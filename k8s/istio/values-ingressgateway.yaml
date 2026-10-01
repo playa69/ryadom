@@ -1,0 +1,71 @@
+# =============================================================================
+# Istio ingressgateway Helm Values (chart istio/gateway) — Timeweb Cloud
+# =============================================================================
+# Namespace: istio-system. Workload gateway живёт рядом с istiod: istiod
+# резолвит credentialName TLS-секретов в namespace gateway-workload,
+# поэтому секрет ryadom-tls кладётся в istio-system (см. k8s/tls/TLS-RUNBOOK.md).
+#
+# Установка:
+#   helm install istio-ingressgateway istio/gateway --namespace istio-system \
+#     -f k8s/istio/values-ingressgateway.yaml
+#
+# У Timeweb managed k8s НЕТ cloud LB-контроллера: Service type=LoadBalancer
+# навсегда повиснет в Pending. Gateway — DaemonSet, наружу порты 80/443
+# публикуются через hostPort (CNI portmap в k0s/Calico — проверено:
+# hostPort доступен на external IP ноды).
+#
+# Решение 2026-10-01: единая точка входа — нода worker-192.168.0.5
+# (185.207.64.68), A-запись корневого домена указывает только на неё.
+# Gateway закреплён за .5 nodeAffinity-патчем (1 под; на .6/.7 подов нет,
+# 80/443 там не слушаются):
+#
+# Почему hostPort, а не hostNetwork:
+#   1) istiod ПРОПУСКАЕТ инъекцию для hostNetwork-подов (hardcoded в
+#      sidecar-injector) — контейнер остаётся с image "auto" и не стартует;
+#   2) hostNetwork запрещает pod-sysctls, а чарт биндит :80/:443 от
+#      non-root через sysctl net.ipv4.ip_unprivileged_port_start=0.
+# hostPort обе проблемы обходит: под в обычной pod-сети, инъекция и
+# sysctl работают, SNAT нет (DNAT через portmap) — envoy видит реальный
+# client IP и пишет его в X-Forwarded-For.
+#
+# ВАЖНО: chart istio/gateway (проверено до 1.30.5) НЕ умеет hostPort через
+# values — после helm install/upgrade применить патч:
+#   kubectl patch ds istio-ingressgateway -n istio-system --type json -p '[
+#     {"op":"add","path":"/spec/template/spec/containers/0/ports/-",
+#      "value":{"containerPort":80,"hostPort":80,"protocol":"TCP"}},
+#     {"op":"add","path":"/spec/template/spec/containers/0/ports/-",
+#      "value":{"containerPort":443,"hostPort":443,"protocol":"TCP"}}]'
+# При helm upgrade патч слетает — применять заново. То же касается
+# nodeAffinity-пиннинга за нодой .5 (единая точка входа, см. выше):
+#   kubectl patch ds istio-ingressgateway -n istio-system --type merge -p '
+#     {"spec":{"template":{"spec":{"affinity":{"nodeAffinity":
+#       {"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":
+#         [{"matchExpressions":[{"key":"kubernetes.io/hostname","operator":"In",
+#           "values":["worker-192.168.0.5"]}]}]}}}}}}}'
+#
+# Service оставляем ClusterIP: нужен для внутрикластерных обращений и
+# targetRef Gateway API (наружу трафик идёт через hostPort, минуя Service).
+# =============================================================================
+
+# DaemonSet: реально работает 1 под на worker-192.168.0.5 (nodeAffinity —
+# патч выше); без патча — по поду на каждой ноде.
+kind: DaemonSet
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+service:
+  type: ClusterIP
+  # Явный список портов БЕЗ status-port (15021): healthz не торчит наружу.
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443

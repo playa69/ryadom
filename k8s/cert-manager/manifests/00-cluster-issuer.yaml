@@ -1,0 +1,37 @@
+# =============================================================================
+# ClusterIssuer: Let's Encrypt PROD, HTTP-01 через Gateway API (cert-manager)
+# =============================================================================
+# Решение для Timeweb-кластера (2026-10-01): вместо lego DNS-01 (см.
+# k8s/tls/TLS-RUNBOOK.md, применялся в YC-установке) — cert-manager с
+# solver gatewayHTTPRoute (Gateway API). Solver создаёт временный под +
+# HTTPRoute на /.well-known/acme-challenge/* и цепляет её parentRef'ом к
+# Gateway ryadom-gateway (istio-system, см. k8s/istio/manifests/01-gateway-api-gateway.yaml).
+# Let's Encrypt заходит по http://<host>/.well-known/... → A-записи домена
+# → external IP нод → hostPort :80 ingressgateway → envoy → solver pod.
+#
+# Требования: Gateway API CRDs (v1.4.0 standard-install), cert-manager
+# с --enable-gateway-api (см. README, раздел Timeweb).
+#
+# NB: email не задан — Let's Encrypt допускает аккаунты без email, но тогда
+# не приходят уведомления об истечении. Задать при появлении почты для
+# алертов.
+# =============================================================================
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          # NB: в cert-manager ≥1.16 поле называется gatewayHTTPRoute
+          # (до этого — gatewayHTTP01); проверено по CRD v1.21.2
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: ryadom-gateway
+                namespace: istio-system
+                kind: Gateway

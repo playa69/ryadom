@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Kubernetes kubeconfig (credentials)
+k8s/*-config.yaml
+k8s/kubeconfig*.yaml

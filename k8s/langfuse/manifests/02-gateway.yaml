@@ -1,0 +1,50 @@
+# =============================================================================
+# Langfuse UI — публичный маршрут ОТСУТСТВУЕТ (internal-only, port-forward)
+# =============================================================================
+# Решение 2026-10-01: Langfuse НЕ публикуется наружу.
+#
+# Почему не /langfuse на корневом домене: схема кластера — только корневой
+# домен с path-based routing, но base path в Langfuse v3 зашит в статику
+# web-контейнера на этапе СБОРКИ образа (NEXT_PUBLIC_BASE_PATH — build-arg,
+# см. langfuse.com/self-hosting/configuration/custom-base-path). Prebuilt
+# образ langfuse/langfuse под base path пересобирать не стали — преждевременно
+# для текущей стадии проекта.
+#
+# Доступ к UI — port-forward (nextauth.url=http://localhost:3000 в
+# values-langfuse.yaml согласован с этим):
+#   kubectl port-forward -n infra svc/langfuse-web 3000:3000
+#   → http://localhost:3000
+#
+# Когда понадобится публичный доступ: пересобрать web-образ с
+# NEXT_PUBLIC_BASE_PATH=/langfuse (см. доку выше, попутно probes в values),
+# выставить nextauth.url=https://xn----htbtgjker8b3a2c.xn--p1ai/langfuse/api/auth
+# и применить HTTPRoute ниже (заполнив образ в values-langfuse.yaml).
+#
+# Публичный вход в кластер — только под будущее API приложения
+# (шаблон: k8s/istio/manifests/00-example-gateway.yaml).
+# =============================================================================
+
+---
+# НЕ ПРИМЕНЯТЬ до пересборки web-образа с base path (см. шапку)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: langfuse
+  namespace: infra
+  annotations:
+    ryadom.dev/status: "template-do-not-apply"
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /langfuse
+      backendRefs:
+        - name: langfuse-web
+          port: 3000

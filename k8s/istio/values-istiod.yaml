@@ -1,0 +1,48 @@
+# =============================================================================
+# Istio control plane (istiod) Helm Values — Yandex Cloud Managed Kubernetes
+# =============================================================================
+# Namespace: istio-system
+# Установка (строго в порядке base → istiod → ingressgateway):
+#   helm repo add istio https://istio-release.storage.googleapis.com/charts
+#   helm repo update
+#   helm install istio-base istio/base --namespace istio-system --create-namespace
+#   helm install istiod istio/istiod --namespace istio-system \
+#     -f k8s/istio/values-istiod.yaml
+#
+# Ресурсы рассчитаны на маленькие ноды (2 vCPU / 8 ГБ): дефолтный istiod
+# запрашивает 500m/2Gi — уменьшено. 1 реплика (бюджетный кластер).
+# NB: после расширения до 3 нод requests НЕ подняты — istiod на таком
+# масштабе mesh не является bottleneck, держим бережливо.
+#
+# Egress mesh-wide: дефолт ALLOW_ANY. Ужесточение до REGISTRY_ONLY +
+# ServiceEntry-allowlist — отдельный этап ПОСЛЕ инвентаризации внешних
+# зависимостей приложений (LLM API, S3 и т.п.), паттерн:
+# UnionApp/k8s/cluster-policies/istio-isolation/. Преключается через
+#   helm upgrade istiod istio/istiod -n istio-system --reuse-values \
+#     --set meshConfig.outboundTrafficPolicy.mode=REGISTRY_ONLY
+# =============================================================================
+
+pilot:
+  replicaCount: 1
+  autoscaleMin: 1
+  autoscaleMax: 2
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+global:
+  # Инъекция включается per-namespace label'ом istio-injection=enabled
+  # (см. namespaces/manifests/00-namespaces.yaml). Ресурсы сайдкаров
+  # уменьшены под маленькие ноды.
+  proxy:
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"

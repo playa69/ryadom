@@ -1,0 +1,104 @@
+# =============================================================================
+# CNPG Cluster: ryadom-db (namespace ryadom-db) — PostgreSQL 16, HA из 2 инстансов
+# =============================================================================
+# Требует установленного CloudNativePG operator:
+#   helm repo add cnpg https://cloudnative-pg.github.io/charts
+#   helm install cnpg cnpg/cloudnative-pg \
+#     --namespace cnpg-system --create-namespace
+#
+# instances=2 — primary + 1 реплика (ноды Timeweb 2 vCPU / 4 ГБ: третий
+# инстанс не влезает по ресурсам). enablePodAntiAffinity разносит инстансы
+# по нодам (встроенный механизм CNPG по kubernetes.io/hostname — как в
+# референсе UnionApp/k8s/langfuse/manifests/02-cnpg-cluster.yaml).
+#
+# Ресурсы PG осознанно скромные (requests 256Mi/100m, shared_buffers 128MB):
+# узкое место маленького кластера — не PG. Поднять до референсных значений
+# (512Mi/150m, shared_buffers 256MB) — при росте объёма данных/нагрузки.
+# =============================================================================
+
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: ryadom-db
+  namespace: ryadom-db
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+
+  storage:
+    size: 10Gi
+    # Сетевой диск Timeweb через CSI. Кластер в регионе Москва — HDD там
+    # недоступен (проверено: CreateVolume "disk preset not found"),
+    # поэтому NVMe. В СПб можно hdd.network-drives.csi.timeweb.cloud.
+    storageClass: nvme.network-drives.csi.timeweb.cloud
+
+  # Multi-node cluster (3 nodes): spread instances across nodes, по инстансу
+  # на ноду
+  affinity:
+    enablePodAntiAffinity: true
+
+  # Суперпользователь postgres для админ-задач (Job create-db для langfuse
+  # и будущих сервисов) — паттерн референса (sevenelement-db). Без
+  # superuserSecret CNPG отключает доступ postgres. Секрет — шаблон в
+  # 00-secrets.yaml, реальное значение в git не коммитим.
+  superuserSecret:
+    name: ryadom-db-superuser
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  bootstrap:
+    initdb:
+      database: ryadom
+      owner: ryadom
+      secret:
+        name: ryadom-db-credentials
+
+  # Continuous backup: WAL archiving + base backups → Yandex Object Storage
+  # (barman-cloud). Bucket ryadom-cnpg-backups (создан заранее в YC).
+  # Credentials — Secret cnpg-backup-s3-credentials (см. 00-secrets.yaml,
+  # реальные значения НЕ храним в git), команда создания — там же.
+  # NB: native barmanObjectStore deprecated, будет удалён в CNPG 1.31 — при
+  # апгрейде оператора мигрировать на Barman Cloud Plugin.
+  #
+  # Префикс .../ryadom-db-twc: под .../ryadom-db лежат WAL/base backups
+  # YC-установки того же кластера (2026-10-01) — barman-cloud-check-wal-archive
+  # требует пустой архив для первого WAL нового кластера ("Expected empty
+  # archive"), поэтому Timeweb-установка пишет в соседний префикс, старые
+  # объекты не удалялись.
+  backup:
+    retentionPolicy: "30d"
+    barmanObjectStore:
+      destinationPath: s3://ryadom-cnpg-backups/cnpg-backups/ryadom-db-twc
+      endpointURL: https://storage.yandexcloud.net
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-backup-s3-credentials
+          key: AWS_ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-backup-s3-credentials
+          key: AWS_SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "128MB"
+      effective_cache_size: "384MB"
+      maintenance_work_mem: "32MB"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "4096kB"
+      default_statistics_target: "100"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "512kB"
+      min_wal_size: "512MB"
+      max_wal_size: "1GB"

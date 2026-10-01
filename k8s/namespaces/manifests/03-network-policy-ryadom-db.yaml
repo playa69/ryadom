@@ -1,0 +1,76 @@
+# =============================================================================
+# Network Policies — изоляция namespace ryadom-db (CNPG PostgreSQL)
+# =============================================================================
+# Namespace БЕЗ istio-injection (см. 00-namespaces.yaml).
+# Ingress-правила для CNPG (оператор, репликация, доступ из prod) —
+# в postgres/manifests/03-network-policy.yaml (компонентный файл, как
+# в референсе langfuse/manifests/03). Здесь — базовый набор:
+# default-deny + минимальный egress.
+# =============================================================================
+
+---
+# Default-deny: блокируем весь ingress и egress в ryadom-db
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ryadom-db-default-deny-all
+  namespace: ryadom-db
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Минимальный egress: DNS, pod-to-pod внутри namespace, HTTPS в интернет
+# (barman-cloud WAL archiving и base backups → Yandex Object Storage)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ryadom-db-allow-egress
+  namespace: ryadom-db
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (CoreDNS в kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Pod-to-pod внутри namespace: репликация CNPG (:5432), админ-Job'ы →
+    # PostgreSQL. NetworkPolicy двусторонняя: без этого правила источник
+    # соединения не пройдёт egress даже при разрешённом ingress на приёмнике.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ryadom-db
+    # S3 (Yandex Object Storage) для CNPG backup
+    # TODO: сузить до CIDR storage.yandexcloud.net, если CNI позволяет
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    # kube-apiserver: нужен инстанс-подам CNPG (initdb/join/instance-manager
+    # ходят в API). Calico применяет egress-проверку ПОСЛЕ DNAT kube-proxy:
+    # kubernetes.default 10.96.0.1:443 уже превращён в реальный endpoint
+    # API (:6443), поэтому правило на :443 его не покрывает — нужен отдельный
+    # (в YC CNI проверка была pre-DNAT, там хватало :443).
+    # Текущий endpoint — 192.168.0.4:6443 (kubectl get endpoints kubernetes),
+    # он покрыт кластерным правилом namespaces/manifests/04-network-policy-kube-apiserver.yaml.
+    # Это правило (публичный IP API из kubeconfig) оставлено про запас —
+    # на старте кластера endpoint резолвился именно в него (2026-10-01).
+    - to:
+        - ipBlock:
+            cidr: 5.129.247.168/32
+      ports:
+        - protocol: TCP
+          port: 6443

@@ -1,0 +1,48 @@
+# =============================================================================
+# ПРИМЕР: HTTPRoute для будущего приложения (ns prod) — path-based routing
+# =============================================================================
+# Это шаблон: перед применением заменить <CHANGE_ME_PATH_PREFIX> и имя/порт
+# Service в backendRefs. Сам по себе без приложения файл не применять.
+#
+# Схема (2026-10-01): ТОЛЬКО корневой домен xn----htbtgjker8b3a2c.xn--p1ai
+# (слышу-рядом.рф), поддомены не используются. Каждое приложение получает
+# свой path-префикс на корневом домене. TLS — единый listener https
+# Gateway ryadom-gateway (istio-system, сертификат ryadom-tls от
+# cert-manager, см. k8s/istio/manifests/01-gateway-api-gateway.yaml).
+# Редирект 80→443 — централизованный (HTTPRoute http-redirect там же),
+# здесь дублировать не нужно.
+#
+# Роут цепляется к listener https через sectionName — чтобы не отдавать
+# приложение по plain HTTP на :80 (на :80 живёт только редирект и ACME).
+#
+# NB: приложение должно уметь работать под path-префиксом (base path) —
+# либо настраивается в самом приложении, либо здесь добавляется фильтр
+# URLRewrite (ReplacePrefixMatch → /), если приложение не знает про префикс.
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ryadom-backend
+  namespace: prod
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    # Публичный API доступен только по /<CHANGE_ME_PATH_PREFIX>/api/v1/*
+    # Internal/debug пути (/metrics, /health, /docs, /openapi.json) снаружи
+    # не отдаём — фильтрация здесь (при появлении AuthorizationPolicy —
+    # дублировать запретом и там, как в референсе).
+    - name: api
+      matches:
+        - path:
+            type: PathPrefix
+            value: /<CHANGE_ME_PATH_PREFIX>/api/v1
+      backendRefs:
+        - name: ryadom-backend
+          port: 80

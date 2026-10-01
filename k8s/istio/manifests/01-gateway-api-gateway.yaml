@@ -1,0 +1,84 @@
+# =============================================================================
+# Gateway API Gateway: ryadom-gateway (istio-system) — единая точка входа
+# =============================================================================
+# Режим MANUAL deployment (istio docs → Gateway API → Deployment methods):
+# addresses указывает на Hostname СУЩЕСТВУЮЩЕГО Service istio-ingressgateway
+# (helm-чарт, DaemonSet + hostPort 80/443 — см. k8s/istio/values-ingressgateway.yaml),
+# поэтому istiod НЕ создаёт отдельный deployment, а программирует listeners
+# на поды нашего gateway. Поды помечены label
+# gateway.networking.k8s.io/gateway-name: ryadom-gateway (патч DS) — нужно
+# для Policy Attachment.
+#
+# Схема доменов (2026-10-01): ТОЛЬКО корневой домен
+# xn----htbtgjker8b3a2c.xn--p1ai (слышу-рядом.рф), path-based routing,
+# без поддоменов. TLS — Certificate ryadom-tls (корень, HTTP-01 через
+# cert-manager, см. k8s/cert-manager/manifests/01-certificate-ryadom-tls.yaml);
+# секрет создаётся в istio-system (namespace gateway-workload).
+#
+# Listener :80 без hostname: нужен ACME HTTP-01 solver'у (solver-HTTPRoute
+# на /.well-known/acme-challenge/* цепляется сюда — она специфичнее
+# catch-all редиректа и выигрывает матч) + HTTPRoute http-redirect
+# (istio-system) делает редирект 80→443 для корневого хоста.
+#
+# Маршруты приложений — HTTPRoute в namespace приложений с parentRef на
+# listener https (sectionName) и path-префиксом приложения.
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ryadom-gateway
+  namespace: istio-system
+spec:
+  gatewayClassName: istio
+  # Manual deployment: не создавать свой deployment, программировать
+  # существующий Service istio-ingressgateway
+  addresses:
+    - value: istio-ingressgateway.istio-system.svc.cluster.local
+      type: Hostname
+  listeners:
+    # HTTP: ACME HTTP-01 challenge (solver-роуты от cert-manager) +
+    # редирект на https (HTTPRoute http-redirect, см. ниже в этом файле)
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+    # HTTPS: корневой домен, единственный TLS-listener. Сертификат —
+    # Certificate ryadom-tls (cert-manager), секрет в istio-system
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: xn----htbtgjker8b3a2c.xn--p1ai
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: ryadom-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+
+---
+# Редирект 80→443 для корневого хоста. ACME solver-роуты
+# (/.well-known/acme-challenge/*) специфичнее и матчатся раньше — challenge
+# не редиректится.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-redirect
+  namespace: istio-system
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: http
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

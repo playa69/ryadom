@@ -1,0 +1,30 @@
+# =============================================================================
+# Certificate: ryadom-tls — TLS для корневого домена слышу-рядом.рф
+# =============================================================================
+# Схема (2026-10-01, решение пользователя): НИКАКИХ поддоменов — всё на
+# корневом домене xn----htbtgjker8b3a2c.xn--p1ai с path-based routing.
+# Поэтому сертификат один, dnsNames — только корень (без wildcard: HTTP-01
+# wildcard не выпускает, да и поддомены не используются).
+#
+# Secret ryadom-tls создаётся cert-manager'ом в istio-system — namespace
+# gateway-workload, туда же ссылается listener Gateway ryadom-gateway
+# (k8s/istio/manifests/01-gateway-api-gateway.yaml).
+#
+# Выпуск: HTTP-01 через ClusterIssuer letsencrypt-prod (см.
+# 00-cluster-issuer.yaml): solver-HTTPRoute на /.well-known/acme-challenge/*
+# цепляется к listener :80 Gateway, Let's Encrypt идёт по корневой A-записи
+# (3 external IP нод) → hostPort :80 → envoy → solver pod.
+# =============================================================================
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ryadom-tls
+  namespace: istio-system
+spec:
+  secretName: ryadom-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - xn----htbtgjker8b3a2c.xn--p1ai

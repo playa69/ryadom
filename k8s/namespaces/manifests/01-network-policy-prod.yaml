@@ -1,0 +1,175 @@
+# =============================================================================
+# Network Policies — изоляция namespace prod
+# =============================================================================
+# Модель: default-deny ingress+egress, далее — явные allow-правила.
+# Трафик между namespace запрещён (не покрыт ни одним allow).
+#
+# NB: политики исполняются, только если в кластере есть CNI с enforcement
+# NetworkPolicy. Timeweb managed k8s (k0s) поставляется с Calico в режиме
+# enforced — проверено на twc-sber500. На YC включить enforcement на уже
+# существующем кластере было НЕЛЬЗЯ (см. UnionApp/k8s/docs/security-map.md).
+# =============================================================================
+
+---
+# Default-deny: блокируем весь ingress и egress в prod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-default-deny-all
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Входящий трафик ТОЛЬКО от istio-ingressgateway (публичный вход в кластер).
+# Gateway workload живёт в istio-system (label istio: ingressgateway) —
+# паттерн референса (UnionApp/k8s/web-sevenelement/manifests/10-network-policy.yaml).
+# Порты 80/8000/8080 — типовые порты приложений; подгонять под реальные
+# сервисы по мере их появления.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-allow-ingress-istio-gateway
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              istio: ingressgateway
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+
+---
+# Pod-to-pod внутри namespace (backend → redis и т.п.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-allow-ingress-same-namespace
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+
+---
+# Исходящий трафик: DNS, внутренний трафик namespace, внешний HTTPS (LLM API)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-allow-egress
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (CoreDNS в kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Pod-to-pod внутри namespace (Redis, межсервисные вызовы)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prod
+    # PostgreSQL (:5432) и Redis (:6379) в ryadom-db (отдельный не-meshed
+    # namespace)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ryadom-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    # Внешние HTTPS: LLM API, S3 (Yandex Object Storage) и т.д.
+    # TODO: заменить 0.0.0.0/0 на конкретные CIDR/FQDN LLM-провайдеров,
+    # если CNI позволяет. При переходе mesh на REGISTRY_ONLY эти же хосты
+    # должны появиться в ServiceEntry (паттерн UnionApp/k8s/cluster-policies/
+    # istio-isolation/01-service-entries.yaml).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Доступ к istiod (istio-system): 15012/TCP (TLS XDS) и 15010/TCP (plaintext XDS).
+# Нужно для istio-sidecar: в namespace включена инъекция
+# (istio-injection=enabled), при включённом CNI-энфорсере без этого правила
+# сайдкары потеряют связь с control plane.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-allow-egress-istiod
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - protocol: TCP
+          port: 15012
+        - protocol: TCP
+          port: 15010
+
+# =============================================================================
+# Kubelet httpGet-пробы → :15020 (istio probe rewrite на pilot-agent)
+# =============================================================================
+# Пробы идут с IP ноды (hostNetwork). Под CNI-энфорсером без этого правила
+# поды уйдут в NotReady (default-deny ingress). Применено 2026-10-01 с
+# internal IP трёх воркеров кластера Timeweb twc-sber500
+# (192.168.0.5/6/7); при пересоздании нод обновить список (паттерн
+# референса, коммит 78c1f91 в UnionApp/k8s).
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubelet-probes-allow-ingress
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.5/32
+        - ipBlock:
+            cidr: 192.168.0.6/32
+        - ipBlock:
+            cidr: 192.168.0.7/32
+      ports:
+        - protocol: TCP
+          port: 15020

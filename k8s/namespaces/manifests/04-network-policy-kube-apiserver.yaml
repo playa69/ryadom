@@ -1,0 +1,59 @@
+# =============================================================================
+# Egress к kube-apiserver во всех namespace
+#
+# В Timeweb managed k0s apiserver — отдельный хост 192.168.0.4:6443
+# (endpoints svc/kubernetes). Calico применяет egress-политику ПОСЛЕ DNAT
+# (10.96.0.1:443 -> 192.168.0.4:6443), поэтому правило "0.0.0.0/0:443"
+# apiserver НЕ покрывает — нужен явный allow на 192.168.0.4/32:6443.
+# Без этого поды под default-deny не могут ходить в K8s API
+# (CNPG initdb/инстансы, cert-manager, любые контроллеры).
+#
+# IP apiserver узнать: kubectl get endpoints kubernetes
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-kube-apiserver
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.4/32
+      ports:
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-kube-apiserver
+  namespace: infra
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.4/32
+      ports:
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-kube-apiserver
+  namespace: ryadom-db
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.4/32
+      ports:
+        - port: 6443
+          protocol: TCP

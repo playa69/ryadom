@@ -1,0 +1,94 @@
+# =============================================================================
+# Job: Create database + role for Langfuse in CNPG cluster ryadom-db
+# =============================================================================
+# Запускать ПОСЛЕ того, как PostgreSQL (CNPG) поднимется:
+#   kubectl wait --for=condition=ready pod -l cnpg.io/cluster=ryadom-db -n ryadom-db
+#   kubectl apply -f k8s/langfuse/manifests/01-job-create-db.yaml
+#
+# Подключается суперпользователем postgres (Secret ryadom-db-superuser,
+# см. postgres/manifests/00-secrets.yaml и .spec.superuserSecret в
+# 01-cnpg-cluster.yaml). Пароль роли langfuse — из копии секрета
+# langfuse-db-credentials в этом namespace (см. 00-secrets.yaml, шапка).
+# Идемпотентно: существующие роль/база пропускаются.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: db-jobs
+  namespace: ryadom-db
+  labels:
+    app.kubernetes.io/part-of: ryadom
+    component: db-init
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-langfuse-db
+  namespace: ryadom-db
+  labels:
+    app: langfuse
+    component: db-init
+spec:
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: langfuse
+        component: db-init
+    spec:
+      serviceAccountName: db-jobs
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: psql
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+                -h ryadom-db-rw.ryadom-db.svc.cluster.local \
+                -U "${POSTGRES_USER}" \
+                -d postgres \
+                -tc "SELECT 1 FROM pg_roles WHERE rolname = 'langfuse'" | grep -q 1 || \
+              PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+                -h ryadom-db-rw.ryadom-db.svc.cluster.local \
+                -U "${POSTGRES_USER}" \
+                -d postgres \
+                -c "CREATE ROLE langfuse LOGIN PASSWORD '${LANGFUSE_PASSWORD}';"
+              PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+                -h ryadom-db-rw.ryadom-db.svc.cluster.local \
+                -U "${POSTGRES_USER}" \
+                -d postgres \
+                -tc "SELECT 1 FROM pg_database WHERE datname = 'langfuse'" | grep -q 1 || \
+              PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+                -h ryadom-db-rw.ryadom-db.svc.cluster.local \
+                -U "${POSTGRES_USER}" \
+                -d postgres \
+                -c "CREATE DATABASE langfuse OWNER langfuse;"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: password
+            - name: LANGFUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-credentials
+                  key: password
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"

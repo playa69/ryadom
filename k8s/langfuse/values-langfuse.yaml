@@ -1,0 +1,222 @@
+# =============================================================================
+# Langfuse Helm Values — Production-ready (internal-only, за Istio Gateway)
+# =============================================================================
+# Namespace: infra
+# Dependencies:
+#   - PostgreSQL: внешний CNPG ryadom-db (ns ryadom-db), база/роль создаются
+#     Job'ом manifests/01-job-create-db.yaml
+#   - ClickHouse: Bitnami subchart, 1 шард / 1 реплика, БЕЗ Keeper
+#   - Redis:      свой bundled subchart (standalone) — как в референсе
+#   - S3:         Yandex Object Storage (external)
+#
+# Установка (версия чарта пиннуется: 1.5.x — последняя линейка на Langfuse
+# v3 + Bitnami-subchart'ы; 2.x — это Langfuse v4 и valkey-io subchart с
+# другой схемой values, миграция отдельной задачей):
+#   helm repo add langfuse https://langfuse.github.io/langfuse-k8s
+#   helm repo update
+#   helm install langfuse langfuse/langfuse --version 1.5.41 \
+#     --namespace infra -f k8s/langfuse/values-langfuse.yaml
+# =============================================================================
+
+langfuse:
+  image:
+    tag: "3.15"
+
+  logging:
+    level: info
+    format: json
+
+  salt:
+    secretKeyRef:
+      name: langfuse-core-secrets
+      key: SALT
+
+  encryptionKey:
+    secretKeyRef:
+      name: langfuse-core-secrets
+      key: ENCRYPTION_KEY
+
+  nextauth:
+    # Заменить на https://<CHANGE_ME_LANGFUSE_HOST> после появления домена
+    url: http://localhost:3000
+    secret:
+      secretKeyRef:
+        name: langfuse-core-secrets
+        key: NEXTAUTH_SECRET
+
+  features:
+    telemetryEnabled: false
+    signUpDisabled: false
+    experimentalFeaturesEnabled: false
+
+  nodeEnv: production
+
+  # Публикация — через Istio Gateway (manifests/02-gateway.yaml), а не
+  # через ingress-ресурс чарта
+  ingress:
+    enabled: false
+
+  web:
+    replicas: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "150m"
+      limits:
+        memory: "1Gi"
+        cpu: "600m"
+
+  worker:
+    replicas: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "150m"
+      limits:
+        memory: "768Mi"
+        cpu: "600m"
+
+  additionalEnv: []
+
+# ------------------------------------------------------------------------------
+# PostgreSQL (external CNPG ryadom-db)
+# ------------------------------------------------------------------------------
+postgresql:
+  deploy: false
+  host: "ryadom-db-rw.ryadom-db.svc.cluster.local"
+  port: 5432
+
+  auth:
+    username: "langfuse"
+    database: "langfuse"
+    existingSecret: "langfuse-db-credentials"
+    secretKeys:
+      userPasswordKey: "password"
+      adminPasswordKey: "password"
+
+  migration:
+    autoMigrate: true
+
+# ------------------------------------------------------------------------------
+# ClickHouse (Bitnami subchart, 1 шард / 1 реплика, БЕЗ Keeper)
+# ------------------------------------------------------------------------------
+# Урезано относительно референса (там 2 реплики + ClickHouse Keeper):
+# одиночный инстанс не требует координации — Keeper/ZooKeeper выключены.
+# Цена — нет отказоустойчивости ClickHouse; данные аналитики восстановимы
+# из S3/повторной ингестии, риск принят (бюджетный кластер).
+clickhouse:
+  deploy: true
+  shards: 1
+  replicaCount: 1
+  clusterEnabled: false
+
+  keeper:
+    enabled: false
+
+  zookeeper:
+    enabled: false
+
+  resourcesPreset: ""
+  # Ноды 4 ГБ: requests урезаны, limit памяти 1Gi (ClickHouse OOM — частая
+  # история на маленьких нодах, не поднимать без надобности)
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 800m
+      memory: 1Gi
+
+  # Отключаем внутренние log-таблицы ClickHouse — на маленьком PVC
+  # они раздувают диск (паттерн референса)
+  extraOverrides: |
+    <clickhouse>
+      <trace_log remove="1" />
+      <text_log remove="1" />
+      <metric_log remove="1" />
+      <asynchronous_metric_log remove="1" />
+      <latency_log remove="1" />
+      <error_log remove="1" />
+      <query_thread_log remove="1" />
+      <query_views_log remove="1" />
+      <part_log remove="1" />
+      <processors_profile_log remove="1" />
+      <opentelemetry_span_log remove="1" />
+      <query_metric_log remove="1" />
+    </clickhouse>
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    # Сетевой диск Timeweb через CSI (кластер в Москве — только NVMe;
+    # в СПб доступен и hdd.network-drives.csi.timeweb.cloud)
+    storageClass: nvme.network-drives.csi.timeweb.cloud
+
+  auth:
+    username: default
+    existingSecret: langfuse-clickhouse-credentials
+    existingSecretKey: password
+
+  migration:
+    autoMigrate: true
+
+# ------------------------------------------------------------------------------
+# Redis (Bitnami Valkey subchart, standalone)
+# ------------------------------------------------------------------------------
+# СВОЙ Redis внутри релиза — как в референсе: очередь Langfuse (бlob-инжестия,
+# batch export) изолирована от прикладного кэша в ryadom-db, отдельный пароль
+# и отдельный lifecycle (удаляется/пересоздаётся вместе с релизом).
+redis:
+  deploy: true
+
+  sentinel:
+    enabled: false
+
+  auth:
+    existingSecret: langfuse-redis-credentials
+    existingSecretPasswordKey: REDIS_PASSWORD
+    database: 0
+
+  primary:
+    resourcesPreset: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# S3 (Yandex Object Storage)
+# ------------------------------------------------------------------------------
+s3:
+  deploy: false
+  storageProvider: s3
+  bucket: "ryadom-app-storage"
+  region: "ru-central1"
+  endpoint: "https://storage.yandexcloud.net"
+  # path-style: для Yandex Object Storage надёжнее virtual-hosted
+  # (<bucket>.storage.yandexcloud.net)
+  forcePathStyle: true
+
+  accessKeyId:
+    secretKeyRef:
+      name: langfuse-s3-credentials
+      key: S3_ACCESS_KEY_ID
+
+  secretAccessKey:
+    secretKeyRef:
+      name: langfuse-s3-credentials
+      key: S3_SECRET_ACCESS_KEY
+
+  eventUpload:
+    bucket: "ryadom-app-storage"
+    prefix: "langfuse/events"
+
+  batchExport:
+    bucket: "ryadom-app-storage"
+    prefix: "langfuse/batch-exports"
+
+  mediaUpload:
+    bucket: "ryadom-app-storage"
+    prefix: "langfuse/media"

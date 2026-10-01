@@ -1,0 +1,35 @@
+# =============================================================================
+# Network Policy: доступ к Redis (:6379) в namespace ryadom-db
+# =============================================================================
+# Разрешён доступ из:
+#   - prod  — прикладные backend/LLM-агенты (кэш, очереди, сессии)
+#   - infra — служебные сервисы. NB: Langfuse по умолчанию использует свой
+#     bundled Redis в ns infra (langfuse/values-langfuse.yaml, redis.deploy:
+#     true — как в референсе); доступ из infra оставлен на случай перехода
+#     Langfuse/других сервисов на общий Redis.
+# Обратная сторона (egress) — в namespaces/manifests/01-network-policy-prod.yaml
+# и 02-network-policy-infra.yaml.
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-ingress
+  namespace: ryadom-db
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prod
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra
+      ports:
+        - protocol: TCP
+          port: 6379

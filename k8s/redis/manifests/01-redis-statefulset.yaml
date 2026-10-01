@@ -1,0 +1,106 @@
+# =============================================================================
+# Redis (namespace ryadom-db) — 1 реплика, общий кэш/очереди прикладных
+# сервисов prod. Langfuse использует СВОЙ bundled Redis в ns infra
+# (см. langfuse/values-langfuse.yaml), сюда не ходит по умолчанию.
+# =============================================================================
+# Паттерн — unionchatbot/10-redis-stack-statefulset.yaml (1 реплика, probes
+# через redis-cli), но на официальном образе redis:7.4.2-alpine (как
+# sevenelement/19) вместо redis-stack-server: модулей RedisStack здесь не
+# нужно. Sentinel/репликация осознанно не разворачиваются — бюджетный
+# кластер, RDB/AOF на PVC + приемлемое окно потери кэша.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis
+  namespace: ryadom-db
+  labels:
+    app: redis
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: ryadom-db
+  labels:
+    app: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      serviceAccountName: redis
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: redis
+          image: redis:7.4.2-alpine
+          command: ["redis-server"]
+          args:
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
+            - "--appendonly"
+            - "yes"
+            - "--maxmemory"
+            - "256mb"
+            - "--maxmemory-policy"
+            - "allkeys-lru"
+          ports:
+            - containerPort: 6379
+              name: redis
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep PONG'
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep PONG'
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # Сетевой диск Timeweb через CSI (кластер в Москве — только NVMe;
+        # в СПб доступен и hdd.network-drives.csi.timeweb.cloud)
+        storageClassName: nvme.network-drives.csi.timeweb.cloud
+        resources:
+          requests:
+            storage: 5Gi

@@ -1,0 +1,113 @@
+# =============================================================================
+# Network Policies — изоляция namespace infra
+# =============================================================================
+# infra — служебные workload'ы БЕЗ istio-injection (см. 00-namespaces.yaml),
+# поэтому правил allow-egress-istiod и kubelet-probes:15020 здесь нет
+# (сайдкаров нет — нечего разрешать).
+# Модель та же: default-deny ingress+egress, далее — явные allow.
+# =============================================================================
+
+---
+# Default-deny: блокируем весь ingress и egress в infra
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra-default-deny-all
+  namespace: infra
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Входящий трафик ТОЛЬКО от istio-ingressgateway и pod-to-pod внутри
+# namespace. Порты: 80/8000/8080 — типовые; 3000 — Langfuse UI
+# (langfuse/manifests/02-gateway.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra-allow-ingress-istio-gateway
+  namespace: infra
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              istio: ingressgateway
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra-allow-ingress-same-namespace
+  namespace: infra
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+
+---
+# Исходящий трафик: DNS, внутренний трафик namespace, внешний HTTPS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra-allow-egress
+  namespace: infra
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (CoreDNS в kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Pod-to-pod внутри namespace (Langfuse → свой ClickHouse/Redis и т.п.)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra
+    # PostgreSQL и Redis в ryadom-db (Langfuse web/worker → CNPG :5432;
+    # :6379 — общий Redis, если сервисы infra переключатся на него)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ryadom-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    # Внешние HTTPS (Yandex Cloud API и т.д.)
+    # TODO: сузить до конкретных CIDR/FQDN, если CNI позволяет
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

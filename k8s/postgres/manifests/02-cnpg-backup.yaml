@@ -1,0 +1,25 @@
+# =============================================================================
+# CNPG Scheduled Backup: ryadom-db → Yandex Object Storage (barman-cloud)
+# =============================================================================
+# Continuous backup (WAL archiving) настраивается в 01-cnpg-cluster.yaml
+# (.spec.backup.barmanObjectStore). Здесь — ежедневный base backup.
+#
+# Требуемый Secret `cnpg-backup-s3-credentials` в ns ryadom-db.
+# Реальные значения НЕ коммитим в git — см. 00-secrets.yaml.
+# =============================================================================
+
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: ryadom-db-daily
+  namespace: ryadom-db
+spec:
+  # 03:00 Europe/Moscow = 00:00 UTC. Формат cron — 6 полей (с секундами),
+  # время всегда UTC.
+  schedule: "0 0 0 * * *"
+  # Первый base backup сразу после создания, далее — по расписанию
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: ryadom-db
+  target: primary
