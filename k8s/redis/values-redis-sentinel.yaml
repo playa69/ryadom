@@ -1,0 +1,110 @@
+# =============================================================================
+# Redis + Sentinel Helm Values (chart bitnami/redis) — Timeweb Cloud
+# =============================================================================
+# Namespace: ryadom-db. Замена standalone-манифестов (бывшие
+# manifests/01-redis-statefulset.yaml + 02, удалены 2026-10-01).
+#
+# Установка (версия пиннуется):
+#   helm install redis bitnami/redis --namespace ryadom-db \
+#     --version 28.3.1 -f k8s/redis/values-redis-sentinel.yaml
+#
+# Топология: 3 пода redis-node (в каждом контейнеры redis + sentinel),
+# hard anti-affinity разносит все три по трём нодам. NB: в chart 28.x при
+# sentinel.enabled разворачивается ЕДИНЫЙ StatefulSet redis-node (мастер
+# выбирается sentinel'ом среди подов), его размер = replica.replicaCount
+# (мастер отдельно НЕ считается — отличие от старых версий чарта).
+#
+# Sentinel: masterSet mymaster, quorum 2. При sentinel.enabled чарт
+# отключает сервисы master/replicas и создаёт ЕДИНЫЙ Service `redis`
+# (ClusterIP, порты 6379 и 26379 на все поды). Приложения: либо
+# sentinel-aware клиент на redis:26379 (mymaster), либо — проще —
+# разрешение мастера через sentinel на старте.
+#
+# Auth: существующий Secret redis-credentials (ключ REDIS_PASSWORD) —
+# тот же пароль, что у бывшего standalone (клиенты не меняются). Пароль
+# применяется и к redis, и к sentinel (auth.sentinel=true по умолчанию).
+#
+# reclaimPolicy Delete у SC nvme.network-drives.csi.timeweb.cloud: удаление
+# PVC = удаление сетевого диска (допустимо — кэш, см. README).
+# =============================================================================
+
+architecture: replication
+
+auth:
+  enabled: true
+  existingSecret: redis-credentials
+  existingSecretPasswordKey: REDIS_PASSWORD
+
+# maxmemory как у бывшего standalone (256mb, allkeys-lru)
+commonConfiguration: |-
+  maxmemory 256mb
+  maxmemory-policy allkeys-lru
+
+master:
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: nvme.network-drives.csi.timeweb.cloud
+  resourcesPreset: "none"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+  # Полный разнос всех redis-подов (master+replica) по нодам
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/instance
+                operator: In
+                values: ["redis"]
+              - key: app.kubernetes.io/component
+                operator: In
+                values: ["master", "replica"]
+          topologyKey: kubernetes.io/hostname
+
+replica:
+  # = число подов STS redis-node (все ноды кластера redis, см. шапку)
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: nvme.network-drives.csi.timeweb.cloud
+  resourcesPreset: "none"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/instance
+                operator: In
+                values: ["redis"]
+              - key: app.kubernetes.io/component
+                operator: In
+                values: ["master", "replica"]
+          topologyKey: kubernetes.io/hostname
+
+sentinel:
+  enabled: true
+  masterSet: mymaster
+  quorum: 2
+  resourcesPreset: "none"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+# Prometheus в кластере нет
+metrics:
+  enabled: false

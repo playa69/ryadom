@@ -24,8 +24,8 @@ k8s/
 ├── twc-sber500-config.yaml         ← kubeconfig (в .gitignore!)
 ├── namespaces/manifests/
 │   ├── 00-namespaces.yaml          ← prod (+istio-injection), infra, ryadom-db
-│   ├── 01-network-policy-prod.yaml    ← + egress в ryadom-db:5432/6379
-│   ├── 02-network-policy-infra.yaml   ← + egress в ryadom-db:5432/6379
+│   ├── 01-network-policy-prod.yaml    ← + egress в ryadom-db:5432/6379/26379
+│   ├── 02-network-policy-infra.yaml   ← + egress в ryadom-db:5432/6379/26379
 │   ├── 03-network-policy-ryadom-db.yaml
 │   └── 04-network-policy-kube-apiserver.yaml  ← egress на 192.168.0.4:6443 (урок post-DNAT)
 ├── istio/
@@ -44,11 +44,11 @@ k8s/
 │   ├── 01-cnpg-cluster.yaml        ← CNPG ryadom-db, 2 инстанса, NVMe, backup→S3
 │   ├── 02-cnpg-backup.yaml         ← ScheduledBackup (daily → S3)
 │   └── 03-network-policy.yaml      ← ingress к подам PG
-├── redis/manifests/
-│   ├── 00-secret.yaml              ← ШАБЛОН redis-credentials
-│   ├── 01-redis-statefulset.yaml   ← Redis 7.4, 1 реплика, PVC 5Gi NVMe
-│   ├── 02-redis-service.yaml       ← ClusterIP :6379
-│   └── 03-network-policy.yaml      ← :6379 от prod и infra
+├── redis/
+│   ├── values-redis-sentinel.yaml  ← helm values bitnami/redis 28.3.1 (3 ноды + Sentinel)
+│   └── manifests/
+│       ├── 00-secret.yaml          ← ШАБЛОН redis-credentials
+│       └── 03-network-policy.yaml  ← :6379/:26379 от prod, infra, same-ns
 └── langfuse/
     ├── values-langfuse.yaml        ← helm values (PG=CNPG, CH 1 реплика, свой Redis, S3)
     └── manifests/
@@ -172,9 +172,12 @@ kubectl apply -f postgres/manifests/     # секреты предварител
 kubectl get cluster ryadom-db -n ryadom-db    # дождаться healthy 2/2
 kubectl get backups -n ryadom-db              # initial backup completed
 
-kubectl apply -f redis/manifests/
-kubectl exec -n ryadom-db redis-0 -- sh -c \
-  'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping'   # → PONG
+kubectl apply -f redis/manifests/03-network-policy.yaml   # до или сразу после helm
+helm install redis bitnami/redis -n ryadom-db --version 28.3.1 \
+  -f redis/values-redis-sentinel.yaml
+kubectl exec -n ryadom-db redis-node-0 -c sentinel -- sh -c \
+  'redis-cli -p 26379 -a "$REDIS_PASSWORD" --no-auth-warning \
+   SENTINEL get-master-addr-by-name mymaster'
 
 kubectl apply -f langfuse/manifests/00-secrets.yaml
 kubectl apply -f langfuse/manifests/01-job-create-db.yaml
@@ -201,7 +204,7 @@ port-forward) и `ci-deploy` (write в prod/infra) до подключения C
 | `istiod`, `istio-ingressgateway`, `istio-reader-service-account` | istio-system | control plane, gateway |
 | `ryadom-db` | ryadom-db | инстансы CNPG (ходят в K8s API — см. 04-network-policy) |
 | `db-jobs` | ryadom-db | админ-Job'ы (create-langfuse-db) |
-| `redis` | ryadom-db | Redis-под (`automountServiceAccountToken: false`) |
+| `redis` | ryadom-db | поды redis-node (создаёт чарт bitnami/redis) |
 | `langfuse`, `langfuse-clickhouse`, `langfuse-redis-primary` | infra | чарт Langfuse |
 
 ### Доступ к Yandex Cloud из кластера (через Secrets)
@@ -223,7 +226,7 @@ Default-deny ingress+egress в каждом namespace; разрешены: ingre
 istio-ingressgateway, pod-to-pod внутри namespace, DNS (kube-system :53),
 HTTPS наружу (:443 — LLM API, S3), egress на kube-apiserver
 (04-network-policy-kube-apiserver.yaml), для meshed ns — сайдкары → istiod
-(:15012/:15010). Меж-namespace только явные prod/infra → ryadom-db:5432/6379.
+(:15012/:15010). Меж-namespace только явные prod/infra → ryadom-db:5432/6379/26379.
 
 **Урок (Calico post-DNAT):** egress-политика применяется ПОСЛЕ DNAT
 kube-proxy: обращение к kubernetes.default 10.96.0.1:443 превращается в
@@ -234,6 +237,31 @@ egress из `04-…yaml`. Актуальный endpoint: `kubectl get endpoints 
 **TODO по ужесточению:** сузить egress 0.0.0.0/0:443 до CIDR LLM-провайдеров;
 REGISTRY_ONLY + ServiceEntry-allowlist + AuthorizationPolicy-матрица —
 после появления приложений (паттерн UnionApp/k8s/cluster-policies/istio-isolation/).
+
+## Redis + Sentinel
+
+Общий кэш/очереди прикладных сервисов prod (Langfuse использует свой
+bundled Redis в infra). До 2026-10-01 был standalone-манифест (1 реплика,
+удалён), заменён на Bitnami chart `redis` 28.3.1 (Redis 8.10.2) с Sentinel
+— `redis/values-redis-sentinel.yaml`.
+
+Топология: единый StatefulSet `redis-node`, 3 пода (в каждом контейнеры
+`redis` + `sentinel`), hard anti-affinity по нодам (по поду на ноду).
+NB: в chart 28.x размер STS = `replica.replicaCount` (мастер отдельно не
+считается — он выбирается sentinel'ом среди подов, masterSet `mymaster`,
+quorum 2). PVC 5Gi NVMe на под, maxmemory 256mb allkeys-lru — как у
+бывшего standalone. Пароль — тот же Secret `redis-credentials`
+(клиенты не меняются), применяется и к sentinel (auth.sentinel=true).
+
+Подключение из приложений: чарт создаёт ЕДИНЫЙ Service `redis`
+(ClusterIP, 6379 + 26379 на все поды). Sentinel-aware клиент — на
+`redis:26379` (имя мастера `mymaster`); либо разрешить мастер через
+sentinel на старте и ходить на узел напрямую. Адрес мастера всегда можно
+узнать: `SENTINEL get-master-addr-by-name mymaster`.
+
+Failover проверен (2026-10-01): удаление пода мастера → новый мастер за
+~10 с (sentinel quorum 2/3), данные на месте, вернувшийся под встаёт
+репликой и догоняет.
 
 ## Langfuse: internal-only
 
@@ -281,6 +309,6 @@ subchart'ы; чарт 2.x = Langfuse v4 + valkey-io subchart с несовмес
 | Certificate ryadom-tls | LE | Ready, корневой домен |
 | CNPG operator | helm latest | Running |
 | PostgreSQL ryadom-db | 16.4 | 2/2 healthy, WAL→S3 (префикс ryadom-db-twc), initial backup OK, daily ScheduledBackup |
-| Redis | 7.4.2 | 1/1, PONG |
+| Redis + Sentinel | 8.10.2, chart 28.3.1 | 3/3 (redis-node-0/1/2 по нодам), failover проверен |
 | Langfuse | image 3.15, chart 1.5.41 | internal-only (port-forward 3000) |
 | DNS | Yandex Cloud DNS | корневая A → 185.207.64.68 (единая точка входа) |

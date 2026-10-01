@@ -103,6 +103,9 @@ spec:
           port: 5432
         - protocol: TCP
           port: 6379
+        # Redis Sentinel (битнами redis+sentinel с 2026-10-01)
+        - protocol: TCP
+          port: 26379
     # Внешние HTTPS (Yandex Cloud API и т.д.)
     # TODO: сузить до конкретных CIDR/FQDN, если CNI позволяет
     - to:

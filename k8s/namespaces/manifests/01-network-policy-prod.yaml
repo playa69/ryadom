@@ -107,6 +107,9 @@ spec:
           port: 5432
         - protocol: TCP
           port: 6379
+        # Redis Sentinel (битнами redis+sentinel с 2026-10-01)
+        - protocol: TCP
+          port: 26379
     # Внешние HTTPS: LLM API, S3 (Yandex Object Storage) и т.д.
     # TODO: заменить 0.0.0.0/0 на конкретные CIDR/FQDN LLM-провайдеров,
     # если CNI позволяет. При переходе mesh на REGISTRY_ONLY эти же хосты

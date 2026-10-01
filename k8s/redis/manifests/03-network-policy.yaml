@@ -1,5 +1,5 @@
 # =============================================================================
-# Network Policy: доступ к Redis (:6379) в namespace ryadom-db
+# Network Policy: доступ к Redis+Sentinel (:6379/:26379) в namespace ryadom-db
 # =============================================================================
 # Разрешён доступ из:
 #   - prod  — прикладные backend/LLM-агенты (кэш, очереди, сессии)
@@ -7,8 +7,15 @@
 #     bundled Redis в ns infra (langfuse/values-langfuse.yaml, redis.deploy:
 #     true — как в референсе); доступ из infra оставлен на случай перехода
 #     Langfuse/других сервисов на общий Redis.
-# Обратная сторона (egress) — в namespaces/manifests/01-network-policy-prod.yaml
-# и 02-network-policy-infra.yaml.
+#   - pod-to-pod внутри ryadom-db — sentinel↔redis, межнодовая репликация
+#     (bitnami redis+sentinel, 2026-10-01: раньше был standalone, same-ns
+#     ingress не требовался).
+# Обратная сторона (egress :6379/:26379) — в namespaces/manifests/
+# 01-network-policy-prod.yaml и 02-network-policy-infra.yaml; egress
+# same-namespace — в namespaces/manifests/03-network-policy-ryadom-db.yaml.
+#
+# podSelector — лейблы bitnami/redis chart (бывший app=redis standalone
+# удалён 2026-10-01).
 # =============================================================================
 
 apiVersion: networking.k8s.io/v1
@@ -19,7 +26,8 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: redis
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/name: redis
   policyTypes:
     - Ingress
   ingress:
@@ -30,6 +38,10 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: infra
+        # sentinel↔redis, репликация — внутри namespace
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: 6379
+        - protocol: TCP
+          port: 26379
