@@ -1,0 +1,103 @@
+# =============================================================================
+# grafana/loki — SingleBinary, filesystem storage (PVC на NVMe CSI)
+#
+# Установка:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm install loki grafana/loki \
+#     -n monitoring -f k8s/monitoring/values-loki.yaml --version 7.3.0
+#
+# Хранение — PVC (filesystem). Потеря PVC = потеря логов, принято осознанно
+# (паттерн референса UnionApp: S3 в нём отменён из-за несовместимости
+# loki 3.6.11+ с YC S3, grafana/loki#21926).
+#
+# NEXT STEP (S3): перевести object_store на Timeweb S3 bucket
+# ryadom-app-storage — loki.storage.type: s3 + schemaConfig.object_store: s3
+# + loki.storage.s3 {endpoint, bucketnames, access_key_id, secret_access_key,
+# s3forcepathstyle: true} и compactor.delete_request_store: s3. Дешевле NVMe
+# и переживает потерю PVC. Сделать при росте объёма логов.
+# =============================================================================
+
+deploymentMode: SingleBinary
+
+# Single-binary mode: scalable targets must be zeroed explicitly (chart validator)
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2026-10-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  limits_config:
+    retention_period: 168h # 7d; Prometheus держит метрики 3d
+    volume_enabled: true
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+    compaction_interval: 10m
+    retention_delete_delay: 2h
+    retention_delete_worker_count: 150
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    storageClass: nvme.network-drives.csi.timeweb.cloud
+    size: 5Gi
+  # PVC RWO: RollingUpdate дедлокится на Multi-Attach при замене пода.
+  # Recreate = ~1 минута разрыва ingestion; alloy дочитает с positions-файла.
+  updateStrategy:
+    type: Recreate
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  # Single-binary Loki с filesystem storage не ходит в Kubernetes API
+  automountServiceAccountToken: false
+
+# Ruler rules sidecar (kiwigrid/k8s-sidecar) не нужен: алертинг —
+# задача kube-prometheus-stack. Заодно убирает лишний third-party image.
+sidecar:
+  rules:
+    enabled: false
+
+# Least privilege: namespaced Role вместо cluster-wide ClusterRole
+# (дефолт чарта даёт get/watch/list на configmaps+secrets по всему кластеру).
+rbac:
+  namespaced: true
+
+# Без gateway/nginx — Grafana и alloy ходят в loki Service напрямую
+gateway:
+  enabled: false
+
+# Минимальный объём логов: кэши, canary и self-monitoring не нужны
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+monitoring:
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false

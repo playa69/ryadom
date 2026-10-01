@@ -1,16 +1,18 @@
 # =============================================================================
-# Namespaces: prod / infra / ryadom-db
+# Namespaces: prod / infra / ryadom-db / monitoring
 # =============================================================================
 # Кластер только под production (dev/stage на момент создания каркаса не
 # нужны — при появлении добавить по образцу prod). Изоляция — через
-# NetworkPolicy (см. 01..03-network-policy-*.yaml): default-deny
+# NetworkPolicy (см. 01..03-network-policy-*.yaml и
+# monitoring/manifests/01-network-policy.yaml): default-deny
 # ingress/egress в каждом namespace, трафик между namespace запрещён
 # (кроме явных allow).
 #
 # istio-injection=enabled — только прикладной namespace (prod): сайдкары
-# нужны приложениям и LLM-агентам. infra (служебные workload'ы) и
-# ryadom-db (CNPG PostgreSQL) — БЕЗ инъекции: паттерн референса, базы живут
-# в отдельных не-meshed namespace (UnionApp: sevenelement-db, langfuse),
+# нужны приложениям и LLM-агентам. infra (служебные workload'ы),
+# ryadom-db (CNPG PostgreSQL) и monitoring (Prometheus/Loki/Grafana) — БЕЗ
+# инъекции: паттерн референса, базы и мониторинг живут в отдельных не-meshed
+# namespace (UnionApp: sevenelement-db, langfuse, monitoring),
 # CNPG + sidecar требует оговорок (probe rewrite, holdApplicationUntilProxy-
 # Starts) и в референсе осознанно не используется.
 # =============================================================================
@@ -38,4 +40,12 @@ metadata:
   name: ryadom-db
   labels:
     kubernetes.io/metadata.name: ryadom-db
+    app.kubernetes.io/part-of: ryadom
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    kubernetes.io/metadata.name: monitoring
     app.kubernetes.io/part-of: ryadom

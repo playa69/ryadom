@@ -1,0 +1,165 @@
+# =============================================================================
+# kube-prometheus-stack: Prometheus + Grafana + node-exporter + kube-state-metrics
+#
+# Установка:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm install prometheus prometheus-community/kube-prometheus-stack \
+#     -n monitoring -f k8s/monitoring/values-prometheus.yaml --version 91.8.2
+#
+# Alertmanager ОТКЛЮЧЁН осознанно (2026-10-01): алерты пока никуда не
+# доставляются, операторный overhead без пользы. Включение — отдельный шаг
+# (alertmanager.enabled: true + NP + канал доставки).
+# =============================================================================
+
+# Managed control plane Timeweb (k0s): etcd/scheduler/controller-manager/kube-proxy
+# недоступны для scrape — их ServiceMonitor'ы только плодят DOWN-таргеты.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    # 3GB из PVC 5Gi: headroom под wal/compaction. Потеря метрик при переполнении
+    # недопустима — Prometheus останавливает ingestion при упоре в диск.
+    retentionSize: 3GB
+    # Подбирать ВСЕ ServiceMonitor/PodMonitor/PrometheusRule/Probe в кластере
+    # (не только созданные этим чартом) — паттерн референса UnionApp.
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: nvme.network-drives.csi.timeweb.cloud
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    additionalScrapeConfigs:
+      # Istio sidecar/proxy metrics (порт 15090, имя http-envoy-prom) во всех
+      # namespace — паттерн референса. Сейчас сайдкаров нет (prod без
+      # workload'ов), job безопасен и заработает сам при их появлении.
+      - job_name: istio-proxy
+        metrics_path: /stats/prometheus
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            action: keep
+            regex: http-envoy-prom
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      # CNPG PostgreSQL: инстансы ryadom-db отдают метрики на :9187
+      # (тот же порт, что дёргает оператор). Ingress со стороны ryadom-db —
+      # postgres/manifests/03-network-policy.yaml (monitoring:9187).
+      - job_name: cnpg
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: ["ryadom-db"]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+            action: keep
+            regex: ryadom-db
+          - source_labels: [__meta_kubernetes_pod_ip]
+            regex: (.+)
+            target_label: __address__
+            replacement: ${1}:9187
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Grafana
+grafana:
+  enabled: true
+  admin:
+    existingSecret: grafana-admin-credentials
+    userKey: admin-user
+    passwordKey: admin-password
+  # Не звонить домой (stats.grafana.org всё равно закрыт NetworkPolicy):
+  # чистые логи, без warning'ов про недоступную телеметрию.
+  grafana.ini:
+    analytics:
+      check_for_updates: false
+      check_for_plugin_updates: false
+      reporting:
+        enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    type: pvc
+    size: 2Gi
+    storageClassName: nvme.network-drives.csi.timeweb.cloud
+  # PVC RWO: RollingUpdate дедлокится на Multi-Attach при замене пода.
+  # Recreate = ~1 минута недоступности UI при рестарте — приемлемо.
+  deploymentStrategy:
+    type: Recreate
+    rollingUpdate: null
+  # Предустановленные k8s-дашборды
+  defaultDashboardsEnabled: true
+  # Свои дашборды — как код: ConfigMap с label grafana_dashboard=1 подхватывается
+  # sidecar'ом grafana-sc-dashboard (включён дефолтом чарта, searchNamespace: ALL).
+  # Манифест: monitoring/manifests/02-dashboard-cluster-resources.yaml,
+  # источник JSON: monitoring/dashboards/cluster-resources.json.
+  # Loki как datasource (Prometheus — дефолтный, добавляется чартом сам)
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      isDefault: false
+      editable: true

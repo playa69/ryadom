@@ -1,0 +1,257 @@
+# =============================================================================
+# Network Policies — изоляция namespace monitoring
+# =============================================================================
+# Модель: default-deny ingress+egress, далее — явные allow (паттерн
+# namespaces/manifests/01-03 и референса UnionApp/k8s/monitoring).
+# Namespace БЕЗ istio-injection — правил для istiod/15020 нет.
+#
+# Обратная сторона scrape-правил (ingress от monitoring на scrape-порты):
+#   prod      :15090  — namespaces/manifests/01-network-policy-prod.yaml
+#   infra     :3000/9091 — namespaces/manifests/02-network-policy-infra.yaml
+#   ryadom-db :9187   — postgres/manifests/03-network-policy.yaml
+# kube-system (coredns :9153) и ноды (:10250/:9100) своих NP не имеют —
+# ingress с той стороны ничего не режет.
+# =============================================================================
+
+---
+# Default-deny: блокируем весь ingress и egress в monitoring
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-default-deny-all
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Pod-to-pod внутри namespace (Prometheus → kube-state-metrics,
+# Grafana → Loki/Prometheus, alloy → Loki, operator → Prometheus)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-allow-ingress-same-namespace
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+
+---
+# Kubelet httpGet-пробы и kubectl port-forward идут с IP нод (hostNetwork).
+# Без этого правила поды под default-deny ушли бы в NotReady.
+# В отличие от prod (там istio переписывает пробы на :15020), здесь поды без
+# сайдкаров — пробы идут на реальные порты (3000/3100/8080/9090/...),
+# поэтому allow без сужения по портам: источники — только доверенные ноды.
+# При пересоздании нод обновить список (см. namespaces/manifests/01).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubelet-probes-allow-ingress
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.5/32
+        - ipBlock:
+            cidr: 192.168.0.6/32
+        - ipBlock:
+            cidr: 192.168.0.7/32
+
+---
+# prometheus-operator admission webhook (:9443): его дёргает kube-apiserver.
+# В Timeweb managed k0s apiserver — внешний хост 192.168.0.4, трафик в кластер
+# идёт через konnectivity-agent (kube-system): разрешаем оба источника.
+# Без этого правила создание ServiceMonitor/PrometheusRule падает —
+# helm install kube-prometheus-stack не проходит.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-operator-allow-ingress-webhook
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: prometheus-operator
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - ipBlock:
+            cidr: 192.168.0.4/32
+      ports:
+        - protocol: TCP
+          port: 9443
+
+---
+# Общий egress для ВСЕХ подов monitoring: DNS, kube-apiserver, same-namespace.
+# kube-apiserver — 192.168.0.4:6443 (endpoints svc/kubernetes): Calico
+# применяет egress-проверку ПОСЛЕ DNAT kube-proxy (10.96.0.1:443 уже превращён
+# в реальный endpoint), правило на :443 его не покрывает — урок из ryadom-db
+# (namespaces/manifests/04-network-policy-kube-apiserver.yaml).
+# Нужен: kube-state-metrics и operator (API), всем подам (DNS),
+# Prometheus (ServiceMonitor kube-apiserver → тот же endpoint).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-allow-egress-common
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (CoreDNS в kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # kube-apiserver (post-DNAT endpoint)
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.4/32
+      ports:
+        - protocol: TCP
+          port: 6443
+    # Pod-to-pod внутри namespace
+    - to:
+        - podSelector: {}
+
+---
+# Prometheus: egress на scrape-таргеты (симметрично ingress-правилам
+# в целевых namespace — см. шапку файла)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-allow-egress-scrape
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    # Kubelet/cadvisor (:10250) и node-exporter (:9100, hostNetwork) на IP нод
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.5/32
+        - ipBlock:
+            cidr: 192.168.0.6/32
+        - ipBlock:
+            cidr: 192.168.0.7/32
+      ports:
+        - protocol: TCP
+          port: 10250
+        - protocol: TCP
+          port: 9100
+    # CoreDNS metrics (:9153) в kube-system
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 9153
+        - protocol: UDP
+          port: 9153
+    # Istio sidecar/proxy metrics (:15090, job istio-proxy): сайдкары
+    # приложений в prod + сам ingressgateway в istio-system
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prod
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - protocol: TCP
+          port: 15090
+    # Langfuse (:3000 UI/метрики, :9091 worker metrics) в infra
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9091
+    # CNPG PostgreSQL metrics (:9187, job cnpg) в ryadom-db
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ryadom-db
+      ports:
+        - protocol: TCP
+          port: 9187
+
+---
+# Grafana: запросы к datasource'ам (Loki, Prometheus) внутри namespace.
+# DNS и same-ns уже разрешены общим правилом; это правило — явная фиксация
+# datasource-портов (NetworkPolicy аддитивны, сужения не происходит).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-allow-egress-datasources
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 3100
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+
+---
+# Alloy: push логов в Loki (DNS и apiserver — общее правило выше)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alloy-allow-egress-loki
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 3100

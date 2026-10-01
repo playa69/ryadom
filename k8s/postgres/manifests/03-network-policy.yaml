@@ -48,6 +48,16 @@ spec:
           port: 8000
         - protocol: TCP
           port: 9187
+    # Prometheus (ns monitoring): scrape metrics инстансов :9187
+    # (job cnpg в monitoring/values-prometheus.yaml; обратная сторона —
+    # egress-правило prometheus в monitoring/manifests/01-network-policy.yaml)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9187
     # Межинстансовые проверки CNPG (failsafe/liveness :8000) внутри namespace.
     # Правило добавлено после включения Calico: референс его не содержал
     # (там NP не исполнялись), без него инстансы не достукиваются друг до

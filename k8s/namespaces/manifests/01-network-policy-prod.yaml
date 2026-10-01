@@ -55,6 +55,30 @@ spec:
           port: 8080
 
 ---
+# Scrape от Prometheus (ns monitoring): :15090 — объединённые метрики
+# istio-сайдкаров будущих приложений (prometheus.io-аннотации istio, порт
+# http-envoy-prom). Обратная сторона — egress-правило prometheus в
+# monitoring/manifests/01-network-policy.yaml. Сайдкаров пока нет (namespace
+# без workload'ов) — правило сработает само при их появлении.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-allow-ingress-monitoring-scrape
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 15090
+
+---
 # Pod-to-pod внутри namespace (backend → redis и т.п.)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

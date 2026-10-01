@@ -52,6 +52,31 @@ spec:
           port: 8080
 
 ---
+# Scrape от Prometheus (ns monitoring): :3000 — Langfuse web (если включим
+# prom-метрики), :9091 — типовой metrics-порт worker'ов. Сейчас Langfuse
+# prom-метрики не отдаёт — порты открыты на будущее; обратная сторона —
+# egress-правило prometheus в monitoring/manifests/01-network-policy.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra-allow-ingress-monitoring-scrape
+  namespace: infra
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9091
+
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -106,11 +131,13 @@ spec:
         # Redis Sentinel (битнами redis+sentinel с 2026-10-01)
         - protocol: TCP
           port: 26379
-    # Внешние HTTPS (Yandex Cloud API и т.д.)
-    # TODO: сузить до конкретных CIDR/FQDN, если CNI позволяет
+    # Внешний HTTPS — ТОЛЬКО Yandex Object Storage (blobs Langfuse).
+    # FQDN в NetworkPolicy не поддерживается (Calico OSS), поэтому пин
+    # на A-записи storage.yandexcloud.net (снято 2026-10-01).
+    # ПЕРЕПРОВЕРЯТЬ при сбоях загрузки blobs: dig storage.yandexcloud.net
     - to:
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: 213.180.193.243/32
       ports:
         - protocol: TCP
           port: 443
