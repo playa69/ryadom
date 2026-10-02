@@ -251,6 +251,19 @@ helm install alloy grafana/alloy \
 - **CI** — отдельный `ci-deploy` пока не заведён (TODO до подключения CI),
   паттерн тот же.
 
+**Разница admin / developer:**
+
+| | Админ (`twc-sber500-config.yaml`) | Developer (`developer-kubeconfig.yaml`) |
+|---|---|---|
+| Идентичность | cluster-admin сертификат Timeweb | SA `developer` (ns agent) + RBAC (k8s/rbac/) |
+| Зона ответственности | весь кластер: инфра, NetworkPolicy, Istio, БД, мониторинг, node-level | только ns `agent`/`backend` (полный CRUD своих workload'ов) |
+| БД и Langfuse | управление (секреты, рестарты, удаление) | read-only + port-forward + логи (debug); креды PG/Redis — Secret `db-credentials` в agent/backend (PG-юзер `developer`, не superuser) |
+| prod, monitoring, istio-system | полный доступ | полный запрет (даже read) |
+| Cluster-scope (CRD, RBAC, NetworkPolicy, namespaces) | да | нет (только get/list namespaces и nodes) |
+| pods/exec, delete подов в ryadom-db | да | нет |
+| Кому выдаётся | только владельцу, не передаётся | всей команде разработки |
+| Компрометация = | потеря всего кластера и данных | ущерб ограничен ns agent/backend; отзыв — `kubectl delete secret developer-token -n agent` + перевыпуск |
+
 ### ServiceAccount внутри кластера (рабочие)
 
 | SA | Namespace | Кто использует |
@@ -313,8 +326,31 @@ kubectl port-forward -n ryadom-db svc/redis 26379:26379
 kubectl port-forward -n infra svc/langfuse-web 3000:3000
 ```
 
-Пароли БД — у владельца (секреты ryadom-db/infra разработчикам не
-доступны по RBAC).
+**Креды БД для разработчиков** — Secret `db-credentials` в namespace
+`agent` и `backend` (читается их RBAC, значения одинаковые в обоих ns):
+
+```bash
+# пример: прочитать пароль postgres
+kubectl get secret db-credentials -n agent \
+  -o jsonpath='{.data.postgres-password}' | base64 -d
+```
+
+Поля: `postgres-host` (`ryadom-db-rw.ryadom-db.svc.cluster.local`; при
+port-forward — `localhost`), `postgres-port` 5432, `postgres-user`
+`developer`, `postgres-password`, `postgres-db-agent` / `postgres-db-backend`
+(базы уже созданы, owner — developer); `redis-host`
+(`redis.ryadom-db.svc.cluster.local`), `redis-port` 6379,
+`redis-sentinel-port` 26379, `redis-master-name` `mymaster`,
+`redis-password`.
+
+- PG-пользователь `developer`: LOGIN + CREATEDB, БЕЗ superuser/createrole
+  (managed role в `postgres/manifests/01-cnpg-cluster.yaml`, пароль —
+  Secret `developer-pg-role` в ryadom-db). Свои базы (`agent`, `backend`)
+  и новые БД через CREATEDB — можно; чужие базы (langfuse, ryadom) и роли —
+  нельзя.
+- Redis — один общий AUTH-пароль на всех (ограничение bitnami
+  redis+sentinel: ACL-пользователи усложняют репликацию). Hardening
+  через Redis ACL — отдельная будущая задача.
 
 NB: `kubectl auth can-i` клиента v1.34 против сервера v1.36 глючит на
 сабресурсах (pods/portforward шлётся как name=portforward, а не

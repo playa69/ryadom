@@ -220,3 +220,8 @@ __marimo__/
 # Kubernetes kubeconfig (credentials)
 k8s/*-config.yaml
 k8s/kubeconfig*.yaml
+
+# Пакет онбординга разработчиков в корне (передаётся лично, содержит секреты)
+/developer-kubeconfig.yaml
+/registry-pusher-key.json
+/ONBOARDING.md
