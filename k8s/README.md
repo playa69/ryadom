@@ -93,6 +93,29 @@ CSI-драйвер `network-drives.csi.timeweb.cloud` — установка ч�
 вместе с данными.** Для PG допустимо (бэкапы в S3), для ручных данных —
 создавать диск в панели и подключать через PV с Retain.
 
+## Реестр образов: зеркало в Yandex Container Registry
+
+Все образы workload'ов кластера зеркалированы в `cr.yandex/crpsqeamqpuvrkm5tpr9`
+(Yandex Cloud) и все values/манифесты переведены на pull оттуда — кластер не
+зависит от доступности/rate-limit'ов docker.io, quay.io, ghcr.io,
+registry.k8s.io, registry.istio.io. Схема имён, SA и ключи — в
+`CLOUD-RESOURCES.md` (раздел Container Registry).
+
+- Pull — k8s-секрет `registry-pull` (dockerconfigjson от SA
+  ryadom-registry-puller) в namespace prod, infra, ryadom-db, monitoring,
+  istio-system, cert-manager, cnpg-system. Проброшен в поды через
+  imagePullSecrets в values/манифестах (istio — через global.imagePullSecrets
+  istiod: инъектор добавляет в meshed-поды сам).
+- Добавление нового helm-чарта/образа: зеркалировать образ в cr.yandex
+  (`docker pull --platform linux/amd64` → tag → push), прописать
+  registry/repository + imagePullSecrets в values, убедиться что в целевом
+  namespace есть секрет registry-pull.
+- Системные образы (kube-system, Calico, csi-driver-timeweb-cloud,
+  local-path-provisioner) — НЕ зеркалированы осознанно: managed-сущности
+  Timeweb/k0s, тянутся с cr-internal.twcstorage.ru и registry.k8s.io.
+- Bitnami-валидатор образов (chart redis 28.x) обходится
+  `global.security.allowInsecureImages: true` — в зеркале те же битнами-образы.
+
 ## Вход в кластер: единая точка входа
 
 LoadBalancer в Timeweb managed k8s нет. Схема:
@@ -218,13 +241,15 @@ helm install alloy grafana/alloy \
 
 ### Доступ людей/CI к кластеру (kubectl)
 
-Сейчас существует только **админский kubeconfig** `twc-sber500-config.yaml`
-(cluster-admin из панели Timeweb). Отдельных ServiceAccount с RBAC для
-разработчиков/CI пока нет. Создавать по паттерну стенда
-(`~/PycharmProjects/k8s/make-developer-kubeconfig.sh`): SA + Role/ClusterRole
-+ долгоживущий токен (Secret типа `kubernetes.io/service-account-token`) +
-генерация ограниченного kubeconfig. TODO: завести `developer` (read-only +
-port-forward) и `ci-deploy` (write в prod/infra) до подключения CI.
+- **Админский kubeconfig** `twc-sber500-config.yaml` (cluster-admin из
+  панели Timeweb) — только у владельца.
+- **Разработчики** — общий SA `developer` (namespace agent) + RBAC
+  (k8s/rbac/) + ограниченный kubeconfig
+  `~/.config/ryadom/developer-kubeconfig.yaml` (раздаётся команде,
+  в git не коммитить). Подробности и команды — в разделе
+  «Доступы для разработчиков» ниже.
+- **CI** — отдельный `ci-deploy` пока не заведён (TODO до подключения CI),
+  паттерн тот же.
 
 ### ServiceAccount внутри кластера (рабочие)
 
@@ -235,6 +260,7 @@ port-forward) и `ci-deploy` (write в prod/infra) до подключения C
 | `db-jobs` | ryadom-db | админ-Job'ы (create-langfuse-db) |
 | `redis` | ryadom-db | поды redis-node (создаёт чарт bitnami/redis) |
 | `langfuse`, `langfuse-clickhouse`, `langfuse-redis-primary` | infra | чарт Langfuse |
+| `developer` | agent | общий SA коллег-разработчиков (деплой в agent/backend, debug — см. «Доступы для разработчиков») |
 
 ### Доступ к Yandex Cloud из кластера (через Secrets)
 
@@ -242,12 +268,58 @@ port-forward) и `ci-deploy` (write в prod/infra) до подключения C
 |---|---|---|---|
 | `cnpg-backup-s3-credentials` | ryadom-db | статический S3-ключ (бэкапы → ryadom-cnpg-backups) | `ryadom-backups` |
 | `langfuse-s3-credentials` | infra | статический S3-ключ (blobs → ryadom-app-storage) | `ryadom-app-storage` |
-| `registry-pull` | prod (TODO) | dockerconfigjson для pull из cr.yandex/crpsqeamqpuvrkm5tpr9 — создать при первом деплое приложения (ключ SA `ryadom-registry-pusher` ещё не выпускался) | `ryadom-registry-pusher` |
+| `registry-pull` | prod, infra, ryadom-db, monitoring, istio-system, cert-manager, cnpg-system, agent, backend | dockerconfigjson для pull из зеркала cr.yandex/crpsqeamqpuvrkm5tpr9 (imagePullSecret всех workload'ов) | `ryadom-registry-puller` |
 | `ryadom-tls` | istio-system | LE-сертификат корневого домена (создаёт cert-manager); копия в prod — при публикации Gateway из prod | — |
 
 Ключ SA `ryadom-dns` (dns.editor) в кластер НЕ загружался — HTTP-01 его не
 требует; нужен только для резервной схемы DNS-01 (tls/TLS-RUNBOOK.md,
 шаблон `tls/manifests/00-secret-yandex-authorized-key.yaml`).
+
+## Доступы для разработчиков
+
+Коллеги работают с кластером через общий ServiceAccount `developer`
+(namespace agent, манифесты — k8s/rbac/). Каждому выдаётся файл
+`developer-kubeconfig.yaml` (хранится у владельца в
+`~/.config/ryadom/developer-kubeconfig.yaml`, права 600; в git не
+коммитить, токен не публиковать). Использование:
+
+```bash
+export KUBECONFIG=~/путь/к/developer-kubeconfig.yaml
+kubectl get pods -n agent
+```
+
+**Что разрешено:**
+
+| Где | Права | Роль (k8s/rbac/) |
+|---|---|---|
+| `agent`, `backend` | полный CRUD: deployments, statefulsets, pods, services, configmaps, secrets, pvc, jobs/cronjobs, ingresses, httproutes + логи/port-forward своих подов | ClusterRole `developer-deploy` (RoleBinding в обоих ns) |
+| `ryadom-db` (postgres, redis), `infra` (langfuse) | read-only (pods/services/endpoints/statefulsets, логи) + `pods/portforward` | ClusterRole `developer-debug` |
+| весь кластер | get/list namespaces, nodes (ориентироваться) | ClusterRole `developer-read-cluster` (ClusterRoleBinding) |
+
+**Что запрещено:** любые изменения вне agent/backend (prod, monitoring,
+istio-system, cert-manager, cnpg-system — read тоже нет), secrets вне
+agent/backend, cluster-scope ресурсы (RBAC, CRD, NetworkPolicy и т.п.),
+pods/exec нигде.
+
+**Port-forward для отладки:**
+
+```bash
+# PostgreSQL (CNPG, rw — primary)
+kubectl port-forward -n ryadom-db svc/ryadom-db-rw 5432:5432
+# Redis (через Sentinel-выбранный master) и сам Sentinel
+kubectl port-forward -n ryadom-db svc/redis 6379:6379
+kubectl port-forward -n ryadom-db svc/redis 26379:26379
+# Langfuse UI
+kubectl port-forward -n infra svc/langfuse-web 3000:3000
+```
+
+Пароли БД — у владельца (секреты ryadom-db/infra разработчикам не
+доступны по RBAC).
+
+NB: `kubectl auth can-i` клиента v1.34 против сервера v1.36 глючит на
+сабресурсах (pods/portforward шлётся как name=portforward, а не
+subresource) — проверять права на сабресурсы через
+SelfSubjectAccessReview (kubectl create --validate=false -f -).
 
 ## Модель NetworkPolicy
 

@@ -1,0 +1,30 @@
+# =============================================================================
+# ClusterRole developer-read-cluster — минимальный read-only на кластер
+# =============================================================================
+# get/list/watch namespaces и nodes: без этого `kubectl get ns` /
+# `kubectl get nodes` падают с Forbidden, что мешает ориентироваться.
+# Secrets cluster-wide НЕ выдаются осознанно.
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: developer-read-cluster
+  labels:
+    app.kubernetes.io/part-of: ryadom
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: developer-read-cluster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: developer-read-cluster
+subjects:
+  - kind: ServiceAccount
+    name: developer
+    namespace: agent

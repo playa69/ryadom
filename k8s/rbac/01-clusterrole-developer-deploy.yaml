@@ -1,0 +1,78 @@
+# =============================================================================
+# ClusterRole developer-deploy — деплой своих сервисов
+# =============================================================================
+# Выдаётся SA agent/developer RoleBinding'ами ТОЛЬКО в namespace agent и
+# backend (ниже в этом файле) — cluster-scope ресурсов в роли нет,
+# ClusterRole использована просто как переиспользуемый набор правил.
+#
+# Помимо CRUD на workload'ы: read pods/log + create pods/portforward —
+# иначе отладка своих подов (логи, проброс портов) невозможна.
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: developer-deploy
+  labels:
+    app.kubernetes.io/part-of: ryadom
+rules:
+  # Workload'ы: deployments, statefulsets (полный CRUD),
+  # replicasets/daemonsets — read (дети deployment'ов, rollout status)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  # Core: pods, services, configmaps, secrets, pvc (полный CRUD);
+  # логи/port-forward/events — для отладки
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["events", "endpoints", "serviceaccounts"]
+    verbs: ["get", "list", "watch"]
+  # Batch: jobs, cronjobs
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Сеть: ingresses (networking.k8s.io), httproutes (Gateway API)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-deploy
+  namespace: agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: developer-deploy
+subjects:
+  - kind: ServiceAccount
+    name: developer
+    namespace: agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-deploy
+  namespace: backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: developer-deploy
+subjects:
+  - kind: ServiceAccount
+    name: developer
+    namespace: agent

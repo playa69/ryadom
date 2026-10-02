@@ -1,0 +1,54 @@
+# =============================================================================
+# ClusterRole developer-debug — read-only + port-forward в служебных ns
+# =============================================================================
+# Выдаётся SA agent/developer RoleBinding'ами в ryadom-db (PostgreSQL CNPG,
+# Redis/Sentinel) и infra (Langfuse) — для отладки через port-forward и
+# чтения логов. Изменять там ничего нельзя (нет write-глаголов).
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: developer-debug
+  labels:
+    app.kubernetes.io/part-of: ryadom
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-debug
+  namespace: ryadom-db
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: developer-debug
+subjects:
+  - kind: ServiceAccount
+    name: developer
+    namespace: agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-debug
+  namespace: infra
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: developer-debug
+subjects:
+  - kind: ServiceAccount
+    name: developer
+    namespace: agent

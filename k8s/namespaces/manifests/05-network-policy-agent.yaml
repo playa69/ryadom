@@ -1,0 +1,193 @@
+# =============================================================================
+# Network Policies — изоляция namespace agent
+# =============================================================================
+# Копия модели prod (01-network-policy-prod.yaml): default-deny
+# ingress+egress, далее — явные allow-правила. Трафик между namespace
+# запрещён (не покрыт ни одним allow).
+#
+# agent — namespace коллег-разработчиков (логика агента), workload'ы
+# деплоятся через SA developer (k8s/rbac/). Egress в kube-apiserver —
+# в 04-network-policy-kube-apiserver.yaml.
+# =============================================================================
+
+---
+# Default-deny: блокируем весь ingress и egress в agent
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-default-deny-all
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Входящий трафик ТОЛЬКО от istio-ingressgateway (публичный вход в кластер).
+# Порты 80/8000/8080 — типовые порты приложений; подгонять под реальные
+# сервисы по мере их появления.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-ingress-istio-gateway
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              istio: ingressgateway
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+
+---
+# Scrape от Prometheus (ns monitoring): :15090 — объединённые метрики
+# istio-сайдкаров (prometheus.io-аннотации istio, порт http-envoy-prom).
+# Обратная сторона — egress-правило prometheus в
+# monitoring/manifests/01-network-policy.yaml: чтобы scrape заработал,
+# туда тоже нужно добавить egress в agent (по образцу prod).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-ingress-monitoring-scrape
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 15090
+
+---
+# Pod-to-pod внутри namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-ingress-same-namespace
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+
+---
+# Исходящий трафик: DNS, внутренний трафик namespace, БД в ryadom-db,
+# внешний HTTPS (LLM API)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-egress
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (CoreDNS в kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Pod-to-pod внутри namespace (межсервисные вызовы)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent
+    # PostgreSQL (:5432) и Redis (:6379) в ryadom-db (отдельный не-meshed
+    # namespace)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ryadom-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        # Redis Sentinel
+        - protocol: TCP
+          port: 26379
+    # Внешние HTTPS: LLM API, S3 (Yandex Object Storage) и т.д.
+    # TODO: заменить 0.0.0.0/0 на конкретные CIDR/FQDN LLM-провайдеров,
+    # если CNI позволяет. При переходе mesh на REGISTRY_ONLY эти же хосты
+    # должны появиться в ServiceEntry.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Доступ к istiod (istio-system): 15012/TCP (TLS XDS) и 15010/TCP
+# (plaintext XDS). Без этого сайдкары потеряют связь с control plane.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-egress-istiod
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - protocol: TCP
+          port: 15012
+        - protocol: TCP
+          port: 15010
+
+---
+# Kubelet httpGet-пробы → :15020 (istio probe rewrite на pilot-agent).
+# Пробы идут с IP нод (hostNetwork). При пересоздании нод обновить список
+# (см. 01-network-policy-prod.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubelet-probes-allow-ingress
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.5/32
+        - ipBlock:
+            cidr: 192.168.0.6/32
+        - ipBlock:
+            cidr: 192.168.0.7/32
+      ports:
+        - protocol: TCP
+          port: 15020
