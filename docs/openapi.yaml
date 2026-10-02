@@ -3,10 +3,11 @@ info:
   title: Слышу Рядом — Backend API
   description: |
     REST-контракт backend голосового ИИ-компаньона эмоциональной поддержки.
-    Машиночитаемая заготовка к `docs/api.md` (эндпоинты совпадают 1:1).
+    Единый источник правды — OpenSpec (openspec/specs/ и openspec/changes/);
+    этот файл — машиночитаемое представление для понимания и генерации клиентов.
 
     WebSocket-протокол стриминга (`/api/v1/ws/sessions/{session_id}`) в OpenAPI
-    не описывается — см. `docs/api.md`, раздел 5. AsyncAPI-спецификация —
+    не описывается — см. capability `streaming` в OpenSpec. AsyncAPI-спецификация —
     отдельным шагом при необходимости.
 
     Аутентификация: `Authorization: Bearer <access_token>` (JWT HS256, TTL 15 мин).
@@ -637,7 +638,7 @@ paths:
     post:
       tags: [sessions]
       summary: SSE-fallback — текстовое сообщение в сессию (text/event-stream)
-      description: Деградация без голоса. Типы SSE-событий совпадают с WS-протоколом (docs/api.md, раздел 5.4). Лимит 60 сообщений/мин на пользователя.
+      description: Деградация без голоса. Типы SSE-событий совпадают с WS-протоколом (capability `streaming` в OpenSpec). Лимит 60 сообщений/мин на пользователя.
       operationId: postSessionMessage
       security:
         - bearerAuth: []

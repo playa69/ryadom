@@ -1,0 +1,56 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  Продукт: «Слышу Рядом» — голосовой ИИ-компаньон эмоциональной поддержки (Sber500xDisrupt).
+  Спека: spec_slyshu_ryadom.pdf (v1.1). Аудитория 18+, 152-ФЗ, данные только в РФ,
+  анонимный device-based вход, «стереть всё» одной кнопкой, кризисный протокол
+  перекрывает любой режим и любую метрику.
+
+  Единый источник правды по API: OpenSpec (openspec/specs/ — утверждённые capabilities,
+  openspec/changes/ — активные предложения) + docs/openapi.yaml (OpenAPI 3.1,
+  41 операция, для понимания и генерации клиентов).
+  Любые задачи backend ОБЯЗАНЫ соответствовать specs; расхождения —
+  сначала правим specs, потом код.
+
+  Tech stack backend: Python 3.12, FastAPI, WebSocket (голос/текст стриминг),
+  SQLAlchemy async, PostgreSQL 16 + pgvector, Redis 8 + Sentinel (сессии, очереди,
+  rate-limit), Celery + beat (фон: суммаризация, консолидация памяти, пуши),
+  GigaChat (LLM), SaluteSpeech (ASR/TTS стриминг), Langfuse (трейсинг),
+  ClickHouse (события/метрика конкурса). Клиент: Flutter (iOS/Android).
+
+  Референс реализации (копировать паттерны): UnionApp —
+  /Users/aleksandrsamofalov/PycharmProjects/UnionApp/SevenElementBackend
+  (JWT access 15 мин + opaque refresh с ротацией и family-revoke, argon2,
+  rate-limit sliding window на Redis ZSET, антиспам по IP + cooldown по хэшу
+  контакта, trusted-proxy XFF, формат ошибок {"error":{code,message,details}}).
+
+  Инфраструктура (готова): k8s Timeweb twc-sber500, namespace backend,
+  БД backend (PG user developer), Redis+Sentinel в ns ryadom-db, Langfuse в ns infra,
+  образы только из cr.yandex/crpsqeamqpuvrkm5tpr9 (imagePullSecret registry-pull),
+  ingress: корневой домен слышу-рядом.рф, API под path /api (без поддоменов),
+  мониторинг Prometheus/Loki/Grafana в ns monitoring.
+
+  Соглашения: комментарии и документация на русском; коммиты — по одному логическому
+  изменению, без явной команды не коммитим; секреты — только через kubectl create
+  secret / ~/.config/ryadom/, в git только плейсхолдеры <CHANGE_ME_*>.
+
+# Per-artifact rules (optional)
+rules:
+  tasks:
+    - "Задачи нарезать стандартно: каждая — атомарная, проверяемая, с критерием приёмки"
+    - "Ссылки на spec.md своего change'а, docs/openapi.yaml и (для UnionApp-паттернов) прямые пути UnionApp в каждой задаче"
+    - "Порядок: каркас/конфиг → модели/миграции → репозитории → сервисы → роутеры → тесты → деплой-манифесты"
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
