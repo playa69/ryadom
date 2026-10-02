@@ -30,6 +30,23 @@
 
 architecture: replication
 
+# Образы — из зеркала cr.yandex (см. k8s/README.md «Реестр образов»).
+# Дефолт чарта 28.3.1 — bitnami/redis{,-sentinel}:latest (moving tag после
+# ухода bitnami на paid-модель); пиннуем замороженный latest = Redis 8.10.2
+# (версия подтверждена redis-server --version внутри образа, 2026-10-01).
+image:
+  registry: cr.yandex
+  repository: crpsqeamqpuvrkm5tpr9/bitnami/redis
+  tag: 8.10.2
+
+global:
+  imagePullSecrets:
+    - name: registry-pull
+  # Bitnami-валидатор (chart 28.x) блокирует не-bitnami registry — наше
+  # зеркало содержит те же образы bitnami/redis, поэтому отключаем.
+  security:
+    allowInsecureImages: true
+
 auth:
   enabled: true
   existingSecret: redis-credentials
@@ -97,6 +114,10 @@ sentinel:
   enabled: true
   masterSet: mymaster
   quorum: 2
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/bitnami/redis-sentinel
+    tag: 8.10.2
   resourcesPreset: "none"
   resources:
     requests:

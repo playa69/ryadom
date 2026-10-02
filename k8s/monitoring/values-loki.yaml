@@ -19,6 +19,10 @@
 
 deploymentMode: SingleBinary
 
+# Образ — из зеркала cr.yandex (см. k8s/README.md «Реестр образов»)
+imagePullSecrets:
+  - name: registry-pull
+
 # Single-binary mode: scalable targets must be zeroed explicitly (chart validator)
 read:
   replicas: 0
@@ -29,6 +33,9 @@ backend:
 
 loki:
   auth_enabled: false
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/grafana/loki
   commonConfig:
     replication_factor: 1
   storage:

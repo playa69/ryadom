@@ -1,0 +1,26 @@
+# =============================================================================
+# cert-manager Helm Values (chart jetstack/cert-manager v1.21.2)
+# =============================================================================
+# Установка/обновление:
+#   helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager \
+#     --create-namespace --version v1.21.2 -f k8s/cert-manager/values-cert-manager.yaml
+#
+# Образы — из зеркала cr.yandex/crpsqeamqpuvrkm5tpr9 (imageRegistry принимает
+# path-префикс; imageNamespace=jetstack покрывает controller, webhook,
+# cainjector, acmesolver, startupapicheck). acmesolver-поды стартуют при
+# каждом выпуске сертификата, startupapicheck — на helm upgrade: оба
+# зеркалированы, imagePullSecrets проброшен глобально.
+# =============================================================================
+
+crds:
+  enabled: true
+
+extraArgs:
+  - --enable-gateway-api
+
+imageRegistry: cr.yandex/crpsqeamqpuvrkm5tpr9
+imageNamespace: jetstack
+
+global:
+  imagePullSecrets:
+    - name: registry-pull

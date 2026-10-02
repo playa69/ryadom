@@ -35,6 +35,16 @@ pilot:
       cpu: "500m"
 
 global:
+  # Образы — из зеркала в Yandex Container Registry (весь кластер на
+  # cr.yandex, см. k8s/README.md «Реестр образов»). hub действует и на
+  # инъектируемые сайдкары/gateway (proxyv2), т.к. шаблон инъекции —
+  # в istiod. imagePullSecrets добавляются инъектором во все meshed-поды.
+  hub: cr.yandex/crpsqeamqpuvrkm5tpr9/istio
+  # NB: imagePullSecrets — список СТРОК (не maps!): istio-шаблон сам рендерит
+  # "name: {{ . }}"; map превращается в "map[name:registry-pull]" и под
+  # падает с FailedToRetrieveImagePullSecret.
+  imagePullSecrets:
+    - registry-pull
   # Инъекция включается per-namespace label'ом istio-injection=enabled
   # (см. namespaces/manifests/00-namespaces.yaml). Ресурсы сайдкаров
   # уменьшены под маленькие ноды.

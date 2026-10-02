@@ -9,7 +9,16 @@
 # Alertmanager ОТКЛЮЧЁН осознанно (2026-10-01): алерты пока никуда не
 # доставляются, операторный overhead без пользы. Включение — отдельный шаг
 # (alertmanager.enabled: true + NP + канал доставки).
+#
+# Образы — из зеркала cr.yandex/crpsqeamqpuvrkm5tpr9 (см. k8s/README.md
+# «Реестр образов»): все registry/repository переопределены ниже,
+# imagePullSecrets: registry-pull (глобально для subchart'ов + явно для
+# operator и prometheusSpec).
 # =============================================================================
+
+global:
+  imagePullSecrets:
+    - name: registry-pull
 
 # Managed control plane Timeweb (k0s): etcd/scheduler/controller-manager/kube-proxy
 # недоступны для scrape — их ServiceMonitor'ы только плодят DOWN-таргеты.
@@ -27,6 +36,11 @@ alertmanager:
 
 prometheus:
   prometheusSpec:
+    image:
+      registry: cr.yandex
+      repository: crpsqeamqpuvrkm5tpr9/prometheus/prometheus
+    imagePullSecrets:
+      - name: registry-pull
     retention: 3d
     # 3GB из PVC 5Gi: headroom под wal/compaction. Потеря метрик при переполнении
     # недопустима — Prometheus останавливает ingestion при упоре в диск.
@@ -90,6 +104,9 @@ prometheus:
             target_label: pod
 
 kube-state-metrics:
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/kube-state-metrics/kube-state-metrics
   resources:
     requests:
       cpu: 25m
@@ -99,6 +116,9 @@ kube-state-metrics:
       memory: 128Mi
 
 prometheus-node-exporter:
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/prometheus/node-exporter
   resources:
     requests:
       cpu: 25m
@@ -108,6 +128,21 @@ prometheus-node-exporter:
       memory: 128Mi
 
 prometheusOperator:
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/prometheus-operator/prometheus-operator
+  imagePullSecrets:
+    - name: registry-pull
+  prometheusConfigReloader:
+    image:
+      registry: cr.yandex
+      repository: crpsqeamqpuvrkm5tpr9/prometheus-operator/prometheus-config-reloader
+  admissionWebhooks:
+    patch:
+      # hook-job на каждом helm upgrade — тоже из зеркала
+      image:
+        registry: cr.yandex
+        repository: crpsqeamqpuvrkm5tpr9/jkroepke/kube-webhook-certgen
   resources:
     requests:
       cpu: 50m
@@ -119,6 +154,22 @@ prometheusOperator:
 # Grafana
 grafana:
   enabled: true
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/grafana/grafana
+  imagePullSecrets:
+    - name: registry-pull
+  sidecar:
+    image:
+      registry: cr.yandex
+      repository: crpsqeamqpuvrkm5tpr9/kiwigrid/k8s-sidecar
+  initChownData:
+    image:
+      registry: cr.yandex
+      repository: crpsqeamqpuvrkm5tpr9/library/busybox
+  downloadDashboardsImage:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/curlimages/curl
   admin:
     existingSecret: grafana-admin-credentials
     userKey: admin-user

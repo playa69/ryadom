@@ -38,12 +38,29 @@
 
 ### Container Registry
 
-- `ryadom-registry` → `cr.yandex/crpsqeamqpuvrkm5tpr9` — образы backend/агентов.
-- Push: SA `ryadom-registry-pusher` (container-registry.images.pusher) для CI;
-  локально — `yc container registry configure-docker` под своим аккаунтом.
-- Pull из кластера Timeweb: нужен imagePullSecret `registry-pull`
-  (dockerconfigjson с IAM-токеном или ключом SA) в каждом namespace,
-  где крутятся поды с образами из реестра.
+- `ryadom-registry` → `cr.yandex/crpsqeamqpuvrkm5tpr9`. С 2026-10-01 —
+  **полное зеркало ВСЕХ образов кластера twc-sber500** (docker.io/quay.io/
+  ghcr.io/registry.k8s.io/registry.istio.io → cr.yandex): кластер не тянет
+  ничего из внешних registry. Схема имён: сохранён путь оригинала без
+  registry-хоста, например `istio/pilot:1.30.5` (← registry.istio.io/release/pilot),
+  `bitnamilegacy/clickhouse:25.2.1-debian-12-r0`, `library/busybox:1.38.0`.
+  Исключение: `bitnami/redis{,-sentinel}:latest` заморожены как `bitnami/redis{,-sentinel}:8.10.2`.
+  Архитектура — linux/amd64 (push с Mac arm через `docker pull --platform`).
+  Системные образы Timeweb/k0s (kube-system, Calico, CSI addon) НЕ
+  зеркалируются — живут на cr-internal.twcstorage.ru и registry.k8s.io.
+- Push: SA `ryadom-registry-pusher` (container-registry.images.pusher на
+  фолдер), ключ `~/.config/ryadom/registry-pusher-key.json`. Локальный логин:
+  `cat registry-pusher-key.json | docker login --username json_key --password-stdin cr.yandex`.
+  NB: docker push некоторых образов с attestations (containerd store) падает на
+  blob upload с "Permission denied" — обход: `crane copy --platform linux/amd64`
+  (crane читает ~/.docker/config.json).
+- Pull кластером: SA `ryadom-registry-puller` (container-registry.images.puller
+  **на фолдер** — registry-level биндинг через `yc container registry
+  add-access-binding` тихо не сохраняется, не использовать), ключ
+  `~/.config/ryadom/registry-puller-key.json` → k8s-секрет
+  `registry-pull` (dockerconfigjson `json_key:<ключ>`) во всех namespace с
+  подами: prod, infra, ryadom-db, monitoring, istio-system, cert-manager,
+  cnpg-system. Проброшен в pod spec через values/манифесты (imagePullSecrets).
 
 ### Сервисные аккаунты — сводка
 
@@ -52,7 +69,8 @@
 | `ryadom-backups` | storage.editor | используется (CNPG) |
 | `ryadom-app-storage` | storage.editor | используется (Langfuse) |
 | `ryadom-dns` | dns.editor | резерв (DNS-01) |
-| `ryadom-registry-pusher` | container-registry.images.pusher | CI |
+| `ryadom-registry-pusher` | container-registry.images.pusher (фолдер) | push зеркала + CI |
+| `ryadom-registry-puller` | container-registry.images.puller (фолдер) | imagePullSecret registry-pull в кластере |
 | `k8s-cluster-208-sa` | k8s.clusters.agent и др. | НЕ используется — кластер YC удалён 2026-10-01, можно удалить |
 | `k8s-cluster-208-node-sa` | container-registry.images.puller | НЕ используется — то же |
 
@@ -68,6 +86,8 @@
 ├── s3-backup-key.json             # статический ключ SA ryadom-backups
 ├── s3-app-storage-key.json        # статический ключ SA ryadom-app-storage
 ├── dns-authorized-key.json        # authorized key SA ryadom-dns
+├── registry-pusher-key.json       # authorized key SA ryadom-registry-pusher
+├── registry-puller-key.json       # authorized key SA ryadom-registry-puller
 └── k8s-secrets.env                # сгенерированные пароли k8s-секретов (KEY=VALUE)
 
 k8s/twc-sber500-config.yaml        # kubeconfig кластера Timeweb (в .gitignore)

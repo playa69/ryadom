@@ -42,9 +42,12 @@ spec:
       serviceAccountName: db-jobs
       automountServiceAccountToken: false
       restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: registry-pull
       containers:
         - name: psql
-          image: postgres:16-alpine
+          # Образ из зеркала cr.yandex (см. k8s/README.md «Реестр образов»)
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/library/postgres:16-alpine
           command:
             - sh
             - -c

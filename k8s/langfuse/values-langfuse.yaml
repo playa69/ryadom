@@ -18,9 +18,18 @@
 #     --namespace infra -f k8s/langfuse/values-langfuse.yaml
 # =============================================================================
 
+# imagePullSecrets для Bitnami-subchart'ов (clickhouse, redis/valkey) —
+# они читают общий global. У самого langfuse — langfuse.image.pullSecrets выше.
+global:
+  imagePullSecrets:
+    - name: registry-pull
+
 langfuse:
+  # Образы — из зеркала cr.yandex (см. k8s/README.md «Реестр образов»).
   image:
     tag: "3.15"
+    pullSecrets:
+      - name: registry-pull
 
   logging:
     level: info
@@ -58,6 +67,8 @@ langfuse:
 
   web:
     replicas: 1
+    image:
+      repository: cr.yandex/crpsqeamqpuvrkm5tpr9/langfuse/langfuse
     resources:
       requests:
         memory: "256Mi"
@@ -68,6 +79,8 @@ langfuse:
 
   worker:
     replicas: 1
+    image:
+      repository: cr.yandex/crpsqeamqpuvrkm5tpr9/langfuse/langfuse-worker
     resources:
       requests:
         memory: "256Mi"
@@ -109,6 +122,11 @@ clickhouse:
   shards: 1
   replicaCount: 1
   clusterEnabled: false
+
+  # Образ — из зеркала cr.yandex (дефолт subchart'а — bitnamilegacy)
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/bitnamilegacy/clickhouse
 
   keeper:
     enabled: false
@@ -168,6 +186,11 @@ clickhouse:
 # и отдельный lifecycle (удаляется/пересоздаётся вместе с релизом).
 redis:
   deploy: true
+
+  # Образ — из зеркала cr.yandex (дефолт subchart'а — bitnamilegacy/valkey)
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/bitnamilegacy/valkey
 
   sentinel:
     enabled: false

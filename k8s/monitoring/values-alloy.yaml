@@ -67,3 +67,19 @@ alloy:
 # DaemonSet — по поду на ноду (дефолт чарта, зафиксировано явно)
 controller:
   type: daemonset
+
+# Образы — из зеркала cr.yandex (см. k8s/README.md «Реестр образов»).
+# NB: ключи top-level (image:, configReloader:), НЕ под alloy:.
+# configReloader: digest из дефолта чарта сброшен — digest manifest-list
+# quay.io не совпадает с пересобранным single-platform образом в зеркале.
+image:
+  registry: cr.yandex
+  repository: crpsqeamqpuvrkm5tpr9/grafana/alloy
+  pullSecrets:
+    - name: registry-pull
+
+configReloader:
+  image:
+    registry: cr.yandex
+    repository: crpsqeamqpuvrkm5tpr9/prometheus-operator/prometheus-config-reloader
+    tag: v0.94.0

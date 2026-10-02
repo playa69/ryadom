@@ -1,0 +1,17 @@
+# =============================================================================
+# CNPG operator Helm Values (chart cnpg/cloudnative-pg 0.29.1)
+# =============================================================================
+# Установка/обновление:
+#   helm upgrade --install cnpg cnpg/cloudnative-pg -n cnpg-system \
+#     --create-namespace --version 0.29.1 -f k8s/postgres/values-cnpg-operator.yaml
+#
+# Образ оператора — из зеркала cr.yandex (см. k8s/README.md «Реестр образов»).
+# Образ инстансов PG задаётся отдельно — в Cluster ryadom-db
+# (manifests/01-cnpg-cluster.yaml, spec.imageName + imagePullSecrets).
+# =============================================================================
+
+image:
+  repository: cr.yandex/crpsqeamqpuvrkm5tpr9/cloudnative-pg/cloudnative-pg
+
+imagePullSecrets:
+  - name: registry-pull

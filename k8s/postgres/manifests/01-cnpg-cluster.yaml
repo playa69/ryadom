@@ -23,7 +23,12 @@ metadata:
   namespace: ryadom-db
 spec:
   instances: 2
-  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  # Образ из зеркала cr.yandex (см. k8s/README.md «Реестр образов»).
+  # Смена imageName → rolling-пересоздание инстансов (реплики первыми,
+  # switchover primary — автоматически, кластер остаётся healthy).
+  imageName: cr.yandex/crpsqeamqpuvrkm5tpr9/cloudnative-pg/postgresql:16.4
+  imagePullSecrets:
+    - name: registry-pull
 
   storage:
     size: 10Gi
