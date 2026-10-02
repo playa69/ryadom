@@ -1,0 +1,2031 @@
+openapi: 3.1.0
+info:
+  title: Слышу Рядом — Backend API
+  description: |
+    REST-контракт backend голосового ИИ-компаньона эмоциональной поддержки.
+    Машиночитаемая заготовка к `docs/api.md` (эндпоинты совпадают 1:1).
+
+    WebSocket-протокол стриминга (`/api/v1/ws/sessions/{session_id}`) в OpenAPI
+    не описывается — см. `docs/api.md`, раздел 5. AsyncAPI-спецификация —
+    отдельным шагом при необходимости.
+
+    Аутентификация: `Authorization: Bearer <access_token>` (JWT HS256, TTL 15 мин).
+    Единый формат ошибок: `{"error": {code, message, details}}`.
+    Пагинация — cursor-based (`limit`/`cursor` → `next_cursor`).
+  version: 0.1.0
+  contact:
+    name: Команда Слышу Рядом
+servers:
+  - url: https://xn----htbtgjker8b3a2c.xn--p1ai/api/v1
+    description: Production (слышу-рядом.рф)
+tags:
+  - name: auth
+    description: Аутентификация (гибрид device-based + email), токены, сброс пароля
+  - name: users
+    description: Профиль, согласия, настройки, факты памяти, пуш-токены, состояние дня
+  - name: sessions
+    description: Сессии диалога, история, завершение, SSE-fallback стриминга
+  - name: journal
+    description: Журнал (гештальт-письма и записи), экспорт
+  - name: rituals
+    description: Ритуалы утро/вечер, серии
+  - name: checkins
+    description: Чекины HALT / WHO-5 / tension
+  - name: news
+    description: Новостная лента (публичная)
+  - name: support
+    description: «Люди рядом» — горячие линии, группы, специалисты
+  - name: sos
+    description: Фиксация SOS/кризиса, ресурсы помощи
+paths:
+  /auth/device:
+    post:
+      tags: [auth]
+      summary: Анонимный вход по устройству
+      description: Идемпотентен — тот же device_id + device_key = тот же пользователь. Лимит 20/час по IP.
+      operationId: deviceLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceLoginRequest'
+      responses:
+        '200':
+          description: Пара токенов + профиль-флаги
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/email/link:
+    post:
+      tags: [auth]
+      summary: Привязка email к анонимному аккаунту (отправка 6-значного кода)
+      description: Код в Redis, TTL 600 сек. Лимит 5 кодов/час на аккаунт и на хэш email.
+      operationId: linkEmail
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailLinkRequest'
+      responses:
+        '200':
+          description: Код отправлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailLinkPendingResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/email/link/confirm:
+    post:
+      tags: [auth]
+      summary: Подтверждение привязки email кодом
+      operationId: confirmEmailLink
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailLinkConfirmRequest'
+      responses:
+        '200':
+          description: Email привязан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailLinkConfirmResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/email/login:
+    post:
+      tags: [auth]
+      summary: Вход по email/паролю с нового устройства
+      description: Лимит 10 попыток/5 мин по IP. Одинаковый ответ для несуществующего email и неверного пароля (anti-enumeration).
+      operationId: emailLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailLoginRequest'
+      responses:
+        '200':
+          description: Пара токенов + профиль-флаги
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Ротация пары токенов
+      description: Старый refresh отзывается. Replay вне grace-окна 10 сек — отзыв всех refresh пользователя (family kill).
+      operationId: refreshTokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Новая пара токенов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Выход (отзыв refresh-токена устройства)
+      operationId: logout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Выход выполнен (идемпотентно)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/password-reset/request:
+    post:
+      tags: [auth]
+      summary: Запрос сброса пароля
+      description: Anti-enumeration — одинаковый ответ для любого email. Лимит 1 запрос/21 час по IP и по хэшу email.
+      operationId: requestPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Одинаковый ответ для любого email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/password-reset/confirm:
+    post:
+      tags: [auth]
+      summary: Подтверждение сброса пароля
+      description: После сброса отзываются все refresh-токены пользователя. Лимит 10/5 мин по IP.
+      operationId: confirmPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+      responses:
+        '200':
+          description: Пароль обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /users/me/consents:
+    post:
+      tags: [users]
+      summary: Фиксация согласий (18+, дисклеймер, оферта)
+      operationId: acceptConsents
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentsRequest'
+      responses:
+        '200':
+          description: Согласия зафиксированы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /users/me:
+    get:
+      tags: [users]
+      summary: Текущий профиль
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Профиль пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [users]
+      summary: Частичное обновление профиля
+      operationId: updateMe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPatch'
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [users]
+      summary: «Стереть всё» — необратимое удаление аккаунта и данных
+      description: Запускает асинхронную задачу каскадного удаления. Требует подтверждение.
+      operationId: deleteMe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteMeRequest'
+      responses:
+        '202':
+          description: Удаление запланировано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteMeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /users/me/facts:
+    get:
+      tags: [users]
+      summary: Факты памяти («профиль под капотом»)
+      operationId: listMemoryFacts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: category
+          in: query
+          schema:
+            $ref: '#/components/schemas/MemoryFactCategory'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Страница фактов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryFactPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /users/me/facts/{factId}:
+    patch:
+      tags: [users]
+      summary: Правка факта памяти
+      operationId: updateMemoryFact
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: factId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryFactPatch'
+      responses:
+        '200':
+          description: Обновлённый факт
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryFact'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [users]
+      summary: Удаление факта памяти
+      operationId: deleteMemoryFact
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: factId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Факт удалён
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /users/me/settings:
+    get:
+      tags: [users]
+      summary: Настройки пользователя
+      operationId: getSettings
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Настройки + доступные голоса TTS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [users]
+      summary: Частичное обновление настроек (мерж по полям)
+      operationId: updateSettings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserSettingsPatch'
+      responses:
+        '200':
+          description: Полные настройки после мержа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /users/me/devices/current/push-token:
+    put:
+      tags: [users]
+      summary: Регистрация пуш-токена текущего устройства (upsert, идемпотентно)
+      operationId: putPushToken
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenRequest'
+      responses:
+        '204':
+          description: Токен сохранён
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /users/me/state:
+    get:
+      tags: [users]
+      summary: Состояние дня (главный экран, антизависимый контур)
+      operationId: getMyState
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Агрегированное состояние пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /sessions:
+    post:
+      tags: [sessions]
+      summary: Создать сессию диалога
+      description: 1 активная сессия на пользователя. Возвращает WS URL и короткоживущий session_token.
+      operationId: createSession
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionCreateRequest'
+      responses:
+        '201':
+          description: Сессия создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionCreateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    get:
+      tags: [sessions]
+      summary: История сессий (лента саммари, без транскриптов)
+      operationId: listSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: mode
+          in: query
+          schema:
+            $ref: '#/components/schemas/SessionMode'
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Страница истории
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /sessions/{sessionId}:
+    get:
+      tags: [sessions]
+      summary: Детали сессии и транскрипт
+      description: 410 SESSION_TRANSCRIPTS_DISABLED, если хранение транскриптов выключено или транскрипт удалён.
+      operationId: getSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Сессия с транскриптом
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+    delete:
+      tags: [sessions]
+      summary: Удалить сессию (транскрипт, саммари, эмбеддинги)
+      operationId: deleteSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Сессия удалена
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sessions/{sessionId}/finish:
+    post:
+      tags: [sessions]
+      summary: Завершить сессию (самооценка после + takeaway)
+      description: Триггерит фоновую суммаризацию и консолидацию памяти.
+      operationId: finishSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionFinishRequest'
+      responses:
+        '200':
+          description: Сессия завершена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionFinishResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /sessions/{sessionId}/messages:
+    post:
+      tags: [sessions]
+      summary: SSE-fallback — текстовое сообщение в сессию (text/event-stream)
+      description: Деградация без голоса. Типы SSE-событий совпадают с WS-протоколом (docs/api.md, раздел 5.4). Лимит 60 сообщений/мин на пользователя.
+      operationId: postSessionMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TextMessageRequest'
+      responses:
+        '200':
+          description: Поток событий SSE
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: 'События: transcript.final, safety.status, llm.token, llm.done, crisis.intervention, error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /journal/entries:
+    post:
+      tags: [journal]
+      summary: Создать запись журнала
+      operationId: createJournalEntry
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JournalEntryCreateRequest'
+      responses:
+        '201':
+          description: Запись создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    get:
+      tags: [journal]
+      summary: Лента записей журнала
+      operationId: listJournalEntries
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            $ref: '#/components/schemas/JournalEntryKind'
+        - name: q
+          in: query
+          description: Поиск подстрокой
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Страница записей
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalEntryPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /journal/entries/{entryId}:
+    get:
+      tags: [journal]
+      summary: Одна запись журнала
+      operationId: getJournalEntry
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Запись журнала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [journal]
+      summary: Удалить запись журнала
+      operationId: deleteJournalEntry
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Запись удалена
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /journal/export:
+    get:
+      tags: [journal]
+      summary: Экспорт журнала одним Markdown-документом (для share sheet)
+      operationId: exportJournal
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Экспорт журнала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalExport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /rituals/today:
+    get:
+      tags: [rituals]
+      summary: Ритуалы на сегодня (утро/вечер, адаптация из памяти)
+      operationId: getTodayRituals
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ритуалы дня с сериями
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RitualList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /rituals/{ritualId}/complete:
+    post:
+      tags: [rituals]
+      summary: Отметить выполнение ритуала (идемпотентно в пределах дня)
+      operationId: completeRitual
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: ritualId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RitualCompleteRequest'
+      responses:
+        '200':
+          description: Ритуал с обновлённой серией
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ritual'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /rituals/history:
+    get:
+      tags: [rituals]
+      summary: История выполнений ритуалов
+      operationId: listRitualHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum: [morning, evening]
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Страница истории
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RitualCompletionPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /checkins:
+    post:
+      tags: [checkins]
+      summary: Создать чекин (HALT / WHO-5 / tension)
+      description: Заголовок Idempotency-Key обязателен. Лимит 30/час на пользователя.
+      operationId: createCheckin
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckinCreateRequest'
+      responses:
+        '201':
+          description: Чекин создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkin'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /checkins/history:
+    get:
+      tags: [checkins]
+      summary: История чекинов с агрегатами (динамика WHO-5, чистое время)
+      operationId: listCheckins
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/CheckinType'
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Страница чекинов + агрегаты
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /news:
+    get:
+      tags: [news]
+      summary: Лента новостей
+      operationId: listNews
+      parameters:
+        - name: tag
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Страница новостей
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsItemPage'
+  /news/{newsId}:
+    get:
+      tags: [news]
+      summary: Полная новость
+      operationId: getNewsItem
+      parameters:
+        - name: newsId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Новость
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsItem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /support/hotlines:
+    get:
+      tags: [support]
+      summary: Горячие линии (всегда первым блоком)
+      description: Кэшируется по ETag (If-None-Match → 304). Auth опционален.
+      operationId: listHotlines
+      responses:
+        '200':
+          description: Список горячих линий
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportHotlineList'
+  /support/groups:
+    get:
+      tags: [support]
+      summary: Группы поддержки по типу запроса
+      description: Кэшируется по ETag. Auth опционален.
+      operationId: listSupportGroups
+      parameters:
+        - name: topic
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportTopic'
+      responses:
+        '200':
+          description: Список групп
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportGroupList'
+  /support/specialists:
+    get:
+      tags: [support]
+      summary: Каталог проверенных специалистов
+      description: Кэшируется по ETag. Auth опционален.
+      operationId: listSpecialists
+      parameters:
+        - name: topic
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportTopic'
+      responses:
+        '200':
+          description: Список специалистов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecialistList'
+  /sos/events:
+    post:
+      tags: [sos]
+      summary: Фиксация нажатия SOS / срабатывания кризиса
+      description: Auth опционален (SOS доступен всегда). Idempotency-Key обязателен. Лимит 10/час по IP.
+      operationId: createSosEvent
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SosEventRequest'
+      responses:
+        '201':
+          description: Событие зафиксировано, ресурсы помощи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SosEventResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access-токен (JWT HS256, TTL 15 мин)
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      description: Размер страницы (1–100)
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    CursorParam:
+      name: cursor
+      in: query
+      description: Opaque-курсор из предыдущего ответа
+      schema:
+        type: string
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID идемпотентности (повтор с тем же ключом в течение 24 ч возвращает первый ответ)
+      schema:
+        type: string
+        format: uuid
+  responses:
+    BadRequest:
+      description: Ошибка запроса (коды AUTH_CODE_*, AUTH_RESET_TOKEN_INVALID)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Требуется авторизация / токен недействителен
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: Доступ запрещён (AGE_RESTRICTED, CONSENT_REQUIRED, FORBIDDEN)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: Конфликт данных / состояния
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Gone:
+      description: Ресурс больше недоступен (SESSION_TRANSCRIPTS_DISABLED)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ValidationError:
+      description: Ошибка валидации (детали по полям в error.details)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    RateLimited:
+      description: Превышен лимит запросов
+      headers:
+        Retry-After:
+          description: Через сколько секунд повторять
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ServiceUnavailable:
+      description: Зависимость недоступна (auth-критичные контуры fail-closed)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    ErrorCode:
+      type: string
+      description: Машиночитаемый код ошибки
+      enum:
+        - AUTH_TOKEN_EXPIRED
+        - AUTH_TOKEN_INVALID
+        - AUTH_REFRESH_TOKEN_INVALID
+        - AUTH_INVALID_CREDENTIALS
+        - AUTH_RESET_TOKEN_INVALID
+        - AUTH_CODE_EXPIRED
+        - AUTH_CODE_INVALID
+        - AUTH_CODE_TOO_MANY_ATTEMPTS
+        - AUTH_EMAIL_ALREADY_LINKED
+        - AGE_RESTRICTED
+        - CONSENT_REQUIRED
+        - FORBIDDEN
+        - VALIDATION_ERROR
+        - NOT_FOUND
+        - SESSION_NOT_FOUND
+        - ENTRY_NOT_FOUND
+        - FACT_NOT_FOUND
+        - RITUAL_NOT_FOUND
+        - NEWS_NOT_FOUND
+        - SESSION_TRANSCRIPTS_DISABLED
+        - SESSION_ALREADY_FINISHED
+        - CONFLICT
+        - RATE_LIMITED
+        - SERVICE_UNAVAILABLE
+        - INTERNAL_ERROR
+    FieldError:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+        code:
+          type: string
+          default: invalid
+      required: [field, message]
+    Problem:
+      type: object
+      description: Единый формат ошибки
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+              description: Человекочитаемое сообщение (RU)
+            details:
+              oneOf:
+                - type: 'null'
+                - type: object
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/FieldError'
+          required: [code, message]
+      required: [error]
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required: [message]
+    DeviceLoginRequest:
+      type: object
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        device_key:
+          type: string
+          format: password
+          description: Генерируется клиентом при первом запуске, хранится в keychain/keystore
+        platform:
+          type: string
+          enum: [ios, android]
+        app_version:
+          type: string
+      required: [device_id, device_key]
+    EmailLinkRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+      required: [email, password]
+    EmailLinkPendingResponse:
+      type: object
+      properties:
+        pending_token:
+          type: string
+          format: uuid
+        expires_in:
+          type: integer
+          description: TTL кода в секундах (600)
+        email_masked:
+          type: string
+          example: u***r@example.com
+      required: [pending_token, expires_in, email_masked]
+    EmailLinkConfirmRequest:
+      type: object
+      properties:
+        pending_token:
+          type: string
+          format: uuid
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+      required: [pending_token, code]
+    EmailLinkConfirmResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserFlags'
+      required: [user]
+    EmailLoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        device_id:
+          type: string
+          format: uuid
+        device_key:
+          type: string
+          format: password
+        platform:
+          type: string
+          enum: [ios, android]
+        app_version:
+          type: string
+      required: [email, password, device_id]
+    RefreshRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          format: password
+      required: [refresh_token]
+    PasswordResetRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+      required: [email]
+    PasswordResetConfirmRequest:
+      type: object
+      properties:
+        token:
+          type: string
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+      required: [token, new_password]
+    TokenPair:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+          description: TTL access-токена в секундах (900)
+        refresh_token:
+          type: string
+        refresh_expires_in:
+          type: integer
+          description: TTL refresh-токена в секундах (2592000)
+      required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in]
+    UserFlags:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        is_anonymous:
+          type: boolean
+        has_email:
+          type: boolean
+        age_confirmed:
+          type: boolean
+        consents_completed:
+          type: boolean
+      required: [id, is_anonymous, has_email]
+    AuthResponse:
+      allOf:
+        - $ref: '#/components/schemas/TokenPair'
+        - type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/UserFlags'
+            is_new_user:
+              type: boolean
+          required: [user, is_new_user]
+    ConsentsRequest:
+      type: object
+      properties:
+        age_confirmed:
+          type: boolean
+        disclaimer_accepted:
+          type: boolean
+        offer_accepted:
+          type: boolean
+        offer_version:
+          type: string
+          example: '2026-09-01'
+      required: [age_confirmed, disclaimer_accepted, offer_accepted, offer_version]
+    ConsentsResponse:
+      type: object
+      properties:
+        consents_completed:
+          type: boolean
+        accepted_at:
+          type: string
+          format: date-time
+      required: [consents_completed, accepted_at]
+    AgeGroup:
+      type: string
+      enum: ['18_24', '25_34', '35_44', '45_54', '55_plus']
+    User:
+      allOf:
+        - $ref: '#/components/schemas/UserFlags'
+        - type: object
+          properties:
+            display_name:
+              type: string
+              nullable: true
+            age_group:
+              $ref: '#/components/schemas/AgeGroup'
+            created_at:
+              type: string
+              format: date-time
+    UserPatch:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 64
+        age_group:
+          $ref: '#/components/schemas/AgeGroup'
+    DeleteMeRequest:
+      type: object
+      properties:
+        confirmation:
+          type: string
+          description: Строка-подтверждение «УДАЛИТЬ»
+      required: [confirmation]
+    DeleteMeResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [scheduled]
+        deletion_request_id:
+          type: string
+          format: uuid
+      required: [status, deletion_request_id]
+    MemoryFactCategory:
+      type: string
+      enum: [themes, values, triggers, coping, close_people, big5, works_for_user]
+    MemoryFact:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        category:
+          $ref: '#/components/schemas/MemoryFactCategory'
+        text:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        source:
+          type: string
+          enum: [session, checkin, user_edit, consolidation]
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, category, text, confidence, updated_at]
+    MemoryFactPatch:
+      type: object
+      properties:
+        text:
+          type: string
+          maxLength: 1000
+      required: [text]
+    MemoryFactPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryFact'
+        next_cursor:
+          type: string
+          nullable: true
+      required: [items, next_cursor]
+    QuietHours:
+      type: object
+      properties:
+        from:
+          type: string
+          pattern: '^[0-2][0-9]:[0-5][0-9]$'
+          example: '23:00'
+        to:
+          type: string
+          pattern: '^[0-2][0-9]:[0-5][0-9]$'
+          example: '08:00'
+      required: [from, to]
+    UserSettings:
+      type: object
+      properties:
+        voice_id:
+          type: string
+        available_voices:
+          type: array
+          items:
+            type: string
+          description: 2–3 варианта TTS-голоса (только в GET)
+        theme:
+          type: string
+          enum: [dark, light, system]
+        notifications:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            quiet_hours:
+              $ref: '#/components/schemas/QuietHours'
+        privacy:
+          type: object
+          properties:
+            store_transcripts:
+              type: boolean
+            incognito_session:
+              type: boolean
+        limits:
+          type: object
+          properties:
+            voice_minutes_per_day:
+              type: integer
+              minimum: 5
+              maximum: 240
+      required: [voice_id, theme, notifications, privacy, limits]
+    UserSettingsPatch:
+      type: object
+      description: Частичное обновление — мерж по полям
+      properties:
+        voice_id:
+          type: string
+        theme:
+          type: string
+          enum: [dark, light, system]
+        notifications:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            quiet_hours:
+              $ref: '#/components/schemas/QuietHours'
+        privacy:
+          type: object
+          properties:
+            store_transcripts:
+              type: boolean
+            incognito_session:
+              type: boolean
+        limits:
+          type: object
+          properties:
+            voice_minutes_per_day:
+              type: integer
+              minimum: 5
+              maximum: 240
+    PushTokenRequest:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [apns, fcm, rustore]
+        push_token:
+          type: string
+      required: [provider, push_token]
+    Streak:
+      type: object
+      properties:
+        count:
+          type: integer
+        status:
+          type: string
+          enum: [active, resting]
+          description: Серия «отдыхает», не «сгорает»
+        resting_days:
+          type: integer
+      required: [count, status, resting_days]
+    UserState:
+      type: object
+      properties:
+        minutes_today:
+          type: integer
+        soft_recommendation:
+          type: boolean
+          description: true при устойчивом >90 мин/день — мягкая рекомендация живого контакта
+        who5_last:
+          type: object
+          nullable: true
+          properties:
+            score:
+              type: integer
+            measured_at:
+              type: string
+              format: date-time
+        clean_time_seconds:
+          type: integer
+          nullable: true
+          description: Счётчик чистого времени (режим recovery)
+        streak:
+          $ref: '#/components/schemas/Streak'
+      required: [minutes_today, soft_recommendation]
+    SessionMode:
+      type: string
+      description: Режимы из спеки 4.1; warmth зарезервирован под v1
+      enum: [vent, chat, gestalt_diary, recovery, rituals, warmth]
+    SessionStatus:
+      type: string
+      enum: [active, paused, finished, expired]
+    SessionCreateRequest:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/SessionMode'
+      required: [mode]
+    SessionCreateResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        mode:
+          $ref: '#/components/schemas/SessionMode'
+        ws_url:
+          type: string
+          format: uri
+        session_token:
+          type: string
+        session_token_expires_in:
+          type: integer
+          description: TTL session_token (300 сек)
+        sse_fallback_url:
+          type: string
+      required: [session_id, mode, ws_url, session_token, session_token_expires_in, sse_fallback_url]
+    SessionSummary:
+      type: object
+      properties:
+        themes:
+          type: array
+          items:
+            type: string
+        emotions:
+          type: array
+          items:
+            type: string
+        tension_before:
+          type: integer
+          minimum: 1
+          maximum: 10
+          nullable: true
+        tension_after:
+          type: integer
+          minimum: 1
+          maximum: 10
+          nullable: true
+        takeaway:
+          type: string
+          nullable: true
+    SessionListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        mode:
+          $ref: '#/components/schemas/SessionMode'
+        status:
+          $ref: '#/components/schemas/SessionStatus'
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        summary:
+          $ref: '#/components/schemas/SessionSummary'
+        has_transcript:
+          type: boolean
+      required: [id, mode, status, started_at, has_transcript]
+    SessionPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionListItem'
+        next_cursor:
+          type: string
+          nullable: true
+      required: [items, next_cursor]
+    TranscriptMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        text:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        emo_tags:
+          type: array
+          items:
+            type: string
+      required: [role, text, ts]
+    SessionDetail:
+      allOf:
+        - $ref: '#/components/schemas/SessionListItem'
+        - type: object
+          properties:
+            transcript:
+              type: array
+              items:
+                $ref: '#/components/schemas/TranscriptMessage'
+    SessionFinishRequest:
+      type: object
+      properties:
+        tension_after:
+          type: integer
+          minimum: 1
+          maximum: 10
+        takeaway:
+          type: string
+          maxLength: 500
+      required: [tension_after]
+    SessionFinishResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [finished]
+        summary_status:
+          type: string
+          enum: [pending, ready]
+      required: [session_id, status, summary_status]
+    TextMessageRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          maxLength: 4000
+        client_msg_id:
+          type: string
+          format: uuid
+          description: Дедупликация повторных отправок
+      required: [text, client_msg_id]
+    JournalEntryKind:
+      type: string
+      enum: [gestalt_letter, note]
+    JournalEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/JournalEntryKind'
+        title:
+          type: string
+        text:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, kind, title, text, created_at, updated_at]
+    JournalEntryCreateRequest:
+      type: object
+      properties:
+        kind:
+          $ref: '#/components/schemas/JournalEntryKind'
+        title:
+          type: string
+          maxLength: 200
+        text:
+          type: string
+          maxLength: 50000
+      required: [kind, text]
+    JournalEntryPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JournalEntry'
+        next_cursor:
+          type: string
+          nullable: true
+      required: [items, next_cursor]
+    JournalExport:
+      type: object
+      properties:
+        format:
+          type: string
+          enum: [markdown]
+        filename:
+          type: string
+        content:
+          type: string
+      required: [format, filename, content]
+    Ritual:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [morning, evening]
+        title:
+          type: string
+        duration_seconds:
+          type: integer
+        completed:
+          type: boolean
+        streak:
+          $ref: '#/components/schemas/Streak'
+      required: [id, kind, title, duration_seconds, completed]
+    RitualList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ritual'
+      required: [items]
+    RitualCompleteRequest:
+      type: object
+      properties:
+        mood_note:
+          type: string
+          maxLength: 500
+    RitualCompletion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ritual_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [morning, evening]
+        completed_at:
+          type: string
+          format: date-time
+        mood_note:
+          type: string
+          nullable: true
+      required: [id, ritual_id, kind, completed_at]
+    RitualCompletionPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RitualCompletion'
+        next_cursor:
+          type: string
+          nullable: true
+      required: [items, next_cursor]
+    CheckinType:
+      type: string
+      enum: [halt, who5, tension]
+    CheckinCreateRequest:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/CheckinType'
+        payload:
+          type: object
+          description: |
+            halt: {hungry, angry, lonely, tired, tension(1-10)};
+            who5: {answers: [5 ответов 0–5]};
+            tension: {value: 1–10}
+      required: [type, payload]
+    Checkin:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/CheckinType'
+        payload:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        clean_time_seconds:
+          type: integer
+          nullable: true
+      required: [id, type, payload, created_at]
+    CheckinPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Checkin'
+        aggregates:
+          type: object
+          properties:
+            who5_trend:
+              type: array
+              items:
+                type: object
+                properties:
+                  week:
+                    type: string
+                  avg_score:
+                    type: number
+            clean_time_seconds:
+              type: integer
+              nullable: true
+        next_cursor:
+          type: string
+          nullable: true
+      required: [items, next_cursor]
+    NewsItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        teaser:
+          type: string
+        body_markdown:
+          type: string
+          description: Только в GET /news/{id}
+        tags:
+          type: array
+          items:
+            type: string
+        published_at:
+          type: string
+          format: date-time
+      required: [id, title, teaser, tags, published_at]
+    NewsItemPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewsItem'
+        next_cursor:
+          type: string
+          nullable: true
+      required: [items, next_cursor]
+    SupportTopic:
+      type: string
+      enum: [addiction, grief, burnout, anxiety, other]
+    SupportHotline:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        hours:
+          type: string
+        description:
+          type: string
+      required: [id, name, phone, hours]
+    SupportHotlineList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportHotline'
+      required: [items]
+    SupportGroup:
+      type: object
+      properties:
+        id:
+          type: string
+        topic:
+          $ref: '#/components/schemas/SupportTopic'
+        name:
+          type: string
+        city:
+          type: string
+        schedule:
+          type: string
+        contact:
+          type: string
+        notes:
+          type: string
+      required: [id, topic, name]
+    SupportGroupList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportGroup'
+      required: [items]
+    Specialist:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        specialization:
+          type: string
+        topics:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportTopic'
+        format:
+          type: string
+          enum: [online, offline, hybrid]
+        price_from_rub:
+          type: integer
+        booking_url:
+          type: string
+          format: uri
+      required: [id, name, specialization, topics, format]
+    SpecialistList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Specialist'
+      required: [items]
+    SosEventRequest:
+      type: object
+      properties:
+        trigger:
+          type: string
+          enum: [sos_button, crisis_classifier]
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+      required: [trigger]
+    SosEventResponse:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        resources:
+          type: object
+          properties:
+            hotlines:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupportHotline'
+      required: [event_id, resources]
