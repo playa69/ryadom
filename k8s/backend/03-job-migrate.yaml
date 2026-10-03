@@ -34,11 +34,13 @@ spec:
         - name: registry-pull
       securityContext:
         runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: alembic
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/backend/api:0.1.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/backend/api:0.1.1
           command: ["alembic", "upgrade", "head"]
           securityContext:
             allowPrivilegeEscalation: false

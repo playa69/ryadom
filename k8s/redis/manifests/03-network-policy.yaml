@@ -3,6 +3,7 @@
 # =============================================================================
 # Разрешён доступ из:
 #   - prod  — прикладные backend/LLM-агенты (кэш, очереди, сессии)
+#   - backend — backend-api (k8s/backend/): антиспам auth, email-коды
 #   - infra — служебные сервисы. NB: Langfuse по умолчанию использует свой
 #     bundled Redis в ns infra (langfuse/values-langfuse.yaml, redis.deploy:
 #     true — как в референсе); доступ из infra оставлен на случай перехода
@@ -35,6 +36,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: prod
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: backend
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: infra

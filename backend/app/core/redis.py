@@ -50,9 +50,18 @@ async def create_redis_client(
 ) -> Redis:
     """Создаёт Sentinel-aware async Redis-клиент и проверяет соединение."""
     sentinel_hosts = _resolve_sentinel_hosts(sentinel_host, sentinel_port)
+    # redis-py: kwargs Sentinel(...) уходят в master/replica-соединения,
+    # на сами sentinel-инстансы auth передаётся только через sentinel_kwargs.
+    # Bitnami redis+sentinel ставит requirepass и на sentinel-порт — без
+    # sentinel_kwargs discover_master падает с NOAUTH AuthenticationError.
     sentinel = Sentinel(
         sentinel_hosts,
         password=password,
+        sentinel_kwargs={
+            "password": password,
+            "socket_connect_timeout": 1.0,
+            "socket_timeout": 1.0,
+        },
         socket_connect_timeout=1.0,
         socket_timeout=1.0,
         decode_responses=True,

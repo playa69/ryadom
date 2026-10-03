@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Mapping
+from uuid import uuid4
 
 import jwt
 from pwdlib import PasswordHash
@@ -91,6 +92,9 @@ def create_access_token(
     payload: dict[str, Any] = {
         "sub": subject,
         "type": JWTTokenType.ACCESS.value,
+        # jti: без него два access-токена одного пользователя, выпущенные
+        # в пределах одной секунды, побайтово совпадают (iat/exp — секунды).
+        "jti": uuid4().hex,
         "iat": issued_at,
         "exp": expires_at,
     }
