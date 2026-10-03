@@ -54,7 +54,9 @@ spec:
 
 ---
 # Scrape от Prometheus (ns monitoring): :15090 — объединённые метрики
-# istio-сайдкаров (prometheus.io-аннотации istio, порт http-envoy-prom).
+# istio-сайдкаров (prometheus.io-аннотации istio, порт http-envoy-prom),
+# :8000 — /metrics приложения backend-api (ServiceMonitor
+# k8s/backend/05-servicemonitor.yaml).
 # Обратная сторона — egress-правило prometheus в
 # monitoring/manifests/01-network-policy.yaml: чтобы scrape заработал,
 # туда тоже нужно добавить egress в backend (по образцу prod).
@@ -75,6 +77,8 @@ spec:
       ports:
         - protocol: TCP
           port: 15090
+        - protocol: TCP
+          port: 8000
 
 ---
 # Pod-to-pod внутри namespace

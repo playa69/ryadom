@@ -1,0 +1,32 @@
+# =============================================================================
+# ServiceMonitor backend-api — scrape /metrics Prometheus'ом (ns backend)
+# =============================================================================
+# Prometheus (kube-prometheus-stack, ns monitoring) подбирает ВСЕ
+# ServiceMonitor'ы кластера (serviceMonitorSelectorNilUsesHelmValues: false,
+# см. k8s/monitoring/values-prometheus.yaml). Endpoint /metrics отдаёт
+# prometheus_client-метрики auth-контура (app/core/metrics.py).
+#
+# Сетевая сторона: ingress monitoring→:8000 в
+# namespaces/manifests/06-network-policy-backend.yaml
+# (backend-allow-ingress-monitoring-scrape) и egress prometheus→backend:8000
+# в monitoring/manifests/01-network-policy.yaml
+# (prometheus-allow-egress-scrape).
+# =============================================================================
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-api
+  namespace: backend
+  labels:
+    app: backend-api
+spec:
+  selector:
+    matchLabels:
+      app: backend-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

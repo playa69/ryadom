@@ -1,0 +1,114 @@
+# =============================================================================
+# Job backend-migrate-0001 — применение Alembic-миграций (ns backend)
+# =============================================================================
+# По design.md D8/Migration Plan: миграции применяются отдельным Job (тот же
+# образ, `alembic upgrade head`) ПЕРЕД rollout Deployment. Alembic берёт DSN
+# из APP_CONFIG (env PG_* — см. alembic/env.py), поэтому env совпадает с
+# Deployment.
+#
+# Запуск: kubectl apply -f k8s/backend/03-job-migrate.yaml && \
+#   kubectl -n backend wait --for=condition=complete job/backend-migrate-0001
+# Перед повторным прогоном новой миграции — новый Job с новым именем
+# (backend-migrate-0002 и т.д.); старый удалить: kubectl -n backend delete
+# job backend-migrate-0001.
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backend-migrate-0001
+  namespace: backend
+  labels:
+    app: backend-migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: backend-migrate
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alembic
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/backend/api:0.1.0
+          command: ["alembic", "upgrade", "head"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: PG_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-host
+            - name: PG_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-port
+            - name: PG_DB
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-db-backend
+            - name: PG_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-user
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+            - name: REDIS_SENTINEL_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: redis-host
+            - name: REDIS_SENTINEL_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: redis-sentinel-port
+            - name: REDIS_MASTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: redis-master-name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: redis-password
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secrets
+                  key: JWT_SECRET_KEY
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: logs
+          emptyDir: {}
