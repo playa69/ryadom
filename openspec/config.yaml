@@ -27,11 +27,15 @@ context: |
   - apps/admin — админка (Next.js): пользователи, блокировки, удаление аккаунтов, журнал действий;
   - services/api — API приложения (Hono): REST /api/*, WebSocket-шлюз к агенту /api/dialogs/ws,
     раздача PWA и OTA-сборки мобильного клиента; PostgreSQL через Drizzle (packages/db);
+    Redis (необязателен) — общие для реплик счётчики лимитов запросов;
   - packages/{contracts,client-core,core,db,design,ui}; dev/agent-mock — заглушка агента для
     разработки; e2e — сквозные тесты Playwright.
   Клиенты ходят только в app/services/api, он вызывает агента по agent-api (REST + WebSocket).
-  backend/ приложением сейчас не вызывается: у приложения свой вход по почте и паролю (не
-  device-based), свои маршруты /api/* и свои данные.
+  backend/ приложением сейчас не вызывается: у приложения свой вход (анонимный по device_id с
+  последующей привязкой почты либо по почте и паролю), свои маршруты /api/* и свои данные.
+  Сквозная трассировка — те же пять заголовков, что принимают backend/ и agent/ (x-trace-id,
+  x-request-time, x-client-id, x-session-id, x-user-id): клиенты шлют их на каждый запрос, API
+  пишет в логи и передаёт агенту.
   Источник правды по поведению клиентов, публичных сайтов и админки и по доставке мобильного
   клиента (PWA, сборки Android/iOS, обновления) — specs client-*, landing-site, admin-console,
   pwa-delivery, native-app-build, app-updates (до архивации — в openspec/changes/); формат
