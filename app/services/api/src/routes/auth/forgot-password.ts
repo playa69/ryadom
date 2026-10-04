@@ -23,7 +23,7 @@ export function forgotPasswordRoutes(app: Hono<AppEnv>, { rateLimiter, logger }:
     jsonBody(bodySchema),
     async (c) => {
       const email = normalizeEmail(c.req.valid('json').email)
-      if (!rateLimiter.hit(`email:forgot:${email}`, RATE_LIMITS.emailCode.perEmail)) {
+      if (!(await rateLimiter.hit(`email:forgot:${email}`, RATE_LIMITS.emailCode.perEmail))) {
         return apiError(c, 429, 'Too many codes requested for this email')
       }
       try {

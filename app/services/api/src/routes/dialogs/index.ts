@@ -54,7 +54,7 @@ const endBody = z.object({
 export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter }: RouteDeps): void {
   app.post(ApiPath.Dialogs, requireAuth(jwt), jsonBody(startBody), async (c) => {
     const { userId } = authUser(c)
-    if (!rateLimiter.hit(`user:dialog-start:${userId}`, RATE_LIMITS.dialogStart.perUser)) {
+    if (!(await rateLimiter.hit(`user:dialog-start:${userId}`, RATE_LIMITS.dialogStart.perUser))) {
       return apiError(c, 429, 'Too many dialog starts')
     }
     const result = await dialogsProcess.execute(new StartDialogOperation({ userId }))

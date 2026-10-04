@@ -11,6 +11,8 @@ import { createJwt } from './lib/jwt'
 import { startDraining } from './lib/lifecycle'
 import { createLogger, LOG_REDACT } from './lib/logger'
 import { createRateLimiter } from './lib/rate-limit'
+import { createRedisClient } from './lib/redis'
+import { createRedisRateLimiter } from './lib/redis-rate-limiter'
 import { createPolicySource } from './lib/release-policy'
 import { createShutdown } from './lib/shutdown'
 
@@ -45,7 +47,17 @@ const logger = createLogger(env.LOG_LEVEL)
 // the life of the process, so nothing here needs to be re-read.
 const policy = createPolicySource(env)
 
-const rateLimiter = createRateLimiter()
+// Redis makes the limits shared by every replica. Without it, or while it is down, each replica
+// counts for itself.
+const redis = await createRedisClient(env, logger)
+const memoryLimiter = createRateLimiter()
+const rateLimiter = redis
+  ? createRedisRateLimiter(redis, {
+      fallback: memoryLimiter,
+      onUnavailable: (error) =>
+        logger.warn({ err: error }, 'Redis недоступен: лимиты считаются в памяти этого пода'),
+    })
+  : memoryLimiter
 const app = createApp({ env, logger, policy, rateLimiter })
 const jwt = createJwt(env.MOBILE_JWT_SECRET)
 
@@ -80,7 +92,7 @@ const shutdown = createShutdown({
   closeServer: (done) => server.close(done),
   finish: () => {
     // Logging shuts down last so that it still records what happened while the DB pool closed.
-    void shutdownCore()
+    void Promise.allSettled([shutdownCore(), redis?.quit()])
       .finally(() => shutdownTelemetry())
       .finally(() => process.exit(0))
   },

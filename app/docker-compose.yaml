@@ -41,6 +41,15 @@ services:
     ports:
       - '8026:8025' # emails: http://localhost:8026
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   agent-mock:
     build:
       context: ./dev/agent-mock
@@ -82,6 +91,8 @@ services:
       AGENT_TIMEOUT_MS: '10000'
       DIALOG_IDLE_TIMEOUT_SEC: '900'
       DIALOG_MAX_DURATION_SEC: '7200'
+      REDIS_ENABLED: 'true'
+      REDIS_URL: redis://redis:6379
     ports:
       - '3002:3002'
     depends_on:
@@ -89,6 +100,8 @@ services:
         condition: service_completed_successfully
       agent-mock:
         condition: service_started
+      redis:
+        condition: service_healthy
 
   admin:
     build:

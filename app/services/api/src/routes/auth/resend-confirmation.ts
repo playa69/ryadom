@@ -24,7 +24,7 @@ export function resendConfirmationRoutes(app: Hono<AppEnv>, { rateLimiter, logge
     jsonBody(bodySchema),
     async (c) => {
       const email = normalizeEmail(c.req.valid('json').email)
-      if (!rateLimiter.hit(`email:resend:${email}`, RATE_LIMITS.emailCode.perEmail)) {
+      if (!(await rateLimiter.hit(`email:resend:${email}`, RATE_LIMITS.emailCode.perEmail))) {
         return apiError(c, 429, 'Too many codes requested for this email')
       }
       try {

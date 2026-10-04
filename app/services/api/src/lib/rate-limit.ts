@@ -3,12 +3,13 @@ import { apiError } from './api-response'
 import type { AppEnv } from './context'
 
 /**
- * Rate limiting in process memory. It protects what is open without authorization:
- * email codes, login and password recovery.
+ * Rate limiting. It protects what is open without authorization: email codes, login and password
+ * recovery.
  *
- * In memory means per replica: with three replicas the effective total limit is three times the
- * stated one. That is enough against brute force; a strict shared limit would require Redis, which
- * is a separate decision to be made together with the infrastructure.
+ * Two implementations behind one interface. This file holds the one in process memory, which counts
+ * per replica: with three replicas the effective total limit is three times the stated one. That is
+ * enough against brute force on its own, and it is what runs without Redis. `redis-rate-limiter.ts`
+ * counts in Redis, shared by every replica, and falls back to this one when Redis is unreachable.
  */
 export interface RateLimitRule {
   /** How many requests are allowed within the window. */
@@ -17,16 +18,20 @@ export interface RateLimitRule {
 }
 
 export interface RateLimiter {
-  /** false means the limit is exhausted. */
-  hit(key: string, rule: RateLimitRule): boolean
+  /** false means the limit is exhausted; a refused request is not counted. */
+  hit(key: string, rule: RateLimitRule): Promise<boolean>
+}
+
+/** The in-memory limiter can be emptied, which tests need between assertions. */
+export interface ResettableRateLimiter extends RateLimiter {
   reset(): void
 }
 
-export function createRateLimiter(now: () => number = Date.now): RateLimiter {
+export function createRateLimiter(now: () => number = Date.now): ResettableRateLimiter {
   const hits = new Map<string, number[]>()
 
   return {
-    hit(key, rule) {
+    async hit(key, rule) {
       const current = now()
       const from = current - rule.windowMs
       const recent = (hits.get(key) ?? []).filter((time) => time > from)
@@ -68,7 +73,7 @@ export function clientIp(c: Context<AppEnv>): string {
  */
 export function limitByIp(limiter: RateLimiter, name: string, rule: RateLimitRule): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    if (!limiter.hit(`ip:${name}:${clientIp(c)}`, rule)) {
+    if (!(await limiter.hit(`ip:${name}:${clientIp(c)}`, rule))) {
       return apiError(c, 429, 'Too many requests: try again later')
     }
     return next()

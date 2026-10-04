@@ -281,14 +281,14 @@ describe('лимиты частоты', () => {
     )
   })
 
-  it('лимит считает окно, а не общее число', () => {
+  it('лимит считает окно, а не общее число', async () => {
     let now = 0
     const limiter = createRateLimiter(() => now)
     const rule = { limit: 2, windowMs: 1000 }
-    expect(limiter.hit('k', rule)).toBe(true)
-    expect(limiter.hit('k', rule)).toBe(true)
-    expect(limiter.hit('k', rule)).toBe(false)
+    expect(await limiter.hit('k', rule)).toBe(true)
+    expect(await limiter.hit('k', rule)).toBe(true)
+    expect(await limiter.hit('k', rule)).toBe(false)
     now += 1001
-    expect(limiter.hit('k', rule)).toBe(true)
+    expect(await limiter.hit('k', rule)).toBe(true)
   })
 })

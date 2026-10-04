@@ -42,7 +42,7 @@ export function registerRoutes(app: Hono<AppEnv>, { rateLimiter }: RouteDeps): v
       if (name === null) return apiError(c, 422, 'Name length is out of range')
 
       // A second limit, per address: codes must not be sent in batches to the same mailbox.
-      if (!rateLimiter.hit(`email:register:${email}`, RATE_LIMITS.emailCode.perEmail)) {
+      if (!(await rateLimiter.hit(`email:register:${email}`, RATE_LIMITS.emailCode.perEmail))) {
         return apiError(c, 429, 'Too many codes requested for this email')
       }
 

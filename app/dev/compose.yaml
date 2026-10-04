@@ -29,6 +29,19 @@ services:
       - '1026:1025' # SMTP
       - '8026:8025' # web UI: http://localhost:8026
 
+  # Shared rate limits. With REDIS_ENABLED=true and REDIS_URL=redis://localhost:56379 in
+  # services/api/.env.local every API process counts in here; without it each one counts for itself.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '56379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # agent-api mock: REST + WebSocket, dialogs held in process memory.
   agent-mock:
     build: ./agent-mock

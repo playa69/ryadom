@@ -93,6 +93,21 @@ const appShape = {
   /** Hard cap on a single connection: protection against sockets that never end on rollouts. */
   DIALOG_MAX_DURATION_SEC: optionalInt(60).transform((value) => value ?? 7200),
   /**
+   * State shared by the replicas; for now only the rate limits. Off by default: each replica then
+   * counts on its own, and the real limit is the stated one times the number of replicas. With it
+   * on, the address is either `REDIS_URL` (one node, local development) or Sentinel, whose password
+   * `REDIS_PASSWORD` serves the Sentinel nodes and the master alike.
+   */
+  REDIS_ENABLED: booleanFlag,
+  REDIS_URL: z.preprocess(
+    emptyToUndefined,
+    z.url({ protocol: /^rediss?$/, error: 'must be a redis:// URL' }).optional(),
+  ),
+  REDIS_SENTINEL_HOST: optionalString,
+  REDIS_SENTINEL_PORT: optionalInt(1).transform((value) => value ?? 26379),
+  REDIS_MASTER_NAME: optionalString,
+  REDIS_PASSWORD: optionalString,
+  /**
    * Native version gate: store links plus the min/latest build per platform. There is
    * no bucket manifest any more - the JS/OTA axis is baked into the image (`lib/ota-bundle.ts`) and
    * ships with every deploy, while this native axis changes only on a store release (rare, and
@@ -114,6 +129,7 @@ const adminShape = {
 }
 
 const baseObject = z.object(baseShape)
+const appObject = z.object({ ...baseShape, ...appShape })
 type BaseEnvInput = z.infer<typeof baseObject>
 
 /** Conditional requirements: email transport. */
@@ -135,6 +151,20 @@ function refineBase(env: BaseEnvInput, ctx: z.RefinementCtx): void {
   if (env.OTEL_ENABLED) require('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_ENABLED=true')
 }
 
+/** The app's own conditional requirements: Redis needs an address. */
+function refineApp(env: z.infer<typeof appObject>, ctx: z.RefinementCtx): void {
+  if (!env.REDIS_ENABLED || env.REDIS_URL) return
+  for (const key of ['REDIS_SENTINEL_HOST', 'REDIS_MASTER_NAME'] as const) {
+    if (env[key] === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [key],
+        message: 'required when REDIS_ENABLED=true without REDIS_URL',
+      })
+    }
+  }
+}
+
 /**
  * Conditional checks run even when other fields already have errors, so that startup reports
  * every env problem at once instead of one at a time.
@@ -148,7 +178,9 @@ export const baseServerEnvSchema = z.object(baseShape).superRefine(refineBase, r
 /** admin: shared variables plus PORT. The admin list stays in the shared ones, read by the core. */
 export const adminEnvSchema = z.object({ ...baseShape, ...adminShape }).superRefine(refineBase, refineAlways)
 /** app: shared variables plus PORT, JWT, agent and version policy. */
-export const appEnvSchema = z.object({ ...baseShape, ...appShape }).superRefine(refineBase, refineAlways)
+export const appEnvSchema = appObject
+  .superRefine(refineBase, refineAlways)
+  .superRefine(refineApp, refineAlways)
 /** What the core itself reads: the shared variables (the core has no sessions, so no JWT secrets). */
 export const coreEnvSchema = z.object(baseShape).superRefine(refineBase, refineAlways)
 
