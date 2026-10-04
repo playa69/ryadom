@@ -46,8 +46,10 @@ export default function DeleteAccountPage() {
       // The account is gone, and with it the device's claim on it: a later anonymous sign-in must start fresh.
       await forgetDevice()
       // Sign out before the message: the server will not refresh the token any more, so any
-      // background request would fail.
-      await logout()
+      // background request would fail. An account with no confirmed address was opened by this phone
+      // alone: with it gone, the person is back at the start, not at a sign-in for an account they never had.
+      const backToStart = auth.user?.email === null || auth.user?.isEmailConfirmed === false
+      await logout({ entry: backToStart ? 'welcome' : 'login' })
       f7.dialog.alert('Аккаунт и все разговоры удалены. Береги себя.', 'Готово')
     } catch (err) {
       f7.dialog.alert(

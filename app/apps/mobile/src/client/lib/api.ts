@@ -23,7 +23,9 @@ export { ACCOUNT_UNAVAILABLE_EVENT, setSessionEndHandler } from './platform-adap
 export const {
   login,
   deviceLogin,
+  hasDevice,
   forgetDevice,
+  acceptConsents,
   linkEmail,
   register,
   confirmEmail,

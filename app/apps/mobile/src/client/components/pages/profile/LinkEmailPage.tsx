@@ -3,7 +3,15 @@ import type { Router } from 'framework7/types'
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import { LinkEmailApiErrorCode } from '@ryadom/contracts/api/auth/link-email'
-import { apiErrorText, codeText, confirmEmail, linkEmail, resendConfirmation } from '../../../lib/api'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import {
+  apiErrorText,
+  codeText,
+  confirmEmail,
+  forgetDevice,
+  linkEmail,
+  resendConfirmation,
+} from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
 import { passwordProblem } from '../../../lib/validation'
 import CodeInput from '../../CodeInput'
@@ -18,7 +26,7 @@ import PasswordInput from '../../PasswordInput'
 
 const LINK_ERRORS: Record<LinkEmailApiErrorCode, string> = {
   [LinkEmailApiErrorCode.EMAIL_TAKEN]:
-    'Эта почта уже занята другим аккаунтом. Укажи другую или войди в тот аккаунт',
+    'Эта почта уже занята другим аккаунтом. Укажи другую или войди в тот аккаунт: разговоры этого телефона в него не перенесутся',
   [LinkEmailApiErrorCode.ALREADY_HAS_EMAIL]: 'К аккаунту уже привязана почта',
   [LinkEmailApiErrorCode.DISPOSABLE_EMAIL]:
     'Одноразовые адреса не подходят: на них не прочитать код. Укажи свою почту',
@@ -41,7 +49,8 @@ export default function LinkEmailPage({
   f7router: Router.Router
   pendingEmail?: string
 }) {
-  const { updateUser } = useAuth()
+  const { updateUser, leaveAnonymousAccount } = useAuth()
+  const [taken, setTaken] = useState(false)
   const [step, setStep] = useState<'address' | 'code'>(pendingEmail ? 'code' : 'address')
   const [email, setEmail] = useState(pendingEmail ?? '')
   const [password, setPassword] = useState('')
@@ -63,11 +72,13 @@ export default function LinkEmailPage({
     if (weak) return setError(weak)
 
     setError('')
+    setTaken(false)
     setLoading(true)
     try {
       const outcome = await linkEmail(address, password)
       if (!outcome.ok) {
         setError(codeText(LINK_ERRORS, outcome.code, 'Не получилось привязать почту'))
+        setTaken(outcome.code === LinkEmailApiErrorCode.EMAIL_TAKEN)
         return
       }
       setEmail(outcome.data.email)
@@ -98,6 +109,8 @@ export default function LinkEmailPage({
         return
       }
       updateUser({ isEmailConfirmed: true })
+      // The account has a password now, and the server forgets the phone's key with the confirmation.
+      await forgetDevice()
       f7.toast
         .create({
           text: 'Почта подтверждена: в аккаунт можно войти с другого устройства',
@@ -122,6 +135,14 @@ export default function LinkEmailPage({
     } catch {
       f7.toast.create({ text: 'Не получилось отправить письмо', closeTimeout: 2500 }).open()
     }
+  }
+
+  function handleSwitchAccount() {
+    f7.dialog.confirm(
+      `Разговоры этого телефона в тот аккаунт не перенесутся. Вернуться в этот профиль будет нельзя, и через ${ANONYMOUS_RETENTION_DAYS} дней он удалится вместе с разговорами.`,
+      'Войти в тот аккаунт',
+      () => void leaveAnonymousAccount(),
+    )
   }
 
   if (step === 'code') {
@@ -181,8 +202,9 @@ export default function LinkEmailPage({
       <Navbar backLink="Профиль" title="Почта для входа" transparent />
       <div className="rd-done">
         <p className="rd-muted">
-          Без почты аккаунт живёт только на этом устройстве. С почтой и паролем в него можно войти и с
-          другого.
+          Без почты аккаунт живёт только на этом устройстве и удаляется через {ANONYMOUS_RETENTION_DAYS} дней
+          без визитов. С почтой и паролем разговоры не потеряются, и в аккаунт можно войти с другого
+          устройства.
         </p>
       </div>
 
@@ -218,6 +240,7 @@ export default function LinkEmailPage({
           onChange={(value) => {
             setPassword(value)
             setError('')
+            setTaken(false)
           }}
         />
         <button type="submit" className="rd-submit-hidden" tabIndex={-1} aria-hidden="true" />
@@ -232,6 +255,11 @@ export default function LinkEmailPage({
         <Button fill large preloader loading={loading} disabled={loading} onClick={() => void handleLink()}>
           Отправить код
         </Button>
+        {taken && (
+          <Button large outline onClick={handleSwitchAccount} data-testid="link-email-switch">
+            Войти в тот аккаунт
+          </Button>
+        )}
       </Block>
     </Page>
   )

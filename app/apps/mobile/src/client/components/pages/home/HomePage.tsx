@@ -50,6 +50,7 @@ const MODES: Array<{ id: DialogMode; label: string; hint: string; icon: string; 
 const START_ERRORS: Record<StartDialogApiErrorCode, string> = {
   [StartDialogApiErrorCode.USER_NOT_FOUND]: 'Аккаунт недоступен. Войди заново',
   [StartDialogApiErrorCode.USER_INACTIVE]: 'Аккаунт заблокирован. Напиши нам, разберёмся',
+  [StartDialogApiErrorCode.CONSENT_REQUIRED]: 'Сначала нужно подтвердить согласие',
 }
 
 function greeting(name: string | null): string {
@@ -60,7 +61,7 @@ function greeting(name: string | null): string {
 }
 
 export default function HomePage({ f7router }: { f7router: Router.Router }) {
-  const { auth } = useAuth()
+  const { auth, updateUser } = useAuth()
   const isWide = useMediaQuery(WIDE_QUERY)
   const isShort = useMediaQuery(SHORT_QUERY)
   const [mode, setMode] = useState<DialogMode>(DialogMode.Vent)
@@ -75,6 +76,9 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     try {
       const result = await startDialog(mode)
       if (!result.ok) {
+        // The server has no agreement on record for this account: forget what was cached, and the
+        // app's gate takes the person through the first screen.
+        if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
         return
       }

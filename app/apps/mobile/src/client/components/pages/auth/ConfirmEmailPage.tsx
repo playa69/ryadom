@@ -24,10 +24,13 @@ export default function ConfirmEmailPage({
   f7router,
   email,
   password,
+  consented,
 }: {
   f7router: Router.Router
   email: string
   password?: string
+  /** The person agreed to the terms on the registration screen: it is recorded once the session starts. */
+  consented?: boolean
 }) {
   const { login: storeLogin } = useAuth()
   const [code, setCode] = useState('')
@@ -53,7 +56,7 @@ export default function ConfirmEmailPage({
       }
       if (password) {
         const { user, tokens } = await login(email, password)
-        await storeLogin(user, tokens)
+        await storeLogin(user, tokens, { consent: consented })
         return
       }
       f7.toast.create({ text: 'Почта подтверждена — можно входить', closeTimeout: 2500 }).open()

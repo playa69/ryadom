@@ -3,6 +3,7 @@ import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import {
   createDialogSocket,
   type DialogSocket,
@@ -10,6 +11,8 @@ import {
   type DialogSocketState,
 } from '../../../lib/dialog-socket'
 import { journal } from '../../../lib/journal'
+import { openRoute } from '../../../lib/nav'
+import { useAuth } from '../../../lib/store'
 import {
   isCaptureSupported,
   MicrophoneDeniedError,
@@ -61,6 +64,8 @@ export default function DialogPage({
   /** Opened by the talk button on home: start listening as soon as the connection is up. */
   listen?: boolean
 }) {
+  const { auth } = useAuth()
+  const user = auth.user
   const [messages, setMessages] = useState<DialogMessageView[]>([])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
@@ -333,13 +338,31 @@ export default function DialogPage({
     setEndOpened(false)
     // The journal lives on another tab; on a wide screen its list is visible right away.
     void journal.refresh()
-    f7.dialog.alert(
-      summary?.title
-        ? `Забираешь с собой: ${summary.title}`
-        : 'Разговор завершён. Я рядом, когда понадоблюсь.',
-      'Спасибо, что поговорил(а)',
-      () => f7router.back(),
-    )
+    const text = summary?.title
+      ? `Забираешь с собой: ${summary.title}`
+      : 'Разговор завершён. Я рядом, когда понадоблюсь.'
+    const keepsConversations = user?.email === null || user?.isEmailConfirmed === false
+    if (!keepsConversations) {
+      f7.dialog.alert(text, 'Спасибо, что поговорил(а)', () => f7router.back())
+    } else {
+      // A finished conversation is the moment an address has something to give: this one is kept.
+      f7.dialog
+        .create({
+          title: 'Спасибо, что поговорил(а)',
+          text: `${text}<br><br>Без почты разговоры хранятся ${ANONYMOUS_RETENTION_DAYS} дней после последнего визита, и войти с другого телефона нельзя. Привяжи почту, чтобы не потерять их.`,
+          buttons: [
+            {
+              text: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
+              onClick: () => {
+                f7router.back()
+                openRoute('/profile/link-email/')
+              },
+            },
+            { text: 'ОК', onClick: () => f7router.back() },
+          ],
+        })
+        .open()
+    }
     // summary is the only dependency: this must fire exactly on the transition out of undefined.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary])

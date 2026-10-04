@@ -3,6 +3,7 @@ import ForgotPasswordPage from './pages/auth/ForgotPasswordPage'
 import LoginPage from './pages/auth/LoginPage'
 import RegisterPage from './pages/auth/RegisterPage'
 import ResetPasswordPage from './pages/auth/ResetPasswordPage'
+import WelcomePage from './pages/auth/WelcomePage'
 import DialogPage from './pages/dialog/DialogPage'
 import HomePage from './pages/home/HomePage'
 import JournalEntryPage from './pages/journal/JournalEntryPage'
@@ -15,7 +16,8 @@ import ProfilePage from './pages/profile/ProfilePage'
 
 /** Framework7 routes, shared by every View: each tab keeps its own history. */
 export const routes = [
-  // no session
+  // no session (the first screen is also the gate for terms that need agreeing to again)
+  { path: '/welcome/', component: WelcomePage },
   { path: '/login/', component: LoginPage },
   { path: '/register/', component: RegisterPage },
   { path: '/confirm-email/', component: ConfirmEmailPage },

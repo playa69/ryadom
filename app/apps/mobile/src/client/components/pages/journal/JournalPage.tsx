@@ -1,8 +1,10 @@
 import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Navbar, Page, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useRef } from 'react'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { journal, useJournal } from '../../../lib/journal'
 import { TAB_IDS } from '../../../lib/nav'
+import { useAuth } from '../../../lib/store'
 import { useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import { SosButton } from '../../SosSheet'
 import { formatJournalDate, nbspDash, tensionLabel } from './format'
@@ -19,6 +21,10 @@ import { JournalEntryBody } from './JournalEntryPage'
  */
 export default function JournalPage({ f7router }: { f7router: Router.Router }) {
   const { items, error, openId } = useJournal()
+  const { auth } = useAuth()
+  const user = auth.user
+  // An account opened by this phone alone: its history goes with the phone, or after the quiet period.
+  const keepsConversations = user?.email === null || user?.isEmailConfirmed === false
   const isWide = useMediaQuery(WIDE_QUERY)
 
   useEffect(() => {
@@ -77,6 +83,18 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
 
           {items !== null && items.length > 0 && (
             <>
+              {keepsConversations && (
+                // The history is what a person has to lose, so this is where the address is offered.
+                <Block data-testid="journal-link-email">
+                  <p className="rd-caption">
+                    Разговоры хранятся только на этом устройстве, {ANONYMOUS_RETENTION_DAYS} дней после
+                    последнего визита. Привяжи почту, чтобы не потерять их.
+                  </p>
+                  <Button small round outline onClick={() => f7router.navigate('/profile/link-email/')}>
+                    {user?.email === null ? 'Привязать почту' : 'Подтвердить почту'}
+                  </Button>
+                </Block>
+              )}
               <BlockTitle>Разговоры</BlockTitle>
               <List inset strong dividers mediaList className="rd-menu">
                 {items.map((item) => (

@@ -1,7 +1,8 @@
 import { App, Icon, Link, Toolbar, View, Views, f7ready } from 'framework7-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { RefreshApiErrorCode } from '@ryadom/contracts/api/auth/refresh'
-import { ACCOUNT_UNAVAILABLE_EVENT } from '../lib/api'
+import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
+import { ACCOUNT_UNAVAILABLE_EVENT, deviceLogin, getCurrentUser, hasDevice } from '../lib/api'
 import { initAppUpdates } from '../lib/app-update'
 import { initBackButton, initBackTrap } from '../lib/native'
 import { TAB_IDS } from '../lib/nav'
@@ -98,6 +99,7 @@ function SignedInViews() {
 
 function Shell() {
   const { auth, logout } = useAuth()
+  const gate = useConsentGate()
 
   useEffect(() => initAppUpdates(), [])
   useEffect(() => initBackButton(), [])
@@ -122,16 +124,92 @@ function Shell() {
     return () => window.removeEventListener(ACCOUNT_UNAVAILABLE_EVENT, handleAccountUnavailable)
   }, [logout])
 
-  if (auth.restoring) {
-    return (
-      <div className="rd-boot" aria-hidden="true">
-        <BrandMark size={72} />
-      </div>
-    )
-  }
+  if (auth.restoring) return <BootSplash />
 
-  if (!auth.isAuthenticated) return <View key="anonymous" main url="/login/" className="safe-areas" />
+  if (!auth.isAuthenticated) return <AnonymousEntry key="anonymous" />
+  if (gate === 'checking') return <BootSplash />
+  // The terms need agreeing to (a new account, or a newer version): the first screen takes the person through.
+  if (gate === 'needed') return <View key="consent" main url="/welcome/" className="safe-areas" />
   return <SignedInViews key="signed-in" />
+}
+
+function BootSplash() {
+  return (
+    <div className="rd-boot" aria-hidden="true">
+      <BrandMark size={72} />
+    </div>
+  )
+}
+
+/**
+ * Where a person without a session lands. A phone that already has an anonymous identity is signed
+ * back in without a screen: that is an account with no password to ask for. Anyone else sees the
+ * first screen if they are new, or the sign-in if they have had an account and left it.
+ */
+function AnonymousEntry() {
+  const { auth, login } = useAuth()
+  const [checking, setChecking] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      if (await hasDevice()) {
+        try {
+          // The agreements were given when the account was made; the gate asks again if a newer
+          // version of the terms is out.
+          const { user, tokens } = await deviceLogin()
+          if (cancelled) return
+          await login(user, tokens)
+          return
+        } catch {
+          // The server does not answer or does not accept the key: the screens below are fine to land on.
+        }
+      }
+      if (!cancelled) setChecking(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [login])
+
+  if (checking) return <BootSplash />
+  return <View main url={auth.entry === 'login' ? '/login/' : '/welcome/'} className="safe-areas" />
+}
+
+/**
+ * Whether the signed-in account has agreed to the current terms. The answer is cached in the stored
+ * user, so an account that has agreed costs no request on later launches. When the check cannot be
+ * made (no network) the app opens anyway: the server refuses a conversation without the agreement.
+ */
+function useConsentGate(): 'checking' | 'needed' | 'ok' {
+  const { auth, updateUser } = useAuth()
+  const userId = auth.user?.id ?? null
+  const agreed = auth.user?.consentVersion === POLICY_VERSION
+  const [verdict, setVerdict] = useState<'checking' | 'needed' | 'unchecked'>('checking')
+
+  useEffect(() => {
+    if (!auth.isAuthenticated || !userId || agreed) return
+    let cancelled = false
+    setVerdict('checking')
+    getCurrentUser()
+      .then((me) => {
+        if (cancelled) return
+        if (me.consentsCompleted && me.consentVersion === POLICY_VERSION) {
+          updateUser({ consentVersion: me.consentVersion })
+        } else {
+          setVerdict('needed')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setVerdict('unchecked')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [auth.isAuthenticated, userId, agreed, updateUser])
+
+  if (!auth.isAuthenticated || agreed || verdict === 'unchecked') return 'ok'
+  return verdict
 }
 
 export default function F7App() {

@@ -3,6 +3,7 @@ import type { Router } from 'framework7/types'
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { apiErrorText, getCurrentUser, updateProfile } from '../../../lib/api'
 import { getVersionInfo } from '../../../lib/device'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { ENV_SWITCHER_TAPS } from '../../../lib/env'
 import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
 import { useAuth } from '../../../lib/store'
@@ -17,7 +18,7 @@ import { nameProblem } from '../../../lib/validation'
  * 5.1.1(v) and Google Play policy), and the spec promises erasing everything with one button.
  */
 export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
-  const { auth, logout, updateUser } = useAuth()
+  const { auth, logout, leaveAnonymousAccount, updateUser } = useAuth()
   const [version, setVersion] = useState('')
   const [envTitle, setEnvTitle] = useState<string | null>(null)
   const versionTaps = useRef(0)
@@ -27,6 +28,9 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   // entered the code yet is waiting for the second step.
   const noEmail = user?.email === null
   const pendingEmail = user?.email && user.isEmailConfirmed === false ? user.email : null
+  // Both are opened by this phone alone, so signing out is not a thing they have: leaving one is
+  // going to another account, and it says what that costs.
+  const anonymous = noEmail || pendingEmail !== null
 
   // The rest of the profile is fetched from the server: sign-in returns only the basic fields.
   useEffect(() => {
@@ -87,12 +91,20 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
     )
   }
 
+  function handleSwitchAccount() {
+    f7.dialog.confirm(
+      `Разговоры этого телефона в другой аккаунт не перенесутся. Вернуться в этот профиль будет нельзя, и через ${ANONYMOUS_RETENTION_DAYS} дней он удалится вместе с разговорами.`,
+      'Войти в другой аккаунт',
+      () => void leaveAnonymousAccount(),
+    )
+  }
+
   return (
     <Page name="profile">
       <Navbar title="Профиль" />
 
       <div className="rd-profile-head">
-        <p className="rd-profile-name">{user?.name ?? '—'}</p>
+        <p className="rd-profile-name">{user?.name ?? (noEmail ? 'Гость' : '—')}</p>
         <p className="rd-profile-email">{noEmail ? 'Без регистрации' : (user?.email ?? '')}</p>
         <Button small round outline className="rd-profile-edit" onClick={handleEditName}>
           Изменить имя
@@ -133,10 +145,23 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
             <Icon slot="media" f7="lock_fill" />
           </ListItem>
         )}
+        {anonymous && (
+          <ListItem link title="Войти в другой аккаунт" onClick={handleSwitchAccount} data-testid="row-switch-account">
+            <Icon slot="media" f7="arrow_right_square_fill" />
+          </ListItem>
+        )}
         <ListItem link title="Люди рядом" onClick={() => f7router.navigate('/people/')}>
           <Icon slot="media" f7="person_2_fill" />
         </ListItem>
       </List>
+      {anonymous && (
+        <Block>
+          <p className="rd-caption">
+            Без подтверждённой почты аккаунт хранится {ANONYMOUS_RETENTION_DAYS} дней после последнего визита, потом
+            удаляется вместе с разговорами. Почта нужна и для входа с другого устройства.
+          </p>
+        </Block>
+      )}
       </section>
 
       <section className="rd-profile-group">
@@ -184,16 +209,18 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
       </section>
 
       <div className="rd-profile-actions">
-        <Block>
-          <Button
-            large
-            outline
-            className="rd-signout"
-            onClick={() => f7.dialog.confirm('Выйти из аккаунта на этом устройстве?', 'Выход', () => void logout())}
-          >
-            Выйти из аккаунта
-          </Button>
-        </Block>
+        {!anonymous && (
+          <Block>
+            <Button
+              large
+              outline
+              className="rd-signout"
+              onClick={() => f7.dialog.confirm('Выйти из аккаунта на этом устройстве?', 'Выход', () => void logout())}
+            >
+              Выйти из аккаунта
+            </Button>
+          </Block>
+        )}
 
         <List inset strong className="rd-menu">
           <ListItem

@@ -1,11 +1,11 @@
-import { Block, Button, List, ListInput, ListItem, Navbar, Page } from 'framework7-react'
+import { Block, Button, List, ListInput, Navbar, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useState, type ChangeEvent, type MouseEvent } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import { RegisterApiErrorCode } from '@ryadom/contracts/api/auth/register'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { apiErrorText, codeText, register } from '../../../lib/api'
-import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
 import { nameProblem, passwordProblem } from '../../../lib/validation'
+import ConsentList, { NO_CONSENT, allConsented } from '../../ConsentList'
 import PasswordInput from '../../PasswordInput'
 
 /**
@@ -27,7 +27,7 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [consent, setConsent] = useState(false)
+  const [consent, setConsent] = useState(NO_CONSENT)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -38,7 +38,7 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
     if (!trimmedEmail || !password) return setError('Введи почту и пароль')
     const problem = passwordProblem(password)
     if (problem) return setError(problem)
-    if (!consent) return setError('Без согласия на обработку данных аккаунт не создать')
+    if (!allConsented(consent)) return setError('Без всех трёх согласий аккаунт не создать')
 
     setError('')
     setLoading(true)
@@ -48,7 +48,9 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
         setError(codeText(REGISTER_ERRORS, result.code, REGISTER_FALLBACK))
         return
       }
-      f7router.navigate('/confirm-email/', { props: { email: result.data.email, password } })
+      // The agreement is recorded once the code is entered and the session starts: only then is there
+      // an account to record it for.
+      f7router.navigate('/confirm-email/', { props: { email: result.data.email, password, consented: true } })
     } catch (err) {
       setError(
         apiErrorText(
@@ -60,13 +62,6 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
     } finally {
       setLoading(false)
     }
-  }
-
-  const openDoc = (url: () => string) => (event: MouseEvent) => {
-    // A link inside the checkbox label: open the document instead of toggling the checkbox.
-    event.preventDefault()
-    event.stopPropagation()
-    void openExternal(url())
   }
 
   return (
@@ -123,30 +118,14 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
         />
       </List>
 
-      {/* Consent is given explicitly: personal data processing and being 18+ (152-FZ). */}
-      <List className="rd-consents" data-testid="consents">
-        <ListItem
-          checkbox
-          checked={consent}
-          className="rd-wrap"
-          onChange={(event: ChangeEvent<HTMLInputElement>) => {
-            setConsent(event.target.checked)
-            setError('')
-          }}
-        >
-          <span slot="title">
-            Мне есть 18. Даю согласие на обработку персональных данных, с{' '}
-            <a href="#" className="rd-inline-link" onClick={openDoc(privacyUrl)}>
-              политикой
-            </a>{' '}
-            ознакомлен(а), с{' '}
-            <a href="#" className="rd-inline-link" onClick={openDoc(termsUrl)}>
-              условиями
-            </a>{' '}
-            согласен(на)
-          </span>
-        </ListItem>
-      </List>
+      {/* Consent is given explicitly: being 18+, the disclaimer, personal data processing (152-FZ). */}
+      <ConsentList
+        value={consent}
+        onChange={(next) => {
+          setConsent(next)
+          setError('')
+        }}
+      />
 
       <Block className="rd-form-actions">
         {error && <p className="rd-form-error" data-testid="form-error">{error}</p>}
