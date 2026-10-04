@@ -1,0 +1,76 @@
+import type { Context, MiddlewareHandler } from 'hono'
+import { apiError } from './api-response'
+import type { AppEnv } from './context'
+
+/**
+ * Rate limiting in process memory. It protects what is open without authorization:
+ * email codes, login and password recovery.
+ *
+ * In memory means per replica: with three replicas the effective total limit is three times the
+ * stated one. That is enough against brute force; a strict shared limit would require Redis, which
+ * is a separate decision to be made together with the infrastructure.
+ */
+export interface RateLimitRule {
+  /** How many requests are allowed within the window. */
+  limit: number
+  windowMs: number
+}
+
+export interface RateLimiter {
+  /** false means the limit is exhausted. */
+  hit(key: string, rule: RateLimitRule): boolean
+  reset(): void
+}
+
+export function createRateLimiter(now: () => number = Date.now): RateLimiter {
+  const hits = new Map<string, number[]>()
+
+  return {
+    hit(key, rule) {
+      const current = now()
+      const from = current - rule.windowMs
+      const recent = (hits.get(key) ?? []).filter((time) => time > from)
+      // Pruned on every call, otherwise keys accumulate for as long as the process lives.
+      if (recent.length >= rule.limit) {
+        hits.set(key, recent)
+        return false
+      }
+      recent.push(current)
+      hits.set(key, recent)
+      return true
+    },
+    reset() {
+      hits.clear()
+    },
+  }
+}
+
+/** The rules, kept in one place instead of being spread across the routes. */
+export const RATE_LIMITS = {
+  /** Email with a code: registration, resend, "forgot password". */
+  emailCode: { perEmail: { limit: 3, windowMs: 10 * 60_000 }, perIp: { limit: 20, windowMs: 60 * 60_000 } },
+  /** Entering a code or a password: guessing a six-digit code must hit the limit, not luck. */
+  attempt: { perIp: { limit: 10, windowMs: 60_000 } },
+  /** Starting a dialog: protection against an accidental loop in the client. */
+  dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
+} as const
+
+/** The request IP: behind the Ingress the real address arrives in X-Forwarded-For. */
+export function clientIp(c: Context<AppEnv>): string {
+  const forwarded = c.req.header('X-Forwarded-For')
+  if (forwarded) return forwarded.split(',')[0]!.trim()
+  return c.req.header('X-Real-IP') ?? 'unknown'
+}
+
+/**
+ * Per-IP limit for a route. The key includes the route name, so guessing a code must not consume
+ * the login limit, and vice versa.
+ */
+export function limitByIp(limiter: RateLimiter, name: string, rule: RateLimitRule): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    if (!limiter.hit(`ip:${name}:${clientIp(c)}`, rule)) {
+      return apiError(c, 429, 'Too many requests: try again later')
+    }
+    return next()
+  }
+}

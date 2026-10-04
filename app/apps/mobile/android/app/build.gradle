@@ -1,0 +1,97 @@
+apply plugin: 'com.android.application'
+
+/**
+ * Две сборки одного приложения:
+ *
+ *  - dev  — applicationId ru.ryadom.app.dev, ставится рядом с боевой, ходит в staging,
+ *           содержит переключатель сред;
+ *  - prod — то, что попадает в магазины.
+ *
+ * versionCode и versionName приходят из CI.
+ * Локально они равны 1 и версии из package.json, чтобы `assembleDevDebug` собирался без
+ * переменных окружения.
+ */
+
+def envOr = { String name, String fallback ->
+    def value = System.getenv(name)
+    return (value == null || value.trim().isEmpty()) ? fallback : value.trim()
+}
+
+def appVersionName = envOr('RYADOM_VERSION_NAME', '0.1.0')
+def appVersionCode = envOr('RYADOM_VERSION_CODE', '1').toInteger()
+def keystorePath = envOr('RYADOM_KEYSTORE_PATH', '')
+
+android {
+    namespace = "ru.ryadom.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "ru.ryadom.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode appVersionCode
+        versionName appVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+
+    signingConfigs {
+        release {
+            // Ключ есть только в CI: без него release-сборка соберётся неподписанной, а не
+            // упадёт на непонятной ошибке Gradle.
+            if (!keystorePath.isEmpty()) {
+                storeFile file(keystorePath)
+                storePassword envOr('RYADOM_KEYSTORE_PASSWORD', '')
+                keyAlias envOr('RYADOM_KEY_ALIAS', '')
+                keyPassword envOr('RYADOM_KEY_PASSWORD', '')
+            }
+        }
+    }
+
+    flavorDimensions += "environment"
+
+    productFlavors {
+        dev {
+            dimension "environment"
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+            resValue "string", "app_name", "Рядом dev"
+        }
+        prod {
+            dimension "environment"
+            resValue "string", "app_name", "Рядом"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (!keystorePath.isEmpty()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'

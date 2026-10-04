@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // mediatr-ts and @hasPII rely on legacy decorator semantics.
+    "experimentalDecorators": true
+  },
+  "include": ["src", "test", "*.ts"]
+}

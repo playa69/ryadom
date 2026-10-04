@@ -1,0 +1,142 @@
+# The whole stack locally in containers: five project images plus Postgres, Mailpit and the
+# agent mock. Useful to check that the images build and that everything wires together; for
+# day-to-day development `pnpm infra:up` + `pnpm dev` is faster.
+#
+#   node scripts/docker.mjs compose up --build
+#
+# There are no secrets here: the values are deliberately local, in production the infrastructure
+# supplies them.
+name: ryadom
+
+x-secrets: &secrets
+  AUTH_SECRET: local-only-auth-secret-change-me-0123456789
+  MOBILE_JWT_SECRET: local-only-mobile-jwt-secret-change-me-0123
+
+x-email: &email
+  EMAIL_TRANSPORT: smtp
+  EMAIL_FROM: Рядом <noreply@ryadom.local>
+  SMTP_HOST: mailpit
+  SMTP_PORT: '1025'
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ryadom
+      POSTGRES_PASSWORD: ryadom
+      POSTGRES_DB: ryadom
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./dev/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ryadom -d ryadom']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - '8026:8025' # emails: http://localhost:8026
+
+  agent-mock:
+    build:
+      context: ./dev/agent-mock
+    restart: unless-stopped
+    environment:
+      PORT: '8080'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # A one-shot container: it applies migrations and exits. api and admin wait for it to succeed.
+  migrate:
+    build:
+      context: .
+      dockerfile: packages/db/Dockerfile
+    environment:
+      DATABASE_URL: postgres://ryadom:ryadom@postgres:5432/ryadom
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*secrets, *email]
+      APP_ENV: local
+      LOG_LEVEL: info
+      PORT: '3002'
+      DATABASE_URL: postgres://ryadom:ryadom@postgres:5432/ryadom
+      PUBLIC_WEB_URL: http://localhost:3000
+      PUBLIC_APP_URL: http://localhost:3002
+      AGENT_API_URL: http://agent-mock:8080
+      AGENT_TIMEOUT_MS: '10000'
+      DIALOG_IDLE_TIMEOUT_SEC: '900'
+      DIALOG_MAX_DURATION_SEC: '7200'
+    ports:
+      - '3002:3002'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      agent-mock:
+        condition: service_started
+
+  admin:
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: [*secrets, *email]
+      APP_ENV: local
+      LOG_LEVEL: info
+      PORT: '3001'
+      DATABASE_URL: postgres://ryadom:ryadom@postgres:5432/ryadom
+      PUBLIC_WEB_URL: http://localhost:3000
+      PUBLIC_APP_URL: http://localhost:3002
+      ADMIN_EMAILS: admin@ryadom.local
+      AGENT_API_URL: http://agent-mock:8080
+      AGENT_TIMEOUT_MS: '10000'
+    ports:
+      - '3001:3001'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  landing:
+    build:
+      context: .
+      dockerfile: apps/landing/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: '3000'
+      PUBLIC_APP_URL: http://localhost:3002
+      PUBLIC_SUPPORT_EMAIL: support@ryadom.local
+    ports:
+      - '3000:3000'
+
+  # The signed-in web app. The browser (not this container) talks to the API, so PUBLIC_API_URL is
+  # the address as seen from the host, not the compose-internal name.
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: '3003'
+      PUBLIC_API_URL: http://localhost:3002
+      PUBLIC_WEB_URL: http://localhost:3000
+    ports:
+      - '3003:3003'
+
+volumes:
+  pg_data:

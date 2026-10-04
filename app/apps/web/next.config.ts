@@ -1,0 +1,18 @@
+import path from 'node:path'
+import type { NextConfig } from 'next'
+
+const repoRoot = path.resolve(import.meta.dirname, '../..')
+
+const nextConfig: NextConfig = {
+  output: 'standalone',
+  outputFileTracingRoot: repoRoot,
+  turbopack: { root: repoRoot },
+  // Workspace packages ship TypeScript sources, so Next compiles them itself.
+  transpilePackages: ['@ryadom/client-core', '@ryadom/contracts', '@ryadom/design', '@ryadom/ui'],
+  poweredByHeader: false,
+  // The dev-mode badge sits over the bottom-left corner, where the sidebar's account button is, and swallows clicks.
+  devIndicators: false,
+  reactStrictMode: true,
+}
+
+export default nextConfig

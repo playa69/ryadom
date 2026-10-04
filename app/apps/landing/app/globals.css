@@ -1,0 +1,7 @@
+@import "@ryadom/ui/globals.css";
+@plugin "@tailwindcss/typography";
+
+/* Tailwind scans the app's own sources; the shared components are declared in the ui package. */
+@source "../app/**/*.{ts,tsx}";
+@source "../components/**/*.{ts,tsx}";
+@source "../lib/**/*.{ts,tsx}";

@@ -1,0 +1,53 @@
+node_modules
+dist
+.next
+.turbo
+out
+coverage
+*.tsbuildinfo
+next-env.d.ts
+
+# env: only templates are committed (.env.example)
+.env.local
+.env.*.local
+.env.development
+.env.test
+# apps/mobile flavours: no secrets (comments in the files), but only the shape is a template
+apps/mobile/.env.dev
+apps/mobile/.env.prod
+
+# android
+apps/mobile/android/.gradle/
+apps/mobile/android/build/
+apps/mobile/android/app/build/
+apps/mobile/android/local.properties
+apps/mobile/android/keystore.properties
+apps/mobile/android/*.keystore
+apps/mobile/android/*.jks
+
+# ios
+apps/mobile/ios/App/Pods/
+apps/mobile/ios/App/App.xcworkspace/xcuserdata/
+apps/mobile/ios/App/App.xcodeproj/xcuserdata/
+apps/mobile/ios/App/build/
+apps/mobile/ios/App/public/
+
+# Next и turbo сами дописывают эти файлы рядом с собой при каждом запуске агента
+apps/*/AGENTS.md
+apps/*/CLAUDE.md
+
+# misc
+.install-lock
+.DS_Store
+*.log
+.idea/
+
+# e2e: reports, traces and screen shots are run output, not sources
+e2e/report/
+e2e/test-results/
+screenshots/
+review/
+.playwright-mcp/
+
+# The repository root ignores lib/ (Python template); here lib/ is source code (apps/*/lib).
+!lib/

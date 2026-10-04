@@ -1,0 +1,54 @@
+import { test as base, type Page } from '@playwright/test'
+import { createHash } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { installSpeechStub } from './speech'
+
+/**
+ * Screenshots go to `e2e/screenshots/` (not in git): the test run's own pictures, kept apart from the
+ * curated set of every app's current screens in the repository's `screenshots/`.
+ */
+const e2eRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+export const SCREENSHOT_DIR = join(e2eRoot, 'screenshots')
+
+export type Shot = (page: Page, name: string, options?: { fullPage?: boolean }) => Promise<void>
+
+/**
+ * A client address of its own for every test. The API limits sign-in and code entry per IP (10 a
+ * minute) and the whole suite comes from 127.0.0.1: once both clients' account scenarios run back to
+ * back in both projects, the shared bucket runs dry and a later sign-in is refused with 429. The API
+ * reads the address from X-Forwarded-For, as it does behind the ingress.
+ */
+function addressFor(key: string): string {
+  const [a, b, c] = createHash('sha1').update(key).digest()
+  return `10.${a}.${b}.${c}`
+}
+
+export const test = base.extend<{ shot: Shot }>({
+  // A route, not `extraHTTPHeaders`: those count as set by the page, so the web app's cross-origin
+  // calls to the API would be preflighted and refused (the API does not allow this header).
+  context: async ({ context }, use, testInfo) => {
+    await installSpeechStub(context)
+    const address = addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`)
+    await context.route(/\/api\//, (route) =>
+      route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': address } }),
+    )
+    await use(context)
+  },
+  shot: async ({}, use, testInfo) => {
+    await mkdir(SCREENSHOT_DIR, { recursive: true })
+    const shot: Shot = async (page, name, options = {}) => {
+      // Otherwise the breathing circle and Framework7 transitions give a different frame each run.
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.waitForTimeout(400)
+      await page.screenshot({
+        path: join(SCREENSHOT_DIR, `${testInfo.project.name}-${name}.png`),
+        fullPage: options.fullPage ?? false,
+      })
+    }
+    await use(shot)
+  },
+})
+
+export { expect } from '@playwright/test'

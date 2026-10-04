@@ -1,0 +1,36 @@
+{
+  "name": "ryadom",
+  "private": true,
+  "description": "«Рядом» — голосовой ИИ-компаньон для эмоциональной разгрузки. Монорепозиторий: лендинг, админка, приложение (веб/PWA/Android/iOS) с API, миграции.",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "turbo run dev --filter=@ryadom/api --filter=@ryadom/landing --filter=@ryadom/web --filter=@ryadom/admin --filter=@ryadom/mobile",
+    "dev:api": "pnpm --filter @ryadom/api dev",
+    "dev:landing": "pnpm --filter @ryadom/landing dev",
+    "dev:web": "pnpm --filter @ryadom/web dev",
+    "dev:admin": "pnpm --filter @ryadom/admin dev",
+    "dev:app": "pnpm --filter @ryadom/mobile dev",
+    "dev:agent-mock": "node dev/agent-mock/server.mjs",
+    "build": "turbo run build --filter=!@ryadom/e2e",
+    "typecheck": "turbo run typecheck --filter=!@ryadom/e2e",
+    "lint": "turbo run lint --filter=!@ryadom/e2e",
+    "test": "turbo run test --filter=!@ryadom/e2e",
+    "format": "prettier --write .",
+    "infra:up": "node scripts/docker.mjs compose -f dev/compose.yaml up -d --wait",
+    "infra:down": "node scripts/docker.mjs compose -f dev/compose.yaml down",
+    "db:generate": "pnpm --filter @ryadom/db generate",
+    "db:migrate": "pnpm --filter @ryadom/db migrate",
+    "db:studio": "pnpm --filter @ryadom/db studio",
+    "test:e2e": "pnpm --filter @ryadom/e2e test",
+    "test:e2e:headed": "pnpm --filter @ryadom/e2e test:headed"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "prettier": "^3.9.9",
+    "turbo": "^2.11.3",
+    "typescript": "~6.0.3"
+  }
+}

@@ -1,0 +1,150 @@
+@import './stars.css';
+
+/*
+ * The Ryadom palette: dark by default, because the product is used in
+ * the evening and at night. The base is a deep midnight blue rather than neutral graphite, lit by
+ * a teal/indigo/violet aurora and a scatter of faint stars, with glass surfaces over it. A clear blue
+ * (#007AFF) is the one action color, indigo and violet are the atmosphere, a soft peach warms the
+ * sphere, mint calms confirmations, red is reserved for irreversible actions, and SOS has a shade
+ * of its own.
+ *
+ * This file is the single source of truth for color, radius and shadow across mobile, web,
+ * landing and admin — edit values here, not in a consumer. Values must stay byte-for-byte
+ * identical to `tokens.ts` next to it (the emails render to static HTML and cannot use CSS custom
+ * properties, so they read the same numbers from there instead of importing this file).
+ */
+:root {
+  --ryadom-paper: #00051a;
+  --ryadom-paper-rgb: 0, 5, 26;
+  --ryadom-surface: #0e1631;
+  --ryadom-surface-2: #151f40;
+  --ryadom-surface-3: #1d2854;
+  --ryadom-line: rgba(255, 255, 255, 0.1);
+  /*
+   * Every consumer of this token is a control boundary (inputs, buttons, the icon buttons, the
+   * code box) — never a decorative divider, that is --ryadom-line above. WCAG 1.4.11 asks for
+   * 3:1 on that kind of boundary; 0.36 clears it on every surface in the palette (3.12:1 on
+   * --ryadom-surface-3, the lightest) and over the glass below.
+   */
+  --ryadom-line-strong: rgba(255, 255, 255, 0.36);
+  /* Bars that float over scrolling content: nearly opaque, so labels never fight the page. */
+  --ryadom-glass: rgba(10, 16, 40, 0.78);
+  /*
+   * Surfaces over the atmosphere: translucent, so the aurora behind reads through cards and lists
+   * instead of being boxed out by opaque panels. Body text on them was measured over the brightest
+   * parts of the aurora: --ryadom-text-faint stays above 5.7:1, --ryadom-text-dim above 7.6:1.
+   */
+  --ryadom-surface-glass: rgba(18, 27, 62, 0.58);
+  --ryadom-surface-2-glass: rgba(24, 35, 78, 0.8);
+  /* The lit top edge of a card: a sheet of glass catching the light, plus a hairline all round. */
+  --ryadom-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --ryadom-blur: blur(22px) saturate(1.25);
+
+  --ryadom-text: #f1f4ff;
+  --ryadom-text-dim: #b0b9d8;
+  /*
+   * Secondary text — captions, fine print, status lines. 5.46:1 on --ryadom-surface-3 and more on
+   * everything darker, so it clears the 4.5:1 body-text minimum everywhere in the palette.
+   */
+  --ryadom-text-faint: #93a0c8;
+
+  /*
+   * The action blue. --ryadom-brand is the exact brand value and is for non-text uses (rings, dots,
+   * glows, borders); --ryadom-brand-400 is its light tint for text and icons on the dark surfaces
+   * (7.7:1 on paper, 5.4:1 on the lightest surface). White text sits on the fill below: its lightest
+   * stop is #0070f0, the brightest blue that still gives white 4.5:1.
+   */
+  --ryadom-brand: #007aff;
+  --ryadom-brand-rgb: 0, 122, 255;
+  --ryadom-brand-400: #4da3ff;
+  /* The solid fill under white text (checked boxes, the primary pill): see the note above. */
+  --ryadom-brand-fill: #0070f0;
+  --ryadom-brand-50: rgba(0, 122, 255, 0.14);
+  --ryadom-brand-100: rgba(0, 122, 255, 0.34);
+  /* The main button: a clear blue with a lit top edge and its own glow on the dark. */
+  --ryadom-cta: linear-gradient(180deg, #0070f0 0%, #005fdd 100%);
+  --ryadom-cta-glow: 0 10px 30px -8px rgba(0, 122, 255, 0.65);
+  --ryadom-cta-ink: #ffffff;
+
+  /* The warm touch of the palette, used sparingly: the glow inside the breathing sphere. */
+  --ryadom-peach: #e8a972;
+  --ryadom-peach-rgb: 232, 169, 114;
+
+  --ryadom-sage: #79d2c2;
+  --ryadom-sage-rgb: 121, 210, 194;
+  --ryadom-sage-50: rgba(121, 210, 194, 0.12);
+  --ryadom-sage-100: rgba(121, 210, 194, 0.28);
+
+  /* Aurora hues, used for glows and tinted icon tiles — never for text or actions. */
+  --ryadom-teal-rgb: 34, 150, 168;
+  --ryadom-indigo-rgb: 73, 61, 209;
+  --ryadom-violet-rgb: 150, 100, 235;
+
+  --ryadom-danger: #ff7a7a;
+  /* White at 14px/500 on this fill was 4.27:1, below the 4.5:1 body-text minimum the md button
+     label actually needs (14px/500 does not qualify as WCAG "large text"). Darkened so the one
+     button that cannot be undone stays readable (design review). */
+  --ryadom-danger-600: #d13333;
+  --ryadom-danger-50: rgba(255, 107, 107, 0.12);
+  --ryadom-danger-100: rgba(255, 107, 107, 0.28);
+
+  --ryadom-sos: #ff6a6f;
+
+  /* Keyboard focus ring: an inner ring matching the surface behind the control plus an outer
+     light-blue ring, so the halo reads on any background instead of only on --ryadom-paper. */
+  --ryadom-focus: 0 0 0 2px var(--ryadom-paper), 0 0 0 4px var(--ryadom-brand-400);
+
+  /*
+   * Ambient background: atmosphere, not accent — blue stays the one action color. Teal over
+   * the top edge, indigo on the right, violet in the lower left. Radial, not linear, so it reads as
+   * depth rather than a decorative stripe. The stars (stars.css) sit on top as the first layer;
+   * admin takes the ambient alone to stay quiet.
+   */
+  --ryadom-bloom-teal: rgba(var(--ryadom-teal-rgb), 0.3);
+  --ryadom-bloom-indigo: rgba(var(--ryadom-indigo-rgb), 0.32);
+  --ryadom-bloom-violet: rgba(var(--ryadom-violet-rgb), 0.22);
+  --ryadom-ambient:
+    radial-gradient(85% 55% at 50% -8%, var(--ryadom-bloom-teal), transparent 72%),
+    radial-gradient(65% 55% at 100% 52%, var(--ryadom-bloom-indigo), transparent 72%),
+    radial-gradient(75% 50% at 0% 100%, var(--ryadom-bloom-violet), transparent 72%);
+  --ryadom-atmosphere: var(--ryadom-stars), var(--ryadom-ambient);
+
+  --ryadom-font: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  --ryadom-r-s: 14px;
+  --ryadom-r-m: 20px;
+  --ryadom-r-l: 28px;
+  --ryadom-r-xl: 36px;
+  --ryadom-r-pill: 999px;
+
+  --ryadom-shadow-1: 0 2px 12px rgba(2, 5, 20, 0.4);
+  --ryadom-shadow-2: 0 24px 60px -12px rgba(2, 5, 20, 0.7);
+
+  /*
+   * Spacing and type scale. These steps are the standard for new rules; they do NOT retrofit older
+   * declarations that picked their own numbers.
+   */
+  --ryadom-s-1: 4px;
+  --ryadom-s-2: 8px;
+  --ryadom-s-3: 12px;
+  --ryadom-s-4: 16px;
+  --ryadom-s-5: 20px;
+  --ryadom-s-6: 24px;
+  --ryadom-s-7: 32px;
+  --ryadom-s-8: 40px;
+
+  --ryadom-t-xs: 12px;
+  --ryadom-t-sm: 13px;
+  --ryadom-t-base: 15px;
+  --ryadom-t-md: 16px;
+  --ryadom-t-lg: 19px;
+  --ryadom-t-xl: 22px;
+  --ryadom-t-2xl: 26px;
+  --ryadom-t-3xl: 32px;
+  --ryadom-t-4xl: 40px;
+  --ryadom-t-5xl: 56px;
+
+  /* Large type sits tighter: at display sizes default tracking reads as loose. */
+  --ryadom-tracking: -0.02em;
+  --ryadom-tracking-tight: -0.035em;
+}

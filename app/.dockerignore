@@ -1,0 +1,24 @@
+# The build context for every image is the repository root (docker build -f <Dockerfile> .).
+**/node_modules
+**/.next
+**/dist
+**/out
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+**/.env*
+!**/.env.example
+# Flavour switches for the OTA/client build (VITE_FLAVOR etc.), no secrets — see their own comments.
+!apps/mobile/.env.dev
+!apps/mobile/.env.prod
+.git
+.claude
+.install-lock
+apps/mobile/android
+apps/mobile/ios
+e2e/report
+e2e/test-results
+screenshots
+review
+.playwright-mcp
+**/*.md

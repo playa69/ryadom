@@ -1,0 +1,19 @@
+{
+  "name": "@ryadom/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "API-контракты «Рядом»: конверт ответа, пути, коды ошибок, WS-протокол диалогов — общие для services/api, apps/mobile и apps/web.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.1"
+  }
+}

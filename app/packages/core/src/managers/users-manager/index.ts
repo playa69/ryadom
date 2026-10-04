@@ -1,0 +1,107 @@
+// 1. Handler imports
+import './commands/create-user/create-user.handler'
+import './commands/mark-user-email-confirmed/mark-user-email-confirmed.handler'
+import './commands/change-user-email/change-user-email.handler'
+import './commands/update-user-name/update-user-name.handler'
+import './commands/set-user-active/set-user-active.handler'
+import './commands/set-user-deletion-archive/set-user-deletion-archive.handler'
+import './commands/soft-delete-user/soft-delete-user.handler'
+import './queries/get-user-by-id/get-user-by-id.handler'
+import './queries/get-user-by-email/get-user-by-email.handler'
+import './queries/search-users/search-users.handler'
+import './queries/get-user-deletion-archive/get-user-deletion-archive.handler'
+
+import type { RequestData } from 'mediatr-ts'
+import { mediatr } from '../../shared'
+
+// 2. Contract re-exports
+export { CreateUserCommand } from './commands/create-user/create-user.command'
+export type { CreateUserCommandData } from './commands/create-user/create-user.command'
+export { MarkUserEmailConfirmedCommand } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.command'
+export type { MarkUserEmailConfirmedCommandData } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.command'
+export { ChangeUserEmailCommand } from './commands/change-user-email/change-user-email.command'
+export type { ChangeUserEmailCommandData } from './commands/change-user-email/change-user-email.command'
+export { UpdateUserNameCommand } from './commands/update-user-name/update-user-name.command'
+export type { UpdateUserNameCommandData } from './commands/update-user-name/update-user-name.command'
+export { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
+export type { SetUserActiveCommandData } from './commands/set-user-active/set-user-active.command'
+export { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
+export type { SetUserDeletionArchiveCommandData } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
+export { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
+export type { SoftDeleteUserCommandData } from './commands/soft-delete-user/soft-delete-user.command'
+export { GetUserByIdQuery } from './queries/get-user-by-id/get-user-by-id.query'
+export type { GetUserByIdQueryData } from './queries/get-user-by-id/get-user-by-id.query'
+export { GetUserByEmailQuery } from './queries/get-user-by-email/get-user-by-email.query'
+export type { GetUserByEmailQueryData } from './queries/get-user-by-email/get-user-by-email.query'
+export { SearchUsersQuery } from './queries/search-users/search-users.query'
+export type { SearchUsersQueryData } from './queries/search-users/search-users.query'
+export { GetUserDeletionArchiveQuery } from './queries/get-user-deletion-archive/get-user-deletion-archive.query'
+export type { GetUserDeletionArchiveQueryData } from './queries/get-user-deletion-archive/get-user-deletion-archive.query'
+
+// 3. Type re-exports
+export type { CreateUserCommandResult } from './commands/create-user/create-user.types'
+export { CreateUserCommandErrorCode } from './commands/create-user/create-user.types'
+export type { MarkUserEmailConfirmedCommandResult } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.types'
+export { MarkUserEmailConfirmedCommandErrorCode } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.types'
+export type { ChangeUserEmailCommandResult } from './commands/change-user-email/change-user-email.types'
+export { ChangeUserEmailCommandErrorCode } from './commands/change-user-email/change-user-email.types'
+export type { UpdateUserNameCommandResult } from './commands/update-user-name/update-user-name.types'
+export { UpdateUserNameCommandErrorCode } from './commands/update-user-name/update-user-name.types'
+export type { SetUserActiveCommandResult } from './commands/set-user-active/set-user-active.types'
+export { SetUserActiveCommandErrorCode } from './commands/set-user-active/set-user-active.types'
+export type { SetUserDeletionArchiveCommandResult } from './commands/set-user-deletion-archive/set-user-deletion-archive.types'
+export { SetUserDeletionArchiveCommandErrorCode } from './commands/set-user-deletion-archive/set-user-deletion-archive.types'
+export type { SoftDeleteUserCommandResult } from './commands/soft-delete-user/soft-delete-user.types'
+export { SoftDeleteUserCommandErrorCode } from './commands/soft-delete-user/soft-delete-user.types'
+export type { GetUserByIdQueryResult } from './queries/get-user-by-id/get-user-by-id.types'
+export { GetUserByIdQueryErrorCode } from './queries/get-user-by-id/get-user-by-id.types'
+export type { GetUserByEmailQueryResult } from './queries/get-user-by-email/get-user-by-email.types'
+export { GetUserByEmailQueryErrorCode } from './queries/get-user-by-email/get-user-by-email.types'
+export type { SearchUsersQueryResult } from './queries/search-users/search-users.types'
+export type { GetUserDeletionArchiveQueryResult } from './queries/get-user-deletion-archive/get-user-deletion-archive.types'
+export { GetUserDeletionArchiveQueryErrorCode } from './queries/get-user-deletion-archive/get-user-deletion-archive.types'
+export type { UserDTO, UserSearchSortBy, SortOrder } from './shared/user.dto'
+export { DELETION_ARCHIVE_KEY } from './shared/user.dto'
+
+// 4. Union type
+import type { CreateUserCommand } from './commands/create-user/create-user.command'
+import type { MarkUserEmailConfirmedCommand } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.command'
+import type { ChangeUserEmailCommand } from './commands/change-user-email/change-user-email.command'
+import type { UpdateUserNameCommand } from './commands/update-user-name/update-user-name.command'
+import type { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
+import type { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
+import type { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
+import type { GetUserByIdQuery } from './queries/get-user-by-id/get-user-by-id.query'
+import type { GetUserByEmailQuery } from './queries/get-user-by-email/get-user-by-email.query'
+import type { SearchUsersQuery } from './queries/search-users/search-users.query'
+import type { GetUserDeletionArchiveQuery } from './queries/get-user-deletion-archive/get-user-deletion-archive.query'
+
+export type UsersManagerRequests =
+  | CreateUserCommand
+  | MarkUserEmailConfirmedCommand
+  | ChangeUserEmailCommand
+  | UpdateUserNameCommand
+  | SetUserActiveCommand
+  | SetUserDeletionArchiveCommand
+  | SoftDeleteUserCommand
+  | GetUserByIdQuery
+  | GetUserByEmailQuery
+  | SearchUsersQuery
+  | GetUserDeletionArchiveQuery
+
+// 5. Facade
+export class UsersManager implements IUsersManager {
+  async execute<T extends UsersManagerRequests>(
+    request: T,
+  ): Promise<T extends RequestData<infer R> ? R : never> {
+    return (await (mediatr.send as (r: UsersManagerRequests) => Promise<unknown>)(
+      request,
+    )) as T extends RequestData<infer R> ? R : never
+  }
+}
+
+export interface IUsersManager {
+  execute<T extends UsersManagerRequests>(request: T): Promise<T extends RequestData<infer R> ? R : never>
+}
+
+export const usersManager: IUsersManager = new UsersManager()

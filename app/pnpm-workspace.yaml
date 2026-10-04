@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - services/*
+  - packages/*
+  - dev/agent-mock
+  - e2e
+
+# Build scripts are allowed by name: pnpm does not run them by default.
+allowBuilds:
+  esbuild: true
+  core-js: false
+  unrs-resolver: true

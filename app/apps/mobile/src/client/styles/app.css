@@ -1,0 +1,2271 @@
+/*
+ * Ryadom screens. Colors and fonts come from the tokens in tokens.css. Classes prefixed rd- are
+ * ours, everything else is Framework7.
+ *
+ * The theme is dark: minimal, large type, and the breathing animation as a visual anchor
+ *. No gamification and no bright panels: the product is opened when things are hard.
+ */
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ryadom-paper);
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * Framework7's own `.dark body, body.dark { background: #000 }` (F7App sets darkMode: true, so
+ * .dark is always present) beats the flat rule above by specificity, not just source order. Same
+ * selector, same specificity, later in the cascade: this wins. It only shows while no page is
+ * up (the boot splash, a page transition).
+ */
+body.dark,
+.dark body {
+  background: var(--ryadom-paper);
+}
+
+/*
+ * The atmosphere is part of every screen, not a backdrop around it: the stars and the teal/indigo
+ * bloom behind the content. The page itself does not scroll, only .page-content inside it does, so
+ * the sky stays put while the content moves over it.
+ */
+.page {
+  background-color: var(--ryadom-paper);
+  background-image: var(--ryadom-atmosphere);
+}
+
+::selection {
+  background: rgba(var(--ryadom-brand-rgb), 0.3);
+}
+
+/*
+ * Framework7 sets `button { appearance: none; width: 100% }` document-wide: its own buttons are
+ * links, and it treats a bare `button` as a full-width form button.
+ *
+ * `:where()` keeps this reset at element specificity, so it beats framework7 by source order but
+ * loses to any class of ours that sets its own width. An enumerated reset such as
+ * `button.rd-icon-button` would instead override `.rd-icon-button { width: 44px }` and turn the
+ * round buttons into ovals.
+ */
+button:where(:not(.button)) {
+  width: auto;
+}
+
+.rd-boot {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ryadom-paper);
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+
+.rd-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--ryadom-text);
+}
+
+.rd-title--lg {
+  font-size: 32px;
+}
+
+.rd-muted {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-muted b {
+  color: var(--ryadom-text);
+}
+
+.rd-caption {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ryadom-text-faint);
+  /* No single word left alone on the last line. */
+  text-wrap: pretty;
+}
+
+.rd-center {
+  text-align: center;
+}
+
+.rd-fineprint {
+  margin: 16px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--ryadom-text-faint);
+  text-wrap: balance;
+}
+
+.rd-inline-link {
+  color: var(--ryadom-brand-400);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Framework7 in dark mode ─────────────────────────────────────────────── */
+
+.list.inset.list-strong > ul {
+  box-shadow: var(--ryadom-highlight), inset 0 0 0 1px var(--ryadom-line);
+}
+
+/* Glass blurs what is behind it: without this the stars show through as sharp dots under the text. */
+.list.inset.list-strong > ul,
+.rd-card,
+.rd-note {
+  -webkit-backdrop-filter: var(--ryadom-blur);
+  backdrop-filter: var(--ryadom-blur);
+}
+
+/* Glass bars over the atmosphere: the colour is translucent (tokens.css), the blur is here. */
+.navbar .navbar-bg {
+  -webkit-backdrop-filter: var(--ryadom-blur);
+  backdrop-filter: var(--ryadom-blur);
+}
+
+.dialog {
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-l);
+  box-shadow: var(--ryadom-highlight), var(--ryadom-shadow-2);
+}
+
+/* The alert's own scale is a stock one: a light 24px title over 14px text in a 280px card. */
+.dialog .dialog-text {
+  font-size: 15px;
+}
+
+.dialog .dialog-button:not(.button-fill) {
+  --f7-button-text-color: var(--ryadom-brand-400);
+}
+
+/* An alert with a single button gets the same lit pill as the main action elsewhere. */
+.dialog .dialog-buttons {
+  padding: 0 16px 16px;
+}
+
+.dialog .dialog-button:only-child {
+  flex: 1 1 100%;
+  width: 100%;
+  height: 48px;
+  border-radius: var(--ryadom-r-pill);
+  background-image: var(--ryadom-cta);
+  box-shadow: var(--ryadom-cta-glow), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  color: var(--ryadom-cta-ink);
+  font-weight: 600;
+}
+
+.dialog-backdrop,
+.sheet-backdrop,
+.actions-backdrop,
+.popup-backdrop {
+  background: rgba(3, 6, 20, 0.72);
+}
+
+/* Chrome autofill paints the field light, so put the dark background back */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--ryadom-text);
+  caret-color: var(--ryadom-text);
+  box-shadow: 0 0 0 1000px var(--ryadom-paper) inset;
+  transition: background-color 9999s ease 0s;
+}
+
+/* The main action is a clear blue with a lit top edge and its own glow on the dark. */
+.button.button-fill.button-large {
+  background-image: var(--ryadom-cta);
+  box-shadow: var(--ryadom-cta-glow), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.button.rd-button-danger.button-fill {
+  background-image: none;
+}
+
+.button.rd-button-danger {
+  --f7-button-fill-bg-color: var(--ryadom-danger-600);
+  --f7-button-fill-text-color: #fff;
+  box-shadow: none;
+}
+
+/* ── Mark and splash ─────────────────────────────────────────────────────── */
+
+.rd-logo-button {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* ── Sign-in and registration ────────────────────────────────────────────── */
+
+.rd-page-auth .navbar {
+  --f7-navbar-bg-color: transparent;
+}
+
+.rd-auth-head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 24px 4px;
+  text-align: center;
+}
+
+/* No single word left alone on the last line of the intro. */
+.rd-auth-head .rd-muted {
+  text-wrap: balance;
+}
+
+.rd-auth-head--top {
+  /* The sign-in screen has no navbar, and the WebView extends under the status bar. */
+  padding-top: calc(48px + var(--f7-safe-area-top, 0px));
+}
+
+/* The sphere from the home screen, small and still: a lit presence above the sign-in form. */
+.rd-auth-orb {
+  position: relative;
+  width: 104px;
+  aspect-ratio: 1;
+  /* The ring sits 10px outside the sphere; the rest keeps it clear of the mark below. */
+  margin-bottom: 14px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 36% 30%,
+    rgba(255, 238, 220, 0.95) 0,
+    rgba(var(--ryadom-peach-rgb), 0.75) 20%,
+    rgba(var(--ryadom-violet-rgb), 0.62) 56%,
+    rgba(var(--ryadom-indigo-rgb), 0.34) 80%,
+    transparent 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 50px rgba(var(--ryadom-violet-rgb), 0.5),
+    0 0 110px rgba(var(--ryadom-teal-rgb), 0.3);
+  animation: rd-auth-orb 8s ease-in-out infinite;
+}
+
+.rd-auth-orb::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--ryadom-brand-rgb), 0.45);
+}
+
+@keyframes rd-auth-orb {
+  0%,
+  100% {
+    transform: scale(0.94);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rd-auth-orb {
+    animation: none;
+  }
+}
+
+/* The form must stay on screen: with little height to spare the sphere gives way. */
+@media (max-height: 740px), (min-width: 700px) and (max-height: 900px) {
+  .rd-auth-orb {
+    display: none;
+  }
+}
+
+.rd-form {
+  margin: 16px 0 0;
+}
+
+.rd-form .item-content {
+  padding-left: 16px;
+}
+
+/*
+ * The floating label cuts a gap in the field's outline. Framework7 does it with a flat box in the
+ * page colour, which over the lighter bloom at the top of a screen shows as a dark patch around the
+ * text. Only the outline line itself is covered here; a label that rests inside the field needs
+ * no cover at all.
+ */
+.rd-form .item-input-outline .item-label,
+.rd-form .item-input-outline .item-floating-label {
+  background: transparent !important;
+}
+
+.rd-form .item-input-outline.item-input-focused .item-floating-label,
+.rd-form .item-input-outline.item-input-with-value .item-floating-label {
+  background: linear-gradient(
+    to bottom,
+    transparent calc(50% - 2px),
+    var(--ryadom-paper) calc(50% - 2px),
+    var(--ryadom-paper) calc(50% + 2px),
+    transparent calc(50% + 2px)
+  ) !important;
+}
+
+.rd-form .item-inner {
+  padding-right: 16px;
+}
+
+/*
+ * The hint under a field hangs below its outline. Inside the outline the field grew taller than its
+ * neighbours and the reveal button drifted off the line of text.
+ */
+.rd-form .item-input-with-info {
+  /* Framework7 adds 24px under the field for the hint; the hint now hangs outside the box. */
+  padding-bottom: 8px !important;
+}
+
+.rd-form .item-input-with-info .item-input-info {
+  position: absolute;
+  top: calc(100% + 21px);
+  right: 0;
+  left: 0;
+  margin: 0;
+}
+
+.rd-form li:has(.item-input-with-info) {
+  margin-bottom: 22px;
+}
+
+.rd-submit-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+}
+
+.rd-form-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.rd-form-error {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ryadom-danger);
+}
+
+.rd-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.rd-links .link {
+  display: inline;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+}
+
+.rd-consents {
+  margin: 12px 0 0;
+}
+
+.rd-consents .item-title,
+.rd-wrap .item-title {
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.rd-consents .item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-wrap .item-title {
+  font-size: 15px;
+  font-weight: 500;
+  /* A long row title splits evenly instead of leaving "данных" alone on the second line. */
+  text-wrap: balance;
+}
+
+/* border-box: with content-box the 44px of room for the toggle came on top of the width and pushed the
+   field 12px past the right edge, which showed up as a horizontal scrollbar on the sign-in screen. */
+.rd-password .item-input-wrap {
+  box-sizing: border-box;
+  padding-right: 44px;
+}
+
+.rd-password-toggle {
+  position: absolute;
+  /* The field is 56px high inside an 8px margin: 16px centres the 40px button on it, and 8px from the
+     right puts it on the same axis as the clear button of the fields above. */
+  top: 16px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ryadom-text-faint);
+  cursor: pointer;
+}
+
+/* ── Code input ──────────────────────────────────────────────────────────── */
+
+.rd-code {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 4px;
+  /* The same gutter as the Block with the buttons below, so the field and the buttons share an edge. */
+  padding: 0 var(--ryadom-s-4);
+}
+
+.rd-code input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 0;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface);
+  font-family: inherit;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 12px;
+  text-align: center;
+  text-indent: 12px;
+  color: var(--ryadom-text);
+}
+
+.rd-code input:focus {
+  border-color: var(--ryadom-brand-400);
+  outline: none;
+}
+
+.rd-done {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  padding: 28px 24px;
+  text-align: center;
+}
+
+.rd-done .button {
+  align-self: stretch;
+}
+
+.rd-done-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 4px;
+  border: 1px solid var(--ryadom-brand-100);
+  border-radius: 50%;
+  background: var(--ryadom-brand-50);
+  color: var(--ryadom-brand-400);
+}
+
+/* ── Breathing circle ────────────────────────────────────────────────────── */
+
+.rd-breathing {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* A soft glow under the ring: that is what creates the sense of breathing. */
+.rd-breathing::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(var(--ryadom-violet-rgb), 0.34),
+    rgba(var(--ryadom-indigo-rgb), 0.2) 40%,
+    rgba(var(--ryadom-teal-rgb), 0.12) 62%,
+    transparent 74%
+  );
+  animation: rd-breathe 8s ease-in-out infinite;
+}
+
+/* The lit core: a peach-to-violet sphere rather than an empty ring. It breathes with the rest,
+   slightly out of phase, so the light seems to swell inside the ring. */
+.rd-breathing-core {
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 36% 30%,
+    rgba(255, 238, 220, 0.95) 0,
+    rgba(var(--ryadom-peach-rgb), 0.75) 20%,
+    rgba(var(--ryadom-violet-rgb), 0.62) 56%,
+    rgba(var(--ryadom-indigo-rgb), 0.34) 80%,
+    transparent 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 60px rgba(var(--ryadom-violet-rgb), 0.5),
+    0 0 130px rgba(var(--ryadom-teal-rgb), 0.28);
+  animation: rd-breathe 8s ease-in-out -0.4s infinite;
+}
+
+/* The ring itself: this is what the person follows, so its edge is crisp. */
+.rd-breathing::after {
+  content: '';
+  position: absolute;
+  inset: 14%;
+  border-radius: 50%;
+  border: 1.5px solid rgba(var(--ryadom-brand-rgb), 0.5);
+  animation: rd-breathe 8s ease-in-out infinite;
+}
+
+.rd-breathing-label {
+  position: relative;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ryadom-text-faint);
+}
+
+@keyframes rd-breathe {
+  0%,
+  100% {
+    transform: scale(0.82);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+/* Honor the system reduced-motion setting: the animation is calming here, but it bothers some
+   people, and then the circle simply stands still. */
+@media (prefers-reduced-motion: reduce) {
+  .rd-breathing::before,
+  .rd-breathing::after,
+  .rd-breathing-core {
+    animation: none;
+    transform: scale(0.96);
+  }
+}
+
+/* ── Voice orb ───────────────────────────────────────────────────────────── */
+
+/*
+ * The conversation sphere reuses the breathing circle and recolours it by state. Registered colour
+ * properties are what make the change a slow dissolve instead of a jump: a gradient cannot be
+ * transitioned, but the colours it is made of can.
+ */
+@property --orb-hi {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(255 238 220);
+}
+@property --orb-warm {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(232 169 114);
+}
+@property --orb-mid {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(150 100 235);
+}
+@property --orb-deep {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(73 61 209);
+}
+@property --orb-halo {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(34 150 168);
+}
+@property --orb-ring {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 122 255);
+}
+
+.rd-orb {
+  width: var(--orb-size, min(96vw, 48vh, 420px));
+  aspect-ratio: 1;
+  /* Long and symmetric: a change of state is a slow dissolve of the tone, never a switch. */
+  transition:
+    --orb-hi 1.8s ease-in-out,
+    --orb-warm 1.8s ease-in-out,
+    --orb-mid 1.8s ease-in-out,
+    --orb-deep 1.8s ease-in-out,
+    --orb-halo 1.8s ease-in-out,
+    --orb-ring 1.8s ease-in-out,
+    opacity 1.2s ease-in-out;
+}
+
+/*
+ * All the motion comes from one loop (client-core's orb-motion), which writes four unitless numbers on
+ * the swell every frame: --orb-level (how loud), --orb-breath and --orb-breath-lag (where the halo and
+ * the core are in their breath, 0..1) and --orb-turn (degrees of the lit edge). This is how far each
+ * of them moves the sphere. The keyframes of the plain breathing circle are switched off here on
+ * purpose: a keyframe animation whose duration follows the state jumps to a new phase when the state
+ * changes. Without the loop (reduced motion, the first paint) the fallbacks leave the sphere still, in
+ * the middle of a breath.
+ */
+.rd-orb-swell {
+  width: 100%;
+  height: 100%;
+  scale: calc(1 + var(--orb-level, 0) * 0.1);
+  rotate: calc(var(--orb-turn, 0) * 1deg);
+  will-change: transform;
+}
+
+.rd-orb .rd-breathing {
+  width: 100%;
+  height: 100%;
+}
+
+.rd-orb .rd-breathing::before,
+.rd-orb .rd-breathing::after,
+.rd-orb .rd-breathing-core {
+  --pulse: var(--orb-breath, 0.5);
+  animation: none;
+  /* The reduced-motion rule of the plain circle sets a transform; the scale below replaces it. */
+  transform: none;
+  scale: calc(0.86 + var(--pulse) * 0.19);
+  opacity: calc(0.6 + var(--pulse) * 0.4);
+  will-change: transform, opacity;
+}
+
+.rd-orb .rd-breathing-core {
+  --pulse: var(--orb-breath-lag, 0.5);
+}
+
+@supports (color: color-mix(in srgb, red, blue)) {
+  .rd-orb .rd-breathing::before {
+    background: radial-gradient(
+      circle at 50% 50%,
+      color-mix(in srgb, var(--orb-mid) 34%, transparent),
+      color-mix(in srgb, var(--orb-deep) 20%, transparent) 40%,
+      color-mix(in srgb, var(--orb-halo) 12%, transparent) 62%,
+      transparent 74%
+    );
+  }
+
+  .rd-orb .rd-breathing-core {
+    background: radial-gradient(
+      circle at 36% 30%,
+      color-mix(in srgb, var(--orb-hi) 95%, transparent) 0,
+      color-mix(in srgb, var(--orb-warm) 75%, transparent) 20%,
+      color-mix(in srgb, var(--orb-mid) 62%, transparent) 56%,
+      color-mix(in srgb, var(--orb-deep) 34%, transparent) 80%,
+      transparent 100%
+    );
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+      0 0 60px color-mix(in srgb, var(--orb-mid) 50%, transparent),
+      0 0 130px color-mix(in srgb, var(--orb-halo) 28%, transparent);
+  }
+
+  .rd-orb .rd-breathing::after {
+    border-color: color-mix(in srgb, var(--orb-ring) 50%, transparent);
+  }
+}
+
+/* Waiting for the connection: a little dimmer (the breath is slowest here, see the motion loop). */
+.rd-orb[data-orb='connecting'] {
+  opacity: 0.55;
+}
+
+/* Listening: the action blue of the app. */
+.rd-orb[data-orb='listening'] {
+  --orb-hi: rgb(225 240 255);
+  --orb-warm: rgb(77 163 255);
+  --orb-mid: rgb(0 122 255);
+  --orb-deep: rgb(73 61 209);
+  --orb-halo: rgb(34 150 168);
+  --orb-ring: rgb(77 163 255);
+}
+
+/* Thinking: violet; the loop turns the sphere so the lit edge travels around it. */
+.rd-orb[data-orb='thinking'] {
+  --orb-hi: rgb(240 230 255);
+  --orb-warm: rgb(180 140 255);
+  --orb-mid: rgb(150 100 235);
+  --orb-deep: rgb(73 61 209);
+  --orb-halo: rgb(150 100 235);
+  --orb-ring: rgb(180 140 255);
+}
+
+/* Speaking: the warm peach of the sphere. */
+.rd-orb[data-orb='speaking'] {
+  --orb-hi: rgb(255 244 232);
+  --orb-warm: rgb(247 190 130);
+  --orb-mid: rgb(205 120 200);
+  --orb-deep: rgb(110 70 220);
+  --orb-halo: rgb(232 169 114);
+  --orb-ring: rgb(247 190 130);
+}
+
+/* ── Home ────────────────────────────────────────────────────────────────── */
+
+.rd-home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ryadom-s-5);
+  padding: var(--ryadom-s-7) var(--ryadom-s-5) var(--ryadom-s-3);
+  text-align: center;
+}
+
+.rd-home-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ryadom-s-4);
+  width: 100%;
+}
+
+.rd-home-greeting {
+  margin: 0;
+  font-size: var(--ryadom-t-2xl);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: var(--ryadom-tracking-tight);
+  color: var(--ryadom-text);
+}
+
+.rd-home-lead {
+  max-width: 30ch;
+}
+
+.rd-talk {
+  width: 100%;
+  max-width: 360px;
+  margin-top: var(--ryadom-s-2);
+}
+
+/* Same width as the rows above, so the note reads as the last item of the column. */
+.rd-home-people {
+  width: 100%;
+  max-width: 440px;
+  margin-top: var(--ryadom-s-2);
+  text-align: left;
+}
+
+.rd-home-people .rd-note {
+  margin: 0;
+}
+
+/* The modes are a list of lit rows: an icon tile, a title with a line of explanation, and either a
+   chevron or the "скоро" mark. */
+.rd-modes {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 440px;
+  margin: 4px 0 0;
+}
+
+.rd-mode {
+  --tint: var(--ryadom-teal-rgb);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 16px 8px 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  box-shadow: var(--ryadom-highlight);
+  -webkit-backdrop-filter: var(--ryadom-blur);
+  backdrop-filter: var(--ryadom-blur);
+  font: inherit;
+  text-align: left;
+  color: var(--ryadom-text);
+  cursor: pointer;
+}
+
+.rd-mode:nth-child(3n + 2) {
+  --tint: var(--ryadom-indigo-rgb);
+}
+
+.rd-mode:nth-child(3n) {
+  --tint: var(--ryadom-violet-rgb);
+}
+
+.rd-mode:first-child {
+  --tint: var(--ryadom-brand-rgb);
+}
+
+.rd-mode--active {
+  border-color: var(--ryadom-brand-100);
+  background: linear-gradient(135deg, rgba(var(--ryadom-brand-rgb), 0.18), var(--ryadom-surface-glass));
+}
+
+/* Not dimmed with opacity: the "скоро" label is information, so the text keeps its readable tone. */
+.rd-mode:disabled {
+  cursor: default;
+}
+
+.rd-mode-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(var(--tint), 0.55), rgba(var(--tint), 0.18));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  color: var(--ryadom-text);
+}
+
+.rd-mode-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rd-mode-label {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.rd-mode-hint {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ryadom-text-faint);
+  /* A hint that wraps splits evenly instead of leaving one word ("себя", "чём") on the second line. */
+  text-wrap: balance;
+}
+
+.rd-mode > .icon {
+  flex-shrink: 0;
+  color: var(--ryadom-text-faint);
+}
+
+.rd-mode-soon {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-pill);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ryadom-text-dim);
+}
+
+/* ── Dialog ──────────────────────────────────────────────────────────────── */
+
+/*
+ * The input field is pinned to the bottom and only the message feed scrolls. Otherwise the input
+ * drifts away with the conversation, and the longer the conversation the further away it gets.
+ */
+.rd-dialog-page .page-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rd-dialog-page .messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 12px;
+  padding-inline: 16px;
+}
+
+.rd-entry .messages {
+  padding-inline: 16px;
+}
+
+.rd-dialog-page .rd-dialog-bar,
+.rd-dialog-page .rd-dialog-end,
+.rd-dialog-page .rd-dialog-status {
+  flex: 0 0 auto;
+}
+
+.rd-dialog-end {
+  /* Last element on the screen, so it carries the home-indicator inset. */
+  padding: 0 var(--ryadom-s-4) calc(var(--ryadom-s-3) + var(--f7-safe-area-bottom, 0px));
+  text-align: center;
+}
+
+/*
+ * Messages are drawn as in the web app: the person's own lines in a soft bubble on the right, the
+ * companion's words as plain text beside a small sphere. Framework7 draws two coloured bubbles
+ * 70% wide with 2px between them and corner rules per position in a group, which reads as a form,
+ * not a conversation. The prefix outweighs its per-theme selectors.
+ */
+:is(.md, .ios) .messages .message.message {
+  max-width: 100%;
+  margin: 0;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+:is(.md, .ios) .messages .message.message + .message {
+  margin-top: 18px;
+}
+
+:is(.md, .ios) .messages .message.message:last-child {
+  margin-bottom: 16px;
+}
+
+:is(.md, .ios) .messages .message-content {
+  min-width: 0;
+  margin: 0;
+}
+
+:is(.md, .ios) .messages .message .message-bubble.message-bubble {
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  /* The person's own line breaks and the agent's paragraphs must survive. */
+  white-space: pre-wrap;
+  -webkit-mask-box-image: none;
+}
+
+/* No single word left alone on the last line of a bubble. */
+.messages .message-text {
+  text-wrap: pretty;
+  line-height: inherit;
+  text-align: left;
+}
+
+/* Framework7 pushes a sent message to the right edge itself (align-self); only the width is ours. */
+:is(.md, .ios) .messages .message.message-sent {
+  max-width: 85%;
+}
+
+:is(.md, .ios) .messages .message.message-sent .message-bubble.message-bubble {
+  padding: 10px 16px;
+  color: var(--ryadom-text);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px var(--ryadom-line);
+  border-radius: 22px 22px 8px 22px;
+}
+
+:is(.md, .ios) .messages .message-received .message-content {
+  flex: 1 1 auto;
+}
+
+:is(.md, .ios) .messages .message.message-received .message-bubble.message-bubble {
+  padding: 4px 0 0;
+  color: var(--ryadom-text);
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The small sphere of the companion, the same lit ball as everywhere else. */
+.messages .message.message-received::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 28px;
+  aspect-ratio: 1;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 36% 30%,
+    rgba(255, 238, 220, 0.95) 0,
+    rgba(var(--ryadom-peach-rgb), 0.75) 20%,
+    rgba(var(--ryadom-violet-rgb), 0.62) 56%,
+    rgba(var(--ryadom-indigo-rgb), 0.34) 80%,
+    transparent 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 14px rgba(var(--ryadom-violet-rgb), 0.45);
+}
+
+.rd-typing::after {
+  content: '▋';
+  margin-left: 2px;
+  animation: rd-blink 1s step-start infinite;
+  color: var(--ryadom-brand-400);
+}
+
+@keyframes rd-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.rd-dialog-status {
+  padding: 8px 16px;
+  font-size: 13px;
+  text-align: center;
+  /* This carries the reconnect/failure messages, i.e. the only explanation the person gets when
+     the conversation stops answering — it needs the readable tone, not the faintest one. */
+  color: var(--ryadom-text-dim);
+}
+
+.rd-dialog-bar {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  align-items: flex-end;
+  /* 16px: the same edge as the message bubbles above (8px of feed padding + 8px of bubble margin). */
+  margin: 0 var(--ryadom-s-4) var(--ryadom-s-2);
+  padding: 6px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-pill);
+  background: var(--ryadom-surface-2-glass);
+  -webkit-backdrop-filter: var(--ryadom-blur);
+  backdrop-filter: var(--ryadom-blur);
+  box-shadow: var(--ryadom-highlight), var(--ryadom-shadow-1);
+}
+
+/* The pill is the field's boundary, so its edge is what lights up on focus. */
+.rd-dialog-bar:focus-within {
+  border-color: var(--ryadom-brand-400);
+}
+
+.rd-dialog-bar textarea {
+  flex: 1;
+  max-height: 120px;
+  min-height: 44px;
+  padding: 11px 8px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--ryadom-t-md);
+  line-height: 1.4;
+  color: var(--ryadom-text);
+  resize: none;
+}
+
+.rd-dialog-bar textarea:focus {
+  outline: none;
+}
+
+/*
+ * Framework7 only styles ::placeholder inside .list, .searchbar, .messagebar and .dialog-input;
+ * this textarea is a bare element in our own composer, so the palette's placeholder colour never
+ * reaches it and the browser's own grey (~3:1) shows through instead. Same for .rd-code input
+ * below, the other bare input with a placeholder.
+ */
+.rd-dialog-bar textarea::placeholder,
+.rd-code input::placeholder {
+  color: var(--ryadom-text-dim);
+  opacity: 1;
+}
+
+.rd-icon-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: 50%;
+  background: var(--ryadom-surface-2);
+  color: var(--ryadom-text);
+  cursor: pointer;
+}
+
+.rd-icon-button--primary {
+  border-color: transparent;
+  background: var(--ryadom-cta);
+  box-shadow: var(--ryadom-cta-glow);
+  color: var(--ryadom-cta-ink);
+}
+
+.rd-icon-button--recording {
+  border-color: transparent;
+  background: var(--ryadom-sos);
+  color: #fff;
+}
+
+/* Back to the voice: the sphere itself is the button, in the corner where voice assistants keep it. */
+.rd-icon-button--voice {
+  border-color: transparent;
+  color: #fff;
+  background: radial-gradient(
+    circle at 36% 30%,
+    rgba(255, 238, 220, 0.95) 0,
+    rgba(var(--ryadom-peach-rgb), 0.85) 18%,
+    rgba(var(--ryadom-violet-rgb), 0.9) 58%,
+    rgba(var(--ryadom-indigo-rgb), 0.8) 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 0 18px rgba(var(--ryadom-violet-rgb), 0.5);
+}
+
+.rd-icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ── Voice screen ────────────────────────────────────────────────────────── */
+
+.rd-voice {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  padding: 0 var(--ryadom-s-5);
+}
+
+/* The sphere takes whatever height is left and sits in the middle of it. */
+.rd-voice-stage {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The person's words while they speak, then the agent's reply. A long reply scrolls in place
+   rather than pushing the sphere off the screen; the whole feed is in the text mode. */
+.rd-voice-caption {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: var(--rd-dialog-col-w, 520px);
+  max-height: 6.75em;
+  overflow-y: auto;
+  font-size: 19px;
+  line-height: 1.5;
+  text-align: center;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  color: var(--ryadom-text);
+}
+
+.rd-voice-caption:empty {
+  display: none;
+}
+
+.rd-voice-hint {
+  flex: 0 0 auto;
+  min-height: 1.5em;
+  margin: 8px 0 0;
+  font-size: 14px;
+  text-align: center;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-voice-controls {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 28px;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 0 calc(16px + var(--f7-safe-area-bottom, 0px));
+}
+
+.rd-voice-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  width: 76px;
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-voice-side:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rd-voice-side-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: 50%;
+  background: var(--ryadom-surface-2);
+  color: var(--ryadom-text);
+}
+
+.rd-voice-mic {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 76px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ryadom-cta);
+  box-shadow: var(--ryadom-cta-glow);
+  color: var(--ryadom-cta-ink);
+  cursor: pointer;
+}
+
+.rd-voice-mic--on {
+  background: var(--ryadom-sos);
+  box-shadow: 0 10px 30px -8px rgba(255, 106, 111, 0.65);
+  color: #fff;
+}
+
+/* ── SOS ─────────────────────────────────────────────────────────────────── */
+
+/* SOS in the conversation navbar. Framework7's right slot sits almost flush with the screen
+   edge, which is too tight for the one control a person reaches for in a hurry.
+   Scoped through .navbar on purpose: framework7 colours everything in the bar with its own link
+   colour through a stronger selector, and SOS must stay the one red thing on the screen. */
+.navbar .rd-navbar-sos {
+  margin-right: 8px;
+  padding: 0 4px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ryadom-sos);
+}
+
+.rd-sos-button {
+  position: absolute;
+  top: calc(var(--f7-safe-area-top, 0px) + 8px);
+  right: 16px;
+  z-index: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--ryadom-danger-100);
+  border-radius: 999px;
+  /* Content scrolls under this pill: a tint over a dark glass keeps it from showing through as text. */
+  background:
+    linear-gradient(var(--ryadom-danger-50), var(--ryadom-danger-50)),
+    rgba(var(--ryadom-paper-rgb), 0.6);
+  -webkit-backdrop-filter: var(--ryadom-blur);
+  backdrop-filter: var(--ryadom-blur);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ryadom-sos);
+  cursor: pointer;
+}
+
+/*
+ * `.rd-offline` only exists in the DOM while OfflineBar is actually showing one (it renders null
+ * otherwise), so this is a reliable global signal. Without it the bar painted over the button's
+ * top ~24 of 34px, leaving a sliver a thumb could not reliably hit — on the one screen (Home)
+ * where SOS is the only safety control visible.
+ */
+.framework7-root:has(.rd-offline) .rd-sos-button {
+  top: calc(var(--f7-safe-area-top, 0px) + 46px);
+}
+
+.sheet-modal {
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--ryadom-highlight), 0 -12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.rd-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+  padding: var(--ryadom-s-6) var(--ryadom-s-5) calc(var(--ryadom-s-5) + var(--f7-safe-area-bottom, 0px));
+}
+
+/* A grab handle: the sheet swipes down to close, and this says so. */
+.rd-sheet-body::before {
+  content: '';
+  align-self: center;
+  width: 40px;
+  height: 4px;
+  margin: -12px 0 4px;
+  border-radius: 2px;
+  background: var(--ryadom-line-strong);
+}
+
+.rd-takeaway {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--ryadom-s-3);
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface);
+  font: inherit;
+  font-size: var(--ryadom-t-md);
+  color: var(--ryadom-text);
+  resize: none;
+}
+
+.rd-takeaway:focus {
+  border-color: var(--ryadom-brand-400);
+  outline: none;
+}
+
+.rd-sheet-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-hotline {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ryadom-s-4);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  box-shadow: var(--ryadom-highlight);
+  color: var(--ryadom-text);
+  text-decoration: none;
+}
+
+.rd-hotlines {
+  display: grid;
+  gap: 10px;
+}
+
+/* On the narrowest phones the name and the number do not fit side by side: the name broke into four
+   lines next to the number, so the number moves under it. */
+@media (max-width: 380px) {
+  .rd-hotline {
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+  }
+}
+
+.rd-hotline-name {
+  font-size: 15px;
+  font-weight: 600;
+  /* A name that wraps splits evenly instead of leaving one word on the second line. */
+  text-wrap: balance;
+}
+
+.rd-hotline-phone {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ryadom-sos);
+}
+
+/* ── Journal and cards ───────────────────────────────────────────────────── */
+
+.rd-card {
+  margin: var(--ryadom-s-3) var(--ryadom-s-4);
+  padding: var(--ryadom-s-5);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-l);
+  background: var(--ryadom-surface-glass);
+  box-shadow: var(--ryadom-highlight);
+}
+
+.rd-note {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: flex-start;
+  margin: var(--ryadom-s-3) var(--ryadom-s-4);
+  padding: var(--ryadom-s-4) var(--ryadom-s-5);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-l);
+  background: var(--ryadom-surface-glass);
+  box-shadow: var(--ryadom-highlight);
+}
+
+.rd-note--danger {
+  border-color: var(--ryadom-danger-100);
+  background: var(--ryadom-danger-50);
+}
+
+.rd-note--danger .rd-note-icon,
+.rd-note--danger .rd-note-title {
+  color: var(--ryadom-danger);
+}
+
+.rd-note--accent {
+  border-color: var(--ryadom-brand-100);
+  background: var(--ryadom-brand-50);
+}
+
+.rd-note--accent .rd-note-icon {
+  color: var(--ryadom-brand-400);
+}
+
+.rd-note-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* The icon sits in a tile like the rows above it. The tile is a wrapper because the Icon component
+   sets its own inline size, which a width on the icon itself could not override. */
+.rd-note-tile {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(var(--ryadom-sage-rgb), 0.5), rgba(var(--ryadom-sage-rgb), 0.16));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  color: var(--ryadom-text);
+}
+
+.rd-note-tile .rd-note-icon {
+  margin: 0;
+}
+
+.rd-note-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.rd-note-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-note-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ryadom-text-dim);
+  overflow-wrap: anywhere;
+}
+
+.rd-journal-item .item-title {
+  font-weight: 600;
+  /* A title is what tells entries apart: it takes two lines before an ellipsis cuts it. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  text-wrap: balance;
+}
+
+/*
+ * On a phone the "7 → 4" mark moves down to the line of the date, so the title keeps the whole row:
+ * next to the mark most titles were cut after two words.
+ */
+@media (max-width: 1023px) {
+  .rd-journal-item .item-title-row {
+    padding-right: 0;
+  }
+
+  .rd-journal-item .item-title-row .item-after {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    height: 21px;
+    margin: 0;
+  }
+}
+
+.rd-tension {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--ryadom-sage-50);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ryadom-sage);
+}
+
+.rd-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+  padding: var(--ryadom-s-8) 28px;
+  text-align: center;
+  color: var(--ryadom-text-dim);
+}
+
+/* A button of its own size, not a bar across the pane. */
+.rd-empty .rd-empty-action {
+  display: inline-flex;
+  width: auto;
+  min-width: 180px;
+  margin-top: var(--ryadom-s-2);
+  padding: 0 28px;
+}
+
+.rd-scale {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin: 8px 0;
+}
+
+/* The ten steps share the row, so on a phone and in a wide sheet alike none of them is a small target. */
+.rd-scale button {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 48px;
+  height: 40px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: 10px;
+  background: var(--ryadom-surface-2);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-scale button[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--ryadom-brand);
+  color: var(--ryadom-cta-ink);
+  font-weight: 700;
+}
+
+/* ── Profile ─────────────────────────────────────────────────────────────── */
+
+.rd-profile-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-1);
+  margin: var(--ryadom-s-3) var(--ryadom-s-4) var(--ryadom-s-1);
+  padding: var(--ryadom-s-5);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-l);
+  background: var(--ryadom-surface-glass);
+  box-shadow: var(--ryadom-highlight);
+}
+
+/* alignSelf, not width: auto — .rd-profile-head is a column flex container with the default
+   align-items: stretch, and a flex item stretches precisely when its cross size is auto, so
+   width: auto gave the full-width button it was meant to prevent (design review). */
+.rd-profile-edit {
+  align-self: flex-start;
+  margin-top: 10px;
+}
+
+.rd-profile-name {
+  margin: 0;
+  font-size: var(--ryadom-t-xl);
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-profile-email {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  overflow-wrap: anywhere;
+}
+
+.rd-menu .item-media .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--ryadom-surface-2);
+  font-size: 18px;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-danger .item-title {
+  color: var(--ryadom-danger);
+}
+
+.rd-menu .rd-danger .item-media .icon {
+  background: var(--ryadom-danger-50);
+  color: var(--ryadom-danger);
+}
+
+/* ── System: network, updates, install ───────────────────────────────────── */
+
+.rd-blocking {
+  position: fixed;
+  inset: 0;
+  z-index: 13000;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 28px;
+  background: var(--ryadom-paper);
+  text-align: center;
+}
+
+.rd-blocking-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-self: stretch;
+  margin-top: 8px;
+}
+
+.rd-banner {
+  position: fixed;
+  /*
+   * Almost every screen has a 64px navbar (only Home and the sign-in screen do not), and this
+   * banner used to sit at safe+8px regardless — squarely on top of the navbar's back link,
+   * title and SOS button, with no way to move it: the `web-update` and `pending` variants have
+   * no dismiss control (see the close button below). Reserving the navbar's height everywhere
+   * leaves a harmless gap under the status bar on the two navbar-less screens, which is a much
+   * smaller problem than covering the one safety control on every other screen.
+   */
+  top: calc(var(--f7-safe-area-top, 0px) + var(--f7-navbar-height, 64px) + 8px);
+  left: 8px;
+  right: 8px;
+  z-index: 12000;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 8px 10px 14px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-3);
+  color: var(--ryadom-text);
+  box-shadow: var(--ryadom-shadow-2);
+}
+
+/* The bottom variant does not sit under a navbar, so it does not need the reservation above. */
+.rd-banner--bottom {
+  top: auto;
+  bottom: calc(12px + var(--f7-safe-area-bottom, 0px));
+}
+
+.framework7-root:has(#rd-tabbar) .rd-banner--bottom {
+  bottom: calc(88px + var(--f7-safe-area-bottom, 0px));
+}
+
+/*
+ * `.rd-banner--bottom` only exists in the DOM while InstallBanner actually renders one (it
+ * returns null otherwise), so this is a reliable global signal without knowing which page is
+ * showing. Screens with no tabbar (register, confirm-email, reset-password) gave the banner no
+ * reserved space at all, so on a short viewport the last button or line of fine print ended up
+ * under it with no way to scroll clear.
+ */
+.framework7-root:has(.rd-banner--bottom):not(:has(#rd-tabbar)) .page-content {
+  --f7-page-content-extra-padding-bottom: 76px;
+}
+
+.rd-banner .icon {
+  flex: none;
+  color: var(--ryadom-brand-400);
+}
+
+.rd-banner-text {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rd-banner-action,
+.rd-banner-close {
+  flex: none;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
+.rd-banner-close {
+  color: var(--ryadom-text-faint);
+}
+
+.rd-offline {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 11000;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--f7-safe-area-top, 0px) + 6px) 12px 6px;
+  border-bottom: 1px solid var(--ryadom-brand-100);
+  background: var(--ryadom-surface-3);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ryadom-text);
+  /*
+   * A status notice, nothing inside is interactive. On a navbar page this bar visually covers
+   * the navbar's top half (back link, title); it must not also swallow taps meant for whatever
+   * is under it, on top of the SOS-button offset above.
+   */
+  pointer-events: none;
+}
+
+.rd-offline .icon {
+  color: var(--ryadom-brand-400);
+}
+
+/* ── Bottom tabs ─────────────────────────────────────────────────────────── */
+
+.toolbar.tabbar#rd-tabbar {
+  --f7-toolbar-height: 68px;
+  --f7-toolbar-link-height: 100%;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + var(--f7-safe-area-bottom, 0px));
+  width: auto;
+  height: 68px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: 30px;
+  background: var(--ryadom-glass);
+  -webkit-backdrop-filter: var(--ryadom-blur);
+  backdrop-filter: var(--ryadom-blur);
+  box-shadow: var(--ryadom-highlight), var(--ryadom-shadow-2);
+}
+
+#rd-tabbar::before {
+  display: none;
+}
+
+#rd-tabbar .toolbar-inner {
+  top: 0;
+  bottom: 0;
+  height: auto;
+  padding: 0 6px;
+}
+
+/*
+ * Content scrolls under the floating tab bar. At rest the first screen would show a row cut in
+ * half by the bar, so the page fades into its own colour right above the bar instead, and the end
+ * of a long page gets room to stop above the fade. Not a mask on .page-content: a mask makes it
+ * the backdrop root of the glass cards inside, which would then stop blurring the stars of the
+ * page behind them.
+ */
+@media (max-width: 699px) {
+  .views.tabs .page:not(.rd-no-tabbar)::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 2;
+    /* The bar's top edge is 80px above the bottom (68px bar + 12px gap). The fade is solid a few pixels
+       above that edge, so nothing behind the bar shows its outline, and it starts about 50px above the bar. */
+    height: calc(136px + var(--f7-safe-area-bottom, 0px));
+    background: linear-gradient(
+      to bottom,
+      rgba(var(--ryadom-paper-rgb), 0),
+      rgba(var(--ryadom-paper-rgb), 0.5) 26px,
+      rgba(var(--ryadom-paper-rgb), 0.98) 46px,
+      var(--ryadom-paper) 52px
+    );
+    pointer-events: none;
+  }
+
+  .views.tabs .page:not(.rd-no-tabbar) > .page-content {
+    padding-bottom: calc(var(--f7-page-toolbar-bottom-offset, 0px) + 44px);
+  }
+}
+
+/* The conversation screen uses the bottom for its input field, so it needs no tabs. */
+.views:has(> .view.tab-active > .page-current.rd-no-tabbar) > .toolbar.tabbar {
+  display: none;
+}
+
+/*
+ * Hiding the tab bar is not enough: framework7 reserves its height on .page-content through a
+ * variable it sets from JS, and that reservation stays. Zero it here, or the composer floats
+ * above an empty strip at the bottom of the screen.
+ */
+.page.rd-no-tabbar {
+  --f7-page-toolbar-bottom-offset: 0px;
+}
+
+/* ── Desktop: hover and keyboard focus ──────────────────────────────────── */
+
+/*
+ * Nothing in this file had a :hover rule: every affordance was built touch-only. `brightness()`
+ * lightens whatever background a control already has instead of picking a color per component,
+ * so one rule covers buttons, chips and links without guessing at each one's own palette.
+ * Scoped to (hover: hover) so touch devices — where a lingering hover state reads as a stuck
+ * press — are untouched.
+ */
+@media (hover: hover) and (pointer: fine) {
+  :where(
+      .button,
+      .list a.item-link,
+      #rd-tabbar a,
+      .rd-icon-button,
+      .rd-mode,
+      .rd-scale button,
+      .rd-hotline,
+      .rd-journal-item,
+      .rd-banner-action,
+      .rd-banner-close,
+      .rd-rail-sos,
+      .rd-inline-link,
+      .rd-links .link
+    ):not(:disabled):hover {
+    filter: brightness(1.12);
+  }
+}
+
+/*
+ * :focus-visible only, not :focus: a mouse click already shows a pressed/active state, and
+ * Framework7 has its own ripple for touch — a ring on every click would be noise. Keyboard
+ * tabbing is the one path that showed no position at all before this.
+ */
+:where(a, button, .button, input, textarea):focus-visible {
+  outline: none;
+  box-shadow: var(--ryadom-focus);
+}
+
+/*
+ * During a conversation there is no bottom banner: it covers the input field, and this is the one
+ * screen where installing the app is certainly not on the person's mind. The top banner stays,
+ * since it announces updates. Where `:has` is unsupported the banner simply remains, as before.
+ */
+.framework7-root:has(.page-current.rd-dialog-page) .rd-banner--bottom {
+  display: none;
+}
+
+/* A button inside a card sizes to its content, not to the full width of the card. */
+.rd-note-body .button {
+  display: inline-flex;
+  width: auto;
+  margin-top: 10px;
+}
+
+/* ── Rail extras, journal panes, journal entry ───────────────────────────── */
+
+/* Only the rail carries these; on a phone the tab bar is a pill with the three tabs alone. */
+.rd-rail-brand,
+.rd-rail-sos {
+  display: none;
+}
+
+.rd-entry-head {
+  padding: var(--ryadom-s-6) var(--ryadom-s-4) 0;
+}
+
+.rd-entry-title {
+  margin: 0 0 var(--ryadom-s-1);
+  font-size: var(--ryadom-t-xl);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ryadom-text);
+}
+
+.rd-entry-tension {
+  margin-top: var(--ryadom-s-2);
+}
+
+.rd-split-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--ryadom-s-6);
+  text-align: center;
+}
+
+/* The round icon above the message of an empty list or an empty pane. */
+.rd-empty-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: 50%;
+  background: var(--ryadom-surface-glass);
+  box-shadow: var(--ryadom-highlight);
+  color: var(--ryadom-text-faint);
+}
+
+/* ── Wide screen (tablet, desktop browser) ───────────────────────────────── */
+/*
+   The phone layout does not change: everything below is under @media, and the few elements that
+   exist only on a wide screen are drawn by JS on the same breakpoints (lib/viewport.ts: DESKTOP
+   700, WIDE 1024).
+
+   One geometry for every section, the way Telegram Desktop does it:
+   - the tabs are a rail on the left, with the mark on top and SOS at the bottom;
+   - DESKTOP (700–1023): one column of one width (--rd-col-w) in every section, so the content does
+     not jump sideways when switching tabs; backgrounds and bars still run the full width;
+   - WIDE (1024+): the journal is a list and an entry side by side, home is two columns;
+   - sheets, toasts and banners are one width, centered.
+   The root is never narrowed: Framework7 measures the app by it, and a narrowed root is the
+   phone-in-a-void layout this replaced.
+*/
+
+@media (min-width: 700px) {
+  /* ── The rail: the signed-in tabs (SignedInViews, F7App.tsx) ── */
+
+  .toolbar.tabbar#rd-tabbar {
+    top: var(--rd-rail-gap);
+    right: auto;
+    bottom: var(--rd-rail-gap);
+    left: var(--rd-rail-gap);
+    display: flex;
+    flex-direction: column;
+    width: var(--rd-rail-w);
+    height: auto;
+    padding: 14px 0 12px;
+  }
+
+  #rd-tabbar .toolbar-inner {
+    position: static;
+    flex: 1;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 6px;
+    height: auto;
+    padding: 18px 0 0;
+  }
+
+  #rd-tabbar .tab-link {
+    flex: none;
+    width: 100%;
+    height: auto;
+    padding: 8px 0;
+  }
+
+  .rd-rail-brand {
+    display: flex;
+    justify-content: center;
+    margin: 0 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--ryadom-line);
+  }
+
+  .rd-rail-sos {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: center;
+    margin: 0 12px;
+    padding: 10px 0 8px;
+    border: 1px solid var(--ryadom-danger-100);
+    border-radius: var(--ryadom-r-m);
+    background: var(--ryadom-danger-50);
+    font: inherit;
+    font-size: var(--ryadom-t-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--ryadom-sos);
+    cursor: pointer;
+  }
+
+  /* One SOS on a wide screen, the rail's: it is there on every signed-in screen, including the
+     ones that had none (profile, people, a journal entry). */
+  .rd-sos-button,
+  .navbar .rd-navbar-sos {
+    display: none;
+  }
+
+  /* On a phone the conversation hides the tabs for its input field. The rail on the side is not
+     in its way, so navigation stays. */
+  .views:has(> .view.tab-active > .page-current.rd-no-tabbar) > .toolbar.tabbar {
+    display: flex;
+  }
+
+  /* Signed-in screens sit to the right of the rail, their navbars and fields included. */
+  .views.tabs > .view {
+    width: auto;
+    margin-left: var(--rd-rail-space);
+  }
+
+  /* Framework7 reserves the bottom tab bar's height on its siblings; a rail on the side needs none. */
+  #rd-tabbar ~ * {
+    --f7-page-toolbar-bottom-offset: 0px;
+  }
+
+  /* ── The column ── */
+
+  /* The padding goes on the inner elements, so the page, the navbar and the atmosphere keep the
+     full width and only the content forms a centered column. `100%` resolves on each element that
+     uses it, against its own box. */
+  .page {
+    --rd-col: var(--rd-col-w);
+    --rd-pad-l: max(16px, (100% - var(--rd-col)) / 2);
+    --rd-pad-r: max(16px, (100% - var(--rd-col)) / 2);
+  }
+
+  .page > .page-content,
+  .page > .navbar > .navbar-inner {
+    padding-left: var(--rd-pad-l);
+    padding-right: var(--rd-pad-r);
+  }
+
+  /* Narrower columns for forms and one-off screens, not for sections. */
+  .rd-page-auth {
+    --rd-col: 440px;
+  }
+
+  .page[data-name='change-password'],
+  .page[data-name='delete-account'] {
+    --rd-col: 480px;
+  }
+
+  /* A lone button does not run the whole width of a 600px column. */
+  .rd-signout {
+    max-width: 360px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  /* The same for the buttons inside a sheet: a 520px-wide "Close" is a bar, not a button. */
+  .sheet-modal .rd-sheet-body .button {
+    width: 100%;
+    max-width: 400px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .rd-dialog-page {
+    --rd-col: var(--rd-dialog-col-w);
+  }
+
+  /* Sign-in and registration: in the middle of the screen, vertically too. */
+  .rd-page-auth > .page-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: safe center;
+  }
+
+  .rd-auth-head--top {
+    padding-top: 8px;
+  }
+
+  /* Framework7 puts PasswordInput's <li> outside the <ul>, and a browser draws a list marker for
+     such an item — on a wide screen a dot to the left of the field. */
+  .list > li {
+    list-style: none;
+  }
+
+  /* ── Sheets, toasts, banners: one width, centered ── */
+
+  /* Not through transform: Framework7 animates the sheet's slide with it. */
+  .sheet-modal {
+    left: calc(50% - min(var(--rd-modal-w), 100% - 32px) / 2);
+    width: min(var(--rd-modal-w), calc(100% - 32px));
+  }
+
+  /* On a wide screen Framework7 puts an md toast in the bottom-left corner, where the rail is. */
+  html.md .toast,
+  html.md .toast.toast-horizontal-left,
+  html.md .toast.toast-horizontal-right,
+  html.md .toast.toast-horizontal-center {
+    right: auto;
+    left: calc(50% - min(220px, (100% - 32px) / 2));
+    width: min(440px, calc(100% - 32px));
+    margin-left: 0;
+  }
+
+  .rd-banner {
+    right: auto;
+    left: calc(50% - min(260px, (100% - 32px) / 2));
+    width: min(520px, calc(100% - 32px));
+  }
+
+  /* No tab pill at the bottom any more, so the install banner drops to the edge. */
+  .framework7-root:has(#rd-tabbar) .rd-banner--bottom {
+    bottom: 24px;
+  }
+
+  .framework7-root:has(#rd-tabbar) .rd-offline {
+    left: var(--rd-rail-space);
+  }
+}
+
+@media (min-width: 1024px) {
+  /* ── Home: the circle and the actions side by side ── */
+
+  .page[data-name='home'] {
+    --rd-col: var(--rd-wide-col-w);
+  }
+
+  .page[data-name='home'] > .page-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: safe center;
+  }
+
+  .rd-home {
+    flex-direction: row;
+    justify-content: center;
+    gap: 56px;
+    padding: var(--ryadom-s-8) var(--ryadom-s-4) var(--ryadom-s-6);
+    text-align: left;
+  }
+
+  .rd-home-main {
+    align-items: flex-start;
+    max-width: 440px;
+  }
+
+  .rd-home-greeting {
+    font-size: var(--ryadom-t-3xl);
+  }
+
+  /* ── Profile: the sections in two columns ── */
+
+  .page[data-name='profile'] {
+    --rd-col: var(--rd-wide-col-w);
+  }
+
+  .rd-profile-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+
+  /* Grid cells do not collapse margins the way stacked blocks do: without this the list's bottom
+     margin and the next title's top margin add up to twice the gap between sections. */
+  .rd-profile-group > .list {
+    margin-bottom: 0;
+  }
+
+  /* Starts level with the lists of the row (title margin + title + gap), not with their titles. */
+  .rd-profile-actions {
+    padding-top: 32px;
+  }
+
+  .rd-signout {
+    max-width: none;
+  }
+
+  /* ── Journal: the list and an entry side by side ── */
+
+  /* The panes split the width right of the rail themselves, without the column's side padding,
+     and run the full height; each scrolls on its own. */
+  .rd-journal-page > .page-content {
+    overflow: hidden;
+    padding-right: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+  }
+
+  .rd-journal-page > .navbar > .navbar-inner {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .rd-split {
+    display: flex;
+    height: 100%;
+  }
+
+  .rd-split-side {
+    flex: none;
+    width: var(--rd-side-w);
+    height: 100%;
+    overflow-y: auto;
+    border-right: 1px solid var(--ryadom-line);
+  }
+
+  .rd-split-main {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    overflow-y: auto;
+  }
+
+  .rd-split-main .rd-entry {
+    max-width: var(--rd-dialog-col-w);
+    margin: 0 auto;
+    padding-bottom: var(--ryadom-s-6);
+  }
+
+  .rd-journal-item--open .item-content {
+    background: var(--ryadom-brand-50);
+  }
+}
+
+/* ── Mouse: thin scrollbars (a computer, even in a narrow window) ────────── */
+
+/* The system grey scrollbars on Windows cut across the dark theme. A phone's overlay scrollbars
+   are not affected; `*` has no weight, so a scrollbar hidden by its own class stays hidden. */
+@media (hover: hover) and (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  }
+}
+
+/* An address in running text: wrap it as one piece instead of breaking at a hyphen. */
+/* The full stop after an address stays glued to it instead of starting the next line, and a short
+   closing sentence moves to the next line whole instead of splitting after its first word. */
+.rd-nowrap {
+  white-space: nowrap;
+}
+
+.rd-email {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* The address and the full stop after it are one unit; a unit wider than the line breaks inside the
+   address instead of running into the screen edge. */
+.rd-email-end {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
