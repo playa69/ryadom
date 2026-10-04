@@ -108,6 +108,12 @@ const appShape = {
   REDIS_MASTER_NAME: optionalString,
   REDIS_PASSWORD: optionalString,
   /**
+   * The hourly job that erases anonymous accounts nobody has opened for `ANONYMOUS_RETENTION_DAYS`
+   * (contracts). On by default, because the app promises it; this is the switch to stop it, for
+   * instance while the agent is being migrated and could not confirm its erasures.
+   */
+  ANONYMOUS_PURGE_DISABLED: booleanFlag,
+  /**
    * Native version gate: store links plus the min/latest build per platform. There is
    * no bucket manifest any more - the JS/OTA axis is baked into the image (`lib/ota-bundle.ts`) and
    * ships with every deploy, while this native axis changes only on a store release (rare, and

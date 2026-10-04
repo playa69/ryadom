@@ -11,6 +11,8 @@ export interface UserDTO {
   isEmailConfirmed: boolean
   isDeleted: boolean
   deletedAt: Date | null
+  /** The last sign-in, session refresh or conversation; what the retention of anonymous accounts counts from. */
+  lastActiveAt: Date
   createdAt: Date
   updatedAt: Date
 }
@@ -30,6 +32,7 @@ export function toUserDTO(row: UserRow): UserDTO {
     isEmailConfirmed: row.isEmailConfirmed,
     isDeleted: row.isDeleted,
     deletedAt: row.deletedAt,
+    lastActiveAt: row.lastActiveAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }

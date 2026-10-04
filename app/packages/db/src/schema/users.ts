@@ -18,10 +18,19 @@ export const users = pgTable(
     properties: jsonb('properties').$type<Record<string, unknown>>(),
     isDeleted: boolean('is_deleted').notNull().default(false),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    /**
+     * The last time the person was seen: a sign-in, a session refresh or a conversation. An anonymous
+     * account that nobody has opened for long enough is erased.
+     */
+    lastActiveAt: timestamp('last_active_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('users_created_at_idx').on(t.createdAt), index('users_is_deleted_idx').on(t.isDeleted)],
+  (t) => [
+    index('users_created_at_idx').on(t.createdAt),
+    index('users_is_deleted_idx').on(t.isDeleted),
+    index('users_last_active_at_idx').on(t.lastActiveAt),
+  ],
 )
 
 export type UserRow = typeof users.$inferSelect

@@ -29,4 +29,5 @@ export {
   codeInputSchema,
   deviceIdInputSchema,
   deviceKeyInputSchema,
+  consentVersionInputSchema,
 } from './input-schemas'

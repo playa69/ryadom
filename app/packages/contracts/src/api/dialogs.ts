@@ -29,6 +29,8 @@ export enum StartDialogApiErrorCode {
   USER_NOT_FOUND = 'USER_NOT_FOUND',
   /** The account is blocked. */
   USER_INACTIVE = 'USER_INACTIVE',
+  /** The person has not agreed to the terms yet: the app shows its first screen. */
+  CONSENT_REQUIRED = 'CONSENT_REQUIRED',
 }
 
 export interface StartDialogApiRequest {

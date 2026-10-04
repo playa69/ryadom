@@ -19,6 +19,7 @@ import {
   type UserDeviceDTO,
 } from '../../../managers/user-devices-manager'
 import { HashTokenRequest, tokenService, VerifyTokenRequest } from '../../../services/token-service'
+import { recordActivity } from '../shared/record-activity'
 import { DeviceLoginOperation } from './device-login.operation'
 import { DeviceLoginOperationErrorCode, type DeviceLoginResult } from './device-login.types'
 import { deviceLoginSchema } from './device-login.validator'
@@ -86,10 +87,18 @@ export class DeviceLoginOperationHandler implements RequestHandler<DeviceLoginOp
     const user = userResult.user
     // Deleting an account forgets its devices, so this is only a guard against stale data.
     if (user.isDeleted) return { success: false, error: DeviceLoginOperationErrorCode.DEVICE_KEY_INVALID }
+    // Confirming an address forgets the account's devices, so this is only a guard against stale
+    // data. It matters: an account with a password must not be opened by a key that stays on a
+    // shared phone after the person has signed out.
+    if (user.isEmailConfirmed) {
+      logger.info('Device sign-in refused: the account has a confirmed address', { userId: user.id })
+      return { success: false, error: DeviceLoginOperationErrorCode.DEVICE_KEY_INVALID }
+    }
     if (!user.isActive) {
       logger.info('Device sign-in refused: user inactive', { userId: user.id })
       return { success: false, error: DeviceLoginOperationErrorCode.USER_INACTIVE }
     }
+    await recordActivity(user.id)
     logger.info('Device signed in', { userId: user.id })
     return { success: true, user, isNewAccount: false }
   }

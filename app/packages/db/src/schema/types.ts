@@ -42,3 +42,16 @@ export type AuditLogAction = (typeof AUDIT_LOG_ACTIONS)[number]
  */
 export const REFRESH_TOKEN_REVOKE_REASONS = ['rotated', 'signed_out', 'revoked'] as const
 export type RefreshTokenRevokeReason = (typeof REFRESH_TOKEN_REVOKE_REASONS)[number]
+
+/**
+ * What a person agreed to (`user_consents.kind`). All three are given on one screen, and a chat
+ * with the agent is closed until each has been recorded.
+ *
+ * - `age_confirmed`: the person is 18 or older;
+ * - `disclaimer`: the service is self-help, not therapy or medical care;
+ * - `offer`: the terms of use and the processing of personal data, in the version that was shown.
+ *
+ * These values are stored in the column, so they must not be changed.
+ */
+export const USER_CONSENT_KINDS = ['age_confirmed', 'disclaimer', 'offer'] as const
+export type UserConsentKind = (typeof USER_CONSENT_KINDS)[number]

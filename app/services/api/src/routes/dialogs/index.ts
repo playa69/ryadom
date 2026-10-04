@@ -64,6 +64,8 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter }: RouteDeps
           return apiRefused(c, StartDialogApiErrorCode.USER_NOT_FOUND, 'User not found')
         case StartDialogOperationErrorCode.USER_INACTIVE:
           return apiRefused(c, StartDialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
+        case StartDialogOperationErrorCode.CONSENT_REQUIRED:
+          return apiRefused(c, StartDialogApiErrorCode.CONSENT_REQUIRED, 'The terms have not been accepted')
         default:
           return assertNever(result.error)
       }

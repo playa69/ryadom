@@ -17,6 +17,7 @@ export enum ApiPath {
   Refresh = '/api/auth/refresh',
   Logout = '/api/auth/logout',
   Me = '/api/auth/me',
+  Consents = '/api/auth/me/consents',
   Password = '/api/auth/password',
   ForgotPassword = '/api/auth/forgot-password',
   ResetPassword = '/api/auth/reset-password',

@@ -6,6 +6,8 @@ import './commands/update-user-name/update-user-name.handler'
 import './commands/set-user-active/set-user-active.handler'
 import './commands/set-user-deletion-archive/set-user-deletion-archive.handler'
 import './commands/soft-delete-user/soft-delete-user.handler'
+import './commands/touch-user-activity/touch-user-activity.handler'
+import './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.handler'
 import './queries/get-user-by-id/get-user-by-id.handler'
 import './queries/get-user-by-email/get-user-by-email.handler'
 import './queries/search-users/search-users.handler'
@@ -29,6 +31,10 @@ export { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-arch
 export type { SetUserDeletionArchiveCommandData } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
 export { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
 export type { SoftDeleteUserCommandData } from './commands/soft-delete-user/soft-delete-user.command'
+export { TouchUserActivityCommand } from './commands/touch-user-activity/touch-user-activity.command'
+export type { TouchUserActivityCommandData } from './commands/touch-user-activity/touch-user-activity.command'
+export { ListInactiveAnonymousUsersQuery } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.query'
+export type { ListInactiveAnonymousUsersQueryData } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.query'
 export { GetUserByIdQuery } from './queries/get-user-by-id/get-user-by-id.query'
 export type { GetUserByIdQueryData } from './queries/get-user-by-id/get-user-by-id.query'
 export { GetUserByEmailQuery } from './queries/get-user-by-email/get-user-by-email.query'
@@ -53,6 +59,8 @@ export type { SetUserDeletionArchiveCommandResult } from './commands/set-user-de
 export { SetUserDeletionArchiveCommandErrorCode } from './commands/set-user-deletion-archive/set-user-deletion-archive.types'
 export type { SoftDeleteUserCommandResult } from './commands/soft-delete-user/soft-delete-user.types'
 export { SoftDeleteUserCommandErrorCode } from './commands/soft-delete-user/soft-delete-user.types'
+export type { TouchUserActivityCommandResult } from './commands/touch-user-activity/touch-user-activity.types'
+export type { ListInactiveAnonymousUsersQueryResult } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.types'
 export type { GetUserByIdQueryResult } from './queries/get-user-by-id/get-user-by-id.types'
 export { GetUserByIdQueryErrorCode } from './queries/get-user-by-id/get-user-by-id.types'
 export type { GetUserByEmailQueryResult } from './queries/get-user-by-email/get-user-by-email.types'
@@ -71,6 +79,8 @@ import type { UpdateUserNameCommand } from './commands/update-user-name/update-u
 import type { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
 import type { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
 import type { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
+import type { TouchUserActivityCommand } from './commands/touch-user-activity/touch-user-activity.command'
+import type { ListInactiveAnonymousUsersQuery } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.query'
 import type { GetUserByIdQuery } from './queries/get-user-by-id/get-user-by-id.query'
 import type { GetUserByEmailQuery } from './queries/get-user-by-email/get-user-by-email.query'
 import type { SearchUsersQuery } from './queries/search-users/search-users.query'
@@ -84,6 +94,8 @@ export type UsersManagerRequests =
   | SetUserActiveCommand
   | SetUserDeletionArchiveCommand
   | SoftDeleteUserCommand
+  | TouchUserActivityCommand
+  | ListInactiveAnonymousUsersQuery
   | GetUserByIdQuery
   | GetUserByEmailQuery
   | SearchUsersQuery

@@ -16,6 +16,10 @@ export interface MeApiResponse {
   isEmailConfirmed: boolean
   /** ISO 8601 registration date. */
   createdAt: string
+  /** The person has agreed to everything a conversation needs (`POST /api/auth/me/consents`). */
+  consentsCompleted: boolean
+  /** The newest version of the terms they accepted; null before the first acceptance. */
+  consentVersion: string | null
 }
 
 export interface UpdateMeApiRequest {

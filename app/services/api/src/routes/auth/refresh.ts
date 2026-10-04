@@ -1,4 +1,5 @@
 import { GetUserByIdQuery, GetUserByIdQueryErrorCode, usersManager } from '@ryadom/core/managers/users-manager'
+import { authenticationProcess, RecordActivityOperation } from '@ryadom/core/processes/authentication'
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
@@ -52,6 +53,9 @@ export function refreshRoutes(app: Hono<AppEnv>, { jwt, sessions }: RouteDeps): 
           return assertNever(rotated.reason)
       }
     }
+
+    // A session lives for weeks: this is what tells the server the person is still opening the app.
+    await authenticationProcess.execute(new RecordActivityOperation({ userId: payload.sub }))
 
     const response: RefreshApiResponse = rotated.tokens
     return apiOk(c, response)

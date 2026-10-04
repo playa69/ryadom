@@ -11,6 +11,7 @@ import {
   DeleteAccountOperation,
   DeleteAccountOperationErrorCode,
 } from '@ryadom/core/processes/account-deletion'
+import { consentsProcess, GetConsentStatusOperation } from '@ryadom/core/processes/consents'
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
@@ -40,7 +41,8 @@ async function readMe(userId: string): Promise<MeApiResponse | null> {
         return assertNever(found.error)
     }
   }
-  return toMe(found.user)
+  const { status } = await consentsProcess.execute(new GetConsentStatusOperation({ userId }))
+  return toMe(found.user, status)
 }
 
 export function meRoutes(app: Hono<AppEnv>, { jwt, logger }: RouteDeps): void {

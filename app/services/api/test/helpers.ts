@@ -8,6 +8,7 @@ import { createLogger, type Logger } from '../src/lib/logger'
 import { createRateLimiter } from '../src/lib/rate-limit'
 import { EMPTY_POLICY, type PolicySource, type ReleasePolicy } from '../src/lib/release-policy'
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
+import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 
 export const PASSWORD = 'correct-horse-battery'
 
@@ -146,13 +147,34 @@ export function mockAgent(overrides: Record<string, Route> = {}) {
   })
 }
 
-/** Register, confirm the email with the code and sign in, the way a person does it. */
-export async function signUpAndIn(app: Hono<AppEnv>, email = uniqueEmail()) {
+/** What the first screen of the app sends: all three agreements, in the version it showed. */
+export async function acceptConsents(app: Hono<AppEnv>, accessToken: string): Promise<void> {
+  ok(
+    await call(
+      app,
+      'POST',
+      '/api/auth/me/consents',
+      { ageConfirmed: true, disclaimerAccepted: true, offerAccepted: true, offerVersion: POLICY_VERSION },
+      accessToken,
+    ),
+  )
+}
+
+/**
+ * Register, confirm the email with the code and sign in, the way a person does it. The terms are
+ * accepted as well, as they are on the first screen: a conversation is closed to anyone who has not.
+ */
+export async function signUpAndIn(
+  app: Hono<AppEnv>,
+  email = uniqueEmail(),
+  options: { consents?: boolean } = {},
+) {
   ok(await call(app, 'POST', '/api/auth/register', { email, password: PASSWORD, name: 'Аня' }))
   ok(await call(app, 'POST', '/api/auth/confirm-email', { email, code: codeFor(email) }))
   const login = ok<{
     user: { id: string; email: string }
     tokens: { accessToken: string; refreshToken: string }
   }>(await call(app, 'POST', '/api/auth/login', { email, password: PASSWORD }))
+  if (options.consents !== false) await acceptConsents(app, login.tokens.accessToken)
   return login
 }

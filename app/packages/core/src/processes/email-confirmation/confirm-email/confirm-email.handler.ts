@@ -1,6 +1,6 @@
 import { requestHandler, type RequestHandler } from 'mediatr-ts'
 import assertNever from 'assert-never'
-import { createLogger, validateInput } from '../../../shared'
+import { createLogger, inTransaction, validateInput } from '../../../shared'
 import {
   emailCodesManager,
   VerifyEmailCodeCommand,
@@ -13,6 +13,7 @@ import {
   MarkUserEmailConfirmedCommandErrorCode,
   usersManager,
 } from '../../../managers/users-manager'
+import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
 import { HashTokenRequest, tokenService } from '../../../services/token-service'
 import { ConfirmEmailOperation } from './confirm-email.operation'
 import { ConfirmEmailOperationErrorCode, type ConfirmEmailResult } from './confirm-email.types'
@@ -60,16 +61,23 @@ export class ConfirmEmailOperationHandler implements RequestHandler<ConfirmEmail
       return { success: false, error: ConfirmEmailOperationErrorCode.EMAIL_ALREADY_CONFIRMED }
     }
 
-    const marked = await usersManager.execute(new MarkUserEmailConfirmedCommand({ userId: userResult.user.id }))
-    if (!marked.success) {
-      switch (marked.error) {
-        case MarkUserEmailConfirmedCommandErrorCode.USER_NOT_FOUND:
-          throw new Error('User disappeared between lookup and email confirmation')
-        default:
-          return assertNever(marked.error)
+    // With a confirmed address the account has a way in that needs no device: its password. The
+    // device keys are forgotten with it, otherwise signing out of a shared phone would not sign
+    // anyone out, since the key left on it would open the account again.
+    const userId = userResult.user.id
+    await inTransaction(async () => {
+      const marked = await usersManager.execute(new MarkUserEmailConfirmedCommand({ userId }))
+      if (!marked.success) {
+        switch (marked.error) {
+          case MarkUserEmailConfirmedCommandErrorCode.USER_NOT_FOUND:
+            throw new Error('User disappeared between lookup and email confirmation')
+          default:
+            return assertNever(marked.error)
+        }
       }
-    }
-    logger.info('Email confirmed', { userId: userResult.user.id })
+      await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
+    })
+    logger.info('Email confirmed', { userId })
     return { success: true }
   }
 }

@@ -22,6 +22,13 @@
       "when": 1791113016818,
       "tag": "0002_anonymous_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791127170525,
+      "tag": "0003_consents_and_activity",
+      "breakpoints": true
     }
   ]
 }

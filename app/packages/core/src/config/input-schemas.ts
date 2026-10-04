@@ -29,3 +29,8 @@ export const deviceIdInputSchema = z
 export const deviceKeyInputSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{32,128}$/, 'must be 32 to 128 URL-safe characters')
+
+/** The version of the terms a person was shown: the date they came into force, `2026-10-04`. */
+export const consentVersionInputSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date such as 2026-10-04')

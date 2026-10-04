@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { auditLog, emailCodes, userCredentials, users, type EmailCodePurpose } from '@ryadom/db/schema'
 import { getDb } from '../src/shared'
 import { authenticationProcess, LoginOperation, RegisterOperation } from '../src/processes/authentication'
+import { AcceptConsentsOperation, consentsProcess } from '../src/processes/consents'
 import { ConfirmEmailOperation, emailConfirmationProcess } from '../src/processes/email-confirmation'
 import { getSentEmails, type SentEmail } from '../src/services/email-sender-service'
 
@@ -40,10 +41,33 @@ export async function confirmEmailDirectly(userId: string): Promise<void> {
   await getDb().update(users).set({ isEmailConfirmed: true }).where(eq(users.id, userId))
 }
 
-/** A registered user with a confirmed address, so they can sign in. */
-export async function registerConfirmedUser(opts: { email?: string; password?: string; name?: string } = {}) {
+/** The version of the terms the tests accept: any date will do, the core only records it. */
+export const OFFER_VERSION = '2026-10-04'
+
+/** What the first screen of the app does: all three agreements at once. */
+export async function acceptConsents(userId: string, offerVersion = OFFER_VERSION): Promise<void> {
+  const result = await consentsProcess.execute(
+    new AcceptConsentsOperation({
+      userId,
+      ageConfirmed: true,
+      disclaimerAccepted: true,
+      offerAccepted: true,
+      offerVersion,
+    }),
+  )
+  if (!result.success) throw new Error(`accepting consents failed: ${result.error}`)
+}
+
+/**
+ * A registered user with a confirmed address, so they can sign in. They have also agreed to the
+ * terms, as everyone who got through the app has: a conversation is closed to anyone who has not.
+ */
+export async function registerConfirmedUser(
+  opts: { email?: string; password?: string; name?: string; consents?: boolean } = {},
+) {
   const user = await registerUser(opts)
   await confirmEmailDirectly(user.id)
+  if (opts.consents !== false) await acceptConsents(user.id)
   return user
 }
 

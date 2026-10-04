@@ -1,4 +1,5 @@
 import type { UserDTO } from '@ryadom/core/processes/authentication'
+import type { ConsentStatusDTO } from '@ryadom/core/processes/consents'
 import type { DialogDTO, DialogListItemDTO, DialogSummaryDTO } from '@ryadom/core/processes/dialogs'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
@@ -18,13 +19,15 @@ export function toAuthUser(user: UserDTO): AuthUserApiResponse {
   return { id: user.id, email: user.email, name: user.name }
 }
 
-export function toMe(user: UserDTO): MeApiResponse {
+export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     isEmailConfirmed: user.isEmailConfirmed,
     createdAt: user.createdAt.toISOString(),
+    consentsCompleted: consent.completed,
+    consentVersion: consent.offerVersion,
   }
 }
 

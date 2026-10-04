@@ -8,6 +8,7 @@ import {
   userCredentialsManager,
 } from '../../../managers/user-credentials-manager'
 import { passwordService, VerifyPasswordRequest } from '../../../services/password-service'
+import { recordActivity } from '../shared/record-activity'
 import { LoginOperation } from './login.operation'
 import { LoginOperationErrorCode, type LoginResult } from './login.types'
 import { loginSchema } from './login.validator'
@@ -68,6 +69,7 @@ export class LoginOperationHandler implements RequestHandler<LoginOperation, Log
       logger.info('Login refused: email not confirmed', { userId: user.id })
       return { success: false, error: LoginOperationErrorCode.EMAIL_NOT_CONFIRMED }
     }
+    await recordActivity(user.id)
     logger.info('User logged in', { userId: user.id })
     return { success: true, user }
   }

@@ -180,17 +180,23 @@ describe('привязка почты', () => {
     expect(signedInByEmail.success && signedInByEmail.user.id).toBe(user.id)
   })
 
-  it('после привязки устройство по-прежнему входит в тот же аккаунт', async () => {
+  it('пока почта не подтверждена, устройство входит в тот же аккаунт; после подтверждения вход только по почте', async () => {
     const device = newDevice()
     const { user } = await signedIn(device)
     const email = uniqueEmail()
     await link(user.id, email)
+
+    const pending = await signedIn(device)
+    expect(pending.user).toMatchObject({ id: user.id, email, isEmailConfirmed: false })
+    expect(pending.isNewAccount).toBe(false)
+
     await confirmWithCode(email)
-
-    const again = await signedIn(device)
-
-    expect(again.user).toMatchObject({ id: user.id, email, isEmailConfirmed: true })
-    expect(again.isNewAccount).toBe(false)
+    // With a password the account needs no device, and a key left on a shared phone must not open it.
+    const after = await signedIn(device)
+    expect(after.isNewAccount).toBe(true)
+    expect(after.user.id).not.toBe(user.id)
+    const byEmail = await login(email)
+    expect(byEmail.success && byEmail.user.id).toBe(user.id)
   })
 
   it('чужой адрес — EMAIL_TAKEN, подтверждённый или нет', async () => {

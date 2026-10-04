@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { createApp } from './app'
 import { closeAllDialogSessions, handleDialogSocket } from './dialogs/gateway'
+import { purgeInactiveAnonymous } from './lib/anonymous-retention'
 import { shutdownCore } from './lib/core'
 import { EnvValidationError, parseEnv } from './lib/env'
 import { createJwt } from './lib/jwt'
@@ -70,6 +71,18 @@ setInterval(() => {
     .purgeExpired()
     .catch((error: unknown) => logger.warn({ err: error }, 'Не удалось очистить реестр refresh-токенов'))
 }, 60 * 60_000).unref()
+
+// Anonymous accounts that nobody has opened for the retention period are erased, the agent's copy
+// included. The first pass comes shortly after start so that a pod that is restarted often still
+// gets to it; the switch is for stopping the job without a rebuild.
+if (!env.ANONYMOUS_PURGE_DISABLED) {
+  const purge = () =>
+    purgeInactiveAnonymous().catch((error: unknown) =>
+      logger.warn({ err: error }, 'Не удалось очистить неактивные анонимные аккаунты'),
+    )
+  setTimeout(() => void purge(), 2 * 60_000).unref()
+  setInterval(() => void purge(), 60 * 60_000).unref()
+}
 
 const server = serve({ fetch: app.fetch, port: env.PORT, createServer }, (info) => {
   logger.info({ port: info.port, appEnv: env.APP_ENV }, 'приложение слушает порт')
