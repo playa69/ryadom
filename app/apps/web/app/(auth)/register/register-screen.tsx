@@ -8,13 +8,13 @@ import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { nameProblem, passwordProblem } from '@ryadom/client-core/validation'
 import { useClient } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
-import { ConsentField, PasswordField, TextField } from '../_components/fields'
+import { ConsentGroup, NO_CONSENT, allConsented, firstMissingConsent } from '../_components/consent-group'
+import { PasswordField, TextField } from '../_components/fields'
 import {
   AuthActions,
   AuthForm,
   AuthHead,
   BackLink,
-  ExternalLink,
   FormError,
   SubmitButton,
   focusField,
@@ -44,7 +44,7 @@ export default function RegisterScreen() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [consent, setConsent] = useState(false)
+  const [consent, setConsent] = useState(NO_CONSENT)
   const [loading, setLoading] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
 
@@ -66,7 +66,9 @@ export default function RegisterScreen() {
     if (!password) return refuse('Введи почту и пароль', 'password')
     const passwordError = passwordProblem(password)
     if (passwordError) return refuse(passwordError, 'password')
-    if (!consent) return refuse('Без согласия на обработку данных аккаунт не создать', 'consent')
+    if (!allConsented(consent)) {
+      return refuse('Без всех трёх согласий аккаунт не создать', firstMissingConsent(consent))
+    }
 
     setProblem(null)
     setLoading(true)
@@ -76,7 +78,9 @@ export default function RegisterScreen() {
         refuse(codeText(REGISTER_ERRORS, result.code, REGISTER_FALLBACK), 'email')
         return
       }
-      flow.begin('confirm', result.data.email, password)
+      // The agreement is recorded once the code is entered and the session starts: only then is there
+      // an account to record it for.
+      flow.begin('confirm', result.data.email, password, true)
       router.push('/confirm-email')
     } catch (err) {
       setProblem({
@@ -146,19 +150,17 @@ export default function RegisterScreen() {
           }}
         />
 
-        {/* Consent is given explicitly: personal data processing and being 18+ (152-FZ). */}
-        <ConsentField
-          checked={consent}
-          invalid={problem?.field === 'consent'}
-          onChange={(value) => {
-            setConsent(value)
+        {/* Consent is given explicitly: being 18+, the disclaimer, personal data processing (152-FZ). */}
+        <ConsentGroup
+          value={consent}
+          invalid={problem?.field?.startsWith('consent') ?? false}
+          onChange={(next) => {
+            setConsent(next)
             setProblem(null)
           }}
-        >
-          Мне есть 18. Даю согласие на обработку персональных данных, с{' '}
-          <ExternalLink href={flow.privacyUrl}>политикой</ExternalLink> ознакомлен(а), с{' '}
-          <ExternalLink href={flow.termsUrl}>условиями</ExternalLink> согласен(на)
-        </ConsentField>
+          termsUrl={flow.termsUrl}
+          privacyUrl={flow.privacyUrl}
+        />
 
         <AuthActions>
           <FormError problem={problem} />

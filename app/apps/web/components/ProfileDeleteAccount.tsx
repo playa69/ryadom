@@ -94,8 +94,11 @@ export default function ProfileDeleteAccount() {
   }
 
   async function finish() {
+    // An account with no confirmed address was opened by this device alone: with it gone, the person
+    // is back at the start, not at a sign-in screen for an account they never had.
+    const backToStart = user?.email === null || user?.isEmailConfirmed === false
     await logout()
-    router.replace('/login')
+    router.replace(backToStart ? '/welcome' : '/login')
   }
 
   return (

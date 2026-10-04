@@ -50,7 +50,7 @@ function ConfirmForm({ email }: { email: string }) {
   const router = useRouter()
   const client = useClient()
   const { login } = useAuth()
-  const { takePassword, clear } = useAuthFlow()
+  const { takePassword, takeConsent, clear } = useAuthFlow()
   const notify = useNotice()
   const formRef = useRef<HTMLFormElement>(null)
   const [code, setCode] = useState('')
@@ -82,11 +82,13 @@ function ConfirmForm({ email }: { email: string }) {
         return
       }
       const password = takePassword()
+      const consented = takeConsent()
       clear()
       if (password) {
         try {
-          // On success the (auth) frame sees the session and moves on to /home.
-          await login(email, password)
+          // On success the (auth) frame sees the session and moves on to /home. The agreement given on
+          // the registration screen is recorded on the way: the account exists now.
+          await login(email, password, { consent: consented })
           return
         } catch {
           // The address is confirmed anyway; the sign-in screen is the way forward.

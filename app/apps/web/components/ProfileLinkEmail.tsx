@@ -3,6 +3,7 @@
 import { useId, useState, type FormEvent } from 'react'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import { LinkEmailApiErrorCode } from '@ryadom/contracts/api/auth/link-email'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { codeProblem, passwordProblem } from '@ryadom/client-core/validation'
 import { Field, FieldError } from '@ryadom/ui/components/field'
@@ -20,7 +21,7 @@ import { Busy, FIELD_FOCUS, ModalActions, ModalText, ProfileButton } from './Pro
 
 const LINK_ERRORS: Record<LinkEmailApiErrorCode, string> = {
   [LinkEmailApiErrorCode.EMAIL_TAKEN]:
-    'Эта почта уже занята другим аккаунтом. Укажи другую или войди в тот аккаунт',
+    'Эта почта уже занята другим аккаунтом. Укажи другую или войди в тот аккаунт: разговоры этого устройства в него не перенесутся',
   [LinkEmailApiErrorCode.ALREADY_HAS_EMAIL]: 'К аккаунту уже привязана почта',
   [LinkEmailApiErrorCode.DISPOSABLE_EMAIL]:
     'Одноразовые адреса не подходят: на них не прочитать код. Укажи свою почту',
@@ -38,11 +39,14 @@ export default function LinkEmailForm({
   pendingEmail,
   onDone,
   onCancel,
+  onSwitchAccount,
 }: {
   /** An address that was linked but not yet confirmed: the form opens at the code step. */
   pendingEmail: string | null
   onDone(): void
   onCancel(): void
+  /** The address belongs to an account the person already has: the way to sign in to it instead. */
+  onSwitchAccount(): void
 }) {
   const client = useClient()
   const { updateUser } = useAuth()
@@ -52,6 +56,7 @@ export default function LinkEmailForm({
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
+  const [taken, setTaken] = useState(false)
   const [busy, setBusy] = useState(false)
   const fieldId = useId()
   const errorId = `${fieldId}-error`
@@ -65,11 +70,13 @@ export default function LinkEmailForm({
     if (weak) return setError(weak)
 
     setError('')
+    setTaken(false)
     setBusy(true)
     try {
       const outcome = await client.linkEmail(address, password)
       if (!outcome.ok) {
         setError(codeText(LINK_ERRORS, outcome.code, 'Не получилось привязать почту'))
+        setTaken(outcome.code === LinkEmailApiErrorCode.EMAIL_TAKEN)
         return
       }
       setEmail(outcome.data.email)
@@ -103,6 +110,8 @@ export default function LinkEmailForm({
         return
       }
       updateUser({ isEmailConfirmed: true })
+      // The account has a password now, and the server forgets the device's key with the confirmation.
+      await client.forgetDevice()
       notify('Почта подтверждена: теперь в аккаунт можно войти с другого устройства', 'success')
       onDone()
     } catch (err) {
@@ -175,7 +184,8 @@ export default function LinkEmailForm({
   return (
     <form className="flex flex-col gap-4" noValidate onSubmit={(event) => void linkAddress(event)}>
       <ModalText>
-        Без почты аккаунт живёт только на этом устройстве. С почтой и паролем в него можно войти и с другого.
+        Без почты аккаунт живёт только на этом устройстве и удаляется через {ANONYMOUS_RETENTION_DAYS} дней
+        без визитов. С почтой и паролем разговоры не потеряются, и в аккаунт можно войти с другого устройства.
       </ModalText>
       <Field role={undefined}>
         <Label htmlFor={`${fieldId}-email`} className="leading-normal">
@@ -217,6 +227,7 @@ export default function LinkEmailForm({
           onChange={(event) => {
             setPassword(event.target.value)
             setError('')
+            setTaken(false)
           }}
         />
       </Field>
@@ -224,6 +235,16 @@ export default function LinkEmailForm({
         <FieldError id={errorId} className="text-center leading-[1.4]" data-testid="form-error">
           {error}
         </FieldError>
+      )}
+      {taken && (
+        <ProfileButton
+          type="button"
+          variant="outline"
+          data-testid="link-email-switch"
+          onClick={onSwitchAccount}
+        >
+          Войти в тот аккаунт
+        </ProfileButton>
       )}
       <ModalActions>
         <ProfileButton type="button" variant="outline" onClick={onCancel}>

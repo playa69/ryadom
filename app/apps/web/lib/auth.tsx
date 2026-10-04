@@ -12,11 +12,18 @@ import {
 } from 'react'
 import { RefreshApiErrorCode } from '@ryadom/contracts/api/auth/refresh'
 import type { AuthTokensApiResponse } from '@ryadom/contracts/api/auth/shared'
+import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import type { RyadomClient } from '@ryadom/client-core/client'
 import type { User } from '@ryadom/client-core/storage'
 import { createWebClient } from './client'
 
 export type AuthStatus = 'restoring' | 'anonymous' | 'authenticated'
+
+/** What a sign-in may record on the way: the agreements the person has just given on a screen. */
+export interface SessionOptions {
+  /** The person ticked everything on this screen: record it for the account the session is for. */
+  consent?: boolean
+}
 
 export interface AuthValue {
   status: AuthStatus
@@ -24,13 +31,24 @@ export interface AuthValue {
   /** Why the person was signed out against their will; the login screen shows it. */
   notice: string | null
   dismissNotice(): void
-  login(email: string, password: string): Promise<void>
-  /** Sign-in without an email: the first call on this device makes the account, later ones return it. */
-  continueAnonymously(): Promise<void>
+  login(email: string, password: string, options?: SessionOptions): Promise<void>
+  /**
+   * Sign-in without an email: the first call on this device makes the account, later ones return it.
+   * The first screen passes `consent`; a launch that finds the device already known does not.
+   */
+  startAnonymously(options?: SessionOptions): Promise<void>
+  /** Records the agreements for the signed-in account; false when the server did not take them. */
+  acceptConsents(): Promise<boolean>
   logout(): Promise<void>
+  /**
+   * Leaves an account that has no way back in other than this device, for the sign-in screen. The
+   * device is forgotten with it: otherwise the next launch would walk straight back into the
+   * account that was just left.
+   */
+  leaveAnonymousAccount(): Promise<void>
   updateUser(partial: Partial<User>): void
   /** For flows that obtain tokens themselves (e.g. right after confirming an email). */
-  completeSession(user: User, tokens: AuthTokensApiResponse): Promise<void>
+  completeSession(user: User, tokens: AuthTokensApiResponse, options?: SessionOptions): Promise<void>
 }
 
 const ClientContext = createContext<RyadomClient | null>(null)
@@ -86,30 +104,51 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
   }, [client])
 
   const completeSession = useCallback(
-    async (next: User, tokens: AuthTokensApiResponse) => {
+    async (next: User, tokens: AuthTokensApiResponse, options: SessionOptions = {}) => {
       await client.startSession(next, tokens)
+      let current = next
+      if (options.consent) {
+        // Before the app learns it is signed in, so that its gate does not ask for what is just being
+        // recorded. A failure is not fatal: the gate asks again, and the server refuses a conversation
+        // in the meantime.
+        const outcome = await client.acceptConsents().catch(() => null)
+        if (outcome?.ok) {
+          current = { ...next, consentVersion: POLICY_VERSION }
+          await client.saveUser(current)
+        }
+      }
       setNotice(null)
-      setUser(next)
+      setUser(current)
       setStatus('authenticated')
     },
     [client],
   )
 
   const login = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, options?: SessionOptions) => {
       const result = await client.login(email, password)
-      await completeSession(result.user, result.tokens)
+      await completeSession(result.user, result.tokens, options)
     },
     [client, completeSession],
   )
 
-  const continueAnonymously = useCallback(async () => {
-    const result = await client.deviceLogin()
-    await completeSession(result.user, result.tokens)
-  }, [client, completeSession])
+  const startAnonymously = useCallback(
+    async (options?: SessionOptions) => {
+      const result = await client.deviceLogin()
+      await completeSession(result.user, result.tokens, options)
+    },
+    [client, completeSession],
+  )
 
   const logout = useCallback(async () => {
     await client.signOut()
+    setUser(null)
+    setStatus('anonymous')
+  }, [client])
+
+  const leaveAnonymousAccount = useCallback(async () => {
+    await client.signOut()
+    await client.forgetDevice()
     setUser(null)
     setStatus('anonymous')
   }, [client])
@@ -126,6 +165,13 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
     [client],
   )
 
+  const acceptConsents = useCallback(async () => {
+    const outcome = await client.acceptConsents().catch(() => null)
+    if (!outcome?.ok) return false
+    updateUser({ consentVersion: POLICY_VERSION })
+    return true
+  }, [client, updateUser])
+
   const dismissNotice = useCallback(() => setNotice(null), [])
 
   const value = useMemo<AuthValue>(
@@ -135,12 +181,26 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
       notice,
       dismissNotice,
       login,
-      continueAnonymously,
+      startAnonymously,
+      acceptConsents,
       logout,
+      leaveAnonymousAccount,
       updateUser,
       completeSession,
     }),
-    [status, user, notice, dismissNotice, login, continueAnonymously, logout, updateUser, completeSession],
+    [
+      status,
+      user,
+      notice,
+      dismissNotice,
+      login,
+      startAnonymously,
+      acceptConsents,
+      logout,
+      leaveAnonymousAccount,
+      updateUser,
+      completeSession,
+    ],
   )
 
   return (

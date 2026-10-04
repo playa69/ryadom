@@ -4,11 +4,13 @@ import { MessagesSquare } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useId, useMemo, useState } from 'react'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { Alert } from '@ryadom/ui/components/alert'
 import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
 import { Skeleton } from '@ryadom/ui/components/skeleton'
 import { cn } from '@ryadom/ui/lib/utils'
+import { useAuth } from '@/lib/auth'
 import { formatJournalDate, tensionLabel, useJournal } from '@/lib/journal'
 import { groupJournal } from '@/lib/journal-groups'
 import { BUSY } from './busy'
@@ -102,7 +104,10 @@ function ListSkeleton() {
  */
 export default function JournalScreen() {
   const idPrefix = useId()
+  const { user } = useAuth()
   const { items, next, error, refresh, loadMore } = useJournal()
+  // An account opened by this device alone: its history goes with the phone, or after the quiet period.
+  const keepsConversations = user?.email === null || user?.isEmailConfirmed === false
   const [retrying, setRetrying] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [announced, setAnnounced] = useState(false)
@@ -164,6 +169,25 @@ export default function JournalScreen() {
 
       {items !== null && items.length > 0 && (
         <>
+          {keepsConversations && (
+            // The history is what a person has to lose, so this is where the address is offered. Where the
+            // sidebar is a column it already carries the same card, and saying it twice is noise.
+            <Alert
+              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2 text-foreground md:hidden"
+              data-testid="journal-link-email"
+            >
+              <span className="min-w-0 flex-1 basis-60">
+                Разговоры хранятся только на этом устройстве, {ANONYMOUS_RETENTION_DAYS} дней после последнего
+                визита. Привяжи почту, чтобы не потерять их.
+              </span>
+              <Button asChild variant="outline" size="sm" className={cn(BUTTON, 'border-input! px-4')}>
+                <Link href="/profile?linkEmail=1">
+                  {user?.email === null ? 'Привязать почту' : 'Подтвердить почту'}
+                </Link>
+              </Button>
+            </Alert>
+          )}
+
           {error && (
             // The button inside brings its own 44px of height, so the note itself takes little padding.
             <Alert

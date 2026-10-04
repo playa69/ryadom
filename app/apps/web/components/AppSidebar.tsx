@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useMemo } from 'react'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { Avatar, AvatarFallback } from '@ryadom/ui/components/avatar'
 import { Button } from '@ryadom/ui/components/button'
 import {
@@ -67,7 +68,12 @@ export default function AppSidebar() {
   }, [pathname, setOpenMobile])
 
   const groups = useMemo(() => groupJournal(items ?? []), [items])
-  const name = user?.name?.trim() || user?.email || ''
+  // An account opened by this device alone has no way back in other than it: that is shown as what it
+  // is (a guest, with an offer to keep the conversations), not as an account with empty fields.
+  const anonymous = user?.email === null || user?.isEmailConfirmed === false
+  const awaitsCode = user?.email != null && user.isEmailConfirmed === false
+  const named = user?.name?.trim() || null
+  const name = named || user?.email || (anonymous ? 'Гость' : '')
   const initial = name.charAt(0).toUpperCase() || '·'
 
   return (
@@ -213,6 +219,23 @@ export default function AppSidebar() {
       </nav>
 
       <SidebarFooter className="border-t border-line p-2 group-data-[collapsible=icon]:px-3">
+        {anonymous && (
+          <div
+            data-testid="guest-card"
+            className="mb-1 flex flex-col gap-2 rounded-lg border border-brand-line bg-brand-soft p-3 group-data-[collapsible=icon]:hidden"
+          >
+            <p className="text-sm font-semibold text-foreground">Сохрани разговоры</p>
+            <p className="text-xs leading-snug text-dim">
+              Без почты они хранятся {ANONYMOUS_RETENTION_DAYS} дней. С почтой не потеряются и откроются на
+              другом устройстве.
+            </p>
+            <Button asChild size="sm" className="h-10 w-full bg-clip-border text-[0.9375rem]">
+              <Link href="/profile?linkEmail=1" data-testid="guest-card-link">
+                {awaitsCode ? 'Подтвердить почту' : 'Привязать почту'}
+              </Link>
+            </Button>
+          </div>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
@@ -224,12 +247,16 @@ export default function AppSidebar() {
             >
               <Avatar className="size-9 rounded-full group-data-[collapsible=icon]:size-8">
                 <AvatarFallback className="rounded-full bg-brand-soft font-semibold text-brand-400">
-                  {initial}
+                  {anonymous && !named && !user?.email ? (
+                    <UserRound className="size-5" strokeWidth={1.8} aria-hidden="true" />
+                  ) : (
+                    initial
+                  )}
                 </AvatarFallback>
               </Avatar>
               <span className="grid min-w-0 flex-1 text-left leading-tight">
                 <span className="truncate text-[0.9375rem] font-semibold">
-                  {user?.name?.trim() || 'Аккаунт'}
+                  {named || (anonymous ? 'Гость' : 'Аккаунт')}
                 </span>
                 <span className="truncate text-xs text-faint">{user?.email ?? 'Без регистрации'}</span>
               </span>
@@ -247,11 +274,16 @@ export default function AppSidebar() {
                 Профиль
               </Link>
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="h-11" onSelect={() => void logout()}>
-              <LogOut />
-              Выйти
-            </DropdownMenuItem>
+            {/* An account opened by this device alone has nothing to sign out of: the profile says how to leave it. */}
+            {!anonymous && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="h-11" onSelect={() => void logout()}>
+                  <LogOut />
+                  Выйти
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarFooter>

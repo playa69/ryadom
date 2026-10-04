@@ -21,22 +21,28 @@ export default function AuthFrame({ webUrl, children }: { webUrl: string; childr
   // No sidebar on these screens, so toasts center on the window.
   useNoticePlacement('bare')
 
+  // The first screen is also where a signed-in person lands when the terms need agreeing to again;
+  // it decides for itself when to move on. On every other screen a session means "go home".
+  const keepsSignedIn = pathname === '/welcome'
+
   // Every sign-in path ends here: the screens do not navigate after a successful sign-in themselves.
   useEffect(() => {
-    if (status === 'authenticated') router.replace('/home')
-  }, [status, router])
+    if (status === 'authenticated' && !keepsSignedIn) router.replace('/home')
+  }, [status, keepsSignedIn, router])
 
-  if (status === 'authenticated') return <BootSplash />
+  if (status === 'authenticated' && !keepsSignedIn) return <BootSplash />
 
-  // Phone, secondary screens: the brand shrinks to a single line so the form gets the height.
-  const compact = pathname !== '/login'
+  // Phone, secondary screens: the brand shrinks to a single line so the form gets the height. The
+  // first screens of a visit (this one and the sign-in) lead with the brand and the sphere.
+  const leading = pathname === '/login' || pathname === '/welcome'
+  const compact = !leading
 
   return (
     <AuthFlowProvider webUrl={webUrl}>
       <div className="flex min-h-dvh flex-col items-center pt-[calc(env(safe-area-inset-top,0px)+clamp(24px,4vh,56px))] pr-[calc(20px+env(safe-area-inset-right,0px))] pb-[calc(env(safe-area-inset-bottom,0px)+clamp(24px,4vh,56px))] pl-[calc(20px+env(safe-area-inset-left,0px))] [@media(min-width:700px)_and_(max-height:940px)]:pt-4 [@media(min-width:700px)_and_(max-height:940px)]:pb-4">
         {/* Auto margins center the block when it fits and let the page scroll when it does not. */}
         <div className="flex w-full max-w-[440px] min-w-0 flex-col gap-6 tab:my-auto tab:max-w-[480px] tab:gap-8 min-[1440px]:max-w-[520px] [@media(min-width:700px)_and_(max-height:940px)]:gap-4">
-          {pathname === '/login' && (
+          {leading && (
             // The sphere from the home screen, small: a lit presence above the sign-in form. The form
             // must stay on screen, so with little height to spare the sphere gives way.
             <div

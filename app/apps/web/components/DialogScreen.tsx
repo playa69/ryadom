@@ -27,7 +27,8 @@ import { ReplyVoice, unlockSpeech } from '@ryadom/client-core/voice/speech'
 import { Button } from '@ryadom/ui/components/button'
 import type { OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
-import { useClient } from '@/lib/auth'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import { useAuth, useClient } from '@/lib/auth'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
@@ -83,6 +84,7 @@ function greetingMessages(greeting: string | null | undefined): DialogMessageVie
 
 export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const client = useClient()
+  const { user } = useAuth()
   const router = useRouter()
   const notify = useNotice()
   // The input box sits where the default toast stack would, so toasts go under the header.
@@ -635,6 +637,19 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         open={alert !== null}
         title={alert?.title ?? ''}
         text={alert?.text ?? ''}
+        // A finished conversation is the moment an address has something to give: this one is kept.
+        offer={
+          alert?.leaves && (user?.email === null || user?.isEmailConfirmed === false)
+            ? {
+                text: `Без почты разговоры хранятся ${ANONYMOUS_RETENTION_DAYS} дней после последнего визита, и войти с другого телефона нельзя. Привяжи почту, чтобы не потерять их.`,
+                action: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
+                onAction: () => {
+                  setAlert(null)
+                  router.push('/profile?linkEmail=1')
+                },
+              }
+            : undefined
+        }
         onClose={() => {
           const leaves = alert?.leaves ?? false
           setAlert(null)

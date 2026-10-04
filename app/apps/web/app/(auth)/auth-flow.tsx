@@ -35,9 +35,14 @@ export interface AuthFlow {
   privacyUrl: string
   /** The address of the running flow, or null when that flow was never started in this tab. */
   emailFor(kind: FlowKind): string | null
-  begin(kind: FlowKind, email: string, password?: string): void
+  begin(kind: FlowKind, email: string, password?: string, consented?: boolean): void
   /** Hands the password over once and forgets it. */
   takePassword(): string | null
+  /**
+   * Hands over once whether the person agreed to the terms on the registration screen, and forgets
+   * it: the account is only signed in after the code, and that is when the agreement is recorded.
+   */
+  takeConsent(): boolean
   clear(): void
 }
 
@@ -76,6 +81,7 @@ export function AuthFlowProvider({ webUrl, children }: { webUrl: string; childre
   const [pending, setPending] = useState<Pending | null>(null)
   const [ready, setReady] = useState(false)
   const password = useRef<string | null>(null)
+  const consented = useRef(false)
 
   // sessionStorage does not exist during SSR; reading it here keeps server and client markup equal.
   useEffect(() => {
@@ -83,8 +89,9 @@ export function AuthFlowProvider({ webUrl, children }: { webUrl: string; childre
     setReady(true)
   }, [])
 
-  const begin = useCallback((kind: FlowKind, email: string, nextPassword?: string) => {
+  const begin = useCallback((kind: FlowKind, email: string, nextPassword?: string, agreed?: boolean) => {
     password.current = nextPassword ?? null
+    consented.current = agreed ?? false
     const next = { kind, email }
     writeStored(next)
     setPending(next)
@@ -96,8 +103,15 @@ export function AuthFlowProvider({ webUrl, children }: { webUrl: string; childre
     return value
   }, [])
 
+  const takeConsent = useCallback(() => {
+    const value = consented.current
+    consented.current = false
+    return value
+  }, [])
+
   const clear = useCallback(() => {
     password.current = null
+    consented.current = false
     writeStored(null)
     setPending(null)
   }, [])
@@ -110,9 +124,10 @@ export function AuthFlowProvider({ webUrl, children }: { webUrl: string; childre
       emailFor: (kind) => (pending?.kind === kind ? pending.email : null),
       begin,
       takePassword,
+      takeConsent,
       clear,
     }),
-    [ready, webUrl, pending, begin, takePassword, clear],
+    [ready, webUrl, pending, begin, takePassword, takeConsent, clear],
   )
 
   return <FlowContext.Provider value={value}>{children}</FlowContext.Provider>

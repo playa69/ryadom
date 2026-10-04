@@ -2,7 +2,8 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useId, useState, type FormEvent } from 'react'
-import { LogOut } from 'lucide-react'
+import { LogOut, UserRound } from 'lucide-react'
+import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { nameProblem } from '@ryadom/client-core/validation'
 import { Avatar, AvatarFallback } from '@ryadom/ui/components/avatar'
@@ -36,10 +37,11 @@ import ProfileRow from './ProfileRow'
 export default function ProfileScreen({ webUrl }: { webUrl: string }) {
   const client = useClient()
   const router = useRouter()
-  const { user, logout, updateUser } = useAuth()
+  const { user, logout, leaveAnonymousAccount, updateUser } = useAuth()
   const [nameOpen, setNameOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
+  const [switchOpen, setSwitchOpen] = useState(false)
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const userId = user?.id ?? null
@@ -75,12 +77,32 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
     }
   }
 
+  async function handleSwitchAccount() {
+    setLoggingOut(true)
+    try {
+      await leaveAnonymousAccount()
+      router.replace('/login')
+    } finally {
+      setLoggingOut(false)
+    }
+  }
+
   const name = user?.name?.trim() || null
   const initial = (name ?? user?.email ?? '').charAt(0).toUpperCase()
   // An anonymous account has no address and no password; one that linked an address and has not yet
   // entered the code is waiting for the second step.
   const noEmail = user?.email === null
   const pendingEmail = user?.email && user.isEmailConfirmed === false ? user.email : null
+  // Both are opened by this device alone, so signing out is not a thing they have: leaving one is
+  // going to another account, and it says what that costs.
+  const anonymous = noEmail || pendingEmail !== null
+
+  // The offer after a finished conversation sends the person here with this in the address.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('linkEmail')) return
+    if (anonymous) setLinkOpen(true)
+    router.replace('/profile')
+  }, [anonymous, router])
 
   return (
     <Page title="Профиль" className="tab:gap-5">
@@ -89,7 +111,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
         <CardContent className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 @lg:grid-cols-[auto_minmax(0,1fr)_auto]">
           <Avatar aria-hidden="true" className="size-14 after:border-0 tab:size-16">
             <AvatarFallback className="border border-brand-line bg-brand-soft text-xl leading-none font-bold text-brand-400">
-              {initial || '·'}
+              {initial || <UserRound className="size-6" strokeWidth={1.8} aria-hidden="true" />}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
@@ -97,7 +119,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
               className="text-xl leading-tight font-semibold tracking-display wrap-break-word"
               data-testid="profile-name"
             >
-              {name ?? '—'}
+              {name ?? (noEmail ? 'Гость' : '—')}
             </p>
             <p className="mt-0.5 text-[0.9375rem] text-dim wrap-break-word" data-testid="profile-email">
               {noEmail ? 'Без регистрации' : (user?.email ?? '')}
@@ -116,7 +138,14 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
         </CardContent>
       </Card>
 
-      <SettingsSection title="Безопасность">
+      <SettingsSection
+        title="Безопасность"
+        note={
+          anonymous
+            ? `Без подтверждённой почты аккаунт хранится ${ANONYMOUS_RETENTION_DAYS} дней после последнего визита, потом удаляется вместе с разговорами. Почта нужна и для входа с другого устройства.`
+            : undefined
+        }
+      >
         {noEmail ? (
           <li>
             <ProfileRow
@@ -148,6 +177,16 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
               />
             </li>
           </>
+        )}
+        {anonymous && (
+          <li>
+            <ProfileRow
+              icon="login"
+              label="Войти в другой аккаунт"
+              testId="row-switch-account"
+              onClick={() => setSwitchOpen(true)}
+            />
+          </li>
         )}
       </SettingsSection>
 
@@ -190,16 +229,18 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
         </li>
       </SettingsSection>
 
-      <ProfileButton
-        type="button"
-        variant="outline"
-        className="w-full tab:w-auto tab:self-start tab:px-6"
-        data-testid="logout"
-        onClick={() => setLogoutOpen(true)}
-      >
-        <LogOut aria-hidden="true" />
-        Выйти из аккаунта
-      </ProfileButton>
+      {!anonymous && (
+        <ProfileButton
+          type="button"
+          variant="outline"
+          className="w-full tab:w-auto tab:self-start tab:px-6"
+          data-testid="logout"
+          onClick={() => setLogoutOpen(true)}
+        >
+          <LogOut aria-hidden="true" />
+          Выйти из аккаунта
+        </ProfileButton>
+      )}
 
       {/* Set apart from everything above, so it is never hit while reaching for something else. */}
       <Separator />
@@ -233,7 +274,42 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           pendingEmail={pendingEmail}
           onDone={() => setLinkOpen(false)}
           onCancel={() => setLinkOpen(false)}
+          onSwitchAccount={() => {
+            setLinkOpen(false)
+            setSwitchOpen(true)
+          }}
         />
+      </Modal>
+
+      <Modal
+        open={switchOpen}
+        onClose={() => setSwitchOpen(false)}
+        title="Войти в другой аккаунт"
+        dismissible={!loggingOut}
+      >
+        <ModalText>
+          Разговоры этого устройства в другой аккаунт не перенесутся. Вернуться в этот профиль будет нельзя, и
+          через {ANONYMOUS_RETENTION_DAYS} дней он удалится вместе с разговорами.
+        </ModalText>
+        <ModalActions>
+          <ProfileButton
+            type="button"
+            variant="outline"
+            disabled={loggingOut}
+            onClick={() => setSwitchOpen(false)}
+          >
+            Отмена
+          </ProfileButton>
+          <ProfileButton
+            type="button"
+            data-testid="switch-account-confirm"
+            aria-busy={loggingOut || undefined}
+            onClick={() => void handleSwitchAccount()}
+          >
+            <Busy on={loggingOut} />
+            Войти
+          </ProfileButton>
+        </ModalActions>
       </Modal>
 
       <Modal open={aboutOpen} onClose={() => setAboutOpen(false)} title="О приложении">

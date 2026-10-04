@@ -190,23 +190,25 @@ export function ConsentField({
   checked,
   onChange,
   invalid,
+  name = 'consent',
   children,
 }: {
   checked: boolean
   onChange(checked: boolean): void
   invalid?: boolean
+  /** The input's name: a refused submit puts focus on the one that is missing. */
+  name?: string
   children: ReactNode
 }) {
   return (
     <Label
-      data-testid="consents"
       className={cn(
         'min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-input bg-surface px-4 py-3 text-[0.9375rem] leading-[1.45] font-normal text-muted-foreground select-text hover:border-muted-foreground',
         invalid && 'border-destructive',
       )}
     >
       <NativeCheckbox
-        name="consent"
+        name={name}
         checked={checked}
         required
         aria-invalid={invalid ? 'true' : undefined}

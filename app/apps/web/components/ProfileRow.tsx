@@ -5,6 +5,7 @@ import {
   FileText,
   Info,
   Lock,
+  LogIn,
   Mail,
   Trash2,
   Users,
@@ -16,6 +17,7 @@ import { ROW, RowIcon } from './ProfileParts'
 
 const ICONS = {
   lock: Lock,
+  login: LogIn,
   mail: Mail,
   users: Users,
   info: Info,

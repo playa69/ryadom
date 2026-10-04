@@ -37,6 +37,7 @@ const MODES: Array<{ id: DialogMode; label: string; icon: LucideIcon; ready: boo
 const START_ERRORS: Record<StartDialogApiErrorCode, string> = {
   [StartDialogApiErrorCode.USER_NOT_FOUND]: 'Аккаунт недоступен. Войди заново',
   [StartDialogApiErrorCode.USER_INACTIVE]: 'Аккаунт заблокирован. Напиши нам, разберёмся',
+  [StartDialogApiErrorCode.CONSENT_REQUIRED]: 'Сначала нужно подтвердить согласие',
 }
 
 function greeting(name: string | null): string {
@@ -47,7 +48,7 @@ function greeting(name: string | null): string {
 }
 
 export default function HomeScreen() {
-  const { user } = useAuth()
+  const { user, updateUser } = useAuth()
   const client = useClient()
   const router = useRouter()
   const [mode, setMode] = useState<DialogMode>(DialogMode.Vent)
@@ -79,6 +80,9 @@ export default function HomeScreen() {
       // person who has left would wait for the next visit to that dialog and send the draft then.
       if (!alive.current) return
       if (!result.ok) {
+        // The server has no agreement on record for this account: forget what was cached, and the
+        // app's gate takes the person through the first screen.
+        if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
         return
       }
