@@ -1,4 +1,5 @@
 export * from './client'
+export * from './device'
 export * from './dialog-socket'
 export * from './errors'
 export * from './hotlines'

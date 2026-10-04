@@ -23,6 +23,10 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   const versionTaps = useRef(0)
   const user = auth.user
   const userId = user?.id ?? null
+  // An anonymous account has no address and no password; one that linked an address and has not
+  // entered the code yet is waiting for the second step.
+  const noEmail = user?.email === null
+  const pendingEmail = user?.email && user.isEmailConfirmed === false ? user.email : null
 
   // The rest of the profile is fetched from the server: sign-in returns only the basic fields.
   useEffect(() => {
@@ -89,7 +93,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
 
       <div className="rd-profile-head">
         <p className="rd-profile-name">{user?.name ?? '—'}</p>
-        <p className="rd-profile-email">{user?.email ?? ''}</p>
+        <p className="rd-profile-email">{noEmail ? 'Без регистрации' : (user?.email ?? '')}</p>
         <Button small round outline className="rd-profile-edit" onClick={handleEditName}>
           Изменить имя
         </Button>
@@ -101,9 +105,32 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
       <section className="rd-profile-group">
       <BlockTitle>Аккаунт</BlockTitle>
       <List inset strong dividers className="rd-menu">
-        <ListItem link title="Изменить пароль" onClick={() => f7router.navigate('/profile/change-password/')}>
-          <Icon slot="media" f7="lock_fill" />
-        </ListItem>
+        {noEmail ? (
+          <ListItem
+            link
+            title="Привязать почту"
+            after="чтобы войти с другого устройства"
+            onClick={() => f7router.navigate('/profile/link-email/')}
+          >
+            <Icon slot="media" f7="envelope_fill" />
+          </ListItem>
+        ) : (
+          <>
+            {pendingEmail && (
+              <ListItem
+                link
+                title="Подтвердить почту"
+                after={pendingEmail}
+                onClick={() => f7router.navigate('/profile/link-email/', { props: { pendingEmail } })}
+              >
+                <Icon slot="media" f7="envelope_fill" />
+              </ListItem>
+            )}
+            <ListItem link title="Изменить пароль" onClick={() => f7router.navigate('/profile/change-password/')}>
+              <Icon slot="media" f7="lock_fill" />
+            </ListItem>
+          </>
+        )}
         <ListItem link title="Люди рядом" onClick={() => f7router.navigate('/people/')}>
           <Icon slot="media" f7="person_2_fill" />
         </ListItem>

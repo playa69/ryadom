@@ -58,7 +58,7 @@ export class ResendConfirmationOperationHandler
     const { email } = await emailRendererService.execute(
       new RenderEmailConfirmationEmailRequest({ userName: user.name, code, expiresInMinutes }),
     )
-    await emailSenderService.execute(new SendEmailRequest({ to: user.email, ...email }))
+    await emailSenderService.execute(new SendEmailRequest({ to: input.email, ...email }))
     logger.info('Confirmation code sent', { userId: user.id })
     return { success: true }
   }

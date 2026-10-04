@@ -10,7 +10,8 @@ export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    email: citext('email').notNull().unique('users_email_unique'),
+    /** Null for an anonymous account that has not linked an address (Postgres lets many rows hold null in a unique column). */
+    email: citext('email').unique('users_email_unique'),
     name: text('name'),
     isActive: boolean('is_active').notNull().default(true),
     isEmailConfirmed: boolean('is_email_confirmed').notNull().default(false),

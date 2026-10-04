@@ -19,3 +19,13 @@ export const codeInputSchema = z
   .string()
   .trim()
   .regex(/^\d{6}$/, 'must be a 6-digit code')
+
+/** The id the app makes for a device on first launch: random, URL-safe. */
+export const deviceIdInputSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{16,64}$/, 'must be 16 to 64 URL-safe characters')
+
+/** The device's secret key: 256 random bits as URL-safe base64, with room for other encodings. */
+export const deviceKeyInputSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{32,128}$/, 'must be 32 to 128 URL-safe characters')

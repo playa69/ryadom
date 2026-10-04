@@ -58,7 +58,7 @@ export function registerRoutes(app: Hono<AppEnv>, { rateLimiter }: RouteDeps): v
         }
       }
 
-      const response: RegisterApiResponse = { email: result.user.email, emailConfirmationRequired: true }
+      const response: RegisterApiResponse = { email, emailConfirmationRequired: true }
       return apiOk(c, response)
     },
   )

@@ -10,6 +10,7 @@ import JournalPage from './pages/journal/JournalPage'
 import PeoplePage from './pages/people/PeoplePage'
 import ChangePasswordPage from './pages/profile/ChangePasswordPage'
 import DeleteAccountPage from './pages/profile/DeleteAccountPage'
+import LinkEmailPage from './pages/profile/LinkEmailPage'
 import ProfilePage from './pages/profile/ProfilePage'
 
 /** Framework7 routes, shared by every View: each tab keeps its own history. */
@@ -27,6 +28,7 @@ export const routes = [
   { path: '/journal/:dialogId/', component: JournalEntryPage },
   { path: '/profile/', component: ProfilePage },
   { path: '/profile/change-password/', component: ChangePasswordPage },
+  { path: '/profile/link-email/', component: LinkEmailPage },
   { path: '/profile/delete/', component: DeleteAccountPage },
 
   // conversation and people, opened from any tab

@@ -231,7 +231,7 @@ export default function AppSidebar() {
                 <span className="truncate text-[0.9375rem] font-semibold">
                   {user?.name?.trim() || 'Аккаунт'}
                 </span>
-                <span className="truncate text-xs text-faint">{user?.email}</span>
+                <span className="truncate text-xs text-faint">{user?.email ?? 'Без регистрации'}</span>
               </span>
               <ChevronsUpDown className="ml-auto size-4 shrink-0 text-faint" />
             </SidebarMenuButton>

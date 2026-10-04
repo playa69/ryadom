@@ -4,7 +4,7 @@ import { closeDb, getDb } from '../src/shared'
 import { resetEnvCache } from '../src/config'
 import { clearSentEmails } from '../src/services/email-sender-service'
 
-const TABLES = ['audit_log', 'email_codes', 'refresh_tokens', 'user_credentials', 'users']
+const TABLES = ['audit_log', 'email_codes', 'refresh_tokens', 'user_credentials', 'user_devices', 'users']
 
 beforeEach(async () => {
   vi.useRealTimers()

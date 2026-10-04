@@ -62,7 +62,7 @@ export class ForgotPasswordOperationHandler
     const { email } = await emailRendererService.execute(
       new RenderForgotPasswordEmailRequest({ userName: user.name, code, expiresInMinutes }),
     )
-    await emailSenderService.execute(new SendEmailRequest({ to: user.email, ...email }))
+    await emailSenderService.execute(new SendEmailRequest({ to: input.email, ...email }))
     logger.info('Password reset code sent', { userId: user.id })
     return { success: true }
   }

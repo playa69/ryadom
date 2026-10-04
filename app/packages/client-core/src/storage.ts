@@ -1,5 +1,6 @@
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
+import type { DeviceCredentials } from './device'
 
 /** The user in the store: sign-in returns a basic profile, the profile screen loads the rest. */
 export type User = AuthUserApiResponse & Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt'>>
@@ -19,6 +20,12 @@ export interface SessionStorage {
   removeRefreshToken(): Promise<void>
   getUser(): Promise<User | null>
   setUser(user: User | null): Promise<void>
+  /**
+   * The anonymous identity of this device. Unlike the session it survives signing out: it is how an
+   * anonymous account is found again. A secret, so the same protection as the refresh token.
+   */
+  getDevice(): Promise<DeviceCredentials | null>
+  setDevice(device: DeviceCredentials | null): Promise<void>
 }
 
 /**
@@ -28,6 +35,7 @@ export interface SessionStorage {
 export function createLocalSessionStorage(prefix = 'ryadom_'): SessionStorage {
   const refreshKey = `${prefix}refreshToken`
   const userKey = 'ryadom.user'
+  const deviceKey = `${prefix}device`
   return {
     async getRefreshToken() {
       const value = localStorage.getItem(refreshKey)
@@ -50,6 +58,21 @@ export function createLocalSessionStorage(prefix = 'ryadom_'): SessionStorage {
     async setUser(user) {
       if (user) localStorage.setItem(userKey, JSON.stringify(user))
       else localStorage.removeItem(userKey)
+    },
+    async getDevice() {
+      try {
+        const raw = localStorage.getItem(deviceKey)
+        const device = raw ? (JSON.parse(raw) as Partial<DeviceCredentials>) : null
+        return typeof device?.deviceId === 'string' && typeof device.deviceKey === 'string'
+          ? { deviceId: device.deviceId, deviceKey: device.deviceKey }
+          : null
+      } catch {
+        return null
+      }
+    },
+    async setDevice(device) {
+      if (device) localStorage.setItem(deviceKey, JSON.stringify(device))
+      else localStorage.removeItem(deviceKey)
     },
   }
 }

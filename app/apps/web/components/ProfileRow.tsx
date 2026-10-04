@@ -5,6 +5,7 @@ import {
   FileText,
   Info,
   Lock,
+  Mail,
   Trash2,
   Users,
   type LucideIcon,
@@ -15,6 +16,7 @@ import { ROW, RowIcon } from './ProfileParts'
 
 const ICONS = {
   lock: Lock,
+  mail: Mail,
   users: Users,
   info: Info,
   doc: FileText,

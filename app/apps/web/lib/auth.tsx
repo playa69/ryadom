@@ -25,6 +25,8 @@ export interface AuthValue {
   notice: string | null
   dismissNotice(): void
   login(email: string, password: string): Promise<void>
+  /** Sign-in without an email: the first call on this device makes the account, later ones return it. */
+  continueAnonymously(): Promise<void>
   logout(): Promise<void>
   updateUser(partial: Partial<User>): void
   /** For flows that obtain tokens themselves (e.g. right after confirming an email). */
@@ -101,6 +103,11 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
     [client, completeSession],
   )
 
+  const continueAnonymously = useCallback(async () => {
+    const result = await client.deviceLogin()
+    await completeSession(result.user, result.tokens)
+  }, [client, completeSession])
+
   const logout = useCallback(async () => {
     await client.signOut()
     setUser(null)
@@ -122,8 +129,18 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
   const dismissNotice = useCallback(() => setNotice(null), [])
 
   const value = useMemo<AuthValue>(
-    () => ({ status, user, notice, dismissNotice, login, logout, updateUser, completeSession }),
-    [status, user, notice, dismissNotice, login, logout, updateUser, completeSession],
+    () => ({
+      status,
+      user,
+      notice,
+      dismissNotice,
+      login,
+      continueAnonymously,
+      logout,
+      updateUser,
+      completeSession,
+    }),
+    [status, user, notice, dismissNotice, login, continueAnonymously, logout, updateUser, completeSession],
   )
 
   return (

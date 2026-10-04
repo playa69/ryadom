@@ -12,6 +12,8 @@ export enum ApiPath {
   ConfirmEmail = '/api/auth/confirm-email',
   ResendConfirmation = '/api/auth/resend-confirmation',
   Login = '/api/auth/login',
+  DeviceLogin = '/api/auth/device',
+  LinkEmail = '/api/auth/email/link',
   Refresh = '/api/auth/refresh',
   Logout = '/api/auth/logout',
   Me = '/api/auth/me',

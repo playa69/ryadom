@@ -10,7 +10,8 @@
  */
 export interface MeApiResponse {
   id: string
-  email: string
+  /** null for an anonymous account that has not linked an address (`POST /api/auth/email/link`). */
+  email: string | null
   name: string | null
   isEmailConfirmed: boolean
   /** ISO 8601 registration date. */

@@ -63,6 +63,8 @@ export async function confirmEmail(_prev: UserActionState, formData: FormData): 
     switch (result.error) {
       case ConfirmUserEmailOperationErrorCode.USER_NOT_FOUND:
         return { ok: null, error: 'Пользователь не найден.' }
+      case ConfirmUserEmailOperationErrorCode.USER_HAS_NO_EMAIL:
+        return { ok: null, error: 'У аккаунта нет почты: подтверждать нечего.' }
       default:
         return assertNever(result.error)
     }

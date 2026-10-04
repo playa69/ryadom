@@ -2,7 +2,9 @@ import type { Hono } from 'hono'
 import type { AppEnv, RouteDeps } from '../lib/context'
 import { appStatusRoutes } from './app-status'
 import { confirmEmailRoutes } from './auth/confirm-email'
+import { deviceRoutes } from './auth/device'
 import { forgotPasswordRoutes } from './auth/forgot-password'
+import { linkEmailRoutes } from './auth/link-email'
 import { loginRoutes } from './auth/login'
 import { logoutRoutes } from './auth/logout'
 import { meRoutes } from './auth/me'
@@ -25,6 +27,8 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   confirmEmailRoutes(app, deps)
   resendConfirmationRoutes(app, deps)
   loginRoutes(app, deps)
+  deviceRoutes(app, deps)
+  linkEmailRoutes(app, deps)
   refreshRoutes(app, deps)
   logoutRoutes(app, deps)
   meRoutes(app, deps)

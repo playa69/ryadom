@@ -134,7 +134,7 @@ export class RegisterOperationHandler implements RequestHandler<RegisterOperatio
       const { email } = await emailRendererService.execute(
         new RenderWelcomeEmailRequest({ userName: outcome.name, code, expiresInMinutes }),
       )
-      await emailSenderService.execute(new SendEmailRequest({ to: outcome.email, ...email }))
+      await emailSenderService.execute(new SendEmailRequest({ to: input.email, ...email }))
     } catch (error) {
       logger.error('Failed to send welcome email', error, { userId })
     }

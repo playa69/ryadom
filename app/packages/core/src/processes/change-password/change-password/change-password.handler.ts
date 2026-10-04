@@ -94,13 +94,16 @@ export class ChangePasswordOperationHandler implements RequestHandler<ChangePass
 
     // The password-change email cannot be turned off: it is the owner's signal if someone else
     // changed the password.
-    try {
-      const { email } = await emailRendererService.execute(
-        new RenderPasswordChangedEmailRequest({ userName: user.name, changedAt: new Date() }),
-      )
-      await emailSenderService.execute(new SendEmailRequest({ to: user.email, ...email }))
-    } catch (error) {
-      logger.error('Failed to send password changed email', error, { userId: user.id })
+    // An account with a password always has an address (linking sets both); the check is for the type.
+    if (user.email !== null) {
+      try {
+        const { email } = await emailRendererService.execute(
+          new RenderPasswordChangedEmailRequest({ userName: user.name, changedAt: new Date() }),
+        )
+        await emailSenderService.execute(new SendEmailRequest({ to: user.email, ...email }))
+      } catch (error) {
+        logger.error('Failed to send password changed email', error, { userId: user.id })
+      }
     }
     logger.info('Password changed', { userId: user.id })
     return { success: true }

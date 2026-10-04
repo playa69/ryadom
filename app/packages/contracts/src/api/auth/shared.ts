@@ -16,7 +16,8 @@ export interface AuthTokensApiResponse {
 
 export interface AuthUserApiResponse {
   id: string
-  email: string
+  /** null for an anonymous account that has not linked an address. */
+  email: string | null
   name: string | null
 }
 

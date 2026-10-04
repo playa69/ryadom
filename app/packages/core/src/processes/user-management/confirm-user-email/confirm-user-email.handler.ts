@@ -26,6 +26,7 @@ export class ConfirmUserEmailOperationHandler implements RequestHandler<ConfirmU
       }
     }
     const user = userResult.user
+    if (user.email === null) return { success: false, error: ConfirmUserEmailOperationErrorCode.USER_HAS_NO_EMAIL }
 
     const failure = await inTransaction(async (): Promise<ConfirmUserEmailOperationErrorCode | null> => {
       const marked = await usersManager.execute(new MarkUserEmailConfirmedCommand({ userId: user.id }))

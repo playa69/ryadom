@@ -24,6 +24,7 @@ import {
   RevokeUserRefreshTokensCommand,
   refreshTokensManager,
 } from '../../../managers/refresh-tokens-manager'
+import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
 import { PROCESSES_CONFIG } from '../../config'
 import { DeleteUserAccountOperation } from './delete-user-account.operation'
 import { DeleteUserAccountOperationErrorCode, type DeleteUserAccountResult } from './delete-user-account.types'
@@ -117,7 +118,11 @@ export class DeleteUserAccountOperationHandler
       }
 
       await userCredentialsManager.execute(new DeleteUserCredentialsCommand({ userId }))
-      await emailCodesManager.execute(new DeleteEmailCodesCommand({ email: user.email }))
+      // The account is only anonymized, so its devices must be forgotten here: otherwise they would
+      // keep signing in to it.
+      await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
+      if (user.email !== null)
+        await emailCodesManager.execute(new DeleteEmailCodesCommand({ email: user.email }))
 
       const deleted = await usersManager.execute(new SoftDeleteUserCommand({ userId }))
       if (!deleted.success) {

@@ -33,23 +33,31 @@ function ConfirmButton({ enabled }: { enabled: boolean }) {
  * Lives inside the dialog content, which Radix unmounts on close, so every opening starts with
  * an empty field and without the previous attempt's error.
  */
-function DeleteForm({ userId, email }: { userId: string; email: string }) {
+function DeleteForm({
+  userId,
+  confirmation,
+  confirmationLabel,
+}: {
+  userId: string
+  confirmation: string
+  confirmationLabel: string
+}) {
   const [state, action] = useActionState(deleteAccount, INITIAL_USER_ACTION_STATE)
   const [typed, setTyped] = useState('')
-  // Only a convenience: the action compares the address again on the server.
-  const matches = typed.trim().toLowerCase() === email.trim().toLowerCase()
+  // Only a convenience: the action compares what was typed again on the server.
+  const matches = typed.trim().toLowerCase() === confirmation.trim().toLowerCase()
 
   return (
     <form action={action} className="space-y-4">
       <input type="hidden" name="userId" value={userId} />
-      <input type="hidden" name="email" value={email} />
+      <input type="hidden" name="email" value={confirmation} />
       <div className="space-y-2">
-        <Label htmlFor="confirmEmail">Почта пользователя</Label>
+        <Label htmlFor="confirmEmail">{confirmationLabel}</Label>
         <Input
           id="confirmEmail"
           name="confirmEmail"
           autoComplete="off"
-          placeholder={email}
+          placeholder={confirmation}
           required
           value={typed}
           onChange={(event) => setTyped(event.target.value)}
@@ -64,7 +72,16 @@ function DeleteForm({ userId, email }: { userId: string; email: string }) {
   )
 }
 
-export default function DeleteAccount({ userId, email }: { userId: string; email: string }) {
+export default function DeleteAccount({
+  userId,
+  confirmation,
+  confirmationLabel,
+}: {
+  userId: string
+  /** What the admin types to confirm: the address, or the id of an account that has none. */
+  confirmation: string
+  confirmationLabel: string
+}) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
@@ -80,11 +97,11 @@ export default function DeleteAccount({ userId, email }: { userId: string; email
         <AlertDialogHeader>
           <AlertDialogTitle>Удалить аккаунт?</AlertDialogTitle>
           <AlertDialogDescription>
-            Аккаунт и все разговоры стираются без возможности восстановления, включая данные на
-            стороне сервиса диалогов. Для подтверждения введите почту пользователя.
+            Аккаунт и все разговоры стираются без возможности восстановления, включая данные на стороне
+            сервиса диалогов. Для подтверждения введите: {confirmationLabel.toLowerCase()}.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <DeleteForm userId={userId} email={email} />
+        <DeleteForm userId={userId} confirmation={confirmation} confirmationLabel={confirmationLabel} />
       </AlertDialogContent>
     </AlertDialog>
   )

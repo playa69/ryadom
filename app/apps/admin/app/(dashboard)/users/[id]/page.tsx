@@ -46,10 +46,12 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
           <ArrowLeft className="size-4" aria-hidden="true" />
           Пользователи
         </Link>
-        <h1 className="text-2xl font-bold break-all text-gray-900">{user.email}</h1>
+        <h1 className="text-2xl font-bold break-all text-gray-900">{user.email ?? 'Аккаунт без почты'}</h1>
         <div className="flex flex-wrap gap-2">
           <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-          {user.isEmailConfirmed ? (
+          {user.email === null ? (
+            <StatusBadge tone="neutral">Анонимный аккаунт</StatusBadge>
+          ) : user.isEmailConfirmed ? (
             <StatusBadge tone="success">Почта подтверждена</StatusBadge>
           ) : (
             <StatusBadge tone="warning">Почта не подтверждена</StatusBadge>
@@ -70,7 +72,9 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                   <span className="font-mono text-xs break-all">{user.id}</span>
                 </Fact>
                 <Fact label="Имя">{user.name ?? <span className="text-gray-600">не указано</span>}</Fact>
-                <Fact label="Почта подтверждена">{user.isEmailConfirmed ? 'да' : 'нет'}</Fact>
+                <Fact label="Почта подтверждена">
+                  {user.email === null ? '—' : user.isEmailConfirmed ? 'да' : 'нет'}
+                </Fact>
                 <Fact label="Регистрация">{formatMoscow(user.createdAt)}</Fact>
                 <Fact label="Последнее изменение">{formatMoscow(user.updatedAt)}</Fact>
                 {user.deletedAt && <Fact label="Удалён">{formatMoscow(user.deletedAt)}</Fact>}
@@ -115,7 +119,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                 userId={user.id}
                 isActive={user.isActive}
                 isDeleted={user.isDeleted}
-                isEmailConfirmed={user.isEmailConfirmed}
+                isEmailConfirmed={user.isEmailConfirmed || user.email === null}
               />
             </CardContent>
           </Card>
@@ -129,7 +133,11 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <DeleteAccount userId={user.id} email={user.email} />
+                <DeleteAccount
+                  userId={user.id}
+                  confirmation={user.email ?? user.id}
+                  confirmationLabel={user.email === null ? 'ID пользователя' : 'Почта пользователя'}
+                />
               </CardContent>
             </Card>
           )}

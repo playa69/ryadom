@@ -1,6 +1,6 @@
 import { Block, BlockTitle, Button, Icon, List, ListItem, Navbar, Page, f7 } from 'framework7-react'
 import { useState, type ChangeEvent } from 'react'
-import { apiErrorText, deleteAccount } from '../../../lib/api'
+import { apiErrorText, deleteAccount, forgetDevice } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
 
 /**
@@ -27,6 +27,7 @@ const CONSEQUENCES: Array<{ icon: string; text: string }> = [
 
 export default function DeleteAccountPage() {
   const { auth, logout } = useAuth()
+  const anonymous = auth.user?.email === null
   const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -34,6 +35,8 @@ export default function DeleteAccountPage() {
     setLoading(true)
     try {
       await deleteAccount()
+      // The account is gone, and with it the device's claim on it: a later anonymous sign-in must start fresh.
+      await forgetDevice()
       // Sign out before the message: the server will not refresh the token any more, so any
       // background request would fail.
       await logout()
@@ -57,14 +60,20 @@ export default function DeleteAccountPage() {
         <div className="rd-note-body">
           <p className="rd-note-title">Это действие необратимо</p>
           <p className="rd-note-text">
-            Удаляется аккаунт <b className="rd-email">{auth.user?.email ?? ''}</b> и всё, что связано с ним.
+            {anonymous ? (
+              'Удаляется аккаунт без регистрации и всё, что связано с ним.'
+            ) : (
+              <>
+                Удаляется аккаунт <b className="rd-email">{auth.user?.email ?? ''}</b> и всё, что связано с ним.
+              </>
+            )}
           </p>
         </div>
       </div>
 
       <BlockTitle>Что произойдёт</BlockTitle>
       <List inset strong dividers className="rd-menu">
-        {CONSEQUENCES.map((item) => (
+        {CONSEQUENCES.filter((item) => !anonymous || item.icon !== 'envelope').map((item) => (
           <ListItem key={item.icon} className="rd-wrap" title={item.text}>
             <Icon slot="media" f7={item.icon} />
           </ListItem>

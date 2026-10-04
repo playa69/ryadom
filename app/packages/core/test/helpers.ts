@@ -25,7 +25,8 @@ export async function registerUser(opts: { email?: string; password?: string; na
     }),
   )
   if (!result.success) throw new Error(`register failed: ${result.error}`)
-  return result.user
+  if (result.user.email === null) throw new Error('a registered user has an address')
+  return { ...result.user, email: result.user.email }
 }
 
 /** Confirms the address the way a person does, with the code from the letter. */

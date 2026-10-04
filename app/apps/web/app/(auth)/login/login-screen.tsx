@@ -33,7 +33,7 @@ import {
  * case at once: the same text for everyone, revealing nothing.
  */
 export default function LoginScreen() {
-  const { login, notice, dismissNotice } = useAuth()
+  const { login, continueAnonymously, notice, dismissNotice } = useAuth()
   const { termsUrl, privacyUrl } = useAuthFlow()
   const formRef = useRef<HTMLFormElement>(null)
   const [email, setEmail] = useState('')
@@ -62,6 +62,21 @@ export default function LoginScreen() {
       setProblem({
         text: apiErrorText(err, { byStatus: { 401: 'Неверная почта или пароль' } }, 'Не получилось войти'),
       })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /** The terms line under the form covers this button too: continuing is agreeing, the same as signing in. */
+  async function continueWithoutAccount() {
+    if (loading) return
+    setProblem(null)
+    setLoading(true)
+    try {
+      // On success the (auth) frame sees the session and moves on to /home.
+      await continueAnonymously()
+    } catch (err) {
+      setProblem({ text: apiErrorText(err, {}, 'Не получилось продолжить без регистрации') })
     } finally {
       setLoading(false)
     }
@@ -145,6 +160,17 @@ export default function LoginScreen() {
             onClick={() => setHelpOpen(true)}
           >
             Не получается войти?
+          </Button>
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            className={LINK_BUTTON}
+            data-testid="continue-anonymously"
+            disabled={loading}
+            onClick={() => void continueWithoutAccount()}
+          >
+            Продолжить без регистрации
           </Button>
         </div>
       </AuthForm>

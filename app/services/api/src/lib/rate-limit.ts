@@ -56,6 +56,12 @@ export const RATE_LIMITS = {
   emailCode: { perEmail: { limit: 3, windowMs: 10 * 60_000 }, perIp: { limit: 20, windowMs: 60 * 60_000 } },
   /** Entering a code or a password: guessing a six-digit code must hit the limit, not luck. */
   attempt: { perIp: { limit: 10, windowMs: 60_000 } },
+  /**
+   * Device sign-in, which also makes an account for a new device. Per hour, not per minute: the
+   * app calls it once at install and again only when a session is lost, but many people share one
+   * address behind carrier NAT.
+   */
+  deviceLogin: { perIp: { limit: 30, windowMs: 60 * 60_000 } },
   /** Starting a dialog: protection against an accidental loop in the client. */
   dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
 } as const

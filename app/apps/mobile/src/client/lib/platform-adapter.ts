@@ -1,6 +1,11 @@
 import { SecureStorage } from '@aparajita/capacitor-secure-storage'
 import { Preferences } from '@capacitor/preferences'
-import { createClient, type SessionStorage, type User } from '@ryadom/client-core/index'
+import {
+  createClient,
+  type DeviceCredentials,
+  type SessionStorage,
+  type User,
+} from '@ryadom/client-core/index'
 import { getVersionHeaders, notifyUpgradeRequired } from './app-update'
 import { getApiBase, getWsBase } from './env'
 import { isAndroid, isIosNative } from './platform'
@@ -24,6 +29,7 @@ export const ACCOUNT_UNAVAILABLE_EVENT = 'ryadom:account-unavailable'
 const KEY_PREFIX = 'ryadom_'
 const REFRESH_TOKEN_KEY = 'refreshToken'
 const USER_KEY = 'ryadom.user'
+const DEVICE_KEY = 'device'
 
 let prefixReady: Promise<void> | null = null
 
@@ -74,6 +80,25 @@ const storage: SessionStorage = {
     } catch {
       // Storage is unavailable, so the user only survives until the app is closed.
     }
+  },
+  /** The anonymous identity: a secret, so secure storage like the refresh token, not Preferences. */
+  async getDevice() {
+    await ensurePrefix()
+    const value = await SecureStorage.get(DEVICE_KEY, false)
+    if (typeof value !== 'string' || !value) return null
+    try {
+      const device = JSON.parse(value) as Partial<DeviceCredentials>
+      return typeof device.deviceId === 'string' && typeof device.deviceKey === 'string'
+        ? { deviceId: device.deviceId, deviceKey: device.deviceKey }
+        : null
+    } catch {
+      return null
+    }
+  },
+  async setDevice(device) {
+    await ensurePrefix()
+    if (device) await SecureStorage.set(DEVICE_KEY, JSON.stringify(device), false)
+    else await SecureStorage.remove(DEVICE_KEY)
   },
 }
 

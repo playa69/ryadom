@@ -50,6 +50,7 @@ export default function ProfileDeleteAccount() {
   const client = useClient()
   const router = useRouter()
   const { user, logout } = useAuth()
+  const anonymous = user?.email === null
   const [confirmed, setConfirmed] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -65,6 +66,8 @@ export default function ProfileDeleteAccount() {
     setLoading(true)
     try {
       await client.deleteAccount()
+      // The account is gone, and with it the device's claim on it: a later anonymous sign-in must start fresh.
+      await client.forgetDevice()
       // Drop the tokens before anything else: the server will not refresh them any more, so a
       // request made while the message is on screen would only bounce. The signed-in shell stays
       // mounted until the person answers the message, so it is not torn down under the dialog.
@@ -91,14 +94,20 @@ export default function ProfileDeleteAccount() {
     <Page title="Удаление аккаунта" back={{ href: '/profile', label: 'Профиль' }} measure="form">
       {/* A statement of fact, not an alert: it must not be announced the moment the screen opens. */}
       <DangerNote title="Это действие необратимо" role={undefined}>
-        Удаляется аккаунт{' '}
-        {/* An address in running text: wrap it as one piece instead of breaking at a hyphen. */}
-        <b className="inline-block max-w-full wrap-anywhere text-foreground">{user?.email ?? ''}</b> и всё,
-        что связано с ним.
+        {anonymous ? (
+          'Удаляется аккаунт без регистрации и всё, что связано с ним.'
+        ) : (
+          <>
+            Удаляется аккаунт{' '}
+            {/* An address in running text: wrap it as one piece instead of breaking at a hyphen. */}
+            <b className="inline-block max-w-full wrap-anywhere text-foreground">{user?.email ?? ''}</b> и всё,
+            что связано с ним.
+          </>
+        )}
       </DangerNote>
 
       <SettingsSection title="Что произойдёт" testId="consequences">
-        {CONSEQUENCES.map((item) => (
+        {CONSEQUENCES.filter((item) => !anonymous || item.icon !== Mail).map((item) => (
           <li key={item.text}>
             <Item
               className={cn(ROW, 'min-h-0 items-start text-[0.9375rem] leading-normal font-normal text-dim')}

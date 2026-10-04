@@ -4,7 +4,8 @@ import type { CreateUserCommandResult } from './create-user.types'
 
 export interface CreateUserCommandData {
   userId: string
-  email: string
+  /** Null makes an anonymous account. */
+  email: string | null
   name: string | null
   isEmailConfirmed: boolean
 }
@@ -16,7 +17,7 @@ export class CreateUserCommand extends RequestData<CreateUserCommandResult> {
   public readonly userId: string
 
   @hasPII()
-  public readonly email: string
+  public readonly email: string | null
 
   public readonly name: string | null
   public readonly isEmailConfirmed: boolean

@@ -13,6 +13,7 @@ import { Label } from '@ryadom/ui/components/label'
 import { Separator } from '@ryadom/ui/components/separator'
 import { useAuth, useClient } from '@/lib/auth'
 import Modal from './Modal'
+import LinkEmailForm from './ProfileLinkEmail'
 import { useNotice } from './Notice'
 import {
   Busy,
@@ -38,6 +39,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
   const { user, logout, updateUser } = useAuth()
   const [nameOpen, setNameOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [linkOpen, setLinkOpen] = useState(false)
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const userId = user?.id ?? null
@@ -75,6 +77,10 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
 
   const name = user?.name?.trim() || null
   const initial = (name ?? user?.email ?? '').charAt(0).toUpperCase()
+  // An anonymous account has no address and no password; one that linked an address and has not yet
+  // entered the code is waiting for the second step.
+  const noEmail = user?.email === null
+  const pendingEmail = user?.email && user.isEmailConfirmed === false ? user.email : null
 
   return (
     <Page title="Профиль" className="tab:gap-5">
@@ -94,7 +100,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
               {name ?? '—'}
             </p>
             <p className="mt-0.5 text-[0.9375rem] text-dim wrap-break-word" data-testid="profile-email">
-              {user?.email ?? ''}
+              {noEmail ? 'Без регистрации' : (user?.email ?? '')}
             </p>
           </div>
           <ProfileButton
@@ -111,14 +117,39 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
       </Card>
 
       <SettingsSection title="Безопасность">
-        <li>
-          <ProfileRow
-            icon="lock"
-            label="Изменить пароль"
-            href="/profile/change-password"
-            testId="row-change-password"
-          />
-        </li>
+        {noEmail ? (
+          <li>
+            <ProfileRow
+              icon="mail"
+              label="Привязать почту"
+              value="чтобы войти с другого устройства"
+              testId="row-link-email"
+              onClick={() => setLinkOpen(true)}
+            />
+          </li>
+        ) : (
+          <>
+            {pendingEmail && (
+              <li>
+                <ProfileRow
+                  icon="mail"
+                  label="Подтвердить почту"
+                  value={pendingEmail}
+                  testId="row-confirm-email"
+                  onClick={() => setLinkOpen(true)}
+                />
+              </li>
+            )}
+            <li>
+              <ProfileRow
+                icon="lock"
+                label="Изменить пароль"
+                href="/profile/change-password"
+                testId="row-change-password"
+              />
+            </li>
+          </>
+        )}
       </SettingsSection>
 
       <SettingsSection title="Поддержка">
@@ -195,6 +226,14 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           initial={user?.name ?? ''}
           onDone={() => setNameOpen(false)}
           onCancel={() => setNameOpen(false)}
+        />
+      </Modal>
+
+      <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Почта для входа">
+        <LinkEmailForm
+          pendingEmail={pendingEmail}
+          onDone={() => setLinkOpen(false)}
+          onCancel={() => setLinkOpen(false)}
         />
       </Modal>
 

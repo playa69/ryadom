@@ -15,6 +15,13 @@
       "when": 1791112390222,
       "tag": "0001_refresh_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791113016818,
+      "tag": "0002_anonymous_accounts",
+      "breakpoints": true
     }
   ]
 }

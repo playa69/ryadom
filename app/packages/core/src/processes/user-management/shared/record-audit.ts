@@ -7,7 +7,7 @@ export async function recordAudit(entry: {
   adminEmail: string
   action: AuditLogAction
   targetUserId: string
-  targetEmail: string
+  targetEmail: string | null
   payload?: Record<string, unknown>
 }): Promise<void> {
   await auditLogManager.execute(

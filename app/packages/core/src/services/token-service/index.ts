@@ -1,5 +1,6 @@
 // 1. Handler imports
 import './hash-token/hash-token.handler'
+import './verify-token/verify-token.handler'
 import './create-numeric-code/create-numeric-code.handler'
 
 import type { RequestData } from 'mediatr-ts'
@@ -8,19 +9,24 @@ import { mediatr } from '../../shared'
 // 2. Contract re-exports
 export { HashTokenRequest } from './hash-token/hash-token.request'
 export type { HashTokenRequestData } from './hash-token/hash-token.request'
+export { VerifyTokenRequest } from './verify-token/verify-token.request'
+export type { VerifyTokenRequestData } from './verify-token/verify-token.request'
 export { CreateNumericCodeRequest } from './create-numeric-code/create-numeric-code.request'
 export type { CreateNumericCodeRequestData } from './create-numeric-code/create-numeric-code.request'
 
 // 3. Type re-exports
 export type { HashTokenRequestResult } from './hash-token/hash-token.types'
+export type { VerifyTokenRequestResult } from './verify-token/verify-token.types'
 export type { CreateNumericCodeRequestResult } from './create-numeric-code/create-numeric-code.types'
 
 // 4. Union type
 import type { HashTokenRequest } from './hash-token/hash-token.request'
+import type { VerifyTokenRequest } from './verify-token/verify-token.request'
 import type { CreateNumericCodeRequest } from './create-numeric-code/create-numeric-code.request'
 
 export type TokenServiceRequests =
   | HashTokenRequest
+  | VerifyTokenRequest
   | CreateNumericCodeRequest
 
 // 5. Facade

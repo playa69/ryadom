@@ -1,3 +1,4 @@
+import type { DeviceCredentials } from '../src/device'
 import type { SessionStorage, User } from '../src/storage'
 
 const encode = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString('base64url')
@@ -11,6 +12,7 @@ export function makeToken(subject: string, expiresInSeconds = 3600, nonce = ''):
 export interface MemoryStorage extends SessionStorage {
   refreshToken: string | null
   user: User | null
+  device: DeviceCredentials | null
   /** Makes every write to the refresh token fail, like a blocked or full browser storage. */
   failWrites: boolean
 }
@@ -20,6 +22,7 @@ export function memoryStorage(): MemoryStorage {
   const storage: MemoryStorage = {
     refreshToken: null,
     user: null,
+    device: null,
     failWrites: false,
     async getRefreshToken() {
       return storage.refreshToken
@@ -36,6 +39,12 @@ export function memoryStorage(): MemoryStorage {
     },
     async setUser(user) {
       storage.user = user
+    },
+    async getDevice() {
+      return storage.device
+    },
+    async setDevice(device) {
+      storage.device = device
     },
   }
   return storage

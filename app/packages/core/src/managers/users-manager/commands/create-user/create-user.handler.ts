@@ -13,7 +13,7 @@ export class CreateUserCommandHandler implements RequestHandler<CreateUserComman
       .insert(users)
       .values({
         id: command.userId,
-        email: command.email.trim().toLowerCase(),
+        email: command.email === null ? null : command.email.trim().toLowerCase(),
         name: command.name,
         isEmailConfirmed: command.isEmailConfirmed,
         createdAt: now,

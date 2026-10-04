@@ -2,7 +2,8 @@ import type { UserRow } from '@ryadom/db/schema'
 
 export interface UserDTO {
   id: string
-  email: string
+  /** null for an anonymous account that has not linked an address yet. */
+  email: string | null
   /** null only for a deleted account (anonymization). */
   name: string | null
   /** false means the account was blocked by an admin, or deleted. */

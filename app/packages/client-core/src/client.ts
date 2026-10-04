@@ -3,7 +3,13 @@ import type {
   ConfirmEmailApiErrorCode,
   ConfirmEmailApiRequest,
 } from '@ryadom/contracts/api/auth/confirm-email'
+import type { DeviceLoginApiRequest, DeviceLoginApiResponse } from '@ryadom/contracts/api/auth/device'
 import type { ForgotPasswordApiRequest } from '@ryadom/contracts/api/auth/forgot-password'
+import type {
+  LinkEmailApiErrorCode,
+  LinkEmailApiRequest,
+  LinkEmailApiResponse,
+} from '@ryadom/contracts/api/auth/link-email'
 import type { LoginApiRequest } from '@ryadom/contracts/api/auth/login'
 import type { LogoutApiRequest } from '@ryadom/contracts/api/auth/logout'
 import type { MeApiResponse, UpdateMeApiRequest } from '@ryadom/contracts/api/auth/me'
@@ -41,6 +47,7 @@ import type {
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { AppHeader } from '@ryadom/contracts/api/headers'
 import { ApiPath, dialogEndPath, dialogPath } from '@ryadom/contracts/api/paths'
+import { newDeviceCredentials } from './device'
 import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from './dialog-socket'
 import { ApiError, NETWORK_ERROR_STATUS, type ApiOutcome } from './errors'
 import { isTokenValid, tokenSubject } from './jwt'
@@ -80,6 +87,7 @@ interface RequestOptions {
 }
 
 export type LoginResult = LoginApiResponse
+export type DeviceLoginResult = DeviceLoginApiResponse
 
 export function createClient(config: ClientConfig) {
   let accessToken: string | null = null
@@ -400,6 +408,45 @@ export function createClient(config: ClientConfig) {
     login: (email: string, password: string): Promise<LoginResult> => {
       const body: LoginApiRequest = { email, password }
       return apiFetch<LoginResult>(ApiPath.Login, { method: 'POST', body })
+    },
+
+    /**
+     * Sign-in without an email. The first call on a device makes an account for it, later ones
+     * return that account, whatever happened to the session in between. Like `login` it starts no
+     * session: the caller does, with the result. A failure is ApiError(401) for a key the server
+     * does not accept, and the stored identity is left alone: only the person can give up an account.
+     */
+    deviceLogin: async (): Promise<DeviceLoginResult> => {
+      // A failed read is not "no identity": making a new one would orphan the account the old one opened.
+      let device = await config.storage.getDevice()
+      if (!device) {
+        device = newDeviceCredentials()
+        // Saved before the server hears of it: an account made for an identity we then forgot could
+        // never be reached again. If the storage refuses, the account works until the session ends.
+        await config.storage.setDevice(device).catch(() => undefined)
+      }
+      const body: DeviceLoginApiRequest = { deviceId: device.deviceId, deviceKey: device.deviceKey }
+      return apiFetch<DeviceLoginResult>(ApiPath.DeviceLogin, { method: 'POST', body })
+    },
+
+    /** Forgets the anonymous identity of this device, for when its account is deleted. */
+    forgetDevice: async (): Promise<void> => {
+      await config.storage.setDevice(null).catch(() => undefined)
+    },
+
+    /**
+     * Gives an anonymous account an address and a password. The address counts once the code from
+     * the email is entered (`confirmEmail`), after which the account also signs in by email.
+     */
+    linkEmail: (
+      email: string,
+      password: string,
+    ): Promise<ApiOutcome<LinkEmailApiResponse, LinkEmailApiErrorCode>> => {
+      const body: LinkEmailApiRequest = { email, password }
+      return apiOutcome<LinkEmailApiResponse, LinkEmailApiErrorCode>(ApiPath.LinkEmail, {
+        method: 'POST',
+        body,
+      })
     },
 
     /** Registration. Returns no session: first the code from the email, then sign-in. */

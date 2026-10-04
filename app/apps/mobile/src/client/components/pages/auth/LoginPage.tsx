@@ -1,7 +1,7 @@
 import { Block, Button, Link, List, ListInput, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
-import { apiErrorText, login } from '../../../lib/api'
+import { apiErrorText, deviceLogin, login } from '../../../lib/api'
 import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
 import { useAuth } from '../../../lib/store'
 import { useEnvSwitcherTaps } from '../../../lib/use-env-switcher'
@@ -35,6 +35,20 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
       await storeLogin(user, tokens)
     } catch (err) {
       setError(apiErrorText(err, { byStatus: { 401: 'Неверная почта или пароль' } }, 'Не получилось войти'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /** The terms line under the form covers this too: continuing is agreeing, the same as signing in. */
+  async function handleAnonymous() {
+    setError('')
+    setLoading(true)
+    try {
+      const { user, tokens } = await deviceLogin()
+      await storeLogin(user, tokens)
+    } catch (err) {
+      setError(apiErrorText(err, {}, 'Не получилось продолжить без регистрации'))
     } finally {
       setLoading(false)
     }
@@ -115,6 +129,9 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
         <div className="rd-links">
           <Link onClick={() => f7router.navigate('/forgot-password/')}>Не помню пароль</Link>
           <Link onClick={showLoginHelp}>Не получается войти?</Link>
+          <Link onClick={() => void handleAnonymous()} data-testid="continue-anonymously">
+            Продолжить без регистрации
+          </Link>
         </div>
 
         <p className="rd-fineprint">

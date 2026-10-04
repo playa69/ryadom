@@ -80,9 +80,12 @@ export default async function UsersPage({
                     <TableRow key={user.id}>
                       <TableCell>
                         {/* One line with an ellipsis: an address cut in the middle of a word reads as a bug. */}
-                        <span className="block max-w-80 truncate" title={user.email}>
-                          <Link href={`/users/${user.id}`} className="font-medium text-blue-600 hover:underline">
-                            {user.email}
+                        <span className="block max-w-80 truncate" title={user.email ?? user.id}>
+                          <Link
+                            href={`/users/${user.id}`}
+                            className="font-medium text-blue-600 hover:underline"
+                          >
+                            {user.email ?? `Без почты · ${user.id.slice(0, 8)}`}
                           </Link>
                         </span>
                       </TableCell>

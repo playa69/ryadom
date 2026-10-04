@@ -22,4 +22,11 @@ export {
   emailTransportConfig,
   type EmailTransportConfig,
 } from './helpers'
-export { emailInputSchema, passwordInputSchema, nameInputSchema, codeInputSchema } from './input-schemas'
+export {
+  emailInputSchema,
+  passwordInputSchema,
+  nameInputSchema,
+  codeInputSchema,
+  deviceIdInputSchema,
+  deviceKeyInputSchema,
+} from './input-schemas'
