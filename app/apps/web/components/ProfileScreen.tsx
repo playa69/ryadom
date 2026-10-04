@@ -122,7 +122,6 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
             <ProfileRow
               icon="mail"
               label="Привязать почту"
-              value="чтобы войти с другого устройства"
               testId="row-link-email"
               onClick={() => setLinkOpen(true)}
             />

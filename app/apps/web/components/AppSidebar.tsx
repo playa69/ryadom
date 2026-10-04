@@ -68,7 +68,7 @@ export default function AppSidebar() {
 
   const groups = useMemo(() => groupJournal(items ?? []), [items])
   const name = user?.name?.trim() || user?.email || ''
-  const initial = name.charAt(0).toUpperCase() || '?'
+  const initial = name.charAt(0).toUpperCase() || '·'
 
   return (
     <Sidebar collapsible="icon" className="border-line **:data-[sidebar=sidebar]:backdrop-blur-2xl">

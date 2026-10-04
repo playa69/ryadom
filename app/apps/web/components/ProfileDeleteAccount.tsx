@@ -51,6 +51,14 @@ export default function ProfileDeleteAccount() {
   const router = useRouter()
   const { user, logout } = useAuth()
   const anonymous = user?.email === null
+  // An anonymous account has no password to delete and no address to free.
+  const consequences = anonymous
+    ? CONSEQUENCES.filter((item) => item.icon !== Mail).map((item) =>
+        item.icon === UserX
+          ? { ...item, text: 'Профиль удаляется. Восстановить аккаунт будет нельзя.' }
+          : item,
+      )
+    : CONSEQUENCES
   const [confirmed, setConfirmed] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -107,7 +115,7 @@ export default function ProfileDeleteAccount() {
       </DangerNote>
 
       <SettingsSection title="Что произойдёт" testId="consequences">
-        {CONSEQUENCES.filter((item) => !anonymous || item.icon !== Mail).map((item) => (
+        {consequences.map((item) => (
           <li key={item.text}>
             <Item
               className={cn(ROW, 'min-h-0 items-start text-[0.9375rem] leading-normal font-normal text-dim')}

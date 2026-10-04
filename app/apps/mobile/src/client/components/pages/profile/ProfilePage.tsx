@@ -105,31 +105,33 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
       <section className="rd-profile-group">
       <BlockTitle>Аккаунт</BlockTitle>
       <List inset strong dividers className="rd-menu">
-        {noEmail ? (
+        {/* Direct children of the List, not a fragment: Framework7 groups the rows of a list by looking
+            at them, and a fragment drops its rows out of the card. The explanation goes under the
+            title: next to it (`after`) it is long enough to push the title out of the row. */}
+        {noEmail && (
           <ListItem
             link
             title="Привязать почту"
-            after="чтобы войти с другого устройства"
+            footer="чтобы войти с другого устройства"
             onClick={() => f7router.navigate('/profile/link-email/')}
           >
             <Icon slot="media" f7="envelope_fill" />
           </ListItem>
-        ) : (
-          <>
-            {pendingEmail && (
-              <ListItem
-                link
-                title="Подтвердить почту"
-                after={pendingEmail}
-                onClick={() => f7router.navigate('/profile/link-email/', { props: { pendingEmail } })}
-              >
-                <Icon slot="media" f7="envelope_fill" />
-              </ListItem>
-            )}
-            <ListItem link title="Изменить пароль" onClick={() => f7router.navigate('/profile/change-password/')}>
-              <Icon slot="media" f7="lock_fill" />
-            </ListItem>
-          </>
+        )}
+        {pendingEmail && (
+          <ListItem
+            link
+            title="Подтвердить почту"
+            footer={pendingEmail}
+            onClick={() => f7router.navigate('/profile/link-email/', { props: { pendingEmail } })}
+          >
+            <Icon slot="media" f7="envelope_fill" />
+          </ListItem>
+        )}
+        {!noEmail && (
+          <ListItem link title="Изменить пароль" onClick={() => f7router.navigate('/profile/change-password/')}>
+            <Icon slot="media" f7="lock_fill" />
+          </ListItem>
         )}
         <ListItem link title="Люди рядом" onClick={() => f7router.navigate('/people/')}>
           <Icon slot="media" f7="person_2_fill" />

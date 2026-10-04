@@ -28,6 +28,14 @@ const CONSEQUENCES: Array<{ icon: string; text: string }> = [
 export default function DeleteAccountPage() {
   const { auth, logout } = useAuth()
   const anonymous = auth.user?.email === null
+  // An anonymous account has no password to delete and no address to free.
+  const consequences = anonymous
+    ? CONSEQUENCES.filter((item) => item.icon !== 'envelope').map((item) =>
+        item.icon === 'person_crop_circle_badge_xmark'
+          ? { ...item, text: 'Профиль удаляется. Восстановить аккаунт будет нельзя.' }
+          : item,
+      )
+    : CONSEQUENCES
   const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -73,7 +81,7 @@ export default function DeleteAccountPage() {
 
       <BlockTitle>Что произойдёт</BlockTitle>
       <List inset strong dividers className="rd-menu">
-        {CONSEQUENCES.filter((item) => !anonymous || item.icon !== 'envelope').map((item) => (
+        {consequences.map((item) => (
           <ListItem key={item.icon} className="rd-wrap" title={item.text}>
             <Icon slot="media" f7={item.icon} />
           </ListItem>

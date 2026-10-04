@@ -96,7 +96,9 @@ export default async function UsersPage({
                         <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
                       </TableCell>
                       <TableCell>
-                        {user.isEmailConfirmed ? (
+                        {user.email === null ? (
+                          <span className="text-gray-500">—</span>
+                        ) : user.isEmailConfirmed ? (
                           <StatusBadge tone="success">да</StatusBadge>
                         ) : (
                           <StatusBadge tone="warning">нет</StatusBadge>
