@@ -12,7 +12,12 @@ import {
   LinkEmailOperation,
   authenticationProcess,
 } from '../src/processes/authentication'
-import { PurgeInactiveAnonymousOperation, accountDeletionProcess } from '../src/processes/account-deletion'
+import { ListInactiveAnonymousUsersQuery, usersManager } from '../src/managers/users-manager'
+import {
+  DeleteAccountOperation,
+  PurgeInactiveAnonymousOperation,
+  accountDeletionProcess,
+} from '../src/processes/account-deletion'
 import { StartDialogOperation, dialogsProcess } from '../src/processes/dialogs'
 import { ConfirmEmailOperation, emailConfirmationProcess } from '../src/processes/email-confirmation'
 import {
@@ -104,6 +109,51 @@ describe('когда человека видели', () => {
     travelBy(2 * HOUR)
     await deviceLogin(device)
     expect((await lastSeen(user.id)).getTime()).toBeGreaterThan(recent.getTime())
+  })
+})
+
+describe('кого считают анонимным и неактивным', () => {
+  it('список — только тихие аккаунты с ключом устройства и неподтверждённой почтой, не заблокированные', async () => {
+    const quiet = await anonymousSeen(RETENTION_DAYS + 5)
+    const seenRecently = await anonymousSeen(RETENTION_DAYS - 5)
+    const blocked = await anonymousSeen(RETENTION_DAYS + 5)
+    await blockDirectly(blocked.user.id)
+    // An address that was confirmed, with a device row left behind by stale data.
+    const confirmed = await anonymousSeen(RETENTION_DAYS + 5)
+    await getDb().update(users).set({ isEmailConfirmed: true }).where(eq(users.id, confirmed.user.id))
+    // Registered by email: no device at all, however long it has been quiet.
+    const registered = await registerConfirmedUser()
+    await setLastSeen(registered.id, new Date(Date.now() - 400 * DAY))
+    // Already erased.
+    mockAgent()
+    const gone = await anonymousSeen(RETENTION_DAYS + 5)
+    await accountDeletionProcess.execute(new DeleteAccountOperation({ userId: gone.user.id }))
+
+    const { users: listed } = await usersManager.execute(
+      new ListInactiveAnonymousUsersQuery({
+        inactiveSince: new Date(Date.now() - RETENTION_DAYS * DAY),
+        limit: 100,
+      }),
+    )
+
+    expect(listed.map((user) => user.id)).toEqual([quiet.user.id])
+    expect(seenRecently.user.id).not.toBe(quiet.user.id)
+  })
+
+  it('самые давние — первыми, и не больше лимита', async () => {
+    const newer = await anonymousSeen(RETENTION_DAYS + 2)
+    const oldest = await anonymousSeen(RETENTION_DAYS + 9)
+    const middle = await anonymousSeen(RETENTION_DAYS + 5)
+
+    const { users: listed } = await usersManager.execute(
+      new ListInactiveAnonymousUsersQuery({
+        inactiveSince: new Date(Date.now() - RETENTION_DAYS * DAY),
+        limit: 2,
+      }),
+    )
+
+    expect(listed.map((user) => user.id)).toEqual([oldest.user.id, middle.user.id])
+    expect(newer.user.id).not.toBe(oldest.user.id)
   })
 })
 
