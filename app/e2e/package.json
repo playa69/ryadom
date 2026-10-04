@@ -10,6 +10,7 @@
     "report": "playwright show-report report"
   },
   "devDependencies": {
+    "@ryadom/contracts": "workspace:*",
     "@playwright/test": "^1.56.1",
     "@types/node": "^24.6.0",
     "@types/pngjs": "^6.0.5",

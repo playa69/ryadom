@@ -27,7 +27,7 @@ test('путь аккаунта: регистрация, вход, смена п
 
   // ── sign-up ──────────────────────────────────────────────────────────────
   await openApp(page)
-  await shot(page, 'app-login')
+  await shot(page, 'app-welcome')
   await registerAndConfirm(page, email)
   await shot(page, 'app-home')
 

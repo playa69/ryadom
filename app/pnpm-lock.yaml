@@ -473,6 +473,9 @@ importers:
       '@playwright/test':
         specifier: ^1.56.1
         version: 1.63.0
+      '@ryadom/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
       '@types/node':
         specifier: ^24.6.0
         version: 24.19.0

@@ -42,7 +42,12 @@ test('путь аккаунта в вебе: регистрация, профи�
 
   // ── sign-up ──────────────────────────────────────────────────────────────
   await openWebApp(page)
-  // The root has no screen of its own: an anonymous visitor lands on the sign-in.
+  // The root has no screen of its own: a visitor with no account lands on the first screen, and the
+  // sign-in is a door they open themselves.
+  await expect(page).toHaveURL(/\/welcome$/)
+  await expectNoHorizontalOverflow(page)
+  await shot(page, 'web-welcome')
+  await page.getByTestId('have-account').click()
   await expect(page).toHaveURL(/\/login$/)
   await expect(button(page, 'Войти')).toBeVisible()
   await expectNoHorizontalOverflow(page)

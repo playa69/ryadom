@@ -53,11 +53,30 @@ export function modalButton(page: Page, name: string): Locator {
   return modal(page).getByRole('button', { name, exact: true })
 }
 
-/** The consent checkbox: a real input inside the `consents` label (sign-up and account deletion). */
+/**
+ * Every checkbox of the `consents` group: the three agreements of the first screen and of sign-up,
+ * or the single one that confirms an account deletion.
+ */
 export async function checkConsent(page: Page): Promise<void> {
-  const box = page.getByTestId('consents').getByRole('checkbox')
-  await box.check()
-  await expect(box).toBeChecked()
+  const boxes = page.getByTestId('consents').getByRole('checkbox')
+  await expect(boxes.first()).toBeVisible()
+  const count = await boxes.count()
+  expect(count, 'в блоке согласий есть что отметить').toBeGreaterThan(0)
+  for (let index = 0; index < count; index += 1) {
+    await boxes.nth(index).check()
+    await expect(boxes.nth(index)).toBeChecked()
+  }
+}
+
+/**
+ * The first screen as a new visitor meets it: all three agreements, then "Начать". An account is made
+ * behind the scenes and the person is on the home screen, with no address and no password.
+ */
+export async function startAnonymously(page: Page): Promise<void> {
+  await expect(page).toHaveURL(/\/welcome$/)
+  await checkConsent(page)
+  await button(page, 'Начать').click()
+  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
 }
 
 /** What a layout decision hangs on: the sidebar is a drawer below 768px and a column from there up. */
@@ -209,6 +228,9 @@ export async function endConversation(page: Page, takeaway: string): Promise<voi
   await expect(modal(page).getByRole('heading', { name: 'Спасибо, что поговорил(а)' })).toBeVisible({
     timeout: 30_000,
   })
+  // Only an account that has no way back in other than this device is offered an address: a registered
+  // one has been through all that, and is not told what it already has.
+  await expect(page.getByTestId('alert-offer')).toHaveCount(0)
   await page.getByTestId('alert-ok').click()
   await expect(page).toHaveURL(/\/home$/)
 }
@@ -222,7 +244,13 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
 
 /** Sign-up with email confirmation: afterwards the person is already inside, on the home screen. */
 export async function registerAndConfirm(page: Page, email: string, name = 'Тест'): Promise<void> {
-  await page.getByRole('link', { name: 'Создать аккаунт', exact: true }).click()
+  // A new visitor meets the first screen and opens the sign-in from it; from the sign-in screen the
+  // way to the sign-up is one link away.
+  const haveAccount = page.getByTestId('have-account')
+  const createAccount = page.getByRole('link', { name: 'Создать аккаунт', exact: true })
+  await expect(haveAccount.or(createAccount)).toBeVisible({ timeout: 30_000 })
+  if (await haveAccount.isVisible()) await haveAccount.click()
+  await createAccount.click()
   await expect(page.getByRole('heading', { name: 'Давай знакомиться' })).toBeVisible()
 
   await field(page, 'name').fill(name)

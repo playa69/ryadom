@@ -41,8 +41,15 @@ export function button(page: Page, name: string | RegExp) {
  */
 export async function checkConsent(page: Page): Promise<void> {
   const consent = screen(page).getByTestId('consents')
-  await consent.locator('.icon-checkbox').click()
-  await expect(consent.locator('input[type="checkbox"]')).toBeChecked()
+  const icons = consent.locator('.icon-checkbox')
+  // The page may still be sliding in: count only once the first box is on screen.
+  await expect(icons.first()).toBeVisible()
+  const count = await icons.count()
+  expect(count, 'в блоке согласий есть что отметить').toBeGreaterThan(0)
+  for (let index = 0; index < count; index += 1) {
+    await icons.nth(index).click()
+    await expect(consent.locator('input[type="checkbox"]').nth(index)).toBeChecked()
+  }
 }
 
 /** Closes the open sheet with the sheet's own button. */
@@ -59,10 +66,21 @@ export function sheetButton(page: Page, name: string | RegExp) {
 
 export async function openApp(page: Page): Promise<void> {
   await page.goto(`${APP_URL}/`)
-  await expect(button(page, 'Войти').or(button(page, 'Поговорить'))).toBeVisible({ timeout: 30_000 })
+  // A new visitor lands on the first screen, someone with a session on home.
+  await expect(button(page, 'Начать').or(button(page, 'Поговорить'))).toBeVisible({ timeout: 30_000 })
   // The PWA install banner covers the bottom of the screen and is not needed in the test browser.
   const dismiss = page.getByRole('button', { name: 'Скрыть' })
   if (await dismiss.isVisible().catch(() => false)) await dismiss.click()
+}
+
+/**
+ * The first screen as a new visitor meets it: all three agreements, then "Начать". An account is made
+ * behind the scenes and the person is on the home screen, with no address and no password.
+ */
+export async function startAnonymously(page: Page): Promise<void> {
+  await checkConsent(page)
+  await button(page, 'Начать').click()
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
 }
 
 export async function signIn(page: Page, email: string, password = PASSWORD): Promise<void> {
@@ -74,6 +92,10 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
 
 /** Sign-up with email confirmation: afterwards the person is already inside. */
 export async function registerAndConfirm(page: Page, email: string, name = 'Тест'): Promise<void> {
+  // A new visitor meets the first screen and opens the sign-in from it; from the sign-in screen the
+  // sign-up is one button away.
+  const haveAccount = screen(page).getByTestId('have-account')
+  if (await haveAccount.isVisible().catch(() => false)) await haveAccount.click()
   await button(page, 'Создать аккаунт').click()
   await expect(page.getByText('Давай знакомиться')).toBeVisible()
 

@@ -97,6 +97,7 @@ test('несуществующая страница отвечает 404 по-р
 test('экраны входа укладываются в политику, а worklet микрофона не блокируется', async ({ page }) => {
   const violations = await watchCsp(page)
   const titles: Array<[string, string]> = [
+    ['/welcome', 'Добро пожаловать — Рядом'],
     ['/login', 'Вход — Рядом'],
     ['/register', 'Регистрация — Рядом'],
     ['/forgot-password', 'Восстановление пароля — Рядом'],
@@ -125,17 +126,24 @@ test('экраны входа укладываются в политику, а w
   expect(await violations(), 'нарушения политики при загрузке worklet').toEqual([])
 })
 
-test('адаптивность: на входе и регистрации нет горизонтальной прокрутки от 360 до 1920', async ({ page }) => {
-  for (const path of ['/login', '/register']) {
+test('адаптивность: на входе, регистрации и первом экране нет горизонтальной прокрутки от 360 до 1920', async ({
+  page,
+}) => {
+  for (const path of ['/welcome', '/login', '/register']) {
     await openWebApp(page, path)
     for (const width of [360, 820, 1280, 1920]) {
       await page.setViewportSize({ width, height: 800 })
       await expectNoHorizontalOverflow(page)
-      // The form stays inside the window at every width, whichever way the card is laid out.
-      const email = await field(page, 'email').boundingBox()
-      expect(email!.x, `${path}@${width}: поле почты слева`).toBeGreaterThanOrEqual(0)
-      expect(email!.x + email!.width, `${path}@${width}: поле почты справа`).toBeLessThanOrEqual(width)
-      await expect(button(page, path === '/login' ? 'Войти' : 'Создать аккаунт')).toBeVisible()
+      // The form stays inside the window at every width, whichever way the card is laid out. The first
+      // screen has no address field: its edge to hold is the group of agreements.
+      const edge =
+        path === '/welcome' ? page.getByTestId('consents') : field(page, 'email')
+      const box = await edge.boundingBox()
+      expect(box!.x, `${path}@${width}: форма слева`).toBeGreaterThanOrEqual(0)
+      expect(box!.x + box!.width, `${path}@${width}: форма справа`).toBeLessThanOrEqual(width)
+      await expect(
+        button(page, path === '/welcome' ? 'Начать' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
+      ).toBeVisible()
     }
   }
 })

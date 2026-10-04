@@ -1,4 +1,4 @@
-import { test as base, type Page } from '@playwright/test'
+import { test as base, type BrowserContext, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -25,16 +25,36 @@ function addressFor(key: string): string {
   return `10.${a}.${b}.${c}`
 }
 
-export const test = base.extend<{ shot: Shot }>({
-  // A route, not `extraHTTPHeaders`: those count as set by the page, so the web app's cross-origin
-  // calls to the API would be preflighted and refused (the API does not allow this header).
+/**
+ * A route, not `extraHTTPHeaders`: those count as set by the page, so the web app's cross-origin
+ * calls to the API would be preflighted and refused (the API does not allow this header).
+ */
+async function prepareContext(context: BrowserContext, address: string): Promise<void> {
+  await installSpeechStub(context)
+  await context.route(/\/api\//, (route) =>
+    route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': address } }),
+  )
+}
+
+export const test = base.extend<{ shot: Shot; newDevice: () => Promise<Page> }>({
   context: async ({ context }, use, testInfo) => {
-    await installSpeechStub(context)
-    const address = addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`)
-    await context.route(/\/api\//, (route) =>
-      route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': address } }),
-    )
+    await prepareContext(context, addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`))
     await use(context)
+  },
+  /**
+   * Another device of the same person: a browser context of its own, so no session, device key or
+   * cookie is shared with the test's page. It comes from the same address as the test, so the
+   * per-IP limits count both devices together, as they would behind one router.
+   */
+  newDevice: async ({ browser }, use, testInfo) => {
+    const contexts: BrowserContext[] = []
+    await use(async () => {
+      const context = await browser.newContext(testInfo.project.use)
+      contexts.push(context)
+      await prepareContext(context, addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`))
+      return context.newPage()
+    })
+    await Promise.all(contexts.map((context) => context.close()))
   },
   shot: async ({}, use, testInfo) => {
     await mkdir(SCREENSHOT_DIR, { recursive: true })
