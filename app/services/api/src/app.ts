@@ -3,25 +3,27 @@ import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
 import { HTTPException } from 'hono/http-exception'
-import { AppHeader } from '@ryadom/contracts/api/headers'
+import { AppHeader, TracingHeader } from '@ryadom/contracts/api/headers'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, type TransportErrorStatus } from './lib/api-response'
 import type { AppDeps, AppEnv } from './lib/context'
 import { createJwt } from './lib/jwt'
 import { registerPwaServing } from './lib/pwa'
+import { tracing } from './lib/tracing'
 import { versionGate } from './lib/version-gate'
 import { registerAllRoutes } from './routes'
 
 /**
  * HTTP application. The middleware order matters:
  *
- * 1. request log, outermost, so the status and duration of every response are visible;
- * 2. CORS, before the gate: the app calls from `https://localhost` (WebView), and without CORS
+ * 1. tracing context, outermost, so that even the request log carries the trace id;
+ * 2. request log, so the status and duration of every response are visible;
+ * 3. CORS, before the gate: the app calls from `https://localhost` (WebView), and without CORS
  *    headers even a 426 looks to it like a dropped connection;
- * 3. body size limit;
- * 4. version gate, before the routes: an outdated client gets 426 before its body is parsed;
- * 5. `/api/*` routes;
- * 6. PWA serving, after the routes: an `/api/*` request with no matching route still gets JSON
+ * 4. body size limit;
+ * 5. version gate, before the routes: an outdated client gets 426 before its body is parsed;
+ * 6. `/api/*` routes;
+ * 7. PWA serving, after the routes: an `/api/*` request with no matching route still gets JSON
  *    rather than HTML.
  */
 
@@ -35,6 +37,8 @@ const TRANSPORT_STATUSES = new Set<number>([400, 401, 404, 413, 422, 426, 429, 5
 export function createApp(deps: AppDeps, pwaRoot?: string | null): Hono<AppEnv> {
   const { logger, policy } = deps
   const app = new Hono<AppEnv>()
+
+  app.use('*', tracing())
 
   app.use('*', async (c, next) => {
     const started = performance.now()
@@ -65,6 +69,8 @@ export function createApp(deps: AppDeps, pwaRoot?: string | null): Hono<AppEnv> 
         AppHeader.Platform,
         AppHeader.AppVersion,
         AppHeader.JsVersion,
+        // The web app calls from another origin and sends them on every request.
+        ...Object.values(TracingHeader),
       ],
       maxAge: 600,
     }),

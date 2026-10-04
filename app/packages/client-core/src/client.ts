@@ -44,6 +44,7 @@ import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from 
 import { ApiError, NETWORK_ERROR_STATUS, type ApiOutcome } from './errors'
 import { isTokenValid, tokenSubject } from './jwt'
 import type { SessionStorage, User } from './storage'
+import { createTracing } from './tracing'
 
 /**
  * The API client, one instance per app. Everything the two apps do differently is passed in
@@ -57,6 +58,8 @@ export interface ClientConfig {
   /** `ws(s)://host`, no trailing slash. */
   wsBase(): string
   storage: SessionStorage
+  /** Sent as `x-client-id` so that the logs say which app a request came from. */
+  clientId?: string
   /**
    * Extra headers on every request. A store build puts `X-Platform` and its versions here so the
    * version gate can refuse an outdated one; a browser client returns nothing.
@@ -91,6 +94,7 @@ export function createClient(config: ClientConfig) {
   let refreshing: Promise<boolean> | null = null
 
   const versionHeaders = async (): Promise<Record<string, string>> => (await config.versionHeaders?.()) ?? {}
+  const tracing = createTracing(config.clientId)
 
   // ─── session ────────────────────────────────────────────────────────────────
 
@@ -237,7 +241,7 @@ export function createClient(config: ClientConfig) {
       const body: RefreshApiRequest = { refreshToken }
       const res = await fetch(`${config.apiBase()}${ApiPath.Refresh}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await versionHeaders()) },
+        headers: { 'Content-Type': 'application/json', ...tracing(), ...(await versionHeaders()) },
         body: JSON.stringify(body),
       })
       if (stale()) return false
@@ -293,9 +297,10 @@ export function createClient(config: ClientConfig) {
     }
     const attempt = (): Promise<Response> => {
       if (accessToken) headers[AppHeader.Authorization] = `Bearer ${accessToken}`
+      // A retry after a refresh is a request of its own, so it gets its own trace id.
       return fetch(`${config.apiBase()}${path}`, {
         method: opts.method ?? 'GET',
-        headers,
+        headers: { ...headers, ...tracing() },
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       })
     }

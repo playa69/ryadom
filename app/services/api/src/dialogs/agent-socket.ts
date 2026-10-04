@@ -1,3 +1,4 @@
+import { bindRequestContext, tracingHeaders } from '@ryadom/core/shared'
 import { WebSocket } from 'ws'
 
 /**
@@ -41,22 +42,30 @@ export interface AgentSocketOptions {
 export function openAgentSocket(options: AgentSocketOptions, handlers: AgentSocketHandlers): AgentSocket {
   const { token } = options
   const socket = new WebSocket(agentWsUrl(options.baseUrl, options.userId, options.dialogId), {
-    // Server to server: a header is available, so the token does not have to go into the URL.
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    // Server to server: headers are available, so the token does not have to go into the URL.
+    headers: { ...tracingHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     handshakeTimeout: 10_000,
   })
 
-  socket.on('open', handlers.onOpen)
-  socket.on('message', (data: Buffer, isBinary: boolean) => {
-    if (isBinary) return handlers.onBinary(data)
-    try {
-      handlers.onText(JSON.parse(data.toString('utf8')))
-    } catch {
-      handlers.onError(new Error('Agent sent a malformed text frame'))
-    }
-  })
-  socket.on('close', (code: number, reason: Buffer) => handlers.onClose(code, reason.toString('utf8')))
-  socket.on('error', handlers.onError)
+  // ws calls listeners from the socket's own async context; bound ones keep the dialog's tracing
+  // fields on everything the gateway logs when the agent speaks.
+  socket.on('open', bindRequestContext(handlers.onOpen))
+  socket.on(
+    'message',
+    bindRequestContext((data: Buffer, isBinary: boolean) => {
+      if (isBinary) return handlers.onBinary(data)
+      try {
+        handlers.onText(JSON.parse(data.toString('utf8')))
+      } catch {
+        handlers.onError(new Error('Agent sent a malformed text frame'))
+      }
+    }),
+  )
+  socket.on(
+    'close',
+    bindRequestContext((code: number, reason: Buffer) => handlers.onClose(code, reason.toString('utf8'))),
+  )
+  socket.on('error', bindRequestContext(handlers.onError))
 
   return {
     send(frame) {

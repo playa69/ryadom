@@ -1,5 +1,12 @@
+import type { IncomingMessage } from 'node:http'
 import type { WebSocket } from 'ws'
-import { createLogger } from '@ryadom/core/shared'
+import {
+  bindRequestContext,
+  createLogger,
+  readTracingContext,
+  runWithRequestContext,
+  updateRequestContext,
+} from '@ryadom/core/shared'
 import {
   AUDIO_FRAME_HEADER_BYTES,
   AudioFrameKind,
@@ -73,14 +80,28 @@ class DialogSession {
       this.fail(DialogWsErrorCode.UNAUTHORIZED, 'hello frame expected', DialogCloseCode.Unauthorized)
     }, DIALOG_LIMITS.helloTimeoutMs)
 
-    socket.on('message', (data: Buffer, isBinary: boolean) => {
-      this.queue = this.queue.then(() => this.onClientMessage(data, isBinary)).catch(() => {})
-    })
-    socket.on('close', () => this.dispose())
-    socket.on('error', () => this.dispose())
-    socket.on('pong', () => {
-      this.alive = true
-    })
+    // The constructor runs inside the connection's tracing context; ws would call these listeners
+    // from the socket's own context, so they are bound to keep it.
+    socket.on(
+      'message',
+      bindRequestContext((data: Buffer, isBinary: boolean) => {
+        this.queue = this.queue.then(() => this.onClientMessage(data, isBinary)).catch(() => {})
+      }),
+    )
+    socket.on(
+      'close',
+      bindRequestContext(() => this.dispose()),
+    )
+    socket.on(
+      'error',
+      bindRequestContext(() => this.dispose()),
+    )
+    socket.on(
+      'pong',
+      bindRequestContext(() => {
+        this.alive = true
+      }),
+    )
   }
 
   private toClient(frame: DialogServerMessage): void {
@@ -225,6 +246,8 @@ class DialogSession {
 
     this.userId = payload.sub
     this.dialogId = dialogId
+    // The upgrade carried only what the client could put in headers; now the account is verified.
+    updateRequestContext({ userId: this.userId })
 
     // One active connection per person: the second socket closes the first, otherwise the same
     // person on a phone and in a browser would hold two conversations in one dialog.
@@ -423,15 +446,26 @@ class DialogSession {
   }
 }
 
-/** A new client connection: the session itself waits for `hello` and everything after it. */
-export function handleDialogSocket(socket: WebSocket, deps: GatewayDeps): void {
+/**
+ * A new client connection: the session itself waits for `hello` and everything after it. The
+ * tracing headers are read from the upgrade request and are this connection's context for its whole
+ * life: a socket has no later request to carry them.
+ */
+export function handleDialogSocket(
+  socket: WebSocket,
+  deps: GatewayDeps,
+  request: Pick<IncomingMessage, 'headers'>,
+): void {
   // The balancer has not stopped sending traffic yet: a socket that arrives now would be closed a few seconds
   // later anyway, so it is turned away at once and the client comes back to a pod that stays.
   if (isDraining()) {
     socket.close(DialogCloseCode.Restarting, 'server is restarting')
     return
   }
-  new DialogSession(socket, deps)
+  runWithRequestContext(
+    readTracingContext((name) => request.headers[name]),
+    () => new DialogSession(socket, deps),
+  )
 }
 
 /**

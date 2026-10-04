@@ -1,8 +1,9 @@
-import { AgentUnavailableError } from '../../../shared'
+import { AgentUnavailableError, tracingHeaders } from '../../../shared'
 import { agentApiConfig } from '../config'
 
 /**
- * The single way to call the agent: timeout, shared secret in a header, JSON parsing.
+ * The single way to call the agent: timeout, shared secret in a header, the tracing headers of the
+ * current request, JSON parsing.
  *
  * Network errors, timeouts, 5xx and garbage instead of JSON all become `AgentUnavailableError`:
  * technical failures are thrown (core rules), but the application has to tell "the agent is down"
@@ -18,7 +19,7 @@ export async function callAgent<T>(
   path: string,
   init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown } = { method: 'GET' },
 ): Promise<AgentCallResult<T>> {
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { Accept: 'application/json', ...tracingHeaders() }
   if (init.body !== undefined) headers['Content-Type'] = 'application/json'
   const token = agentApiConfig.token
   if (token) headers.Authorization = `Bearer ${token}`

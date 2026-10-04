@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from 'hono'
+import { updateRequestContext } from '@ryadom/core/shared'
 import { AppHeader } from '@ryadom/contracts/api/headers'
 import { apiError } from './api-response'
 import type { AppEnv } from './context'
@@ -35,6 +36,8 @@ export function requireAuth(jwt: Jwt): MiddlewareHandler<AppEnv> {
     const user = await getUserFromRequest(jwt, c.req.header(AppHeader.Authorization))
     if (!user) return apiError(c, 401, 'Unauthorised')
     c.set('auth', user)
+    // `x-user-id` is whatever the client wrote; behind a verified token the log and the agent get the account.
+    updateRequestContext({ userId: user.userId })
     await next()
   }
 }

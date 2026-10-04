@@ -10,6 +10,7 @@ export function createWebClient(apiBase: string, handlers: () => Handlers): Ryad
     apiBase: () => apiBase,
     wsBase: () => toWsBase(apiBase),
     storage: createLocalSessionStorage(),
+    clientId: 'ryadom-web',
     // Called through a ref-backed getter so the handlers may change without re-creating the client.
     onAccountUnavailable: (code) => handlers().onAccountUnavailable?.(code),
     onSessionEnd: () => handlers().onSessionEnd?.(),

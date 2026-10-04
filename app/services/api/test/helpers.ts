@@ -4,7 +4,7 @@ import { getSentEmails } from '@ryadom/core/services/email-sender-service'
 import { createApp } from '../src/app'
 import type { AppEnv } from '../src/lib/context'
 import { parseEnv } from '../src/lib/env'
-import { createLogger } from '../src/lib/logger'
+import { createLogger, type Logger } from '../src/lib/logger'
 import { createRateLimiter } from '../src/lib/rate-limit'
 import { EMPTY_POLICY, type PolicySource, type ReleasePolicy } from '../src/lib/release-policy'
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
@@ -26,12 +26,14 @@ export interface TestApp {
  * The application under test. `pwaRoot: null` because serving the PWA is covered end to end
  * against a real build; otherwise the result would depend on whether `dist/pwa` exists locally.
  */
-export function makeApp(options: { policy?: ReleasePolicy; env?: Record<string, string> } = {}): TestApp {
+export function makeApp(
+  options: { policy?: ReleasePolicy; env?: Record<string, string>; logger?: Logger } = {},
+): TestApp {
   const rateLimiter = createRateLimiter()
   const app = createApp(
     {
       env: parseEnv({ ...process.env, ...options.env }),
-      logger: createLogger('silent'),
+      logger: options.logger ?? createLogger('silent'),
       policy: staticPolicy(options.policy),
       rateLimiter,
     },

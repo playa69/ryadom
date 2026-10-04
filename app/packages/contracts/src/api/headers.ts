@@ -21,3 +21,21 @@ export enum AppPlatform {
   Android = 'android',
   Ios = 'ios',
 }
+
+/**
+ * Tracing headers: the same five that `backend/` and `agent/` take and pass on
+ * (`.agents/skills/api-headers-rules`). The app sends them on every request, the API puts them in
+ * its log records and forwards them to the agent. Lower case, as they travel on the wire.
+ */
+export enum TracingHeader {
+  /** Id of one request, the same in the logs of every service it passes through (`rqUId`). */
+  TraceId = 'x-trace-id',
+  /** When the caller sent the request, ISO 8601 (`rqTime`). */
+  RequestTime = 'x-request-time',
+  /** Which system is calling: the web app, the Android build (`systemId`). */
+  ClientId = 'x-client-id',
+  /** Session of the caller (`gwSessionId`). */
+  SessionId = 'x-session-id',
+  /** Who is calling. Behind a token the API replaces the client's value with the verified account (`userId`). */
+  UserId = 'x-user-id',
+}

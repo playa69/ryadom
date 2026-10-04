@@ -206,3 +206,63 @@ describe('сессия: несколько вкладок на одном хра
     expect(await client.restoreSession()).toEqual(userOf('a'))
   })
 })
+
+describe('трассировка', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+  function sentHeaders(call: number): Record<string, string> {
+    return fetchMock.mock.calls[call]![1]!.headers as Record<string, string>
+  }
+
+  it('каждый запрос несёт свой x-trace-id, время, клиента и общую для клиента сессию', async () => {
+    stubFetch()
+    const { client } = setup(memoryStorage(), { clientId: 'ryadom-web' })
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockImplementation(async () => envelope({}))
+
+    await client.getDialog('d-1').catch(() => undefined)
+    await client.getDialog('d-2').catch(() => undefined)
+
+    const [first, second] = [sentHeaders(0), sentHeaders(1)]
+    expect(first['x-trace-id']).toMatch(UUID)
+    expect(second['x-trace-id']).toMatch(UUID)
+    expect(first['x-trace-id']).not.toBe(second['x-trace-id'])
+    expect(new Date(first['x-request-time']!).toISOString()).toBe(first['x-request-time'])
+    expect(first['x-client-id']).toBe('ryadom-web')
+    expect(first['x-session-id']).toMatch(UUID)
+    expect(second['x-session-id']).toBe(first['x-session-id'])
+    // The account comes from the token on the server; a header the client wrote could be forged.
+    expect(first).not.toHaveProperty('x-user-id')
+    expect(first.Authorization).toBe('Bearer access-1')
+  })
+
+  it('без clientId заголовок x-client-id не уходит', async () => {
+    stubFetch()
+    const { client } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockImplementation(async () => envelope({}))
+
+    await client.getDialog('d-1').catch(() => undefined)
+
+    expect(sentHeaders(0)).not.toHaveProperty('x-client-id')
+    expect(sentHeaders(0)['x-trace-id']).toMatch(UUID)
+  })
+
+  it('повтор после обновления токена и сам refresh — отдельные запросы со своими trace id', async () => {
+    stubFetch()
+    const { client } = setup(memoryStorage(), { clientId: 'ryadom-web' })
+    const refresh = makeToken('a')
+    await client.startSession(userOf('a'), tokens(refresh))
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(envelope({ accessToken: 'access-2', refreshToken: refresh, expiresAt: 0 }))
+      .mockResolvedValueOnce(envelope({}))
+
+    await client.getDialog('d-1').catch(() => undefined)
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const traceIds = [0, 1, 2].map((call) => sentHeaders(call)['x-trace-id'])
+    expect(new Set(traceIds).size).toBe(3)
+    expect(sentHeaders(1)['x-client-id']).toBe('ryadom-web')
+  })
+})

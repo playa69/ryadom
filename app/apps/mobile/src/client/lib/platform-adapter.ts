@@ -3,6 +3,7 @@ import { Preferences } from '@capacitor/preferences'
 import { createClient, type SessionStorage, type User } from '@ryadom/client-core/index'
 import { getVersionHeaders, notifyUpgradeRequired } from './app-update'
 import { getApiBase, getWsBase } from './env'
+import { isAndroid, isIosNative } from './platform'
 
 /**
  * Everything Capacitor- and Vite-specific that the shared client (@ryadom/client-core) needs, and
@@ -90,6 +91,8 @@ export const client = createClient({
   apiBase: getApiBase,
   wsBase: getWsBase,
   storage,
+  // The same code runs in both store builds and as a PWA; the logs tell them apart by this.
+  clientId: isAndroid() ? 'ryadom-android' : isIosNative() ? 'ryadom-ios' : 'ryadom-pwa',
   versionHeaders: getVersionHeaders,
   onUpgradeRequired: notifyUpgradeRequired,
   onAccountUnavailable: (code) => {

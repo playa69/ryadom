@@ -10,6 +10,17 @@ export {
   type LogData,
   type LoggerSettings,
 } from './logger'
+export {
+  TRACING_HEADERS,
+  bindRequestContext,
+  getRequestContext,
+  readTracingContext,
+  requestContextLogFields,
+  runWithRequestContext,
+  tracingHeaders,
+  updateRequestContext,
+  type RequestContext,
+} from './request-context'
 export { startTelemetry, shutdownTelemetry } from './telemetry'
 export {
   getDb,

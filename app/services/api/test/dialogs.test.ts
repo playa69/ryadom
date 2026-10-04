@@ -1,7 +1,7 @@
 /**
  * Dialogs: REST and the WebSocket gateway against an agent started inside the test.
  */
-import { createServer, type Server } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type Server } from 'node:http'
 import { AddressInfo } from 'node:net'
 import { serve } from '@hono/node-server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -117,6 +117,8 @@ describe('REST диалогов', () => {
 
 interface AgentConnection {
   socket: WebSocket
+  /** Headers of the handshake the gateway made. */
+  headers: IncomingHttpHeaders
   received: unknown[]
   binaryFrames: Buffer[]
 }
@@ -144,6 +146,7 @@ async function startFakeAgent(): Promise<FakeAgent> {
     const dialogId = decodeURIComponent(parts[4] ?? '')
     const connection: AgentConnection = {
       socket: socket as unknown as WebSocket,
+      headers: request.headers,
       received: [],
       binaryFrames: [],
     }
@@ -186,7 +189,7 @@ async function startGatewayServer(agentUrl: string) {
       socket.destroy()
       return
     }
-    wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws as never, { env, jwt }))
+    wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws as never, { env, jwt }, request))
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 50))
   const { port } = server.address() as AddressInfo
@@ -259,6 +262,49 @@ describe('WebSocket-шлюз', () => {
     agentSide.socket.send(JSON.stringify({ type: 'ack', id: 'c-1', messageId: 'm-1' }))
     expect(await nextFrame(client, DialogServerFrame.Ack)).toMatchObject({ clientId: 'c-1', messageId: 'm-1' })
 
+    client.close()
+  })
+
+  it('заголовки трассировки из рукопожатия клиента уходят агенту, а userId подменяется проверенным', async () => {
+    const userId = '33333333-3333-4333-8333-333333333333'
+    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const client = new WebSocket(gateway.wsUrl, {
+      headers: {
+        'x-trace-id': 'trace-ws-1',
+        'x-request-time': '2026-10-04T10:00:00.000Z',
+        'x-client-id': 'ryadom-test',
+        'x-session-id': 'session-ws-1',
+        'x-user-id': 'forged-user',
+      },
+    })
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-trace-1' }))
+
+    const agentSide = await agent.waitFor('d-trace-1')
+    expect(agentSide.headers).toMatchObject({
+      'x-trace-id': 'trace-ws-1',
+      'x-request-time': '2026-10-04T10:00:00.000Z',
+      'x-client-id': 'ryadom-test',
+      'x-session-id': 'session-ws-1',
+      'x-user-id': userId,
+    })
+    client.close()
+  })
+
+  it('сокет без заголовков (браузер их задать не может): агенту уходят все пять пустыми', async () => {
+    const userId = '44444444-4444-4444-8444-444444444444'
+    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-trace-2' }))
+
+    const agentSide = await agent.waitFor('d-trace-2')
+    // No trace id is made up, but the account is known from the token.
+    expect(agentSide.headers['x-trace-id']).toBe('')
+    expect(agentSide.headers['x-request-time']).toBe('')
+    expect(agentSide.headers['x-client-id']).toBe('')
+    expect(agentSide.headers['x-session-id']).toBe('')
+    expect(agentSide.headers['x-user-id']).toBe(userId)
     client.close()
   })
 

@@ -7,6 +7,7 @@ import {
   type DestinationStream,
   type Logger as PinoLogger,
 } from 'pino'
+import { requestContextLogFields } from './request-context'
 import { isTelemetryEnabled, otelLogStream } from './telemetry'
 
 /**
@@ -107,6 +108,8 @@ export function getRootLogger(): PinoLogger {
       formatters: { level: (label) => ({ level: label }) },
       redact: { paths: redactPaths(), censor: '[redacted]' },
       serializers: { err: serializeError },
+      // Every record written while a request is handled carries its tracing fields; call sites do not pass them.
+      mixin: requestContextLogFields,
     },
     logDestination(),
   )
