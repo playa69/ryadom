@@ -6,6 +6,8 @@ export interface ChangePasswordOperationData {
   userId: string
   currentPassword: string
   newPassword: string
+  /** The session that made the change keeps working; every other one ends. Null ends all of them. */
+  keepSessionId?: string | null
 }
 
 export class ChangePasswordOperation extends RequestData<ChangePasswordResult> {
@@ -20,10 +22,13 @@ export class ChangePasswordOperation extends RequestData<ChangePasswordResult> {
   @hasPII(true)
   public readonly newPassword: string
 
+  public readonly keepSessionId: string | null
+
   constructor(data: ChangePasswordOperationData) {
     super()
     this.userId = data.userId
     this.currentPassword = data.currentPassword
     this.newPassword = data.newPassword
+    this.keepSessionId = data.keepSessionId ?? null
   }
 }

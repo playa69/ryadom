@@ -1,6 +1,6 @@
 import { requestHandler, type RequestHandler } from 'mediatr-ts'
 import assertNever from 'assert-never'
-import { createLogger, validateInput } from '../../../shared'
+import { createLogger, inTransaction, validateInput } from '../../../shared'
 import { GetUserByIdQuery, GetUserByIdQueryErrorCode, usersManager } from '../../../managers/users-manager'
 import {
   GetUserCredentialsQuery,
@@ -9,6 +9,10 @@ import {
   UpdateUserCredentialsCommandErrorCode,
   userCredentialsManager,
 } from '../../../managers/user-credentials-manager'
+import {
+  RevokeUserRefreshTokensCommand,
+  refreshTokensManager,
+} from '../../../managers/refresh-tokens-manager'
 import { HashPasswordRequest, passwordService, VerifyPasswordRequest } from '../../../services/password-service'
 import {
   emailRendererService,
@@ -22,8 +26,9 @@ import { changePasswordSchema } from './change-password.validator'
 /**
  * Password change using the current password. No account, a deleted one, or one without a
  * password gives USER_NOT_FOUND (an account without a password needs to set one instead).
- * After the change a "password changed" email is sent, and its failure does not cancel the
- * change.
+ * The other sessions end together with the old password: a password changed because someone else
+ * knew it must not leave that someone signed in. After the change a "password changed" email is
+ * sent, and its failure does not cancel the change.
  */
 @requestHandler(ChangePasswordOperation)
 export class ChangePasswordOperationHandler implements RequestHandler<ChangePasswordOperation, ChangePasswordResult> {
@@ -64,17 +69,28 @@ export class ChangePasswordOperationHandler implements RequestHandler<ChangePass
     if (!isValid) return { success: false, error: ChangePasswordOperationErrorCode.INVALID_CURRENT_PASSWORD }
 
     const { passwordHash } = await passwordService.execute(new HashPasswordRequest({ password: input.newPassword }))
-    const updated = await userCredentialsManager.execute(
-      new UpdateUserCredentialsCommand({ userId: user.id, passwordHash }),
-    )
-    if (!updated.success) {
-      switch (updated.error) {
-        case UpdateUserCredentialsCommandErrorCode.CREDENTIALS_NOT_FOUND:
-          return { success: false, error: ChangePasswordOperationErrorCode.USER_NOT_FOUND }
-        default:
-          assertNever(updated.error)
+    const failure = await inTransaction(async (): Promise<ChangePasswordOperationErrorCode | null> => {
+      const updated = await userCredentialsManager.execute(
+        new UpdateUserCredentialsCommand({ userId: user.id, passwordHash }),
+      )
+      if (!updated.success) {
+        switch (updated.error) {
+          case UpdateUserCredentialsCommandErrorCode.CREDENTIALS_NOT_FOUND:
+            return ChangePasswordOperationErrorCode.USER_NOT_FOUND
+          default:
+            assertNever(updated.error)
+        }
       }
-    }
+      await refreshTokensManager.execute(
+        new RevokeUserRefreshTokensCommand({
+          userId: user.id,
+          exceptSessionId: operation.keepSessionId,
+          revokedAt: new Date(),
+        }),
+      )
+      return null
+    })
+    if (failure) return { success: false, error: failure }
 
     // The password-change email cannot be turned off: it is the owner's signal if someone else
     // changed the password.

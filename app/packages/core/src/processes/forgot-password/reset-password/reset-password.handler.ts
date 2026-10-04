@@ -15,6 +15,10 @@ import {
   UpdateUserCredentialsCommandErrorCode,
   userCredentialsManager,
 } from '../../../managers/user-credentials-manager'
+import {
+  RevokeUserRefreshTokensCommand,
+  refreshTokensManager,
+} from '../../../managers/refresh-tokens-manager'
 import { HashPasswordRequest, passwordService } from '../../../services/password-service'
 import { HashTokenRequest, tokenService } from '../../../services/token-service'
 import { ResetPasswordOperation } from './reset-password.operation'
@@ -26,6 +30,7 @@ import { resetPasswordSchema } from './reset-password.validator'
  * one form, there is no separate "check the link" screen. A wrong or expired code gives
  * CODE_INVALID, the fifth error in a row gives TOO_MANY_ATTEMPTS, and a blocked account gives
  * USER_INACTIVE. The password row may be missing (corrupted data), in which case it is created.
+ * Every session ends: the person who resets a password has lost it, or somebody else has it.
  */
 @requestHandler(ResetPasswordOperation)
 export class ResetPasswordOperationHandler implements RequestHandler<ResetPasswordOperation, ResetPasswordResult> {
@@ -69,6 +74,9 @@ export class ResetPasswordOperationHandler implements RequestHandler<ResetPasswo
 
     const { passwordHash } = await passwordService.execute(new HashPasswordRequest({ password: input.newPassword }))
     await inTransaction(async (): Promise<void> => {
+      await refreshTokensManager.execute(
+        new RevokeUserRefreshTokensCommand({ userId, exceptSessionId: null, revokedAt: new Date() }),
+      )
       const updated = await userCredentialsManager.execute(new UpdateUserCredentialsCommand({ userId, passwordHash }))
       if (updated.success) return
       switch (updated.error) {

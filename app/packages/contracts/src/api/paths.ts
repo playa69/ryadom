@@ -13,6 +13,7 @@ export enum ApiPath {
   ResendConfirmation = '/api/auth/resend-confirmation',
   Login = '/api/auth/login',
   Refresh = '/api/auth/refresh',
+  Logout = '/api/auth/logout',
   Me = '/api/auth/me',
   Password = '/api/auth/password',
   ForgotPassword = '/api/auth/forgot-password',

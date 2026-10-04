@@ -27,11 +27,15 @@ export function passwordRoutes(app: Hono<AppEnv>, { jwt }: RouteDeps): void {
     const newPassword = inputOrNull(passwordInputSchema, body.newPassword)
     if (newPassword === null) return apiError(c, 422, 'Password length is out of range')
 
+    const { userId, sessionId } = authUser(c)
+
     const result = await changePasswordProcess.execute(
       new ChangePasswordOperation({
-        userId: authUser(c).userId,
+        userId,
         currentPassword: body.currentPassword,
         newPassword,
+        // The session that makes the change stays signed in, every other one ends.
+        keepSessionId: sessionId,
       }),
     )
     if (!result.success) {

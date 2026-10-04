@@ -102,7 +102,7 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
   )
 
   const logout = useCallback(async () => {
-    await client.endSession()
+    await client.signOut()
     setUser(null)
     setStatus('anonymous')
   }, [client])

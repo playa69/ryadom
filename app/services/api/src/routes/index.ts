@@ -4,6 +4,7 @@ import { appStatusRoutes } from './app-status'
 import { confirmEmailRoutes } from './auth/confirm-email'
 import { forgotPasswordRoutes } from './auth/forgot-password'
 import { loginRoutes } from './auth/login'
+import { logoutRoutes } from './auth/logout'
 import { meRoutes } from './auth/me'
 import { passwordRoutes } from './auth/password'
 import { refreshRoutes } from './auth/refresh'
@@ -25,6 +26,7 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   resendConfirmationRoutes(app, deps)
   loginRoutes(app, deps)
   refreshRoutes(app, deps)
+  logoutRoutes(app, deps)
   meRoutes(app, deps)
   passwordRoutes(app, deps)
   forgotPasswordRoutes(app, deps)

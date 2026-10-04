@@ -9,6 +9,7 @@ import { apiError, type TransportErrorStatus } from './lib/api-response'
 import type { AppDeps, AppEnv } from './lib/context'
 import { createJwt } from './lib/jwt'
 import { registerPwaServing } from './lib/pwa'
+import { createSessions } from './lib/sessions'
 import { tracing } from './lib/tracing'
 import { versionGate } from './lib/version-gate'
 import { registerAllRoutes } from './routes'
@@ -86,7 +87,8 @@ export function createApp(deps: AppDeps, pwaRoot?: string | null): Hono<AppEnv> 
 
   app.use('*', versionGate(policy))
 
-  registerAllRoutes(app, { ...deps, jwt: createJwt(deps.env.MOBILE_JWT_SECRET) })
+  const jwt = createJwt(deps.env.MOBILE_JWT_SECRET)
+  registerAllRoutes(app, { ...deps, jwt, sessions: createSessions(jwt) })
 
   registerPwaServing(app, deps, pwaRoot)
 

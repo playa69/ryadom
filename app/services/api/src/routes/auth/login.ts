@@ -25,7 +25,7 @@ const bodySchema = z.object({
   password: z.string().min(1).max(1024),
 })
 
-export function loginRoutes(app: Hono<AppEnv>, { jwt, logger, rateLimiter }: RouteDeps): void {
+export function loginRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions }: RouteDeps): void {
   app.post(
     ApiPath.Login,
     limitByIp(rateLimiter, 'login', RATE_LIMITS.attempt.perIp),
@@ -52,7 +52,7 @@ export function loginRoutes(app: Hono<AppEnv>, { jwt, logger, rateLimiter }: Rou
 
       const response: LoginApiResponse = {
         user: toAuthUser(result.user),
-        tokens: await jwt.issueTokenPair(result.user.id),
+        tokens: await sessions.start(result.user.id),
       }
       return apiOk(c, response)
     },

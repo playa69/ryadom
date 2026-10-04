@@ -44,7 +44,9 @@ describe('регистрация и вход', () => {
     const refreshed = ok<RefreshApiResponse>(
       await call(app, 'POST', '/api/auth/refresh', { refreshToken: tokens.refreshToken }),
     )
-    expect(refreshed.refreshToken).toBe(tokens.refreshToken)
+    // Every refresh token is single-use: the answer carries the next one.
+    expect(refreshed.refreshToken).not.toBe(tokens.refreshToken)
+    ok(await call(app, 'POST', '/api/auth/refresh', { refreshToken: refreshed.refreshToken }))
     expect(ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, refreshed.accessToken)).id).toBe(user.id)
   })
 

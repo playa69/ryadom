@@ -20,6 +20,10 @@ import {
 } from '../../../managers/user-credentials-manager'
 import { DeleteEmailCodesCommand, emailCodesManager } from '../../../managers/email-codes-manager'
 import { agentApiIntegration, EraseAgentUserRequest } from '../../../integrations/agent-api'
+import {
+  RevokeUserRefreshTokensCommand,
+  refreshTokensManager,
+} from '../../../managers/refresh-tokens-manager'
 import { PROCESSES_CONFIG } from '../../config'
 import { DeleteUserAccountOperation } from './delete-user-account.operation'
 import { DeleteUserAccountOperationErrorCode, type DeleteUserAccountResult } from './delete-user-account.types'
@@ -126,6 +130,9 @@ export class DeleteUserAccountOperationHandler
             assertNever(deleted.error)
         }
       }
+      await refreshTokensManager.execute(
+        new RevokeUserRefreshTokensCommand({ userId, exceptSessionId: null, revokedAt: new Date() }),
+      )
       await recordAudit({
         adminEmail: operation.adminEmail,
         action: 'USER_ACCOUNT_DELETED',

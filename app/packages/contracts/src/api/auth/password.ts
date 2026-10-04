@@ -1,7 +1,8 @@
 /**
  * `POST /api/auth/password` — change the password using the current one. 400 when
  * required fields are missing; 422 when the new password length is outside `InputLimit`. A success
- * answers `null`.
+ * answers `null`. The session that makes the change stays signed in; the person's other sessions end
+ * with the old password.
  */
 
 export enum ChangePasswordApiErrorCode {

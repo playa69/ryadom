@@ -18,6 +18,10 @@ import {
 } from '../../../managers/user-credentials-manager'
 import { DeleteEmailCodesCommand, emailCodesManager } from '../../../managers/email-codes-manager'
 import { agentApiIntegration, EraseAgentUserRequest } from '../../../integrations/agent-api'
+import {
+  RevokeUserRefreshTokensCommand,
+  refreshTokensManager,
+} from '../../../managers/refresh-tokens-manager'
 import { buildDeletionArchive } from '../shared/deletion-archive'
 import { PROCESSES_CONFIG } from '../../config'
 import { DeleteAccountOperation } from './delete-account.operation'
@@ -93,6 +97,9 @@ export class DeleteAccountOperationHandler implements RequestHandler<DeleteAccou
             assertNever(deleted.error)
         }
       }
+      await refreshTokensManager.execute(
+        new RevokeUserRefreshTokensCommand({ userId, exceptSessionId: null, revokedAt: new Date() }),
+      )
       return null
     })
     if (failure) return { success: false, error: failure }

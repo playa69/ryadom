@@ -1,7 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { AuthTokensApiResponse } from '@ryadom/contracts/api/auth/shared'
 import { setSessionEndHandler } from './api'
-import { endSession as clearSession, restoreSession, saveUser, startSession, type User } from './auth'
+import {
+  endSession as clearSession,
+  restoreSession,
+  saveUser,
+  signOut,
+  startSession,
+  type User,
+} from './auth'
 import { journal } from './journal'
 
 /**
@@ -64,6 +71,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuth(ANONYMOUS)
   }, [])
 
+  /** The person signs out: the server ends the session first, then the same teardown. */
+  const logout = useCallback(async () => {
+    await signOut()
+    journal.reset()
+    setAuth(ANONYMOUS)
+  }, [])
+
   // The API layer cannot import the store (that would be a cycle), so it uses this subscription.
   useEffect(() => {
     setSessionEndHandler(() => void endSession())
@@ -80,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ auth, login, logout: endSession, updateUser }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ auth, login, logout, updateUser }}>{children}</AuthContext.Provider>
   )
 }
 

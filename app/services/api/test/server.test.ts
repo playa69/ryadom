@@ -178,6 +178,10 @@ describe('JWT', () => {
     const refresh = decodeJwt(pair.refreshToken)
     expect(access).toMatchObject({ sub: 'user-1', type: 'access' })
     expect(refresh).toMatchObject({ sub: 'user-1', type: 'refresh' })
+    // A refresh token is named (jti) and both tokens say which session they belong to (sid).
+    expect(refresh.jti).toMatch(/^[0-9a-f-]{36}$/)
+    expect(access.jti).toBeUndefined()
+    expect(access.sid).toBe(refresh.sid)
     expect(access.exp! - access.iat!).toBe(ACCESS_TTL_SECONDS)
     expect(refresh.exp! - refresh.iat!).toBe(REFRESH_TTL_SECONDS)
     expect(pair.expiresAt).toBeGreaterThanOrEqual(before + ACCESS_TTL_SECONDS * 1000)
@@ -185,7 +189,11 @@ describe('JWT', () => {
 
   it('verifyToken проверяет тип, подпись и срок', async () => {
     const pair = await jwt.issueTokenPair('user-1')
-    expect(await jwt.verifyToken(pair.accessToken, 'access')).toEqual({ sub: 'user-1', type: 'access' })
+    expect(await jwt.verifyToken(pair.accessToken, 'access')).toEqual({
+      sub: 'user-1',
+      type: 'access',
+      sid: decodeJwt(pair.accessToken).sid,
+    })
     expect(await jwt.verifyToken(pair.refreshToken, 'access')).toBeNull()
     expect(await jwt.verifyToken((await otherJwt.issueTokenPair('u')).accessToken, 'access')).toBeNull()
     const expired = await new SignJWT({ type: 'access' })

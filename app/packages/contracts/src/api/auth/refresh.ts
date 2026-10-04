@@ -1,9 +1,14 @@
 /**
- * `POST /api/auth/refresh` — a new access token in exchange for a refresh token.
+ * `POST /api/auth/refresh` — a new token pair in exchange for a refresh token.
  *
  * The only place where the server looks at account state: an access token is verified by signature
- * alone and lives out its 15 minutes. The refresh token is not rotated. An expired or forged refresh
- * token, or a user who is gone, is a 401.
+ * alone and lives out its 15 minutes.
+ *
+ * A refresh token is single-use. The response carries a new one, which the client must store in
+ * place of the old: the old one is retired. If the response is lost, repeating the request within a
+ * few seconds works; later, a retired token is a 401 and also ends every session of the person,
+ * because it can only come from a copy that was kept. An expired, forged or already ended refresh
+ * token, or a user who is gone, is a 401 as well.
  */
 
 export enum RefreshApiErrorCode {

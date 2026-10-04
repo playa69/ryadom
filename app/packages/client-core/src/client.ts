@@ -5,6 +5,7 @@ import type {
 } from '@ryadom/contracts/api/auth/confirm-email'
 import type { ForgotPasswordApiRequest } from '@ryadom/contracts/api/auth/forgot-password'
 import type { LoginApiRequest } from '@ryadom/contracts/api/auth/login'
+import type { LogoutApiRequest } from '@ryadom/contracts/api/auth/logout'
 import type { MeApiResponse, UpdateMeApiRequest } from '@ryadom/contracts/api/auth/me'
 import type {
   ChangePasswordApiErrorCode,
@@ -355,14 +356,42 @@ export function createClient(config: ClientConfig) {
   const getDialog = (dialogId: string): Promise<ApiOutcome<DialogApiResponse, DialogApiErrorCode>> =>
     apiOutcome<DialogApiResponse, DialogApiErrorCode>(dialogPath(dialogId))
 
+  /**
+   * Signing out: the server ends the session first, so that a copy of its token dies with it, then
+   * this device forgets it. The server is not waited on for long and its silence changes nothing:
+   * someone who signs out offline is signed out here all the same.
+   */
+  async function signOut(): Promise<void> {
+    if (!sessionToken) return clearSession()
+    // The storage now belongs to someone else (a stale tab): their session is not this tab's to end.
+    // Owning it also adopts a newer token than this tab remembers, if another tab refreshed.
+    if (!(await ownsStoredSession())) return forgetSession()
+    const token = sessionToken
+    if (token) {
+      const body: LogoutApiRequest = { refreshToken: token }
+      await fetch(`${config.apiBase()}${ApiPath.Logout}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...tracing(), ...(await versionHeaders()) },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(3_000),
+      }).catch(() => undefined)
+    }
+    await clearSession()
+  }
+
   return {
     getAccessToken: (): string | null => accessToken,
     refreshSession,
     restoreSession,
     revalidateSession,
     startSession,
-    /** Ends the session on this device: drops the tokens and the stored user. */
+    /**
+     * Ends the session on this device only: drops the tokens and the stored user. For a session
+     * that is already over (the server refused it, the account is gone). A person's own sign-out is
+     * `signOut`.
+     */
     endSession: clearSession,
+    signOut,
     saveUser,
 
     // ─── account ──────────────────────────────────────────────────────────────

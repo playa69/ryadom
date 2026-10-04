@@ -12,4 +12,5 @@ export const getAccessToken = client.getAccessToken
 export const restoreSession = client.restoreSession
 export const startSession = client.startSession
 export const endSession = client.endSession
+export const signOut = client.signOut
 export const saveUser = client.saveUser

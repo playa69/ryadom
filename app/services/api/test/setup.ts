@@ -4,7 +4,7 @@ import { closeDb, getDb } from '@ryadom/core/shared'
 import { resetEnvCache } from '@ryadom/core/config'
 import { clearSentEmails } from '@ryadom/core/services/email-sender-service'
 
-const TABLES = ['audit_log', 'email_codes', 'user_credentials', 'users']
+const TABLES = ['audit_log', 'email_codes', 'refresh_tokens', 'user_credentials', 'users']
 
 beforeEach(async () => {
   vi.useRealTimers()

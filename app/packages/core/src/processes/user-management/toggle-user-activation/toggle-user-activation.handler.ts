@@ -8,6 +8,10 @@ import {
   SetUserActiveCommandErrorCode,
   usersManager,
 } from '../../../managers/users-manager'
+import {
+  RevokeUserRefreshTokensCommand,
+  refreshTokensManager,
+} from '../../../managers/refresh-tokens-manager'
 import { ToggleUserActivationOperation } from './toggle-user-activation.operation'
 import {
   ToggleUserActivationOperationErrorCode,
@@ -18,8 +22,8 @@ import { recordAudit } from '../shared/record-audit'
 /**
  * Blocking and unblocking from the admin panel. A deleted account is left alone. The action is
  * written to the audit log. A blocked user lives on in the application until the access token
- * expires (15 minutes): `/api/auth/refresh` will not extend the session, and it is the only
- * place where account state is checked.
+ * expires (15 minutes): `/api/auth/refresh` will not extend the session. Their refresh tokens are
+ * revoked as well, so unblocking does not bring an old session back: the person signs in again.
  */
 @requestHandler(ToggleUserActivationOperation)
 export class ToggleUserActivationOperationHandler
@@ -50,6 +54,15 @@ export class ToggleUserActivationOperationHandler
           default:
             assertNever(set.error)
         }
+      }
+      if (!isActive) {
+        await refreshTokensManager.execute(
+          new RevokeUserRefreshTokensCommand({
+            userId: user.id,
+            exceptSessionId: null,
+            revokedAt: new Date(),
+          }),
+        )
       }
       await recordAudit({
         adminEmail: operation.adminEmail,

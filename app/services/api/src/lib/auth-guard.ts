@@ -15,6 +15,8 @@ import type { Jwt } from './jwt'
 
 export interface AuthUser {
   userId: string
+  /** The session the token belongs to; null for a token issued before sessions existed. */
+  sessionId: string | null
 }
 
 function bearerToken(header: string | undefined): string | null {
@@ -27,7 +29,7 @@ export async function getUserFromRequest(jwt: Jwt, authorization: string | undef
   const token = bearerToken(authorization)
   if (!token) return null
   const payload = await jwt.verifyToken(token, 'access')
-  return payload ? { userId: payload.sub } : null
+  return payload ? { userId: payload.sub, sessionId: payload.sid ?? null } : null
 }
 
 /** Route for signed-in users only: without a valid token it is 401, and the client refreshes and retries. */

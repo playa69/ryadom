@@ -266,3 +266,88 @@ describe('трассировка', () => {
     expect(sentHeaders(1)['x-client-id']).toBe('ryadom-web')
   })
 })
+
+describe('выход', () => {
+  function logoutCalls() {
+    return fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/auth/logout'))
+  }
+
+  it('сообщает серверу токен сессии, потом стирает её у себя', async () => {
+    stubFetch()
+    const { client, storage } = setup()
+    const refresh = makeToken('a')
+    await client.startSession(userOf('a'), tokens(refresh))
+    fetchMock.mockResolvedValue(envelope(null))
+
+    await client.signOut()
+
+    expect(logoutCalls()).toHaveLength(1)
+    const [url, init] = logoutCalls()[0]!
+    expect(url).toBe('http://api.test/api/auth/logout')
+    expect(JSON.parse(String(init!.body))).toEqual({ refreshToken: refresh })
+    expect(init!.signal).toBeInstanceOf(AbortSignal)
+    expect(storage.refreshToken).toBeNull()
+    expect(client.getAccessToken()).toBeNull()
+  })
+
+  it('сервер недоступен — человек всё равно вышел на этом устройстве', async () => {
+    stubFetch()
+    const { client, storage } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockRejectedValue(new TypeError('network down'))
+
+    await expect(client.signOut()).resolves.toBeUndefined()
+
+    expect(storage.refreshToken).toBeNull()
+    expect(client.getAccessToken()).toBeNull()
+  })
+
+  it('берёт самый свежий токен из общего хранилища: другая вкладка уже обновила сессию', async () => {
+    stubFetch()
+    const { client, storage } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a', 3600, 'first')))
+    // Another tab refreshed and stored the next token of the same session.
+    const newer = makeToken('a', 3600, 'second')
+    storage.refreshToken = newer
+    fetchMock.mockResolvedValue(envelope(null))
+
+    await client.signOut()
+
+    expect(JSON.parse(String(logoutCalls()[0]![1]!.body))).toEqual({ refreshToken: newer })
+  })
+
+  it('хранилище уже чужое (устаревшая вкладка): чужую сессию не трогает и ничего не стирает', async () => {
+    stubFetch()
+    const { client, storage } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    const theirs = makeToken('b')
+    storage.refreshToken = theirs
+
+    await client.signOut()
+
+    expect(logoutCalls()).toHaveLength(0)
+    expect(storage.refreshToken).toBe(theirs)
+    expect(client.getAccessToken()).toBeNull()
+  })
+
+  it('без сессии запроса нет, но хранилище чистится', async () => {
+    stubFetch()
+    const { client, storage } = setup()
+    storage.refreshToken = makeToken('a')
+
+    await client.signOut()
+
+    expect(logoutCalls()).toHaveLength(0)
+    expect(storage.refreshToken).toBeNull()
+  })
+
+  it('endSession (сессия уже закончилась) сервера не спрашивает', async () => {
+    stubFetch()
+    const { client } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+
+    await client.endSession()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

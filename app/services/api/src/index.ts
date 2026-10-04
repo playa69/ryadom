@@ -14,6 +14,7 @@ import { createRateLimiter } from './lib/rate-limit'
 import { createRedisClient } from './lib/redis'
 import { createRedisRateLimiter } from './lib/redis-rate-limiter'
 import { createPolicySource } from './lib/release-policy'
+import { createSessions } from './lib/sessions'
 import { createShutdown } from './lib/shutdown'
 
 /**
@@ -60,6 +61,15 @@ const rateLimiter = redis
   : memoryLimiter
 const app = createApp({ env, logger, policy, rateLimiter })
 const jwt = createJwt(env.MOBILE_JWT_SECRET)
+
+// Refresh tokens that have long expired are of no use even for spotting a replay. Hourly is plenty:
+// the table only grows by the sessions of the day, and every replica doing it is harmless.
+const sessions = createSessions(jwt)
+setInterval(() => {
+  sessions
+    .purgeExpired()
+    .catch((error: unknown) => logger.warn({ err: error }, 'Не удалось очистить реестр refresh-токенов'))
+}, 60 * 60_000).unref()
 
 const server = serve({ fetch: app.fetch, port: env.PORT, createServer }, (info) => {
   logger.info({ port: info.port, appEnv: env.APP_ENV }, 'приложение слушает порт')
