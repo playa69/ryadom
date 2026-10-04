@@ -2,8 +2,13 @@ import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
 import type { DeviceCredentials } from './device'
 
-/** The user in the store: sign-in returns a basic profile, the profile screen loads the rest. */
-export type User = AuthUserApiResponse & Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt'>>
+/**
+ * The user in the store: sign-in returns a basic profile, the profile screen loads the rest.
+ * `consentVersion` is what the app knows about the terms the person accepted: undefined until it has
+ * asked the server or recorded the acceptance itself, null when the server has none on record.
+ */
+export type User = AuthUserApiResponse &
+  Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt' | 'consentVersion'>>
 
 /**
  * Where the refresh token and the user live. The app supplies it: the platform's secure storage on

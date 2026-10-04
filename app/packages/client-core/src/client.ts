@@ -3,6 +3,11 @@ import type {
   ConfirmEmailApiErrorCode,
   ConfirmEmailApiRequest,
 } from '@ryadom/contracts/api/auth/confirm-email'
+import type {
+  AcceptConsentsApiErrorCode,
+  AcceptConsentsApiRequest,
+  AcceptConsentsApiResponse,
+} from '@ryadom/contracts/api/auth/consents'
 import type { DeviceLoginApiRequest, DeviceLoginApiResponse } from '@ryadom/contracts/api/auth/device'
 import type { ForgotPasswordApiRequest } from '@ryadom/contracts/api/auth/forgot-password'
 import type {
@@ -47,6 +52,7 @@ import type {
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { AppHeader } from '@ryadom/contracts/api/headers'
 import { ApiPath, dialogEndPath, dialogPath } from '@ryadom/contracts/api/paths'
+import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { newDeviceCredentials } from './device'
 import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from './dialog-socket'
 import { ApiError, NETWORK_ERROR_STATUS, type ApiOutcome } from './errors'
@@ -429,9 +435,47 @@ export function createClient(config: ClientConfig) {
       return apiFetch<DeviceLoginResult>(ApiPath.DeviceLogin, { method: 'POST', body })
     },
 
-    /** Forgets the anonymous identity of this device, for when its account is deleted. */
+    /**
+     * Whether this device already has an anonymous identity, which is to say an account that
+     * `deviceLogin` will return. A first launch has none and shows the first screen; every later one
+     * signs in without asking. A storage that cannot be read counts as "none": the first screen is
+     * the safe place to land, and `deviceLogin` itself refuses to make a new identity in that case.
+     */
+    hasDevice: async (): Promise<boolean> => {
+      try {
+        return (await config.storage.getDevice()) !== null
+      } catch {
+        return false
+      }
+    },
+
+    /**
+     * Forgets the anonymous identity of this device: when its account is deleted, when the address is
+     * confirmed (the account then signs in by email, and the server forgets the device too), and
+     * when the person leaves the account for another one.
+     */
     forgetDevice: async (): Promise<void> => {
       await config.storage.setDevice(null).catch(() => undefined)
+    },
+
+    /**
+     * The three agreements of the first screen, recorded for the signed-in account. All three go
+     * together, and the version is the one this build shows (`POLICY_VERSION`): the server keeps what
+     * the person was shown. Until they are on record the server will not start a conversation.
+     */
+    acceptConsents: (
+      offerVersion: string = POLICY_VERSION,
+    ): Promise<ApiOutcome<AcceptConsentsApiResponse, AcceptConsentsApiErrorCode>> => {
+      const body: AcceptConsentsApiRequest = {
+        ageConfirmed: true,
+        disclaimerAccepted: true,
+        offerAccepted: true,
+        offerVersion,
+      }
+      return apiOutcome<AcceptConsentsApiResponse, AcceptConsentsApiErrorCode>(ApiPath.Consents, {
+        method: 'POST',
+        body,
+      })
     },
 
     /**

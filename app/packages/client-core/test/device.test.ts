@@ -3,6 +3,7 @@
  * signing out, and given up only on request.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { createClient } from '../src/client'
 import { newDeviceCredentials } from '../src/device'
 import { ApiError } from '../src/errors'
@@ -161,6 +162,72 @@ describe('удостоверение и сессия', () => {
     const { client } = setup(storage)
 
     await expect(client.forgetDevice()).resolves.toBeUndefined()
+  })
+
+  it('hasDevice: удостоверения нет до первого входа, есть после и снова нет после забывания', async () => {
+    const { client } = setup()
+    fetchMock.mockImplementation(async () => answer())
+
+    expect(await client.hasDevice()).toBe(false)
+    await client.deviceLogin()
+    expect(await client.hasDevice()).toBe(true)
+    await client.forgetDevice()
+    expect(await client.hasDevice()).toBe(false)
+  })
+
+  it('hasDevice: хранилище не читается — «нет», первый экран безопаснее сбоя', async () => {
+    const storage = memoryStorage()
+    storage.getDevice = async () => {
+      throw new Error('storage unavailable')
+    }
+    const { client } = setup(storage)
+
+    expect(await client.hasDevice()).toBe(false)
+  })
+})
+
+describe('согласия', () => {
+  it('три сразу, в версии этой сборки, с токеном сессии', async () => {
+    const { client } = setup()
+    await client.startSession(userOf('anon'), tokens())
+    fetchMock.mockResolvedValue(envelope({ consentsCompleted: true, acceptedAt: '2026-10-04T10:00:00.000Z' }))
+
+    const outcome = await client.acceptConsents()
+
+    expect(outcome).toEqual({
+      ok: true,
+      data: { consentsCompleted: true, acceptedAt: '2026-10-04T10:00:00.000Z' },
+    })
+    expect(fetchMock.mock.calls[0]![0]).toBe('http://api.test/api/auth/me/consents')
+    expect(sentBody(0)).toEqual({
+      ageConfirmed: true,
+      disclaimerAccepted: true,
+      offerAccepted: true,
+      offerVersion: POLICY_VERSION,
+    })
+    expect((fetchMock.mock.calls[0]![1]!.headers as Record<string, string>).Authorization).toBe(
+      'Bearer access-1',
+    )
+  })
+
+  it('версию можно назвать явно', async () => {
+    const { client } = setup()
+    await client.startSession(userOf('anon'), tokens())
+    fetchMock.mockResolvedValue(envelope({ consentsCompleted: true, acceptedAt: '2027-02-01T00:00:00.000Z' }))
+
+    await client.acceptConsents('2027-02-01')
+
+    expect(sentBody(0)).toMatchObject({ offerVersion: '2027-02-01' })
+  })
+
+  it('отказ сервера приходит кодом, а не исключением', async () => {
+    const { client } = setup()
+    await client.startSession(userOf('anon'), tokens())
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ status: false, errorCode: 'AGE_RESTRICTED' }), { status: 200 }),
+    )
+
+    expect(await client.acceptConsents()).toEqual({ ok: false, code: 'AGE_RESTRICTED' })
   })
 })
 
