@@ -18,7 +18,26 @@ context: |
   SQLAlchemy async, PostgreSQL 16 + pgvector, Redis 8 + Sentinel (сессии, очереди,
   rate-limit), Celery + beat (фон: суммаризация, консолидация памяти, пуши),
   GigaChat (LLM), SaluteSpeech (ASR/TTS стриминг), Langfuse (трейсинг),
-  ClickHouse (события/метрика конкурса). Клиент: Flutter (iOS/Android).
+  ClickHouse (события/метрика конкурса). Клиенты — приложение в app/ (см. ниже).
+
+  Приложение (каталог app/ — отдельный pnpm + Turborepo монорепозиторий на TypeScript, Node >= 24):
+  - apps/web — веб-приложение за логином (Next.js 16, React 19, Tailwind 4, shadcn/ui из packages/ui);
+  - apps/mobile — мобильный клиент (Framework7 + Capacitor 8 + Vite): PWA, Android, iOS;
+  - apps/landing — публичный сайт (Next.js): лендинг, /privacy, /terms, /download, /delete-account;
+  - apps/admin — админка (Next.js): пользователи, блокировки, удаление аккаунтов, журнал действий;
+  - services/api — API приложения (Hono): REST /api/*, WebSocket-шлюз к агенту /api/dialogs/ws,
+    раздача PWA и OTA-сборки мобильного клиента; PostgreSQL через Drizzle (packages/db);
+  - packages/{contracts,client-core,core,db,design,ui}; dev/agent-mock — заглушка агента для
+    разработки; e2e — сквозные тесты Playwright.
+  Клиенты ходят только в app/services/api, он вызывает агента по agent-api (REST + WebSocket).
+  backend/ приложением сейчас не вызывается: у приложения свой вход по почте и паролю (не
+  device-based), свои маршруты /api/* и свои данные.
+  Источник правды по поведению клиентов, публичных сайтов и админки и по доставке мобильного
+  клиента (PWA, сборки Android/iOS, обновления) — specs client-*, landing-site, admin-console,
+  pwa-delivery, native-app-build, app-updates (до архивации — в openspec/changes/); формат
+  публичного API приложения до появления отдельной спеки — типы в app/packages/contracts.
+  В коде app/ комментарии на английском и только о причинах; тексты интерфейса и документация —
+  на русском.
 
   Референс реализации (копировать паттерны): UnionApp —
   /Users/aleksandrsamofalov/PycharmProjects/UnionApp/SevenElementBackend
