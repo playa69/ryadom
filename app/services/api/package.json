@@ -1,0 +1,40 @@
+{
+  "name": "@ryadom/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "«Рядом» — общий API для всех клиентов (Hono): REST, WebSocket-шлюз к агенту, раздача PWA/OTA-сборки apps/mobile.",
+  "scripts": {
+    "dev": "tsx watch --tsconfig tsconfig.dev.json --env-file-if-exists=.env.local src/index.ts",
+    "build": "node build.mjs",
+    "start": "node --enable-source-maps dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@hono/zod-validator": "^0.9.1",
+    "@ryadom/contracts": "workspace:*",
+    "@ryadom/core": "workspace:*",
+    "@ryadom/db": "workspace:*",
+    "assert-never": "^1.4.0",
+    "hono": "^4.13.8",
+    "ioredis": "^5.11.1",
+    "jose": "^6.2.12",
+    "pino": "^10.3.1",
+    "ws": "^8.19.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@node-rs/argon2": "^2.2.1",
+    "@types/ioredis-mock": "^8.2.8",
+    "@types/node": "^24.6.0",
+    "@types/ws": "^8.18.1",
+    "drizzle-orm": "^0.45.3",
+    "esbuild": "^0.28.2",
+    "ioredis-mock": "^8.13.1",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.1"
+  }
+}

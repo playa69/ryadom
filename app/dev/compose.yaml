@@ -1,0 +1,60 @@
+# Local infrastructure for development: `pnpm infra:up` / `pnpm infra:down`.
+# The ports are non-standard so they do not clash with Postgres and Mailpit of other projects
+# on the machine.
+name: ryadom-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ryadom
+      POSTGRES_PASSWORD: ryadom
+      POSTGRES_DB: ryadom
+    ports:
+      - '55433:5432'
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ryadom -d ryadom']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - '1026:1025' # SMTP
+      - '8026:8025' # web UI: http://localhost:8026
+
+  # Shared rate limits. With REDIS_ENABLED=true and REDIS_URL=redis://localhost:56379 in
+  # services/api/.env.local every API process counts in here; without it each one counts for itself.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '56379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # agent-api mock: REST + WebSocket, dialogs held in process memory.
+  agent-mock:
+    build: ./agent-mock
+    restart: unless-stopped
+    environment:
+      PORT: '8080'
+    ports:
+      - '8080:8080'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pg_data:

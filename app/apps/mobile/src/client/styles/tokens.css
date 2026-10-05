@@ -1,0 +1,137 @@
+:root {
+  /*
+   * Color, radius and shadow tokens (--ryadom-paper, --ryadom-brand, --ryadom-r-*, ...) live in
+   * @ryadom/design/tokens.css, imported in main.tsx before this file. This file holds only what
+   * is specific to this client: the wide-screen geometry and the Framework7 remaps below.
+   *
+   * Wide-screen geometry (from 700px, lib/viewport.ts): the tabs become a rail on the left, the
+   * content is one column of the same width in every section, and from 1024px the journal
+   * splits into a list and an entry. The root is never narrowed — only the content is.
+   */
+  --rd-rail-w: 88px;
+  --rd-rail-gap: 12px;
+  /* How much room the rail takes on the left, gaps included */
+  --rd-rail-space: calc(var(--rd-rail-w) + var(--rd-rail-gap) * 2);
+  --rd-col-w: 640px;
+  --rd-wide-col-w: 960px;
+  --rd-dialog-col-w: 760px;
+  --rd-side-w: 360px;
+  --rd-modal-w: 560px;
+
+  /*
+   * Framework7. Its dark mode is enabled in F7App (`darkMode: true`), and here we override what we
+   * do not want: this file is loaded after its styles, so it wins.
+   *
+   * Every surface Framework7 derives from the accent color is reassigned explicitly. Our accent is
+   * a bright blue while the surfaces are navy, and without this the result is mismatched panels on blue-grey
+   * screens.
+   */
+  --f7-font-family: var(--ryadom-font);
+  --f7-theme-color: var(--ryadom-brand);
+  --f7-theme-color-rgb: var(--ryadom-brand-rgb);
+  --f7-theme-color-shade: #0062e0;
+  --f7-theme-color-tint: var(--ryadom-brand-400);
+
+  --f7-page-bg-color: var(--ryadom-paper);
+  /* Pill buttons and generous radii: soft shapes, nothing with a hard corner. */
+  --f7-button-border-radius: var(--ryadom-r-pill);
+  --f7-list-inset-border-radius: var(--ryadom-r-l);
+  --f7-card-border-radius: var(--ryadom-r-l);
+  --f7-sheet-border-radius: var(--ryadom-r-xl);
+  --f7-dialog-width: 320px;
+  --f7-dialog-title-font-size: 20px;
+  --f7-dialog-title-font-weight: 700;
+  --f7-message-bubble-border-radius: 20px;
+  --f7-text-color: var(--ryadom-text);
+  /* Glass bars: the atmosphere shows through as content scrolls under them (blur in app.css). */
+  --f7-bars-bg-color: rgba(var(--ryadom-paper-rgb), 0.72);
+  --f7-bars-text-color: var(--ryadom-text);
+  --f7-bars-link-color: var(--ryadom-brand-400);
+  --f7-bars-border-color: var(--ryadom-line);
+  --f7-navbar-bg-color: rgba(var(--ryadom-paper-rgb), 0.72);
+  --f7-navbar-text-color: var(--ryadom-text);
+  --f7-navbar-title-font-weight: 700;
+  /*
+   * The md theme points its back-link color at a blue-derived on-surface tone we never mapped
+   * (it is generated at runtime from the accent, the same leak `darkMode: true` was meant to
+   * close for other surfaces). Left unset, the back arrow renders a warm cream next to the cool
+   * white title beside it. Same story for the outline-input clear button below (design review).
+   */
+  --f7-navbar-link-color: var(--ryadom-text);
+  --f7-input-clear-button-color: var(--ryadom-text-faint);
+
+  --f7-list-bg-color: var(--ryadom-surface-glass);
+  --f7-list-strong-bg-color: var(--ryadom-surface-glass);
+  --f7-list-group-title-bg-color: var(--ryadom-paper);
+  --f7-menu-list-item-bg-color: var(--ryadom-surface);
+  --f7-block-strong-bg-color: var(--ryadom-surface);
+  --f7-card-bg-color: var(--ryadom-surface-glass);
+  --f7-card-expandable-bg-color: var(--ryadom-surface);
+  --f7-popover-bg-color: var(--ryadom-surface-2);
+  --f7-panel-bg-color: var(--ryadom-surface);
+  --f7-notification-bg-color: var(--ryadom-surface-2);
+  --f7-searchbar-input-bg-color: var(--ryadom-surface-2);
+  --f7-segmented-strong-bg-color: var(--ryadom-surface-2);
+  --f7-chip-bg-color: var(--ryadom-surface-2);
+  --f7-input-item-bg-color: var(--ryadom-surface-2);
+  --f7-button-tonal-bg-color: var(--ryadom-brand-50);
+  --f7-toggle-inactive-bg-color: var(--ryadom-line-strong);
+  --f7-tabbar-link-active-icon-bg-color: var(--ryadom-brand-50);
+  --f7-list-item-border-color: var(--ryadom-line);
+  --f7-list-item-title-text-color: var(--ryadom-text);
+  /* The md theme points this at the same blue-derived on-surface tone as the navbar link above;
+     unmapped, a journal entry's date line rendered warmer and brighter than its own title. */
+  --f7-list-item-subtitle-text-color: var(--ryadom-text-dim);
+  --f7-list-item-after-text-color: var(--ryadom-text-dim);
+  --f7-list-item-text-text-color: var(--ryadom-text-dim);
+  --f7-list-chevron-icon-color: var(--ryadom-text-faint);
+  --f7-block-title-text-color: var(--ryadom-text-faint);
+  --f7-block-text-color: var(--ryadom-text-dim);
+  --f7-block-footer-text-color: var(--ryadom-text-faint);
+
+  --f7-input-text-color: var(--ryadom-text);
+  --f7-input-placeholder-color: var(--ryadom-text-faint);
+  --f7-input-outline-border-color: var(--ryadom-line-strong);
+  --f7-input-outline-focused-border-color: var(--ryadom-brand);
+  --f7-label-text-color: var(--ryadom-text-dim);
+  --f7-input-info-text-color: var(--ryadom-text-faint);
+  --f7-input-error-text-color: var(--ryadom-danger);
+
+  --f7-button-text-color: var(--ryadom-text);
+  --f7-button-border-color: var(--ryadom-line-strong);
+  --f7-button-fill-text-color: var(--ryadom-cta-ink);
+  --f7-button-fill-bg-color: var(--ryadom-brand-fill);
+  --f7-button-outline-border-color: var(--ryadom-line-strong);
+
+  --f7-dialog-bg-color: var(--ryadom-surface-2);
+  --f7-dialog-text-color: var(--ryadom-text);
+  --f7-dialog-title-text-color: var(--ryadom-text);
+  --f7-sheet-bg-color: var(--ryadom-surface-2-glass);
+  --f7-actions-bg-color: var(--ryadom-surface-2);
+  --f7-actions-button-text-color: var(--ryadom-text);
+  --f7-actions-label-text-color: var(--ryadom-text-faint);
+  --f7-toast-bg-color: var(--ryadom-surface-3);
+  --f7-toast-text-color: var(--ryadom-text);
+  --f7-preloader-modal-bg-color: var(--ryadom-surface-2);
+
+  --f7-tabbar-link-active-color: var(--ryadom-brand-400);
+  /* The bar is translucent (--ryadom-glass) and floats over page content, so the composited
+     result can be darker than any flat surface in the palette; --ryadom-text-faint measured
+     as low as 4.01:1 there, below the 4.5:1 the tab labels need as the app's only navigation. */
+  --f7-tabbar-link-inactive-color: var(--ryadom-text-dim);
+
+  --f7-message-received-bg-color: var(--ryadom-surface-2-glass);
+  --f7-message-received-text-color: var(--ryadom-text);
+  --f7-message-sent-bg-color: var(--ryadom-brand-fill);
+  --f7-message-sent-text-color: var(--ryadom-cta-ink);
+  --f7-messagebar-bg-color: var(--ryadom-surface);
+  --f7-messagebar-textarea-bg-color: var(--ryadom-surface-2);
+  --f7-messagebar-textarea-text-color: var(--ryadom-text);
+}
+
+/* Room for the whole title of an entry in the journal list on a big screen. */
+@media (min-width: 1600px) {
+  :root {
+    --rd-side-w: 440px;
+  }
+}

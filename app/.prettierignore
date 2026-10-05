@@ -1,0 +1,8 @@
+pnpm-lock.yaml
+**/.next
+**/dist
+**/out
+packages/db/migrations
+apps/mobile/android
+apps/mobile/ios
+docs

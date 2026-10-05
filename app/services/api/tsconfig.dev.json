@@ -1,0 +1,10 @@
+{
+  // Только для `pnpm dev` (tsx): tsx применяет настройки TypeScript лишь к файлам
+  // из include, а ядро (легаси-декораторы, шаблоны писем на React) живёт в
+  // packages/*. Проверку типов ведёт tsconfig.json.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "../../packages/core/src", "../../packages/db/src"]
+}

@@ -1,0 +1,484 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* The palette, radii, shadows and the night-sky layers: one source for every app. */
+@import "@ryadom/design/tokens.css";
+
+/* The product is dark-only; the `dark` variant stays so shadcn's `dark:` classes apply. */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Short windows (a phone on its side is as little as 320px tall). Tailwind cannot put a width and a
+ * height in one built-in variant name, so the combinations the product uses are named here. They sort
+ * after `tab:` and `desk:`, so they win over those on the same property.
+ */
+@custom-variant short (@media (max-height: 520px));
+@custom-variant short-wide (@media (max-height: 520px) and (min-width: 560px));
+@custom-variant tab-short (@media (min-width: 700px) and (max-height: 520px));
+
+/* Utilities used by the components in this package. Each app adds its own folders with @source. */
+@source "../**/*.{ts,tsx}";
+
+/*
+ * shadcn's semantic variables, wired to the Ryadom tokens. Components below read `--primary`,
+ * `--border`... and never a literal color, so a change in packages/design reaches them all.
+ */
+:root {
+  color-scheme: dark;
+
+  --background: var(--ryadom-paper);
+  --foreground: var(--ryadom-text);
+  --card: var(--ryadom-surface-glass);
+  --card-foreground: var(--ryadom-text);
+  --popover: var(--ryadom-surface-2);
+  --popover-foreground: var(--ryadom-text);
+  --primary: var(--ryadom-brand-fill);
+  --primary-foreground: var(--ryadom-cta-ink);
+  --secondary: var(--ryadom-surface-2-glass);
+  --secondary-foreground: var(--ryadom-text);
+  --muted: var(--ryadom-surface-2);
+  --muted-foreground: var(--ryadom-text-dim);
+  --accent: var(--ryadom-surface-3);
+  --accent-foreground: var(--ryadom-text);
+  /* Red is for the irreversible; the lighter token is the text/border tone on dark surfaces. */
+  --destructive: var(--ryadom-danger);
+  --border: var(--ryadom-line);
+  /* A control's own boundary: the 3:1 line (WCAG 1.4.11), not the decorative hairline. */
+  --input: var(--ryadom-line-strong);
+  --ring: var(--ryadom-brand-400);
+  --radius: var(--ryadom-r-m);
+
+  --chart-1: var(--ryadom-brand);
+  --chart-2: var(--ryadom-sage);
+  --chart-3: rgb(var(--ryadom-indigo-rgb));
+  --chart-4: rgb(var(--ryadom-violet-rgb));
+  --chart-5: rgb(var(--ryadom-teal-rgb));
+
+  --sidebar: var(--ryadom-glass);
+  --sidebar-foreground: var(--ryadom-text);
+  --sidebar-primary: var(--ryadom-brand-fill);
+  --sidebar-primary-foreground: var(--ryadom-cta-ink);
+  --sidebar-accent: var(--ryadom-brand-50);
+  --sidebar-accent-foreground: var(--ryadom-brand-400);
+  --sidebar-border: var(--ryadom-line);
+  --sidebar-ring: var(--ryadom-brand-400);
+}
+
+@theme inline {
+  --font-sans: var(--ryadom-font);
+  --font-heading: var(--ryadom-font);
+
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+
+  /* Product colors beyond shadcn's set. */
+  --color-paper: var(--ryadom-paper);
+  --color-surface: var(--ryadom-surface);
+  --color-surface-2: var(--ryadom-surface-2);
+  --color-surface-3: var(--ryadom-surface-3);
+  --color-glass: var(--ryadom-surface-glass);
+  --color-glass-2: var(--ryadom-surface-2-glass);
+  --color-bars: var(--ryadom-glass);
+  --color-dim: var(--ryadom-text-dim);
+  --color-faint: var(--ryadom-text-faint);
+  --color-line: var(--ryadom-line);
+  --color-line-strong: var(--ryadom-line-strong);
+  --color-brand: var(--ryadom-brand);
+  --color-brand-400: var(--ryadom-brand-400);
+  --color-brand-fill: var(--ryadom-brand-fill);
+  --color-brand-soft: var(--ryadom-brand-50);
+  --color-brand-line: var(--ryadom-brand-100);
+  --color-sage: var(--ryadom-sage);
+  --color-sage-soft: var(--ryadom-sage-50);
+  --color-sage-line: var(--ryadom-sage-100);
+  --color-danger: var(--ryadom-danger);
+  --color-danger-strong: var(--ryadom-danger-600);
+  --color-danger-soft: var(--ryadom-danger-50);
+  --color-danger-line: var(--ryadom-danger-100);
+  --color-sos: var(--ryadom-sos);
+  --color-cta-ink: var(--ryadom-cta-ink);
+
+  /* shadcn's radius ladder, anchored on --radius (20px): lg 20, xl 28, 2xl 36. */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  --shadow-card: var(--ryadom-highlight), var(--ryadom-shadow-1);
+  --shadow-float: var(--ryadom-highlight), var(--ryadom-shadow-2);
+  --shadow-cta: var(--ryadom-cta-glow), inset 0 1px 0 rgb(255 255 255 / 0.45);
+  --shadow-focus: var(--ryadom-focus);
+
+  --tracking-display: var(--ryadom-tracking);
+  --tracking-display-tight: var(--ryadom-tracking-tight);
+
+  /* The two layout steps of the pages: compact headers and one-row fields from 700px, wide screens from 1024px. */
+  --breakpoint-tab: 700px;
+  --breakpoint-desk: 1024px;
+
+  --animate-breathe: breathe 8s ease-in-out infinite;
+  --animate-breathe-slow: breathe 9s ease-in-out infinite;
+  --animate-orb: orb 8s ease-in-out infinite;
+  --animate-blink: blink 1s step-start infinite;
+  --animate-rec: rec 1.6s ease-out infinite;
+
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(0.82);
+      opacity: 0.55;
+    }
+    50% {
+      transform: scale(1.06);
+      opacity: 1;
+    }
+  }
+
+  @keyframes orb {
+    0%,
+    100% {
+      transform: scale(0.94);
+      opacity: 0.85;
+    }
+    50% {
+      transform: scale(1.04);
+      opacity: 1;
+    }
+  }
+
+  @keyframes blink {
+    50% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes rec {
+    from {
+      box-shadow: 0 0 0 0 rgb(255 90 95 / 0.5);
+    }
+    to {
+      box-shadow: 0 0 0 14px rgb(255 90 95 / 0);
+    }
+  }
+}
+
+/*
+ * Recurring surfaces. They live in the components layer so that a utility on the same element
+ * (border-input, shadow-card, bg-...) always wins; as @utility they would out-rank those.
+ */
+@layer components {
+  .glass {
+    background: var(--ryadom-surface-glass);
+    border: 1px solid var(--ryadom-line);
+    box-shadow: var(--ryadom-highlight);
+    -webkit-backdrop-filter: var(--ryadom-blur);
+    backdrop-filter: var(--ryadom-blur);
+  }
+
+  .glass-2 {
+    background: var(--ryadom-surface-2-glass);
+    border: 1px solid var(--ryadom-line);
+    box-shadow: var(--ryadom-highlight);
+    -webkit-backdrop-filter: var(--ryadom-blur);
+    backdrop-filter: var(--ryadom-blur);
+  }
+
+  /* The main action: a clear blue with a lit top edge and its own glow on the dark. */
+  .cta {
+    background-image: var(--ryadom-cta);
+    color: var(--ryadom-cta-ink);
+    box-shadow: var(--shadow-cta);
+  }
+}
+
+/* The breathing sphere (components/orb.tsx): a halo, a lit core, and a ring drawn on top. */
+@utility orb-glow {
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(var(--ryadom-violet-rgb), 0.34),
+    rgba(var(--ryadom-indigo-rgb), 0.2) 40%,
+    rgba(var(--ryadom-teal-rgb), 0.12) 62%,
+    transparent 74%
+  );
+}
+
+@utility orb-core {
+  background: radial-gradient(
+    circle at 36% 30%,
+    rgba(255, 238, 220, 0.95) 0,
+    rgba(var(--ryadom-peach-rgb), 0.75) 20%,
+    rgba(var(--ryadom-violet-rgb), 0.62) 56%,
+    rgba(var(--ryadom-indigo-rgb), 0.34) 80%,
+    transparent 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 60px rgba(var(--ryadom-violet-rgb), 0.5),
+    0 0 130px rgba(var(--ryadom-teal-rgb), 0.28);
+}
+
+/*
+ * The conversation sphere (components/voice-orb.tsx): the breathing sphere recoloured by who has the
+ * floor. Registered colour properties turn the change into a slow dissolve, because a gradient cannot
+ * be transitioned but the colours it is made of can. Plain rules, outside the layers, on purpose:
+ * they must win over the `animate-*` utilities on the same layers, and the state selectors are theirs alone.
+ */
+@property --orb-hi {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(255 238 220);
+}
+@property --orb-warm {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(232 169 114);
+}
+@property --orb-mid {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(150 100 235);
+}
+@property --orb-deep {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(73 61 209);
+}
+@property --orb-halo {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(34 150 168);
+}
+@property --orb-ring {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 122 255);
+}
+
+.voice-orb {
+  position: relative;
+  aspect-ratio: 1;
+  max-width: 100%;
+  /* Long and symmetric: a change of state is a slow dissolve of the tone, never a switch. */
+  transition:
+    --orb-hi 1.8s ease-in-out,
+    --orb-warm 1.8s ease-in-out,
+    --orb-mid 1.8s ease-in-out,
+    --orb-deep 1.8s ease-in-out,
+    --orb-halo 1.8s ease-in-out,
+    --orb-ring 1.8s ease-in-out,
+    opacity 1.2s ease-in-out;
+}
+
+/*
+ * All the motion comes from one loop (client-core's orb-motion), which writes four unitless numbers on
+ * the swell every frame: --orb-level (how loud), --orb-breath and --orb-breath-lag (where the halo and
+ * the core are in their breath, 0..1) and --orb-turn (degrees of the lit edge). This is how far each
+ * of them moves the sphere. There are no keyframes on purpose: a keyframe animation whose duration
+ * follows the state jumps to a new phase when the state changes. Without the loop (reduced motion,
+ * the first paint) the fallbacks leave the sphere still, in the middle of a breath.
+ */
+.voice-orb-swell {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  scale: calc(1 + var(--orb-level, 0) * 0.1);
+  rotate: calc(var(--orb-turn, 0) * 1deg);
+  will-change: transform;
+}
+
+.voice-orb-layer {
+  --pulse: var(--orb-breath, 0.5);
+  position: absolute;
+  border-radius: 9999px;
+  scale: calc(0.86 + var(--pulse) * 0.19);
+  opacity: calc(0.6 + var(--pulse) * 0.4);
+  will-change: transform, opacity;
+}
+
+.voice-orb-glow {
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(var(--ryadom-violet-rgb), 0.34),
+    rgba(var(--ryadom-indigo-rgb), 0.2) 40%,
+    rgba(var(--ryadom-teal-rgb), 0.12) 62%,
+    transparent 74%
+  );
+}
+
+.voice-orb-core {
+  --pulse: var(--orb-breath-lag, 0.5);
+  inset: 22%;
+  background: radial-gradient(
+    circle at 36% 30%,
+    rgba(255, 238, 220, 0.95) 0,
+    rgba(var(--ryadom-peach-rgb), 0.75) 20%,
+    rgba(var(--ryadom-violet-rgb), 0.62) 56%,
+    rgba(var(--ryadom-indigo-rgb), 0.34) 80%,
+    transparent 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 60px rgba(var(--ryadom-violet-rgb), 0.5),
+    0 0 130px rgba(var(--ryadom-teal-rgb), 0.28);
+}
+
+.voice-orb-ring {
+  inset: 14%;
+  border: 1.5px solid rgba(var(--ryadom-brand-rgb), 0.5);
+}
+
+@supports (color: color-mix(in srgb, red, blue)) {
+  .voice-orb-glow {
+    background: radial-gradient(
+      circle at 50% 50%,
+      color-mix(in srgb, var(--orb-mid) 34%, transparent),
+      color-mix(in srgb, var(--orb-deep) 20%, transparent) 40%,
+      color-mix(in srgb, var(--orb-halo) 12%, transparent) 62%,
+      transparent 74%
+    );
+  }
+
+  .voice-orb-core {
+    background: radial-gradient(
+      circle at 36% 30%,
+      color-mix(in srgb, var(--orb-hi) 95%, transparent) 0,
+      color-mix(in srgb, var(--orb-warm) 75%, transparent) 20%,
+      color-mix(in srgb, var(--orb-mid) 62%, transparent) 56%,
+      color-mix(in srgb, var(--orb-deep) 34%, transparent) 80%,
+      transparent 100%
+    );
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+      0 0 60px color-mix(in srgb, var(--orb-mid) 50%, transparent),
+      0 0 130px color-mix(in srgb, var(--orb-halo) 28%, transparent);
+  }
+
+  .voice-orb-ring {
+    border-color: color-mix(in srgb, var(--orb-ring) 50%, transparent);
+  }
+}
+
+/* Waiting for the connection: a little dimmer (the breath is slowest here, see the motion loop). */
+.voice-orb[data-orb='connecting'] {
+  opacity: 0.55;
+}
+
+/* Listening: the action blue of the app. */
+.voice-orb[data-orb='listening'] {
+  --orb-hi: rgb(225 240 255);
+  --orb-warm: rgb(77 163 255);
+  --orb-mid: rgb(0 122 255);
+  --orb-deep: rgb(73 61 209);
+  --orb-halo: rgb(34 150 168);
+  --orb-ring: rgb(77 163 255);
+}
+
+/* Thinking: violet; the loop turns the sphere so the lit edge travels around it. */
+.voice-orb[data-orb='thinking'] {
+  --orb-hi: rgb(240 230 255);
+  --orb-warm: rgb(180 140 255);
+  --orb-mid: rgb(150 100 235);
+  --orb-deep: rgb(73 61 209);
+  --orb-halo: rgb(150 100 235);
+  --orb-ring: rgb(180 140 255);
+}
+
+/* Speaking: the warm peach of the sphere. */
+.voice-orb[data-orb='speaking'] {
+  --orb-hi: rgb(255 244 232);
+  --orb-warm: rgb(247 190 130);
+  --orb-mid: rgb(205 120 200);
+  --orb-deep: rgb(110 70 220);
+  --orb-halo: rgb(232 169 114);
+  --orb-ring: rgb(247 190 130);
+}
+
+/* A small lit sphere as the face of a button: the way back to the voice. */
+@utility orb-chip {
+  background: radial-gradient(
+    circle at 36% 30%,
+    rgba(255, 238, 220, 0.95) 0,
+    rgba(var(--ryadom-peach-rgb), 0.85) 18%,
+    rgba(var(--ryadom-violet-rgb), 0.9) 58%,
+    rgba(var(--ryadom-indigo-rgb), 0.8) 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 0 18px rgba(var(--ryadom-violet-rgb), 0.5);
+}
+
+@utility sky {
+  background-color: var(--ryadom-paper);
+  background-image: var(--ryadom-atmosphere);
+  background-attachment: fixed;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans antialiased;
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply min-h-dvh overflow-x-hidden sky text-foreground;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: rgba(var(--ryadom-brand-rgb), 0.3);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

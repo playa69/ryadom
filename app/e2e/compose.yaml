@@ -1,0 +1,47 @@
+# Infrastructure for e2e only: its own database, its own mail server, its own agent mock.
+# The ports do not overlap with `dev/compose.yaml`, so a test run does not disturb development.
+name: ryadom-e2e
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ryadom
+      POSTGRES_PASSWORD: ryadom
+      POSTGRES_DB: ryadom
+    ports:
+      - '55434:5432'
+    volumes:
+      - ../dev/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    # tmpfs: the database lives only for the run, so every next run starts from a clean one.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ryadom -d ryadom']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - '1027:1025'
+      - '8027:8025'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8025/readyz']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  agent-mock:
+    build:
+      context: ../dev/agent-mock
+    environment:
+      PORT: '8080'
+    ports:
+      - '8081:8080'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
+      interval: 3s
+      timeout: 3s
+      retries: 30

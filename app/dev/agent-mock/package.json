@@ -1,0 +1,13 @@
+{
+  "name": "@ryadom/agent-mock",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Заглушка agent-api для локальной разработки: REST + WebSocket, диалоги в памяти процесса.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}

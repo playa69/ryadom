@@ -1,0 +1,10 @@
+{
+  "name": "@ryadom/design",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Общие токены дизайна «Рядом»: единственный источник палитры, отступов, типографики и радиусов для app, web, admin и писем.",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    ".": "./tokens.ts"
+  }
+}

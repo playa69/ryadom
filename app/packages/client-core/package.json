@@ -1,0 +1,22 @@
+{
+  "name": "@ryadom/client-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Клиентское ядро «Рядом», общее для apps/mobile и apps/web: API-клиент, сессия, WebSocket диалога, голос. Без React, Capacitor и Vite — хранилище, адреса и версионные заголовки подставляет приложение.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@ryadom/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.1"
+  }
+}
