@@ -5,6 +5,8 @@ import {
   ConfirmUserEmailOperationErrorCode,
   DeleteUserAccountOperation,
   DeleteUserAccountOperationErrorCode,
+  RevokeUserSessionsOperation,
+  RevokeUserSessionsOperationErrorCode,
   ToggleUserActivationOperation,
   ToggleUserActivationOperationErrorCode,
   userManagementProcess,
@@ -72,6 +74,33 @@ export async function confirmEmail(_prev: UserActionState, formData: FormData): 
 
   refresh(userId)
   return { ok: 'Почта отмечена подтверждённой.', error: null }
+}
+
+/**
+ * Signs the person out of every device without blocking the account (a lost phone, a doubt about
+ * who else is in): unlike blocking, they can sign in again at once.
+ */
+export async function revokeSessions(_prev: UserActionState, formData: FormData): Promise<UserActionState> {
+  const session = await requireAdmin()
+  const userId = String(formData.get('userId') ?? '')
+
+  const result = await userManagementProcess.execute(
+    new RevokeUserSessionsOperation({ adminEmail: session.email, userId }),
+  )
+
+  if (!result.success) {
+    switch (result.error) {
+      case RevokeUserSessionsOperationErrorCode.USER_NOT_FOUND:
+        return { ok: null, error: 'Пользователь не найден.' }
+      case RevokeUserSessionsOperationErrorCode.USER_DELETED:
+        return { ok: null, error: 'Аккаунт удалён: сессий у него уже нет.' }
+      default:
+        return assertNever(result.error)
+    }
+  }
+
+  refresh(userId)
+  return { ok: 'Все сессии завершены. Войти заново можно сразу.', error: null }
 }
 
 export async function deleteAccount(_prev: UserActionState, formData: FormData): Promise<UserActionState> {
