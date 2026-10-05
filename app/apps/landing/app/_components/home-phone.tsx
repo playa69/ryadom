@@ -10,10 +10,12 @@ export function HeroPhone() {
   return (
     <div
       className={cn(
-        'relative w-full max-w-70 justify-self-center overflow-hidden rounded-[36px] border border-line-strong bg-paper',
+        'relative w-full max-w-65 justify-self-center overflow-hidden rounded-[36px] border border-line-strong bg-paper',
         '[box-shadow:var(--ryadom-highlight),var(--ryadom-shadow-2),0_0_100px_rgba(var(--ryadom-indigo-rgb),0.3)]',
-        // 360px is the floor: below 400px the phone gives up its fixed width.
-        'min-[400.02px]:w-[300px] min-[400.02px]:max-w-none min-[1280px]:w-[336px] min-[1600px]:w-[380px]',
+        // A screenshot is 2.16 times taller than wide, so the widths are chosen by the height they give: the whole
+        // phone has to sit in the first screen (606px high at 280, 649px at 300, 693px at 320). 360px is the floor:
+        // below 400px the phone gives up its fixed width.
+        'min-[400.02px]:w-[280px] min-[400.02px]:max-w-none min-[1280px]:w-[300px] min-[1600px]:w-[320px]',
       )}
     >
       {/* A plain <img>: the file is already sized and compressed, and the standalone server needs no image optimizer for it. */}
