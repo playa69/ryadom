@@ -2,7 +2,7 @@
 
 import hmac
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Header, Request
 
@@ -32,8 +32,13 @@ def get_store(request: Request) -> DialogStore:
     return request.app.state.store
 
 
+def active_tts(app: Any) -> TextToSpeech | None:
+    """Озвучка, которая работает сейчас: настроенный провайдер, если dev-режим не выключил его (`POST /dev/tts`)."""
+    return app.state.tts if app.state.tts_mode == "auto" else None
+
+
 def get_tts(request: Request) -> TextToSpeech | None:
-    return request.app.state.tts
+    return active_tts(request.app)
 
 
 def canonical_user_id(user_id: str) -> str | None:

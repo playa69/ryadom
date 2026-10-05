@@ -327,3 +327,19 @@ def test_without_tts_there_are_no_voice_frames(client, user_id):
         send_user_message(ws, "c-1", "привет")
         frames = read_frames(ws, reply_done)
     assert not has(frames, "tts_start") and binary_frames(frames) == []
+
+
+def test_switching_speech_off_applies_to_a_live_socket(voice_client, user_id):
+    """Агент с отказавшей озвучкой (dev-режим): текст идёт, звука нет, клиент читает ответ сам."""
+    dialog = start_dialog(voice_client, user_id)
+    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+        voice_client.post("/dev/tts", json={"mode": "none"}, headers=AUTH)
+        send_user_message(ws, "c-1", "раз")
+        off = read_frames(ws, reply_done)
+        assert not has(off, "tts_start") and binary_frames(off) == []
+
+        voice_client.post("/dev/tts", json={"mode": "auto"}, headers=AUTH)
+        send_user_message(ws, "c-2", "два")
+        on = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
+        assert has(on, "tts_start") and binary_frames(on)

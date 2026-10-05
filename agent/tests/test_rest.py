@@ -179,3 +179,23 @@ def test_access_log_filter_is_installed_once():
     create_app()
     installed = [f for f in logging.getLogger("uvicorn.access").filters if isinstance(f, SkipServiceEndpoints)]
     assert len(installed) == 1
+
+
+# ─── dev-переключатель озвучки (как у dev/agent-mock) ─────────────────────────
+
+
+def test_dev_tts_mode_can_be_switched(voice_client):
+    assert voice_client.get("/dev/tts", headers=AUTH).json() == {"mode": "auto", "provider": "fake", "effective": "fake"}
+
+    off = voice_client.post("/dev/tts", json={"mode": "none"}, headers=AUTH).json()
+    assert off == {"mode": "none", "provider": "fake", "effective": None}
+    assert voice_client.get("/health/ready").json()["tts"] == "none"
+    assert voice_client.get("/dev/tts", params={"text": "Привет"}, headers=AUTH).status_code == 503
+
+    on = voice_client.post("/dev/tts", json={"mode": "auto"}, headers=AUTH).json()
+    assert on["effective"] == "fake"
+
+
+def test_dev_tts_mode_needs_a_valid_mode_and_the_token(voice_client):
+    assert voice_client.post("/dev/tts", json={"mode": "loud"}, headers=AUTH).status_code == 400
+    assert voice_client.post("/dev/tts", json={"mode": "none"}).status_code == 401

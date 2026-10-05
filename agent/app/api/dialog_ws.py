@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-from app.api.deps import canonical_user_id, token_ok
+from app.api.deps import active_tts, canonical_user_id, token_ok
 from app.clients.speech import TextToSpeech, pcm_chunks, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
@@ -37,12 +37,13 @@ class DialogSession:
         websocket: WebSocket,
         store: DialogStore,
         dialog: Dialog,
-        tts: TextToSpeech | None,
+        tts_source: Callable[[], TextToSpeech | None],
     ) -> None:
         self._ws = websocket
         self._store = store
         self._dialog = dialog
-        self._tts = tts
+        # Озвучка берётся при каждой реплике: dev-режим может выключить её на лету.
+        self._tts_source = tts_source
         self._stream_delay = APP_CONFIG.dialog.stream_delay_ms / 1000
         self._frame_interval = APP_CONFIG.speech.tts_frame_interval_ms / 1000
 
@@ -223,9 +224,10 @@ class DialogSession:
     # ─── озвучка ──────────────────────────────────────────────────────────────
 
     def _speak_in_background(self, message_id: str, text: str) -> None:
-        if self._tts is None or not text:
+        tts = self._tts_source()
+        if tts is None or not text:
             return
-        task = asyncio.create_task(self._speak(self._tts, message_id, text))
+        task = asyncio.create_task(self._speak(tts, message_id, text))
         self._speech_tasks.add(task)
         task.add_done_callback(self._speech_tasks.discard)
 
@@ -294,7 +296,7 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
     try:
         await websocket.accept()
         logger.info("socket opened dialog=%s", dialog.id)
-        await DialogSession(websocket, store, dialog, websocket.app.state.tts).run()
+        await DialogSession(websocket, store, dialog, lambda: active_tts(websocket.app)).run()
     finally:
         dialog.has_live_socket = False
         logger.info("socket closed dialog=%s", dialog.id)

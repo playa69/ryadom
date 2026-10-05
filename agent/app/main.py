@@ -57,6 +57,7 @@ def create_app(tts_factory: Callable[[], TextToSpeech | None] | None = None) -> 
     app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
     app.state.store = DialogStore()
     app.state.tts = None
+    app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(dialogs.router)
