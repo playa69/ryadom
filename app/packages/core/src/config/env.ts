@@ -65,6 +65,13 @@ const baseShape = {
   SMTP_SECURE: booleanFlag,
   ADMIN_EMAILS: adminEmails,
   /**
+   * How many reverse proxies in front of the service append to `X-Forwarded-For` (see
+   * `resolveClientIp`): 1 behind a single ingress or gateway, 2 with a CDN in front of it, 0 to
+   * ignore the header altogether. The client address, and with it every per-IP rate limit, comes
+   * from the entry the outermost trusted proxy added, never from the one the client wrote.
+   */
+  TRUSTED_PROXY_HOPS: optionalInt(0).transform((value) => value ?? 1),
+  /**
    * Dialog agent: REST base URL (the WebSocket address is derived from it, http -> ws) and the
    * shared secret. In the base schema and not only in `app` because the admin panel calls the
    * agent too: deleting an account erases the person's data there.

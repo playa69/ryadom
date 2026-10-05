@@ -11,6 +11,8 @@ export interface AppEnv {
   Variables: {
     /** Present only behind `requireAuth`. */
     auth: AuthUser | undefined
+    /** The client address behind the trusted proxies, set once per request by `createApp`. */
+    clientIp: string
   }
 }
 

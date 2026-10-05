@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from 'hono'
+import { UNKNOWN_CLIENT_IP } from '@ryadom/core/shared'
 import { apiError } from './api-response'
 import type { AppEnv } from './context'
 
@@ -66,11 +67,13 @@ export const RATE_LIMITS = {
   dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
 } as const
 
-/** The request IP: behind the Ingress the real address arrives in X-Forwarded-For. */
+/**
+ * The request IP. It is resolved once per request in `createApp` from X-Forwarded-For and
+ * `TRUSTED_PROXY_HOPS` (core's `resolveClientIp`): the entry our own proxy appended, not the
+ * first one, which the client writes itself and could change on every request to dodge the limit.
+ */
 export function clientIp(c: Context<AppEnv>): string {
-  const forwarded = c.req.header('X-Forwarded-For')
-  if (forwarded) return forwarded.split(',')[0]!.trim()
-  return c.req.header('X-Real-IP') ?? 'unknown'
+  return c.get('clientIp') ?? UNKNOWN_CLIENT_IP
 }
 
 /**
