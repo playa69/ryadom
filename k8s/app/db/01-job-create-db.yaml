@@ -1,8 +1,9 @@
 # =============================================================================
 # Job: роль app + база app (+ citext) в CNPG-кластере ryadom-db
 # =============================================================================
-# Запускать ПОСЛЕ create-secrets.sh (нужен Secret app-db-credentials в ns
-# ryadom-db) и когда кластер ryadom-db healthy:
+# Запускать ПОСЛЕ создания Secret app-db-credentials (ключ password, в ns
+# ryadom-db; значение хранится локально у администратора) и когда кластер
+# ryadom-db healthy:
 #   kubectl -n ryadom-db wait --for=condition=ready pod -l cnpg.io/cluster=ryadom-db
 #   kubectl apply -f k8s/app/db/01-job-create-db.yaml
 #   kubectl -n ryadom-db wait --for=condition=complete job/create-app-db

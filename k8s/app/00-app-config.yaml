@@ -3,8 +3,8 @@
 # =============================================================================
 # Общий для api, admin, web и landing (envFrom): каждое приложение читает
 # только свои ключи, лишние игнорирует. ПРАВИЛО: здесь — всё статическое и
-# несекретное, в Secret'ах (app-secrets, app-smtp; создаёт k8s/app/create-secrets.sh
-# из локального app-secrets.env) — только секреты: DB_PASSWORD, AUTH_SECRET,
+# несекретное, в Secret'ах (app-secrets, app-smtp; значения хранятся локально у
+# администратора, в git их нет) — только секреты: DB_PASSWORD, AUTH_SECRET,
 # MOBILE_JWT_SECRET, REDIS_PASSWORD, AGENT_API_TOKEN, SMTP_PASSWORD.
 # DATABASE_URL в Secret'ах нет: Deployment'ы собирают его из DB_* отсюда и
 # DB_PASSWORD из Secret'а. Список админов — отдельный ConfigMap
@@ -25,7 +25,7 @@
 # Redis (общий ryadom-db, Sentinel) используется только api и только для
 # счётчиков лимитов запросов: ключи ryadom:rl:* (префикс по умолчанию, с Python
 # backend не пересекаются), каждый с TTL окна. Пароль — REDIS_PASSWORD из
-# Secret app-secrets (копия redis-credentials, делает create-secrets.sh). Если
+# Secret app-secrets (копия redis-credentials). Если
 # Redis недоступен, api сам переходит на счёт в памяти (lib/redis-rate-limiter.ts).
 #
 # TRUSTED_PROXY_HOPS=1: перед сервисами ровно один доверенный прокси (Istio

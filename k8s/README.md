@@ -41,7 +41,6 @@ k8s/
 │   └── 01-certificate-ryadom-tls.yaml   ← cert на корневой домен → istio-system
 ├── app/                            ← сервисы из app/ репозитория (ns prod): см. раздел ниже
 │   ├── 00-app-config.yaml          ← ConfigMap app-config (всё статическое и несекретное)
-│   ├── create-secrets.sh           ← app-secrets.env (вне git) → Secret'ы кластера (kubectl create, не apply)
 │   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 02-job-migrate (drizzle)
 │   └── api/ admin/ web/ landing/   ← 01-service, 02-httproute, 03-deployment (admin/ ещё 00-config: ADMIN_EMAILS)
 ├── tls/                            ← РЕЗЕРВ: lego DNS-01 runbook (не используется,
@@ -545,8 +544,8 @@ Python backend (`/api/v1`) живёт отдельно и мобильным к�
 api сам считает лимиты в памяти (`lib/redis-rate-limiter.ts`), то есть
 отказ Redis не кладёт вход. Сетевые правила уже есть: `prod` → `ryadom-db`
 :6379/:26379 (01-network-policy-prod) и приём из `prod` на стороне Redis
-(`redis/manifests/03-network-policy.yaml`). Ручных шагов нет: пароль копирует
-`create-secrets.sh` из `ryadom-db/redis-credentials`, адреса — в `app-config`.
+(`redis/manifests/03-network-policy.yaml`). Ручных шагов нет: пароль в `app-secrets`
+— копия `ryadom-db/redis-credentials`, адреса — в `app-config`.
 Общий Redis работает с `allkeys-lru` на 256 МБ: счётчики крошечные, но при
 нехватке памяти вытесняться могут и ключи соседей — следить за памятью Redis.
 Проверка после выката: `kubectl -n prod logs deploy/app-api | grep -i redis`
@@ -574,34 +573,25 @@ done   # ожидается: 200 ×30, затем 429 — несмотря на 
 
 ### Секреты и конфиги
 
-**Правило: секреты — в локальном `.env`-файле и Secret'ах, всё статическое
-несекретное — в ConfigMap'ах (в git).**
+**Правило: секреты — в Secret'ах кластера, всё статическое несекретное — в
+ConfigMap'ах (в git).** Значения секретов хранятся локально у администратора, в
+репозитории их нет.
 
 | Что | Где | Примеры |
 |---|---|---|
 | Статика, несекретное | ConfigMap `app-config` ([00-app-config.yaml](app/00-app-config.yaml)) | `DB_HOST/PORT/NAME/USER`, публичные URL, `TRUSTED_PROXY_HOPS`, `REDIS_*` адреса, флаги |
 | Статика только админки | ConfigMap `app-admin-config` ([admin/00-config.yaml](app/admin/00-config.yaml)) | `ADMIN_EMAILS` (в API он попадать не должен) |
-| Секреты | `app-secrets.env` в корне репозитория → Secret'ы кластера | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `AGENT_API_TOKEN`, `SMTP_PASSWORD` |
+| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), позже `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_API_TOKEN`; `SMTP_PASSWORD` |
 
 `DATABASE_URL` нигде не хранится: Deployment'ы собирают его из `DB_*`
-(ConfigMap) и `DB_PASSWORD` (Secret). Пароль Redis в файл не пишется: скрипт
-копирует его из `ryadom-db/redis-credentials`.
+(ConfigMap) и `DB_PASSWORD` (Secret). `REDIS_PASSWORD` в `app-secrets` — копия
+`ryadom-db/redis-credentials`. Secret'ы создаются командой `kubectl create secret
+generic ... --from-env-file=...` (именно `create`, а не `apply`, чтобы не перезаписать
+существующие; значения в командную строку и в историю не попадают).
 
-Файл `app-secrets.env` — источник секретов при деплое. Он создаётся один раз
-(`bash k8s/app/create-secrets.sh --generate-only`, кластер не нужен), лежит
-вне git (скрыт локально через `.git/info/exclude`, `.gitignore` не менялся;
-скрипт отказывается работать с файлом, который git не игнорирует) и читается
-обычным запуском скрипта, который создаёт Secret'ы в кластере. Недостающие
-значения дописываются в файл ДО создания секретов; при сбое в кластере ничего
-не создаётся, а повторный запуск берёт значения из файла. В новом клоне
-исключение нужно добавить заново (скрипт подскажет команды).
-
-Копию файла положите в менеджер паролей: при потере кластера без неё все
-сессии пользователей станут недействительны (`AUTH_SECRET`). Права 0600
-скрипт выставляет там, где ФС это поддерживает, и предупреждает, если нет
-(NTFS, `/mnt/c` в WSL). Позже подключить почту: `SMTP_PASSWORD=... bash
-k8s/app/create-secrets.sh --smtp-only` (+ `SMTP_HOST/PORT/SECURE/USER` и
-`EMAIL_TRANSPORT=smtp` в `app-config`, правило egress в NetworkPolicy).
+Потеря `AUTH_SECRET` вместе с кластером сделает недействительными все сессии
+пользователей, поэтому копию значений администратор держит отдельно, например в
+менеджере паролей.
 
 ### Что сознательно выключено на первом выкате
 
@@ -639,7 +629,7 @@ Postbox ([документация](https://yandex.cloud/ru/docs/postbox/quickst
 1. Сервисный аккаунт (напр. `ryadom-postbox`) с ролью `postbox.sender` в том же
    каталоге, что и зона DNS.
 2. API-ключ этого аккаунта с областью `yc.postbox.send`. Секретная часть
-   показывается один раз: сразу в `app-secrets.env` как `SMTP_PASSWORD`, в чаты
+   показывается один раз: сразу в хранилище администратора как `SMTP_PASSWORD`, в чаты
    и коммиты — нет. Идентификатор ключа — это `SMTP_USER` (несекретный).
 3. Адрес (identity) для домена `xn----htbtgjker8b3a2c.xn--p1ai` (punycode;
    про кириллицу документация молчит), настройка DKIM — «Простая». Консоль
@@ -647,7 +637,8 @@ Postbox ([документация](https://yandex.cloud/ru/docs/postbox/quickst
    Отправлять можно с `noreply@<домен>`, но не с поддомена `x@mail.<домен>`.
 4. Проверить в консоли Postbox лимиты и ограничения на отправку (в
    документации они не описаны).
-5. Секрет в кластер: `bash k8s/app/create-secrets.sh --smtp-only` (нужен админский
+5. Секрет в кластер: `kubectl -n prod create secret generic app-smtp
+   --from-env-file=<файл с одной строкой SMTP_PASSWORD=...>` (нужен админский
    kubeconfig). Затем в `00-app-config.yaml` раскомментировать `SMTP_USER`,
    `EMAIL_TRANSPORT: "smtp"` и применить вместе с
    `07-network-policy-prod-apps.yaml` (там egress на :465).
@@ -661,7 +652,7 @@ Postbox ([документация](https://yandex.cloud/ru/docs/postbox/quickst
 
 Для выката нужны на машине оператора: Docker, kubectl, **админский** kubeconfig
 (`k8s/twc-sber500-config.yaml`, в git его нет), `registry-pusher-key.json` в
-корне репозитория и `app-secrets.env`.
+корне репозитория; значения секретов хранятся у администратора.
 
 ### Первый выкат (порядок важен)
 
@@ -676,9 +667,10 @@ export KUBECONFIG=~/.kube/ryadom-admin.yaml
 kubectl get nodes && kubectl -n prod get pods          # read-only проверка доступа
 kubectl -n istio-system get gateway ryadom-gateway -o yaml > /tmp/gateway-backup.yaml
 
-# 1. Секреты и БД. Источник — app-secrets.env в корне репозитория (создаётся
-#    командой `bash k8s/app/create-secrets.sh --generate-only`, вне git)
-bash k8s/app/create-secrets.sh
+# 1. Секреты (значения хранятся у администратора, в git их нет) и БД. `create`, не `apply`.
+kubectl -n ryadom-db create secret generic app-db-credentials --from-env-file=<файл: password=...>
+kubectl -n prod create secret generic app-secrets --from-env-file=<файл: DB_PASSWORD, AUTH_SECRET,
+#   MOBILE_JWT_SECRET, REDIS_PASSWORD (копия ryadom-db/redis-credentials), AGENT_API_TOKEN>
 kubectl apply -f k8s/app/db/01-job-create-db.yaml
 kubectl -n ryadom-db wait --for=condition=complete job/create-app-db --timeout=120s
 

@@ -95,8 +95,6 @@
 └── k8s-secrets.env                # сгенерированные пароли k8s-секретов (KEY=VALUE)
 
 k8s/twc-sber500-config.yaml        # kubeconfig кластера Timeweb (в .gitignore)
-app-secrets.env                    # секреты сервисов app/ (корень репозитория; вне git через
-                                   # .git/info/exclude; создаёт k8s/app/create-secrets.sh)
 ```
 
 `yc` CLI на машине владельца авторизован под его аккаунтом (`yc config list`) —
