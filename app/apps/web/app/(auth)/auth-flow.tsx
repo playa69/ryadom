@@ -11,6 +11,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { WEB_PENDING_AUTH_KEY } from '@/lib/storage-keys'
 
 /**
  * State shared by the multi-step anonymous screens (register → confirm, forgot → reset).
@@ -46,7 +47,7 @@ export interface AuthFlow {
   clear(): void
 }
 
-const STORAGE_KEY = 'ryadom.pending-auth'
+const STORAGE_KEY = WEB_PENDING_AUTH_KEY
 
 function readStored(): Pending | null {
   try {

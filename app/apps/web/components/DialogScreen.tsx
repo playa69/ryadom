@@ -29,6 +29,7 @@ import type { OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { useAuth, useClient } from '@/lib/auth'
+import { appPath } from '@/lib/base-path'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
@@ -365,7 +366,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       voice.current?.cancel()
       socket.current?.interruptSpeech()
       await player.current?.unlock().catch(() => undefined)
-      const started = await startCapture((frame) => socket.current?.sendAudio(frame))
+      // The worklet is a file of this app (public/), so under a URL prefix it is served from there.
+      const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
+        workletUrl: appPath('/voice-worklet.js'),
+      })
       // The person may have left, the conversation ended, the connection dropped or the text been
       // chosen while the permission prompt was open.
       const live = socket.current

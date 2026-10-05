@@ -8,6 +8,11 @@
 # on every request (apps/web/.env.example), so one image serves staging and prod:
 #   PUBLIC_API_URL  the API the browser connects to (also the only extra origin the CSP allows)
 #   PUBLIC_WEB_URL  the marketing site, where the terms and privacy documents live
+#
+# The one thing that is NOT runtime config is the URL prefix: Next fixes basePath at build time, so
+# the image is built for the place it is published at:
+#   --build-arg BASE_PATH=/web       published at https://<domain>/web (health: /web/api/health)
+#   (no argument)                    published at the root of its own host
 
 FROM node:24-alpine AS build
 ENV CI=true
@@ -20,13 +25,17 @@ COPY . .
 # "..." pulls in the workspace packages the app imports (client-core, contracts, design).
 RUN --mount=type=cache,id=ryadom-pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter "@ryadom/web..."
+ARG BASE_PATH=""
+ENV BASE_PATH=$BASE_PATH
 RUN pnpm --filter @ryadom/web build
 
 
 FROM node:24-alpine AS runtime
+ARG BASE_PATH=""
 ENV NODE_ENV=production \
     PORT=3003 \
-    HOSTNAME=0.0.0.0
+    HOSTNAME=0.0.0.0 \
+    BASE_PATH=$BASE_PATH
 WORKDIR /app
 
 # Next standalone output: the server plus only the modules it actually imports.
@@ -37,5 +46,5 @@ COPY --from=build --chown=node:node /repo/apps/web/public/ ./apps/web/public/
 USER node
 EXPOSE 3003
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget -qO- "http://127.0.0.1:${PORT}/api/health" > /dev/null || exit 1
+    CMD wget -qO- "http://127.0.0.1:${PORT}${BASE_PATH}/api/health" > /dev/null || exit 1
 CMD ["node", "apps/web/server.js"]

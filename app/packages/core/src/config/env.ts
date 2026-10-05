@@ -13,6 +13,29 @@ const publicUrl = z
   .url({ protocol: /^https?$/, error: 'must be an http(s) URL' })
   .transform((value) => value.replace(/\/+$/, ''))
 
+/**
+ * An address that is an origin: scheme, host and port, no path. The API lives at `<origin>/api/...`
+ * and the OTA bundle URLs are `<origin>` plus a path, so a path here would be doubled in them. The
+ * place of a client on a shared host (`/app`) is a separate setting, not part of this address.
+ */
+const publicOrigin = z
+  .url({ protocol: /^https?$/, error: 'must be an http(s) URL' })
+  .refine((value) => new URL(value).pathname === '/', {
+    error: 'must be an origin without a path (the API lives at <origin>/api); the PWA prefix is PWA_BASE_PATH',
+  })
+  .transform((value) => value.replace(/\/+$/, ''))
+
+/** A URL path prefix like `/app` (a trailing slash is dropped); empty when there is no prefix. */
+const urlPathPrefix = z
+  .preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*\/?$/, 'must look like "/app"')
+      .optional(),
+  )
+  .transform((value) => (value ?? '').replace(/\/+$/, ''))
+
 const booleanFlag = z.preprocess((value) => {
   if (value === undefined || value === null || value === '') return undefined
   if (typeof value === 'boolean') return value
@@ -54,8 +77,11 @@ const baseShape = {
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
   AUTH_SECRET: z.string().min(32, 'must be at least 32 characters'),
   PUBLIC_WEB_URL: publicUrl,
-  /** Public address of the application (PWA and API), used in email texts and site links. */
-  PUBLIC_APP_URL: publicUrl,
+  /**
+   * Public ORIGIN of the application server (API, OTA bundles and the PWA): `https://example.com`,
+   * never with a path. Where the PWA itself sits on that host is `PWA_BASE_PATH`.
+   */
+  PUBLIC_APP_URL: publicOrigin,
   EMAIL_TRANSPORT: z.enum(EMAIL_TRANSPORTS),
   EMAIL_FROM: z.string().min(3),
   SMTP_HOST: optionalString,
@@ -94,6 +120,13 @@ const baseShape = {
 
 const appShape = {
   PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(65535).default(3002)),
+  /**
+   * The URL prefix the PWA is served under (`/app`), empty when it is served from the root. It must
+   * be the prefix the PWA was BUILT for (the Dockerfile passes one value to both): the build writes
+   * it into every asset URL, the service worker and the manifest, and the server serves the files
+   * and the SPA fallback only under it. `/api/*` is never prefixed.
+   */
+  PWA_BASE_PATH: urlPathPrefix,
   MOBILE_JWT_SECRET: z.string().min(32, 'must be at least 32 characters'),
   /** After this many seconds without frames the server closes the socket. */
   DIALOG_IDLE_TIMEOUT_SEC: optionalInt(30).transform((value) => value ?? 900),

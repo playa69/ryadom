@@ -67,17 +67,37 @@ function injectMeta(html: string, env: AppDeps['env']): string {
   return html.includes('</head>') ? html.replace('</head>', `${meta}</head>`) : html
 }
 
-/** `root` is only for tests: it substitutes a fixture instead of looking on disk. */
+/**
+ * `root` is only for tests: it substitutes a fixture instead of looking on disk.
+ *
+ * `PWA_BASE_PATH` (`/app`, or empty) is where the PWA sits on the host. With a prefix the build has
+ * it in every URL (Vite `base`), so the server only has to answer under it: the files are looked up
+ * with the prefix removed, the SPA fallback is served only under it, `/app` leads to `/app/` and the
+ * root of the host leads to the app. Everything else outside `/api/*` is a 404 in the API's own
+ * format, never HTML. Without a prefix the PWA owns every path that is not `/api/*`.
+ */
 export function registerPwaServing(app: Hono<AppEnv>, deps: AppDeps, root = resolvePwaRoot()): void {
   if (!root) return
 
+  const base = deps.env.PWA_BASE_PATH
+  const entry = `${base}/`
+  const underBase = (path: string): boolean =>
+    base === '' ? !path.startsWith('/api/') : path === base || path.startsWith(entry)
+
+  if (base !== '') {
+    const withSearch = (url: string, target: string): string => `${target}${new URL(url).search}`
+    app.get(base, (c) => c.redirect(withSearch(c.req.url, entry), 301))
+    app.get('/', (c) => c.redirect(withSearch(c.req.url, entry), 302))
+  }
+
   app.use('*', async (c, next) => {
-    if (c.req.path.startsWith('/api/')) return next()
+    if (!underBase(c.req.path)) return next()
     // index.html goes only through the catch-all below: serveStatic finds it for "/" by itself and
     // would serve it as is, without the injected meta tags.
-    if (c.req.path === '/' || c.req.path === '/index.html') return next()
+    if (c.req.path === entry || c.req.path === `${entry}index.html`) return next()
     return serveStatic({
       root,
+      rewriteRequestPath: base === '' ? undefined : (path) => path.slice(base.length),
       onFound: (diskPath, ctx) => {
         ctx.header('Cache-Control', cacheControlFor(diskPath))
         ctx.header('X-Robots-Tag', 'noindex')
@@ -89,7 +109,7 @@ export function registerPwaServing(app: Hono<AppEnv>, deps: AppDeps, root = reso
   // An SPA route with no file on disk (for example /dialog/d-1/) gets index.html; the client
   // (Framework7) resolves the route itself. `/api/*` never reaches here, or it would get HTML.
   app.get('*', async (c) => {
-    if (c.req.path.startsWith('/api/')) return apiError(c, 404, `No route for GET ${c.req.path}`)
+    if (!underBase(c.req.path)) return apiError(c, 404, `No route for GET ${c.req.path}`)
     const html = await readFile(join(root, 'index.html'), 'utf8').catch(() => null)
     if (html === null) return apiError(c, 404, 'PWA build is missing index.html')
     c.header('Content-Type', 'text/html; charset=utf-8')

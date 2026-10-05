@@ -3,13 +3,15 @@ import { connection } from 'next/server'
 import '@fontsource-variable/inter/wght.css'
 import './globals.css'
 import { readApiBase } from '@/lib/api-url'
+import { appPath } from '@/lib/base-path'
 import Providers from './providers'
 
 export const metadata: Metadata = {
   title: { default: 'Рядом', template: '%s — Рядом' },
   // The product lives behind a sign-in; only the landing (apps/landing) is meant to be indexed.
   robots: { index: false, follow: false },
-  icons: { icon: '/favicon.svg' },
+  // Next does not prefix a string icon URL with the base path.
+  icons: { icon: appPath('/favicon.svg') },
 }
 
 // Zoom stays enabled: pinch-zoom is an accessibility feature, not ours to take away.

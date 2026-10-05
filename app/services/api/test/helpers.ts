@@ -28,7 +28,13 @@ export interface TestApp {
  * against a real build; otherwise the result would depend on whether `dist/pwa` exists locally.
  */
 export function makeApp(
-  options: { policy?: ReleasePolicy; env?: Record<string, string>; logger?: Logger } = {},
+  options: {
+    policy?: ReleasePolicy
+    env?: Record<string, string>
+    logger?: Logger
+    /** A directory standing in for the PWA build (pwa.test.ts); every other test leaves it null. */
+    pwaRoot?: string
+  } = {},
 ): TestApp {
   const rateLimiter = createRateLimiter()
   const app = createApp(
@@ -38,7 +44,7 @@ export function makeApp(
       policy: staticPolicy(options.policy),
       rateLimiter,
     },
-    null,
+    options.pwaRoot ?? null,
   )
   return { app, resetLimits: () => rateLimiter.reset() }
 }

@@ -50,7 +50,13 @@ function run(command, args, options = {}) {
 
 async function buildFlavor(flavor) {
   await rm(clientDist, { recursive: true, force: true })
-  run('pnpm', ['exec', 'vite', 'build', '--mode', flavor], { cwd: root })
+  // The flavour is also the build mode, so it is passed on instead of being read from .env.dev /
+  // .env.prod: those files are gitignored, and in a clean checkout or in the Docker build the
+  // config would fail with "VITE_FLAVOR must be dev or prod". Where the files exist the value is the same.
+  run('pnpm', ['exec', 'vite', 'build', '--mode', flavor], {
+    cwd: root,
+    env: { ...process.env, VITE_FLAVOR: flavor },
+  })
 
   const file = `ryadom-${flavor}-${version}.zip`
   const archivePath = join(otaDist, file)

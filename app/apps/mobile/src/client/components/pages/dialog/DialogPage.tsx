@@ -222,7 +222,10 @@ export default function DialogPage({
       // The player is unlocked by the person's own tap (an iOS requirement). A refusal here only
       // means the agent will not be heard; it must not block the microphone.
       await player.current?.unlock().catch(() => undefined)
-      const started = await startCapture((frame) => socket.current?.sendAudio(frame))
+      // The worklet is in public/: next to index.html, which under a PWA prefix is not the root.
+      const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
+        workletUrl: `${import.meta.env.BASE_URL}voice-worklet.js`,
+      })
       // The connection may have dropped, or the person moved to the text, while the permission
       // prompt was open.
       if (!socket.current?.isConnected() || modeRef.current !== 'voice') {

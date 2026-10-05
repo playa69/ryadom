@@ -1,3 +1,4 @@
+import { webDialogViewKey } from '../lib/storage-keys'
 import { peekDialogHandoff } from './dialog-start'
 
 /**
@@ -6,7 +7,7 @@ import { peekDialogHandoff } from './dialog-start'
  */
 export type DialogView = 'voice' | 'text'
 
-const key = (dialogId: string) => `ryadom.dialog-view.${dialogId}`
+const key = webDialogViewKey
 
 /**
  * Per tab, not forever: a reload or a way back into a conversation that was being typed stays on the

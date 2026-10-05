@@ -36,10 +36,18 @@ export interface SessionStorage {
 /**
  * Browser storage. The refresh token in localStorage is readable by any script on the origin, so
  * the page must run under a CSP without `unsafe-inline` for scripts.
+ *
+ * localStorage belongs to the ORIGIN, not to a path: clients published on one host under different
+ * prefixes (`/web`, `/app`) see the same keys. Two clients writing the same refresh token key would
+ * overwrite each other's session, and the API treats a replay of a rotated token as theft and ends
+ * ALL of the account's sessions. So each client names its own keys:
+ * - `prefix` is put in front of `refreshToken` and `device`;
+ * - `userKey` is the whole key of the cached user.
+ * The defaults are the original (legacy) names, which the PWA and the store builds keep using
+ * through the platform adapter (`ryadom_refreshToken`, `ryadom_device`, `ryadom.user`).
  */
-export function createLocalSessionStorage(prefix = 'ryadom_'): SessionStorage {
+export function createLocalSessionStorage(prefix = 'ryadom_', userKey = 'ryadom.user'): SessionStorage {
   const refreshKey = `${prefix}refreshToken`
-  const userKey = 'ryadom.user'
   const deviceKey = `${prefix}device`
   return {
     async getRefreshToken() {

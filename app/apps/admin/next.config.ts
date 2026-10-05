@@ -3,20 +3,35 @@ import type { NextConfig } from 'next'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 
+/**
+ * The URL prefix the admin is published under on a shared host (`/admin`), empty when it has a
+ * host of its own. It is fixed at build time (`BASE_PATH`): Next bakes it into the server, the
+ * asset URLs and the router, so one image serves one prefix. See `lib/base-path.ts` for the places
+ * Next does not prefix by itself.
+ */
+function readBasePath(value: string | undefined): string {
+  const trimmed = (value ?? '').trim().replace(/\/+$/, '')
+  if (!trimmed) return ''
+  if (!/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(trimmed)) {
+    throw new Error(`BASE_PATH must look like "/admin" (got "${value}")`)
+  }
+  return trimmed
+}
+
+const basePath = readBasePath(process.env.BASE_PATH)
+
 const nextConfig: NextConfig = {
   output: 'standalone',
+  basePath,
+  // Read by `lib/base-path.ts` in server and client code alike.
+  env: { NEXT_PUBLIC_BASE_PATH: basePath },
   outputFileTracingRoot: repoRoot,
   turbopack: { root: repoRoot },
-  // Workspace packages ship TypeScript sources, so Next compiles them itself.
   transpilePackages: ['@ryadom/core', '@ryadom/db'],
-  // Native modules and anything owning its own worker threads stay outside the bundle.
   serverExternalPackages: ['@node-rs/argon2', 'pino', 'pino-pretty', 'thread-stream'],
   poweredByHeader: false,
-  // The dev-mode badge sits over the bottom-left corner, on top of the sidebar's last link.
   devIndicators: false,
   reactStrictMode: true,
-  // `next dev` otherwise prints every action call with its arguments, and those include the
-  // one-time codes from the login form.
   logging: { serverFunctions: false },
 }
 
