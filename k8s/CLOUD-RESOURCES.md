@@ -31,7 +31,7 @@
   Делегирован с reg.ru на `ns1.yandexcloud.net` / `ns2.yandexcloud.net`.
 - Записи: корневая A → `185.207.64.68` (нода worker-192.168.0.5 кластера Timeweb,
   единая точка входа istio-gateway). Поддоменов нет, routing path-based; сервисы
-  из `app/` тоже на корне по путям (`/api`, `/app`, `/web`, `/admin`; см.
+  из `app/` тоже на корне по путям (`/api`, `/app`, `/admin`; см.
   `README.md`, раздел «Сервисы из app/»), отдельных A-записей не нужно. Для почты
   (Postbox) в этой же зоне — 2 CNAME DKIM, TXT SPF на корне и TXT `_dmarc`
   (список и значения — `README.md`, «DNS и почта: что сделать руками»).

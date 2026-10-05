@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/web:0.2.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/web:0.2.1
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -60,21 +60,21 @@ spec:
               value: "3003"
           startupProbe:
             httpGet:
-              path: /web/api/health
+              path: /app/api/health
               port: 3003
             periodSeconds: 3
             failureThreshold: 20
             timeoutSeconds: 3
           readinessProbe:
             httpGet:
-              path: /web/api/health
+              path: /app/api/health
               port: 3003
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /web/api/health
+              path: /app/api/health
               port: 3003
             periodSeconds: 20
             timeoutSeconds: 3

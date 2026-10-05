@@ -14,13 +14,13 @@
 # (k8s/README.md, «Сервисы из app/»):
 #   /          landing (маркетинг, документы)
 #   /api       api: REST, WebSocket, OTA     (/api/v1 — Python backend, длиннее и побеждает)
-#   /app       PWA (раздаёт api)
-#   /web       apps/web (клиент после входа)
+#   /app       apps/web (клиент после входа)
 #   /admin     admin
 # Адреса, оканчивающиеся на ORIGIN (без пути): PUBLIC_WEB_URL (landing, корень),
 # PUBLIC_APP_URL (сервер приложения: API и OTA-бандлы — путь в нём удвоился бы),
-# PUBLIC_API_URL (apps/web). Где живёт PWA — отдельная переменная PUBLIC_PWA_URL,
-# на неё ссылаются кнопки «Открыть приложение» на landing.
+# PUBLIC_API_URL (apps/web). Куда ведёт «Открыть приложение» — отдельная переменная
+# PUBLIC_PWA_URL (имя историческое), на неё ссылаются кнопки на landing.
+# PWA по путям не публикуется: его только скачивают.
 #
 # Redis (общий ryadom-db, Sentinel) используется только api и только для
 # счётчиков лимитов запросов: ключи ryadom:rl:* (префикс по умолчанию, с Python
@@ -66,10 +66,10 @@ data:
   # <origin>/api/ota
   PUBLIC_APP_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai"
   # apps/web: API, к которому ходит браузер (REST + WebSocket). Тот же origin, что у
-  # страницы /web, поэтому CORS не нужен; он же единственный внешний origin в CSP
+  # страницы /app, поэтому CORS не нужен; он же единственный внешний origin в CSP
   # connect-src
   PUBLIC_API_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai"
-  # landing: куда ведут «Открыть приложение» — PWA под префиксом /app
+  # landing: куда ведут «Открыть приложение» — веб-клиент под префиксом /app
   PUBLIC_PWA_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai/app/"
   # landing: адрес поддержки (временно — личная почта владельца; заменить на
   # support@... перед публикацией)

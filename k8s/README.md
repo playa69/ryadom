@@ -147,7 +147,7 @@ LoadBalancer в Timeweb managed k8s нет. Схема:
 с reg.ru на Yandex Cloud DNS (зона `slyshu-ryadom`, см. CLOUD-RESOURCES.md).
 Только корневой домен, поддоменов нет, wildcard нет — маршрутизация
 path-based через HTTPRoute (шаблон `istio/manifests/00-example-gateway.yaml`).
-Так же публикуются сервисы из `app/` (`/`, `/api`, `/app`, `/web`, `/admin`; Python
+Так же публикуются сервисы из `app/` (`/`, `/api`, `/app`, `/admin`; Python
 backend — `/api/v1`) — см. раздел «Сервисы из app/» ниже. Новых DNS-записей,
 сертификатов и listener'ов для них не нужно.
 
@@ -492,15 +492,14 @@ Node-приложения «Рядом» из каталога `app/` репоз
 |---|---|---|---|
 | `/api/v1/*` | Python backend (ns `backend`) | 8000 | уже работает, длиннее `/api` и побеждает |
 | `/api/*` | `app-api` | 3002 | REST, WebSocket к агенту (`/api/dialogs/ws`), OTA-бандлы (`/api/ota`) |
-| `/app/*` | `app-api` | 3002 | PWA (её раздаёт тот же api; собрана под префикс `/app`) |
-| `/web/*` | `app-web` | 3003 | веб-клиент после входа (Next `basePath=/web`) |
+| `/app/*` | `app-web` | 3003 | веб-клиент после входа (Next `basePath=/app`) |
 | `/admin/*` | `app-admin` | 3001 | админка (Next `basePath=/admin`; вход по `ADMIN_EMAILS`) |
 | `/` | `app-landing` | 3000 | маркетинг и документы (всё, что не совпало выше) |
 | — | `app-migrate` | — | Job drizzle-миграций БД `app` |
 
 `<домен>` = `xn----htbtgjker8b3a2c.xn--p1ai`. Общий ConfigMap `app-config`
 (+ `app-admin-config` для админки), секреты `app-secrets`/`app-smtp`
-(создаются скриптом из локального файла, в git их нет). БД — тот же сервер
+(значения хранятся локально у администратора, в git их нет). БД — тот же сервер
 CNPG `ryadom-db` (`ryadom-db-rw.ryadom-db:5432`), что у Python backend, но
 **своя база и своя роль `app`**: у backend база `backend` и роль `developer`.
 Базу, роль и расширение `citext` создаёт Job `create-app-db`.
@@ -510,25 +509,25 @@ CNPG `ryadom-db` (`ryadom-db-rw.ryadom-db:5432`), что у Python backend, но
 api при сборке (build-arg `VITE_PROD_API_URL`) и попадает в OTA-бандлы.
 Python backend (`/api/v1`) живёт отдельно и мобильным клиентом не используется.
 
-### Пути и префиксы (как приложения живут под `/web`, `/admin`, `/app`)
+### Пути и префиксы (как приложения живут под `/app` и `/admin`)
 
 Прокси ничего не переписывает, поэтому каждое приложение само знает свой префикс:
 
 | Приложение | Префикс | Как задаётся | Что учтено в коде |
 |---|---|---|---|
-| web | `/web` | build-arg `BASE_PATH` (Next `basePath`, при сборке) | favicon, voice-worklet, healthcheck и пробы `/web/api/health`; matcher `proxy.ts` с корневым источником `/` (иначе под префиксом главная осталась бы без CSP, тест `test/proxy-matcher.test.ts`) |
+| web | `/app` | build-arg `BASE_PATH` (Next `basePath`, при сборке) | favicon, voice-worklet, healthcheck и пробы `/app/api/health`; matcher `proxy.ts` с корневым источником `/` (иначе под префиксом главная осталась бы без CSP, тест `test/proxy-matcher.test.ts`) |
 | admin | `/admin` | build-arg `BASE_PATH` | favicon, форма выхода, редирект в route handler, cookie `path=/admin`, пробы `/admin/api/health` |
-| PWA (`apps/mobile`, раздаёт api) | `/app` | build-arg `PWA_BASE_PATH` образа api (и в сборку PWA, и в рантайм сервера) | Vite `base`, регистрация SW со scope `/app/`, относительный manifest, теги manifest и apple-icon, worklet; сервер отвечает только под префиксом, `/app` ведёт на `/app/`, а `/` на самом поде — на `/app/` |
+| PWA (`apps/mobile`) | не публикуется | — | Его только скачивают (`/download` на landing); маршрута на него нет. Код умеет жить под префиксом (build-arg `PWA_BASE_PATH` образа api: Vite `base`, scope SW, относительный manifest), если понадобится его публиковать |
 | api | — | `/api/*` без префикса | `PUBLIC_APP_URL` теперь ТОЛЬКО origin (проверка в схеме env): к нему приклеивается `/api/ota/...` |
-| landing | `/` | — | кнопки «Открыть приложение» ведут на `PUBLIC_PWA_URL` (`/app/`), иначе на `PUBLIC_APP_URL` |
+| landing | `/` | — | кнопки «Открыть приложение» ведут на `PUBLIC_PWA_URL` (имя историческое; сейчас `/app/`, то есть веб-клиент), иначе на `PUBLIC_APP_URL` |
 
 Префикс — build-arg, а не рантайм-переменная: образ собирается под то место, где
-публикуется (при сборке передаются `/web`, `/admin`, `/app`, см. «Сборка и push образов»; без аргумента
+публикуется (при сборке передаются `/app` для web и `/admin` для админки, см. «Сборка и push образов»; без аргумента
 приложение живёт в корне своего хоста, как раньше). Нативные сборки и OTA-бандлы
 префиксов не знают (WebView на `https://localhost/`): их адрес API — origin.
 
-**Хранилище браузера принадлежит origin'у, а не пути.** web и PWA делят его на этом
-хосте, а API при повторе уже ротированного refresh-токена завершает ВСЕ сессии
+**Хранилище браузера принадлежит origin'у, а не пути.** Клиенты на одном хосте делили
+бы его ключи, а API при повторе уже ротированного refresh-токена завершает ВСЕ сессии
 аккаунта. Поэтому ключи разделены: web пишет в `ryadom.web.*`
 (`apps/web/lib/storage-keys.ts`), а PWA и нативные сборки сохраняют прежние
 `ryadom_refreshToken`, `ryadom_device`, `ryadom.user` (переименование разлогинило бы
@@ -675,7 +674,7 @@ kubectl apply -f k8s/app/db/01-job-create-db.yaml
 kubectl -n ryadom-db wait --for=condition=complete job/create-app-db --timeout=120s
 
 # 2. Образы: собрать и отправить в реестр командами docker — раздел «Сборка и push
-#    образов» ниже (префиксы /web, /admin, /app передаются build-arg'ами).
+#    образов» ниже (префикс /app для web и /admin для админки передаются build-arg'ами).
 
 # 3. Сеть, конфиг, миграции (DNS и сертификат не нужны: всё на корневом домене)
 kubectl apply -f k8s/namespaces/manifests/07-network-policy-prod-apps.yaml
@@ -696,8 +695,8 @@ kubectl apply -f k8s/app/api/02-httproute.yaml -f k8s/app/web/02-httproute.yaml 
 kubectl -n prod get httproute                                        # Accepted/ResolvedRefs
 ```
 
-Проверка: `curl https://<домен>/api/health` → 200; страницы `/` (landing), `/app/`
-(PWA), `/web/`, `/admin/` (редирект на `/admin/login`); логи api: «Redis подключён»;
+Проверка: `curl https://<домен>/api/health` → 200; страницы `/` (landing), `/app`
+(веб-клиент, с CSP), `/admin/` (редирект на `/admin/login`); логи api: «Redis подключён»;
 проверка IP-лимитов (раздел выше); **регресс** — `https://<домен>/api/v1/...` Python
 backend отвечает как раньше (его маршрут длиннее `/api` и побеждает). Откат:
 `kubectl delete -f k8s/app/<svc>/02-httproute.yaml` (снимает публикацию сервиса);
@@ -719,17 +718,17 @@ Next и Vite фиксируют их при сборке (см. «Пути и п
 
 ```bash
 REG=cr.yandex/crpsqeamqpuvrkm5tpr9/app
-TAG=0.2.0
+TAG=0.2.1
 ORIGIN=https://xn----htbtgjker8b3a2c.xn--p1ai          # origin без пути
 cd app                                                   # контекст сборки
 FLAGS="--platform linux/amd64 --provenance=false --sbom=false --load"
 
 docker buildx build $FLAGS -f packages/db/Dockerfile   -t $REG/migrate:$TAG .
 docker buildx build $FLAGS -f apps/landing/Dockerfile  -t $REG/landing:$TAG .
-docker buildx build $FLAGS -f apps/web/Dockerfile      -t $REG/web:$TAG   --build-arg BASE_PATH=/web .
+docker buildx build $FLAGS -f apps/web/Dockerfile      -t $REG/web:$TAG   --build-arg BASE_PATH=/app .
 docker buildx build $FLAGS -f apps/admin/Dockerfile    -t $REG/admin:$TAG --build-arg BASE_PATH=/admin .
 docker buildx build $FLAGS -f services/api/Dockerfile  -t $REG/api:$TAG \
-  --build-arg PWA_BASE_PATH=/app \
+  --build-arg PWA_BASE_PATH=/pwa \
   --build-arg VITE_PROD_API_URL=$ORIGIN --build-arg VITE_PROD_WEB_URL=$ORIGIN \
   --build-arg OTA_BUILD_NUMBER=$(git rev-list --count HEAD) .
 
@@ -801,7 +800,7 @@ NVMe (PG 2×10, Redis 3×5, CH 10, Loki 5, Prom 5, Grafana 2, Langfuse-redis).
   (шаблон `istio/manifests/00-example-gateway.yaml`) + правило ingress в NP
   namespace.
 - Сервисы из `app/` — на корневом домене по путям: `/` landing, `/api` api, `/app`
-  PWA, `/web` веб-клиент, `/admin` админка (HTTPRoute'ы на listener `https`);
+  `/app` веб-клиент, `/admin` админка (HTTPRoute'ы на listener `https`);
   см. раздел «Сервисы из app/».
 - Админские UI (ClusterIP + port-forward): Grafana `:3000`
   (`svc/prometheus-grafana`, пароль в `~/.config/ryadom/k8s-secrets.env`),
