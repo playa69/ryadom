@@ -10,13 +10,17 @@
 # DB_PASSWORD из Secret'а. Список админов — отдельный ConfigMap
 # admin/00-config.yaml, только для админки (API его получать не должен).
 #
-# Схема доменов (поддомены — решение от 2026-10-05, см. k8s/README.md):
-#   xn----htbtgjker8b3a2c.xn--p1ai          landing (маркетинг, документы)
-#   app.xn----htbtgjker8b3a2c.xn--p1ai      api: REST + WebSocket + PWA
-#   web.xn----htbtgjker8b3a2c.xn--p1ai      apps/web (клиент после входа)
-#   admin.xn----htbtgjker8b3a2c.xn--p1ai    admin
-# NB: PUBLIC_WEB_URL в приложениях — это МАРКЕТИНГОВЫЙ сайт (landing, корень),
-# а не поддомен web. (apps/web — клиент; см. apps/web/.env.example.)
+# Схема адресов: ОДИН хост xn----htbtgjker8b3a2c.xn--p1ai, сервисы по путям
+# (k8s/README.md, «Сервисы из app/»):
+#   /          landing (маркетинг, документы)
+#   /api       api: REST, WebSocket, OTA     (/api/v1 — Python backend, длиннее и побеждает)
+#   /app       PWA (раздаёт api)
+#   /web       apps/web (клиент после входа)
+#   /admin     admin
+# Адреса, оканчивающиеся на ORIGIN (без пути): PUBLIC_WEB_URL (landing, корень),
+# PUBLIC_APP_URL (сервер приложения: API и OTA-бандлы — путь в нём удвоился бы),
+# PUBLIC_API_URL (apps/web). Где живёт PWA — отдельная переменная PUBLIC_PWA_URL,
+# на неё ссылаются кнопки «Открыть приложение» на landing.
 #
 # Redis (общий ryadom-db, Sentinel) используется только api и только для
 # счётчиков лимитов запросов: ключи ryadom:rl:* (префикс по умолчанию, с Python
@@ -58,10 +62,15 @@ data:
   DB_USER: "app"
   # --- Публичные адреса ---
   PUBLIC_WEB_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai"
-  PUBLIC_APP_URL: "https://app.xn----htbtgjker8b3a2c.xn--p1ai"
-  # apps/web: API, к которому ходит браузер (REST + WebSocket); он же единственный
-  # внешний origin в CSP connect-src
-  PUBLIC_API_URL: "https://app.xn----htbtgjker8b3a2c.xn--p1ai"
+  # Origin сервера приложения (БЕЗ пути): API лежит на <origin>/api, OTA-бандлы — на
+  # <origin>/api/ota
+  PUBLIC_APP_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai"
+  # apps/web: API, к которому ходит браузер (REST + WebSocket). Тот же origin, что у
+  # страницы /web, поэтому CORS не нужен; он же единственный внешний origin в CSP
+  # connect-src
+  PUBLIC_API_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai"
+  # landing: куда ведут «Открыть приложение» — PWA под префиксом /app
+  PUBLIC_PWA_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai/app/"
   # landing: адрес поддержки (временно — личная почта владельца; заменить на
   # support@... перед публикацией)
   PUBLIC_SUPPORT_EMAIL: "totsamiynixon@yandex.ru"

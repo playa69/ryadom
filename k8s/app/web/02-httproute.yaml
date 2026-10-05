@@ -1,10 +1,16 @@
 # =============================================================================
-# HTTPRoute app-web — web.<домен>: клиент после входа (ns prod)
+# HTTPRoute app-web — /web на корневом домене: клиент после входа (ns prod)
 # =============================================================================
-# apps/web — залогиненный веб-клиент; из браузера ходит в API на
-# app.xn----htbtgjker8b3a2c.xn--p1ai (PUBLIC_API_URL) — у API CORS origin: '*'
-# (авторизация только заголовком, cookie нет), так что кросс-доменные
-# запросы работают. Listener https-web.
+# apps/web — залогиненный веб-клиент. Публикуется по пути /web на корневом хосте
+# (listener https, сертификат ryadom-tls); образ собран под этот префикс (Next
+# basePath=/web, build-arg BASE_PATH), переписывать пути в gateway не нужно.
+# В API ходит на тот же origin (PUBLIC_API_URL = origin корня, пути /api/*), так
+# что CORS не задействован.
+#
+# Хранилище браузера (localStorage) принадлежит ORIGIN'у, а не пути, поэтому web и PWA
+# (/app) делят его на этом хосте. Чтобы они не затирали сессии друг друга, web пишет
+# в собственное пространство имён ryadom.web.* (apps/web/lib/storage-keys.ts), а PWA
+# и нативные сборки сохраняют прежние ключи ryadom_*.
 # =============================================================================
 
 ---
@@ -19,15 +25,15 @@ spec:
   parentRefs:
     - name: ryadom-gateway
       namespace: istio-system
-      sectionName: https-web
+      sectionName: https
   hostnames:
-    - web.xn----htbtgjker8b3a2c.xn--p1ai
+    - xn----htbtgjker8b3a2c.xn--p1ai
   rules:
     - name: web
       matches:
         - path:
             type: PathPrefix
-            value: /
+            value: /web
       backendRefs:
         - name: app-web
           port: 80

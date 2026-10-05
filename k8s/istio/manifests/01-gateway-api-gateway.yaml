@@ -9,15 +9,11 @@
 # gateway.networking.k8s.io/gateway-name: ryadom-gateway (патч DS) — нужно
 # для Policy Attachment.
 #
-# Схема доменов (2026-10-01): корневой домен
-# xn----htbtgjker8b3a2c.xn--p1ai (слышу-рядом.рф), path-based routing.
-# TLS — Certificate ryadom-tls (корень, HTTP-01 через
+# Схема доменов (2026-10-01): ТОЛЬКО корневой домен
+# xn----htbtgjker8b3a2c.xn--p1ai (слышу-рядом.рф), path-based routing,
+# без поддоменов. TLS — Certificate ryadom-tls (корень, HTTP-01 через
 # cert-manager, см. k8s/cert-manager/manifests/01-certificate-ryadom-tls.yaml);
 # секрет создаётся в istio-system (namespace gateway-workload).
-# С 2026-10-05 для сервисов из app/ добавлены поддомены app./web./admin. —
-# отдельные listener'ы https-app/https-web/https-admin ниже и отдельный
-# Certificate ryadom-apps-tls (02-certificate-apps-tls.yaml); корневые
-# listener'ы и сертификат при этом не менялись.
 #
 # Listener :80 без hostname: нужен ACME HTTP-01 solver'у (solver-HTTPRoute
 # на /.well-known/acme-challenge/* цепляется сюда — она специфичнее
@@ -60,45 +56,6 @@ spec:
         mode: Terminate
         certificateRefs:
           - name: ryadom-tls
-      allowedRoutes:
-        namespaces:
-          from: All
-    # HTTPS для сервисов из app/ на поддоменах (2026-10-05): app. — api+PWA,
-    # web. — веб-клиент, admin. — админка. Сертификат — отдельный
-    # Certificate ryadom-apps-tls (k8s/cert-manager/manifests/02-...), чтобы
-    # корневой ryadom-tls не затрагивался. Редирект 80→443 для поддоменов —
-    # 02-http-redirect-apps.yaml. Эти listener'ы применять ТОЛЬКО после того,
-    # как секрет ryadom-apps-tls выпущен (иначе listener невалиден).
-    - name: https-app
-      port: 443
-      protocol: HTTPS
-      hostname: app.xn----htbtgjker8b3a2c.xn--p1ai
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - name: ryadom-apps-tls
-      allowedRoutes:
-        namespaces:
-          from: All
-    - name: https-web
-      port: 443
-      protocol: HTTPS
-      hostname: web.xn----htbtgjker8b3a2c.xn--p1ai
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - name: ryadom-apps-tls
-      allowedRoutes:
-        namespaces:
-          from: All
-    - name: https-admin
-      port: 443
-      protocol: HTTPS
-      hostname: admin.xn----htbtgjker8b3a2c.xn--p1ai
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - name: ryadom-apps-tls
       allowedRoutes:
         namespaces:
           from: All

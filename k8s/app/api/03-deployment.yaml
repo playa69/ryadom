@@ -1,9 +1,9 @@
 # =============================================================================
 # Deployment app-api — Node API + WebSocket-шлюз + PWA (ns prod)
 # =============================================================================
-# Образ app/api (app/services/api/Dockerfile, build-args VITE_PROD_* — см.
-# k8s/app/build-push.sh). Перед первым rollout должен завершиться Job
-# миграций (db/02-job-migrate.yaml).
+# Образ app/api (app/services/api/Dockerfile; build-args PWA_BASE_PATH и VITE_PROD_* —
+# см. k8s/README.md, «Сборка и push образов»). Перед первым rollout должен завершиться
+# Job миграций (db/02-job-migrate.yaml).
 #
 # 1 реплика: ресурсов в кластере впритык. Лимиты запросов считаются в Redis
 # (REDIS_ENABLED=true, общие для реплик), поэтому replicas можно поднимать
@@ -57,7 +57,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/api:0.1.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/api:0.2.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

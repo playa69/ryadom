@@ -1,14 +1,21 @@
 # =============================================================================
-# HTTPRoute app-api — app.<домен>: REST + WebSocket + PWA (ns prod)
+# HTTPRoute app-api — /api и /app на корневом домене (ns prod)
 # =============================================================================
-# Весь хост app.xn----htbtgjker8b3a2c.xn--p1ai целиком отдаётся api: у него
-# свои роуты /api/*, шлюз /api/dialogs/ws и PWA на остальных путях (lib/pwa.ts),
-# так что фильтровать пути здесь не нужно (в отличие от Python backend на
-# корневом хосте, где наружу открыт только /api/v1).
+# Всё публикуется на ОДНОМ хосте по путям; api отвечает за два префикса:
+#   /api   REST, WebSocket-шлюз к агенту (/api/dialogs/ws), раздача OTA-бандлов
+#   /app   PWA (раздаёт тот же api; собрана под префикс /app, см. PWA_BASE_PATH)
+# Переписывание путей НЕ нужно: PWA собрана с base=/app/, а сервер сам отвечает под
+# этим префиксом (lib/pwa.ts), /api/* не префиксуется.
 #
-# Цепляется к listener https-app (k8s/istio/manifests/01-gateway-api-gateway.yaml);
-# plain HTTP на :80 — только редирект на https (02-http-redirect-apps.yaml)
-# и ACME. WebSocket через Istio Gateway работает из коробки (upgrade).
+# Приоритет совпадения (побеждает самый длинный префикс):
+#   /api/v1/*  → Python backend (k8s/backend/02-httproute.yaml, ns backend)
+#   /api/*     → этот роут (Node api; его пути /api/auth, /api/dialogs, ... с /api/v1
+#                не пересекаются)
+#   /app/*     → этот роут (PWA)
+#   всё прочее → landing (корень)
+# Цепляется к СУЩЕСТВУЮЩЕМУ listener https (корневой хост, сертификат ryadom-tls):
+# новых listener'ов, сертификатов и DNS-записей не нужно. WebSocket через Istio
+# Gateway работает из коробки (upgrade).
 # =============================================================================
 
 ---
@@ -23,15 +30,18 @@ spec:
   parentRefs:
     - name: ryadom-gateway
       namespace: istio-system
-      sectionName: https-app
+      sectionName: https
   hostnames:
-    - app.xn----htbtgjker8b3a2c.xn--p1ai
+    - xn----htbtgjker8b3a2c.xn--p1ai
   rules:
     - name: api
       matches:
         - path:
             type: PathPrefix
-            value: /
+            value: /api
+        - path:
+            type: PathPrefix
+            value: /app
       backendRefs:
         - name: app-api
           port: 80

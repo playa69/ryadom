@@ -4,11 +4,13 @@
 # Корень xn----htbtgjker8b3a2c.xn--p1ai (слышу-рядом.рф) → landing на PathPrefix /.
 # Цепляется к СУЩЕСТВУЮЩЕМУ listener https (корневой хост, сертификат ryadom-tls).
 #
-# Сосуществует с роутом Python backend (k8s/backend/02-httproute.yaml,
-# PathPrefix /api/v1 на том же хосте): при матче побеждает более длинный
-# префикс, поэтому /api/v1/* по-прежнему уходит в backend, а всё остальное —
-# сюда. Служебные пути backend (/health, /metrics, /docs) снаружи недоступны
-# и так: вместо 404 от gateway их отдаст 404 landing.
+# Сосуществует с остальными роутами на этом хосте: при матче побеждает более
+# длинный префикс, поэтому /api/v1/* уходит в Python backend, /api/* и /app/* — в
+# app-api, /web/* — в app-web, /admin/* — в app-admin, а всё остальное — сюда.
+# Служебные пути backend (/health, /metrics, /docs) снаружи недоступны и так:
+# вместо 404 от gateway их отдаст 404 landing.
+# NB: пути landing (/privacy, /terms, /download, /delete-account, /android,
+# /robots.txt) не должны совпадать с префиксами выше — сейчас не совпадают.
 # =============================================================================
 
 ---
