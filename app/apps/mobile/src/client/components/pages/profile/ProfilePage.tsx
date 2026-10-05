@@ -145,6 +145,17 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
             <Icon slot="media" f7="lock_fill" />
           </ListItem>
         )}
+        {/* A guest has one phone and no way in from another, so there is no list to look at. */}
+        {!anonymous && (
+          <ListItem
+            link
+            title="Устройства и сессии"
+            data-testid="row-sessions"
+            onClick={() => f7router.navigate('/profile/sessions/')}
+          >
+            <Icon slot="media" f7="device_laptop" />
+          </ListItem>
+        )}
         {anonymous && (
           <ListItem link title="Войти в другой аккаунт" onClick={handleSwitchAccount} data-testid="row-switch-account">
             <Icon slot="media" f7="arrow_right_square_fill" />

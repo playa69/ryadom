@@ -13,6 +13,7 @@ import ChangePasswordPage from './pages/profile/ChangePasswordPage'
 import DeleteAccountPage from './pages/profile/DeleteAccountPage'
 import LinkEmailPage from './pages/profile/LinkEmailPage'
 import ProfilePage from './pages/profile/ProfilePage'
+import SessionsPage from './pages/profile/SessionsPage'
 
 /** Framework7 routes, shared by every View: each tab keeps its own history. */
 export const routes = [
@@ -31,6 +32,7 @@ export const routes = [
   { path: '/profile/', component: ProfilePage },
   { path: '/profile/change-password/', component: ChangePasswordPage },
   { path: '/profile/link-email/', component: LinkEmailPage },
+  { path: '/profile/sessions/', component: SessionsPage },
   { path: '/profile/delete/', component: DeleteAccountPage },
 
   // conversation and people, opened from any tab
