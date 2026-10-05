@@ -22,11 +22,12 @@ context: |
 
   Приложение (каталог app/ — отдельный pnpm + Turborepo монорепозиторий на TypeScript, Node >= 24):
   - apps/web — веб-приложение за логином (Next.js 16, React 19, Tailwind 4, shadcn/ui из packages/ui);
-  - apps/mobile — мобильный клиент (Framework7 + Capacitor 8 + Vite): PWA, Android, iOS;
+  - apps/mobile — мобильный клиент (Framework7 + Capacitor 8 + Vite): PWA (отдельный образ nginx,
+    путь /pwa/ на том же хосте, что и API), Android, iOS;
   - apps/landing — публичный сайт (Next.js): лендинг, /privacy, /terms, /download, /delete-account;
   - apps/admin — админка (Next.js): пользователи, блокировки, удаление аккаунтов, журнал действий;
   - services/api — API приложения (Hono): REST /api/*, WebSocket-шлюз к агенту /api/dialogs/ws,
-    раздача PWA и OTA-сборки мобильного клиента; PostgreSQL через Drizzle (packages/db);
+    раздача OTA-сборки мобильного клиента (клиентов API не раздаёт); PostgreSQL через Drizzle (packages/db);
     Redis (необязателен) — общие для реплик счётчики лимитов запросов;
   - packages/{contracts,client-core,core,db,design,ui}; dev/agent-mock — заглушка агента для
     разработки; e2e — сквозные тесты Playwright.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Нативные приложения узнают об обновлениях, спрашивая API: по номеру сборки решается, нужно ли обновить приложение через магазин (блокирующий экран или мягкое предложение), а по версии JS — можно ли без магазина подтянуть новый пакет интерфейса (OTA). Веб-клиент и PWA в этом не участвуют: у них ворот версий нет, а оболочка PWA обновляется по кнопке (см. `pwa-delivery`). Спека описывает ответ `GET /api/app-status`, ворота версий (426), раздачу `GET /api/ota/<file>`, политику релизов и то, что видит человек; нативные сборки описаны в `native-app-build`. Реализовано в `app/services/api/src/lib/release-policy.ts`, `app/services/api/src/lib/version-gate.ts`, `app/services/api/src/lib/ota-bundle.ts`, `app/services/api/src/routes/app-status.ts`, `app/services/api/src/routes/ota-bundle.ts`, `app/apps/mobile/scripts/build-ota-bundle.mjs`, `app/apps/mobile/src/client/lib/app-update.ts`, `app/apps/mobile/src/client/components/AppUpdateGate.tsx` и `app/packages/contracts/src/api/app-status.ts`.
+Нативные приложения узнают об обновлениях, спрашивая API: по номеру сборки решается, нужно ли обновить приложение через магазин (блокирующий экран или мягкое предложение), а по версии JS — можно ли без магазина подтянуть новый пакет интерфейса (OTA). Веб-клиент и PWA в этом не участвуют: у них ворот версий нет, а PWA — отдельный образ, оболочка которого обновляется в браузере по кнопке (см. `pwa-delivery`); OTA-пакеты нативных сборок живут только в образе API. Спека описывает ответ `GET /api/app-status`, ворота версий (426), раздачу `GET /api/ota/<file>`, политику релизов и то, что видит человек; нативные сборки описаны в `native-app-build`. Реализовано в `app/services/api/src/lib/release-policy.ts`, `app/services/api/src/lib/version-gate.ts`, `app/services/api/src/lib/ota-bundle.ts`, `app/services/api/src/routes/app-status.ts`, `app/services/api/src/routes/ota-bundle.ts`, `app/apps/mobile/scripts/build-ota-bundle.mjs`, `app/apps/mobile/src/client/lib/app-update.ts`, `app/apps/mobile/src/client/components/AppUpdateGate.tsx` и `app/packages/contracts/src/api/app-status.ts`.
 
 ## ADDED Requirements
 
@@ -162,7 +162,7 @@ HTTP-запрос с допустимым `X-Platform` (`android` или `ios`) 
 
 ### Requirement: Сборка OTA-пакетов и манифест
 
-Сборка образа API SHALL после сборки PWA выполнять `build:ota` (`scripts/build-ota-bundle.mjs`): для вариантов `prod` и `dev` собрать JS (`vite build --mode <вариант>`), упаковать содержимое `dist/client` в zip так, чтобы `index.html` лежал в корне архива, назвать его `ryadom-<вариант>-<версия>.zip`, посчитать SHA-256 архива и записать `ota/manifest.json` вида `{ "prod": { version, file, checksum }, "dev": { … } }`. Версия пакета SHALL быть `<version из app/apps/mobile/package.json>.<OTA_BUILD_NUMBER>` (без номера — `0`). Адреса `VITE_PROD_API_URL`, `VITE_PROD_WEB_URL`, `VITE_STAGING_API_URL`, `VITE_STAGING_WEB_URL` MUST передаваться в сборку образа аргументами и вшиваться в пакеты; каталог `ota` MUST копироваться в образ рядом с `pwa`. Пакет уезжает тем же деплоем, что и сервер, отдельного шага публикации нет.
+Сборка образа API SHALL выполнять `build:ota` (`scripts/build-ota-bundle.mjs`): для вариантов `prod` и `dev` собрать JS (`vite build --mode <вариант>`), упаковать содержимое `dist/client` в zip так, чтобы `index.html` лежал в корне архива, назвать его `ryadom-<вариант>-<версия>.zip`, посчитать SHA-256 архива и записать `ota/manifest.json` вида `{ "prod": { version, file, checksum }, "dev": { … } }`. Версия пакета SHALL быть `<version из app/apps/mobile/package.json>.<OTA_BUILD_NUMBER>` (без номера — `0`). Адреса `VITE_PROD_API_URL`, `VITE_PROD_WEB_URL`, `VITE_STAGING_API_URL`, `VITE_STAGING_WEB_URL` MUST передаваться в сборку образа аргументами и вшиваться в пакеты; каталог `ota` MUST копироваться в образ API рядом с серверным бандлом. Веб-сборки PWA в образе API нет: PWA — отдельный образ с собственным деплоем (см. `pwa-delivery`). Пакет уезжает тем же деплоем, что и сервер, отдельного шага публикации нет.
 
 #### Scenario: Сборка с номером
 
@@ -351,7 +351,7 @@ HTTP-запрос с допустимым `X-Platform` (`android` или `ios`) 
 
 ### Requirement: Ворота версий и OTA не действуют в вебе и PWA
 
-Веб-клиент (`app/apps/web`) и PWA SHALL работать без ворот версий: они не отправляют `X-Platform` и `X-App-Version`, поэтому не получают 426, не запрашивают `/api/app-status` и не получают OTA-пакеты. Оболочка PWA обновляется только service worker по кнопке (см. `pwa-delivery`).
+Веб-клиент (`app/apps/web`) и PWA SHALL работать без ворот версий: они не отправляют `X-Platform` и `X-App-Version`, поэтому не получают 426, не запрашивают `/api/app-status` и не получают OTA-пакеты. Оболочка PWA обновляется только service worker по кнопке (см. `pwa-delivery`); PWA выкатывается отдельным образом, независимо от API, поэтому ворота версий, которых у неё нет, не защищают её от расхождения с сервером, и API MUST оставаться совместимым с предыдущей сборкой PWA (см. «Совместимость старых сборок»).
 
 #### Scenario: PWA при высоком минимуме (мобильный)
 
@@ -370,12 +370,17 @@ HTTP-запрос с допустимым `X-Platform` (`android` или `ios`) 
 
 ### Requirement: Совместимость старых сборок
 
-Нативные сборки живут месяцами, поэтому сервер MUST отрезать старую сборку только по нативному минимуму, а контракт диалогов (REST и WebSocket, `app/packages/contracts/src/api/dialogs.ts`) SHALL оставаться стабильным и меняться только добавлением полей. Клиент SHALL читать ответ `app-status` терпимо: неизвестные поля игнорируются, а ответ, где `runtimeUpdate` или `jsUpdate` не из допустимых значений (`not_available`, `available`, `required`), считается неисправным — экран не меняется, ошибка пишется в консоль.
+Нативные сборки живут месяцами, поэтому сервер MUST отрезать старую сборку только по нативному минимуму, а контракт диалогов (REST и WebSocket, `app/packages/contracts/src/api/dialogs.ts`) SHALL оставаться стабильным и меняться только добавлением полей. То же относится к PWA: она выкатывается отдельным образом и остаётся на оболочке старой сборки, пока человек не обновит её кнопкой, а отрезать её ворота версий не могут. Клиент SHALL читать ответ `app-status` терпимо: неизвестные поля игнорируются, а ответ, где `runtimeUpdate` или `jsUpdate` не из допустимых значений (`not_available`, `available`, `required`), считается неисправным — экран не меняется, ошибка пишется в консоль.
 
 #### Scenario: Новое поле в ответе
 
 - **WHEN** сервер добавляет в ответ `app-status` новое поле
 - **THEN** сборки, не знающие о нём, продолжают работать, поле игнорируется
+
+#### Scenario: Старая оболочка PWA
+
+- **WHEN** выкачен новый образ API, а у человека установлена PWA предыдущей сборки
+- **THEN** запросы старой оболочки обслуживаются как прежде, ответа 426 она не получает
 
 #### Scenario: Неизвестное значение
 
