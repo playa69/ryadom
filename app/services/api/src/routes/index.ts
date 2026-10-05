@@ -14,6 +14,7 @@ import { refreshRoutes } from './auth/refresh'
 import { registerRoutes } from './auth/register'
 import { resendConfirmationRoutes } from './auth/resend-confirmation'
 import { resetPasswordRoutes } from './auth/reset-password'
+import { sessionsRoutes } from './auth/sessions'
 import { dialogsRoutes } from './dialogs'
 import { healthRoutes } from './health'
 import { otaBundleRoutes } from './ota-bundle'
@@ -32,6 +33,7 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   linkEmailRoutes(app, deps)
   refreshRoutes(app, deps)
   logoutRoutes(app, deps)
+  sessionsRoutes(app, deps)
   meRoutes(app, deps)
   consentsRoutes(app, deps)
   passwordRoutes(app, deps)

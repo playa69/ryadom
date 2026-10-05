@@ -6,6 +6,9 @@ export interface StoreRefreshTokenCommandData {
   sessionId: string
   userId: string
   expiresAt: Date
+  /** What the client says about itself; shown to the person in the list of their sessions. */
+  clientId: string | null
+  userAgent: string | null
 }
 
 export class StoreRefreshTokenCommand extends RequestData<StoreRefreshTokenCommandResult> {
@@ -16,6 +19,8 @@ export class StoreRefreshTokenCommand extends RequestData<StoreRefreshTokenComma
   public readonly sessionId: string
   public readonly userId: string
   public readonly expiresAt: Date
+  public readonly clientId: string | null
+  public readonly userAgent: string | null
 
   constructor(data: StoreRefreshTokenCommandData) {
     super()
@@ -23,5 +28,7 @@ export class StoreRefreshTokenCommand extends RequestData<StoreRefreshTokenComma
     this.sessionId = data.sessionId
     this.userId = data.userId
     this.expiresAt = data.expiresAt
+    this.clientId = data.clientId
+    this.userAgent = data.userAgent
   }
 }

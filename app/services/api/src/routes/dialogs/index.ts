@@ -23,7 +23,7 @@ import {
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
-import { authUser, requireAuth } from '../../lib/auth-guard'
+import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { toDialog, toDialogListItem, toDialogSummary } from '../../lib/mappers'
 import { RATE_LIMITS } from '../../lib/rate-limit'
@@ -51,28 +51,36 @@ const endBody = z.object({
   tensionAfter: z.coerce.number().int().min(1).max(10).optional(),
 })
 
-export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter }: RouteDeps): void {
-  app.post(ApiPath.Dialogs, requireAuth(jwt), jsonBody(startBody), async (c) => {
-    const { userId } = authUser(c)
-    if (!(await rateLimiter.hit(`user:dialog-start:${userId}`, RATE_LIMITS.dialogStart.perUser))) {
-      return apiError(c, 429, 'Too many dialog starts')
-    }
-    const result = await dialogsProcess.execute(new StartDialogOperation({ userId }))
-    if (!result.success) {
-      switch (result.error) {
-        case StartDialogOperationErrorCode.USER_NOT_FOUND:
-          return apiRefused(c, StartDialogApiErrorCode.USER_NOT_FOUND, 'User not found')
-        case StartDialogOperationErrorCode.USER_INACTIVE:
-          return apiRefused(c, StartDialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
-        case StartDialogOperationErrorCode.CONSENT_REQUIRED:
-          return apiRefused(c, StartDialogApiErrorCode.CONSENT_REQUIRED, 'The terms have not been accepted')
-        default:
-          return assertNever(result.error)
+export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }: RouteDeps): void {
+  // Starting a conversation is what an ended session must not be able to do on the access token it
+  // still holds: it opens a dialog at the agent.
+  app.post(
+    ApiPath.Dialogs,
+    requireAuth(jwt),
+    requireActiveSession(sessions),
+    jsonBody(startBody),
+    async (c) => {
+      const { userId } = authUser(c)
+      if (!(await rateLimiter.hit(`user:dialog-start:${userId}`, RATE_LIMITS.dialogStart.perUser))) {
+        return apiError(c, 429, 'Too many dialog starts')
       }
-    }
-    const response: StartDialogApiResponse = result.dialog
-    return apiOk(c, response)
-  })
+      const result = await dialogsProcess.execute(new StartDialogOperation({ userId }))
+      if (!result.success) {
+        switch (result.error) {
+          case StartDialogOperationErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, StartDialogApiErrorCode.USER_NOT_FOUND, 'User not found')
+          case StartDialogOperationErrorCode.USER_INACTIVE:
+            return apiRefused(c, StartDialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
+          case StartDialogOperationErrorCode.CONSENT_REQUIRED:
+            return apiRefused(c, StartDialogApiErrorCode.CONSENT_REQUIRED, 'The terms have not been accepted')
+          default:
+            return assertNever(result.error)
+        }
+      }
+      const response: StartDialogApiResponse = result.dialog
+      return apiOk(c, response)
+    },
+  )
 
   app.get(ApiPath.Dialogs, requireAuth(jwt), queryParams(listQuery), async (c) => {
     const { limit, before } = c.req.valid('query')

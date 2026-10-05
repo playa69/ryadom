@@ -176,6 +176,17 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
                 testId="row-change-password"
               />
             </li>
+            {/* A guest has one device and no way in from another, so there is no list to look at. */}
+            {!pendingEmail && (
+              <li>
+                <ProfileRow
+                  icon="devices"
+                  label="Устройства и сессии"
+                  href="/profile/sessions"
+                  testId="row-sessions"
+                />
+              </li>
+            )}
           </>
         )}
         {anonymous && (

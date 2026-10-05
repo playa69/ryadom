@@ -21,8 +21,9 @@ import { ApiPath } from '@ryadom/contracts/api/paths'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
+import { createSessions } from '../src/lib/sessions'
 import { parseEnv } from '../src/lib/env'
-import { call, json, makeApp, mockAgent, ok, refusedWith, signUpAndIn } from './helpers'
+import { PASSWORD, call, json, makeApp, mockAgent, ok, refusedWith, signUpAndIn } from './helpers'
 
 const { app, resetLimits } = makeApp()
 
@@ -111,6 +112,24 @@ describe('REST диалогов', () => {
     })
     expect(response.status).toBe(401)
   })
+
+  it('старт по access-токену завершённой сессии — 401 и агента не трогает: подпись ещё верна, сессии нет', async () => {
+    resetLimits()
+    const { user, tokens } = await signUpAndIn(app)
+    const phone = ok<{ tokens: { accessToken: string } }>(
+      await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD }),
+    ).tokens
+    ok(await call(app, 'POST', '/api/auth/logout-all', { keepCurrent: true }, tokens.accessToken))
+    const { calls } = mockAgent()
+
+    const started = await call(app, 'POST', '/api/dialogs', {}, phone.accessToken)
+
+    expect(started.status).toBe(401)
+    expect(calls).toEqual([])
+    // The session that was kept still starts a dialog.
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-kept', resumed: false }) })
+    ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
+  })
 })
 
 // ─── WebSocket gateway ────────────────────────────────────────────────────────
@@ -127,6 +146,8 @@ interface FakeAgent {
   url: string
   /** Connection by dialog id: each test has its own, so tests do not interfere with each other. */
   waitFor: (dialogId: string) => Promise<AgentConnection>
+  /** Whether the gateway has opened a connection for this dialog. */
+  opened: (dialogId: string) => boolean
   close: () => Promise<void>
 }
 
@@ -165,6 +186,7 @@ async function startFakeAgent(): Promise<FakeAgent> {
       await vi.waitFor(() => expect(connections.has(dialogId)).toBe(true), { timeout: 5000 })
       return connections.get(dialogId)!
     },
+    opened: (dialogId) => connections.has(dialogId),
     close: () =>
       new Promise<void>((resolve) => {
         // terminate rather than close: otherwise wss.close waits for clients and the hook times out.
@@ -174,13 +196,18 @@ async function startFakeAgent(): Promise<FakeAgent> {
   }
 }
 
+/** An open dialog asks about its session every second here, not every 30: the tests would wait that long. */
+const sessionCheckEnv = { DIALOG_SESSION_CHECK_SEC: '1' }
+
 /** The app with WebSocket: as in production, the upgrade is intercepted before Hono. */
 async function startGatewayServer(agentUrl: string) {
   // The agent address reaches the gateway through the app env rather than the core's getEnv():
   // otherwise clearing the stubs in setup.ts between tests would point the socket at the real address.
-  const env = parseEnv({ ...process.env, AGENT_API_URL: agentUrl })
-  const { app: hono } = makeApp({ env: { AGENT_API_URL: agentUrl } })
+  const gatewayEnv = { AGENT_API_URL: agentUrl, ...sessionCheckEnv }
+  const env = parseEnv({ ...process.env, ...gatewayEnv })
+  const { app: hono, resetLimits: resetGatewayLimits } = makeApp({ env: gatewayEnv })
   const jwt = createJwt(env.MOBILE_JWT_SECRET)
+  const sessions = createSessions(jwt)
 
   const server = serve({ fetch: hono.fetch, port: 0, createServer }) as unknown as Server
   const wss = new WebSocketServer({ noServer: true })
@@ -189,13 +216,20 @@ async function startGatewayServer(agentUrl: string) {
       socket.destroy()
       return
     }
-    wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws as never, { env, jwt }, request))
+    wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws as never, { env, jwt, sessions }, request))
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 50))
   const { port } = server.address() as AddressInfo
   return {
     wsUrl: `ws://127.0.0.1:${port}${ApiPath.DialogsWs}`,
     jwt,
+    sessions,
+    /** A real account with a registered session: the gateway asks the registry, so a token minted by hand would be refused. */
+    async signIn() {
+      resetGatewayLimits()
+      const { user, tokens } = await signUpAndIn(hono, undefined, { consents: false })
+      return { userId: user.id, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken }
+    },
     close: () =>
       new Promise<void>((resolve) => {
         wss.close(() => server.close(() => resolve()))
@@ -240,8 +274,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('hello с токеном открывает диалог и пропускает кадры в обе стороны', async () => {
-    const userId = '11111111-1111-4111-8111-111111111111'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)
 
@@ -266,8 +299,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('заголовки трассировки из рукопожатия клиента уходят агенту, а userId подменяется проверенным', async () => {
-    const userId = '33333333-3333-4333-8333-333333333333'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { userId, accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl, {
       headers: {
         'x-trace-id': 'trace-ws-1',
@@ -292,8 +324,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('сокет без заголовков (браузер их задать не может): агенту уходят все пять пустыми', async () => {
-    const userId = '44444444-4444-4444-8444-444444444444'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { userId, accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)
     client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-trace-2' }))
@@ -309,8 +340,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('кадр safety без линий помощи дополняется нашими', async () => {
-    const userId = '22222222-2222-4222-8222-222222222222'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)
     client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-2' }))
@@ -345,8 +375,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('слишком длинная реплика отклоняется, соединение живёт', async () => {
-    const userId = '33333333-3333-4333-8333-333333333333'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)
     client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-4' }))
@@ -361,8 +390,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('второе соединение того же человека закрывает первое', async () => {
-    const userId = '44444444-4444-4444-8444-444444444444'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { accessToken } = await gateway.signIn()
     const first = new WebSocket(gateway.wsUrl)
     await waitOpen(first)
     first.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-5' }))
@@ -378,8 +406,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('бинарные кадры аудио идут агенту как есть', async () => {
-    const userId = '55555555-5555-4555-8555-555555555555'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)
     client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-6' }))
@@ -409,12 +436,8 @@ describe('WebSocket-шлюз', () => {
 
   it('перекат закрывает все диалоги кодом 1012, растянув закрытие во времени', async () => {
     const clients: WebSocket[] = []
-    for (const [index, userId] of [
-      '88888888-8888-4888-8888-888888888881',
-      '88888888-8888-4888-8888-888888888882',
-      '88888888-8888-4888-8888-888888888883',
-    ].entries()) {
-      const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    for (const index of [0, 1, 2]) {
+      const { accessToken } = await gateway.signIn()
       const client = new WebSocket(gateway.wsUrl)
       await waitOpen(client)
       client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: `d-roll-${index}` }))
@@ -449,8 +472,7 @@ describe('WebSocket-шлюз', () => {
   }
 
   it('долгая реплика и всплеск кадров после подвисания не рвут соединение', async () => {
-    const userId = '66666666-6666-4666-8666-666666666666'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)
     client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-7' }))
@@ -468,8 +490,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('поток кадров быстрее, чем говорит человек, — RATE_LIMITED', async () => {
-    const userId = '77777777-7777-4777-8777-777777777777'
-    const { accessToken } = await gateway.jwt.issueTokenPair(userId)
+    const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)
     client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-8' }))
@@ -481,5 +502,79 @@ describe('WebSocket-шлюз', () => {
 
     expect((await nextFrame(client, DialogServerFrame.Error)).code).toBe(DialogWsErrorCode.RATE_LIMITED)
     expect(await closed).toBe(DialogCloseCode.RateLimited)
+  })
+
+  describe('сессия, которую завершили', () => {
+    /** Opens a dialog and waits until the agent side sees it, so the socket is past `hello`. */
+    async function openDialog(accessToken: string, dialogId: string) {
+      const client = new WebSocket(gateway.wsUrl)
+      await waitOpen(client)
+      client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId }))
+      await agent.waitFor(dialogId)
+      return client
+    }
+    const closedWith = (client: WebSocket) => new Promise<number>((resolve) => client.once('close', resolve))
+
+    it('открытый диалог закрывается кодом Unauthorized после отзыва сессии', async () => {
+      const { userId, accessToken } = await gateway.signIn()
+      const client = await openDialog(accessToken, 'd-revoked-1')
+      const closed = closedWith(client)
+
+      await gateway.sessions.endAll(userId, null)
+
+      expect(await closed).toBe(DialogCloseCode.Unauthorized)
+    })
+
+    it('закрывается и после выхода (logout) этой сессии, а чужая сессия того же человека не страдает', async () => {
+      const { userId, accessToken, refreshToken } = await gateway.signIn()
+      const client = await openDialog(accessToken, 'd-signed-out')
+      const closed = closedWith(client)
+      const payload = await gateway.jwt.verifyToken(refreshToken, 'refresh')
+      await gateway.sessions.end(payload!.jti!)
+      expect(await closed).toBe(DialogCloseCode.Unauthorized)
+
+      // Another session of the same person is not touched by the first one's sign-out.
+      const other = await gateway.sessions.start(userId, { clientId: null, userAgent: null })
+      const second = await openDialog(other.accessToken, 'd-other-session')
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+      expect(second.readyState).toBe(WebSocket.OPEN)
+      second.close()
+    })
+
+    it('живой диалог не трогают: проверки проходят, соединение остаётся', async () => {
+      const { accessToken } = await gateway.signIn()
+      const client = await openDialog(accessToken, 'd-alive')
+
+      // Two intervals of the check have passed by now.
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+
+      expect(client.readyState).toBe(WebSocket.OPEN)
+      client.close()
+    })
+
+    it('hello с access-токеном завершённой сессии отвергается: подпись ещё верна, а сессии нет', async () => {
+      const { userId, accessToken } = await gateway.signIn()
+      await gateway.sessions.endAll(userId, null)
+      const client = new WebSocket(gateway.wsUrl)
+      await waitOpen(client)
+
+      client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-late-hello' }))
+
+      const error = await nextFrame(client, DialogServerFrame.Error)
+      expect(error.code).toBe(DialogWsErrorCode.UNAUTHORIZED)
+      expect(await closedWith(client)).toBe(DialogCloseCode.Unauthorized)
+      // The agent was never opened for it.
+      expect(agent.opened('d-late-hello')).toBe(false)
+    })
+
+    it('токен, которого нет в реестре, отвергается: без записи о сессии доверять нечему', async () => {
+      const { accessToken } = await gateway.jwt.issueTokenPair('99999999-9999-4999-8999-999999999999')
+      const client = new WebSocket(gateway.wsUrl)
+      await waitOpen(client)
+
+      client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-unknown-session' }))
+
+      expect((await nextFrame(client, DialogServerFrame.Error)).code).toBe(DialogWsErrorCode.UNAUTHORIZED)
+    })
   })
 })

@@ -9,6 +9,7 @@ import { z } from 'zod'
 import type { LoginApiResponse } from '@ryadom/contracts/api/auth/shared'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk } from '../../lib/api-response'
+import { clientDevice } from '../../lib/client-device'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { toAuthUser } from '../../lib/mappers'
 import { limitByIp, RATE_LIMITS } from '../../lib/rate-limit'
@@ -52,7 +53,7 @@ export function loginRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions }
 
       const response: LoginApiResponse = {
         user: toAuthUser(result.user),
-        tokens: await sessions.start(result.user.id),
+        tokens: await sessions.start(result.user.id, clientDevice(c)),
       }
       return apiOk(c, response)
     },

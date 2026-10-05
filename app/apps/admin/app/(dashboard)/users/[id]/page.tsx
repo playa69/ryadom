@@ -1,3 +1,4 @@
+import { ListUserSessionsQuery, refreshTokensManager } from '@ryadom/core/managers/refresh-tokens-manager'
 import { GetUserByIdQuery, usersManager } from '@ryadom/core/managers/users-manager'
 import { isUuid } from '@ryadom/core/shared'
 import { ArrowLeft } from 'lucide-react'
@@ -7,7 +8,7 @@ import { notFound } from 'next/navigation'
 import { StatusBadge } from '@/components/status-badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { requireAdmin } from '@/lib/session'
-import { formatMoscow, userStatus } from '../../_lib/labels'
+import { formatMoscow, sessionDevice, userStatus } from '../../_lib/labels'
 import DeleteAccount from './_components/delete-account'
 import UserActions from './_components/user-actions'
 
@@ -35,6 +36,10 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
 
   const user = result.user
   const status = userStatus(user)
+  // A deleted account has had its sessions ended already, and there is nothing left to show.
+  const { sessions } = user.isDeleted
+    ? { sessions: [] }
+    : await refreshTokensManager.execute(new ListUserSessionsQuery({ userId: user.id, now: new Date() }))
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -82,7 +87,36 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
             </CardContent>
           </Card>
 
-          <Card size="sm" className="order-4">
+          <Card size="sm" className="order-3" data-testid="user-sessions">
+            <CardHeader>
+              <CardTitle className="font-semibold text-gray-900">Сессии</CardTitle>
+              <CardDescription className="text-gray-600">
+                Открытые входы человека. Устройство названо так, как оно само о себе сообщило.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {sessions.length === 0 ? (
+                <p className="text-gray-600" data-testid="user-sessions-none">
+                  Открытых сессий нет.
+                </p>
+              ) : (
+                <ul className="divide-y divide-gray-200">
+                  {sessions.map((session) => (
+                    <li key={session.sessionId} className="py-3 first:pt-0 last:pb-0" data-testid="user-session">
+                      <p className="text-sm font-medium text-gray-900">{sessionDevice(session)}</p>
+                      <p className="mt-0.5 text-xs text-gray-600">
+                        Вход: {formatMoscow(session.startedAt)} · последняя активность:{' '}
+                        {formatMoscow(session.lastUsedAt)}
+                        {session.clientId && <> · {session.clientId}</>}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card size="sm" className="order-5">
             <CardHeader>
               <CardTitle className="font-semibold text-gray-900">История</CardTitle>
             </CardHeader>
@@ -96,7 +130,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
             </CardContent>
           </Card>
 
-          <Card size="sm" className="order-5">
+          <Card size="sm" className="order-6">
             <CardHeader>
               <CardTitle className="font-semibold text-gray-900">Разговоры</CardTitle>
             </CardHeader>
@@ -120,12 +154,13 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                 isActive={user.isActive}
                 isDeleted={user.isDeleted}
                 isEmailConfirmed={user.isEmailConfirmed || user.email === null}
+                sessionCount={sessions.length}
               />
             </CardContent>
           </Card>
 
           {!user.isDeleted && (
-            <Card size="sm" className="order-3 border-red-200">
+            <Card size="sm" className="order-4 border-red-200">
               <CardHeader>
                 <CardTitle className="font-semibold text-red-700">Опасная зона</CardTitle>
                 <CardDescription className="text-gray-600">

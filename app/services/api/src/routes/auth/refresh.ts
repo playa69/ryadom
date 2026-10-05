@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { RefreshApiErrorCode, type RefreshApiResponse } from '@ryadom/contracts/api/auth/refresh'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
+import { clientDevice } from '../../lib/client-device'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { jsonBody } from '../../lib/request'
 
@@ -41,7 +42,11 @@ export function refreshRoutes(app: Hono<AppEnv>, { jwt, sessions }: RouteDeps): 
     if (found.user.isDeleted) return apiRefused(c, RefreshApiErrorCode.ACCOUNT_DELETED, 'Account deleted')
     if (!found.user.isActive) return apiRefused(c, RefreshApiErrorCode.ACCOUNT_INACTIVE, 'Account inactive')
 
-    const rotated = await sessions.rotate({ userId: payload.sub, tokenId: payload.jti })
+    const rotated = await sessions.rotate({
+      userId: payload.sub,
+      tokenId: payload.jti,
+      device: clientDevice(c),
+    })
     if (!rotated.ok) {
       // An unknown, expired or retired token and a replayed one look the same from outside: the
       // session is over. The difference is in the log and in what the server did next.

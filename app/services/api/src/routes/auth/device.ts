@@ -10,6 +10,7 @@ import { z } from 'zod'
 import type { DeviceLoginApiResponse } from '@ryadom/contracts/api/auth/device'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk } from '../../lib/api-response'
+import { clientDevice } from '../../lib/client-device'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { toAuthUser } from '../../lib/mappers'
 import { limitByIp, RATE_LIMITS } from '../../lib/rate-limit'
@@ -53,7 +54,7 @@ export function deviceRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions 
 
       const response: DeviceLoginApiResponse = {
         user: toAuthUser(result.user),
-        tokens: await sessions.start(result.user.id),
+        tokens: await sessions.start(result.user.id, clientDevice(c)),
         isNewAccount: result.isNewAccount,
       }
       return apiOk(c, response)

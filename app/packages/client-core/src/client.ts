@@ -17,6 +17,7 @@ import type {
 } from '@ryadom/contracts/api/auth/link-email'
 import type { LoginApiRequest } from '@ryadom/contracts/api/auth/login'
 import type { LogoutApiRequest } from '@ryadom/contracts/api/auth/logout'
+import type { LogoutAllApiRequest } from '@ryadom/contracts/api/auth/logout-all'
 import type { MeApiResponse, UpdateMeApiRequest } from '@ryadom/contracts/api/auth/me'
 import type {
   ChangePasswordApiErrorCode,
@@ -37,6 +38,11 @@ import type {
   ResetPasswordApiErrorCode,
   ResetPasswordApiRequest,
 } from '@ryadom/contracts/api/auth/reset-password'
+import type {
+  EndSessionApiErrorCode,
+  ListSessionsApiResponse,
+  SessionApiResponse,
+} from '@ryadom/contracts/api/auth/sessions'
 import type { AuthTokensApiResponse, LoginApiResponse } from '@ryadom/contracts/api/auth/shared'
 import type {
   DialogApiErrorCode,
@@ -51,7 +57,7 @@ import type {
 } from '@ryadom/contracts/api/dialogs'
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { AppHeader } from '@ryadom/contracts/api/headers'
-import { ApiPath, dialogEndPath, dialogPath } from '@ryadom/contracts/api/paths'
+import { ApiPath, dialogEndPath, dialogPath, sessionPath } from '@ryadom/contracts/api/paths'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { newDeviceCredentials } from './device'
 import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from './dialog-socket'
@@ -556,6 +562,32 @@ export function createClient(config: ClientConfig) {
       return voidOutcome(
         await apiOutcome<null, ChangePasswordApiErrorCode>(ApiPath.Password, { method: 'POST', body }),
       )
+    },
+
+    // ─── sessions ─────────────────────────────────────────────────────────────
+
+    /** The person's open sessions, the most recently used first, this device's marked `current`. */
+    listSessions: async (): Promise<SessionApiResponse[]> =>
+      (await apiFetch<ListSessionsApiResponse>(ApiPath.Sessions)).sessions,
+
+    /**
+     * Ends another device's session. A refusal named `SESSION_NOT_FOUND` means it is gone already
+     * (ended elsewhere, or by the time the list was read), which is where the person wanted it.
+     * This device's own session is ended by `signOut`.
+     */
+    revokeSession: async (sessionId: string): Promise<ApiOutcome<void, EndSessionApiErrorCode>> =>
+      voidOutcome(
+        await apiOutcome<null, EndSessionApiErrorCode>(sessionPath(sessionId), { method: 'DELETE' }),
+      ),
+
+    /**
+     * "Sign out on all devices". With `keepCurrent` the others end and this one stays; without it
+     * this one ends too on the server, and the caller then forgets it locally (`signOut`, which
+     * finds the session already gone and still clears the device).
+     */
+    signOutEverywhere: async (keepCurrent: boolean): Promise<void> => {
+      const body: LogoutAllApiRequest = { keepCurrent }
+      await apiFetch<null>(ApiPath.LogoutAll, { method: 'POST', body })
     },
 
     // ─── dialogs ──────────────────────────────────────────────────────────────

@@ -1,12 +1,21 @@
 import type { AuditLogAction } from '@ryadom/core/managers/audit-log-manager'
+import type { SessionDTO } from '@ryadom/core/managers/refresh-tokens-manager'
 import type { UserDTO } from '@ryadom/core/managers/users-manager'
+import { describeUserAgent } from '@ryadom/core/shared'
 import type { Tone } from '@/components/status-badge'
+
+/** "Chrome · Windows"; a device that said nothing readable is just that, with its raw agent unshown. */
+export function sessionDevice(session: Pick<SessionDTO, 'userAgent'>): string {
+  const { browser, os } = describeUserAgent(session.userAgent)
+  return [browser, os].filter(Boolean).join(' · ') || 'Неизвестное устройство'
+}
 
 export const AUDIT_ACTION_LABELS: Record<AuditLogAction, string> = {
   USER_BLOCKED: 'Заблокирован',
   USER_UNBLOCKED: 'Разблокирован',
   USER_EMAIL_CONFIRMED: 'Почта подтверждена вручную',
   USER_ACCOUNT_DELETED: 'Аккаунт удалён',
+  USER_SESSIONS_REVOKED: 'Сессии завершены',
 }
 
 export const AUDIT_ACTION_TONES: Record<AuditLogAction, Tone> = {
@@ -14,6 +23,7 @@ export const AUDIT_ACTION_TONES: Record<AuditLogAction, Tone> = {
   USER_UNBLOCKED: 'success',
   USER_EMAIL_CONFIRMED: 'info',
   USER_ACCOUNT_DELETED: 'dark',
+  USER_SESSIONS_REVOKED: 'warning',
 }
 
 export interface UserStatus {

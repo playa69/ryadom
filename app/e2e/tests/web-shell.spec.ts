@@ -211,6 +211,11 @@ test('каркас: сайдбар слева на широком окне, шт
       await expect(drawer(page)).toHaveCount(0)
       await expect(nav(page), `${at}: сайдбар на месте`).toBeVisible()
       await expect(menuButton(page)).toBeVisible()
+      // The column grows into place when the window widens (it was a drawer or a narrow rail a moment ago),
+      // so its width is read once it has settled: measured mid-way it came out as the rail's 56px.
+      await expect
+        .poll(async () => (await nav(page).boundingBox())?.width ?? 0, { message: `${at}: сайдбар 256px` })
+        .toBeGreaterThanOrEqual(240)
       const side = (await nav(page).boundingBox())!
       expect(side.x, `${at}: сайдбар у левого края`).toBeLessThanOrEqual(1)
       expect(side.width, `${at}: сайдбар 256px`).toBeGreaterThanOrEqual(240)
