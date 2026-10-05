@@ -12,7 +12,8 @@ export function webSpec(args, repoRoot) {
   const userId = () => {
     const saved = JSON.parse(readFileSync(state, 'utf8'))
     for (const origin of saved.origins ?? []) {
-      const raw = origin.localStorage?.find((entry) => entry.name === 'ryadom.user')?.value
+      // The web client keeps its own namespace (`ryadom.web.`) where the PWA and the apps share the origin.
+      const raw = origin.localStorage?.find((entry) => entry.name === 'ryadom.web.user' || entry.name === 'ryadom.user')?.value
       if (raw) return JSON.parse(raw).id
     }
     throw new Error('no user in the saved session: run demo-account.mjs')
