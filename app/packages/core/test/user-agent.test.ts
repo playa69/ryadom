@@ -4,7 +4,7 @@
  * for a Mac.
  */
 import { describe, expect, it } from 'vitest'
-import { describeUserAgent } from '../src/lib/user-agent'
+import { describeUserAgent } from '../src/shared'
 
 describe('имена браузера и системы по User-Agent', () => {
   it.each([

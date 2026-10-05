@@ -33,3 +33,4 @@ export {
 } from './db'
 export { validateInput } from './validation'
 export { addSeconds, addMinutes, addHours, addDays } from './time'
+export { describeUserAgent, type UserAgentNames } from './user-agent'

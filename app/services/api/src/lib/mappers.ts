@@ -2,6 +2,7 @@ import type { SessionDTO } from '@ryadom/core/managers/refresh-tokens-manager'
 import type { UserDTO } from '@ryadom/core/processes/authentication'
 import type { ConsentStatusDTO } from '@ryadom/core/processes/consents'
 import type { DialogDTO, DialogListItemDTO, DialogSummaryDTO } from '@ryadom/core/processes/dialogs'
+import { describeUserAgent } from '@ryadom/core/shared'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import { SessionClient, type SessionApiResponse } from '@ryadom/contracts/api/auth/sessions'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
@@ -11,7 +12,6 @@ import {
   type DialogListItemApiResponse,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
-import { describeUserAgent } from './user-agent'
 
 /**
  * Mappers from core DTOs to route responses. Core DTOs never leave the server and
