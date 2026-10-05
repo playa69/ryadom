@@ -3,9 +3,13 @@
  * Brings up the stack for e2e and holds it until Playwright is done.
  *
  * Its own compose project and its own ports: a test run must not break the database used for
- * development (`pnpm infra:up` on 55433). The ports here are 55434 / 8080+ / 3100 / 3102 / 3103.
+ * development (`pnpm infra:up` on 55433). The ports here are 55434 / 8080+ / 3100 / 3102 / 3103 / 3104.
  *
- * Built servers rather than `dev`: what has to be checked is what ships in the image.
+ * Built servers rather than `dev`: what has to be checked is what ships in the image. The one
+ * exception is the PWA: in production it is an nginx image (apps/mobile/Dockerfile), here the same
+ * build is served by `vite preview`, which also proxies `/api` to the API so the client stays on one
+ * origin, as it is behind the gateway. The nginx behaviour (headers, cache, fallback) is checked on
+ * the image itself, not here.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { cp } from 'node:fs/promises'
@@ -19,10 +23,11 @@ const isWindows = process.platform === 'win32'
 const DB_URL = 'postgres://ryadom:ryadom@127.0.0.1:55434/ryadom'
 const AGENT_URL = 'http://127.0.0.1:8081'
 // 3100 is the landing site (its env var is still called WEB_*: the legal pages live there), 3102
-// is the API and 3103 is the signed-in web app.
+// is the API, 3103 is the signed-in web app and 3104 is the PWA.
 const WEB_PORT = '3100'
 const APP_PORT = '3102'
 const WEBAPP_PORT = '3103'
+const PWA_PORT = '3104'
 
 const children = []
 let shuttingDown = false
@@ -111,18 +116,11 @@ log('применяю миграции')
 runSync('pnpm', ['--filter', '@ryadom/db', 'migrate'], { env: { ...process.env, DATABASE_URL: DB_URL } })
 
 log('собираю клиент, api, сайт и веб-приложение')
-// apps/mobile's "build" is build:pwa only (it has no server of its own any more).
+// apps/mobile's "build" is build:pwa: the web build into dist/pwa, which `vite preview` serves below.
 runSync('pnpm', ['--filter', '@ryadom/mobile', 'build'])
 runSync('pnpm', ['--filter', '@ryadom/api', 'build'])
 runSync('pnpm', ['--filter', '@ryadom/landing', 'build'])
 runSync('pnpm', ['--filter', '@ryadom/web', 'build'])
-
-// api serves the PWA apps/mobile just built (lib/pwa.ts resolves ./pwa next to cwd, then
-// ./dist/pwa) — outside Docker the two live in sibling packages, so it has to be copied over,
-// the same way the Dockerfile's runtime stage copies it next to the server bundle.
-await cp(join(repoRoot, 'apps', 'mobile', 'dist', 'pwa'), join(repoRoot, 'services', 'api', 'dist', 'pwa'), {
-  recursive: true,
-})
 
 const apiEnv = {
   ...process.env,
@@ -148,9 +146,21 @@ const apiEnv = {
 }
 
 log('запускаю api')
-// cwd is services/api: from there the server finds the copied PWA (dist/pwa) and the native argon2.
+// cwd is services/api: from there the server finds the native argon2.
 start('api', 'node', ['dist/index.js'], { env: apiEnv, cwd: join(repoRoot, 'services', 'api') })
 await waitFor(`http://127.0.0.1:${APP_PORT}/api/health`, 'api')
+
+log('запускаю PWA')
+// The preview config proxies `/api` (REST and the dialog WebSocket) to API_PROXY_TARGET, so the client
+// talks to its own origin and needs no CORS. The meta tags the nginx image injects (site address,
+// environment) are not there, which is fine: the client falls back to relative legal links.
+start(
+  'pwa',
+  'pnpm',
+  ['--filter', '@ryadom/mobile', 'exec', 'vite', 'preview', '--mode', 'web', '--host', '127.0.0.1', '--port', PWA_PORT, '--strictPort'],
+  { env: { ...process.env, API_PROXY_TARGET: `http://127.0.0.1:${APP_PORT}` } },
+)
+await waitFor(`http://127.0.0.1:${PWA_PORT}/`, 'PWA')
 
 // A Next standalone build contains neither the static assets nor public: the Dockerfile copies
 // them in next to it. We do the same, otherwise the tests would check the site without styles
@@ -192,7 +202,9 @@ start('landing', 'node', ['server.js'], {
     NODE_ENV: 'production',
     PORT: WEB_PORT,
     HOSTNAME: '127.0.0.1',
-    PUBLIC_APP_URL: `http://127.0.0.1:${APP_PORT}`,
+    // "Open the app" leads to the web app; the download page also links the PWA.
+    PUBLIC_WEBAPP_URL: `http://127.0.0.1:${WEBAPP_PORT}`,
+    PUBLIC_PWA_URL: `http://127.0.0.1:${PWA_PORT}`,
     PUBLIC_SUPPORT_EMAIL: 'support@ryadom.local',
   },
 })

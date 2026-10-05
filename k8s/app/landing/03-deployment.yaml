@@ -2,8 +2,9 @@
 # Deployment app-landing — маркетинговый сайт (Next.js standalone, ns prod)
 # =============================================================================
 # Образ app/landing (app/apps/landing/Dockerfile). Без БД и секретов; из env
-# нужны PUBLIC_APP_URL и PUBLIC_SUPPORT_EMAIL (+ опц. ссылки на сторы) —
-# берутся из ConfigMap app-config.
+# нужны PUBLIC_WEBAPP_URL (куда ведёт «Открыть приложение») и PUBLIC_SUPPORT_EMAIL,
+# опционально PUBLIC_PWA_URL (карточка установки PWA на /download) и ссылки на
+# сторы — берутся из ConfigMap app-config.
 #
 # Пробы и securityContext — как в api/03-deployment.yaml.
 # =============================================================================

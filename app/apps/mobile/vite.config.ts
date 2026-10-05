@@ -6,7 +6,8 @@ import { VitePWA } from 'vite-plugin-pwa'
 /**
  * The app client (src/client). Three build outputs and a dev server:
  *
- * - `vite build --mode web`: the web build, a PWA that services/api serves from dist/pwa;
+ * - `vite build --mode web`: the web build, a PWA written to dist/pwa and served by the nginx image
+ *   built from the Dockerfile next to this file (the API serves no client);
  * - `vite build --mode prod`: JS for store builds, prod URLs, no env switcher;
  * - `vite build --mode dev`: JS for dev builds, with the env switcher, staging by default;
  * - `vite --mode dev`: dev server on http://localhost:5174, with `/api` and the WebSocket proxied

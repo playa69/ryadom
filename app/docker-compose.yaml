@@ -1,4 +1,4 @@
-# The whole stack locally in containers: five project images plus Postgres, Mailpit and the
+# The whole stack locally in containers: six project images plus Postgres, Mailpit and the
 # agent mock. Useful to check that the images build and that everything wires together; for
 # day-to-day development `pnpm infra:up` + `pnpm dev` is faster.
 #
@@ -132,7 +132,9 @@ services:
     restart: unless-stopped
     environment:
       PORT: '3000'
-      PUBLIC_APP_URL: http://localhost:3002
+      # "Open the app" leads to the web app; the download page also links the PWA.
+      PUBLIC_WEBAPP_URL: http://localhost:3003
+      PUBLIC_PWA_URL: http://localhost:3004/pwa/
       PUBLIC_SUPPORT_EMAIL: support@ryadom.local
     ports:
       - '3000:3000'
@@ -150,6 +152,27 @@ services:
       PUBLIC_WEB_URL: http://localhost:3000
     ports:
       - '3003:3003'
+
+  # The PWA: the browser build of apps/mobile behind nginx, at http://localhost:3004/pwa/ (the prefix
+  # mirrors production). In production the gateway routes `/api` of the same host to the API; here
+  # there is no gateway, so a dev-only snippet is mounted into nginx that does the same, and the
+  # client keeps talking to its own origin (REST and the dialog WebSocket included).
+  pwa:
+    build:
+      context: .
+      dockerfile: apps/mobile/Dockerfile
+      args:
+        PWA_BASE_PATH: /pwa
+    restart: unless-stopped
+    environment:
+      PUBLIC_WEB_URL: http://localhost:3000
+      APP_ENV: local
+    volumes:
+      - ./dev/pwa-api-proxy.conf:/etc/nginx/dev.d/api.conf:ro
+    ports:
+      - '3004:3004'
+    depends_on:
+      - api
 
 volumes:
   pg_data:

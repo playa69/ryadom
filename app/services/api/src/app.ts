@@ -8,7 +8,6 @@ import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, type TransportErrorStatus } from './lib/api-response'
 import type { AppDeps, AppEnv } from './lib/context'
 import { createJwt } from './lib/jwt'
-import { registerPwaServing } from './lib/pwa'
 import { createSessions } from './lib/sessions'
 import { tracing } from './lib/tracing'
 import { versionGate } from './lib/version-gate'
@@ -23,19 +22,14 @@ import { registerAllRoutes } from './routes'
  *    headers even a 426 looks to it like a dropped connection;
  * 4. body size limit;
  * 5. version gate, before the routes: an outdated client gets 426 before its body is parsed;
- * 6. `/api/*` routes;
- * 7. PWA serving, after the routes: an `/api/*` request with no matching route still gets JSON
- *    rather than HTML.
+ * 6. `/api/*` routes; anything without a matching route gets a JSON 404.
+ *
+ * The API serves no client: the PWA is its own image (apps/mobile/Dockerfile).
  */
 
 const TRANSPORT_STATUSES = new Set<number>([400, 401, 404, 413, 422, 426, 429, 500, 501, 502, 503])
 
-/**
- * `pwaRoot` is only for tests of pure API behaviour: `null` disables PWA serving explicitly,
- * no matter whether a local build left `dist/pwa` on disk. Without it the tests would not be
- * deterministic.
- */
-export function createApp(deps: AppDeps, pwaRoot?: string | null): Hono<AppEnv> {
+export function createApp(deps: AppDeps): Hono<AppEnv> {
   const { logger, policy } = deps
   const app = new Hono<AppEnv>()
 
@@ -99,8 +93,6 @@ export function createApp(deps: AppDeps, pwaRoot?: string | null): Hono<AppEnv> 
 
   const jwt = createJwt(deps.env.MOBILE_JWT_SECRET)
   registerAllRoutes(app, { ...deps, jwt, sessions: createSessions(jwt) })
-
-  registerPwaServing(app, deps, pwaRoot)
 
   app.notFound((c) => apiError(c, 404, `No route for ${c.req.method} ${c.req.path}`))
 

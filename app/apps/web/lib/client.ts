@@ -10,7 +10,7 @@ export function createWebClient(apiBase: string, handlers: () => Handlers): Ryad
   return createClient({
     apiBase: () => apiBase,
     wsBase: () => toWsBase(apiBase),
-    // Own keys (`ryadom.web.*`): the PWA shares this origin under `/app` and must not read or
+    // Own keys (`ryadom.web.*`): the PWA shares this origin (under `/pwa`) and must not read or
     // overwrite this client's session (see lib/storage-keys.ts).
     storage: createLocalSessionStorage(WEB_STORAGE_PREFIX, WEB_USER_KEY),
     clientId: 'ryadom-web',

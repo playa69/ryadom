@@ -1,8 +1,10 @@
 /**
- * The client web build (PWA) and the application that serves it.
+ * The client web build (PWA) and the image that serves it (apps/mobile/Dockerfile, nginx).
  *
  * One image serves both staging and prod, so environment settings are not baked into the build: the
- * server injects meta tags before `</head>` every time it serves `index.html`.
+ * image's entrypoint (apps/mobile/nginx/entrypoint.sh) inserts these meta tags before `</head>` of
+ * `index.html` every time the container starts. The entrypoint spells the names out, so a change here
+ * has to be repeated there.
  */
 export enum PwaMeta {
   /** `PUBLIC_WEB_URL`: legal documents and anything "on the website". */

@@ -1,0 +1,132 @@
+# nginx for the PWA image (apps/mobile/Dockerfile).
+#
+# This file is a template: the Dockerfile renders it into /etc/nginx/nginx.conf with sed.
+#   @BASE@        where the PWA sits on the host: `/pwa`, or empty when it owns the whole host. Fixed at
+#                 image build time because Vite writes it into every asset URL (`base`) and into the
+#                 service worker scope.
+#   "#prefix# "   a line that exists only when @BASE@ is not empty (the prefix is removed, the line
+#                 stays); with an empty @BASE@ the line is deleted.
+#
+# Replaces what services/api/src/lib/pwa.ts did when the API served the PWA: SPA fallback, cache
+# headers, CSP, redirects. Differences: only hashed files under /assets/ are cached forever (the old
+# rule also covered unhashed icons and voice-worklet.js), and a missing /assets/* file is a real 404,
+# never the HTML shell.
+#
+# The root filesystem is read-only in k8s: every writable path is under /tmp.
+
+pid /tmp/nginx.pid;
+worker_processes 1;
+error_log /dev/stderr warn;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+  include /etc/nginx/mime.types;
+  # Not in the stock mime.types: without it the manifest goes out as application/octet-stream.
+  types {
+    application/manifest+json webmanifest;
+  }
+  default_type application/octet-stream;
+
+  server_tokens off;
+  sendfile on;
+  charset utf-8;
+
+  client_body_temp_path /tmp/client_temp;
+  proxy_temp_path /tmp/proxy_temp;
+  fastcgi_temp_path /tmp/fastcgi_temp;
+  uwsgi_temp_path /tmp/uwsgi_temp;
+  scgi_temp_path /tmp/scgi_temp;
+
+  # The bundle is about 1.1 MB of JS and 570 KB of CSS. text/html is always compressed.
+  gzip on;
+  gzip_vary on;
+  gzip_min_length 1024;
+  gzip_types text/css text/javascript application/javascript application/json application/manifest+json image/svg+xml font/ttf;
+
+  # The kubelet probe every few seconds would drown the log.
+  map $request_uri $pwa_loggable {
+    /healthz 0;
+    default  1;
+  }
+  access_log /dev/stdout combined if=$pwa_loggable;
+
+  # Vite stamps JS, CSS and fonts under /assets/ with a hash, so a changed file never keeps its URL and
+  # such files are cached forever. Everything else is revalidated: the shell, sw.js, the manifest and
+  # voice-worklet.js (the service worker precaches it with its own revision). Icons change rarely.
+  map $uri $pwa_cache_control {
+    default                 "no-cache";
+    ~^@BASE@/assets/        "public, max-age=31536000, immutable";
+    ~*\.(png|svg|ico)$      "public, max-age=86400";
+  }
+
+  # Used by the dev proxy in dev.d/ (docker-compose mounts it; the image itself has none).
+  map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+  }
+
+  server {
+    listen 3004;
+
+    # Behind the TLS-terminating gateway an absolute Location would carry http://host:3004.
+    absolute_redirect off;
+
+    # Headers are set only here: a location that has its own add_header drops all inherited ones.
+    # The CSP is the one the API used to send. connect-src has ws: and wss: because a dialog runs over a
+    # WebSocket to the same origin; media-src has blob: for playing back speech; framing is denied.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+    add_header X-Robots-Tag "noindex" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    # No `always`: an error response must not be marked immutable.
+    add_header Cache-Control $pwa_cache_control;
+
+    include /etc/nginx/dev.d/*.conf;
+
+    # For the kubelet and the mesh. Outside the prefix on purpose: the gateway never routes it.
+    location = /healthz {
+      access_log off;
+      default_type text/plain;
+      return 200 "ok\n";
+    }
+
+#prefix#     location = @BASE@ {
+#prefix#       return 301 @BASE@/$is_args$args;
+#prefix#     }
+#prefix#     location = / {
+#prefix#       return 302 @BASE@/$is_args$args;
+#prefix#     }
+#prefix#     # Anything else outside the prefix is not ours.
+#prefix#     location / {
+#prefix#       return 404;
+#prefix#     }
+
+    # The shell: index.html with the meta tags that entrypoint.sh filled in at start. The service worker
+    # precaches @BASE@/index.html, so it must be the same injected file as the root, not the build output.
+    location = @BASE@/ {
+      include /etc/nginx/pwa-shell.inc;
+    }
+    location = @BASE@/index.html {
+      include /etc/nginx/pwa-shell.inc;
+    }
+    location @pwa_shell {
+      include /etc/nginx/pwa-shell.inc;
+    }
+
+    # Hashed files: a missing one is a real 404, so a stale shell never gets HTML for a script.
+    location @BASE@/assets/ {
+      root /srv/pwa-static;
+      try_files $uri =404;
+    }
+
+    # Everything else under the prefix: the file if there is one, otherwise the shell, and the client
+    # (Framework7) resolves the route itself. `$uri/` is left out of try_files on purpose: no directory
+    # redirects.
+    location @BASE@/ {
+      root /srv/pwa-static;
+      try_files $uri @pwa_shell;
+    }
+  }
+}

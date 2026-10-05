@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "«Рядом» — общий API для всех клиентов (Hono): REST, WebSocket-шлюз к агенту, раздача PWA/OTA-сборки apps/mobile.",
+  "description": "«Рядом» — общий API для всех клиентов (Hono): REST, WebSocket-шлюз к агенту, раздача OTA-сборки apps/mobile.",
   "scripts": {
     "dev": "tsx watch --tsconfig tsconfig.dev.json --env-file-if-exists=.env.local src/index.ts",
     "build": "node build.mjs",

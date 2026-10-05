@@ -19,7 +19,7 @@ export function initServiceWorker(onUpdateAvailable: () => void): () => void {
   let registration: ServiceWorkerRegistration | null = null
 
   // The worker sits next to index.html: at the root of the origin, or under the prefix the PWA is
-  // published under (`/app/`). `BASE_URL` is that prefix, and the scope must be the same.
+  // published under (`/pwa/`). `BASE_URL` is that prefix, and the scope must be the same.
   const base = import.meta.env.BASE_URL
   void navigator.serviceWorker
     .register(`${base}sw.js`, { scope: base })

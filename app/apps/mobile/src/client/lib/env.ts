@@ -37,8 +37,9 @@ export function prodEndpoints(): Endpoints {
 }
 
 /**
- * Web build: the API is the same origin, served by the same app, and the website URL arrives in a
- * meta tag that the server injects when it serves index.html.
+ * Web build: the API is the same origin (the gateway routes `/api` of the host to it), and the
+ * website URL arrives in a meta tag that the PWA image inserts into index.html when its container
+ * starts.
  */
 export function webEndpoints(): Endpoints {
   const meta = document.querySelector(`meta[name="${PwaMeta.WebUrl}"]`)

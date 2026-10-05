@@ -9,11 +9,13 @@ import { isClientAllowed, parseJsVersion, parseVersionCode, type PolicySource } 
  * Version gate. A store build sends `X-Platform` and its versions on every
  * request; below the minimum it gets 426 and goes to `/api/app-status` for instructions.
  *
- * Requests without those headers (the web build, a browser on the dev server, monitoring) are not
- * checked: for the web build the client and the API are always the same version because they ship
- * in one image. `/api/app-status` and `/api/health` are always open, otherwise an outdated client
- * would loop; `/api/ota/*` is open too, otherwise a client below the minimum could never reach the
- * very bundle that would get it off that version.
+ * Requests without those headers (the web clients, the PWA, a browser on the dev server, monitoring)
+ * are not checked: a web client is not an installed build that can fall behind the minimum, it is
+ * whatever the host serves. The PWA is its own image, so it is deployed independently of the API
+ * and the API has to stay compatible with the previous PWA build for a while. `/api/app-status` and
+ * `/api/health` are always open, otherwise an outdated client would loop; `/api/ota/*` is open too,
+ * otherwise a client below the minimum could never reach the very bundle that would get it off that
+ * version.
  */
 const OPEN_PATHS = new Set<string>([ApiPath.AppStatus, ApiPath.Health])
 const OPEN_PREFIXES = [`${ApiPath.OtaBundle}/`]

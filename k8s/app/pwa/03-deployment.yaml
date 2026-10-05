@@ -1,0 +1,110 @@
+# =============================================================================
+# Deployment app-pwa — PWA (nginx, статика, ns prod)
+# =============================================================================
+# Образ app/pwa (app/apps/mobile/Dockerfile). Без БД и секретов. На старте
+# контейнера entrypoint вписывает в index.html два мета-тега из ConfigMap app-config:
+# PUBLIC_WEB_URL (сайт с правовыми документами) и APP_ENV — один образ для любого
+# окружения. Берутся ровно эти два ключа, а не весь ConfigMap (в nginx незачем
+# передавать DB_* и остальное). Без любого из них контейнер не стартует.
+# Изменение значений в ConfigMap требует `kubectl rollout restart deploy/app-pwa`;
+# уже установленные у людей копии подхватят новые мета только после следующей сборки
+# образа (service worker кэширует index.html по хешу сборки).
+#
+# Префикс /pwa зашит в образ build-arg'ом PWA_BASE_PATH (Vite base + nginx).
+#
+# Пробы — httpGet на /healthz (вне префикса, наружу gateway его не отдаёт). Istio
+# переписывает httpGet-пробы, tcpSocket не использовать.
+# securityContext — как в web/03-deployment.yaml, но uid 101: это штатный пользователь
+# образа nginx-unprivileged. Корневая ФС read-only, писать нужно только в /tmp
+# (отрисованный index.html, pid, временные файлы nginx) — это emptyDir.
+# =============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-pwa
+  namespace: prod
+  labels:
+    app: app-pwa
+    app.kubernetes.io/part-of: ryadom
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: app-pwa
+  template:
+    metadata:
+      labels:
+        app: app-pwa
+    spec:
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pwa
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/pwa:0.2.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 3004
+              protocol: TCP
+          env:
+            - name: PUBLIC_WEB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: PUBLIC_WEB_URL
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: APP_ENV
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 3004
+            periodSeconds: 3
+            failureThreshold: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3004
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3004
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
