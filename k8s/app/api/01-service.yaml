@@ -1,0 +1,26 @@
+# =============================================================================
+# Service app-api — ClusterIP перед Deployment app-api (ns prod)
+# =============================================================================
+# Порт 80 → 3002 (Node API). Имя порта http — на него ссылаются HTTPRoute
+# (backendRefs) и Istio. Сервис отдаёт REST (/api/*), WebSocket-шлюз к агенту
+# (/api/dialogs/ws) и PWA — всё на одном порту.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-api
+  namespace: prod
+  labels:
+    app: app-api
+    app.kubernetes.io/part-of: ryadom
+spec:
+  type: ClusterIP
+  selector:
+    app: app-api
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 3002

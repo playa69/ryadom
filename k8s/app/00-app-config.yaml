@@ -1,0 +1,93 @@
+# =============================================================================
+# ConfigMap app-config — несекретные env сервисов из app/ (ns prod)
+# =============================================================================
+# Общий для api, admin, web и landing (envFrom): каждое приложение читает
+# только свои ключи, лишние игнорирует. ПРАВИЛО: здесь — всё статическое и
+# несекретное, в Secret'ах (app-secrets, app-smtp; создаёт k8s/app/create-secrets.sh
+# из локального app-secrets.env) — только секреты: DB_PASSWORD, AUTH_SECRET,
+# MOBILE_JWT_SECRET, REDIS_PASSWORD, AGENT_API_TOKEN, SMTP_PASSWORD.
+# DATABASE_URL в Secret'ах нет: Deployment'ы собирают его из DB_* отсюда и
+# DB_PASSWORD из Secret'а. Список админов — отдельный ConfigMap
+# admin/00-config.yaml, только для админки (API его получать не должен).
+#
+# Схема доменов (поддомены — решение от 2026-10-05, см. k8s/README.md):
+#   xn----htbtgjker8b3a2c.xn--p1ai          landing (маркетинг, документы)
+#   app.xn----htbtgjker8b3a2c.xn--p1ai      api: REST + WebSocket + PWA
+#   web.xn----htbtgjker8b3a2c.xn--p1ai      apps/web (клиент после входа)
+#   admin.xn----htbtgjker8b3a2c.xn--p1ai    admin
+# NB: PUBLIC_WEB_URL в приложениях — это МАРКЕТИНГОВЫЙ сайт (landing, корень),
+# а не поддомен web. (apps/web — клиент; см. apps/web/.env.example.)
+#
+# Redis (общий ryadom-db, Sentinel) используется только api и только для
+# счётчиков лимитов запросов: ключи ryadom:rl:* (префикс по умолчанию, с Python
+# backend не пересекаются), каждый с TTL окна. Пароль — REDIS_PASSWORD из
+# Secret app-secrets (копия redis-credentials, делает create-secrets.sh). Если
+# Redis недоступен, api сам переходит на счёт в памяти (lib/redis-rate-limiter.ts).
+#
+# TRUSTED_PROXY_HOPS=1: перед сервисами ровно один доверенный прокси (Istio
+# ingress-gateway), он ДОПИСЫВАЕТ адрес клиента в конец X-Forwarded-For. IP для
+# лимитов берётся оттуда, а не из первого элемента, который пишет сам клиент.
+# Появится CDN/балансировщик перед gateway — поставить 2.
+#
+# На первом выкате сознательно выключено:
+#   ANONYMOUS_PURGE_DISABLED=true — часовая чистка анонимных аккаунтов шлёт
+#     стирание данных в agent; агента в кластере ещё нет (см. AGENT_API_URL).
+#   EMAIL_TRANSPORT=console — egress из prod разрешён только на :443, а SMTP
+#     (465/587) закрыт NetworkPolicy; письма пишутся в лог и не уходят.
+#     Для реальной почты: SMTP-провайдер + egress-правило + EMAIL_TRANSPORT=smtp.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+data:
+  # --- Общие ---
+  APP_ENV: "prod"
+  LOG_LEVEL: "info"
+  # --- PostgreSQL: тот же сервер CNPG, что у Python backend (ryadom-db-rw), но
+  # своя база и своя роль (изоляция от баз backend/agent/langfuse). Пароль — DB_PASSWORD
+  # из Secret app-secrets. БД и роль создаёт Job db/01-job-create-db.yaml.
+  DB_HOST: "ryadom-db-rw.ryadom-db.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "app"
+  DB_USER: "app"
+  # --- Публичные адреса ---
+  PUBLIC_WEB_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai"
+  PUBLIC_APP_URL: "https://app.xn----htbtgjker8b3a2c.xn--p1ai"
+  # apps/web: API, к которому ходит браузер (REST + WebSocket); он же единственный
+  # внешний origin в CSP connect-src
+  PUBLIC_API_URL: "https://app.xn----htbtgjker8b3a2c.xn--p1ai"
+  # landing: адрес поддержки (временно — личная почта владельца; заменить на
+  # support@... перед публикацией)
+  PUBLIC_SUPPORT_EMAIL: "totsamiynixon@yandex.ru"
+  # Один доверенный прокси перед сервисами (см. шапку)
+  TRUSTED_PROXY_HOPS: "1"
+  # --- Почта: Yandex Cloud Postbox (см. шапку и README, «Почта: Yandex Cloud Postbox») ---
+  # ПЕРЕКЛЮЧЕНИЕ на реальную почту — три шага, строго по порядку: 1) адрес в Postbox
+  # подтверждён (DKIM = Success), 2) Secret app-smtp создан (SMTP_PASSWORD), 3) тут
+  # раскомментировать SMTP_USER и заменить console на smtp. До этого коды
+  # входа пишутся в лог (console).
+  EMAIL_TRANSPORT: "console"
+  EMAIL_FROM: "Рядом <noreply@xn----htbtgjker8b3a2c.xn--p1ai>"
+  SMTP_HOST: "postbox.cloud.yandex.net"
+  SMTP_PORT: "465"
+  SMTP_SECURE: "true"
+  # SMTP_USER: ""     # идентификатор API-ключа Postbox (несекретный); секретная часть —
+  #                   # SMTP_PASSWORD в Secret app-smtp
+  # --- Agent (плейсхолдер: сервиса в кластере пока нет) ---
+  # api стартует и без него (/api/health проверяет только БД), но диалоги
+  # и стирание данных у агента не работают, пока он не появится.
+  AGENT_API_URL: "http://agent.agent.svc.cluster.local:8001"
+  AGENT_TIMEOUT_MS: "10000"
+  ANONYMOUS_PURGE_DISABLED: "true"
+  # --- Redis Sentinel (см. шапку): лимиты запросов общие для реплик ---
+  REDIS_ENABLED: "true"
+  REDIS_SENTINEL_HOST: "redis.ryadom-db.svc.cluster.local"
+  REDIS_SENTINEL_PORT: "26379"
+  REDIS_MASTER_NAME: "mymaster"
+  # (REDIS_PASSWORD — из Secret app-secrets, не из ConfigMap)

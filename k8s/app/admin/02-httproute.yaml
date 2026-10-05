@@ -1,0 +1,35 @@
+# =============================================================================
+# HTTPRoute app-admin — admin.<домен> (ns prod)
+# =============================================================================
+# Админка публикуется на отдельном хосте admin.xn----htbtgjker8b3a2c.xn--p1ai
+# (listener https-admin). Вход — по логину и списку ADMIN_EMAILS (пусто =
+# войти не может никто). Исходный Dockerfile admin предполагал, что наружу её
+# закрывает Ingress; здесь она доступна из интернета и защищена только
+# приложением. При желании сузить по IP — добавить Istio AuthorizationPolicy
+# на istio-ingressgateway (отдельной задачей).
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-admin
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https-admin
+  hostnames:
+    - admin.xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: admin
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: app-admin
+          port: 80

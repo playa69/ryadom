@@ -1,0 +1,24 @@
+# =============================================================================
+# ConfigMap app-admin-config — несекретный конфиг ТОЛЬКО админки (ns prod)
+# =============================================================================
+# Список админов — статическое несекретное значение, поэтому он в ConfigMap, а не
+# в Secret. Отдельный от app-config ConfigMap нужен, чтобы список не попадал в
+# api (там он намеренно пуст, см. app/services/api/.env.example): общий
+# app-config подключается ко всем сервисам через envFrom, этот — только к admin.
+#
+# ADMIN_EMAILS — через запятую, регистр не важен; пусто = войти не может никто.
+# Вход — по коду из письма на этот адрес (пока EMAIL_TRANSPORT=console, код — в
+# логе пода app-admin, см. 00-app-config.yaml). Изменили список — перезапустить:
+#   kubectl -n prod rollout restart deploy/app-admin
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-admin-config
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+data:
+  ADMIN_EMAILS: "totsamiynixon@yandex.ru"

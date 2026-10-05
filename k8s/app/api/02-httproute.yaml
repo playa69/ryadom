@@ -1,0 +1,37 @@
+# =============================================================================
+# HTTPRoute app-api — app.<домен>: REST + WebSocket + PWA (ns prod)
+# =============================================================================
+# Весь хост app.xn----htbtgjker8b3a2c.xn--p1ai целиком отдаётся api: у него
+# свои роуты /api/*, шлюз /api/dialogs/ws и PWA на остальных путях (lib/pwa.ts),
+# так что фильтровать пути здесь не нужно (в отличие от Python backend на
+# корневом хосте, где наружу открыт только /api/v1).
+#
+# Цепляется к listener https-app (k8s/istio/manifests/01-gateway-api-gateway.yaml);
+# plain HTTP на :80 — только редирект на https (02-http-redirect-apps.yaml)
+# и ACME. WebSocket через Istio Gateway работает из коробки (upgrade).
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-api
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https-app
+  hostnames:
+    - app.xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: api
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: app-api
+          port: 80

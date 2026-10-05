@@ -1,0 +1,33 @@
+# =============================================================================
+# HTTPRoute app-web — web.<домен>: клиент после входа (ns prod)
+# =============================================================================
+# apps/web — залогиненный веб-клиент; из браузера ходит в API на
+# app.xn----htbtgjker8b3a2c.xn--p1ai (PUBLIC_API_URL) — у API CORS origin: '*'
+# (авторизация только заголовком, cookie нет), так что кросс-доменные
+# запросы работают. Listener https-web.
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-web
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https-web
+  hostnames:
+    - web.xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: web
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: app-web
+          port: 80

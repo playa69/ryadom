@@ -1,0 +1,24 @@
+# =============================================================================
+# Service app-admin — ClusterIP перед Deployment app-admin (ns prod)
+# =============================================================================
+# Порт 80 → 3001 (Next.js standalone). Имя порта http — для HTTPRoute.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-admin
+  namespace: prod
+  labels:
+    app: app-admin
+    app.kubernetes.io/part-of: ryadom
+spec:
+  type: ClusterIP
+  selector:
+    app: app-admin
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 3001
