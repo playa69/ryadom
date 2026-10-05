@@ -24,7 +24,7 @@ import {
   Tag,
   Tile,
 } from './_components/home-parts'
-import { PhoneMock } from './_components/home-phone'
+import { HeroPhone } from './_components/home-phone'
 
 /** A lit squircle above each mode: a glyph to scan the grid by; the title carries the meaning. */
 function ModeMark({ icon: Icon }: { icon: LucideIcon }) {
@@ -79,7 +79,7 @@ export default async function LandingPage() {
               Бесплатно на старте. Работает в браузере и на телефоне. 18+
             </p>
           </div>
-          <PhoneMock />
+          <HeroPhone />
         </Section>
 
         <Section id="honest" glow="indigo" side="right">

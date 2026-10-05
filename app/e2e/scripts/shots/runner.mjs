@@ -16,6 +16,7 @@ export async function runShots(spec, args, repoRoot) {
   const out = resolve(String(args.out ?? join(repoRoot, 'screenshots')))
   const ignore = args.ignore ? String(args.ignore).split(',') : []
   const strict = Boolean(args.strict)
+  const scale = Number(args.scale ?? 1)
   // A headless browser has no microphone: the fake device plays a tone, so the voice screen can listen.
   const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
 
@@ -40,6 +41,7 @@ export async function runShots(spec, args, repoRoot) {
       const context = await browser.newContext({
         viewport: { width, height: spec.heights(width, screen) },
         locale: 'ru-RU',
+        deviceScaleFactor: scale,
         reducedMotion: 'reduce',
         permissions: ['microphone'],
         ...(screen.anon || !spec.state ? {} : { storageState: spec.state }),

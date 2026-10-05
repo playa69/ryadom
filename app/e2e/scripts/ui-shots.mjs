@@ -19,7 +19,7 @@
  * Options: --base <url> (web 3023, landing 3020, mobile 5184, admin 3021), --screens a,b,
  * --widths 390,820,1280,1920 (admin 1280,1920), --out <dir>, --state <file> (saved session),
  * --agent <url> (agent mock, 8080), --mail <url> (Mailpit, 8026), --ignore kind,kind (glitch kinds
- * to leave out), --strict. Shots that start a conversation restore the demo journal first. Exit
+ * to leave out), --scale 2 (device pixel ratio, 1 by default), --strict. Shots that start a conversation restore the demo journal first. Exit
  * code 1 when any screen had a glitch or failed. Pair with ui-diff.mjs to compare two takes.
  */
 import { dirname, join } from 'node:path'
