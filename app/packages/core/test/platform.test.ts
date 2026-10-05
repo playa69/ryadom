@@ -68,6 +68,7 @@ describe('config', () => {
     expect(env.AGENT_TIMEOUT_MS).toBe(10_000)
     expect(env.DIALOG_IDLE_TIMEOUT_SEC).toBe(900)
     expect(env.DIALOG_MAX_DURATION_SEC).toBe(7200)
+    expect(env.DIALOG_SESSION_CHECK_SEC).toBe(30)
     // No bucket manifest any more: the native axis defaults to "no gate, no banner".
     expect(env.MOBILE_ANDROID_MIN_VERSION_CODE).toBe(0)
     expect(env.MOBILE_ANDROID_LATEST_VERSION_CODE).toBe(0)

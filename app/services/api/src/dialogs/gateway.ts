@@ -25,6 +25,7 @@ import { HOTLINES } from '../lib/hotlines'
 import type { Jwt } from '../lib/jwt'
 import { openAgentSocket, type AgentSocket } from './agent-socket'
 import { isDraining } from '../lib/lifecycle'
+import type { Sessions } from '../lib/sessions'
 import { DIALOG_LIMITS } from './limits'
 
 /**
@@ -33,6 +34,13 @@ import { DIALOG_LIMITS } from './limits'
  * What it does: verifies the token from the `hello` frame, keeps one active connection per person,
  * enforces the limits, translates frames in both directions and closes everything once either side
  * is gone. What it does not do: interpret or store message content, or write text to the logs.
+ *
+ * The signature of an access token proves nothing about the session once it has been issued, and a
+ * dialog lasts far longer than a token is meant to be trusted. So the session is asked about when
+ * the socket opens, which also stops a client that was signed out from reconnecting on the token it
+ * still holds, and then at an interval for as long as the socket lives. A session that was signed
+ * out, revoked or blocked closes the socket the way an expired token would: with `Unauthorized`, so
+ * the client refreshes, finds the session gone and signs the person out.
  */
 
 /** Open connections per user: a second one closes the first. */
@@ -41,6 +49,7 @@ const sessionsByUser = new Map<string, Set<DialogSession>>()
 export interface GatewayDeps {
   env: AppServerEnv
   jwt: Jwt
+  sessions: Pick<Sessions, 'isActive'>
 }
 
 interface AgentTextFrame {
@@ -53,8 +62,12 @@ class DialogSession {
   private agent: AgentSocket | null = null
   private userId: string | null = null
   private dialogId: string | null = null
+  /** The session of the access token from `hello`; null for a token that carries none. */
+  private sessionId: string | null = null
+  private checkingSession = false
   private helloTimer: NodeJS.Timeout
   private heartbeatTimer: NodeJS.Timeout | undefined
+  private sessionTimer: NodeJS.Timeout | undefined
   private maxDurationTimer: NodeJS.Timeout | undefined
   private idleTimer: NodeJS.Timeout | undefined
   private alive = true
@@ -133,6 +146,7 @@ class DialogSession {
   private dispose(): void {
     clearTimeout(this.helloTimer)
     clearInterval(this.heartbeatTimer)
+    clearInterval(this.sessionTimer)
     clearTimeout(this.maxDurationTimer)
     clearTimeout(this.idleTimer)
     this.agent?.close()
@@ -243,8 +257,14 @@ class DialogSession {
     if (!payload || !dialogId) {
       return this.fail(DialogWsErrorCode.UNAUTHORIZED, 'invalid token or dialogId', DialogCloseCode.Unauthorized)
     }
+    if (payload.sid && !(await this.deps.sessions.isActive(payload.sid))) {
+      return this.fail(DialogWsErrorCode.UNAUTHORIZED, 'session ended', DialogCloseCode.Unauthorized)
+    }
+    // The socket may have gone while the registry was being asked: a closed one starts nothing.
+    if (this.closed) return
 
     this.userId = payload.sub
+    this.sessionId = payload.sid ?? null
     this.dialogId = dialogId
     // The upgrade carried only what the client could put in headers; now the account is verified.
     updateRequestContext({ userId: this.userId })
@@ -258,6 +278,7 @@ class DialogSession {
     sessionsByUser.set(this.userId, new Set([this]))
 
     this.startHeartbeat()
+    this.startSessionCheck()
     this.maxDurationTimer = setTimeout(
       () => this.close(DialogCloseCode.Done, 'max duration reached'),
       this.deps.env.DIALOG_MAX_DURATION_SEC * 1000,
@@ -301,6 +322,29 @@ class DialogSession {
       }
     }, DIALOG_LIMITS.heartbeatMs)
     this.heartbeatTimer.unref()
+  }
+
+  private startSessionCheck(): void {
+    const sessionId = this.sessionId
+    if (!sessionId) return
+    this.sessionTimer = setInterval(() => {
+      // A slow registry must not stack up checks: the next tick waits for this one.
+      if (this.checkingSession) return
+      this.checkingSession = true
+      this.deps.sessions
+        .isActive(sessionId)
+        .then((active) => {
+          if (!active) this.fail(DialogWsErrorCode.UNAUTHORIZED, 'session ended', DialogCloseCode.Unauthorized)
+        })
+        // A registry that cannot be reached is no reason to cut a person off mid-conversation: the next tick asks again.
+        .catch((error: unknown) =>
+          this.logger.warn('Не удалось проверить сессию открытого диалога', error, { userId: this.userId }),
+        )
+        .finally(() => {
+          this.checkingSession = false
+        })
+    }, this.deps.env.DIALOG_SESSION_CHECK_SEC * 1000)
+    this.sessionTimer.unref()
   }
 
   private connectAgent(): void {

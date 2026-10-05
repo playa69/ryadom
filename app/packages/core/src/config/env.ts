@@ -93,6 +93,12 @@ const appShape = {
   /** Hard cap on a single connection: protection against sockets that never end on rollouts. */
   DIALOG_MAX_DURATION_SEC: optionalInt(60).transform((value) => value ?? 7200),
   /**
+   * How often an open dialog asks the registry whether its session is still alive. The access token
+   * is checked once, at `hello`, and says nothing about a session that was ended afterwards; this is
+   * how long such a dialog can go on at most.
+   */
+  DIALOG_SESSION_CHECK_SEC: optionalInt(1).transform((value) => value ?? 30),
+  /**
    * State shared by the replicas; for now only the rate limits. Off by default: each replica then
    * counts on its own, and the real limit is the stated one times the number of replicas. With it
    * on, the address is either `REDIS_URL` (one node, local development) or Sentinel, whose password

@@ -97,7 +97,7 @@ server.on('upgrade', (request, socket, head) => {
     socket.destroy()
     return
   }
-  wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws, { env, jwt }, request))
+  wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws, { env, jwt, sessions }, request))
 })
 
 server.on('error', (error: NodeJS.ErrnoException) => {
