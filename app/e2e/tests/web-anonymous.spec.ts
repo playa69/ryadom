@@ -169,6 +169,7 @@ test('аккаунт без почты: профиль, привязка, под
     0,
   )
   await expect(page.getByTestId('row-confirm-email')).toHaveCount(0)
+  await expect(page.getByTestId('row-sessions'), 'у гостя одно устройство: смотреть нечего').toHaveCount(0)
   await expect(
     page.getByText(new RegExp(`${ANONYMOUS_RETENTION_DAYS} дней после последнего визита`)),
   ).toBeVisible()
@@ -228,6 +229,10 @@ test('аккаунт без почты: профиль, привязка, под
   await expect(page.getByTestId('profile-email')).toHaveText(email)
   await expect(page.getByTestId('profile-name')).toHaveText('Аноним')
   await expect(page.getByTestId('row-change-password')).toBeVisible()
+  await expect(
+    page.getByTestId('row-sessions'),
+    'с подтверждённой почтой войти можно с другого устройства',
+  ).toBeVisible()
   await expect(page.getByTestId('row-link-email')).toHaveCount(0)
   await expect(page.getByTestId('row-switch-account')).toHaveCount(0)
   await expect(page.getByTestId('logout')).toBeVisible()
@@ -334,6 +339,10 @@ test('привязка почты, начатая и брошенная, про�
   const confirmRow = page.getByTestId('row-confirm-email')
   await expect(confirmRow).toContainText(email)
   await expect(page.getByTestId('row-link-email'), 'адрес уже указан').toHaveCount(0)
+  await expect(
+    page.getByTestId('row-sessions'),
+    'пока почта не подтверждена, список устройств не нужен',
+  ).toHaveCount(0)
   // Not confirmed yet: this phone is still the only way in, so there is still nothing to sign out of.
   await expect(page.getByTestId('logout')).toHaveCount(0)
   await expect(page.getByTestId('row-switch-account')).toBeVisible()

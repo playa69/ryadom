@@ -143,6 +143,8 @@ const apiEnv = {
   AGENT_TIMEOUT_MS: '10000',
   DIALOG_IDLE_TIMEOUT_SEC: '900',
   DIALOG_MAX_DURATION_SEC: '7200',
+  // An open dialog whose session was ended closes within this long: the scenario waits for it.
+  DIALOG_SESSION_CHECK_SEC: '2',
 }
 
 log('запускаю api')
