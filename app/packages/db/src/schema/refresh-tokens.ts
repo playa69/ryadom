@@ -23,6 +23,9 @@ export const refreshTokens = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     revokedReason: text('revoked_reason').$type<RefreshTokenRevokeReason>(),
+    /** What the person sees in the list of their sessions: `x-client-id` and `User-Agent` of the request that issued the token. Both are what the client says about itself, so a label and nothing more. */
+    clientId: text('client_id'),
+    userAgent: text('user_agent'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -1,6 +1,6 @@
 /**
  * Application API paths. Parameters travel in the query string or the body; the only
- * path parameter is the dialog id.
+ * path parameters are the dialog id and the session id.
  */
 export enum ApiPath {
   Health = '/api/health',
@@ -16,6 +16,8 @@ export enum ApiPath {
   LinkEmail = '/api/auth/email/link',
   Refresh = '/api/auth/refresh',
   Logout = '/api/auth/logout',
+  LogoutAll = '/api/auth/logout-all',
+  Sessions = '/api/auth/sessions',
   Me = '/api/auth/me',
   Consents = '/api/auth/me/consents',
   Password = '/api/auth/password',
@@ -34,6 +36,11 @@ export function dialogPath(dialogId: string): string {
 
 export function dialogEndPath(dialogId: string): string {
   return `${dialogPath(dialogId)}/end`
+}
+
+/** `/api/auth/sessions/:id`: one session of the person. */
+export function sessionPath(sessionId: string): string {
+  return `${ApiPath.Sessions}/${encodeURIComponent(sessionId)}`
 }
 
 /** `/api/ota/<file>`: the exact file name a client was told to fetch by `/api/app-status`. */

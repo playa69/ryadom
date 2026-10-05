@@ -3,17 +3,23 @@ import {
   DeleteExpiredRefreshTokensCommand,
   GetRefreshTokenQuery,
   GetRefreshTokenQueryErrorCode,
+  GetSessionStatusQuery,
+  ListUserSessionsQuery,
   RevokeRefreshTokenCommand,
   RevokeRefreshTokenCommandErrorCode,
   RevokeSessionRefreshTokensCommand,
   RevokeUserRefreshTokensCommand,
+  RevokeUserSessionCommand,
+  RevokeUserSessionCommandErrorCode,
   StoreRefreshTokenCommand,
   StoreRefreshTokenCommandErrorCode,
   refreshTokensManager,
   type RefreshTokenDTO,
+  type SessionDTO,
 } from '@ryadom/core/managers/refresh-tokens-manager'
 import { createLogger } from '@ryadom/core/shared'
 import assertNever from 'assert-never'
+import type { ClientDevice } from './client-device'
 import { REFRESH_TTL_SECONDS, type Jwt, type TokenPair } from './jwt'
 
 /**
@@ -35,7 +41,8 @@ import { REFRESH_TTL_SECONDS, type Jwt, type TokenPair } from './jwt'
  * otherwise one of those could still be exchanged during the grace window.
  *
  * The access token stays stateless, so a revoked session lives until its access token expires
- * (15 minutes) and not a moment longer than the next refresh.
+ * (15 minutes) and not a moment longer than the next refresh. What holds an access token for longer
+ * than that, an open dialog, asks `isActive` itself.
  */
 export const REFRESH_GRACE_MS = 10_000
 
@@ -46,11 +53,19 @@ export type RotateOutcome = { ok: true; tokens: TokenPair } | { ok: false; reaso
 
 export interface Sessions {
   /** A new session: a token pair whose refresh token is registered. */
-  start(userId: string): Promise<TokenPair>
+  start(userId: string, device: ClientDevice): Promise<TokenPair>
   /** Exchanges a refresh token (already verified by signature) for the next pair of its session. */
-  rotate(token: { userId: string; tokenId: string }): Promise<RotateOutcome>
+  rotate(token: { userId: string; tokenId: string; device: ClientDevice }): Promise<RotateOutcome>
   /** Ends the session of this refresh token. A token that is unknown or already ended is not an error. */
   end(tokenId: string): Promise<void>
+  /** The open sessions of a person, the most recently used first. */
+  list(userId: string): Promise<SessionDTO[]>
+  /** The person ends one of their own sessions. False when none of theirs has this id. */
+  endOne(userId: string, sessionId: string): Promise<boolean>
+  /** Ends every session of the person, or every one but `exceptSessionId`. */
+  endAll(userId: string, exceptSessionId: string | null): Promise<void>
+  /** Whether the session is still open. For what outlives an access token, such as a dialog. */
+  isActive(sessionId: string): Promise<boolean>
   /** Housekeeping for the registry. */
   purgeExpired(): Promise<void>
 }
@@ -70,11 +85,11 @@ export function createSessions(jwt: Jwt): Sessions {
   }
 
   /** The next token of a session: registered first, so that a signed token always has a row. */
-  async function issue(userId: string, sessionId: string): Promise<TokenPair> {
+  async function issue(userId: string, sessionId: string, device: ClientDevice): Promise<TokenPair> {
     const tokenId = randomUUID()
     const expiresAt = new Date(Date.now() + REFRESH_TTL_SECONDS * 1000)
     const stored = await refreshTokensManager.execute(
-      new StoreRefreshTokenCommand({ tokenId, sessionId, userId, expiresAt }),
+      new StoreRefreshTokenCommand({ tokenId, sessionId, userId, expiresAt, ...device }),
     )
     if (!stored.success) {
       switch (stored.error) {
@@ -88,9 +103,9 @@ export function createSessions(jwt: Jwt): Sessions {
   }
 
   return {
-    start: (userId) => issue(userId, randomUUID()),
+    start: (userId, device) => issue(userId, randomUUID(), device),
 
-    async rotate({ userId, tokenId }) {
+    async rotate({ userId, tokenId, device }) {
       let token = await find(tokenId)
       if (!token || token.userId !== userId) return { ok: false, reason: 'invalid' }
       const now = new Date()
@@ -100,7 +115,7 @@ export function createSessions(jwt: Jwt): Sessions {
         const retired = await refreshTokensManager.execute(
           new RevokeRefreshTokenCommand({ tokenId, reason: 'rotated', revokedAt: now }),
         )
-        if (retired.success) return { ok: true, tokens: await issue(userId, token.sessionId) }
+        if (retired.success) return { ok: true, tokens: await issue(userId, token.sessionId, device) }
         switch (retired.error) {
           case RevokeRefreshTokenCommandErrorCode.TOKEN_NOT_ACTIVE:
             break
@@ -115,7 +130,7 @@ export function createSessions(jwt: Jwt): Sessions {
 
       if (token.revokedReason !== 'rotated') return { ok: false, reason: 'invalid' }
       if (now.getTime() - token.revokedAt.getTime() <= REFRESH_GRACE_MS) {
-        return { ok: true, tokens: await issue(userId, token.sessionId) }
+        return { ok: true, tokens: await issue(userId, token.sessionId, device) }
       }
 
       await refreshTokensManager.execute(
@@ -135,6 +150,37 @@ export function createSessions(jwt: Jwt): Sessions {
       await refreshTokensManager.execute(
         new RevokeSessionRefreshTokensCommand({ sessionId: token.sessionId, revokedAt: new Date() }),
       )
+    },
+
+    async list(userId) {
+      const result = await refreshTokensManager.execute(
+        new ListUserSessionsQuery({ userId, now: new Date() }),
+      )
+      return result.sessions
+    },
+
+    async endOne(userId, sessionId) {
+      const result = await refreshTokensManager.execute(
+        new RevokeUserSessionCommand({ userId, sessionId, revokedAt: new Date() }),
+      )
+      if (result.success) return true
+      switch (result.error) {
+        case RevokeUserSessionCommandErrorCode.SESSION_NOT_FOUND:
+          return false
+        default:
+          return assertNever(result.error)
+      }
+    },
+
+    async endAll(userId, exceptSessionId) {
+      await refreshTokensManager.execute(
+        new RevokeUserRefreshTokensCommand({ userId, exceptSessionId, revokedAt: new Date() }),
+      )
+    },
+
+    async isActive(sessionId) {
+      const result = await refreshTokensManager.execute(new GetSessionStatusQuery({ sessionId }))
+      return result.active
     },
 
     async purgeExpired() {

@@ -7,6 +7,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditLogAction, string> = {
   USER_UNBLOCKED: 'Разблокирован',
   USER_EMAIL_CONFIRMED: 'Почта подтверждена вручную',
   USER_ACCOUNT_DELETED: 'Аккаунт удалён',
+  USER_SESSIONS_REVOKED: 'Сессии завершены',
 }
 
 export const AUDIT_ACTION_TONES: Record<AuditLogAction, Tone> = {
@@ -14,6 +15,7 @@ export const AUDIT_ACTION_TONES: Record<AuditLogAction, Tone> = {
   USER_UNBLOCKED: 'success',
   USER_EMAIL_CONFIRMED: 'info',
   USER_ACCOUNT_DELETED: 'dark',
+  USER_SESSIONS_REVOKED: 'warning',
 }
 
 export interface UserStatus {

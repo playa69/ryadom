@@ -26,6 +26,7 @@ export const AUDIT_LOG_ACTIONS = [
   'USER_UNBLOCKED',
   'USER_EMAIL_CONFIRMED',
   'USER_ACCOUNT_DELETED',
+  'USER_SESSIONS_REVOKED',
 ] as const
 export type AuditLogAction = (typeof AUDIT_LOG_ACTIONS)[number]
 
@@ -36,7 +37,8 @@ export type AuditLogAction = (typeof AUDIT_LOG_ACTIONS)[number]
  *   seconds when presented again (a lost response, two tabs), and only such a token presented late
  *   gives away a stolen copy;
  * - `signed_out`: the person signed out;
- * - `revoked`: ended from outside the session: password change or reset, blocking, deletion.
+ * - `revoked`: ended from outside the session: password change or reset, blocking, deletion, the
+ *   person ending it from the list of their devices, an admin ending every session of the account.
  *
  * These values are stored in the column, so they must not be changed.
  */

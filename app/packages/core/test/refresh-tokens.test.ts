@@ -8,10 +8,14 @@ import {
   DeleteExpiredRefreshTokensCommand,
   GetRefreshTokenQuery,
   GetRefreshTokenQueryErrorCode,
+  GetSessionStatusQuery,
+  ListUserSessionsQuery,
   RevokeRefreshTokenCommand,
   RevokeRefreshTokenCommandErrorCode,
   RevokeSessionRefreshTokensCommand,
   RevokeUserRefreshTokensCommand,
+  RevokeUserSessionCommand,
+  RevokeUserSessionCommandErrorCode,
   StoreRefreshTokenCommand,
   StoreRefreshTokenCommandErrorCode,
   refreshTokensManager,
@@ -26,15 +30,20 @@ import {
 } from '../src/processes/forgot-password'
 import {
   DeleteUserAccountOperation,
+  RevokeUserSessionsOperation,
+  RevokeUserSessionsOperationErrorCode,
   ToggleUserActivationOperation,
   userManagementProcess,
 } from '../src/processes/user-management'
 import {
   ADMIN_EMAIL,
   HOUR,
+  MINUTE,
   PASSWORD,
+  auditRows,
   codeFromEmail,
   lastEmailTo,
+  login,
   mockAgent,
   registerConfirmedUser,
   travelBy,
@@ -42,7 +51,17 @@ import {
 
 const DAY = 24 * HOUR
 
-async function store(userId: string, sessionId = randomUUID(), expiresInMs = 30 * DAY) {
+interface Device {
+  clientId: string | null
+  userAgent: string | null
+}
+
+async function store(
+  userId: string,
+  sessionId = randomUUID(),
+  expiresInMs = 30 * DAY,
+  device: Device = { clientId: null, userAgent: null },
+) {
   const tokenId = randomUUID()
   const stored = await refreshTokensManager.execute(
     new StoreRefreshTokenCommand({
@@ -50,6 +69,7 @@ async function store(userId: string, sessionId = randomUUID(), expiresInMs = 30 
       sessionId,
       userId,
       expiresAt: new Date(Date.now() + expiresInMs),
+      ...device,
     }),
   )
   expect(stored).toEqual({ success: true })
@@ -78,7 +98,14 @@ describe('реестр: команды менеджера', () => {
     })
 
     const again = await refreshTokensManager.execute(
-      new StoreRefreshTokenCommand({ tokenId, sessionId, userId: user.id, expiresAt: new Date() }),
+      new StoreRefreshTokenCommand({
+        tokenId,
+        sessionId,
+        userId: user.id,
+        expiresAt: new Date(),
+        clientId: null,
+        userAgent: null,
+      }),
     )
     expect(again).toEqual({ success: false, error: StoreRefreshTokenCommandErrorCode.TOKEN_ALREADY_EXISTS })
     expect(await refreshTokensManager.execute(new GetRefreshTokenQuery({ tokenId: 'not-a-uuid' }))).toEqual({
@@ -173,6 +200,175 @@ describe('реестр: команды менеджера', () => {
   })
 })
 
+const listSessions = async (userId: string) => {
+  const result = await refreshTokensManager.execute(new ListUserSessionsQuery({ userId, now: new Date() }))
+  return result.sessions
+}
+
+const isSessionActive = async (sessionId: string) =>
+  (await refreshTokensManager.execute(new GetSessionStatusQuery({ sessionId }))).active
+
+describe('список сессий', () => {
+  it('цепочка ротаций — одна строка: начало по первому токену, последнее использование и клиент по последнему', async () => {
+    const user = await registerConfirmedUser()
+    const sessionId = randomUUID()
+    // A frozen clock, so that the times in the answer can be compared exactly.
+    travelBy(0)
+    const signedInAt = new Date()
+    const first = await store(user.id, sessionId, undefined, { clientId: 'ryadom-web', userAgent: 'Old UA' })
+    await refreshTokensManager.execute(
+      new RevokeRefreshTokenCommand({ tokenId: first.tokenId, reason: 'rotated', revokedAt: new Date() }),
+    )
+    travelBy(10 * MINUTE)
+    await store(user.id, sessionId, undefined, { clientId: 'ryadom-pwa', userAgent: 'New UA' })
+
+    const sessions = await listSessions(user.id)
+
+    expect(sessions).toEqual([
+      {
+        sessionId,
+        clientId: 'ryadom-pwa',
+        userAgent: 'New UA',
+        startedAt: signedInAt,
+        lastUsedAt: new Date(signedInAt.getTime() + 10 * MINUTE),
+      },
+    ])
+  })
+
+  it('самая недавняя сессия первой; чужих нет', async () => {
+    const user = await registerConfirmedUser()
+    const stranger = await registerConfirmedUser()
+    const older = await store(user.id)
+    travelBy(MINUTE)
+    const newer = await store(user.id)
+    await store(stranger.id)
+
+    expect((await listSessions(user.id)).map((s) => s.sessionId)).toEqual([newer.sessionId, older.sessionId])
+  })
+
+  it('завершённые и истёкшие сессии не показываются', async () => {
+    const user = await registerConfirmedUser()
+    const live = await store(user.id)
+    const signedOut = await store(user.id)
+    const revoked = await store(user.id)
+    await store(user.id, randomUUID(), 1 * HOUR)
+    await refreshTokensManager.execute(
+      new RevokeSessionRefreshTokensCommand({ sessionId: signedOut.sessionId, revokedAt: new Date() }),
+    )
+    await refreshTokensManager.execute(
+      new RevokeUserSessionCommand({ userId: user.id, sessionId: revoked.sessionId, revokedAt: new Date() }),
+    )
+    travelBy(2 * HOUR)
+
+    expect((await listSessions(user.id)).map((s) => s.sessionId)).toEqual([live.sessionId])
+  })
+
+  it('сессия с токеном, погашенным ротацией, жива, пока в цепочке нет завершённого', async () => {
+    const user = await registerConfirmedUser()
+    const sessionId = randomUUID()
+    const rotated = await store(user.id, sessionId)
+    await store(user.id, sessionId)
+    await refreshTokensManager.execute(
+      new RevokeRefreshTokenCommand({ tokenId: rotated.tokenId, reason: 'rotated', revokedAt: new Date() }),
+    )
+
+    expect((await listSessions(user.id)).map((s) => s.sessionId)).toEqual([sessionId])
+  })
+
+  it('у пользователя без сессий и при не-UUID список пуст', async () => {
+    const user = await registerConfirmedUser()
+    expect(await listSessions(user.id)).toEqual([])
+    expect(await listSessions('not-a-uuid')).toEqual([])
+  })
+})
+
+describe('завершение одной сессии человеком', () => {
+  it('завершает всю цепочку своей сессии, остальные остаются', async () => {
+    const user = await registerConfirmedUser()
+    const sessionId = randomUUID()
+    const rotated = await store(user.id, sessionId)
+    const current = await store(user.id, sessionId)
+    const other = await store(user.id)
+    await refreshTokensManager.execute(
+      new RevokeRefreshTokenCommand({ tokenId: rotated.tokenId, reason: 'rotated', revokedAt: new Date() }),
+    )
+
+    const result = await refreshTokensManager.execute(
+      new RevokeUserSessionCommand({ userId: user.id, sessionId, revokedAt: new Date() }),
+    )
+
+    expect(result).toEqual({ success: true })
+    // The rotated token is retired for good too, otherwise it could be exchanged during the grace window.
+    expect((await read(rotated.tokenId)).revokedReason).toBe('revoked')
+    expect((await read(current.tokenId)).revokedReason).toBe('revoked')
+    expect(await isActive(other.tokenId)).toBe(true)
+  })
+
+  it('чужая, несуществующая, уже завершённая сессия и не-UUID — SESSION_NOT_FOUND, ничего не меняется', async () => {
+    const user = await registerConfirmedUser()
+    const stranger = await registerConfirmedUser()
+    const theirs = await store(stranger.id)
+    const ended = await store(user.id)
+    await refreshTokensManager.execute(
+      new RevokeUserSessionCommand({ userId: user.id, sessionId: ended.sessionId, revokedAt: new Date() }),
+    )
+    const notFound = { success: false, error: RevokeUserSessionCommandErrorCode.SESSION_NOT_FOUND }
+    const end = (userId: string, sessionId: string) =>
+      refreshTokensManager.execute(new RevokeUserSessionCommand({ userId, sessionId, revokedAt: new Date() }))
+
+    expect(await end(user.id, theirs.sessionId)).toEqual(notFound)
+    expect(await end(user.id, randomUUID())).toEqual(notFound)
+    expect(await end(user.id, ended.sessionId)).toEqual(notFound)
+    expect(await end(user.id, 'not-a-uuid')).toEqual(notFound)
+    expect(await end('not-a-uuid', theirs.sessionId)).toEqual(notFound)
+    expect(await isActive(theirs.tokenId)).toBe(true)
+  })
+})
+
+describe('состояние сессии', () => {
+  it('живая сессия активна, в том числе в миг ротации, когда прежний токен уже погашен, а следующего ещё нет', async () => {
+    const user = await registerConfirmedUser()
+    const sessionId = randomUUID()
+    const first = await store(user.id, sessionId)
+    expect(await isSessionActive(sessionId)).toBe(true)
+
+    await refreshTokensManager.execute(
+      new RevokeRefreshTokenCommand({ tokenId: first.tokenId, reason: 'rotated', revokedAt: new Date() }),
+    )
+    expect(await isSessionActive(sessionId)).toBe(true)
+  })
+
+  it('выход, отзыв одной сессии и отзыв всех завершают сессию', async () => {
+    const user = await registerConfirmedUser()
+    const signedOut = await store(user.id)
+    const revokedOne = await store(user.id)
+    const revokedAll = await store(user.id)
+    await refreshTokensManager.execute(
+      new RevokeSessionRefreshTokensCommand({ sessionId: signedOut.sessionId, revokedAt: new Date() }),
+    )
+    await refreshTokensManager.execute(
+      new RevokeUserSessionCommand({
+        userId: user.id,
+        sessionId: revokedOne.sessionId,
+        revokedAt: new Date(),
+      }),
+    )
+    expect(await isSessionActive(revokedAll.sessionId)).toBe(true)
+    await refreshTokensManager.execute(
+      new RevokeUserRefreshTokensCommand({ userId: user.id, exceptSessionId: null, revokedAt: new Date() }),
+    )
+
+    expect(await isSessionActive(signedOut.sessionId)).toBe(false)
+    expect(await isSessionActive(revokedOne.sessionId)).toBe(false)
+    expect(await isSessionActive(revokedAll.sessionId)).toBe(false)
+  })
+
+  it('неизвестная сессия и не-UUID не активны', async () => {
+    expect(await isSessionActive(randomUUID())).toBe(false)
+    expect(await isSessionActive('not-a-uuid')).toBe(false)
+  })
+})
+
 describe('сценарии, которые завершают сессии', () => {
   it('смена пароля завершает остальные сессии, а текущая продолжает работать', async () => {
     const user = await registerConfirmedUser()
@@ -255,6 +451,54 @@ describe('сценарии, которые завершают сессии', () 
 
     await toggle()
     expect(await isActive(session.tokenId)).toBe(false)
+  })
+
+  it('админ завершает все сессии: аккаунт остаётся активным, вход возможен, действие в журнале', async () => {
+    const user = await registerConfirmedUser()
+    const stranger = await registerConfirmedUser()
+    const first = await store(user.id)
+    const second = await store(user.id)
+    const strangers = await store(stranger.id)
+
+    const result = await userManagementProcess.execute(
+      new RevokeUserSessionsOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
+    )
+
+    expect(result).toEqual({ success: true })
+    expect((await read(first.tokenId)).revokedReason).toBe('revoked')
+    expect((await read(second.tokenId)).revokedReason).toBe('revoked')
+    expect(await isActive(strangers.tokenId)).toBe(true)
+    expect((await login(user.email)).success).toBe(true)
+    const [entry, ...rest] = await auditRows()
+    expect(rest).toEqual([])
+    expect(entry).toMatchObject({
+      action: 'USER_SESSIONS_REVOKED',
+      adminEmail: ADMIN_EMAIL,
+      targetUserId: user.id,
+      targetEmail: user.email,
+    })
+  })
+
+  it('завершить сессии несуществующего или удалённого аккаунта нельзя, в журнал ничего не пишется', async () => {
+    mockAgent()
+    const deleted = await registerConfirmedUser()
+    await userManagementProcess.execute(
+      new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: deleted.id }),
+    )
+    const before = (await auditRows()).length
+
+    const revoke = (userId: string) =>
+      userManagementProcess.execute(new RevokeUserSessionsOperation({ adminEmail: ADMIN_EMAIL, userId }))
+
+    expect(await revoke(deleted.id)).toEqual({
+      success: false,
+      error: RevokeUserSessionsOperationErrorCode.USER_DELETED,
+    })
+    expect(await revoke(randomUUID())).toEqual({
+      success: false,
+      error: RevokeUserSessionsOperationErrorCode.USER_NOT_FOUND,
+    })
+    expect(await auditRows()).toHaveLength(before)
   })
 
   it('удаление аккаунта (самим человеком и админом) завершает сессии', async () => {

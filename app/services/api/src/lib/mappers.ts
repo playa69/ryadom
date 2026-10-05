@@ -1,7 +1,9 @@
+import type { SessionDTO } from '@ryadom/core/managers/refresh-tokens-manager'
 import type { UserDTO } from '@ryadom/core/processes/authentication'
 import type { ConsentStatusDTO } from '@ryadom/core/processes/consents'
 import type { DialogDTO, DialogListItemDTO, DialogSummaryDTO } from '@ryadom/core/processes/dialogs'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
+import { SessionClient, type SessionApiResponse } from '@ryadom/contracts/api/auth/sessions'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
 import {
   DialogMode,
@@ -9,6 +11,7 @@ import {
   type DialogListItemApiResponse,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
+import { describeUserAgent } from './user-agent'
 
 /**
  * Mappers from core DTOs to route responses. Core DTOs never leave the server and
@@ -28,6 +31,31 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     createdAt: user.createdAt.toISOString(),
     consentsCompleted: consent.completed,
     consentVersion: consent.offerVersion,
+  }
+}
+
+/** What the clients put in `x-client-id` (`ryadom-web`, `ryadom-pwa`, `ryadom-android`, `ryadom-ios`). */
+const SESSION_CLIENTS: Record<string, SessionClient> = {
+  'ryadom-web': SessionClient.Web,
+  'ryadom-pwa': SessionClient.Pwa,
+  'ryadom-android': SessionClient.Android,
+  'ryadom-ios': SessionClient.Ios,
+}
+
+export function toSession(session: SessionDTO, currentSessionId: string | null): SessionApiResponse {
+  const { browser, os } = describeUserAgent(session.userAgent)
+  return {
+    id: session.sessionId,
+    current: session.sessionId === currentSessionId,
+    // Own property only: a client id of "constructor" must not find a function on the prototype.
+    client:
+      session.clientId !== null && Object.hasOwn(SESSION_CLIENTS, session.clientId)
+        ? SESSION_CLIENTS[session.clientId]!
+        : null,
+    browser,
+    os,
+    startedAt: session.startedAt.toISOString(),
+    lastUsedAt: session.lastUsedAt.toISOString(),
   }
 }
 

@@ -21,6 +21,8 @@ export class StoreRefreshTokenCommandHandler implements RequestHandler<
         sessionId: command.sessionId,
         userId: command.userId,
         expiresAt: command.expiresAt,
+        clientId: command.clientId,
+        userAgent: command.userAgent,
         createdAt: new Date(),
       })
       .onConflictDoNothing({ target: refreshTokens.id })
