@@ -20,9 +20,28 @@ from app.services.dialog_store import DialogStore
 logger = logging.getLogger("agent")
 
 
+class SkipServiceEndpoints(logging.Filter):
+    """Служебные эндпоинты не пишутся в access-лог (specs/agent-api «Служебные эндпоинты»)."""
+
+    PREFIXES = ("/health", "/version")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access: args = (клиент, метод, путь, версия HTTP, статус)
+        args = record.args
+        path = str(args[2]).split("?")[0] if isinstance(args, tuple) and len(args) >= 3 else ""
+        return not path.startswith(self.PREFIXES)
+
+
+def _quiet_service_endpoints() -> None:
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, SkipServiceEndpoints) for f in access.filters):
+        access.addFilter(SkipServiceEndpoints())
+
+
 def create_app(tts_factory: Callable[[], TextToSpeech | None] | None = None) -> FastAPI:
     """Собирает FastAPI-приложение. `tts_factory` подменяют тесты; по умолчанию озвучка берётся из конфига."""
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    _quiet_service_endpoints()
     factory = tts_factory or (lambda: build_tts(APP_CONFIG.speech))
 
     @asynccontextmanager

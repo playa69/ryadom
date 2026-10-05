@@ -147,3 +147,35 @@ def test_dev_tts_provider_failure_is_503():
         response = client.get("/dev/tts", params={"text": "Привет"}, headers=AUTH)
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "VOICE_UNAVAILABLE"
+
+
+# ─── access-лог ───────────────────────────────────────────────────────────────
+
+
+def _access_record(path: str):
+    import logging
+
+    return logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0, '%s - "%s %s HTTP/%s" %d', ("127.0.0.1:1", "GET", path, "1.1", 200), None
+    )
+
+
+def test_service_endpoints_are_not_written_to_the_access_log():
+    from app.main import SkipServiceEndpoints
+
+    keep = SkipServiceEndpoints()
+    for path in ("/health", "/health/ready", "/version", "/health?x=1"):
+        assert keep.filter(_access_record(path)) is False, path
+    for path in ("/v1/users/u/dialogs", "/dev/tts?text=a", "/"):
+        assert keep.filter(_access_record(path)) is True, path
+
+
+def test_access_log_filter_is_installed_once():
+    import logging
+
+    from app.main import SkipServiceEndpoints, create_app
+
+    create_app()
+    create_app()
+    installed = [f for f in logging.getLogger("uvicorn.access").filters if isinstance(f, SkipServiceEndpoints)]
+    assert len(installed) == 1

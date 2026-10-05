@@ -22,7 +22,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY app ./app
 
-RUN useradd --system --uid 10001 --no-create-home agent
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin agent
 USER agent
 
 EXPOSE 8001

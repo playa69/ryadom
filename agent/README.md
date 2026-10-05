@@ -30,7 +30,7 @@ AGENT_INTERNAL_TOKEN=<токен> uv run uvicorn app.main:app --port 8001
 ## Проверка
 
 ```bash
-uv run pytest                                   # 57 тестов: REST, WebSocket, голос, озвучка, провайдеры речи
+uv run pytest                                   # 59 тестов: REST, WebSocket, голос, озвучка, провайдеры речи
 uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> --wav reply.wav
 ```
 
