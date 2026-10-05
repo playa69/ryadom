@@ -30,7 +30,11 @@
 - Домен: `слышу-рядом.рф` (punycode `xn----htbtgjker8b3a2c.xn--p1ai`).
   Делегирован с reg.ru на `ns1.yandexcloud.net` / `ns2.yandexcloud.net`.
 - Записи: корневая A → `185.207.64.68` (нода worker-192.168.0.5 кластера Timeweb,
-  единая точка входа istio-gateway). Поддоменов нет, routing path-based.
+  единая точка входа istio-gateway). Поддоменов нет, routing path-based; сервисы
+  из `app/` тоже на корне по путям (`/api`, `/app`, `/admin`; см.
+  `README.md`, раздел «Сервисы из app/»), отдельных A-записей не нужно. Для почты
+  (Postbox) в этой же зоне — 2 CNAME DKIM, TXT SPF на корне и TXT `_dmarc`
+  (список и значения — `README.md`, «DNS и почта: что сделать руками»).
 - Сервисный аккаунт `ryadom-dns` (dns.editor), authorized key —
   `~/.config/ryadom/dns-authorized-key.json`. Создавался под lego DNS-01;
   сейчас сертификаты выпускает cert-manager по HTTP-01, SA оставлен про запас

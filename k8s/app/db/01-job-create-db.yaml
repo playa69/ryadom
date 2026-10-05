@@ -1,0 +1,99 @@
+# =============================================================================
+# Job: роль app + база app (+ citext) в CNPG-кластере ryadom-db
+# =============================================================================
+# Запускать ПОСЛЕ создания Secret app-db-credentials (ключ password, в ns
+# ryadom-db; значение хранится локально у администратора) и когда кластер
+# ryadom-db healthy:
+#   kubectl -n ryadom-db wait --for=condition=ready pod -l cnpg.io/cluster=ryadom-db
+#   kubectl apply -f k8s/app/db/01-job-create-db.yaml
+#   kubectl -n ryadom-db wait --for=condition=complete job/create-app-db
+#
+# Подключается суперпользователем postgres (Secret ryadom-db-superuser) — по
+# образцу k8s/langfuse/manifests/01-job-create-db.yaml; SA db-jobs уже создан
+# тем манифестом (здесь не пересоздаём, чтобы не затронуть чужой ресурс).
+#
+# Что делает (идемпотентно, ТОЛЬКО роль app и база app, чужие базы не трогает):
+#   1. CREATE ROLE app LOGIN, если нет; пароль всегда выравнивается с Secret
+#      (Secret — источник правды: пересоздали секрет → перезапустили Job);
+#   2. CREATE DATABASE app OWNER app, если нет;
+#   3. CREATE EXTENSION IF NOT EXISTS citext в базе app. Миграция 0000
+#      (app/packages/db/migrations) тоже делает это, но на серверах citext
+#      должен создать суперпользователь заранее (в доверенных расширениях
+#      PG16 он есть, но не будем полагаться на права владельца).
+# Повторный прогон: удалить старый Job (kubectl -n ryadom-db delete job
+# create-app-db) и применить заново.
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-app-db
+  namespace: ryadom-db
+  labels:
+    app: app
+    component: db-init
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: app
+        component: db-init
+    spec:
+      serviceAccountName: db-jobs
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: registry-pull
+      containers:
+        - name: psql
+          # Образ из зеркала cr.yandex (см. k8s/README.md «Реестр образов»)
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/library/postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              export PGPASSWORD="${POSTGRES_PASSWORD}"
+              HOST=ryadom-db-rw.ryadom-db.svc.cluster.local
+              psql_admin() { psql -h "$HOST" -U "$POSTGRES_USER" -v ON_ERROR_STOP=1 "$@"; }
+
+              # 1. Роль app (пароль из Secret; psql подставляет :'pw' из stdin)
+              if ! psql_admin -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'app'" | grep -q 1; then
+                echo "CREATE ROLE app LOGIN" | psql_admin -d postgres
+              fi
+              echo "ALTER ROLE app WITH LOGIN PASSWORD :'pw'" | psql_admin -d postgres -v pw="$APP_PASSWORD"
+
+              # 2. База app
+              if ! psql_admin -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'app'" | grep -q 1; then
+                psql_admin -d postgres -c "CREATE DATABASE app OWNER app"
+              fi
+
+              # 3. citext в базе app
+              psql_admin -d app -c "CREATE EXTENSION IF NOT EXISTS citext"
+              echo "OK: role app, database app, extension citext"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: password
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-db-credentials
+                  key: password
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"

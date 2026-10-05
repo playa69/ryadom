@@ -1,4 +1,4 @@
-import { AgentUnavailableError } from '@ryadom/core/shared'
+import { AgentUnavailableError, resolveClientIp } from '@ryadom/core/shared'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
@@ -40,6 +40,16 @@ export function createApp(deps: AppDeps, pwaRoot?: string | null): Hono<AppEnv> 
   const app = new Hono<AppEnv>()
 
   app.use('*', tracing())
+
+  // The client address for the per-IP rate limits: the entry the trusted proxy appended to
+  // X-Forwarded-For (TRUSTED_PROXY_HOPS), not the one the client wrote.
+  app.use('*', async (c, next) => {
+    c.set(
+      'clientIp',
+      resolveClientIp(c.req.header('X-Forwarded-For'), c.req.header('X-Real-IP'), deps.env.TRUSTED_PROXY_HOPS),
+    )
+    await next()
+  })
 
   app.use('*', async (c, next) => {
     const started = performance.now()

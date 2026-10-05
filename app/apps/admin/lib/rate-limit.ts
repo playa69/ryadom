@@ -1,6 +1,8 @@
 import 'server-only'
 
 import { headers } from 'next/headers'
+import { resolveClientIp } from '@ryadom/core/shared'
+import { adminEnv } from './env'
 
 /**
  * Rate limits for the login screen, the only thing reachable without a cookie. In-memory and
@@ -31,10 +33,12 @@ export function hitLimit(key: string, rule: { limit: number; windowMs: number })
   return hits.length <= rule.limit
 }
 
-/** The address the reverse proxy reports; without a proxy header everything shares one bucket. */
+/**
+ * The address our own reverse proxy reports (the entry it appended to X-Forwarded-For, see
+ * `TRUSTED_PROXY_HOPS`), not the first one, which the client writes itself. Without a proxy header
+ * everything shares one bucket.
+ */
 export async function clientIp(): Promise<string> {
   const store = await headers()
-  const forwarded = store.get('x-forwarded-for')
-  if (forwarded) return forwarded.split(',')[0]!.trim()
-  return store.get('x-real-ip')?.trim() || 'unknown'
+  return resolveClientIp(store.get('x-forwarded-for'), store.get('x-real-ip'), adminEnv().TRUSTED_PROXY_HOPS)
 }

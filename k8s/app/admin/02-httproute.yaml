@@ -1,0 +1,38 @@
+# =============================================================================
+# HTTPRoute app-admin — /admin на корневом домене (ns prod)
+# =============================================================================
+# Админка публикуется по пути /admin на корневом хосте (listener https, сертификат
+# ryadom-tls). Образ собран под этот префикс (Next basePath=/admin, build-arg
+# BASE_PATH), поэтому переписывать пути в gateway не нужно. Cookie сессии админа
+# ограничена path=/admin и не уходит ни на landing, ни в API, ни в web-клиент.
+#
+# Вход — по коду из письма и списку ADMIN_EMAILS (пусто = войти не может никто).
+# Админка доступна из интернета и защищена только приложением. При желании сузить
+# по IP — добавить Istio AuthorizationPolicy на istio-ingressgateway (отдельной
+# задачей).
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-admin
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: admin
+      matches:
+        - path:
+            type: PathPrefix
+            value: /admin
+      backendRefs:
+        - name: app-admin
+          port: 80

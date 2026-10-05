@@ -1,0 +1,24 @@
+# =============================================================================
+# Service app-landing — ClusterIP перед Deployment app-landing (ns prod)
+# =============================================================================
+# Порт 80 → 3000 (Next.js standalone). Имя порта http — для HTTPRoute.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-landing
+  namespace: prod
+  labels:
+    app: app-landing
+    app.kubernetes.io/part-of: ryadom
+spec:
+  type: ClusterIP
+  selector:
+    app: app-landing
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 3000

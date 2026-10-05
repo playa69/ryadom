@@ -224,6 +224,13 @@ describe('настройка из env', () => {
     REDIS_MASTER_NAME: undefined,
   }
 
+  it('TRUSTED_PROXY_HOPS по умолчанию 1 (один прокси перед сервисом)', () => {
+    expect(parseEnv(base).TRUSTED_PROXY_HOPS).toBe(1)
+    expect(parseEnv({ ...base, TRUSTED_PROXY_HOPS: '2' }).TRUSTED_PROXY_HOPS).toBe(2)
+    expect(parseEnv({ ...base, TRUSTED_PROXY_HOPS: '0' }).TRUSTED_PROXY_HOPS).toBe(0)
+    expect(parseEnv({ ...base, TRUSTED_PROXY_HOPS: '' }).TRUSTED_PROXY_HOPS).toBe(1)
+  })
+
   it('по умолчанию Redis выключен, клиент не создаётся', async () => {
     const env = parseEnv(base)
     expect(env.REDIS_ENABLED).toBeUndefined()

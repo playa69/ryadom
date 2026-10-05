@@ -1,6 +1,7 @@
 import { createClient, type ClientConfig, type RyadomClient } from '@ryadom/client-core/client'
 import { createLocalSessionStorage } from '@ryadom/client-core/storage'
 import { toWsBase } from './api-url'
+import { WEB_STORAGE_PREFIX, WEB_USER_KEY } from './storage-keys'
 
 type Handlers = Pick<ClientConfig, 'onAccountUnavailable' | 'onSessionEnd' | 'onUpgradeRequired'>
 
@@ -9,7 +10,9 @@ export function createWebClient(apiBase: string, handlers: () => Handlers): Ryad
   return createClient({
     apiBase: () => apiBase,
     wsBase: () => toWsBase(apiBase),
-    storage: createLocalSessionStorage(),
+    // Own keys (`ryadom.web.*`): the PWA shares this origin under `/app` and must not read or
+    // overwrite this client's session (see lib/storage-keys.ts).
+    storage: createLocalSessionStorage(WEB_STORAGE_PREFIX, WEB_USER_KEY),
     clientId: 'ryadom-web',
     // Called through a ref-backed getter so the handlers may change without re-creating the client.
     onAccountUnavailable: (code) => handlers().onAccountUnavailable?.(code),

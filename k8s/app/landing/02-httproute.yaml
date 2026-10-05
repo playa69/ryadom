@@ -1,0 +1,39 @@
+# =============================================================================
+# HTTPRoute app-landing — корневой домен: маркетинг и документы (ns prod)
+# =============================================================================
+# Корень xn----htbtgjker8b3a2c.xn--p1ai (слышу-рядом.рф) → landing на PathPrefix /.
+# Цепляется к СУЩЕСТВУЮЩЕМУ listener https (корневой хост, сертификат ryadom-tls).
+#
+# Сосуществует с остальными роутами на этом хосте: при матче побеждает более
+# длинный префикс, поэтому /api/v1/* уходит в Python backend, /api/* — в app-api,
+# /app/* — в app-web, /admin/* — в app-admin, а всё остальное — сюда.
+# Служебные пути backend (/health, /metrics, /docs) снаружи недоступны и так:
+# вместо 404 от gateway их отдаст 404 landing.
+# NB: пути landing (/privacy, /terms, /download, /delete-account, /android,
+# /robots.txt) не должны совпадать с префиксами выше — сейчас не совпадают.
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-landing
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: landing
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: app-landing
+          port: 80

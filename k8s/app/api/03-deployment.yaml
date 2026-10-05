@@ -1,0 +1,169 @@
+# =============================================================================
+# Deployment app-api — Node API + WebSocket-шлюз + PWA (ns prod)
+# =============================================================================
+# Образ app/api (app/services/api/Dockerfile; build-args PWA_BASE_PATH и VITE_PROD_* —
+# см. k8s/README.md, «Сборка и push образов»). Перед первым rollout должен завершиться
+# Job миграций (db/02-job-migrate.yaml).
+#
+# 1 реплика: ресурсов в кластере впритык. Лимиты запросов считаются в Redis
+# (REDIS_ENABLED=true, общие для реплик), поэтому replicas можно поднимать
+# без размножения лимитов, когда хватит ресурсов.
+#
+# Пробы — только httpGet: NetworkPolicy пускает kubelet лишь на :15020
+# (istio переписывает httpGet-пробы на pilot-agent), tcpSocket на :3002 был бы
+# заблокирован. readiness по /api/health: 503, пока БД недоступна и пока под
+# останавливается (draining) — балансировщик снимает его с трафика.
+# liveness тоже /api/health, но терпимая (6×20с = 2 мин сбоя БД до рестарта).
+#
+# readOnlyRootFilesystem + emptyDir /tmp. Если под упадёт с EROFS — это
+# приложение пишет в файловую систему: найти путь в логах и добавить emptyDir.
+# terminationGracePeriodSeconds 60: на SIGTERM api отвечает 503 на health,
+# закрывает сокеты и завершает работу (lib/shutdown.ts).
+# =============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-api
+  namespace: prod
+  labels:
+    app: app-api
+    app.kubernetes.io/part-of: ryadom
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: app-api
+  template:
+    metadata:
+      labels:
+        app: app-api
+    spec:
+      terminationGracePeriodSeconds: 60
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        # node:alpine → USER node (uid 1000); числовой uid нужен kubelet'у
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/api:0.2.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 3002
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PORT
+              value: "3002"
+            # DATABASE_URL собирается из несекретных DB_* (ConfigMap app-config) и
+            # DB_PASSWORD (Secret). Порядок важен: $(VAR) раскрывается только для
+            # переменных, объявленных ВЫШЕ в этом списке env.
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: AUTH_SECRET
+            - name: MOBILE_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MOBILE_JWT_SECRET
+            # Пароль Redis (копия redis-credentials; нужен и Sentinel'ам, и мастеру)
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: REDIS_PASSWORD
+            # Токен агента: пусто = заголовок Authorization к агенту не шлётся
+            - name: AGENT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: AGENT_API_TOKEN
+                  optional: true
+            # Пароль SMTP появится, когда будет провайдер почты (app-smtp, опц.); логин — SMTP_USER в app-config
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-smtp
+                  key: SMTP_PASSWORD
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 3002
+            periodSeconds: 3
+            failureThreshold: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3002
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3002
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}

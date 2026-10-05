@@ -1,0 +1,24 @@
+# =============================================================================
+# Service app-web — ClusterIP перед Deployment app-web (ns prod)
+# =============================================================================
+# Порт 80 → 3003 (Next.js standalone). Имя порта http — для HTTPRoute.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-web
+  namespace: prod
+  labels:
+    app: app-web
+    app.kubernetes.io/part-of: ryadom
+spec:
+  type: ClusterIP
+  selector:
+    app: app-web
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 3003

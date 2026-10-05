@@ -27,21 +27,48 @@ const API_PROXY_TARGET = process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:3002'
 /**
  * PWA tags, web build only: store builds set these themselves through Capacitor and the platform
  * manifest, where extra apple-* tags mean nothing.
+ *
+ * The two URLs are written here, after Vite has rewritten the asset URLs of index.html, so they are
+ * NOT rebased by it: they are built from the resolved `base` (`/` or the prefix the PWA is
+ * published under, e.g. `/pwa/`).
  */
 function webIndexHtmlPlugin(): Plugin {
-  const tags = [
-    '<link rel="manifest" href="/manifest.webmanifest">',
-    '<link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png">',
-    '<meta name="mobile-web-app-capable" content="yes">',
-    '<meta name="apple-mobile-web-app-capable" content="yes">',
-    // black-translucent lets content run under the status bar, as in the native build.
-    '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">',
-    '<meta name="apple-mobile-web-app-title" content="Рядом">',
-  ].join('\n    ')
+  let base = '/'
   return {
     name: 'ryadom-web-index-html',
-    transformIndexHtml: (html) => html.replace('</head>', `    ${tags}\n  </head>`),
+    configResolved(config) {
+      base = config.base
+    },
+    transformIndexHtml: (html) => {
+      const tags = [
+        `<link rel="manifest" href="${base}manifest.webmanifest">`,
+        `<link rel="apple-touch-icon" href="${base}apple-touch-icon-180x180.png">`,
+        '<meta name="mobile-web-app-capable" content="yes">',
+        '<meta name="apple-mobile-web-app-capable" content="yes">',
+        // black-translucent lets content run under the status bar, as in the native build.
+        '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">',
+        '<meta name="apple-mobile-web-app-title" content="Рядом">',
+      ].join('\n    ')
+      return html.replace('</head>', `    ${tags}\n  </head>`)
+    },
   }
+}
+
+/**
+ * The URL prefix of the web build (`PWA_BASE`, e.g. `/pwa`): the PWA is published under it on a
+ * host shared with other apps, and every asset URL, the service worker and the manifest are
+ * resolved against it. Returns Vite's form, with a slash on both ends; `/` is a host of its own.
+ *
+ * Only the web build has a prefix. The store builds and the OTA bundles (`--mode prod|dev`) run
+ * from the WebView at `https://localhost/` and must keep `/`.
+ */
+function readWebBase(value: string | undefined): string {
+  const trimmed = (value ?? '').trim().replace(/^\/+|\/+$/g, '')
+  if (!trimmed) return '/'
+  if (!/^[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(trimmed)) {
+    throw new Error(`PWA_BASE must look like "/pwa" (got "${value}")`)
+  }
+  return `/${trimmed}/`
 }
 
 function pickViteVars(source: NodeJS.ProcessEnv): Record<string, string> {
@@ -69,6 +96,8 @@ export default defineConfig(({ command, mode }) => {
   }
 
   return {
+    // Web build only (see readWebBase); the store and OTA builds are served from the WebView root.
+    base: isWeb ? readWebBase(process.env.PWA_BASE) : '/',
     plugins: [
       react(),
       isWeb && webIndexHtmlPlugin(),

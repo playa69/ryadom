@@ -1,0 +1,150 @@
+# =============================================================================
+# Deployment app-admin — админ-панель (Next.js standalone, ns prod)
+# =============================================================================
+# Образ app/admin (app/apps/admin/Dockerfile). Нужны БД (та же app), AUTH_SECRET
+# (подпись cookie сессии админа), ADMIN_EMAILS и агент (стирание данных при
+# удалении аккаунта; пока плейсхолдер — см. 00-app-config.yaml).
+#
+# Пробы и securityContext — как в api/03-deployment.yaml (httpGet на :15020
+# через istio, числовой uid 1000). Next пишет кэш в .next/cache → emptyDir
+# поверх read-only root FS.
+# =============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-admin
+  namespace: prod
+  labels:
+    app: app-admin
+    app.kubernetes.io/part-of: ryadom
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: app-admin
+  template:
+    metadata:
+      labels:
+        app: app-admin
+    spec:
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: admin
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/admin:0.2.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 3001
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: app-config
+            # ADMIN_EMAILS — несекретный список админов, только для админки
+            - configMapRef:
+                name: app-admin-config
+          env:
+            - name: PORT
+              value: "3001"
+            # DATABASE_URL собирается из несекретных DB_* (ConfigMap app-config) и
+            # DB_PASSWORD (Secret). Порядок важен: $(VAR) раскрывается только для
+            # переменных, объявленных ВЫШЕ в этом списке env.
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: AUTH_SECRET
+            - name: AGENT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: AGENT_API_TOKEN
+                  optional: true
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-smtp
+                  key: SMTP_PASSWORD
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /admin/api/health
+              port: 3001
+            periodSeconds: 3
+            failureThreshold: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /admin/api/health
+              port: 3001
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /admin/api/health
+              port: 3001
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/apps/admin/.next/cache
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 384Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}

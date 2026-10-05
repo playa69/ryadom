@@ -1,0 +1,40 @@
+# =============================================================================
+# HTTPRoute app-web — /app на корневом домене: клиент после входа (ns prod)
+# =============================================================================
+# apps/web — залогиненный веб-клиент. Публикуется по пути /app на корневом хосте
+# (listener https, сертификат ryadom-tls); образ собран под этот префикс (Next
+# basePath=/app, build-arg BASE_PATH), переписывать пути в gateway не нужно.
+# PWA (apps/mobile) по путям не публикуется: его только скачивают (landing, /download).
+# В API ходит на тот же origin (PUBLIC_API_URL = origin корня, пути /api/*), так
+# что CORS не задействован.
+#
+# Хранилище браузера (localStorage) принадлежит ORIGIN'у, а не пути, поэтому клиенты на
+# одном хосте делили бы его ключи. Чтобы не затирать сессии друг друга, web пишет в
+# собственное пространство имён ryadom.web.* (apps/web/lib/storage-keys.ts), а PWA и
+# нативные сборки сохраняют прежние ключи ryadom_*.
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-web
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: web
+      matches:
+        - path:
+            type: PathPrefix
+            value: /app
+      backendRefs:
+        - name: app-web
+          port: 80

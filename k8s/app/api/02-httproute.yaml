@@ -1,0 +1,43 @@
+# =============================================================================
+# HTTPRoute app-api — /api на корневом домене (ns prod)
+# =============================================================================
+# Всё публикуется на ОДНОМ хосте по путям; api отвечает за префикс /api: REST,
+# WebSocket-шлюз к агенту (/api/dialogs/ws), раздача OTA-бандлов (/api/ota).
+# PWA по путям НЕ публикуется (его только скачивают), поэтому маршрута на неё нет;
+# сборка PWA лежит в образе api, но снаружи не достижима. /app занят веб-клиентом.
+#
+# Приоритет совпадения (побеждает самый длинный префикс):
+#   /api/v1/*  → Python backend (k8s/backend/02-httproute.yaml, ns backend)
+#   /api/*     → этот роут (Node api; его пути /api/auth, /api/dialogs, ... с /api/v1
+#                не пересекаются)
+#   /app/*     → app-web (веб-клиент)
+#   всё прочее → landing (корень)
+# Цепляется к СУЩЕСТВУЮЩЕМУ listener https (корневой хост, сертификат ryadom-tls):
+# новых listener'ов, сертификатов и DNS-записей не нужно. WebSocket через Istio
+# Gateway работает из коробки (upgrade).
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-api
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: api
+      matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: app-api
+          port: 80

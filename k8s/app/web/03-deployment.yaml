@@ -1,0 +1,98 @@
+# =============================================================================
+# Deployment app-web — веб-клиент (Next.js standalone, ns prod)
+# =============================================================================
+# Образ app/web (app/apps/web/Dockerfile). Без БД и секретов: нужны только
+# PUBLIC_API_URL и PUBLIC_WEB_URL (читаются на каждый запрос, не вшиваются в
+# сборку — один образ для любого окружения). Берутся из ConfigMap app-config.
+#
+# Пробы и securityContext — как в api/03-deployment.yaml.
+# =============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-web
+  namespace: prod
+  labels:
+    app: app-web
+    app.kubernetes.io/part-of: ryadom
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: app-web
+  template:
+    metadata:
+      labels:
+        app: app-web
+    spec:
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/web:0.2.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 3003
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PORT
+              value: "3003"
+          startupProbe:
+            httpGet:
+              path: /app/api/health
+              port: 3003
+            periodSeconds: 3
+            failureThreshold: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /app/api/health
+              port: 3003
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /app/api/health
+              port: 3003
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/apps/web/.next/cache
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}

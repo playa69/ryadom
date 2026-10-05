@@ -113,6 +113,17 @@ describe('вход по устройству', () => {
     expect((await deviceLogin(device, { 'X-Forwarded-For': '203.0.113.8' })).status).toBe(200)
   })
 
+  it('частоту нельзя обойти подменой X-Forwarded-For: считается адрес, дописанный прокси', async () => {
+    resetLimits()
+    const device = newDevice()
+    // The proxy appends the address it accepted the connection from; whatever stands before it
+    // the client wrote itself, and a new fake value on every request must not give a new bucket.
+    const spoofed = (i: number) => ({ 'X-Forwarded-For': `198.51.100.${i}, 203.0.113.7` })
+
+    for (let i = 0; i < 30; i++) expect((await deviceLogin(device, spoofed(i))).status).toBe(200)
+    expect((await deviceLogin(device, spoofed(99))).status).toBe(429)
+  })
+
   it('смена пароля у аккаунта без пароля — понятный отказ, а не сбой', async () => {
     resetLimits()
     const { tokens } = ok(await deviceLogin(newDevice()))

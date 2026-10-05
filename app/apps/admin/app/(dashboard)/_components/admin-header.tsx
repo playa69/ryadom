@@ -1,5 +1,6 @@
 import { LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { appPath } from '@/lib/base-path'
 
 export function AdminHeader({ email }: { email: string }) {
   return (
@@ -9,7 +10,7 @@ export function AdminHeader({ email }: { email: string }) {
         <div className="text-xs text-gray-500">Администратор</div>
       </div>
       {/* A POST form, not a link: a GET would let a foreign page sign the admin out with an image tag. */}
-      <form action="/logout" method="post">
+      <form action={appPath('/logout')} method="post">
         <Button
           type="submit"
           variant="ghost"

@@ -46,6 +46,18 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
+      // The home page. Under a basePath (`/app`) Next puts the prefix in front of every source, so
+      // the pattern below becomes `/app/((?!…).*)` and does not match `/app` itself: the home page
+      // would be served with no CSP and no nonce, and this app keeps the refresh token in
+      // localStorage, which the CSP is what protects. `/` is the one source Next maps to the bare
+      // prefix. (The values are literals: Next reads this config statically, no shared constants.)
+      source: '/',
+      missing: [
+        { type: 'header', key: 'next-router-prefetch' },
+        { type: 'header', key: 'purpose', value: 'prefetch' },
+      ],
+    },
+    {
       // The liveness probe is JSON: it needs no nonce and must answer even if this function is broken.
       source: '/((?!api/health|_next/static|_next/image|favicon.svg|voice-worklet.js).*)',
       missing: [

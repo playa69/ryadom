@@ -39,11 +39,23 @@ function frameFor(sequence: number, samples: Int16Array): ArrayBuffer {
   return buffer
 }
 
+export interface StartCaptureOptions {
+  /**
+   * Where the page serves `voice-worklet.js` from. The default is the root of the origin; a client
+   * published under a URL prefix (`/web`, `/app`) passes its own, because a root-absolute URL would
+   * land on whatever else is served at `/`.
+   */
+  workletUrl?: string
+}
+
 /**
  * Starts capture and pushes frames to `onFrame`. The browser or the OS asks for permission; a
  * refusal arrives as `MicrophoneDeniedError`, and the screen explains what to do next.
  */
-export async function startCapture(onFrame: (frame: ArrayBuffer) => void): Promise<VoiceCapture> {
+export async function startCapture(
+  onFrame: (frame: ArrayBuffer) => void,
+  options: StartCaptureOptions = {},
+): Promise<VoiceCapture> {
   let stream: MediaStream
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -59,7 +71,7 @@ export async function startCapture(onFrame: (frame: ArrayBuffer) => void): Promi
   try {
     const audio = new AudioContext()
     created = audio
-    await audio.audioWorklet.addModule('/voice-worklet.js')
+    await audio.audioWorklet.addModule(options.workletUrl ?? '/voice-worklet.js')
     const source = audio.createMediaStreamSource(stream)
     const worklet = new AudioWorkletNode(audio, 'ryadom-capture', { numberOfOutputs: 0 })
 

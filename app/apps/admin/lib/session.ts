@@ -4,6 +4,7 @@ import { isAdminEmail as isAdminEmailInEnv } from '@ryadom/core/config'
 import { jwtVerify, SignJWT } from 'jose'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { BASE_PATH } from '@/lib/base-path'
 import { adminEnv } from '@/lib/env'
 
 /**
@@ -43,7 +44,9 @@ export function adminSessionCookieOptions(maxAge = ADMIN_COOKIE_MAX_AGE) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax' as const,
     maxAge,
-    path: '/',
+    // Scoped to the admin's own prefix on a shared host, so the session cookie is not sent to the
+    // landing, the API or the web client that live on the same origin. `/` on a host of its own.
+    path: BASE_PATH || '/',
   }
 }
 

@@ -22,7 +22,14 @@ RUN --mount=type=cache,id=ryadom-pnpm-store,target=/root/.local/share/pnpm/store
 RUN pnpm --filter @ryadom/api build
 # The PWA is apps/mobile's client with a different build target; the API serves it itself
 # (lib/pwa.ts), so it ships in this same image — apps/mobile has no runtime image of its own.
-RUN pnpm --filter @ryadom/mobile build:pwa
+#
+# PWA_BASE_PATH is where the PWA sits on the host (`/pwa` when the host is shared with a landing
+# page and other apps; empty when the PWA owns the root). The build writes it into every asset URL,
+# the service worker scope and the manifest, and the runtime stage gives the same value to the
+# server, which then answers only under it. It is NOT part of the OTA/native bundles below: those
+# run from the WebView root.
+ARG PWA_BASE_PATH=""
+RUN PWA_BASE="$PWA_BASE_PATH" pnpm --filter @ryadom/mobile build:pwa
 
 # OTA: both native flavours, zipped and checksummed, baked into this same image - no
 # bucket, no second pipeline. OTA_BUILD_NUMBER ties the bundle version to this build; empty here
@@ -45,8 +52,10 @@ RUN pnpm --filter @ryadom/mobile build:ota
 
 
 FROM node:24-alpine AS runtime
+ARG PWA_BASE_PATH=""
 ENV NODE_ENV=production \
-    PORT=3002
+    PORT=3002 \
+    PWA_BASE_PATH=$PWA_BASE_PATH
 WORKDIR /app
 
 # Native modules (argon2) for the image platform, at the versions recorded by the build.
