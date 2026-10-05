@@ -11,9 +11,12 @@ import { defineConfig, devices } from '@playwright/test'
  */
 
 export const WEB_URL = process.env.E2E_WEB_URL ?? 'http://127.0.0.1:3100'
+/** The API. It serves no client any more: the PWA below is a separate server. */
 export const APP_URL = process.env.E2E_APP_URL ?? 'http://127.0.0.1:3102'
 /** The signed-in web app (apps/web). `baseURL` above is the landing site, not this one. */
 export const WEBAPP_URL = process.env.E2E_WEBAPP_URL ?? 'http://127.0.0.1:3103'
+/** The PWA (apps/mobile web build), on its own origin with `/api` proxied to the API. */
+export const PWA_URL = process.env.E2E_PWA_URL ?? 'http://127.0.0.1:3104'
 /** Mailpit web UI: this is where the tests read the codes from the emails. */
 export const MAIL_URL = process.env.E2E_MAIL_URL ?? 'http://127.0.0.1:8027'
 

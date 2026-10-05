@@ -1,4 +1,4 @@
-import { APP_URL } from '../playwright.config'
+import { PWA_URL, WEBAPP_URL } from '../playwright.config'
 import { expect, test } from '../support/fixtures'
 
 /** The landing site: it has to work without the database, without the core and without the app. */
@@ -11,10 +11,23 @@ test('главная рассказывает, что это, и ведёт в �
   await expect(page.getByRole('heading', { name: 'Психотерапия и не замена людям' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Открыть приложение' }).first()).toHaveAttribute(
     'href',
-    APP_URL,
+    WEBAPP_URL,
   )
 
   await shot(page, 'landing', { fullPage: true })
+})
+
+test('страница «Скачать» ведёт на PWA и объясняет, как её установить', async ({ page }) => {
+  await page.goto('/download')
+
+  const install = page.getByRole('link', { name: 'Открыть и установить' })
+  // The link ends with a slash: that is the PWA's scope, and without it the host would redirect.
+  await expect(install).toHaveAttribute('href', `${PWA_URL}/`)
+  await expect(page.getByRole('heading', { name: 'Установить из браузера' })).toBeVisible()
+  // One instruction per kind of device, so a person finds their own.
+  await expect(page.getByText('Android, Chrome')).toBeVisible()
+  await expect(page.getByText('iPhone и iPad, Safari')).toBeVisible()
+  await expect(page.getByText('Компьютер, Chrome или Edge')).toBeVisible()
 })
 
 test('телефоны помощи видны и набираются в один тап', async ({ page }) => {

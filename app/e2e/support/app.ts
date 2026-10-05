@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test'
-import { APP_URL } from '../playwright.config'
+import { PWA_URL } from '../playwright.config'
 import { waitForCode } from './mail'
 
 /**
@@ -65,7 +65,7 @@ export function sheetButton(page: Page, name: string | RegExp) {
 }
 
 export async function openApp(page: Page): Promise<void> {
-  await page.goto(`${APP_URL}/`)
+  await page.goto(`${PWA_URL}/`)
   // A new visitor lands on the first screen, someone with a session on home.
   await expect(button(page, 'Начать').or(button(page, 'Поговорить'))).toBeVisible({ timeout: 30_000 })
   // The PWA install banner covers the bottom of the screen and is not needed in the test browser.

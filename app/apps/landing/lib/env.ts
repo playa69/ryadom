@@ -7,7 +7,10 @@ import 'server-only'
  * Read per request, not at build time, so one image serves every environment.
  */
 export interface WebEnv {
+  /** The signed-in web app (apps/web): where "open the app" leads. */
   appUrl: string
+  /** The PWA, always with a trailing slash (it is the scope). Null: the install block is not shown. */
+  pwaUrl: string | null
   androidApkUrl: string | null
   rustoreUrl: string | null
   googlePlayUrl: string | null
@@ -21,11 +24,15 @@ function optional(value: string | undefined): string | null {
 }
 
 export function getWebEnv(): WebEnv {
+  const pwaUrl = optional(process.env.PUBLIC_PWA_URL)
   return {
-    // Where the "open the app" links lead: the app's own address. On a host shared with the other
-    // apps that is a path (`https://example.com/app/`), which PUBLIC_APP_URL cannot carry: it is
-    // the origin of the API and the OTA bundles. Without PUBLIC_PWA_URL the app is at PUBLIC_APP_URL.
-    appUrl: optional(process.env.PUBLIC_PWA_URL) ?? optional(process.env.PUBLIC_APP_URL) ?? 'http://localhost:3002',
+    // Where the "open the app" links lead: the signed-in web app. On a host shared with the other
+    // apps that is a path (`https://example.com/app/`), so this is its own address and not the origin
+    // of the API (PUBLIC_APP_URL), which serves no client.
+    appUrl: optional(process.env.PUBLIC_WEBAPP_URL) ?? 'http://localhost:3003',
+    // The PWA is a separate app on the same host (`https://example.com/pwa/`). The download page links
+    // it with install instructions; without the address it simply is not offered.
+    pwaUrl: pwaUrl ? `${pwaUrl}/` : null,
     androidApkUrl: optional(process.env.PUBLIC_ANDROID_APK_URL),
     rustoreUrl: optional(process.env.PUBLIC_RUSTORE_URL),
     googlePlayUrl: optional(process.env.PUBLIC_GOOGLE_PLAY_URL),

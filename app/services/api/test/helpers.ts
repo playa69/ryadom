@@ -23,29 +23,21 @@ export interface TestApp {
   resetLimits(): void
 }
 
-/**
- * The application under test. `pwaRoot: null` because serving the PWA is covered end to end
- * against a real build; otherwise the result would depend on whether `dist/pwa` exists locally.
- */
+/** The application under test. */
 export function makeApp(
   options: {
     policy?: ReleasePolicy
     env?: Record<string, string>
     logger?: Logger
-    /** A directory standing in for the PWA build (pwa.test.ts); every other test leaves it null. */
-    pwaRoot?: string
   } = {},
 ): TestApp {
   const rateLimiter = createRateLimiter()
-  const app = createApp(
-    {
-      env: parseEnv({ ...process.env, ...options.env }),
-      logger: options.logger ?? createLogger('silent'),
-      policy: staticPolicy(options.policy),
-      rateLimiter,
-    },
-    options.pwaRoot ?? null,
-  )
+  const app = createApp({
+    env: parseEnv({ ...process.env, ...options.env }),
+    logger: options.logger ?? createLogger('silent'),
+    policy: staticPolicy(options.policy),
+    rateLimiter,
+  })
   return { app, resetLimits: () => rateLimiter.reset() }
 }
 

@@ -1,12 +1,14 @@
 # syntax=docker/dockerfile:1
-# The API image: REST, the WebSocket gateway to the agent, and PWA/OTA serving.
+# The API image: REST, the WebSocket gateway to the agent, and OTA bundle serving.
 # The build context is the repository root:
 #   node scripts/docker.mjs build -f services/api/Dockerfile -t ryadom-api:local .
 #
-# build   installs the API and apps/mobile (its client is what the API serves — one image, one
-#         version, same reasoning as before the two were split into separate packages), then
-#         bundles the API (esbuild), the PWA (vite) and both native OTA bundles (vite, zipped);
+# build   installs the API and apps/mobile (the native OTA bundles are built from its client, one
+#         image, one version), then bundles the API (esbuild) and both native OTA bundles (vite, zipped);
 # runtime keeps only the bundles and the native dependencies that stay out of the bundle (argon2).
+#
+# The PWA is not here: it is the browser build of the same client, and it has its own image
+# (apps/mobile/Dockerfile, nginx).
 
 FROM node:24-alpine AS build
 ENV CI=true
@@ -20,16 +22,6 @@ COPY . .
 RUN --mount=type=cache,id=ryadom-pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter "@ryadom/api..." --filter "@ryadom/mobile..."
 RUN pnpm --filter @ryadom/api build
-# The PWA is apps/mobile's client with a different build target; the API serves it itself
-# (lib/pwa.ts), so it ships in this same image — apps/mobile has no runtime image of its own.
-#
-# PWA_BASE_PATH is where the PWA sits on the host (`/pwa` when the host is shared with a landing
-# page and other apps; empty when the PWA owns the root). The build writes it into every asset URL,
-# the service worker scope and the manifest, and the runtime stage gives the same value to the
-# server, which then answers only under it. It is NOT part of the OTA/native bundles below: those
-# run from the WebView root.
-ARG PWA_BASE_PATH=""
-RUN PWA_BASE="$PWA_BASE_PATH" pnpm --filter @ryadom/mobile build:pwa
 
 # OTA: both native flavours, zipped and checksummed, baked into this same image - no
 # bucket, no second pipeline. OTA_BUILD_NUMBER ties the bundle version to this build; empty here
@@ -52,10 +44,8 @@ RUN pnpm --filter @ryadom/mobile build:ota
 
 
 FROM node:24-alpine AS runtime
-ARG PWA_BASE_PATH=""
 ENV NODE_ENV=production \
-    PORT=3002 \
-    PWA_BASE_PATH=$PWA_BASE_PATH
+    PORT=3002
 WORKDIR /app
 
 # Native modules (argon2) for the image platform, at the versions recorded by the build.
@@ -64,7 +54,6 @@ RUN npm install --omit=dev --no-audit --no-fund --no-package-lock \
     && npm cache clean --force
 
 COPY --from=build /repo/services/api/dist/ ./
-COPY --from=build /repo/apps/mobile/dist/pwa/ ./pwa/
 COPY --from=build /repo/apps/mobile/dist/ota/ ./ota/
 
 USER node

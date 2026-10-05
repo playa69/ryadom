@@ -16,7 +16,8 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const OUT = join(repoRoot, 'review')
 
 const WEB = process.env.E2E_WEB_URL ?? 'http://127.0.0.1:3100'
-const APP = process.env.E2E_APP_URL ?? 'http://127.0.0.1:3102'
+// The PWA (apps/mobile web build, served by `vite preview` in the stack), not the API.
+const APP = process.env.E2E_PWA_URL ?? 'http://127.0.0.1:3104'
 const MAIL = process.env.E2E_MAIL_URL ?? 'http://127.0.0.1:8027'
 
 const WIDTHS = [

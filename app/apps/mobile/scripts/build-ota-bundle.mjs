@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Builds the OTA bundle for both native flavours and bakes them into the image.
- * services/api's Dockerfile runs this once, after build:pwa, and copies dist/ota/ into the
- * runtime layer next to dist/pwa/. There is no bucket and no separate publish step any more: the
+ * services/api's Dockerfile runs this once and copies dist/ota/ into the runtime layer. (The PWA is
+ * a separate image, apps/mobile/Dockerfile, and has nothing to do with this.) There is no bucket and
+ * no separate publish step any more: the
  * JS bundle ships from the same commit, in the same deploy, as the server that reads its manifest
  * (`services/api/src/lib/ota-bundle.ts`).
  *
