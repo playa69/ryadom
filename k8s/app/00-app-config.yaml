@@ -2,7 +2,8 @@
 # ConfigMap app-config — несекретные env сервисов из app/ (ns prod)
 # =============================================================================
 # Общий для api, admin, web и landing (envFrom): каждое приложение читает
-# только свои ключи, лишние игнорирует. ПРАВИЛО: здесь — всё статическое и
+# только свои ключи, лишние игнорирует. pwa (nginx) берёт ровно два ключа через
+# configMapKeyRef: PUBLIC_WEB_URL и APP_ENV. ПРАВИЛО: здесь — всё статическое и
 # несекретное, в Secret'ах (app-secrets, app-smtp; значения хранятся локально у
 # администратора, в git их нет) — только секреты: DB_PASSWORD, AUTH_SECRET,
 # MOBILE_JWT_SECRET, REDIS_PASSWORD, AGENT_API_TOKEN, SMTP_PASSWORD.
@@ -15,12 +16,13 @@
 #   /          landing (маркетинг, документы)
 #   /api       api: REST, WebSocket, OTA     (/api/v1 — Python backend, длиннее и побеждает)
 #   /app       apps/web (клиент после входа)
+#   /pwa       PWA (apps/mobile в браузере, nginx; ставится на домашний экран)
 #   /admin     admin
 # Адреса, оканчивающиеся на ORIGIN (без пути): PUBLIC_WEB_URL (landing, корень),
 # PUBLIC_APP_URL (сервер приложения: API и OTA-бандлы — путь в нём удвоился бы),
-# PUBLIC_API_URL (apps/web). Куда ведёт «Открыть приложение» — отдельная переменная
-# PUBLIC_PWA_URL (имя историческое), на неё ссылаются кнопки на landing.
-# PWA по путям не публикуется: его только скачивают.
+# PUBLIC_API_URL (apps/web). Адреса с путём — только для landing: PUBLIC_WEBAPP_URL
+# (куда ведут «Открыть приложение») и PUBLIC_PWA_URL (ссылка с инструкцией
+# установки на странице /download).
 #
 # Redis (общий ryadom-db, Sentinel) используется только api и только для
 # счётчиков лимитов запросов: ключи ryadom:rl:* (префикс по умолчанию, с Python
@@ -70,7 +72,11 @@ data:
   # connect-src
   PUBLIC_API_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai"
   # landing: куда ведут «Открыть приложение» — веб-клиент под префиксом /app
-  PUBLIC_PWA_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai/app/"
+  PUBLIC_WEBAPP_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai/app/"
+  # landing: ссылка со страницы /download на PWA (под префиксом /pwa) и инструкции установки.
+  # Раньше под этим именем лежал адрес веб-клиента (/app/), теперь — настоящий PWA:
+  # применять ПОСЛЕ выката app-pwa и до нового образа landing, см. k8s/README.md
+  PUBLIC_PWA_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai/pwa/"
   # landing: адрес поддержки (временно — личная почта владельца; заменить на
   # support@... перед публикацией)
   PUBLIC_SUPPORT_EMAIL: "totsamiynixon@yandex.ru"

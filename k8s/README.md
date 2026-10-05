@@ -42,7 +42,7 @@ k8s/
 ├── app/                            ← сервисы из app/ репозитория (ns prod): см. раздел ниже
 │   ├── 00-app-config.yaml          ← ConfigMap app-config (всё статическое и несекретное)
 │   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 02-job-migrate (drizzle)
-│   └── api/ admin/ web/ landing/   ← 01-service, 02-httproute, 03-deployment (admin/ ещё 00-config: ADMIN_EMAILS)
+│   └── api/ admin/ web/ landing/ pwa/   ← 01-service, 02-httproute, 03-deployment (admin/ ещё 00-config: ADMIN_EMAILS)
 ├── tls/                            ← РЕЗЕРВ: lego DNS-01 runbook (не используется,
 │                                     рабочая схема — cert-manager HTTP-01)
 ├── postgres/manifests/
@@ -493,6 +493,7 @@ Node-приложения «Рядом» из каталога `app/` репоз
 | `/api/v1/*` | Python backend (ns `backend`) | 8000 | уже работает, длиннее `/api` и побеждает |
 | `/api/*` | `app-api` | 3002 | REST, WebSocket к агенту (`/api/dialogs/ws`), OTA-бандлы (`/api/ota`) |
 | `/app/*` | `app-web` | 3003 | веб-клиент после входа (Next `basePath=/app`) |
+| `/pwa/*` | `app-pwa` | 3004 | PWA: браузерная сборка `apps/mobile` за nginx (Vite `base=/pwa/`), ставится на домашний экран; ссылка с инструкцией — на `/download` |
 | `/admin/*` | `app-admin` | 3001 | админка (Next `basePath=/admin`; вход по `ADMIN_EMAILS`) |
 | `/` | `app-landing` | 3000 | маркетинг и документы (всё, что не совпало выше) |
 | — | `app-migrate` | — | Job drizzle-миграций БД `app` |
@@ -509,7 +510,7 @@ CNPG `ryadom-db` (`ryadom-db-rw.ryadom-db:5432`), что у Python backend, но
 api при сборке (build-arg `VITE_PROD_API_URL`) и попадает в OTA-бандлы.
 Python backend (`/api/v1`) живёт отдельно и мобильным клиентом не используется.
 
-### Пути и префиксы (как приложения живут под `/app` и `/admin`)
+### Пути и префиксы (как приложения живут под `/app`, `/pwa` и `/admin`)
 
 Прокси ничего не переписывает, поэтому каждое приложение само знает свой префикс:
 
@@ -517,14 +518,25 @@ Python backend (`/api/v1`) живёт отдельно и мобильным к�
 |---|---|---|---|
 | web | `/app` | build-arg `BASE_PATH` (Next `basePath`, при сборке) | favicon, voice-worklet, healthcheck и пробы `/app/api/health`; matcher `proxy.ts` с корневым источником `/` (иначе под префиксом главная осталась бы без CSP, тест `test/proxy-matcher.test.ts`) |
 | admin | `/admin` | build-arg `BASE_PATH` | favicon, форма выхода, редирект в route handler, cookie `path=/admin`, пробы `/admin/api/health` |
-| PWA (`apps/mobile`) | не публикуется | — | Его только скачивают (`/download` на landing); маршрута на него нет. Код умеет жить под префиксом (build-arg `PWA_BASE_PATH` образа api: Vite `base`, scope SW, относительный manifest), если понадобится его публиковать |
-| api | — | `/api/*` без префикса | `PUBLIC_APP_URL` теперь ТОЛЬКО origin (проверка в схеме env): к нему приклеивается `/api/ota/...` |
-| landing | `/` | — | кнопки «Открыть приложение» ведут на `PUBLIC_PWA_URL` (имя историческое; сейчас `/app/`, то есть веб-клиент), иначе на `PUBLIC_APP_URL` |
+| pwa | `/pwa` | build-arg `PWA_BASE_PATH` (Vite `base` и конфиг nginx, при сборке) | scope service worker и manifest — `/pwa/`; nginx отдаёт SPA-fallback только под префиксом, `/pwa` → 301 `/pwa/`, остальное → 404; проба `/healthz` (вне префикса, наружу не маршрутизируется) |
+| api | — | `/api/*` без префикса | `PUBLIC_APP_URL` теперь ТОЛЬКО origin (проверка в схеме env): к нему приклеивается `/api/ota/...`. Клиентов не раздаёт |
+| landing | `/` | — | «Открыть приложение» ведёт на `PUBLIC_WEBAPP_URL` (веб-клиент, `/app/`); карточка «Установить из браузера» на `/download` — на `PUBLIC_PWA_URL` (`/pwa/`), без переменной карточки нет |
 
 Префикс — build-arg, а не рантайм-переменная: образ собирается под то место, где
-публикуется (при сборке передаются `/app` для web и `/admin` для админки, см. «Сборка и push образов»; без аргумента
+публикуется (при сборке передаются `/app` для web, `/pwa` для pwa и `/admin` для админки, см. «Сборка и push образов»; без аргумента
 приложение живёт в корне своего хоста, как раньше). Нативные сборки и OTA-бандлы
 префиксов не знают (WebView на `https://localhost/`): их адрес API — origin.
+
+**PWA ходит в API на тот же origin** (`apiBase` пустой, адрес WebSocket строится от
+`window.location`), поэтому `/api` хоста маршрутизирует gateway в `app-api`, а не nginx PWA:
+у `app-pwa` нет ни прокси, ни CORS. Образ не зависит от версии API: они выкатываются
+независимо, поэтому API должен оставаться совместимым с предыдущей сборкой PWA (у уже
+установленных копий service worker обновляется по кнопке и может отставать). Для
+обратно-несовместимых изменений API — сначала расширение, потом выкат PWA, потом сужение.
+Мета-теги с адресом сайта и окружением (`PUBLIC_WEB_URL`, `APP_ENV` из ConfigMap) nginx-образ
+вписывает в `index.html` на старте контейнера; после смены значений нужен
+`kubectl -n prod rollout restart deploy/app-pwa`, а у уже установленных копий они
+обновятся только вместе со следующей сборкой образа.
 
 **Хранилище браузера принадлежит origin'у, а не пути.** Клиенты на одном хосте делили
 бы его ключи, а API при повторе уже ротированного refresh-токена завершает ВСЕ сессии
@@ -683,7 +695,7 @@ kubectl apply -f k8s/app/db/02-job-migrate.yaml
 kubectl -n prod wait --for=condition=complete job/app-migrate-0001 --timeout=180s
 
 # 5. Сервисы — ПО ОДНОМУ, следя за ресурсами (kubectl top nodes / дашборд)
-for s in api landing web admin; do
+for s in api landing web admin pwa; do
   kubectl apply -f k8s/app/$s/01-service.yaml -f k8s/app/$s/03-deployment.yaml
   kubectl -n prod rollout status deploy/app-$s --timeout=180s
 done
@@ -691,12 +703,17 @@ done
 # 4. Маршруты — В САМОМ КОНЦЕ. Общий Gateway и сертификат НЕ меняются: только
 #    HTTPRoute'ы в ns prod на существующий listener https корневого хоста
 kubectl apply -f k8s/app/api/02-httproute.yaml -f k8s/app/web/02-httproute.yaml \
-  -f k8s/app/admin/02-httproute.yaml -f k8s/app/landing/02-httproute.yaml
+  -f k8s/app/admin/02-httproute.yaml -f k8s/app/landing/02-httproute.yaml \
+  -f k8s/app/pwa/02-httproute.yaml
 kubectl -n prod get httproute                                        # Accepted/ResolvedRefs
 ```
 
 Проверка: `curl https://<домен>/api/health` → 200; страницы `/` (landing), `/app`
-(веб-клиент, с CSP), `/admin/` (редирект на `/admin/login`); логи api: «Redis подключён»;
+(веб-клиент, с CSP), `/pwa/` (PWA: 200, `Cache-Control: no-cache`, CSP, `X-Robots-Tag: noindex`,
+в теле два мета-тега `ryadom-web-url` и `ryadom-app-env` перед `</head>`; `/pwa` → 301 на
+`/pwa/`; `/pwa/sw.js` и `/pwa/manifest.webmanifest` отдаются), `/admin/` (редирект на
+`/admin/login`); на `/download` карточка «Установить из браузера» ведёт на `/pwa/`;
+логи api: «Redis подключён»;
 проверка IP-лимитов (раздел выше); **регресс** — `https://<домен>/api/v1/...` Python
 backend отвечает как раньше (его маршрут длиннее `/api` и побеждает). Откат:
 `kubectl delete -f k8s/app/<svc>/02-httproute.yaml` (снимает публикацию сервиса);
@@ -707,6 +724,20 @@ backend отвечает как раньше (его маршрут длинне
 Собрать и отправить нужный образ (раздел ниже) → поправить тег в
 `k8s/app/<svc>/03-deployment.yaml` → `kubectl apply` → `rollout status`. Для
 миграций — Job `app-migrate-0002` с новым образом `app/migrate:<тег>`.
+
+**Перенос PWA на уже работающий стенд** (раньше его раздавал образ api, но наружу он не
+публиковался; теперь это `app-pwa`, а ключ `PUBLIC_PWA_URL` в `app-config` получил новый
+смысл, адрес веб-клиента переехал в `PUBLIC_WEBAPP_URL`). Порядок важен, иначе кнопки
+на landing поведут не туда:
+1. порт 3004 в сети: `kubectl apply -f k8s/namespaces/manifests/07-network-policy-prod-apps.yaml`;
+2. образ `pwa` собрать и отправить (раздел ниже);
+3. `kubectl apply -f k8s/app/pwa/01-service.yaml -f k8s/app/pwa/03-deployment.yaml`, дождаться
+   `rollout status deploy/app-pwa`, затем `kubectl apply -f k8s/app/pwa/02-httproute.yaml`;
+4. `kubectl apply -f k8s/app/00-app-config.yaml` (появляется `PUBLIC_WEBAPP_URL`, `PUBLIC_PWA_URL`
+   теперь `…/pwa/`; старый образ landing в этот момент ведёт «Открыть приложение» на `/pwa/`,
+   что работает);
+5. новый образ landing (читает `PUBLIC_WEBAPP_URL`): поправить тег, `kubectl apply`, `rollout status`;
+6. образ api без PWA — когда удобно, на работу PWA не влияет.
 
 ### Сборка и push образов
 
@@ -727,14 +758,14 @@ docker buildx build $FLAGS -f packages/db/Dockerfile   -t $REG/migrate:$TAG .
 docker buildx build $FLAGS -f apps/landing/Dockerfile  -t $REG/landing:$TAG .
 docker buildx build $FLAGS -f apps/web/Dockerfile      -t $REG/web:$TAG   --build-arg BASE_PATH=/app .
 docker buildx build $FLAGS -f apps/admin/Dockerfile    -t $REG/admin:$TAG --build-arg BASE_PATH=/admin .
+docker buildx build $FLAGS -f apps/mobile/Dockerfile   -t $REG/pwa:$TAG   --build-arg PWA_BASE_PATH=/pwa .
 docker buildx build $FLAGS -f services/api/Dockerfile  -t $REG/api:$TAG \
-  --build-arg PWA_BASE_PATH=/pwa \
   --build-arg VITE_PROD_API_URL=$ORIGIN --build-arg VITE_PROD_WEB_URL=$ORIGIN \
   --build-arg OTA_BUILD_NUMBER=$(git rev-list --count HEAD) .
 
 # push: ключ SA ryadom-registry-pusher — registry-pusher-key.json в корне репозитория
 cat ../registry-pusher-key.json | docker login --username json_key --password-stdin cr.yandex
-for n in migrate landing web admin api; do docker push $REG/$n:$TAG; done
+for n in migrate landing web admin pwa api; do docker push $REG/$n:$TAG; done
 ```
 
 `--provenance=false --sbom=false` и раздельные `build --load` + `push` нужны потому, что
@@ -800,7 +831,7 @@ NVMe (PG 2×10, Redis 3×5, CH 10, Loki 5, Prom 5, Grafana 2, Langfuse-redis).
   (шаблон `istio/manifests/00-example-gateway.yaml`) + правило ingress в NP
   namespace.
 - Сервисы из `app/` — на корневом домене по путям: `/` landing, `/api` api, `/app`
-  `/app` веб-клиент, `/admin` админка (HTTPRoute'ы на listener `https`);
+  веб-клиент, `/pwa` PWA, `/admin` админка (HTTPRoute'ы на listener `https`);
   см. раздел «Сервисы из app/».
 - Админские UI (ClusterIP + port-forward): Grafana `:3000`
   (`svc/prometheus-grafana`, пароль в `~/.config/ryadom/k8s-secrets.env`),

@@ -1,0 +1,24 @@
+# =============================================================================
+# Service app-pwa — ClusterIP перед Deployment app-pwa (ns prod)
+# =============================================================================
+# Порт 80 → 3004 (nginx). Имя порта http — для HTTPRoute.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-pwa
+  namespace: prod
+  labels:
+    app: app-pwa
+    app.kubernetes.io/part-of: ryadom
+spec:
+  type: ClusterIP
+  selector:
+    app: app-pwa
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 3004

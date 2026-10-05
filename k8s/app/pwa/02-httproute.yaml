@@ -1,0 +1,42 @@
+# =============================================================================
+# HTTPRoute app-pwa — /pwa на корневом домене: PWA (ns prod)
+# =============================================================================
+# PWA — браузерная сборка apps/mobile, ставится на домашний экран (landing, /download,
+# карточка «Установить из браузера»). Публикуется по пути /pwa на корневом хосте
+# (listener https, сертификат ryadom-tls); образ собран под этот префикс (Vite base и
+# nginx, build-arg PWA_BASE_PATH=/pwa), переписывать пути в gateway не нужно.
+# Область service worker и манифеста — /pwa/.
+#
+# Клиент ходит в API на ТОТ ЖЕ origin (apiBase пустой, WebSocket строится от
+# window.location), поэтому /api этого же хоста маршрутизируется в app-api — это делает
+# gateway (см. api/02-httproute.yaml); CORS не задействован. Сам nginx /api не видит.
+#
+# Хранилище браузера (localStorage) принадлежит ORIGIN'у, а не пути: PWA, веб-клиент
+# (/app) и лендинг делят один. Ключи не пересекаются: PWA пишет ryadom_*, web —
+# ryadom.web.* (apps/web/lib/storage-keys.ts).
+# =============================================================================
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-pwa
+  namespace: prod
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  parentRefs:
+    - name: ryadom-gateway
+      namespace: istio-system
+      sectionName: https
+  hostnames:
+    - xn----htbtgjker8b3a2c.xn--p1ai
+  rules:
+    - name: pwa
+      matches:
+        - path:
+            type: PathPrefix
+            value: /pwa
+      backendRefs:
+        - name: app-pwa
+          port: 80

@@ -1,9 +1,10 @@
 # =============================================================================
-# Deployment app-api — Node API + WebSocket-шлюз + PWA (ns prod)
+# Deployment app-api — Node API + WebSocket-шлюз + OTA-бандлы (ns prod)
 # =============================================================================
-# Образ app/api (app/services/api/Dockerfile; build-args PWA_BASE_PATH и VITE_PROD_* —
-# см. k8s/README.md, «Сборка и push образов»). Перед первым rollout должен завершиться
-# Job миграций (db/02-job-migrate.yaml).
+# Образ app/api (app/services/api/Dockerfile; build-args VITE_PROD_* и OTA_BUILD_NUMBER —
+# см. k8s/README.md, «Сборка и push образов»). PWA в образ не входит: это отдельный
+# сервис app-pwa. Перед первым rollout должен завершиться Job миграций
+# (db/02-job-migrate.yaml).
 #
 # 1 реплика: ресурсов в кластере впритык. Лимиты запросов считаются в Redis
 # (REDIS_ENABLED=true, общие для реплик), поэтому replicas можно поднимать

@@ -7,7 +7,7 @@
 #
 # Зачем: prod-allow-ingress-istio-gateway пускает от istio-ingressgateway лишь
 # порты 80/8000/8080, а сервисы из app/ слушают 3000 (landing), 3001 (admin),
-# 3002 (api), 3003 (web). Политика применяется к порту ПОДА (после DNAT
+# 3002 (api), 3003 (web), 3004 (pwa). Политика применяется к порту ПОДА (после DNAT
 # сервиса), поэтому нужны именно эти порты, а не 80 у Service.
 #
 # Что здесь НЕ открыто (и работает уже сейчас, см. 01-network-policy-prod.yaml):
@@ -48,6 +48,8 @@ spec:
           port: 3002
         - protocol: TCP
           port: 3003
+        - protocol: TCP
+          port: 3004
 
 ---
 # Исходящая почта через Yandex Cloud Postbox: postbox.cloud.yandex.net:465

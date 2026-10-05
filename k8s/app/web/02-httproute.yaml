@@ -4,7 +4,7 @@
 # apps/web — залогиненный веб-клиент. Публикуется по пути /app на корневом хосте
 # (listener https, сертификат ryadom-tls); образ собран под этот префикс (Next
 # basePath=/app, build-arg BASE_PATH), переписывать пути в gateway не нужно.
-# PWA (apps/mobile) по путям не публикуется: его только скачивают (landing, /download).
+# PWA (apps/mobile) — отдельный сервис app-pwa на /pwa (pwa/02-httproute.yaml).
 # В API ходит на тот же origin (PUBLIC_API_URL = origin корня, пути /api/*), так
 # что CORS не задействован.
 #
