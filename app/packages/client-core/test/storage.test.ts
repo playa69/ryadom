@@ -1,6 +1,6 @@
 /**
  * Browser session storage: the key names are the whole point. localStorage belongs to the origin, so
- * two clients on one host (`/web` and `/app`) must write different keys.
+ * two clients on one host (for example `/app` and `/pwa`) must write different keys.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createLocalSessionStorage } from '../src/storage'

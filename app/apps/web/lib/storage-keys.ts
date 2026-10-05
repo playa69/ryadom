@@ -2,7 +2,7 @@
  * Browser storage keys of the web client.
  *
  * localStorage and sessionStorage belong to the origin, and on the production host several clients
- * share one origin: this one under `/web`, the PWA under `/app` (apps/mobile). The PWA and the store
+ * share one origin: this one under `/app`, and the PWA build (apps/mobile) if it is ever served from it. The PWA and the store
  * builds keep their original names (`ryadom_refreshToken`, `ryadom_device`, `ryadom.user`,
  * `ryadom.update.*`, `ryadom.install.*`) because renaming them would sign every installed app out
  * and lose the anonymous identity of the device. So the web client lives in its own namespace,

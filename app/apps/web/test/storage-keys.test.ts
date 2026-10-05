@@ -1,5 +1,5 @@
 /**
- * The web client and the PWA share one origin on the production host (`/web` and `/app`), so their
+ * The web client and the PWA share one origin on the production host (`/app` for the web client; the PWA build, if it is ever served from the same host), so their
  * browser storage keys must not meet. The PWA and the store builds keep their original names; this
  * client lives in `ryadom.web.*`.
  */

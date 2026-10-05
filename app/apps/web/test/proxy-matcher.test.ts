@@ -1,7 +1,7 @@
 /**
- * proxy.ts sets the CSP (with the nonce) on every page. Under a basePath (`/web`) Next puts the
- * prefix in front of each matcher source, so the catch-all pattern becomes `/web/((?!…).*)`, which
- * does not match `/web` itself. The home page then goes out with no CSP at all, in an app that keeps
+ * proxy.ts sets the CSP (with the nonce) on every page. Under a basePath (`/app`) Next puts the
+ * prefix in front of each matcher source, so the catch-all pattern becomes `/app/((?!…).*)`, which
+ * does not match `/app` itself. The home page then goes out with no CSP at all, in an app that keeps
  * the refresh token in localStorage and relies on the CSP to protect it. The bare `/` source is the
  * one Next maps to the prefix alone, so it has to stay in the list.
  */

@@ -23,7 +23,7 @@ RUN pnpm --filter @ryadom/api build
 # The PWA is apps/mobile's client with a different build target; the API serves it itself
 # (lib/pwa.ts), so it ships in this same image — apps/mobile has no runtime image of its own.
 #
-# PWA_BASE_PATH is where the PWA sits on the host (`/app` when the host is shared with a landing
+# PWA_BASE_PATH is where the PWA sits on the host (`/pwa` when the host is shared with a landing
 # page and other apps; empty when the PWA owns the root). The build writes it into every asset URL,
 # the service worker scope and the manifest, and the runtime stage gives the same value to the
 # server, which then answers only under it. It is NOT part of the OTA/native bundles below: those

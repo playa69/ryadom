@@ -30,7 +30,7 @@ const API_PROXY_TARGET = process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:3002'
  *
  * The two URLs are written here, after Vite has rewritten the asset URLs of index.html, so they are
  * NOT rebased by it: they are built from the resolved `base` (`/` or the prefix the PWA is
- * published under, e.g. `/app/`).
+ * published under, e.g. `/pwa/`).
  */
 function webIndexHtmlPlugin(): Plugin {
   let base = '/'
@@ -55,7 +55,7 @@ function webIndexHtmlPlugin(): Plugin {
 }
 
 /**
- * The URL prefix of the web build (`PWA_BASE`, e.g. `/app`): the PWA is published under it on a
+ * The URL prefix of the web build (`PWA_BASE`, e.g. `/pwa`): the PWA is published under it on a
  * host shared with other apps, and every asset URL, the service worker and the manifest are
  * resolved against it. Returns Vite's form, with a slash on both ends; `/` is a host of its own.
  *
@@ -66,7 +66,7 @@ function readWebBase(value: string | undefined): string {
   const trimmed = (value ?? '').trim().replace(/^\/+|\/+$/g, '')
   if (!trimmed) return '/'
   if (!/^[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(trimmed)) {
-    throw new Error(`PWA_BASE must look like "/app" (got "${value}")`)
+    throw new Error(`PWA_BASE must look like "/pwa" (got "${value}")`)
   }
   return `/${trimmed}/`
 }

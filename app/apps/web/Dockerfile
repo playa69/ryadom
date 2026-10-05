@@ -11,7 +11,7 @@
 #
 # The one thing that is NOT runtime config is the URL prefix: Next fixes basePath at build time, so
 # the image is built for the place it is published at:
-#   --build-arg BASE_PATH=/web       published at https://<domain>/web (health: /web/api/health)
+#   --build-arg BASE_PATH=/app       published at https://<domain>/app (health: /app/api/health)
 #   (no argument)                    published at the root of its own host
 
 FROM node:24-alpine AS build

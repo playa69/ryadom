@@ -70,9 +70,9 @@ function injectMeta(html: string, env: AppDeps['env']): string {
 /**
  * `root` is only for tests: it substitutes a fixture instead of looking on disk.
  *
- * `PWA_BASE_PATH` (`/app`, or empty) is where the PWA sits on the host. With a prefix the build has
+ * `PWA_BASE_PATH` (`/pwa`, or empty) is where the PWA sits on the host. With a prefix the build has
  * it in every URL (Vite `base`), so the server only has to answer under it: the files are looked up
- * with the prefix removed, the SPA fallback is served only under it, `/app` leads to `/app/` and the
+ * with the prefix removed, the SPA fallback is served only under it, `/pwa` leads to `/pwa/` and the
  * root of the host leads to the app. Everything else outside `/api/*` is a 404 in the API's own
  * format, never HTML. Without a prefix the PWA owns every path that is not `/api/*`.
  */

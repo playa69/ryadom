@@ -31,7 +31,7 @@ const urlPathPrefix = z
     emptyToUndefined,
     z
       .string()
-      .regex(/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*\/?$/, 'must look like "/app"')
+      .regex(/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*\/?$/, 'must look like "/pwa"')
       .optional(),
   )
   .transform((value) => (value ?? '').replace(/\/+$/, ''))
@@ -121,7 +121,7 @@ const baseShape = {
 const appShape = {
   PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(65535).default(3002)),
   /**
-   * The URL prefix the PWA is served under (`/app`), empty when it is served from the root. It must
+   * The URL prefix the PWA is served under (`/pwa`), empty when it is served from the root. It must
    * be the prefix the PWA was BUILT for (the Dockerfile passes one value to both): the build writes
    * it into every asset URL, the service worker and the manifest, and the server serves the files
    * and the SPA fallback only under it. `/api/*` is never prefixed.

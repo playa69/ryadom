@@ -1,5 +1,5 @@
 /**
- * The prefix the web client is published under (`/web`), empty on a host of its own. Set at build
+ * The prefix the web client is published under (`/app`), empty on a host of its own. Set at build
  * time from `BASE_PATH` (next.config.ts).
  *
  * Next adds it by itself to `<Link>`, `router.push/replace`, `redirect()` and the asset URLs
@@ -8,7 +8,7 @@
  */
 export const BASE_PATH: string = process.env.NEXT_PUBLIC_BASE_PATH ?? ''
 
-/** A root-absolute path of this app with the prefix in front: `appPath('/x.js')` is `/web/x.js`. */
+/** A root-absolute path of this app with the prefix in front: `appPath('/x.js')` is `/app/x.js`. */
 export function appPath(path: string): string {
   return `${BASE_PATH}${path}`
 }
