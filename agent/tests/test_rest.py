@@ -199,3 +199,43 @@ def test_dev_tts_mode_can_be_switched(voice_client):
 def test_dev_tts_mode_needs_a_valid_mode_and_the_token(voice_client):
     assert voice_client.post("/dev/tts", json={"mode": "loud"}, headers=AUTH).status_code == 400
     assert voice_client.post("/dev/tts", json={"mode": "none"}).status_code == 401
+
+
+# ─── голос по роду ────────────────────────────────────────────────────────────
+
+
+def test_dialog_voice_defaults_to_male_and_is_reported(client, user_id):
+    assert start_dialog(client, user_id)["voice"] == "male"
+
+
+def test_voice_can_be_chosen_when_starting_and_is_remembered(client, user_id):
+    first = client.post(url(user_id), json={"voice": "female"}, headers=AUTH).json()
+    assert first["voice"] == "female"
+    client.post(url(user_id, f"/{first['dialogId']}/end"), headers=AUTH)
+
+    # следующий диалог без явного голоса получает прошлый выбор
+    second = start_dialog(client, user_id)
+    assert second["voice"] == "female" and second["resumed"] is False
+
+    # явный выбор меняет голос возобновлённого диалога
+    again = client.post(url(user_id), json={"voice": "male"}, headers=AUTH).json()
+    assert again["dialogId"] == second["dialogId"] and again["resumed"] is True and again["voice"] == "male"
+
+
+def test_invalid_voice_is_rejected(client, user_id):
+    response = client.post(url(user_id), json={"voice": "robot"}, headers=AUTH)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "AGENT_VALIDATION"
+
+
+def test_erasing_a_user_forgets_the_voice_choice(client, user_id):
+    client.post(url(user_id), json={"voice": "female"}, headers=AUTH)
+    assert client.delete(f"/v1/users/{user_id}", headers=AUTH).status_code == 204
+    assert start_dialog(client, user_id)["voice"] == "male"
+
+
+def test_dev_tts_takes_the_voice(voice_client, voice):
+    voice_client.get("/dev/tts", params={"text": "Привет", "voice": "female"}, headers=AUTH)
+    voice_client.get("/dev/tts", params={"text": "Привет"}, headers=AUTH)
+    assert voice.voices == ["female", "male"]
+    assert voice_client.get("/dev/tts", params={"text": "Привет", "voice": "robot"}, headers=AUTH).status_code == 400

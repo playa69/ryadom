@@ -1,9 +1,12 @@
 """Озвучка ответов: PCM16 24 кГц моно, как в specs/agent-api «Голос — озвучка ответов».
 
-Провайдеры:
-  SaluteTts  SaluteSpeech по REST (целевой провайдер, нужен ключ)
+Провайдеры (по приоритету при `TTS_PROVIDER=auto`):
+  SaluteTts  SaluteSpeech по REST (целевой провайдер, нужен ключ авторизации Сбера)
+  QwenTts    Qwen TTS через OpenAI-совместимый прокси (POST /audio/speech), нужен ключ прокси
   EspeakTts  локальный espeak-ng (роботизированный голос, ключа не нужно; ставится в контейнер)
 Если озвучки нет вовсе, `build_tts` возвращает None, и приложение читает ответы своим голосом.
+
+Голос выбирается по роду (`male` или `female`); каждый провайдер отображает его на свои голоса.
 """
 
 import asyncio
@@ -16,13 +19,16 @@ import time
 import uuid
 import wave
 from array import array
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 
 from app.core.config import SpeechSettings
 
 logger = logging.getLogger("agent.speech")
+
+Voice = Literal["male", "female"]
+VOICES: tuple[Voice, ...] = ("male", "female")
 
 TTS_RATE = 24_000
 FRAME_KIND_TTS = 0x02
@@ -37,8 +43,8 @@ class TtsError(Exception):
 class TextToSpeech(Protocol):
     name: str
 
-    async def synthesize(self, text: str) -> bytes:
-        """Текст → PCM16 little-endian, моно, 24 кГц."""
+    async def synthesize(self, text: str, voice: Voice) -> bytes:
+        """Текст → PCM16 little-endian, моно, 24 кГц, голосом заданного рода."""
         ...
 
     async def aclose(self) -> None: ...
@@ -122,18 +128,18 @@ def pcm_to_wav(pcm: bytes, rate: int = TTS_RATE) -> bytes:
 class EspeakTts:
     name = "espeak"
 
-    def __init__(self, voice: str, speed: int, binary: str = "espeak-ng") -> None:
-        self._voice = voice
+    def __init__(self, voices: dict[Voice, str], speed: int, binary: str = "espeak-ng") -> None:
+        self._voices = voices
         self._speed = speed
         self._binary = binary
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, voice: Voice) -> bytes:
         # Текст идёт через stdin: фраза, начинающаяся с «-», не станет опцией.
         try:
             process = await asyncio.create_subprocess_exec(
                 self._binary,
                 "-v",
-                self._voice,
+                self._voices[voice],
                 "-s",
                 str(self._speed),
                 "--stdout",
@@ -168,16 +174,17 @@ class SaluteTts:
         self,
         auth_key: str,
         scope: str,
-        voice: str,
+        voices: dict[Voice, str],
         timeout_seconds: int = 15,
         ca_bundle: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        if not voice.endswith("_24000"):
-            raise ValueError(f"Голос {voice!r}: нужен вариант на 24 кГц (суффикс _24000)")
+        for voice in voices.values():
+            if not voice.endswith("_24000"):
+                raise ValueError(f"Голос {voice!r}: нужен вариант на 24 кГц (суффикс _24000)")
         self._auth_key = auth_key
         self._scope = scope
-        self._voice = voice
+        self._voices = voices
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds, verify=ca_bundle or True)
         self._token: str | None = None
         self._expires_at = 0.0
@@ -208,13 +215,13 @@ class SaluteTts:
             self._expires_at = expires_ms / 1000 if isinstance(expires_ms, int | float) else time.time() + 1800
             return self._token
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, voice: Voice) -> bytes:
         for attempt in (1, 2):
             token = await self._access_token(force=attempt == 2)
             try:
                 response = await self._client.post(
                     self.SYNTH_URL,
-                    params={"format": "pcm16", "voice": self._voice},
+                    params={"format": "pcm16", "voice": self._voices[voice]},
                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/text"},
                     content=text.encode(),
                 )
@@ -233,30 +240,94 @@ class SaluteTts:
         await self._client.aclose()
 
 
+class QwenTts:
+    """Qwen TTS (`qwen/qwen-audio-3.0-tts-flash`) через OpenAI-совместимый прокси: POST {base_url}/audio/speech.
+
+    Формат запроса у прокси обычный (model, input, voice, response_format), но значения у модели свои: голоса
+    `loongjohn` и `longanhuan_v3.6`, форматы `mp3` и `pcm`. С чужими значениями (alloy, Cherry, wav) апстрим
+    отвечает 400, а прокси превращает это в невнятный 500. Агенту нужен `pcm`: это сырой PCM16, 24 кГц, моно.
+    Прокси при этом помечает pcm как audio/mpeg: на тип ответа не смотрим.
+    """
+
+    name = "qwen"
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        voices: dict[Voice, str],
+        timeout_seconds: int = 30,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._url = f"{base_url.rstrip('/')}/audio/speech"
+        self._api_key = api_key
+        self._model = model
+        self._voices = voices
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+
+    async def synthesize(self, text: str, voice: Voice) -> bytes:
+        try:
+            response = await self._client.post(
+                self._url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={"model": self._model, "input": text, "voice": self._voices[voice], "response_format": "pcm"},
+            )
+        except httpx.HTTPError as error:
+            raise TtsError(f"Qwen TTS не ответил: {error}") from error
+        if response.status_code != 200:
+            hint = " (проверьте голос и формат: у модели только loongjohn/longanhuan_v3.6 и mp3/pcm)" if response.status_code >= 500 else ""
+            raise TtsError(f"Qwen TTS ответил {response.status_code}{hint}: {response.text[:200]}")
+        pcm = response.content[: len(response.content) // 2 * 2]
+        if not pcm:
+            raise TtsError("Qwen TTS вернул пустое аудио")
+        return pcm
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
 def build_tts(settings: SpeechSettings) -> TextToSpeech | None:
     """Выбрать провайдера озвучки по настройкам (см. SpeechSettings.tts_provider)."""
     provider = settings.tts_provider
-    has_key = settings.salute_auth_key is not None
+    has_salute = settings.salute_auth_key is not None
+    has_qwen = settings.qwen_api_key is not None and bool(settings.qwen_base_url)
     has_espeak = shutil.which(settings.espeak_binary) is not None
 
     if provider == "none":
         return None
-    if provider == "salute" and not has_key:
+    if provider == "salute" and not has_salute:
         raise RuntimeError("TTS_PROVIDER=salute, но SALUTE_SPEECH_AUTH_KEY не задан")
+    if provider == "qwen" and not has_qwen:
+        raise RuntimeError("TTS_PROVIDER=qwen, но не заданы QWEN_TTS_BASE_URL и QWEN_TTS_API_KEY")
     if provider == "espeak" and not has_espeak:
         raise RuntimeError("TTS_PROVIDER=espeak, но espeak-ng не найден в PATH")
 
-    if provider == "salute" or (provider == "auto" and has_key):
+    # Приоритет при auto: SaluteSpeech, затем Qwen, затем espeak-ng.
+    if provider == "salute" or (provider == "auto" and has_salute):
         assert settings.salute_auth_key is not None
         return SaluteTts(
             auth_key=settings.salute_auth_key.get_secret_value(),
             scope=settings.salute_scope,
-            voice=settings.salute_voice,
+            voices={"male": settings.salute_voice_male, "female": settings.salute_voice_female},
             timeout_seconds=settings.salute_timeout_seconds,
             ca_bundle=settings.salute_ca_bundle,
         )
+    if provider == "qwen" or (provider == "auto" and has_qwen):
+        assert settings.qwen_api_key is not None and settings.qwen_base_url
+        return QwenTts(
+            base_url=settings.qwen_base_url,
+            api_key=settings.qwen_api_key.get_secret_value(),
+            model=settings.qwen_model,
+            voices={"male": settings.qwen_voice_male, "female": settings.qwen_voice_female},
+            timeout_seconds=settings.qwen_timeout_seconds,
+        )
     if provider == "espeak" or (provider == "auto" and has_espeak):
-        return EspeakTts(voice=settings.espeak_voice, speed=settings.espeak_speed, binary=settings.espeak_binary)
+        return EspeakTts(
+            voices={"male": settings.espeak_voice_male, "female": settings.espeak_voice_female},
+            speed=settings.espeak_speed,
+            binary=settings.espeak_binary,
+        )
 
-    logger.warning("озвучки нет: ни ключа SaluteSpeech, ни espeak-ng; приложение будет читать ответы само")
+    logger.warning("озвучки нет: ни ключа SaluteSpeech, ни ключа Qwen TTS, ни espeak-ng; приложение будет читать ответы само")
     return None

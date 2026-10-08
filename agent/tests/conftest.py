@@ -37,9 +37,11 @@ class FakeTts:
         self.delay = delay
         self.fail = fail
         self.calls: list[str] = []
+        self.voices: list[str] = []
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, voice: str = "male") -> bytes:
         self.calls.append(text)
+        self.voices.append(voice)
         if self.delay:
             await asyncio.sleep(self.delay)
         if self.fail:

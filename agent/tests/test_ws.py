@@ -343,3 +343,41 @@ def test_switching_speech_off_applies_to_a_live_socket(voice_client, user_id):
         send_user_message(ws, "c-2", "два")
         on = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
         assert has(on, "tts_start") and binary_frames(on)
+
+
+# ─── голос по роду ────────────────────────────────────────────────────────────
+
+
+def test_greeting_and_replies_use_the_voice_chosen_at_start(voice_client, voice, user_id):
+    dialog = voice_client.post(f"/v1/users/{user_id}/dialogs", json={"voice": "female"}, headers=AUTH).json()
+    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+        assert set(voice.voices) == {"female"}
+        send_user_message(ws, "c-1", "раз")
+        read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
+    assert set(voice.voices) == {"female"}
+
+
+def test_default_voice_is_male(voice_client, voice, user_id):
+    dialog = start_dialog(voice_client, user_id)
+    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        read_frames(ws, lambda f: has(f, "tts_end"))
+    assert set(voice.voices) == {"male"}
+
+
+def test_set_voice_frame_switches_the_voice_of_the_next_reply(voice_client, voice, user_id):
+    dialog = start_dialog(voice_client, user_id)  # male
+    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие мужским голосом
+        greeting_calls = len(voice.voices)
+        assert set(voice.voices) == {"male"}
+
+        ws.send_text(json.dumps({"type": "set_voice", "voice": "robot"}))  # чужое значение игнорируется
+        ws.send_text(json.dumps({"type": "set_voice", "voice": "female"}))
+        send_user_message(ws, "c-1", "раз")
+        read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
+        assert set(voice.voices[greeting_calls:]) == {"female"}
+
+    # выбор запомнен: следующий диалог человека начинается женским голосом
+    voice_client.post(f"/v1/users/{user_id}/dialogs/{dialog['dialogId']}/end", headers=AUTH)
+    assert start_dialog(voice_client, user_id)["voice"] == "female"

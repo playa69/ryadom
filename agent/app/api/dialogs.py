@@ -1,6 +1,6 @@
 """REST диалогов: начать, журнал, история, завершить, стереть пользователя (specs/agent-api)."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,14 +26,23 @@ class EndBody(BaseModel):
     tension_after: int | None = Field(default=None, ge=1, le=10, alias="tensionAfter")
 
 
+class StartBody(BaseModel):
+    """Тело `POST …/dialogs` необязательно. `voice` — голос озвучки по роду; без него берётся прошлый выбор человека."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    voice: Literal["male", "female"] | None = None
+
+
 @router.post("/dialogs")
-async def start_dialog(user_id: str, store: Store) -> dict[str, Any]:
-    dialog, resumed, hours = store.start(_user(user_id))
+async def start_dialog(user_id: str, store: Store, body: StartBody | None = None) -> dict[str, Any]:
+    dialog, resumed, hours = store.start(_user(user_id), (body or StartBody()).voice)
     return {
         "dialogId": dialog.id,
         "resumed": resumed,
         "greeting": dialog.greeting,
         "sinceLastDialogHours": hours,
+        "voice": dialog.voice,
     }
 
 

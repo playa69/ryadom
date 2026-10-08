@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 
 from app.api.deps import active_tts, get_tts, require_token
-from app.clients.speech import TextToSpeech, TtsError, pcm_to_wav
+from app.clients.speech import TextToSpeech, TtsError, Voice, pcm_to_wav
 from app.core.errors import AgentError
 from app.services.replies import split_sentences
 
@@ -39,13 +39,14 @@ async def say(
     request: Request,
     tts: Annotated[TextToSpeech | None, Depends(get_tts)],
     text: Annotated[str | None, Query(min_length=1, max_length=500)] = None,
+    voice: Voice = "male",
 ) -> Response | dict[str, str | None]:
     if text is None:
         return _status(request)
     if tts is None:
         raise AgentError(503, "VOICE_UNAVAILABLE", "Озвучка не настроена или выключена: нет ключа SaluteSpeech и espeak-ng")
     try:
-        pcm = b"".join([await tts.synthesize(sentence) for sentence in split_sentences(text) or [text]])
+        pcm = b"".join([await tts.synthesize(sentence, voice) for sentence in split_sentences(text) or [text]])
     except TtsError as error:
         raise AgentError(503, "VOICE_UNAVAILABLE", str(error)) from error
     return Response(pcm_to_wav(pcm), media_type="audio/wav", headers={"X-Tts-Provider": tts.name})

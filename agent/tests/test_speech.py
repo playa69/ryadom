@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import struct
 import wave
 
@@ -12,6 +13,7 @@ from app.clients import speech
 from app.clients.speech import (
     FRAME_BYTES,
     EspeakTts,
+    QwenTts,
     SaluteTts,
     TtsError,
     build_tts,
@@ -93,6 +95,8 @@ def test_pcm_to_wav_roundtrip():
 
 # ─── espeak-ng ────────────────────────────────────────────────────────────────
 
+ESPEAK_VOICES = {"male": "ru", "female": "ru+f2"}
+
 
 class FakeProcess:
     def __init__(self, out: bytes, err: bytes = b"", code: int = 0) -> None:
@@ -113,7 +117,7 @@ async def test_espeak_converts_to_24khz_and_passes_text_via_stdin(monkeypatch):
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    out = await EspeakTts(voice="ru", speed=150).synthesize("-Привет")
+    out = await EspeakTts(ESPEAK_VOICES, speed=150).synthesize("-Привет", "male")
 
     assert len(out) // 2 == 2400  # 0,1 с на 24 кГц
     assert process.stdin_seen == "-Привет".encode()  # текст не стал опцией командной строки
@@ -126,7 +130,7 @@ async def test_espeak_failure_becomes_tts_error(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", failing)
     with pytest.raises(TtsError, match="кодом 1"):
-        await EspeakTts("ru", 150).synthesize("привет")
+        await EspeakTts(ESPEAK_VOICES, 150).synthesize("привет", "male")
 
 
 async def test_missing_espeak_binary_becomes_tts_error(monkeypatch):
@@ -135,15 +139,18 @@ async def test_missing_espeak_binary_becomes_tts_error(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", missing)
     with pytest.raises(TtsError, match="не запустился"):
-        await EspeakTts("ru", 150).synthesize("привет")
+        await EspeakTts(ESPEAK_VOICES, 150).synthesize("привет", "male")
 
 
 # ─── SaluteSpeech ─────────────────────────────────────────────────────────────
 
 
+SALUTE_VOICES = {"male": "Bys_24000", "female": "Nec_24000"}
+
+
 def salute(handler, **kwargs) -> SaluteTts:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return SaluteTts(auth_key="KEY", scope="SALUTE_SPEECH_PERS", voice="May_24000", client=client, **kwargs)
+    return SaluteTts(auth_key="KEY", scope="SALUTE_SPEECH_PERS", voices=SALUTE_VOICES, client=client, **kwargs)
 
 
 def make_handler(calls: list[httpx.Request], audio: bytes = b"\x01\x00" * 100, synth_status: list[int] | None = None):
@@ -162,14 +169,14 @@ def make_handler(calls: list[httpx.Request], audio: bytes = b"\x01\x00" * 100, s
 
 async def test_salute_gets_a_token_then_synthesizes_pcm():
     calls: list[httpx.Request] = []
-    out = await salute(make_handler(calls)).synthesize("Привет")
+    out = await salute(make_handler(calls)).synthesize("Привет", "male")
 
     oauth, synth = calls
     assert oauth.headers["Authorization"] == "Basic KEY"
     assert oauth.headers["RqUID"] and b"scope=SALUTE_SPEECH_PERS" in oauth.content
     assert synth.headers["Authorization"] == "Bearer token-1"
     assert synth.headers["Content-Type"] == "application/text"
-    assert synth.url.params["format"] == "pcm16" and synth.url.params["voice"] == "May_24000"
+    assert synth.url.params["format"] == "pcm16" and synth.url.params["voice"] == "Bys_24000"
     assert synth.content == "Привет".encode()
     assert out == b"\x01\x00" * 100
 
@@ -177,15 +184,15 @@ async def test_salute_gets_a_token_then_synthesizes_pcm():
 async def test_salute_caches_the_token_between_calls():
     calls: list[httpx.Request] = []
     tts = salute(make_handler(calls))
-    await tts.synthesize("раз")
-    await tts.synthesize("два")
+    await tts.synthesize("раз", "male")
+    await tts.synthesize("два", "male")
     assert sum(1 for c in calls if c.url.host == "ngw.devices.sberbank.ru") == 1
 
 
 async def test_salute_refreshes_the_token_once_on_401():
     calls: list[httpx.Request] = []
     tts = salute(make_handler(calls, synth_status=[401, 200]))
-    assert await tts.synthesize("привет")
+    assert await tts.synthesize("привет", "male")
     synth_calls = [c for c in calls if c.url.host != "ngw.devices.sberbank.ru"]
     assert [c.headers["Authorization"] for c in synth_calls] == ["Bearer token-1", "Bearer token-2"]
 
@@ -193,7 +200,7 @@ async def test_salute_refreshes_the_token_once_on_401():
 @pytest.mark.parametrize("status", [400, 500])
 async def test_salute_error_status_becomes_tts_error(status):
     with pytest.raises(TtsError, match=str(status)):
-        await salute(make_handler([], synth_status=[status])).synthesize("привет")
+        await salute(make_handler([], synth_status=[status])).synthesize("привет", "male")
 
 
 async def test_salute_without_token_becomes_tts_error():
@@ -201,7 +208,7 @@ async def test_salute_without_token_becomes_tts_error():
         return httpx.Response(401, json={"message": "bad key"})
 
     with pytest.raises(TtsError, match="токен"):
-        await salute(handler).synthesize("привет")
+        await salute(handler).synthesize("привет", "male")
 
 
 async def test_salute_network_error_becomes_tts_error():
@@ -209,19 +216,19 @@ async def test_salute_network_error_becomes_tts_error():
         raise httpx.ConnectError("нет сети")
 
     with pytest.raises(TtsError):
-        await salute(handler).synthesize("привет")
+        await salute(handler).synthesize("привет", "male")
 
 
 def test_salute_needs_a_24khz_voice():
     with pytest.raises(ValueError, match="24"):
-        SaluteTts(auth_key="KEY", scope="S", voice="Nec_8000")
+        SaluteTts(auth_key="KEY", scope="S", voices={"male": "Bys_24000", "female": "Nec_8000"})
 
 
 # ─── выбор провайдера ─────────────────────────────────────────────────────────
 
 
 def settings(monkeypatch, **env: str) -> SpeechSettings:
-    for key in ("TTS_PROVIDER", "SALUTE_SPEECH_AUTH_KEY"):
+    for key in ("TTS_PROVIDER", "SALUTE_SPEECH_AUTH_KEY", "QWEN_TTS_API_KEY", "QWEN_TTS_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -232,9 +239,12 @@ def test_build_tts_none(monkeypatch):
     assert build_tts(settings(monkeypatch, TTS_PROVIDER="none", SALUTE_SPEECH_AUTH_KEY="k")) is None
 
 
-def test_build_tts_auto_prefers_salute_then_espeak_then_nothing(monkeypatch):
+def test_build_tts_auto_prefers_salute_then_qwen_then_espeak_then_nothing(monkeypatch):
     monkeypatch.setattr(speech.shutil, "which", lambda name: "/usr/bin/espeak-ng")
-    assert build_tts(settings(monkeypatch, SALUTE_SPEECH_AUTH_KEY="k")).name == "salute"
+    qwen = {"QWEN_TTS_API_KEY": "k", "QWEN_TTS_BASE_URL": "https://proxy.example/v1"}
+    assert build_tts(settings(monkeypatch, SALUTE_SPEECH_AUTH_KEY="k", **qwen)).name == "salute"  # ключ Сбера главнее
+    assert build_tts(settings(monkeypatch, **qwen)).name == "qwen"
+    assert build_tts(settings(monkeypatch, QWEN_TTS_API_KEY="k")).name == "espeak"  # без адреса прокси Qwen не включается
     assert build_tts(settings(monkeypatch)).name == "espeak"
     monkeypatch.setattr(speech.shutil, "which", lambda name: None)
     assert build_tts(settings(monkeypatch)) is None
@@ -246,3 +256,99 @@ def test_build_tts_explicit_provider_fails_fast_when_unavailable(monkeypatch):
         build_tts(settings(monkeypatch, TTS_PROVIDER="salute"))
     with pytest.raises(RuntimeError, match="espeak-ng"):
         build_tts(settings(monkeypatch, TTS_PROVIDER="espeak"))
+    with pytest.raises(RuntimeError, match="QWEN_TTS_API_KEY"):
+        build_tts(settings(monkeypatch, TTS_PROVIDER="qwen"))
+
+
+# ─── голоса по роду ───────────────────────────────────────────────────────────
+
+
+async def test_espeak_uses_the_voice_of_the_requested_gender(monkeypatch):
+    seen = []
+
+    async def fake_exec(*args, **kwargs):
+        seen.append(args[args.index("-v") + 1])
+        return FakeProcess(wav_bytes([100] * 220, 22_050))
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    tts = EspeakTts(ESPEAK_VOICES, 150)
+    await tts.synthesize("привет", "male")
+    await tts.synthesize("привет", "female")
+    assert seen == ["ru", "ru+f2"]
+
+
+async def test_salute_uses_the_voice_of_the_requested_gender():
+    calls: list[httpx.Request] = []
+    tts = salute(make_handler(calls))
+    await tts.synthesize("раз", "male")
+    await tts.synthesize("два", "female")
+    voices = [c.url.params["voice"] for c in calls if c.url.host != "ngw.devices.sberbank.ru"]
+    assert voices == ["Bys_24000", "Nec_24000"]
+
+
+# ─── Qwen TTS ─────────────────────────────────────────────────────────────────
+
+QWEN_VOICES = {"male": "loongjohn", "female": "longanhuan_v3.6"}
+
+
+def qwen(handler) -> QwenTts:
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return QwenTts("https://proxy.example/v1/", "proxy-key", "qwen/qwen-audio-3.0-tts-flash", QWEN_VOICES, client=client)
+
+
+async def test_qwen_asks_the_proxy_for_pcm_with_the_documented_voice():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        # прокси помечает pcm как audio/mpeg, это не должно мешать
+        return httpx.Response(200, content=b"\x01\x00" * 50, headers={"content-type": "audio/mpeg"})
+
+    out = await qwen(handler).synthesize("Привет", "male")
+    request = seen[0]
+    assert str(request.url) == "https://proxy.example/v1/audio/speech"
+    assert request.headers["Authorization"] == "Bearer proxy-key"
+    assert json.loads(request.content) == {
+        "model": "qwen/qwen-audio-3.0-tts-flash",
+        "input": "Привет",
+        "voice": "loongjohn",
+        "response_format": "pcm",
+    }
+    assert out == b"\x01\x00" * 50
+
+
+async def test_qwen_female_voice_and_odd_tail_is_dropped():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=b"\x01\x00\x02")
+
+    out = await qwen(handler).synthesize("Привет", "female")
+    assert bodies[0]["voice"] == "longanhuan_v3.6"
+    assert out == b"\x01\x00"  # нечётный хвост отброшен: сэмпл PCM16 занимает два байта
+
+
+@pytest.mark.parametrize("status", [400, 500])
+async def test_qwen_error_status_becomes_tts_error(status):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"error": {"message": "Internal server error"}})
+
+    with pytest.raises(TtsError, match=str(status)):
+        await qwen(handler).synthesize("Привет", "male")
+
+
+async def test_qwen_server_error_hints_at_voice_and_format():
+    with pytest.raises(TtsError, match="loongjohn"):
+        await qwen(lambda request: httpx.Response(500, json={})).synthesize("Привет", "male")
+
+
+async def test_qwen_empty_audio_and_network_error_become_tts_error():
+    with pytest.raises(TtsError, match="пустое"):
+        await qwen(lambda request: httpx.Response(200, content=b"")).synthesize("Привет", "male")
+
+    def broken(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("нет сети")
+
+    with pytest.raises(TtsError, match="не ответил"):
+        await qwen(broken).synthesize("Привет", "male")

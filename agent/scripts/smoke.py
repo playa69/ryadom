@@ -60,7 +60,7 @@ def kinds(texts: list[dict]) -> list[str]:
     return [t["type"] for t in texts]
 
 
-async def main(url: str, token: str, wav_path: str | None) -> int:
+async def main(url: str, token: str, wav_path: str | None, voice: str | None) -> int:
     auth = {"Authorization": f"Bearer {token}"}
     ws_base = url.replace("http", "ws", 1)
     user = str(uuid.uuid4())
@@ -75,9 +75,12 @@ async def main(url: str, token: str, wav_path: str | None) -> int:
 
         print("REST")
         check((await http.post(f"/v1/users/{user}/dialogs")).status_code == 401, "POST /dialogs без токена → 401")
-        started = await http.post(f"/v1/users/{user}/dialogs", headers=auth)
+        started = await http.post(f"/v1/users/{user}/dialogs", headers=auth, json={"voice": voice} if voice else None)
         check(started.status_code == 200 and "dialogId" in started.json(), "POST /dialogs", started.text)
         dialog = started.json()["dialogId"]
+        if voice:
+            check(started.json().get("voice") == voice, f"голос диалога: {voice}", started.text)
+        print(f"  голос диалога: {started.json().get('voice')}")
         again = (await http.post(f"/v1/users/{user}/dialogs", headers=auth)).json()
         check(again["dialogId"] == dialog and again["resumed"] is True, "повторный POST возвращает тот же диалог")
 
@@ -169,7 +172,8 @@ if __name__ == "__main__":
     parser.add_argument("--url", default="http://127.0.0.1:8001")
     parser.add_argument("--token", default=os.environ.get("AGENT_INTERNAL_TOKEN"))
     parser.add_argument("--wav", help="куда сохранить голос ответа агента (если озвучка включена)")
+    parser.add_argument("--voice", choices=["male", "female"], help="голос диалога (по умолчанию выбирает агент)")
     args = parser.parse_args()
     if not args.token:
         sys.exit("нужен --token или AGENT_INTERNAL_TOKEN")
-    sys.exit(asyncio.run(main(args.url, args.token, args.wav)))
+    sys.exit(asyncio.run(main(args.url, args.token, args.wav, args.voice)))

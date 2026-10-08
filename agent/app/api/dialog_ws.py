@@ -15,7 +15,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.api.deps import active_tts, canonical_user_id, token_ok
-from app.clients.speech import TextToSpeech, pcm_chunks, tts_frame
+from app.clients.speech import VOICES, TextToSpeech, Voice, pcm_chunks, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
 from app.services.dialog_store import Dialog, DialogStore
@@ -135,6 +135,10 @@ class DialogSession:
                 self._audio_frames = 0
             case "audio_end":
                 await self._on_audio_end()
+            case "set_voice":
+                voice = frame.get("voice")
+                if voice in VOICES:  # чужие значения игнорируются, как любое неизвестное поле
+                    self._store.set_voice(self._dialog, voice)
             case "tts_cancel":
                 message_id = frame.get("messageId")
                 if isinstance(message_id, str):
@@ -227,11 +231,11 @@ class DialogSession:
         tts = self._tts_source()
         if tts is None or not text:
             return
-        task = asyncio.create_task(self._speak(tts, message_id, text))
+        task = asyncio.create_task(self._speak(tts, message_id, text, self._dialog.voice))
         self._speech_tasks.add(task)
         task.add_done_callback(self._speech_tasks.discard)
 
-    async def _speak(self, tts: TextToSpeech, message_id: str, text: str) -> None:
+    async def _speak(self, tts: TextToSpeech, message_id: str, text: str, voice: Voice) -> None:
         """tts_start → кадры 0x02 → tts_end, по предложениям. `tts_start` уходит, когда готов первый звук."""
         async with self._speech_lock:
             if message_id in self._cancelled:
@@ -242,7 +246,7 @@ class DialogSession:
                 for sentence in split_sentences(text):
                     if self._closed or message_id in self._cancelled:
                         break
-                    pcm = await tts.synthesize(sentence)
+                    pcm = await tts.synthesize(sentence, voice)
                     if self._closed or message_id in self._cancelled:
                         break  # перебили, пока синтезировалось: не начинаем озвучку
                     if not started:

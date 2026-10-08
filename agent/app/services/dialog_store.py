@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from app.clients.speech import Voice
+
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -41,6 +43,8 @@ class Dialog:
     # id реплик клиента → id сообщения: повтор без ack не создаёт второго сообщения.
     client_ids: dict[str, str] = field(default_factory=dict)
     reply_index: int = 0
+    # Голос озвучки этого диалога (род): задаётся при старте или кадром set_voice.
+    voice: Voice = "male"
     # Один живой сокет на диалог (specs/agent-api «Обрыв и переподключение»).
     has_live_socket: bool = False
 
@@ -67,8 +71,11 @@ def _decode_cursor(cursor: str) -> tuple[str, str]:
 
 
 class DialogStore:
-    def __init__(self) -> None:
+    def __init__(self, default_voice: Voice = "male") -> None:
         self._users: dict[str, dict[str, Dialog]] = {}
+        self._default_voice = default_voice
+        # Последний выбор голоса человека: следующий диалог без явного голоса получит его.
+        self._voice_prefs: dict[str, Voice] = {}
 
     def _dialogs(self, user_id: str) -> dict[str, Dialog]:
         return self._users.setdefault(user_id, {})
@@ -80,12 +87,18 @@ class DialogStore:
     def open_dialog(self, user_id: str) -> Dialog | None:
         return next((d for d in self._dialogs(user_id).values() if d.ended_at is None), None)
 
-    def start(self, user_id: str) -> tuple[Dialog, bool, int | None]:
-        """Начать или возобновить диалог. Возвращает (диалог, resumed, часов с прошлого разговора)."""
+    def start(self, user_id: str, voice: Voice | None = None) -> tuple[Dialog, bool, int | None]:
+        """Начать или возобновить диалог. Возвращает (диалог, resumed, часов с прошлого разговора).
+
+        `voice` — выбранный голос: запоминается как предпочтение человека; без него берётся прошлый выбор или голос по умолчанию.
+        """
         hours = self._hours_since_last(user_id)
         existing = self.open_dialog(user_id)
         dialog = existing or Dialog(id=str(uuid.uuid4()), user_id=user_id, started_at=now_iso())
         self._dialogs(user_id)[dialog.id] = dialog
+        if voice is not None:
+            self._voice_prefs[user_id] = voice
+        dialog.voice = voice or self._voice_prefs.get(user_id) or self._default_voice
         dialog.greeting = "Продолжим, где остановились." if existing else "Я рядом. С чего начнём?"
         dialog.greeting_pending = True
         return dialog, existing is not None, hours
@@ -106,6 +119,11 @@ class DialogStore:
         page = ordered[:limit]
         has_more = len(ordered) > limit
         return page, (_encode_cursor(page[-1]) if has_more and page else None)
+
+    def set_voice(self, dialog: Dialog, voice: Voice) -> None:
+        """Сменить голос идущего диалога; запоминается и как предпочтение человека."""
+        dialog.voice = voice
+        self._voice_prefs[dialog.user_id] = voice
 
     def add_message(self, dialog: Dialog, role: str, text: str) -> Message:
         message = Message(id=str(uuid.uuid4()), role=role, text=text, created_at=now_iso())
@@ -131,3 +149,4 @@ class DialogStore:
     def erase_user(self, user_id: str) -> None:
         """Стереть всё о человеке. Идемпотентно."""
         self._users.pop(user_id, None)
+        self._voice_prefs.pop(user_id, None)
