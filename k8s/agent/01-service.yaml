@@ -1,0 +1,26 @@
+# =============================================================================
+# Service agent — ClusterIP перед Deployment agent (ns agent)
+# =============================================================================
+# Имя и порт заданы адресом из app-config (AGENT_API_URL):
+# http://agent.agent.svc.cluster.local:8001. Наружу сервис НЕ публикуется (HTTPRoute нет):
+# к агенту ходят только api и admin из ns prod, по внутреннему токену.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent
+  namespace: agent
+  labels:
+    app: agent
+    app.kubernetes.io/part-of: ryadom
+spec:
+  type: ClusterIP
+  selector:
+    app: agent
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8001
+      targetPort: 8001

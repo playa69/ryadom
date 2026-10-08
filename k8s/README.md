@@ -29,7 +29,8 @@ k8s/
 │   ├── 02-network-policy-infra.yaml   ← + egress в ryadom-db:5432/6379/26379, ingress :3000/9091 от monitoring
 │   ├── 03-network-policy-ryadom-db.yaml
 │   ├── 04-network-policy-kube-apiserver.yaml  ← egress на 192.168.0.4:6443 (урок post-DNAT)
-│   └── 07-network-policy-prod-apps.yaml  ← ingress от gateway на :3000–3003 (сервисы app/)
+│   ├── 07-network-policy-prod-apps.yaml  ← ingress от gateway на :3000–3003 (сервисы app/)
+│   └── 08-network-policy-agent-service.yaml  ← prod → agent:8001, агент → прокси Qwen TTS :4000
 ├── istio/
 │   ├── values-istiod.yaml          ← helm values control plane
 │   ├── values-ingressgateway.yaml  ← helm values gateway (DaemonSet + hostPort)
@@ -39,6 +40,7 @@ k8s/
 ├── cert-manager/manifests/
 │   ├── 00-cluster-issuer.yaml      ← letsencrypt-prod, solver gatewayHTTPRoute
 │   └── 01-certificate-ryadom-tls.yaml   ← cert на корневой домен → istio-system
+├── agent/                          ← упрощённый агент (ns agent): 00-config, 01-service, 02-deployment, README
 ├── app/                            ← сервисы из app/ репозитория (ns prod): см. раздел ниже
 │   ├── 00-app-config.yaml          ← ConfigMap app-config (всё статическое и несекретное)
 │   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 02-job-migrate (drizzle)
@@ -614,9 +616,10 @@ generic ... --from-env-file=...` (именно `create`, а не `apply`, что
   `kubectl -n prod logs deploy/app-admin | grep -i "console transport"`.
   Побочный эффект: все коды (привязка почты, сброс пароля) попадают в логи и
   Loki — на время `console` это приемлемо, для реальных пользователей нет.
-- **Agent** (`AGENT_API_URL` — плейсхолдер): сервиса агента в кластере пока
-  нет (`agent/` — заготовка без Dockerfile). api стартует, но диалоги и
-  стирание данных у агента не работают; `ANONYMOUS_PURGE_DISABLED=true`.
+- **Agent** (`AGENT_API_URL` — `http://agent.agent.svc.cluster.local:8001`): манифесты
+  упрощённого агента подготовлены в `k8s/agent/` (шаблонные ответы + озвучка Qwen TTS,
+  см. `k8s/agent/README.md`), но **в кластер ещё не выкатывались**. Пока агента нет, api
+  стартует, а диалоги и стирание данных у агента не работают; `ANONYMOUS_PURGE_DISABLED=true`.
 - 1 реплика на сервис: ресурсов в кластере впритык (см. «Доступные ресурсы»).
 
 ### DNS и почта: что сделать руками (Yandex Cloud, консоль)
