@@ -5,6 +5,7 @@
 интеграцию с приложением до появления настоящей логики (openspec/changes/add-agent-service).
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -12,12 +13,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api import dev, dialog_ws, dialogs, health
-from app.clients.speech import TextToSpeech, build_tts
+from app.clients.speech import CachedTts, TextToSpeech, build_tts
 from app.core.config import APP_CONFIG
 from app.core.errors import install_error_handlers
-from app.services.dialog_store import DialogStore
+from app.services.dialog_store import GREETINGS, DialogStore
+from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
 
 logger = logging.getLogger("agent")
+
+# Всё, что агент произносит: приветствия, кризисный ответ (он важнее) и шаблонные ответы.
+SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, *REPLIES)
 
 
 class SkipServiceEndpoints(logging.Filter):
@@ -48,9 +53,17 @@ def create_app(tts_factory: Callable[[], TextToSpeech | None] | None = None) -> 
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.tts = factory()
         logger.info("agent started: tts=%s", app.state.tts.name if app.state.tts else "none")
+        # Звук должен начаться за 0,9 с после текста, иначе клиент прочтёт его сам, а облачный синтез
+        # медленнее. Всё, что агент говорит, шаблонное: готовим звук всех фраз заранее.
+        warm_up = None
+        if isinstance(app.state.tts, CachedTts):
+            sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
+            warm_up = asyncio.create_task(app.state.tts.warm_up(sentences))
         try:
             yield
         finally:
+            if warm_up is not None:
+                warm_up.cancel()
             if app.state.tts is not None:
                 await app.state.tts.aclose()
 

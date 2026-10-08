@@ -72,6 +72,8 @@ class SpeechSettings(BaseAppSettings):
     tts_provider: Literal["auto", "salute", "qwen", "espeak", "none"] = Field(validation_alias="TTS_PROVIDER", default="auto")
     default_voice: Literal["male", "female"] = Field(validation_alias="TTS_DEFAULT_VOICE", default="male")
     tts_frame_interval_ms: int = Field(validation_alias="TTS_FRAME_INTERVAL_MS", default=100, ge=0)
+    # Сколько озвученных фраз помнить (по ним же прогреваются приветствия); 0 выключает память.
+    tts_cache_items: int = Field(validation_alias="TTS_CACHE_ITEMS", default=64, ge=0)
 
     espeak_binary: str = Field(validation_alias="ESPEAK_BINARY", default="espeak-ng")
     espeak_voice_male: str = Field(validation_alias="ESPEAK_VOICE_MALE", default="ru")

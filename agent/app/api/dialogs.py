@@ -1,5 +1,6 @@
 """REST диалогов: начать, журнал, история, завершить, стереть пользователя (specs/agent-api)."""
 
+import logging
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -8,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import dialog_not_found, validation_error
 from app.services.dialog_store import InvalidCursor
+
+logger = logging.getLogger("agent.dialogs")
 
 router = APIRouter(prefix="/v1/users/{user_id}", dependencies=[Depends(require_token)])
 
@@ -37,6 +40,7 @@ class StartBody(BaseModel):
 @router.post("/dialogs")
 async def start_dialog(user_id: str, store: Store, body: StartBody | None = None) -> dict[str, Any]:
     dialog, resumed, hours = store.start(_user(user_id), (body or StartBody()).voice)
+    logger.info("dialog started dialog=%s resumed=%s voice=%s", dialog.id, resumed, dialog.voice)
     return {
         "dialogId": dialog.id,
         "resumed": resumed,

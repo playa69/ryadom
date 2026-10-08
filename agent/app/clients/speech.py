@@ -19,6 +19,8 @@ import time
 import uuid
 import wave
 from array import array
+from collections import OrderedDict
+from collections.abc import Iterable
 from typing import Literal, Protocol
 
 import httpx
@@ -287,8 +289,58 @@ class QwenTts:
         await self._client.aclose()
 
 
+class CachedTts:
+    """Помнит озвученные фразы. Ответы агента шаблонные, и повтор не должен ждать провайдера снова.
+
+    Нужно прежде всего приветствию: клиент ждёт его `tts_start` не дольше 0,9 с, а облачный синтез
+    (Qwen через прокси) отдаёт первый звук за 1-2 с. Приветствия прогреваются при старте сервиса
+    (`warm_up`), и на соединении звук уже лежит в памяти.
+    """
+
+    def __init__(self, inner: TextToSpeech, max_items: int) -> None:
+        self._inner = inner
+        self._max_items = max_items
+        self._items: OrderedDict[tuple[Voice, str], bytes] = OrderedDict()
+        self.name = inner.name
+
+    async def synthesize(self, text: str, voice: Voice) -> bytes:
+        key = (voice, text)
+        cached = self._items.get(key)
+        if cached is not None:
+            self._items.move_to_end(key)
+            return cached
+        pcm = await self._inner.synthesize(text, voice)  # отказ не запоминается
+        self._items[key] = pcm
+        while len(self._items) > self._max_items:
+            self._items.popitem(last=False)
+        return pcm
+
+    async def warm_up(self, texts: Iterable[str]) -> None:
+        """Озвучить заранее; отказ провайдера не страшен: фраза озвучится при первом обращении."""
+        done = failed = 0
+        for text in texts:
+            for voice in VOICES:
+                try:
+                    await self.synthesize(text, voice)
+                    done += 1
+                except TtsError as error:
+                    failed += 1
+                    logger.warning("прогрев озвучки не удался voice=%s: %s", voice, error)
+        logger.info("прогрев озвучки закончен: озвучено %d, не удалось %d", done, failed)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
 def build_tts(settings: SpeechSettings) -> TextToSpeech | None:
-    """Выбрать провайдера озвучки по настройкам (см. SpeechSettings.tts_provider)."""
+    """Выбрать провайдера озвучки по настройкам и обернуть его памятью фраз (`TTS_CACHE_ITEMS`)."""
+    tts = _build_provider(settings)
+    if tts is None or settings.tts_cache_items == 0:
+        return tts
+    return CachedTts(tts, settings.tts_cache_items)
+
+
+def _build_provider(settings: SpeechSettings) -> TextToSpeech | None:
     provider = settings.tts_provider
     has_salute = settings.salute_auth_key is not None
     has_qwen = settings.qwen_api_key is not None and bool(settings.qwen_base_url)

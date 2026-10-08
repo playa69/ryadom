@@ -14,6 +14,11 @@ from typing import Any
 from app.clients.speech import Voice
 
 
+GREETING_NEW = "Я рядом. С чего начнём?"
+GREETING_RESUMED = "Продолжим, где остановились."
+GREETINGS = (GREETING_NEW, GREETING_RESUMED)
+
+
 def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -99,7 +104,7 @@ class DialogStore:
         if voice is not None:
             self._voice_prefs[user_id] = voice
         dialog.voice = voice or self._voice_prefs.get(user_id) or self._default_voice
-        dialog.greeting = "Продолжим, где остановились." if existing else "Я рядом. С чего начнём?"
+        dialog.greeting = GREETING_RESUMED if existing else GREETING_NEW
         dialog.greeting_pending = True
         return dialog, existing is not None, hours
 

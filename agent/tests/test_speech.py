@@ -12,6 +12,7 @@ import pytest
 from app.clients import speech
 from app.clients.speech import (
     FRAME_BYTES,
+    CachedTts,
     EspeakTts,
     QwenTts,
     SaluteTts,
@@ -352,3 +353,74 @@ async def test_qwen_empty_audio_and_network_error_become_tts_error():
 
     with pytest.raises(TtsError, match="не ответил"):
         await qwen(broken).synthesize("Привет", "male")
+
+
+# ─── память фраз ──────────────────────────────────────────────────────────────
+
+
+class CountingTts:
+    name = "counting"
+
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.fail = fail
+
+    async def synthesize(self, text: str, voice: str) -> bytes:
+        self.calls.append((voice, text))
+        if self.fail:
+            raise TtsError("сломано")
+        return pcm([len(self.calls)])
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_cached_tts_synthesizes_a_phrase_once_per_voice():
+    inner = CountingTts()
+    tts = CachedTts(inner, max_items=8)
+    first = await tts.synthesize("Привет", "male")
+    assert await tts.synthesize("Привет", "male") == first
+    await tts.synthesize("Привет", "female")  # другой голос — другая запись
+    assert inner.calls == [("male", "Привет"), ("female", "Привет")]
+    assert tts.name == "counting"
+
+
+async def test_cached_tts_forgets_the_oldest_phrase_first():
+    inner = CountingTts()
+    tts = CachedTts(inner, max_items=2)
+    for text in ("раз", "два", "раз", "три"):  # «раз» освежили, значит забудется «два»
+        await tts.synthesize(text, "male")
+    await tts.synthesize("раз", "male")
+    await tts.synthesize("два", "male")
+    assert [text for _, text in inner.calls] == ["раз", "два", "три", "два"]
+
+
+async def test_cached_tts_does_not_remember_a_failure():
+    inner = CountingTts(fail=True)
+    tts = CachedTts(inner, max_items=8)
+    for _ in range(2):
+        with pytest.raises(TtsError):
+            await tts.synthesize("Привет", "male")
+    inner.fail = False
+    await tts.synthesize("Привет", "male")
+    assert len(inner.calls) == 3
+
+
+async def test_warm_up_voices_every_text_in_both_voices_and_survives_a_failure():
+    inner = CountingTts()
+    tts = CachedTts(inner, max_items=8)
+    await tts.warm_up(["Я рядом.", "С чего начнём?"])
+    assert sorted(inner.calls) == sorted(
+        [(v, t) for v in ("male", "female") for t in ("Я рядом.", "С чего начнём?")]
+    )
+    await tts.synthesize("Я рядом.", "female")
+    assert len(inner.calls) == 4  # из памяти
+
+    broken = CachedTts(CountingTts(fail=True), max_items=8)
+    await broken.warm_up(["Я рядом."])  # не бросает: фраза озвучится при первом обращении
+
+
+def test_build_tts_wraps_the_provider_in_the_phrase_cache_unless_disabled(monkeypatch):
+    qwen = {"QWEN_TTS_API_KEY": "k", "QWEN_TTS_BASE_URL": "https://proxy.example/v1"}
+    assert isinstance(build_tts(settings(monkeypatch, **qwen)), CachedTts)
+    assert isinstance(build_tts(settings(monkeypatch, TTS_CACHE_ITEMS="0", **qwen)), QwenTts)
