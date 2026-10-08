@@ -4,6 +4,8 @@ import {
   GetUserByIdQueryErrorCode,
   UpdateUserNameCommand,
   UpdateUserNameCommandErrorCode,
+  UpdateUserVoiceCommand,
+  UpdateUserVoiceCommandErrorCode,
   usersManager,
 } from '@ryadom/core/managers/users-manager'
 import {
@@ -15,7 +17,7 @@ import { consentsProcess, GetConsentStatusOperation } from '@ryadom/core/process
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
-import { MeApiErrorCode, type MeApiResponse } from '@ryadom/contracts/api/auth/me'
+import { AGENT_VOICES, MeApiErrorCode, type MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import { authUser, requireAuth } from '../../lib/auth-guard'
@@ -24,10 +26,11 @@ import { toMe } from '../../lib/mappers'
 import { jsonBody } from '../../lib/request'
 import { inputOrNull } from '../../lib/rules'
 
-/** Profile: GET, PATCH (name), DELETE ("erase everything"). */
+/** Profile: GET, PATCH (name and/or the agent's voice), DELETE ("erase everything"). */
 
 const patchBody = z.object({
-  name: z.string(),
+  name: z.string().optional(),
+  voice: z.enum(AGENT_VOICES).optional(),
 })
 
 /** The profile in contract shape; null means there is no such user. Shared by GET and PATCH. */
@@ -52,19 +55,37 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger }: RouteDeps): void {
     return apiOk(c, me)
   })
 
-  /** Changing the name is all the profile can change; the email never changes at all. */
+  /** The profile can change the name and the agent's voice; the email never changes at all. */
   app.patch(ApiPath.Me, requireAuth(jwt), jsonBody(patchBody), async (c) => {
-    const name = inputOrNull(nameInputSchema, c.req.valid('json').name)
+    const body = c.req.valid('json')
+    if (body.name === undefined && body.voice === undefined) {
+      return apiError(c, 422, 'Nothing to update: send name and/or voice')
+    }
+    // Both are checked before anything is written: a bad name must not leave a half-applied change.
+    const name = body.name === undefined ? undefined : inputOrNull(nameInputSchema, body.name)
     if (name === null) return apiError(c, 422, 'Name length is out of range')
 
     const { userId } = authUser(c)
-    const updated = await usersManager.execute(new UpdateUserNameCommand({ userId, name }))
-    if (!updated.success) {
-      switch (updated.error) {
-        case UpdateUserNameCommandErrorCode.USER_NOT_FOUND:
-          return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
-        default:
-          return assertNever(updated.error)
+    if (name !== undefined) {
+      const updated = await usersManager.execute(new UpdateUserNameCommand({ userId, name }))
+      if (!updated.success) {
+        switch (updated.error) {
+          case UpdateUserNameCommandErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
+          default:
+            return assertNever(updated.error)
+        }
+      }
+    }
+    if (body.voice !== undefined) {
+      const updated = await usersManager.execute(new UpdateUserVoiceCommand({ userId, voice: body.voice }))
+      if (!updated.success) {
+        switch (updated.error) {
+          case UpdateUserVoiceCommandErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
+          default:
+            return assertNever(updated.error)
+        }
       }
     }
 

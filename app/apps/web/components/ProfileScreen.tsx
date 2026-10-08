@@ -16,16 +16,10 @@ import { useAuth, useClient } from '@/lib/auth'
 import Modal from './Modal'
 import LinkEmailForm from './ProfileLinkEmail'
 import { useNotice } from './Notice'
-import {
-  Busy,
-  FIELD_FOCUS,
-  ModalActions,
-  ModalText,
-  ProfileButton,
-  SettingsSection,
-} from './ProfileParts'
+import { Busy, FIELD_FOCUS, ModalActions, ModalText, ProfileButton, SettingsSection } from './ProfileParts'
 import { Page } from './Page'
 import ProfileRow from './ProfileRow'
+import ProfileVoice from './ProfileVoice'
 
 /**
  * Profile as a classic settings page: one column of sections (the account, security, support,
@@ -59,6 +53,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           name: me.name,
           isEmailConfirmed: me.isEmailConfirmed,
           createdAt: me.createdAt,
+          voice: me.voice,
         })
       })
       .catch(() => {})
@@ -226,6 +221,14 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
             testId="row-privacy"
           />
         </li>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Голос агента"
+        testId="voice-section"
+        note="Применится со следующего разговора и на всех твоих устройствах."
+      >
+        <ProfileVoice />
       </SettingsSection>
 
       <SettingsSection title="Приложение">

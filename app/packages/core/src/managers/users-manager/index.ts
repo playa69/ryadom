@@ -3,6 +3,7 @@ import './commands/create-user/create-user.handler'
 import './commands/mark-user-email-confirmed/mark-user-email-confirmed.handler'
 import './commands/change-user-email/change-user-email.handler'
 import './commands/update-user-name/update-user-name.handler'
+import './commands/update-user-voice/update-user-voice.handler'
 import './commands/set-user-active/set-user-active.handler'
 import './commands/set-user-deletion-archive/set-user-deletion-archive.handler'
 import './commands/soft-delete-user/soft-delete-user.handler'
@@ -25,6 +26,8 @@ export { ChangeUserEmailCommand } from './commands/change-user-email/change-user
 export type { ChangeUserEmailCommandData } from './commands/change-user-email/change-user-email.command'
 export { UpdateUserNameCommand } from './commands/update-user-name/update-user-name.command'
 export type { UpdateUserNameCommandData } from './commands/update-user-name/update-user-name.command'
+export { UpdateUserVoiceCommand } from './commands/update-user-voice/update-user-voice.command'
+export type { UpdateUserVoiceCommandData } from './commands/update-user-voice/update-user-voice.command'
 export { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
 export type { SetUserActiveCommandData } from './commands/set-user-active/set-user-active.command'
 export { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
@@ -53,6 +56,8 @@ export type { ChangeUserEmailCommandResult } from './commands/change-user-email/
 export { ChangeUserEmailCommandErrorCode } from './commands/change-user-email/change-user-email.types'
 export type { UpdateUserNameCommandResult } from './commands/update-user-name/update-user-name.types'
 export { UpdateUserNameCommandErrorCode } from './commands/update-user-name/update-user-name.types'
+export type { UpdateUserVoiceCommandResult } from './commands/update-user-voice/update-user-voice.types'
+export { UpdateUserVoiceCommandErrorCode } from './commands/update-user-voice/update-user-voice.types'
 export type { SetUserActiveCommandResult } from './commands/set-user-active/set-user-active.types'
 export { SetUserActiveCommandErrorCode } from './commands/set-user-active/set-user-active.types'
 export type { SetUserDeletionArchiveCommandResult } from './commands/set-user-deletion-archive/set-user-deletion-archive.types'
@@ -76,6 +81,7 @@ import type { CreateUserCommand } from './commands/create-user/create-user.comma
 import type { MarkUserEmailConfirmedCommand } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.command'
 import type { ChangeUserEmailCommand } from './commands/change-user-email/change-user-email.command'
 import type { UpdateUserNameCommand } from './commands/update-user-name/update-user-name.command'
+import type { UpdateUserVoiceCommand } from './commands/update-user-voice/update-user-voice.command'
 import type { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
 import type { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
 import type { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
@@ -91,6 +97,7 @@ export type UsersManagerRequests =
   | MarkUserEmailConfirmedCommand
   | ChangeUserEmailCommand
   | UpdateUserNameCommand
+  | UpdateUserVoiceCommand
   | SetUserActiveCommand
   | SetUserDeletionArchiveCommand
   | SoftDeleteUserCommand

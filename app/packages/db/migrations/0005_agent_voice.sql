@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "agent_voice" text DEFAULT 'male' NOT NULL;

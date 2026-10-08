@@ -11,7 +11,17 @@ import { RefreshApiErrorCode, type RefreshApiResponse } from '@ryadom/contracts/
 import { RegisterApiErrorCode, type RegisterApiResponse } from '@ryadom/contracts/api/auth/register'
 import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import type { LoginApiResponse } from '@ryadom/contracts/api/auth/shared'
-import { call, codeFor, makeApp, mockAgent, ok, PASSWORD, refusedWith, signUpAndIn, uniqueEmail } from './helpers'
+import {
+  call,
+  codeFor,
+  makeApp,
+  mockAgent,
+  ok,
+  PASSWORD,
+  refusedWith,
+  signUpAndIn,
+  uniqueEmail,
+} from './helpers'
 
 const { app, resetLimits } = makeApp()
 
@@ -47,7 +57,9 @@ describe('регистрация и вход', () => {
     // Every refresh token is single-use: the answer carries the next one.
     expect(refreshed.refreshToken).not.toBe(tokens.refreshToken)
     ok(await call(app, 'POST', '/api/auth/refresh', { refreshToken: refreshed.refreshToken }))
-    expect(ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, refreshed.accessToken)).id).toBe(user.id)
+    expect(
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, refreshed.accessToken)).id,
+    ).toBe(user.id)
   })
 
   it('неподтверждённую почту можно зарегистрировать заново: пароль нового владельца и новый код', async () => {
@@ -63,8 +75,12 @@ describe('регистрация и вход', () => {
     ok(await call(app, 'POST', '/api/auth/register', { email, password: PASSWORD, name: 'Аня' }))
 
     ok(await call(app, 'POST', '/api/auth/confirm-email', { email, code: codeFor(email) }))
-    expect((await call(app, 'POST', '/api/auth/login', { email, password: 'someone-elses-password' })).status).toBe(401)
-    const { user } = ok<LoginApiResponse>(await call(app, 'POST', '/api/auth/login', { email, password: PASSWORD }))
+    expect(
+      (await call(app, 'POST', '/api/auth/login', { email, password: 'someone-elses-password' })).status,
+    ).toBe(401)
+    const { user } = ok<LoginApiResponse>(
+      await call(app, 'POST', '/api/auth/login', { email, password: PASSWORD }),
+    )
     expect(user).toMatchObject({ email, name: 'Аня' })
   })
 
@@ -110,10 +126,44 @@ describe('регистрация и вход', () => {
   it('смена имени: обрезка пробелов, пустое — 422', async () => {
     resetLimits()
     const { tokens } = await signUpAndIn(app)
-    const me = ok<MeApiResponse>(await call(app, 'PATCH', '/api/auth/me', { name: '  Анна  ' }, tokens.accessToken))
+    const me = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { name: '  Анна  ' }, tokens.accessToken),
+    )
     expect(me.name).toBe('Анна')
     expect((await call(app, 'PATCH', '/api/auth/me', { name: '   ' }, tokens.accessToken)).status).toBe(422)
-    expect((await call(app, 'PATCH', '/api/auth/me', { name: 'x'.repeat(65) }, tokens.accessToken)).status).toBe(422)
+    expect(
+      (await call(app, 'PATCH', '/api/auth/me', { name: 'x'.repeat(65) }, tokens.accessToken)).status,
+    ).toBe(422)
+  })
+
+  it('голос агента: по умолчанию мужской, меняется отдельно и вместе с именем, чужое значение — 400, пустое тело — 422', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    expect((await read()).voice).toBe('male')
+
+    const female = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { voice: 'female' }, tokens.accessToken),
+    )
+    expect(female.voice).toBe('female')
+    expect((await read()).voice).toBe('female')
+
+    const both = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { name: 'Анна', voice: 'male' }, tokens.accessToken),
+    )
+    expect(both).toMatchObject({ name: 'Анна', voice: 'male' })
+
+    // A value the schema does not know is a malformed body (400); a body with nothing to change is refused as such (422).
+    for (const bad of [{ voice: 'robot' }, { voice: 1 }]) {
+      expect((await call(app, 'PATCH', '/api/auth/me', bad, tokens.accessToken)).status).toBe(400)
+    }
+    expect((await call(app, 'PATCH', '/api/auth/me', {}, tokens.accessToken)).status).toBe(422)
+    // A bad name next to a good voice changes nothing: the voice is not half-applied.
+    expect(
+      (await call(app, 'PATCH', '/api/auth/me', { name: '   ', voice: 'female' }, tokens.accessToken)).status,
+    ).toBe(422)
+    expect(await read()).toMatchObject({ name: 'Анна', voice: 'male' })
   })
 })
 
@@ -142,7 +192,9 @@ describe('пароль', () => {
         ),
       ),
     ).toBeNull()
-    expect((await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD })).status).toBe(401)
+    expect(
+      (await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD })).status,
+    ).toBe(401)
     ok(await call(app, 'POST', '/api/auth/login', { email: user.email, password: 'new-password-1' }))
   })
 
@@ -194,7 +246,9 @@ describe('состояние аккаунта проверяет только re
       await call(app, 'POST', '/api/auth/refresh', { refreshToken: tokens.refreshToken }),
       RefreshApiErrorCode.ACCOUNT_INACTIVE,
     )
-    expect((await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD })).status).toBe(401)
+    expect(
+      (await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD })).status,
+    ).toBe(401)
   })
 
   it('удаление аккаунта: данные стёрты у агента, повтор — успех, refresh — ACCOUNT_DELETED', async () => {
@@ -203,14 +257,18 @@ describe('состояние аккаунта проверяет только re
     const { calls } = mockAgent()
 
     expect(ok(await call(app, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
-    expect(calls.some((entry) => entry.method === 'DELETE' && entry.url.pathname === `/v1/users/${user.id}`)).toBe(true)
+    expect(
+      calls.some((entry) => entry.method === 'DELETE' && entry.url.pathname === `/v1/users/${user.id}`),
+    ).toBe(true)
 
     expect(ok(await call(app, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
     refusedWith(
       await call(app, 'POST', '/api/auth/refresh', { refreshToken: tokens.refreshToken }),
       RefreshApiErrorCode.ACCOUNT_DELETED,
     )
-    expect((await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD })).status).toBe(401)
+    expect(
+      (await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD })).status,
+    ).toBe(401)
 
     // The email is free again for a new registration.
     ok(await call(app, 'POST', '/api/auth/register', { email: user.email, password: PASSWORD, name: 'Аня' }))

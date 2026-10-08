@@ -1,6 +1,9 @@
 import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { citext } from './types'
 
+/** The agent's voice by gender. The same values are in the API contract (`@ryadom/contracts/api/auth/me`). */
+export type AgentVoice = 'male' | 'female'
+
 /**
  * Account. The password lives in `user_credentials`, and there are no external sign-in providers
  *. Blocking is `is_active = false`. Deletion is soft: the row is anonymized,
@@ -13,6 +16,8 @@ export const users = pgTable(
     /** Null for an anonymous account that has not linked an address (Postgres lets many rows hold null in a unique column). */
     email: citext('email').unique('users_email_unique'),
     name: text('name'),
+    /** The voice the agent speaks with, by gender (`male` by default); the agent maps it to its speech provider's voice. */
+    agentVoice: text('agent_voice').$type<AgentVoice>().notNull().default('male'),
     isActive: boolean('is_active').notNull().default(true),
     isEmailConfirmed: boolean('is_email_confirmed').notNull().default(false),
     properties: jsonb('properties').$type<Record<string, unknown>>(),

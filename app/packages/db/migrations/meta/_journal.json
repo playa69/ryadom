@@ -36,6 +36,13 @@
       "when": 1791131763841,
       "tag": "0004_session_device",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791498657238,
+      "tag": "0005_agent_voice",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import { requestHandler, type RequestHandler } from 'mediatr-ts'
 import assertNever from 'assert-never'
 import { createLogger } from '../../../shared'
 import { agentApiIntegration, StartAgentDialogRequest } from '../../../integrations/agent-api'
+import { GetUserByIdQuery, usersManager } from '../../../managers/users-manager'
 import { DialogAccessRefusal, ensureActiveUser } from '../shared/ensure-active-user'
 import { hasAllConsents } from '../shared/ensure-consents'
 import { recordActivity } from '../shared/record-activity'
@@ -36,8 +37,11 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
     }
 
     await recordActivity(operation.userId)
+    // The voice is the person's profile setting; the agent applies it to the greeting and to every reply.
+    const found = await usersManager.execute(new GetUserByIdQuery({ userId: operation.userId }))
+    const voice = found.success ? found.user.agentVoice : undefined
     const started = await agentApiIntegration.execute(
-      new StartAgentDialogRequest({ userId: operation.userId }),
+      new StartAgentDialogRequest({ userId: operation.userId, voice }),
     )
     createLogger('dialogs').info('Dialog started', {
       userId: operation.userId,

@@ -1,8 +1,11 @@
 import { RequestData } from 'mediatr-ts'
+import type { AgentVoice } from '@ryadom/db/schema'
 import type { StartAgentDialogResponse } from './start-agent-dialog.types'
 
 export interface StartAgentDialogRequestData {
   userId: string
+  /** The voice the agent speaks with in this dialog; without it the agent keeps the person's last choice. */
+  voice?: AgentVoice
 }
 
 export class StartAgentDialogRequest extends RequestData<StartAgentDialogResponse> {
@@ -10,9 +13,11 @@ export class StartAgentDialogRequest extends RequestData<StartAgentDialogRespons
   static readonly requestName = 'StartAgentDialogRequest'
 
   public readonly userId: string
+  public readonly voice: AgentVoice | undefined
 
   constructor(data: StartAgentDialogRequestData) {
     super()
     this.userId = data.userId
+    this.voice = data.voice
   }
 }
