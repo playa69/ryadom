@@ -13,8 +13,9 @@ from typing import Any
 os.environ["AGENT_INTERNAL_TOKEN"] = "test-internal-token"
 os.environ["STREAM_DELAY_MS"] = "0"
 os.environ["TTS_FRAME_INTERVAL_MS"] = "0"
-os.environ["TTS_PROVIDER"] = "none"
+os.environ["TTS_MODE"] = "none"
 os.environ.pop("SALUTE_SPEECH_AUTH_KEY", None)
+os.environ.pop("AGENT_API_TOKEN", None)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

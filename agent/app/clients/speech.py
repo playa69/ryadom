@@ -1,10 +1,10 @@
 """Озвучка ответов: PCM16 24 кГц моно, как в specs/agent-api «Голос — озвучка ответов».
 
-Провайдеры (по приоритету при `TTS_PROVIDER=auto`):
-  SaluteTts  SaluteSpeech по REST (целевой провайдер, нужен ключ авторизации Сбера)
-  QwenTts    Qwen TTS через OpenAI-совместимый прокси (POST /audio/speech), нужен ключ прокси
-  EspeakTts  локальный espeak-ng (роботизированный голос, ключа не нужно; ставится в контейнер)
-Если озвучки нет вовсе, `build_tts` возвращает None, и приложение читает ответы своим голосом.
+Провайдер выбирается явно, `TTS_MODE`:
+  qwen          QwenTts: Qwen TTS через OpenAI-совместимый прокси (POST /audio/speech), нужен ключ прокси
+  salutespeech  SaluteTts: SaluteSpeech по REST (целевой провайдер, нужен ключ авторизации Сбера)
+  espeak        EspeakTts: локальный espeak-ng (роботизированный голос, ключа не нужно; для разработки)
+  none          без озвучки: `build_tts` возвращает None, и приложение читает ответы своим голосом
 
 Голос выбирается по роду (`male` или `female`); каждый провайдер отображает его на свои голоса.
 """
@@ -168,7 +168,7 @@ class SaluteTts:
     на подменённом транспорте, формат ответа — по документации (`format=pcm16`, голос `*_24000`).
     """
 
-    name = "salute"
+    name = "salutespeech"
     OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     SYNTH_URL = "https://smartspeech.sber.ru/rest/v1/text:synthesize"
 
@@ -341,23 +341,13 @@ def build_tts(settings: SpeechSettings) -> TextToSpeech | None:
 
 
 def _build_provider(settings: SpeechSettings) -> TextToSpeech | None:
-    provider = settings.tts_provider
-    has_salute = settings.salute_auth_key is not None
-    has_qwen = settings.qwen_api_key is not None and bool(settings.qwen_base_url)
-    has_espeak = shutil.which(settings.espeak_binary) is not None
-
-    if provider == "none":
+    mode = settings.mode
+    if mode == "none":
         return None
-    if provider == "salute" and not has_salute:
-        raise RuntimeError("TTS_PROVIDER=salute, но SALUTE_SPEECH_AUTH_KEY не задан")
-    if provider == "qwen" and not has_qwen:
-        raise RuntimeError("TTS_PROVIDER=qwen, но не заданы QWEN_TTS_BASE_URL и QWEN_TTS_API_KEY")
-    if provider == "espeak" and not has_espeak:
-        raise RuntimeError("TTS_PROVIDER=espeak, но espeak-ng не найден в PATH")
 
-    # Приоритет при auto: SaluteSpeech, затем Qwen, затем espeak-ng.
-    if provider == "salute" or (provider == "auto" and has_salute):
-        assert settings.salute_auth_key is not None
+    if mode == "salutespeech":
+        if settings.salute_auth_key is None:
+            raise RuntimeError("TTS_MODE=salutespeech, но SALUTE_SPEECH_AUTH_KEY не задан")
         return SaluteTts(
             auth_key=settings.salute_auth_key.get_secret_value(),
             scope=settings.salute_scope,
@@ -365,8 +355,10 @@ def _build_provider(settings: SpeechSettings) -> TextToSpeech | None:
             timeout_seconds=settings.salute_timeout_seconds,
             ca_bundle=settings.salute_ca_bundle,
         )
-    if provider == "qwen" or (provider == "auto" and has_qwen):
-        assert settings.qwen_api_key is not None and settings.qwen_base_url
+
+    if mode == "qwen":
+        if settings.qwen_api_key is None or not settings.qwen_base_url:
+            raise RuntimeError("TTS_MODE=qwen, но не заданы AGENT_API_TOKEN (ключ прокси) и QWEN_TTS_BASE_URL")
         return QwenTts(
             base_url=settings.qwen_base_url,
             api_key=settings.qwen_api_key.get_secret_value(),
@@ -374,12 +366,11 @@ def _build_provider(settings: SpeechSettings) -> TextToSpeech | None:
             voices={"male": settings.qwen_voice_male, "female": settings.qwen_voice_female},
             timeout_seconds=settings.qwen_timeout_seconds,
         )
-    if provider == "espeak" or (provider == "auto" and has_espeak):
-        return EspeakTts(
-            voices={"male": settings.espeak_voice_male, "female": settings.espeak_voice_female},
-            speed=settings.espeak_speed,
-            binary=settings.espeak_binary,
-        )
 
-    logger.warning("озвучки нет: ни ключа SaluteSpeech, ни ключа Qwen TTS, ни espeak-ng; приложение будет читать ответы само")
-    return None
+    if shutil.which(settings.espeak_binary) is None:  # mode == "espeak"
+        raise RuntimeError("TTS_MODE=espeak, но espeak-ng не найден в PATH")
+    return EspeakTts(
+        voices={"male": settings.espeak_voice_male, "female": settings.espeak_voice_female},
+        speed=settings.espeak_speed,
+        binary=settings.espeak_binary,
+    )

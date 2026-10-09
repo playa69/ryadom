@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Упрощённый агент. Сборка из каталога agent/:
 #   docker build -t ryadom-agent .
-#   docker run --rm -p 8001:8001 -e AGENT_INTERNAL_TOKEN=<токен> ryadom-agent
+#   docker run --rm -p 8001:8001 -e AGENT_INTERNAL_TOKEN=<токен> -e TTS_MODE=espeak ryadom-agent
 FROM python:3.12-slim
 
 # espeak-ng: запасной голос, пока у агента нет ключа SaluteSpeech.

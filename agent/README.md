@@ -8,7 +8,7 @@
 - весь контракт `agent-api` ([openspec/changes/add-agent-service/specs/agent-api](../openspec/changes/add-agent-service/specs/agent-api/spec.md)): REST диалогов и один WebSocket на диалог, текст и голос, внутренний токен, единый формат ошибок;
 - шаблонные ответы по кругу, без модели; кризис определяется по списку слов и отвечает фиксированным текстом;
 - распознавание-заглушка: голосовая реплика превращается в `[голосовая реплика, N с]`;
-- настоящая озвучка ответов и приветствия, мужским или женским голосом: SaluteSpeech, Qwen TTS или espeak-ng;
+- настоящая озвучка ответов и приветствия, мужским или женским голосом: Qwen TTS или SaluteSpeech (режим `TTS_MODE`);
 - диалоги в памяти процесса: после перезапуска пропадают, реплика одна.
 
 Чего нет специально: LLM, LangGraph, БД и память, классификаторы, PII-фильтр, Langfuse, несколько реплик. Всё это
@@ -20,17 +20,19 @@
 ```bash
 cd agent
 uv sync
-AGENT_INTERNAL_TOKEN=<токен> uv run uvicorn app.main:app --port 8001
+AGENT_INTERNAL_TOKEN=<токен> TTS_MODE=espeak uv run uvicorn app.main:app --port 8001
 ```
 
-Без `AGENT_INTERNAL_TOKEN` сервис не стартует. Остальные настройки — в [.env.example](.env.example).
+Без `AGENT_INTERNAL_TOKEN` сервис не стартует. По умолчанию `TTS_MODE=qwen` и нужны ключ прокси и адрес (см. ниже),
+поэтому для локального запуска без ключей выбран `TTS_MODE=espeak` (или `none`). Остальные настройки — в
+[.env.example](.env.example).
 
 В контейнере (ставит espeak-ng): `docker build -t ryadom-agent .`
 
 ## Проверка
 
 ```bash
-uv run pytest                                   # 78 тестов: REST, WebSocket, голос, озвучка, провайдеры речи
+uv run pytest                                   # 89 тестов: REST, WebSocket, голос, озвучка, провайдеры речи
 uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> --wav reply.wav [--voice female]
 ```
 
@@ -41,12 +43,20 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 
 ## Озвучка и выбор голоса
 
-`TTS_PROVIDER=auto` выбирает провайдера по приоритету:
+Чем озвучивать, задаёт `TTS_MODE`. Это не секрет, он лежит в конфиге; недостающий ключ или бинарник — сервис не стартует:
 
-1. **SaluteSpeech**, если задан `SALUTE_SPEECH_AUTH_KEY` (ключ авторизации Сбера);
-2. **Qwen TTS** (`qwen/qwen-audio-3.0-tts-flash`), если заданы `QWEN_TTS_BASE_URL` и `QWEN_TTS_API_KEY` (прокси программы);
-3. **espeak-ng**, если он есть в PATH;
-4. иначе озвучки нет, и приложение читает ответы своим голосом.
+| `TTS_MODE` | Что | Что нужно |
+|---|---|---|
+| `qwen` (по умолчанию) | Qwen TTS (`qwen/qwen-audio-3.0-tts-flash`) через прокси программы | `AGENT_API_TOKEN` (ключ прокси) и `QWEN_TTS_BASE_URL` |
+| `salutespeech` | SaluteSpeech | `SALUTE_SPEECH_AUTH_KEY` (ключ авторизации Сбера) |
+| `espeak` | локальный espeak-ng, для разработки | espeak-ng в PATH |
+| `none` | без озвучки: приложение читает ответы своим голосом, для разработки и тестов | ничего |
+
+Режим не выбирается по наличию ключа: когда появится ключ Сбера, достаточно сменить `TTS_MODE` на `salutespeech`.
+`POST /dev/tts {"mode": ...}` (см. выше) выключает озвучку на лету поверх выбранного режима.
+
+Ключ прокси хранится в `AGENT_API_TOKEN` и принадлежит только агенту. Не путать с `AGENT_INTERNAL_TOKEN`: это общий
+токен между сервисами, им приложение представляется агенту.
 
 Выход всегда PCM16, 24 кГц, кадры по 200 мс, как в контракте. `GET /health/ready` показывает выбранного провайдера.
 
@@ -83,5 +93,9 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 AGENT_API_URL=http://<адрес агента>:8001
 AGENT_API_TOKEN=<тот же токен, что AGENT_INTERNAL_TOKEN у агента>
 ```
+
+Здесь `AGENT_API_TOKEN` — имя переменной внутри приложения для общего токена между сервисами. На стороне агента то же
+имя занимает ключ прокси Qwen, это другой секрет. Поэтому в Secret'ах кластера общий токен лежит под именем
+`AGENT_INTERNAL_TOKEN` и в Deployment приложения подставляется в переменную `AGENT_API_TOKEN`.
 
 Локальную заглушку `dev/agent-mock` это не заменяет и не ломает: она остаётся для разработки без агента.

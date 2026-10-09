@@ -229,36 +229,54 @@ def test_salute_needs_a_24khz_voice():
 
 
 def settings(monkeypatch, **env: str) -> SpeechSettings:
-    for key in ("TTS_PROVIDER", "SALUTE_SPEECH_AUTH_KEY", "QWEN_TTS_API_KEY", "QWEN_TTS_BASE_URL"):
+    for key in ("TTS_MODE", "SALUTE_SPEECH_AUTH_KEY", "AGENT_API_TOKEN", "QWEN_TTS_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return SpeechSettings()
 
 
+PROXY = {"AGENT_API_TOKEN": "k", "QWEN_TTS_BASE_URL": "https://proxy.example/v1"}
+
+
 def test_build_tts_none(monkeypatch):
-    assert build_tts(settings(monkeypatch, TTS_PROVIDER="none", SALUTE_SPEECH_AUTH_KEY="k")) is None
+    assert build_tts(settings(monkeypatch, TTS_MODE="none", SALUTE_SPEECH_AUTH_KEY="k", **PROXY)) is None
 
 
-def test_build_tts_auto_prefers_salute_then_qwen_then_espeak_then_nothing(monkeypatch):
+def test_tts_mode_picks_exactly_the_requested_provider(monkeypatch):
     monkeypatch.setattr(speech.shutil, "which", lambda name: "/usr/bin/espeak-ng")
-    qwen = {"QWEN_TTS_API_KEY": "k", "QWEN_TTS_BASE_URL": "https://proxy.example/v1"}
-    assert build_tts(settings(monkeypatch, SALUTE_SPEECH_AUTH_KEY="k", **qwen)).name == "salute"  # ключ Сбера главнее
-    assert build_tts(settings(monkeypatch, **qwen)).name == "qwen"
-    assert build_tts(settings(monkeypatch, QWEN_TTS_API_KEY="k")).name == "espeak"  # без адреса прокси Qwen не включается
-    assert build_tts(settings(monkeypatch)).name == "espeak"
-    monkeypatch.setattr(speech.shutil, "which", lambda name: None)
-    assert build_tts(settings(monkeypatch)) is None
+    # Ключи есть у всех, но решает только режим: никакого «главнее» по наличию ключа.
+    keys = {"SALUTE_SPEECH_AUTH_KEY": "k", **PROXY}
+    assert build_tts(settings(monkeypatch, TTS_MODE="qwen", **keys)).name == "qwen"
+    assert build_tts(settings(monkeypatch, TTS_MODE="salutespeech", **keys)).name == "salutespeech"
+    assert build_tts(settings(monkeypatch, TTS_MODE="espeak", **keys)).name == "espeak"
 
 
-def test_build_tts_explicit_provider_fails_fast_when_unavailable(monkeypatch):
+def test_tts_mode_defaults_to_qwen(monkeypatch):
+    assert build_tts(settings(monkeypatch, **PROXY)).name == "qwen"
+
+
+def test_the_qwen_key_is_read_from_agent_api_token(monkeypatch):
+    config = settings(monkeypatch, **PROXY)
+    assert config.qwen_api_key is not None and config.qwen_api_key.get_secret_value() == "k"
+    assert "QWEN_TTS_API_KEY" not in {field.validation_alias for field in SpeechSettings.model_fields.values()}
+
+
+def test_tts_mode_fails_fast_when_its_credentials_are_missing(monkeypatch):
     monkeypatch.setattr(speech.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match="SALUTE_SPEECH_AUTH_KEY"):
-        build_tts(settings(monkeypatch, TTS_PROVIDER="salute"))
+        build_tts(settings(monkeypatch, TTS_MODE="salutespeech", **PROXY))
     with pytest.raises(RuntimeError, match="espeak-ng"):
-        build_tts(settings(monkeypatch, TTS_PROVIDER="espeak"))
-    with pytest.raises(RuntimeError, match="QWEN_TTS_API_KEY"):
-        build_tts(settings(monkeypatch, TTS_PROVIDER="qwen"))
+        build_tts(settings(monkeypatch, TTS_MODE="espeak"))
+    with pytest.raises(RuntimeError, match="AGENT_API_TOKEN"):
+        build_tts(settings(monkeypatch, TTS_MODE="qwen"))  # нет ни ключа, ни адреса
+    with pytest.raises(RuntimeError, match="QWEN_TTS_BASE_URL"):
+        build_tts(settings(monkeypatch, TTS_MODE="qwen", AGENT_API_TOKEN="k"))  # без адреса прокси Qwen не включается
+
+
+def test_tts_mode_rejects_unknown_values(monkeypatch):
+    with pytest.raises(ValueError):
+        settings(monkeypatch, TTS_MODE="auto")
 
 
 # ─── голоса по роду ───────────────────────────────────────────────────────────
@@ -421,6 +439,5 @@ async def test_warm_up_voices_every_text_in_both_voices_and_survives_a_failure()
 
 
 def test_build_tts_wraps_the_provider_in_the_phrase_cache_unless_disabled(monkeypatch):
-    qwen = {"QWEN_TTS_API_KEY": "k", "QWEN_TTS_BASE_URL": "https://proxy.example/v1"}
-    assert isinstance(build_tts(settings(monkeypatch, **qwen)), CachedTts)
-    assert isinstance(build_tts(settings(monkeypatch, TTS_CACHE_ITEMS="0", **qwen)), QwenTts)
+    assert isinstance(build_tts(settings(monkeypatch, **PROXY)), CachedTts)
+    assert isinstance(build_tts(settings(monkeypatch, TTS_CACHE_ITEMS="0", **PROXY)), QwenTts)

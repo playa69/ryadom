@@ -43,7 +43,7 @@ class SecuritySettings(BaseAppSettings):
     """Внутренняя авторизация (specs/agent-api «Внутренняя авторизация»).
 
     Обязательна: без токена сервис не стартует. Это тот же секрет, что у вызывающей стороны
-    лежит в `AGENT_API_TOKEN`.
+    приложение отправляет агенту (в Secret'ах кластера он лежит под именем `AGENT_INTERNAL_TOKEN`).
     """
 
     internal_token: SecretStr = Field(validation_alias="AGENT_INTERNAL_TOKEN", min_length=1)
@@ -58,18 +58,17 @@ class DialogSettings(BaseAppSettings):
 class SpeechSettings(BaseAppSettings):
     """Озвучка ответов агента (specs/speech-pipeline).
 
-    `TTS_PROVIDER`:
-      auto    по приоритету: SaluteSpeech (если задан ключ) → Qwen TTS (если задан ключ прокси) →
-              espeak-ng (если установлен) → без озвучки
-      salute  только SaluteSpeech (нет ключа — сервис не стартует)
-      qwen    только Qwen TTS через OpenAI-совместимый прокси (нет ключа или адреса — сервис не стартует)
-      espeak  только espeak-ng (нет бинарника — сервис не стартует)
-      none    без озвучки: приложение читает ответы своим голосом
+    `TTS_MODE`, чем озвучивать (недостающий ключ или бинарник — сервис не стартует):
+      qwen          Qwen TTS через OpenAI-совместимый прокси: нужны `AGENT_API_TOKEN` (ключ прокси) и
+                    `QWEN_TTS_BASE_URL` (по умолчанию)
+      salutespeech  SaluteSpeech: нужен `SALUTE_SPEECH_AUTH_KEY` (ключ авторизации Сбера)
+      espeak        локальный espeak-ng, ключей не нужно (для разработки)
+      none          без озвучки: приложение читает ответы своим голосом (для разработки и тестов)
 
     Голос выбирается по роду, `male` или `female`; у каждого провайдера он отображается на свои голоса.
     """
 
-    tts_provider: Literal["auto", "salute", "qwen", "espeak", "none"] = Field(validation_alias="TTS_PROVIDER", default="auto")
+    mode: Literal["qwen", "salutespeech", "espeak", "none"] = Field(validation_alias="TTS_MODE", default="qwen")
     default_voice: Literal["male", "female"] = Field(validation_alias="TTS_DEFAULT_VOICE", default="male")
     tts_frame_interval_ms: int = Field(validation_alias="TTS_FRAME_INTERVAL_MS", default=100, ge=0)
     # Сколько озвученных фраз помнить (по ним же прогреваются приветствия); 0 выключает память.
@@ -91,7 +90,9 @@ class SpeechSettings(BaseAppSettings):
     # Qwen TTS через OpenAI-совместимый прокси (POST {base_url}/audio/speech). У модели свои голоса и форматы:
     # голоса loongjohn и longanhuan_v3.6, форматы mp3 и pcm; агенту нужен pcm (PCM16, 24 кГц, моно).
     qwen_base_url: str | None = Field(validation_alias="QWEN_TTS_BASE_URL", default=None)
-    qwen_api_key: SecretStr | None = Field(validation_alias="QWEN_TTS_API_KEY", default=None)
+    # Ключ прокси хранится в AGENT_API_TOKEN: он принадлежит только агенту и наружу не уходит. Не путать с
+    # AGENT_INTERNAL_TOKEN, которым вызывающая сторона (api приложения) представляется самому агенту.
+    qwen_api_key: SecretStr | None = Field(validation_alias="AGENT_API_TOKEN", default=None)
     qwen_model: str = Field(validation_alias="QWEN_TTS_MODEL", default="qwen/qwen-audio-3.0-tts-flash")
     qwen_voice_male: str = Field(validation_alias="QWEN_TTS_VOICE_MALE", default="loongjohn")
     qwen_voice_female: str = Field(validation_alias="QWEN_TTS_VOICE_FEMALE", default="longanhuan_v3.6")
