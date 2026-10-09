@@ -52,7 +52,7 @@ kubectl -n agent get secret registry-pull                   # есть: он н�
 
 # 1. Образ: платформа linux/amd64, контекст — каталог agent/ (префикс cr.yandex/.../agent/ — как у app/)
 REG=cr.yandex/crpsqeamqpuvrkm5tpr9/agent
-TAG=0.1.0                                                   # тот же тег в 02-deployment.yaml
+TAG=0.1.1                                                   # тот же тег в 02-deployment.yaml
 cd agent
 docker buildx build --platform linux/amd64 --provenance=false --sbom=false --load -t $REG/agent:$TAG .
 cat ../registry-pusher-key.json | docker login --username json_key --password-stdin cr.yandex
