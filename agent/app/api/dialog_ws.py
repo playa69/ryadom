@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import re
+import time
 from array import array
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -22,6 +23,12 @@ from app.clients.llm import STT_RATE, ChatModel, ModelError, Recognizer
 from app.clients.speech import VOICES, TextToSpeech, Voice, pcm_chunks, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
+from app.core.metrics import (
+    VOICE_FALSE_INTERRUPTIONS_TOTAL,
+    VOICE_INTERRUPTIONS_TOTAL,
+    VOICE_TURN_END_DELAY_SECONDS,
+    VOICE_TURNS_TRUNCATED_TOTAL,
+)
 from app.services.dialog_store import Dialog, DialogStore
 from app.services.replies import (
     CRISIS_REPLY,
@@ -37,11 +44,13 @@ logger = logging.getLogger("agent.ws")
 router = APIRouter()
 
 FRAME_KIND_AUDIO_IN = 0x01
-MAX_USER_TEXT = 4000
+# Набранный текст шлюз приложения ограничивает 4000 символов сам; запас здесь — для голоса:
+# пять минут речи (VOICE_TURN_MAX_SECONDS) — это 4-5 тысяч символов распознанного текста.
+MAX_USER_TEXT = 8000
 # Один кадр голоса человека — 100 мс (specs/agent-api «Голос — формат и ввод»).
 AUDIO_FRAME_SECONDS = 0.1
-# Одна голосовая реплика — не длиннее двух минут: остальное отбрасывается, память не растёт без предела.
-MAX_AUDIO_BYTES = STT_RATE * 2 * 120
+# Одна голосовая реплика — не длиннее VOICE_TURN_MAX_SECONDS: остальное отбрасывается, память не растёт без предела.
+MAX_AUDIO_BYTES = STT_RATE * 2 * APP_CONFIG.dialog.voice_turn_max_seconds
 # Тише этого (среднеквадратичное по PCM16, около -50 дБ) — тишина: whisper на ней выдумывает слова, и в него она не идёт.
 SILENCE_RMS = 100
 # Ответ модели длиннее — обрезаем: озвучка и экран рассчитаны на короткую реплику.
@@ -90,6 +99,11 @@ class DialogSession:
         self._audio_open = False
         self._audio_frames = 0
         self._audio = bytearray()
+        # Когда пришёл последний кадр с речью (monotonic): по нему видно, сколько тишины ждал детектор конца реплики.
+        self._last_voiced: float | None = None
+        # Озвучку перебили, и следующая голосовая реплика — ответ на это перебивание.
+        self._interrupted = False
+        self._turn_interrupts = False
 
     # ─── отправка ─────────────────────────────────────────────────────────────
 
@@ -167,6 +181,9 @@ class DialogSession:
                 self._audio_open = True
                 self._audio_frames = 0
                 self._audio = bytearray()
+                self._last_voiced = None
+                # tts_cancel прямо перед audio_start — перебивание голосом: реплику начинаем с чистого листа.
+                self._turn_interrupts, self._interrupted = self._interrupted, False
             case "audio_end":
                 await self._on_audio_end()
             case "set_voice":
@@ -177,6 +194,12 @@ class DialogSession:
                 message_id = frame.get("messageId")
                 if isinstance(message_id, str):
                     self._cancelled.add(message_id)
+                    VOICE_INTERRUPTIONS_TOTAL.inc()
+                    # Перебили посреди реплики (она началась, пока агент думал) — это перебивание той же реплики.
+                    if self._audio_open:
+                        self._turn_interrupts = True
+                    else:
+                        self._interrupted = True
             case "end":
                 return await self._on_end(frame)
         return False
@@ -186,6 +209,7 @@ class DialogSession:
         client_id = frame.get("id") if isinstance(frame.get("id"), str) and frame.get("id") else None
         if not isinstance(text, str) or not text.strip():
             return
+        self._interrupted = False  # перебили, чтобы написать: это не голосовая реплика
         dialog = self._dialog
         # Клиент повторяет реплику, пока нет ack: тот же id — то же сообщение, без второго ответа.
         if client_id and client_id in dialog.client_ids:
@@ -203,8 +227,17 @@ class DialogSession:
     def _on_audio_frame(self, data: bytes) -> None:
         if self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN:
             self._audio_frames += 1
+            if not is_silence(data[5:]):
+                self._last_voiced = time.monotonic()
             if len(self._audio) < MAX_AUDIO_BYTES:
                 self._audio += data[5:]
+                if len(self._audio) >= MAX_AUDIO_BYTES:
+                    VOICE_TURNS_TRUNCATED_TOTAL.inc()
+                    logger.warning(
+                        "voice turn reached the limit dialog=%s seconds=%d",
+                        self._dialog.id,
+                        APP_CONFIG.dialog.voice_turn_max_seconds,
+                    )
 
     async def _on_audio_end(self) -> None:
         """Конец голосовой реплики. Распознавание идёт в очереди, а не здесь: сокет в это время читает `tts_cancel`.
@@ -214,17 +247,29 @@ class DialogSession:
         if not self._audio_open:
             return
         frames, pcm = self._audio_frames, bytes(self._audio)
+        interrupts = self._turn_interrupts
+        if self._last_voiced is not None:
+            VOICE_TURN_END_DELAY_SECONDS.observe(time.monotonic() - self._last_voiced)
         self._audio_open, self._audio_frames, self._audio = False, 0, bytearray()
+        self._last_voiced, self._turn_interrupts = None, False
         if frames == 0:
+            self._count_false_interruption(interrupts)
             await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
             return
-        self._jobs.put_nowait(lambda: self._voice_turn(frames, pcm))
+        self._jobs.put_nowait(lambda: self._voice_turn(frames, pcm, interrupts))
 
-    async def _voice_turn(self, frames: int, pcm: bytes) -> None:
+    def _count_false_interruption(self, interrupts: bool) -> None:
+        """Перебили, а сказать нечего: детектор принял за речь эхо голоса агента или шум. Текст не пишется."""
+        if interrupts:
+            VOICE_FALSE_INTERRUPTIONS_TOTAL.inc()
+            logger.info("false interruption dialog=%s", self._dialog.id)
+
+    async def _voice_turn(self, frames: int, pcm: bytes, interrupts: bool = False) -> None:
         text = await self._recognize(frames, pcm)
         if text is None:
             return  # распознавание не сработало, error уже ушёл
         if not text:
+            self._count_false_interruption(interrupts)
             await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
             return
         message = self._store.add_message(self._dialog, "user", text[:MAX_USER_TEXT])
@@ -244,7 +289,7 @@ class DialogSession:
         if is_silence(pcm):
             return ""
         try:
-            async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
+            async with asyncio.timeout(APP_CONFIG.llm.stt_timeout_seconds):
                 return await self._recognizer.transcribe(pcm)
         except (ModelError, TimeoutError) as error:
             logger.warning("stt failed dialog=%s: %s", self._dialog.id, error)

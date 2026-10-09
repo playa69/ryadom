@@ -48,6 +48,22 @@
 подтвердить (в плане add-agent-service чат стоит на Cloud.ru, данные в РФ). В журнал пишутся только модель, время и размеры, сами реплики не пишутся.
 Распознавание не получает тишину: запись тише примерно -50 дБ считается пустой, чтобы whisper не выдумывал слова.
 
+Голосовая реплика — до `VOICE_TURN_MAX_SECONDS` (по умолчанию 300 с, как и предел на клиенте): звук сверх этого
+отбрасывается. Распознавание ждёт `STT_TIMEOUT_SECONDS` (по умолчанию 120 с), отдельно от `LLM_TIMEOUT_SECONDS` чата:
+пять минут речи whisper распознаёт заметно дольше 15 с.
+
+## Метрики
+
+`GET /metrics` (без токена, как `/health`, и без access-лога) отдаёт счётчики Prometheus голосового режима «без рук».
+Звук и тексты в метрики и журнал не попадают.
+
+| Метрика | Что |
+|---|---|
+| `agent_voice_interruptions_total` | перебивания озвучки (`tts_cancel`), голосом или нажатием |
+| `agent_voice_false_interruptions_total` | перебивания, после которых реплика оказалась пустой: детектор принял эхо или шум за речь |
+| `agent_voice_turn_end_delay_seconds` | гистограмма: тишина от последнего кадра с речью до `audio_end`, то есть сколько ждал детектор конца реплики |
+| `agent_voice_turns_truncated_total` | реплики длиннее `VOICE_TURN_MAX_SECONDS` |
+
 ## Запуск
 
 ```bash
@@ -65,7 +81,7 @@ AGENT_INTERNAL_TOKEN=<токен> TTS_MODE=espeak LLM_MODE=template uv run uvico
 ## Проверка
 
 ```bash
-uv run pytest                                   # 123 теста: REST, WebSocket, голос, озвучка, провайдеры речи, чат и распознавание
+uv run pytest                                   # 139 тестов: REST, WebSocket, голос, озвучка, провайдеры речи, чат и распознавание
 uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> --wav reply.wav [--voice female]
 ```
 
