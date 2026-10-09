@@ -752,7 +752,7 @@ Next и Vite фиксируют их при сборке (см. «Пути и п
 
 ```bash
 REG=cr.yandex/crpsqeamqpuvrkm5tpr9/app
-TAG=0.2.1
+TAG=0.3.0
 ORIGIN=https://xn----htbtgjker8b3a2c.xn--p1ai          # origin без пути
 cd app                                                   # контекст сборки
 FLAGS="--platform linux/amd64 --provenance=false --sbom=false --load"
