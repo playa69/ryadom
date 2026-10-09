@@ -75,3 +75,77 @@ export async function expectSpoken(page: Page, ...texts: string[]): Promise<void
     .poll(async () => squash((await spokenBy(page)).join(' ')), { message: 'что произнёс шар' })
     .toBe(squash(texts.join(' ')))
 }
+
+/**
+ * How the voice screen takes turns in this context. Hands-free is the product's default, but Chrome's
+ * fake microphone only beeps (20 ms every half a second), which never makes a turn: so the suite runs
+ * tap-to-talk, the fallback the setting turns on, and the hands-free scenarios (`test.use({ handsFree:
+ * true })`) get a microphone the test speaks into instead, a 220 Hz tone switched with `speakIntoMic`.
+ */
+export async function installMicrophone(context: BrowserContext, handsFree: boolean): Promise<void> {
+  if (!handsFree) {
+    await context.addInitScript(() => {
+      try {
+        localStorage.setItem('ryadom.web.hands-free', 'off')
+        localStorage.setItem('ryadom.handsFree', 'off')
+      } catch {
+        // A page without storage (about:blank) has no voice screen either.
+      }
+    })
+    return
+  }
+  await context.addInitScript(() => {
+    const mic = { on: false, gains: [] as GainNode[], since: 0 }
+    ;(window as unknown as { __mic: typeof mic }).__mic = mic
+    if (!navigator.mediaDevices) return
+    navigator.mediaDevices.getUserMedia = async () => {
+      const audio = new AudioContext()
+      await audio.resume()
+      const tone = audio.createOscillator()
+      tone.frequency.value = 220
+      const gain = audio.createGain()
+      gain.gain.value = mic.on ? 0.5 : 0
+      const out = audio.createMediaStreamDestination()
+      tone.connect(gain).connect(out)
+      tone.start()
+      mic.gains.push(gain)
+      return out.stream
+    }
+  })
+}
+
+type Mic = { on: boolean; gains: GainNode[]; since: number }
+
+/** The person starts or stops talking into the microphone of a hands-free context. */
+export async function speakIntoMic(page: Page, on: boolean): Promise<void> {
+  await page.evaluate((value) => {
+    const mic = (window as unknown as { __mic: Mic }).__mic
+    mic.on = value
+    mic.since = performance.now()
+    for (const gain of mic.gains) gain.gain.value = value ? 0.5 : 0
+  }, on)
+}
+
+/**
+ * Starts talking into the microphone and returns the milliseconds until the hint under the sphere reads
+ * `hint`. Watches before speaking, so the change is never missed between two polls.
+ */
+export async function speakAndTime(page: Page, hint: string): Promise<number> {
+  return page.evaluate(
+    (text) =>
+      new Promise<number>((resolve) => {
+        const mic = (window as unknown as { __mic: Mic }).__mic
+        const target = document.querySelector('[data-testid="voice-hint"], .rd-voice-hint')!
+        const observer = new MutationObserver(() => {
+          if (target.textContent?.trim() !== text) return
+          observer.disconnect()
+          resolve(performance.now() - mic.since)
+        })
+        observer.observe(target, { childList: true, characterData: true, subtree: true })
+        mic.on = true
+        mic.since = performance.now()
+        for (const gain of mic.gains) gain.gain.value = 0.5
+      }),
+    hint,
+  )
+}

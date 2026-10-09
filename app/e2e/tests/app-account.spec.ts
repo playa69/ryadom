@@ -41,6 +41,17 @@ test('путь аккаунта: регистрация, вход, смена п
   // ── password change ──────────────────────────────────────────────────────
   await openTab(page, 'Профиль')
   await shot(page, 'app-profile')
+
+  // The agent's voice: a man's until the person picks another one; the choice is saved on the account.
+  const male = page.getByTestId('voice-male')
+  const female = page.getByTestId('voice-female')
+  await expect(male).toHaveClass(/button-active/)
+  await expect(female).not.toHaveClass(/button-active/)
+  await female.click()
+  await expect(page.getByText('Голос сохранён')).toBeVisible()
+  await expect(female).toHaveClass(/button-active/)
+  await expect(male).not.toHaveClass(/button-active/)
+
   await page.getByText('Изменить пароль', { exact: true }).click()
 
   const nextPassword = `${PASSWORD}-new`

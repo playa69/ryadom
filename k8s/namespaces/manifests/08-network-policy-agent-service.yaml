@@ -1,0 +1,100 @@
+# =============================================================================
+# NetworkPolicy — связь api/admin (ns prod) с сервисом agent (ns agent)
+# =============================================================================
+# Дополняет 05-network-policy-agent.yaml и 01/07-network-policy-prod*.yaml.
+# NetworkPolicy аддитивны (union allow-правил): файл ТОЛЬКО расширяет разрешения и не
+# ослабляет default-deny. Без него api не достучится до агента: трафик между namespace
+# по умолчанию закрыт, а порт агента (8001) не входит в список портов 05-й политики.
+#
+# Три правила:
+#   1. ingress в ns agent: от app-api и app-admin из ns prod, только :8001;
+#   2. egress из ns prod: app-api и app-admin → поды agent в ns agent, только :8001;
+#   3. egress из ns agent: прокси программы (Qwen TTS) на :4000. Остальной исходящий
+#      HTTPS (:443, в том числе SaluteSpeech) уже разрешён в 05-й политике.
+#
+# Применять поимённо (нужен админский kubeconfig: NetworkPolicy вне роли developer):
+#   kubectl apply -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml
+# =============================================================================
+
+---
+# 1. Входящий трафик к агенту: только api и admin из prod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-ingress-prod-apps
+  namespace: agent
+spec:
+  podSelector:
+    matchLabels:
+      app: agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prod
+          podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - app-api
+                  - app-admin
+      ports:
+        - protocol: TCP
+          port: 8001
+
+---
+# 2. Исходящий трафик api и admin к агенту (диалоги, голос, стирание данных)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-allow-egress-agent
+  namespace: prod
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - app-api
+          - app-admin
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent
+          podSelector:
+            matchLabels:
+              app: agent
+      ports:
+        - protocol: TCP
+          port: 8001
+
+---
+# 3. Исходящий трафик агента к прокси программы: https://shared1.multitool.works:4000/v1
+# (Qwen TTS). Хост в Yandex Cloud, на момент записи 158.160.233.163; диапазон взят целиком
+# (как в prod-allow-egress-smtp-postbox), чтобы смена адреса внутри YC не ломала озвучку.
+# Если озвучка пропала, а ключ не менялся: `nslookup shared1.multitool.works` и поправить cidr.
+# Агент без этого правила стартует, но синтез не работает: приложение читает ответы само.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-egress-tts-proxy
+  namespace: agent
+spec:
+  podSelector:
+    matchLabels:
+      app: agent
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 158.160.0.0/16
+      ports:
+        - protocol: TCP
+          port: 4000

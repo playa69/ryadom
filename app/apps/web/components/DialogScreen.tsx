@@ -22,14 +22,27 @@ import {
   startCapture,
   type VoiceCapture,
 } from '@ryadom/client-core/voice/capture'
+import {
+  HANDS_FREE_HINT,
+  pausedHint,
+  readHandsFree,
+  type MicPause,
+} from '@ryadom/client-core/voice/hands-free'
 import { VoicePlayer } from '@ryadom/client-core/voice/player'
 import { ReplyVoice, unlockSpeech } from '@ryadom/client-core/voice/speech'
+import {
+  isTurnDetectionSupported,
+  TurnDetector,
+  watchTurns,
+  type TurnEvent,
+} from '@ryadom/client-core/voice/turn-detector'
 import { Button } from '@ryadom/ui/components/button'
 import type { OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { useAuth, useClient } from '@/lib/auth'
 import { appPath } from '@/lib/base-path'
+import { WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
@@ -45,8 +58,11 @@ import { initialDialogView, rememberDialogView, type DialogView } from './dialog
 import { useStickToEnd } from './dialog-scroll'
 
 /**
- * The conversation. Voice is the main way to talk: the screen opens on
- * the sphere, which the person taps to speak and taps again to finish. The text face is one tap away
+ * The conversation. Voice is the main way to talk: the screen opens on the sphere. Hands-free (the
+ * default) the microphone stays open and the person just speaks: the turn detector finds where a turn
+ * starts and ends and lets them talk over the agent, and a tap pauses the microphone. Without it (the
+ * setting is off, or the browser has no detector) the person taps to speak and taps again to finish.
+ * The text face is one tap away
  * and is a classic chat page: the header with "end the conversation", the streaming feed in a centered
  * column and the input box docked under it. The screen owns the socket: it opens on entry and is
  * closed on leaving. Reconnects and the outgoing queue live inside DialogSocket.
@@ -69,7 +85,10 @@ const MIC_FAILED_TEXT = 'Не получилось включить микроф
 const MIC_OFF_TEXT = 'Связь прервалась — микрофон выключен'
 const END_FAILED_TEXT = 'Не получилось завершить разговор. Попробуй ещё раз'
 
-/** Without a first word from the agent the sphere must not think forever. */
+/**
+ * Without a first word from the agent the sphere must not think forever. A long voice turn takes the
+ * recognition a while, so after one the wait grows by the length of the turn.
+ */
 const REPLY_WAIT_MS = 20_000
 
 interface AlertState {
@@ -97,6 +116,12 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [view, setView] = useState<DialogView>(() => initialDialogView(dialogId))
   const [recording, setRecording] = useState(false)
+  /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
+  const [handsFree] = useState(() => readHandsFree(WEB_HANDS_FREE_KEY) && isTurnDetectionSupported())
+  /** Hands-free: the microphone is open and the detector listens for turns. */
+  const [micOpen, setMicOpen] = useState(false)
+  /** Hands-free: why the microphone is off after having been on; null before it first opens. */
+  const [paused, setPaused] = useState<MicPause | null>(null)
   /** What the recognition has heard so far in the current turn. */
   const [hearing, setHearing] = useState('')
   /** The person has finished speaking or typing and the agent has not started to answer yet. */
@@ -115,6 +140,14 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   /** The sphere's own voice for what the agent does not speak itself: the greeting, a reply without speech. */
   const voice = useRef<ReplyVoice | null>(null)
   const micStarting = useRef(false)
+  /** A turn is being sent: the person has the floor. A ref, because the detector's loop reads it. */
+  const recordingRef = useRef(false)
+  const detector = useRef(new TurnDetector())
+  const stopWatching = useRef<(() => void) | null>(null)
+  /** The agent is thinking or answering: silence now is not the person being idle. */
+  const busy = useRef(false)
+  const turnStartedAt = useRef(0)
+  const replyWait = useRef(REPLY_WAIT_MS)
   const viewRef = useRef(view)
   const finished = useRef(false)
   const endTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -137,13 +170,43 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     rememberDialogView(dialogId, view)
   }, [dialogId, view])
 
+  const markRecording = useCallback((on: boolean) => {
+    recordingRef.current = on
+    setRecording(on)
+    if (!on) setHearing('')
+  }, [])
+
+  /**
+   * The microphone off, with no answer wanted for a turn in progress (the conversation is ending, or the
+   * line dropped). Hands-free comes back paused: a tap takes the microphone back.
+   */
   const stopRecording = useCallback(async () => {
+    stopWatching.current?.()
+    stopWatching.current = null
     const active = capture.current
     capture.current = null
-    setRecording(false)
-    setHearing('')
-    if (active) await active.stop()
-  }, [])
+    markRecording(false)
+    setMicOpen(false)
+    if (active) {
+      setPaused('manual')
+      await active.stop()
+    }
+  }, [markRecording])
+
+  /** Hands-free: the microphone off, and what the person was saying still goes to the agent. */
+  const pauseMic = useCallback(
+    async (reason: MicPause) => {
+      if (!capture.current) return
+      if (recordingRef.current) {
+        socket.current?.endAudio()
+        replyWait.current = REPLY_WAIT_MS + (performance.now() - turnStartedAt.current)
+        setAwaitingReply(true)
+      }
+      await stopRecording()
+      setPaused(reason)
+    },
+    [stopRecording],
+  )
 
   /** The summary is shown once, wherever it came from: the `ended` frame, the REST answer or the fallback timer. */
   const finish = useCallback(
@@ -168,9 +231,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
 
   // The socket handlers outlive renders; they read the latest helpers through here.
   const greeting = start?.greeting ?? null
-  const latest = useRef({ notify, openSos, startListening, greeting })
+  const latest = useRef({ notify, openSos, startListening, openMic, onTurn, greeting })
   useEffect(() => {
-    latest.current = { notify, openSos, startListening, greeting }
+    latest.current = { notify, openSos, startListening, openMic, onTurn, greeting }
   })
 
   useEffect(() => {
@@ -183,9 +246,16 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     voice.current = replyVoice
     /** The agent begins speaking a message: on the voice its frames play, and our own voice gives way to it. */
     const startAgentSpeech = (messageId: string) => {
+      replyVoice.agentSpoke(messageId)
+      // The person is already talking (they began while the agent was thinking): it is not spoken over
+      // them. The frames stay muted and the agent is asked to stop, as when they talk over it.
+      if (recordingRef.current) {
+        voicePlayer.stop()
+        socket.current?.interruptSpeech()
+        return
+      }
       // Someone who is reading is not spoken to: the frames of this speech are dropped.
       if (viewRef.current === 'voice') voicePlayer.begin()
-      replyVoice.agentSpoke(messageId)
     }
 
     // Taken once, here: a browser "back" to this dialog later must not send the text again.
@@ -219,12 +289,16 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       },
       onMessages: (list) => {
         // A reply is read out only to someone who is on the voice and not talking themselves.
-        replyVoice.observe(list, viewRef.current === 'voice' && !capture.current)
+        replyVoice.observe(list, viewRef.current === 'voice' && !recordingRef.current)
         setMessages(list)
       },
       onSpeech: (messageId, phase) =>
         phase === 'start' ? startAgentSpeech(messageId) : replyVoice.agentSpeechEnded(messageId),
-      onTranscript: (text, final) => setHearing(final ? '' : text),
+      onTranscript: (text, final) => {
+        setHearing(final ? '' : text)
+        // Nothing was heard (a cough, the agent's own echo): no answer is coming, so nothing is awaited.
+        if (final && !text) setAwaitingReply(false)
+      },
       onAudio: (frame) => voicePlayer.enqueue(frame),
       onSafety: (_level, text, hotlines) => latest.current.openSos({ text, hotlines }),
       onEnded: (result) => finish(result),
@@ -281,6 +355,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       clearTimeout(endTimer.current)
       opened?.close()
       socket.current = null
+      stopWatching.current?.()
+      stopWatching.current = null
       const active = capture.current
       capture.current = null
       void active?.stop()
@@ -301,19 +377,36 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     if (!connected || !listenOnReady.current) return
     listenOnReady.current = false
     void (async () => {
-      const { greeting: text, startListening: listen } = latest.current
+      const { greeting: text, startListening: listen, openMic: open } = latest.current
       if (text) await voice.current?.greet(text, () => player.current?.drained() ?? Promise.resolve())
-      if (viewRef.current === 'voice' && !finished.current) await listen(true)
+      if (viewRef.current !== 'voice' || finished.current) return
+      if (handsFree) await open(true)
+      else await listen(true)
     })()
-  }, [connected])
+  }, [connected, handsFree])
 
   // A reply that never starts (a silent recording, an agent that dropped the turn) would leave the
   // sphere thinking for good.
   useEffect(() => {
     if (!awaitingReply) return
-    const timer = setTimeout(() => setAwaitingReply(false), REPLY_WAIT_MS)
+    const timer = setTimeout(() => setAwaitingReply(false), replyWait.current)
     return () => clearTimeout(timer)
   }, [awaitingReply])
+
+  useEffect(() => {
+    busy.current = awaitingReply || state === 'streaming'
+  }, [awaitingReply, state])
+
+  // Hands-free never listens in the background: a hidden tab closes the microphone (what was being said
+  // is still answered), and only a tap brings it back, which iOS requires anyway.
+  useEffect(() => {
+    if (!handsFree) return
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') void pauseMic('background')
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [handsFree, pauseMic])
 
   // The player's queue is not React state, so the screen asks it a few times a second.
   useEffect(() => {
@@ -327,7 +420,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
 
   /** Whose voice moves the sphere: the person's while listening, the agent's (recorded or ours) otherwise. */
   const level = useCallback(
-    () => capture.current?.level() ?? Math.max(player.current?.level() ?? 0, voice.current?.level() ?? 0),
+    () =>
+      (recordingRef.current ? capture.current?.level() : undefined) ??
+      Math.max(player.current?.level() ?? 0, voice.current?.level() ?? 0),
     [],
   )
 
@@ -379,7 +474,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       }
       capture.current = started
       live.startAudio(started.sampleRate)
-      setRecording(true)
+      markRecording(true)
       setAwaitingReply(false)
     } catch (error) {
       refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
@@ -393,14 +488,98 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     const active = capture.current
     if (!active) return
     capture.current = null
-    setRecording(false)
-    setHearing('')
+    markRecording(false)
     socket.current?.endAudio()
+    replyWait.current = REPLY_WAIT_MS
     setAwaitingReply(true)
     await active.stop()
   }
 
+  /**
+   * Hands-free: the microphone opens for the whole voice session and the detector takes the turns.
+   * `automatic` as in `startListening`. A tap while the agent speaks means the person wants the floor,
+   * so it silences the agent.
+   */
+  async function openMic(automatic: boolean) {
+    if (micStarting.current || capture.current) return
+    unlockSpeech()
+    const refuse = (text: string) => {
+      if (automatic) {
+        setView('text')
+        notify(text, 'info')
+      } else {
+        setAlert({ title: 'Голос', text, leaves: false })
+      }
+    }
+    micStarting.current = true
+    try {
+      if (!automatic) hush()
+      await player.current?.unlock().catch(() => undefined)
+      const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
+        workletUrl: appPath('/voice-worklet.js'),
+        gated: true,
+      })
+      const live = socket.current
+      if (!live || finished.current || !live.isConnected() || viewRef.current !== 'voice') {
+        await started.stop()
+        return
+      }
+      capture.current = started
+      detector.current.reset(performance.now())
+      const agentSpeaking = () => Boolean(player.current?.speaking || voice.current?.speaking)
+      stopWatching.current = watchTurns(detector.current, {
+        level: () => started.level(),
+        agentLevel: () => Math.max(player.current?.level() ?? 0, voice.current?.level() ?? 0),
+        agentSpeaking,
+        busy: () => busy.current || agentSpeaking(),
+        onEvent: (event) => latest.current.onTurn(event),
+      })
+      setMicOpen(true)
+      setPaused(null)
+    } catch (error) {
+      refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+    } finally {
+      micStarting.current = false
+    }
+  }
+
+  /** A turn found by the detector: it is sent while the person speaks, and a turn over the agent silences it. */
+  function onTurn(event: TurnEvent) {
+    const active = capture.current
+    if (!active) return
+    if (event.type === 'idle') {
+      void pauseMic('idle')
+      return
+    }
+    if (event.type === 'start') {
+      const live = socket.current
+      if (!live?.isConnected()) {
+        detector.current.reset(performance.now())
+        return
+      }
+      if (event.bargeIn) hush()
+      live.startAudio(active.sampleRate)
+      active.open()
+      turnStartedAt.current = performance.now()
+      markRecording(true)
+      setAwaitingReply(false)
+      return
+    }
+    if (!recordingRef.current) return
+    active.close()
+    markRecording(false)
+    socket.current?.endAudio()
+    replyWait.current = REPLY_WAIT_MS + (performance.now() - turnStartedAt.current)
+    setAwaitingReply(true)
+  }
+
+  /** A tap on the sphere or the microphone: hands-free it pauses and resumes, otherwise it starts and ends a turn. */
   function toggleListening() {
+    if (handsFree) {
+      if (micOpen) void pauseMic('manual')
+      else void openMic(false)
+      return
+    }
     if (recording) void finishUtterance()
     else void startListening(false)
   }
@@ -414,7 +593,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
 
   async function showText() {
     hush()
-    await finishUtterance()
+    if (handsFree) await pauseMic('manual')
+    else await finishUtterance()
     viewRef.current = 'text'
     setView('text')
   }
@@ -423,7 +603,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     viewRef.current = 'voice'
     setView('voice')
     // Choosing the voice is asking to speak: no second tap.
-    void startListening(false)
+    if (handsFree) void openMic(false)
+    else void startListening(false)
   }
 
   function openEnd() {
@@ -503,7 +684,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // reply (the greeting stays until the person speaks). While the agent thinks the old reply would be
   // stale, so there is nothing. The whole feed is on the text face.
   const caption = orb === 'thinking' ? '' : recording && hearing ? hearing : (lastReply?.text ?? '')
-  const hint =
+  let hint =
     statusText ??
     {
       connecting: '',
@@ -512,6 +693,12 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       thinking: 'Думаю…',
       speaking: 'Нажми, чтобы перебить',
     }[orb]
+  // Hands-free, before the microphone first opens (the greeting is still being said) a tap is what opens
+  // it, so the tap words above are right; after that the microphone is either listening or paused.
+  if (!statusText && handsFree && orb !== 'connecting') {
+    if (micOpen) hint = HANDS_FREE_HINT[orb]
+    else if (paused) hint = pausedHint(paused)
+  }
 
   const sinceDays =
     start?.sinceLastDialogHours != null && start.sinceLastDialogHours >= 24
@@ -559,7 +746,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           caption={caption}
           hint={hint}
           recording={recording}
-          micDisabled={!connected && !recording}
+          micOpen={handsFree ? micOpen : null}
+          micDisabled={!connected && !recording && !micOpen}
           endDisabled={state === 'ended' || ending}
           onToggle={toggleListening}
           onText={() => void showText()}

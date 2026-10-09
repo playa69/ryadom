@@ -85,6 +85,13 @@ test('путь аккаунта в вебе: регистрация, профи�
   await expect(page.getByText('Имя сохранено')).toBeVisible()
   await expect(page.getByTestId('profile-name')).toHaveText('Тест Рядом')
 
+  // The agent's voice: a man's until the person picks another one; the choice is saved on the account.
+  await expect(page.getByTestId('voice-male')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('voice-female')).toHaveAttribute('aria-pressed', 'false')
+  await page.getByTestId('voice-female').click()
+  await expect(page.getByTestId('voice-female')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('voice-male')).toHaveAttribute('aria-pressed', 'false')
+
   // The help lines are also a page of their own: one column at every width, nothing sideways.
   await page.getByTestId('row-people').click()
   await expect(page).toHaveURL(/\/people$/)
@@ -101,6 +108,8 @@ test('путь аккаунта в вебе: регистрация, профи�
   // There is no "back" on this page: the profile is a menu item away.
   await openProfile(page)
   await expect(page.getByTestId('profile-name')).toBeVisible()
+  // The profile is read from the server again, and the voice is still the one chosen.
+  await expect(page.getByTestId('voice-female')).toHaveAttribute('aria-pressed', 'true')
 
   // ── password change ──────────────────────────────────────────────────────
   await page.getByTestId('row-change-password').click()
@@ -188,7 +197,7 @@ test('профиль: разделы, строки и подстраницы', a
   await registerAndConfirm(page, uniqueEmail('web-settings'))
   await openProfile(page)
 
-  // ── the page: one h1 in the header, five sections, a column in the middle ─
+  // ── the page: one h1 in the header, six sections, a column in the middle ──
   await expect(pageTitle(page)).toHaveCount(1)
   await expect(page).toHaveTitle('Профиль — Рядом')
   await expect(page.getByTestId('profile-name')).toHaveText('Тест')
@@ -197,6 +206,7 @@ test('профиль: разделы, строки и подстраницы', a
     'Безопасность',
     'Поддержка',
     'Документы',
+    'Голос агента',
     'Приложение',
     'Опасная зона',
   ])

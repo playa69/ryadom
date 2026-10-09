@@ -57,7 +57,8 @@ test('разговор: приветствие, ответ, кризис, жур
   await expect(caption).not.toBeEmpty()
   await expect(caption).not.toHaveText(greeting)
   // The reply is voiced by the agent as well: more of its audio played, and the app's own voice stayed out.
-  expect(await playedBy(page), 'ответ агента сыгран').toBeGreaterThan(greetingFrames)
+  // Polled: a real speech provider needs a moment to start, the mock does not.
+  await expect.poll(() => playedBy(page), { message: 'ответ агента сыгран' }).toBeGreaterThan(greetingFrames)
   expect(await spokenBy(page)).toEqual([])
   await shot(page, 'dialog-voice-reply')
 

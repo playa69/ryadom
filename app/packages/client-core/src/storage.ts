@@ -8,7 +8,7 @@ import type { DeviceCredentials } from './device'
  * asked the server or recorded the acceptance itself, null when the server has none on record.
  */
 export type User = AuthUserApiResponse &
-  Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt' | 'consentVersion'>>
+  Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt' | 'consentVersion' | 'voice'>>
 
 /**
  * Where the refresh token and the user live. The app supplies it: the platform's secure storage on

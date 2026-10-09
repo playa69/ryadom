@@ -1,14 +1,16 @@
 # =============================================================================
-# Job app-migrate-0001 — миграции drizzle БД app (ns prod)
+# Job app-migrate-0002 — миграции drizzle БД app (ns prod)
 # =============================================================================
 # Образ app/migrate (app/packages/db/Dockerfile): `node migrate.mjs`, нужен
 # только DATABASE_URL; ненулевой код выхода = миграция не применена. Запуск
 # ПОСЛЕ create-app-db и ПЕРЕД первым rollout api/admin:
 #   kubectl apply -f k8s/app/db/02-job-migrate.yaml
-#   kubectl -n prod wait --for=condition=complete job/app-migrate-0001 --timeout=180s
-#   kubectl -n prod logs job/app-migrate-0001
-# Для новой миграции — новый Job с новым именем (app-migrate-0002 и т.д.), с
-# новым тегом образа; старый удалить: kubectl -n prod delete job app-migrate-0001.
+#   kubectl -n prod wait --for=condition=complete job/app-migrate-0002 --timeout=180s
+#   kubectl -n prod logs job/app-migrate-0002
+# Для новой миграции — новый Job с новым именем (app-migrate-0003 и т.д.), с
+# новым тегом образа; старый удалить: kubectl -n prod delete job app-migrate-0002.
+# drizzle применяет только ещё не применённые миграции. В 0.3.0 новая — 0005_agent_voice:
+# колонка users.agent_voice (по умолчанию male), старый код приложения её не замечает.
 #
 # NB: миграции разрабатывались на PG 17 (app/docker-compose.yaml), в кластере
 # PG 16.4 — этот Job первым покажет, если что-то несовместимо.
@@ -22,7 +24,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: app-migrate-0001
+  name: app-migrate-0002
   namespace: prod
   labels:
     app: app-migrate
@@ -50,7 +52,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/migrate:0.2.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/migrate:0.3.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

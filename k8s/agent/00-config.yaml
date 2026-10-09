@@ -1,0 +1,48 @@
+# =============================================================================
+# ConfigMap agent-config — несекретные env сервиса agent/ (ns agent)
+# =============================================================================
+# Правило то же, что у app-config: здесь всё статическое и несекретное, в Secret
+# `agent-secrets` — только секреты (значения хранятся локально у администратора,
+# в git их нет):
+#   AGENT_INTERNAL_TOKEN   общий токен между сервисами, которым api приходит к агенту; ТО ЖЕ
+#                          значение лежит в app-secrets (ns prod) под таким же ключом
+#   AGENT_API_TOKEN        ключ прокси программы (LiteLLM): через него работают Qwen TTS, чат-модель
+#                          и распознавание речи; принадлежит только агенту, в app-secrets его нет
+#   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — сменить TTS_MODE на
+#                          salutespeech и перезапустить агента
+# Режим озвучки TTS_MODE — не секрет, он ниже, в ConfigMap.
+#
+# Голос выбирает человек в профиле (мужской/женский), api передаёт его агенту при старте
+# разговора. TTS_DEFAULT_VOICE — голос тех, кто ещё не выбирал.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: agent
+  labels:
+    app.kubernetes.io/part-of: ryadom
+data:
+  APP_PORT: "8001"
+  # Озвучка: auto = SaluteSpeech (если есть ключ) → Qwen TTS → espeak-ng → без озвучки
+  TTS_MODE: "qwen"                    # qwen | salutespeech
+  TTS_DEFAULT_VOICE: "male"
+  # Кадр звука — 200 мс; 100 мс паузы = вдвое быстрее реального времени (клиент ставит кадры в очередь)
+  TTS_FRAME_INTERVAL_MS: "100"
+  # Озвученные фразы живут в памяти, все фразы агента прогреваются на старте (см. agent/README.md)
+  TTS_CACHE_ITEMS: "64"
+  # Qwen TTS через прокси программы. Голоса (loongjohn / longanhuan_v3.6) и формат pcm
+  # заданы в коде по умолчанию; других значений апстрим не принимает.
+  QWEN_TTS_BASE_URL: "https://shared1.multitool.works:4000/v1"
+  QWEN_TTS_MODEL: "qwen/qwen-audio-3.0-tts-flash"
+  QWEN_TTS_TIMEOUT_SECONDS: "30"
+  # Ответы и распознавание речи: тот же прокси и тот же ключ (AGENT_API_TOKEN), что у озвучки.
+  # proxy = ответы пишет чат-модель, голос распознаёт whisper; template = без моделей (шаблоны и заглушка).
+  # Модель недоступна — агент отвечает шаблоном, сервис не падает.
+  LLM_MODE: "proxy"
+  LLM_BASE_URL: "https://shared1.multitool.works:4000/v1"
+  LLM_CHAT_MODEL: "gigachat3.5-432b-a28b"
+  STT_MODEL: "whisper-large-v3"
+  LLM_TIMEOUT_SECONDS: "15"
