@@ -62,6 +62,14 @@ def test_journal_is_paged_newest_first(client, user_id):
     assert page2["next"] is None
 
 
+def test_dialogs_started_within_one_millisecond_keep_their_order():
+    from app.services.dialog_store import DialogStore
+
+    store = DialogStore()
+    stamps = [store.start(f"user-{i}")[0].started_at for i in range(300)]  # быстрее миллисекунды на диалог
+    assert stamps == sorted(stamps) and len(set(stamps)) == len(stamps)
+
+
 def test_get_dialog_has_messages_in_order(client, user_id):
     dialog = start_dialog(client, user_id)
     body = client.get(url(user_id, f"/{dialog['dialogId']}"), headers=AUTH).json()

@@ -8,11 +8,10 @@ import base64
 import binascii
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.clients.speech import Voice
-
 
 GREETING_NEW = "Я рядом. С чего начнём?"
 GREETING_RESUMED = "Продолжим, где остановились."
@@ -81,6 +80,16 @@ class DialogStore:
         self._default_voice = default_voice
         # Последний выбор голоса человека: следующий диалог без явного голоса получит его.
         self._voice_prefs: dict[str, Voice] = {}
+        self._last_started: datetime | None = None
+
+    def _next_started_at(self) -> str:
+        """Время старта диалога, строго возрастающее: журнал сортируется по нему, а два диалога в одну миллисекунду
+        иначе упорядочились бы по случайному uuid."""
+        now = datetime.now(UTC)
+        if self._last_started is not None and now <= self._last_started:
+            now = self._last_started + timedelta(milliseconds=1)
+        self._last_started = now
+        return now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     def _dialogs(self, user_id: str) -> dict[str, Dialog]:
         return self._users.setdefault(user_id, {})
@@ -99,7 +108,7 @@ class DialogStore:
         """
         hours = self._hours_since_last(user_id)
         existing = self.open_dialog(user_id)
-        dialog = existing or Dialog(id=str(uuid.uuid4()), user_id=user_id, started_at=now_iso())
+        dialog = existing or Dialog(id=str(uuid.uuid4()), user_id=user_id, started_at=self._next_started_at())
         self._dialogs(user_id)[dialog.id] = dialog
         if voice is not None:
             self._voice_prefs[user_id] = voice
