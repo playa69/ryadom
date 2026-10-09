@@ -86,6 +86,7 @@ class DialogStore:
         """Время старта диалога, строго возрастающее: журнал сортируется по нему, а два диалога в одну миллисекунду
         иначе упорядочились бы по случайному uuid."""
         now = datetime.now(UTC)
+        now = now.replace(microsecond=now.microsecond // 1000 * 1000)  # сравниваем с точностью строки: до миллисекунды
         if self._last_started is not None and now <= self._last_started:
             now = self._last_started + timedelta(milliseconds=1)
         self._last_started = now
