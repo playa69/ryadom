@@ -594,7 +594,7 @@ ConfigMap'ах (в git).** Значения секретов хранятся л
 |---|---|---|
 | Статика, несекретное | ConfigMap `app-config` ([00-app-config.yaml](app/00-app-config.yaml)) | `DB_HOST/PORT/NAME/USER`, публичные URL, `TRUSTED_PROXY_HOPS`, `REDIS_*` адреса, флаги |
 | Статика только админки | ConfigMap `app-admin-config` ([admin/00-config.yaml](app/admin/00-config.yaml)) | `ADMIN_EMAILS` (в API он попадать не должен) |
-| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), позже `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_API_TOKEN`; `SMTP_PASSWORD` |
+| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), позже `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`; `SMTP_PASSWORD` |
 
 `DATABASE_URL` нигде не хранится: Deployment'ы собирают его из `DB_*`
 (ConfigMap) и `DB_PASSWORD` (Secret). `REDIS_PASSWORD` в `app-secrets` — копия
@@ -684,7 +684,7 @@ kubectl -n istio-system get gateway ryadom-gateway -o yaml > /tmp/gateway-backup
 # 1. Секреты (значения хранятся у администратора, в git их нет) и БД. `create`, не `apply`.
 kubectl -n ryadom-db create secret generic app-db-credentials --from-env-file=<файл: password=...>
 kubectl -n prod create secret generic app-secrets --from-env-file=<файл: DB_PASSWORD, AUTH_SECRET,
-#   MOBILE_JWT_SECRET, REDIS_PASSWORD (копия ryadom-db/redis-credentials), AGENT_API_TOKEN>
+#   MOBILE_JWT_SECRET, REDIS_PASSWORD (копия ryadom-db/redis-credentials), AGENT_INTERNAL_TOKEN>
 kubectl apply -f k8s/app/db/01-job-create-db.yaml
 kubectl -n ryadom-db wait --for=condition=complete job/create-app-db --timeout=120s
 

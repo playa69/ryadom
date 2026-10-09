@@ -19,20 +19,26 @@
 
 | Secret | Namespace | Ключи |
 |---|---|---|
-| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `QWEN_TTS_API_KEY`, необязательно `SALUTE_SPEECH_AUTH_KEY` |
-| `app-secrets` | `prod` | уже есть; ключ `AGENT_API_TOKEN` должен совпадать с `AGENT_INTERNAL_TOKEN` |
+| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY` |
+| `app-secrets` | `prod` | уже есть; ключ `AGENT_INTERNAL_TOKEN` с тем же значением, что у агента |
 
-- `AGENT_INTERNAL_TOKEN` и `AGENT_API_TOKEN` — **один и тот же** новый случайный секрет (например `openssl rand -hex 32`):
-  им `app-api` и `app-admin` представляются агенту.
-- **Не путать с ключом прокси.** Ключ программы для Qwen TTS (тот, что у администратора мог лежать под именем
-  `AGENT_API_TOKEN`) — это `QWEN_TTS_API_KEY`. Если `app-secrets` уже создан с ключом прокси в `AGENT_API_TOKEN`, его нужно
-  заменить на внутренний токен, иначе `app-api` будет слать ключ прокси агенту, а агент его отвергнет (401):
-  `kubectl -n prod patch secret app-secrets -p '{"stringData":{"AGENT_API_TOKEN":"<внутренний токен>"}}'`
-  и затем `kubectl -n prod rollout restart deploy/app-api deploy/app-admin` (env читается при старте пода).
-- Ключ SaluteSpeech появится позже: добавить `SALUTE_SPEECH_AUTH_KEY` в `agent-secrets` и перезапустить агента. Озвучка
-  пойдёт через Сбер приоритетно, Qwen останется запасным. Сертификаты Сбера подписаны российским корневым УЦ: если
-  системного хранилища образа не хватит, положить пакет в ConfigMap, смонтировать и задать `SALUTE_SPEECH_CA_BUNDLE`
-  (живой проверки SaluteSpeech не было, ключа нет).
+Два разных секрета, не путать:
+
+- `AGENT_INTERNAL_TOKEN` — общий токен между сервисами, **один и тот же** в `agent-secrets` и `app-secrets` (новый случайный,
+  например `openssl rand -hex 32`): им `app-api` и `app-admin` представляются агенту. Внутри самого приложения эта
+  переменная исторически называется `AGENT_API_TOKEN`, поэтому в Deployment `app-api` и `app-admin` ключ
+  `AGENT_INTERNAL_TOKEN` из `app-secrets` подставляется в переменную `AGENT_API_TOKEN`.
+- `AGENT_API_TOKEN` у агента — ключ прокси программы для Qwen TTS. Принадлежит только агенту, в `app-secrets` его нет.
+
+Режим озвучки (`TTS_MODE: qwen`) — не секрет, он в ConfigMap `agent-config`. Ключ SaluteSpeech появится позже: добавить
+`SALUTE_SPEECH_AUTH_KEY` в `agent-secrets`, сменить `TTS_MODE` на `salutespeech` в `00-config.yaml` и перезапустить агента.
+Сертификаты Сбера подписаны российским корневым УЦ: если системного хранилища образа не хватит, положить пакет в
+ConfigMap, смонтировать и задать `SALUTE_SPEECH_CA_BUNDLE` (живой проверки SaluteSpeech не было, ключа нет).
+
+**Если `app-secrets` создан по старой схеме** (ключ `AGENT_API_TOKEN` с общим токеном или, хуже, с ключом прокси): добавить ключ
+`AGENT_INTERNAL_TOKEN` с общим токеном (`kubectl -n prod patch secret app-secrets -p '{"stringData":{"AGENT_INTERNAL_TOKEN":"<токен>"}}'`),
+применить Deployment'ы `k8s/app/api/03-deployment.yaml` и `k8s/app/admin/03-deployment.yaml` (они читают новый ключ) и
+дождаться раскатки. Лишний ключ `AGENT_API_TOKEN` из `app-secrets` потом можно убрать.
 
 ## Первый выкат (порядок важен)
 
@@ -54,7 +60,7 @@ docker push $REG/agent:$TAG
 cd ..
 
 # 2. Секрет агента (значения у администратора) и внутренний токен в app-secrets (см. выше)
-kubectl -n agent create secret generic agent-secrets --from-env-file=<файл: AGENT_INTERNAL_TOKEN, QWEN_TTS_API_KEY>
+kubectl -n agent create secret generic agent-secrets --from-env-file=<файл: AGENT_INTERNAL_TOKEN, AGENT_API_TOKEN (ключ прокси)>
 
 # 3. Сеть: без неё api не достучится до агента, а агент — до прокси
 kubectl apply -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml

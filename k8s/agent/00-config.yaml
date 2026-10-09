@@ -4,11 +4,13 @@
 # Правило то же, что у app-config: здесь всё статическое и несекретное, в Secret
 # `agent-secrets` — только секреты (значения хранятся локально у администратора,
 # в git их нет):
-#   AGENT_INTERNAL_TOKEN   токен, которым api приходит к агенту; ТО ЖЕ значение
-#                          лежит в app-secrets (ns prod) под ключом AGENT_API_TOKEN
-#   QWEN_TTS_API_KEY       ключ прокси программы (LiteLLM), через который работает Qwen TTS
-#   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — озвучка пойдёт
-#                          через Сбер, он главнее Qwen (TTS_PROVIDER=auto)
+#   AGENT_INTERNAL_TOKEN   общий токен между сервисами, которым api приходит к агенту; ТО ЖЕ
+#                          значение лежит в app-secrets (ns prod) под таким же ключом
+#   AGENT_API_TOKEN        ключ прокси программы (LiteLLM), через который работает Qwen TTS;
+#                          принадлежит только агенту, в app-secrets его нет
+#   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — сменить TTS_MODE на
+#                          salutespeech и перезапустить агента
+# Режим озвучки TTS_MODE — не секрет, он ниже, в ConfigMap.
 #
 # Голос выбирает человек в профиле (мужской/женский), api передаёт его агенту при старте
 # разговора. TTS_DEFAULT_VOICE — голос тех, кто ещё не выбирал.
@@ -25,7 +27,7 @@ metadata:
 data:
   APP_PORT: "8001"
   # Озвучка: auto = SaluteSpeech (если есть ключ) → Qwen TTS → espeak-ng → без озвучки
-  TTS_PROVIDER: "auto"
+  TTS_MODE: "qwen"                    # qwen | salutespeech
   TTS_DEFAULT_VOICE: "male"
   # Кадр звука — 200 мс; 100 мс паузы = вдвое быстрее реального времени (клиент ставит кадры в очередь)
   TTS_FRAME_INTERVAL_MS: "100"

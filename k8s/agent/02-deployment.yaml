@@ -68,11 +68,12 @@ spec:
                 secretKeyRef:
                   name: agent-secrets
                   key: AGENT_INTERNAL_TOKEN
-            - name: QWEN_TTS_API_KEY
+            # Ключ прокси Qwen TTS (принадлежит только агенту; не общий токен между сервисами)
+            - name: AGENT_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: agent-secrets
-                  key: QWEN_TTS_API_KEY
+                  key: AGENT_API_TOKEN
             # Ключ SaluteSpeech: пока его нет, ключа в Secret'е тоже нет, и озвучка идёт через Qwen
             - name: SALUTE_SPEECH_AUTH_KEY
               valueFrom:

@@ -120,12 +120,13 @@ spec:
                 secretKeyRef:
                   name: app-secrets
                   key: REDIS_PASSWORD
-            # Токен агента: пусто = заголовок Authorization к агенту не шлётся
+            # Общий токен между сервисами (тот же AGENT_INTERNAL_TOKEN, что у агента): приложение читает его
+            # из переменной AGENT_API_TOKEN; пусто = заголовок Authorization к агенту не шлётся
             - name: AGENT_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
-                  key: AGENT_API_TOKEN
+                  key: AGENT_INTERNAL_TOKEN
                   optional: true
             # Пароль SMTP появится, когда будет провайдер почты (app-smtp, опц.); логин — SMTP_USER в app-config
             - name: SMTP_PASSWORD

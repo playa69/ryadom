@@ -102,7 +102,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
-                  key: AGENT_API_TOKEN
+                  key: AGENT_INTERNAL_TOKEN
                   optional: true
             - name: SMTP_PASSWORD
               valueFrom:
