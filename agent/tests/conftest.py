@@ -14,6 +14,8 @@ os.environ["AGENT_INTERNAL_TOKEN"] = "test-internal-token"
 os.environ["STREAM_DELAY_MS"] = "0"
 os.environ["TTS_FRAME_INTERVAL_MS"] = "0"
 os.environ["TTS_MODE"] = "none"
+os.environ["LLM_MODE"] = "template"
+os.environ["LLM_TIMEOUT_SECONDS"] = "1"  # тест зависшей модели ждёт ровно столько
 os.environ.pop("SALUTE_SPEECH_AUTH_KEY", None)
 os.environ.pop("AGENT_API_TOKEN", None)
 
@@ -55,8 +57,55 @@ class FakeTts:
         return None
 
 
-def make_client(tts: Any = None) -> TestClient:
-    return TestClient(create_app(lambda: tts))
+class FakeChat:
+    """Чат-модель для тестов: ответ задан заранее, запросы запоминаются."""
+
+    name = "fake-chat"
+
+    def __init__(self, reply: str = "Я рядом, расскажи ещё.", delay: float = 0.0, fail: bool = False) -> None:
+        self.reply = reply
+        self.delay = delay
+        self.fail = fail
+        self.calls: list[list[dict[str, str]]] = []
+
+    async def complete(self, messages: list[dict[str, str]]) -> str:
+        self.calls.append(messages)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail:
+            from app.clients.llm import ModelError
+
+            raise ModelError("модель сломана в тесте")
+        return self.reply
+
+    async def aclose(self) -> None:
+        return None
+
+
+class FakeRecognizer:
+    """Распознавание для тестов: возвращает заданный текст и запоминает присланный звук."""
+
+    name = "fake-stt"
+
+    def __init__(self, text: str = "мне сегодня тяжело", fail: bool = False) -> None:
+        self.text = text
+        self.fail = fail
+        self.calls: list[bytes] = []
+
+    async def transcribe(self, pcm: bytes) -> str:
+        self.calls.append(pcm)
+        if self.fail:
+            from app.clients.llm import ModelError
+
+            raise ModelError("распознавание сломано в тесте")
+        return self.text
+
+    async def aclose(self) -> None:
+        return None
+
+
+def make_client(tts: Any = None, chat: Any = None, recognizer: Any = None) -> TestClient:
+    return TestClient(create_app(lambda: tts, lambda: (chat, recognizer)))
 
 
 @pytest.fixture
@@ -128,6 +177,7 @@ def send_user_message(ws: Any, client_id: str, text: str) -> None:
     ws.send_text(json.dumps({"type": "user_message", "id": client_id, "text": text}))
 
 
-def audio_in_frame(sequence: int) -> bytes:
-    """Кадр голоса человека: [0x01][номер uint32 BE][100 мс тишины на 16 кГц]."""
-    return struct.pack(">BI", 0x01, sequence) + bytes(3200)
+def audio_in_frame(sequence: int, loud: bool = False) -> bytes:
+    """Кадр голоса человека: [0x01][номер uint32 BE][100 мс на 16 кГц]: тишина или громкий звук (`loud`)."""
+    samples = struct.pack("<h", 3000) * 1600 if loud else bytes(3200)
+    return struct.pack(">BI", 0x01, sequence) + samples

@@ -4,8 +4,8 @@
 доменные Settings с validation_alias, SecretStr для секретов, fail-fast
 валидация, неизменяемый синглтон APP_CONFIG.
 
-Упрощённая версия: только то, что нужно шаблонному агенту (токен, озвучка, темп стрима).
-Настройки LLM, БД, Redis и Langfuse вернутся вместе с полноценным агентом.
+Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима.
+Настройки БД, Redis и Langfuse вернутся вместе с полноценным агентом.
 """
 
 import logging
@@ -99,6 +99,30 @@ class SpeechSettings(BaseAppSettings):
     qwen_timeout_seconds: int = Field(validation_alias="QWEN_TTS_TIMEOUT_SECONDS", default=30, ge=1)
 
 
+class LlmSettings(BaseAppSettings):
+    """Чат и распознавание речи через OpenAI-совместимый прокси программы (LiteLLM).
+
+    `LLM_MODE`:
+      proxy     ответы пишет чат-модель, голос распознаёт whisper: нужны `AGENT_API_TOKEN` (тот же ключ прокси,
+                что у озвучки) и `LLM_BASE_URL` (по умолчанию)
+      template  без моделей: шаблонные ответы, а голосовая реплика превращается в `[голосовая реплика, N с]`
+                (для разработки и тестов)
+    """
+
+    mode: Literal["proxy", "template"] = Field(validation_alias="LLM_MODE", default="proxy")
+    base_url: str | None = Field(validation_alias="LLM_BASE_URL", default=None)
+    api_key: SecretStr | None = Field(validation_alias="AGENT_API_TOKEN", default=None)
+    # Русскоязычная модель Сбера: первый токен за ~0,6 с, ответ короткий и тёплый (сравнение — в README).
+    chat_model: str = Field(validation_alias="LLM_CHAT_MODEL", default="gigachat3.5-432b-a28b")
+    stt_model: str = Field(validation_alias="STT_MODEL", default="whisper-large-v3")
+    # Дольше ждать ответ нет смысла: после таймаута агент отвечает шаблоном.
+    timeout_seconds: int = Field(validation_alias="LLM_TIMEOUT_SECONDS", default=15, ge=1)
+    # Сколько последних сообщений диалога видит модель.
+    history_messages: int = Field(validation_alias="LLM_HISTORY_MESSAGES", default=12, ge=1)
+    max_tokens: int = Field(validation_alias="LLM_MAX_TOKENS", default=200, ge=16)
+    temperature: float = Field(validation_alias="LLM_TEMPERATURE", default=0.7, ge=0, le=2)
+
+
 class Config:
     """Агрегатор доменных настроек. Неизменяемый синглтон — не мутировать."""
 
@@ -106,6 +130,7 @@ class Config:
     security: SecuritySettings = SecuritySettings()
     dialog: DialogSettings = DialogSettings()
     speech: SpeechSettings = SpeechSettings()
+    llm: LlmSettings = LlmSettings()
 
 
 APP_CONFIG = Config()

@@ -15,9 +15,15 @@ async def health() -> dict[str, str]:
 
 @router.get("/health/ready", include_in_schema=False)
 async def ready(request: Request) -> dict[str, str]:
-    # Внешних обязательных зависимостей пока нет: LLM, БД и Redis появятся с настоящим агентом.
+    # Модели и озвучка не обязательны для готовности: при их отказе агент отвечает шаблоном и текстом.
     tts = active_tts(request.app)
-    return {"status": "ok", "tts": tts.name if tts else "none"}
+    chat, recognizer = request.app.state.chat, request.app.state.recognizer
+    return {
+        "status": "ok",
+        "tts": tts.name if tts else "none",
+        "llm": chat.name if chat else "none",
+        "stt": recognizer.name if recognizer else "none",
+    }
 
 
 @router.get("/version", include_in_schema=False)

@@ -1,8 +1,9 @@
 """Точка входа сервиса agent «Слышу Рядом».
 
-Упрощённый агент: контракт agent-api целиком (REST + WebSocket, текст и голос), шаблонные ответы,
-диалоги в памяти, озвучка через SaluteSpeech или espeak-ng. Нужен, чтобы проверить API, озвучку и
-интеграцию с приложением до появления настоящей логики (openspec/changes/add-agent-service).
+Упрощённый агент: контракт agent-api целиком (REST + WebSocket, текст и голос), ответы чат-модели
+и распознавание речи через прокси программы, озвучка Qwen TTS / SaluteSpeech / espeak-ng, диалоги в памяти.
+Нужен, чтобы проверить API, голос и интеграцию с приложением до появления настоящей логики
+(openspec/changes/add-agent-service).
 """
 
 import asyncio
@@ -13,6 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api import dev, dialog_ws, dialogs, health
+from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
 from app.core.config import APP_CONFIG
 from app.core.errors import install_error_handlers
@@ -43,16 +45,26 @@ def _quiet_service_endpoints() -> None:
         access.addFilter(SkipServiceEndpoints())
 
 
-def create_app(tts_factory: Callable[[], TextToSpeech | None] | None = None) -> FastAPI:
-    """Собирает FastAPI-приложение. `tts_factory` подменяют тесты; по умолчанию озвучка берётся из конфига."""
+def create_app(
+    tts_factory: Callable[[], TextToSpeech | None] | None = None,
+    models_factory: Callable[[], tuple[ChatModel | None, Recognizer | None]] | None = None,
+) -> FastAPI:
+    """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию озвучка и модели берутся из конфига."""
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
     factory = tts_factory or (lambda: build_tts(APP_CONFIG.speech))
+    models = models_factory or (lambda: build_models(APP_CONFIG.llm))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.tts = factory()
-        logger.info("agent started: tts=%s", app.state.tts.name if app.state.tts else "none")
+        app.state.chat, app.state.recognizer = models()
+        logger.info(
+            "agent started: tts=%s llm=%s stt=%s",
+            app.state.tts.name if app.state.tts else "none",
+            app.state.chat.name if app.state.chat else "none",
+            app.state.recognizer.name if app.state.recognizer else "none",
+        )
         # Звук должен начаться за 0,9 с после текста, иначе клиент прочтёт его сам, а облачный синтез
         # медленнее. Всё, что агент говорит, шаблонное: готовим звук всех фраз заранее.
         warm_up = None
@@ -64,12 +76,15 @@ def create_app(tts_factory: Callable[[], TextToSpeech | None] | None = None) -> 
         finally:
             if warm_up is not None:
                 warm_up.cancel()
-            if app.state.tts is not None:
-                await app.state.tts.aclose()
+            for client in (app.state.tts, app.state.chat, app.state.recognizer):
+                if client is not None:
+                    await client.aclose()
 
     app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
     app.state.store = DialogStore(default_voice=APP_CONFIG.speech.default_voice)
     app.state.tts = None
+    app.state.chat = None
+    app.state.recognizer = None
     app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)
     app.include_router(health.router)

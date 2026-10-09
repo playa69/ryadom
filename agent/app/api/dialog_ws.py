@@ -1,13 +1,16 @@
 """WebSocket диалога: текст и голос (specs/agent-api «Разговор по WebSocket», «Голос»).
 
 Один сокет на диалог. Реплики идут в очередь и обрабатываются по одной; `tts_cancel` действует сразу.
-Ответ агента шаблонный (app.services.replies), озвучка настоящая (app.clients.speech).
+Ответ пишет чат-модель (app.clients.llm), голос человека распознаёт whisper, ответ озвучивает app.clients.speech.
+Если модель недоступна, агент отвечает шаблоном (app.services.replies).
 """
 
 import asyncio
 import json
 import logging
+import math
 import re
+from array import array
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -15,11 +18,19 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.api.deps import active_tts, canonical_user_id, token_ok
+from app.clients.llm import STT_RATE, ChatModel, ModelError, Recognizer
 from app.clients.speech import VOICES, TextToSpeech, Voice, pcm_chunks, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
 from app.services.dialog_store import Dialog, DialogStore
-from app.services.replies import CRISIS_REPLY, CRISIS_SAFETY_TEXT, is_crisis, next_reply, split_sentences
+from app.services.replies import (
+    CRISIS_REPLY,
+    CRISIS_SAFETY_TEXT,
+    chat_messages,
+    is_crisis,
+    next_reply,
+    split_sentences,
+)
 
 logger = logging.getLogger("agent.ws")
 
@@ -29,6 +40,22 @@ FRAME_KIND_AUDIO_IN = 0x01
 MAX_USER_TEXT = 4000
 # Один кадр голоса человека — 100 мс (specs/agent-api «Голос — формат и ввод»).
 AUDIO_FRAME_SECONDS = 0.1
+# Одна голосовая реплика — не длиннее двух минут: остальное отбрасывается, память не растёт без предела.
+MAX_AUDIO_BYTES = STT_RATE * 2 * 120
+# Тише этого (среднеквадратичное по PCM16, около -50 дБ) — тишина: whisper на ней выдумывает слова, и в него она не идёт.
+SILENCE_RMS = 100
+# Ответ модели длиннее — обрезаем: озвучка и экран рассчитаны на короткую реплику.
+MAX_REPLY_CHARS = 1200
+
+
+def is_silence(pcm: bytes) -> bool:
+    """Нет ли в записи речи: меряем каждый 16-й сэмпл, этого хватает и не держит цикл событий."""
+    samples = array("h")
+    samples.frombytes(pcm[: len(pcm) // 2 * 2])
+    picked = samples[::16]
+    if not picked:
+        return True
+    return math.sqrt(sum(x * x for x in picked) / len(picked)) < SILENCE_RMS
 
 
 class DialogSession:
@@ -38,10 +65,15 @@ class DialogSession:
         store: DialogStore,
         dialog: Dialog,
         tts_source: Callable[[], TextToSpeech | None],
+        chat: ChatModel | None = None,
+        recognizer: Recognizer | None = None,
     ) -> None:
         self._ws = websocket
         self._store = store
         self._dialog = dialog
+        # Без моделей (`LLM_MODE=template`) агент отвечает шаблоном, а голос превращает в заглушку.
+        self._chat = chat
+        self._recognizer = recognizer
         # Озвучка берётся при каждой реплике: dev-режим может выключить её на лету.
         self._tts_source = tts_source
         self._stream_delay = APP_CONFIG.dialog.stream_delay_ms / 1000
@@ -57,6 +89,7 @@ class DialogSession:
         self._voice_error_sent = False
         self._audio_open = False
         self._audio_frames = 0
+        self._audio = bytearray()
 
     # ─── отправка ─────────────────────────────────────────────────────────────
 
@@ -133,6 +166,7 @@ class DialogSession:
             case "audio_start":
                 self._audio_open = True
                 self._audio_frames = 0
+                self._audio = bytearray()
             case "audio_end":
                 await self._on_audio_end()
             case "set_voice":
@@ -169,24 +203,53 @@ class DialogSession:
     def _on_audio_frame(self, data: bytes) -> None:
         if self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN:
             self._audio_frames += 1
+            if len(self._audio) < MAX_AUDIO_BYTES:
+                self._audio += data[5:]
 
     async def _on_audio_end(self) -> None:
-        """Распознавание-заглушка: текст реплики говорит только о её длительности.
+        """Конец голосовой реплики. Распознавание идёт в очереди, а не здесь: сокет в это время читает `tts_cancel`.
 
         Реплика без `audio_end` (обрыв) сюда не доходит и отбрасывается вместе с сокетом.
         """
         if not self._audio_open:
             return
-        frames, self._audio_open, self._audio_frames = self._audio_frames, False, 0
+        frames, pcm = self._audio_frames, bytes(self._audio)
+        self._audio_open, self._audio_frames, self._audio = False, 0, bytearray()
         if frames == 0:
             await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
             return
-        seconds = max(1, round(frames * AUDIO_FRAME_SECONDS))
-        text = f"[голосовая реплика, {seconds} с]"
-        message = self._store.add_message(self._dialog, "user", text)
+        self._jobs.put_nowait(lambda: self._voice_turn(frames, pcm))
+
+    async def _voice_turn(self, frames: int, pcm: bytes) -> None:
+        text = await self._recognize(frames, pcm)
+        if text is None:
+            return  # распознавание не сработало, error уже ушёл
+        if not text:
+            await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
+            return
+        message = self._store.add_message(self._dialog, "user", text[:MAX_USER_TEXT])
         # На голосовую реплику ack не нужен: final-транскрипт несёт id сохранённого сообщения.
-        await self._send({"type": "transcript", "text": text, "final": True, "messageId": message.id})
-        self._jobs.put_nowait(lambda: self._reply(False))
+        await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
+        crisis = is_crisis(message.text)
+        if crisis:
+            await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
+        await self._reply(crisis)
+
+    async def _recognize(self, frames: int, pcm: bytes) -> str | None:
+        """Текст реплики; "" — тишина; None — распознавание недоступно (`error VOICE_UNAVAILABLE` уже ушёл)."""
+        if self._recognizer is None:
+            # Режим без моделей: текст реплики говорит только о её длительности.
+            seconds = max(1, round(frames * AUDIO_FRAME_SECONDS))
+            return f"[голосовая реплика, {seconds} с]"
+        if is_silence(pcm):
+            return ""
+        try:
+            async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
+                return await self._recognizer.transcribe(pcm)
+        except (ModelError, TimeoutError) as error:
+            logger.warning("stt failed dialog=%s: %s", self._dialog.id, error)
+            await self._send({"type": "error", "code": "VOICE_UNAVAILABLE", "message": "Не удалось распознать речь"})
+            return None
 
     async def _on_end(self, frame: dict[str, Any]) -> bool:
         takeaway = frame.get("takeaway") if isinstance(frame.get("takeaway"), str) else None
@@ -203,13 +266,25 @@ class DialogSession:
 
     # ─── ответ ────────────────────────────────────────────────────────────────
 
+    async def _generate(self) -> str:
+        """Ответ модели по истории диалога. Отказ, таймаут или пустой ответ — следующий шаблон: без ответа не остаёмся."""
+        dialog = self._dialog
+        if self._chat is not None:
+            try:
+                async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
+                    text = await self._chat.complete(chat_messages(dialog.messages, APP_CONFIG.llm.history_messages))
+                if text:
+                    return text[:MAX_REPLY_CHARS]
+                logger.warning("chat returned nothing dialog=%s, using a template", dialog.id)
+            except (ModelError, TimeoutError) as error:
+                logger.warning("chat failed dialog=%s, using a template: %s", dialog.id, error)
+        text = next_reply(dialog.reply_index)
+        dialog.reply_index += 1
+        return text
+
     async def _reply(self, crisis: bool) -> None:
         dialog = self._dialog
-        if crisis:
-            text = CRISIS_REPLY
-        else:
-            text = next_reply(dialog.reply_index)
-            dialog.reply_index += 1
+        text = CRISIS_REPLY if crisis else await self._generate()
         # Законченный ответ лежит в истории сразу: после обрыва клиент найдёт его там.
         message = self._store.add_message(dialog, "assistant", text)
 
@@ -300,7 +375,15 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
     try:
         await websocket.accept()
         logger.info("socket opened dialog=%s", dialog.id)
-        await DialogSession(websocket, store, dialog, lambda: active_tts(websocket.app)).run()
+        session = DialogSession(
+            websocket,
+            store,
+            dialog,
+            lambda: active_tts(websocket.app),
+            websocket.app.state.chat,
+            websocket.app.state.recognizer,
+        )
+        await session.run()
     finally:
         dialog.has_live_socket = False
         logger.info("socket closed dialog=%s", dialog.id)
