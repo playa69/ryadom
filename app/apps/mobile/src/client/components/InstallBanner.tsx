@@ -1,10 +1,11 @@
 import { Icon } from 'framework7-react'
-import { useEffect, useState } from 'react'
-import { canPromptInstall, onInstallPromptChange, triggerInstallPrompt } from '../lib/install-prompt'
-import { isInAppBrowser, isIos, isStandalone } from '../lib/platform'
+import { useEffect, useReducer, useState } from 'react'
+import { canPromptInstall, isAppInstalled, onInstallPromptChange, triggerInstallPrompt } from '../lib/install-prompt'
+import { isInAppBrowser, isIos } from '../lib/platform'
 
 /**
- * PWA install banner, web build outside standalone mode only. Hidden for 14 days once dismissed:
+ * PWA install banner, web build only, and not once the app is installed: neither in its own window
+ * nor in a browser tab of a browser that has it installed. Hidden for 14 days once dismissed:
  * within two weeks a person either installs the app or decides not to.
  */
 
@@ -23,11 +24,14 @@ function isDismissedRecently(): boolean {
 
 export default function InstallBanner() {
   const [dismissed, setDismissed] = useState(isDismissedRecently)
-  const [installable, setInstallable] = useState(canPromptInstall)
+  // The install state lives outside React (install-prompt.ts); a change only asks for a re-render.
+  const [, refresh] = useReducer((tick: number) => tick + 1, 0)
 
-  useEffect(() => onInstallPromptChange(() => setInstallable(canPromptInstall())), [])
+  useEffect(() => onInstallPromptChange(refresh), [])
 
-  if (dismissed || isStandalone()) return null
+  if (dismissed || isAppInstalled()) return null
+
+  const installable = canPromptInstall()
 
   const close = () => {
     try {

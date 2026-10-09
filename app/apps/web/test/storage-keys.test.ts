@@ -21,6 +21,7 @@ const PWA_KEYS = [
   'CapacitorStorage.ryadom.env',
   'CapacitorStorage.ryadom.env.localApi',
   'ryadom.install.dismissedAt',
+  'ryadom.install.installedAt',
   'ryadom.update.lastVersionCode',
   'ryadom.update.nextJsVersion',
   'ryadom.update.dismissedVersionCode',
