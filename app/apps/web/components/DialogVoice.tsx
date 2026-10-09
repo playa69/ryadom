@@ -1,6 +1,6 @@
 'use client'
 
-import { CircleCheck, Keyboard, Mic, Square } from 'lucide-react'
+import { CircleCheck, Keyboard, Mic, Pause, Square } from 'lucide-react'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Button } from '@ryadom/ui/components/button'
 import { VoiceOrb, type OrbState } from '@ryadom/ui/components/voice-orb'
@@ -8,9 +8,10 @@ import { cn } from '@ryadom/ui/lib/utils'
 import { BUTTON, COLUMN, FOCUS_RING } from './controls'
 
 /**
- * The voice face of the conversation: the sphere is the interface. The person taps it to speak and taps
- * again to finish, and under it are their own words as they are recognized, then the companion's latest
- * reply. The whole feed is on the text face, one tap away.
+ * The voice face of the conversation: the sphere is the interface. Hands-free a tap pauses the microphone
+ * and takes it back; otherwise the person taps it to speak and taps again to finish. Under it are their own
+ * words as they are recognized, then the companion's latest reply. The whole feed is on the text face, one
+ * tap away.
  */
 export default function DialogVoice({
   orb,
@@ -18,6 +19,7 @@ export default function DialogVoice({
   caption,
   hint,
   recording,
+  micOpen,
   micDisabled,
   endDisabled,
   onToggle,
@@ -29,6 +31,8 @@ export default function DialogVoice({
   caption: string
   hint: string
   recording: boolean
+  /** Hands-free: whether the microphone is listening (the button pauses it) or paused; null when off. */
+  micOpen: boolean | null
   micDisabled: boolean
   endDisabled: boolean
   onToggle(): void
@@ -36,6 +40,9 @@ export default function DialogVoice({
   onEnd(): void
 }) {
   const captionBox = useRef<HTMLDivElement>(null)
+  const handsFree = micOpen !== null
+  let micLabel = recording ? 'Остановить запись' : 'Говорить'
+  if (handsFree) micLabel = micOpen ? 'Поставить микрофон на паузу' : 'Включить микрофон'
 
   // A long reply streams in below the visible lines: keep the newest words in view.
   useEffect(() => {
@@ -98,16 +105,14 @@ export default function DialogVoice({
             recording &&
               "bg-sos bg-none text-white shadow-none hover:bg-sos after:absolute after:-inset-px after:rounded-full after:content-[''] motion-safe:after:animate-rec relative",
           )}
-          aria-label={recording ? 'Остановить запись' : 'Говорить'}
+          aria-label={micLabel}
           disabled={micDisabled}
           onClick={onToggle}
           data-testid="dialog-mic"
         >
-          {recording ? (
-            <Square className="size-6 fill-current" aria-hidden="true" />
-          ) : (
-            <Mic className="size-7" aria-hidden="true" />
-          )}
+          {handsFree && micOpen && <Pause className="size-6 fill-current" aria-hidden="true" />}
+          {!handsFree && recording && <Square className="size-6 fill-current" aria-hidden="true" />}
+          {(handsFree ? !micOpen : !recording) && <Mic className="size-7" aria-hidden="true" />}
         </Button>
         <SideButton
           label="Завершить"

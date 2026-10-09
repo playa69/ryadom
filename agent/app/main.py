@@ -30,7 +30,7 @@ SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, *REPLIES)
 class SkipServiceEndpoints(logging.Filter):
     """Служебные эндпоинты не пишутся в access-лог (specs/agent-api «Служебные эндпоинты»)."""
 
-    PREFIXES = ("/health", "/version")
+    PREFIXES = ("/health", "/version", "/metrics")
 
     def filter(self, record: logging.LogRecord) -> bool:
         # uvicorn.access: args = (клиент, метод, путь, версия HTTP, статус)

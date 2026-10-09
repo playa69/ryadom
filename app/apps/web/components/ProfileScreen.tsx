@@ -19,6 +19,7 @@ import { useNotice } from './Notice'
 import { Busy, FIELD_FOCUS, ModalActions, ModalText, ProfileButton, SettingsSection } from './ProfileParts'
 import { Page } from './Page'
 import ProfileRow from './ProfileRow'
+import ProfileHandsFree from './ProfileHandsFree'
 import ProfileVoice from './ProfileVoice'
 
 /**
@@ -229,6 +230,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
         note="Применится со следующего разговора и на всех твоих устройствах."
       >
         <ProfileVoice />
+        <ProfileHandsFree />
       </SettingsSection>
 
       <SettingsSection title="Приложение">

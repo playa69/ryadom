@@ -8,6 +8,7 @@ import {
   Navbar,
   Page,
   Segmented,
+  Toggle,
   f7,
 } from 'framework7-react'
 import type { Router } from 'framework7/types'
@@ -19,6 +20,7 @@ import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { ENV_SWITCHER_TAPS } from '../../../lib/env'
 import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
 import { useAuth } from '../../../lib/store'
+import { HANDS_FREE_KEY, readHandsFree, writeHandsFree } from '../../../lib/voice/hands-free'
 import { nameProblem } from '../../../lib/validation'
 
 /**
@@ -38,6 +40,8 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   const userId = user?.id ?? null
   // The voice the agent speaks with; it is saved on the account and applies from the next conversation.
   const voice: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
+  // Hands-free belongs to this device, not the account: it applies from the next conversation.
+  const [handsFree, setHandsFree] = useState(() => readHandsFree(HANDS_FREE_KEY))
   // An anonymous account has no address and no password; one that linked an address and has not
   // entered the code yet is waiting for the second step.
   const noEmail = user?.email === null
@@ -225,6 +229,24 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
             </Button>
           </Segmented>
           <p className="rd-caption">Применится со следующего разговора и на всех твоих устройствах.</p>
+        </Block>
+        <List inset strong className="rd-menu">
+          <ListItem title="Разговор без рук" data-testid="hands-free">
+            <Toggle
+              slot="after"
+              checked={handsFree}
+              onToggleChange={(on: boolean) => {
+                writeHandsFree(HANDS_FREE_KEY, on)
+                setHandsFree(on)
+              }}
+            />
+          </ListItem>
+        </List>
+        <Block>
+          <p className="rd-caption">
+            Просто говори: шар сам поймёт, когда ты закончил(а), и замолчит, если заговорить поверх. Выключи,
+            чтобы говорить по нажатию. Только на этом устройстве.
+          </p>
         </Block>
       </section>
 

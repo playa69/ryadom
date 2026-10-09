@@ -50,9 +50,13 @@ class SecuritySettings(BaseAppSettings):
 
 
 class DialogSettings(BaseAppSettings):
-    """Темп ответа: слова уходят по одному, как стрим настоящей модели."""
+    """Темп ответа и предел голосовой реплики."""
 
+    # Слова уходят по одному, как стрим настоящей модели.
     stream_delay_ms: int = Field(validation_alias="STREAM_DELAY_MS", default=60, ge=0)
+    # Самая длинная голосовая реплика: клиент закрывает её сам на этой же секунде, а всё сверх неё агент
+    # отбрасывает, чтобы память соединения не росла без предела (5 минут PCM16 16 кГц — около 9,6 МБ).
+    voice_turn_max_seconds: int = Field(validation_alias="VOICE_TURN_MAX_SECONDS", default=300, ge=1, le=600)
 
 
 class SpeechSettings(BaseAppSettings):
@@ -117,6 +121,8 @@ class LlmSettings(BaseAppSettings):
     stt_model: str = Field(validation_alias="STT_MODEL", default="whisper-large-v3")
     # Дольше ждать ответ нет смысла: после таймаута агент отвечает шаблоном.
     timeout_seconds: int = Field(validation_alias="LLM_TIMEOUT_SECONDS", default=15, ge=1)
+    # Распознавание ждёт дольше чата: реплика бывает до VOICE_TURN_MAX_SECONDS, и whisper на ней работает заметное время.
+    stt_timeout_seconds: int = Field(validation_alias="STT_TIMEOUT_SECONDS", default=120, ge=1)
     # Сколько последних сообщений диалога видит модель.
     history_messages: int = Field(validation_alias="LLM_HISTORY_MESSAGES", default=12, ge=1)
     max_tokens: int = Field(validation_alias="LLM_MAX_TOKENS", default=200, ge=16)

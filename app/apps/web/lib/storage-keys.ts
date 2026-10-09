@@ -20,3 +20,6 @@ export const WEB_PENDING_AUTH_KEY = `${WEB_STORAGE_PREFIX}pending-auth`
 
 /** Which view (text or voice) a dialog was left in, kept per tab (sessionStorage). */
 export const webDialogViewKey = (dialogId: string): string => `${WEB_STORAGE_PREFIX}dialog-view.${dialogId}`
+
+/** The "Разговор без рук" setting of this browser (localStorage); see client-core/voice/hands-free. */
+export const WEB_HANDS_FREE_KEY = `${WEB_STORAGE_PREFIX}hands-free`

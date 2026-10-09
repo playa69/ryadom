@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { installSpeechStub } from './speech'
+import { installMicrophone, installSpeechStub } from './speech'
 
 /**
  * Screenshots go to `e2e/screenshots/` (not in git): the test run's own pictures, kept apart from the
@@ -29,16 +29,27 @@ function addressFor(key: string): string {
  * A route, not `extraHTTPHeaders`: those count as set by the page, so the web app's cross-origin
  * calls to the API would be preflighted and refused (the API does not allow this header).
  */
-async function prepareContext(context: BrowserContext, address: string): Promise<void> {
+async function prepareContext(context: BrowserContext, address: string, handsFree: boolean): Promise<void> {
   await installSpeechStub(context)
+  await installMicrophone(context, handsFree)
   await context.route(/\/api\//, (route) =>
     route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': address } }),
   )
 }
 
-export const test = base.extend<{ shot: Shot; newDevice: () => Promise<Page> }>({
-  context: async ({ context }, use, testInfo) => {
-    await prepareContext(context, addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`))
+export const test = base.extend<{
+  shot: Shot
+  newDevice: () => Promise<Page>
+  /** Hands-free voice with a microphone the test speaks into; tap-to-talk otherwise (see installMicrophone). */
+  handsFree: boolean
+}>({
+  handsFree: [false, { option: true }],
+  context: async ({ context, handsFree }, use, testInfo) => {
+    await prepareContext(
+      context,
+      addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`),
+      handsFree,
+    )
     await use(context)
   },
   /**
@@ -46,12 +57,16 @@ export const test = base.extend<{ shot: Shot; newDevice: () => Promise<Page> }>(
    * cookie is shared with the test's page. It comes from the same address as the test, so the
    * per-IP limits count both devices together, as they would behind one router.
    */
-  newDevice: async ({ browser }, use, testInfo) => {
+  newDevice: async ({ browser, handsFree }, use, testInfo) => {
     const contexts: BrowserContext[] = []
     await use(async () => {
       const context = await browser.newContext(testInfo.project.use)
       contexts.push(context)
-      await prepareContext(context, addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`))
+      await prepareContext(
+        context,
+        addressFor(`${testInfo.project.name}/${testInfo.titlePath.join('/')}`),
+        handsFree,
+      )
       return context.newPage()
     })
     await Promise.all(contexts.map((context) => context.close()))

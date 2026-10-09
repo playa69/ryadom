@@ -4,6 +4,7 @@ import {
   AudioFrameKind,
 } from '@ryadom/contracts/api/dialogs'
 import { levelOf } from './level'
+import { PRE_ROLL_MS } from './turn-detector'
 
 /**
  * Microphone capture: getUserMedia -> AudioWorklet -> 100 ms PCM16 frames at 16 kHz.
@@ -18,6 +19,13 @@ export interface VoiceCapture {
   readonly sampleRate: number
   /** How loud the person is right now, 0..1. Cheap enough to read on every animation frame. */
   level(): number
+  /**
+   * Hands-free (`gated`): frames start reaching `onFrame`, beginning with the last `PRE_ROLL_MS` that
+   * were held back, so the first syllable of the turn is not lost. Without the gate frames always flow.
+   */
+  open(): void
+  /** Hands-free: frames stop reaching `onFrame` (silence is not streamed); the microphone stays on. */
+  close(): void
 }
 
 export class MicrophoneDeniedError extends Error {
@@ -46,7 +54,15 @@ export interface StartCaptureOptions {
    * land on whatever else is served at `/`.
    */
   workletUrl?: string
+  /**
+   * Hands-free: the microphone is open for the whole session, but frames go out only between `open()`
+   * and `close()`. Until then the last `PRE_ROLL_MS` of them are kept in a ring.
+   */
+  gated?: boolean
 }
+
+/** One worklet frame is 100 ms (see voice-worklet.js). */
+const FRAME_MS = 100
 
 /**
  * Starts capture and pushes frames to `onFrame`. The browser or the OS asks for permission; a
@@ -76,8 +92,16 @@ export async function startCapture(
     const worklet = new AudioWorkletNode(audio, 'ryadom-capture', { numberOfOutputs: 0 })
 
     let sequence = 0
+    let flowing = !options.gated
+    const held: Int16Array[] = []
+    const keep = Math.ceil(PRE_ROLL_MS / FRAME_MS)
     worklet.port.onmessage = (event: MessageEvent<Int16Array>) => {
-      onFrame(frameFor(sequence++, event.data))
+      if (flowing) {
+        onFrame(frameFor(sequence++, event.data))
+        return
+      }
+      held.push(event.data)
+      if (held.length > keep) held.shift()
     }
     source.connect(worklet)
 
@@ -92,6 +116,16 @@ export async function startCapture(
       level() {
         meter.getByteTimeDomainData(bins)
         return levelOf(bins)
+      },
+      open() {
+        if (flowing) return
+        flowing = true
+        for (const samples of held.splice(0)) onFrame(frameFor(sequence++, samples))
+      },
+      close() {
+        if (!options.gated) return
+        flowing = false
+        held.length = 0
       },
       async stop() {
         worklet.port.onmessage = null

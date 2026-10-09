@@ -169,5 +169,5 @@ def build_models(settings: LlmSettings) -> tuple[ChatModel | None, Recognizer | 
         settings.temperature,
         settings.timeout_seconds,
     )
-    stt = ProxyWhisper(settings.base_url, key, settings.stt_model, settings.timeout_seconds)
+    stt = ProxyWhisper(settings.base_url, key, settings.stt_model, settings.stt_timeout_seconds)
     return chat, stt
