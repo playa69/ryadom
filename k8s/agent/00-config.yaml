@@ -6,8 +6,8 @@
 # в git их нет):
 #   AGENT_INTERNAL_TOKEN   общий токен между сервисами, которым api приходит к агенту; ТО ЖЕ
 #                          значение лежит в app-secrets (ns prod) под таким же ключом
-#   AGENT_API_TOKEN        ключ прокси программы (LiteLLM), через который работает Qwen TTS;
-#                          принадлежит только агенту, в app-secrets его нет
+#   AGENT_API_TOKEN        ключ прокси программы (LiteLLM): через него работают Qwen TTS, чат-модель
+#                          и распознавание речи; принадлежит только агенту, в app-secrets его нет
 #   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — сменить TTS_MODE на
 #                          salutespeech и перезапустить агента
 # Режим озвучки TTS_MODE — не секрет, он ниже, в ConfigMap.
@@ -38,3 +38,11 @@ data:
   QWEN_TTS_BASE_URL: "https://shared1.multitool.works:4000/v1"
   QWEN_TTS_MODEL: "qwen/qwen-audio-3.0-tts-flash"
   QWEN_TTS_TIMEOUT_SECONDS: "30"
+  # Ответы и распознавание речи: тот же прокси и тот же ключ (AGENT_API_TOKEN), что у озвучки.
+  # proxy = ответы пишет чат-модель, голос распознаёт whisper; template = без моделей (шаблоны и заглушка).
+  # Модель недоступна — агент отвечает шаблоном, сервис не падает.
+  LLM_MODE: "proxy"
+  LLM_BASE_URL: "https://shared1.multitool.works:4000/v1"
+  LLM_CHAT_MODEL: "gigachat3.5-432b-a28b"
+  STT_MODEL: "whisper-large-v3"
+  LLM_TIMEOUT_SECONDS: "15"
