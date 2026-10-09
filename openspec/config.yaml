@@ -4,7 +4,7 @@ schema: spec-driven
 # This is shown to AI when creating artifacts.
 context: |
   Продукт: «Слышу Рядом» — голосовой ИИ-компаньон эмоциональной поддержки (Sber500xDisrupt).
-  Спека: spec_slyshu_ryadom.pdf (v1.1). Аудитория 18+, 152-ФЗ, данные только в РФ,
+  Спека: docs/spec.md (v2.0, SDD; заменяет spec_slyshu_ryadom.pdf v1.1). Аудитория 18+, 152-ФЗ, данные только в РФ,
   анонимный device-based вход, «стереть всё» одной кнопкой, кризисный протокол
   перекрывает любой режим и любую метрику.
 
