@@ -31,6 +31,19 @@ def save_wav(path: str, pcm: bytes) -> None:
         wav.writeframes(pcm)
 
 
+def to_16k(pcm24: bytes) -> bytes:
+    """PCM16 24 кГц → 16 кГц (линейно): так агент принимает голос клиента."""
+    n = len(pcm24) // 2
+    src = struct.unpack(f"<{n}h", pcm24[: n * 2])
+    out = []
+    for i in range(n * 2 // 3):
+        pos = i * 1.5
+        j = int(pos)
+        nxt = src[min(j + 1, n - 1)]
+        out.append(round(src[j] + (nxt - src[j]) * (pos - j)))
+    return struct.pack(f"<{len(out)}h", *out)
+
+
 def check(ok: bool, what: str, detail: str = "") -> bool:
     print(f"  {'OK  ' if ok else 'FAIL'} {what}{(' — ' + detail) if detail and not ok else ''}")
     if not ok:
@@ -72,6 +85,8 @@ async def main(url: str, token: str, wav_path: str | None, voice: str | None) ->
         tts = ready.json().get("tts", "none")
         check(ready.status_code == 200, "GET /health/ready", ready.text)
         print(f"  озвучка: {tts}")
+        stt = ready.json().get("stt", "none")  # нет поля или none: распознавание-заглушка по длительности
+        print(f"  распознавание: {stt}")
 
         print("REST")
         check((await http.post(f"/v1/users/{user}/dialogs")).status_code == 401, "POST /dialogs без токена → 401")
@@ -132,11 +147,20 @@ async def main(url: str, token: str, wav_path: str | None, voice: str | None) ->
 
             print("голосовая реплика")
             await ws.send(json.dumps({"type": "audio_start"}))
-            for n in range(20):
-                await ws.send(struct.pack(">BI", 0x01, n) + bytes(3200))
+            if stt != "none" and audio:
+                # Настоящее распознавание на тишину не отвечает (по контракту), поэтому говорим ему голосом самого агента:
+                # его только что озвученный ответ, сжатый до 16 кГц.
+                speech = to_16k(b"".join(frame[5:] for frame in audio))
+                chunks = [speech[i : i + 3200] for i in range(0, len(speech), 3200)]
+            else:
+                chunks = [bytes(3200)] * 20  # заглушка считает только длительность
+            for n, chunk in enumerate(chunks):
+                await ws.send(struct.pack(">BI", 0x01, n) + chunk)
             await ws.send(json.dumps({"type": "audio_end"}))
             texts, _ = await read_until(ws, lambda t: "assistant_end" in kinds(t))
             transcript = next((t for t in texts if t["type"] == "transcript"), None)
+            if transcript is not None:
+                print(f"  распознано: {transcript.get('text')!r}")
             check(
                 transcript is not None and transcript["final"] and bool(transcript.get("messageId")),
                 "final-транскрипт с messageId",
