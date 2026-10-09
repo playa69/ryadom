@@ -13,13 +13,14 @@ import {
   StartDialogOperation,
   StartDialogOperationErrorCode,
 } from '../src/processes/dialogs'
+import { UpdateUserVoiceCommand, usersManager } from '../src/managers/users-manager'
 import { AgentUnavailableError } from '../src/shared'
 import { blockDirectly, json, mockAgent, mockFetch, registerConfirmedUser } from './helpers'
 
 const start = (userId: string) => dialogsProcess.execute(new StartDialogOperation({ userId }))
 
 describe('начать разговор', () => {
-  it('агенту уходит только пользователь в пути и ничего больше, возвращает диалог', async () => {
+  it('агенту уходит пользователь в пути и его голос (по умолчанию мужской), больше ничего; возвращает диалог', async () => {
     const user = await registerConfirmedUser()
     const { calls } = mockAgent({
       'POST http://agent.test/v1/users/*/dialogs': () =>
@@ -35,8 +36,22 @@ describe('начать разговор', () => {
     const call = calls.at(-1)!
     expect(call.url.pathname).toBe(`/v1/users/${user.id}/dialogs`)
     expect(call.headers.get('Authorization')).toBe('Bearer test-agent-token')
-    // No body at all: the agent needs nothing but the person.
-    expect(call.body).toBe('')
+    // The body carries only the voice the person picked: nothing about the mode or the client.
+    expect(JSON.parse(call.body)).toEqual({ voice: 'male' })
+  })
+
+  it('голос из профиля уходит агенту при каждом старте: сменили — следующий диалог говорит иначе', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-1', resumed: false }),
+    })
+
+    await start(user.id)
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
+
+    await usersManager.execute(new UpdateUserVoiceCommand({ userId: user.id, voice: 'female' }))
+    await start(user.id)
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
   })
 
   it('заблокированному и удалённому разговор недоступен', async () => {
@@ -90,7 +105,9 @@ describe('журнал и один разговор', () => {
         }),
     })
 
-    const result = await dialogsProcess.execute(new ListDialogsOperation({ userId: user.id, limit: 20, before: null }))
+    const result = await dialogsProcess.execute(
+      new ListDialogsOperation({ userId: user.id, limit: 20, before: null }),
+    )
     expect(result.success).toBe(true)
     if (!result.success) return
     expect(result.next).toBe('cursor-1')
@@ -105,7 +122,9 @@ describe('журнал и один разговор', () => {
   it('чужой или несуществующий диалог — DIALOG_NOT_FOUND', async () => {
     const user = await registerConfirmedUser()
     mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'not_found' }, 404) })
-    expect(await dialogsProcess.execute(new GetDialogOperation({ userId: user.id, dialogId: 'd-x' }))).toEqual({
+    expect(
+      await dialogsProcess.execute(new GetDialogOperation({ userId: user.id, dialogId: 'd-x' })),
+    ).toEqual({
       success: false,
       error: GetDialogOperationErrorCode.DIALOG_NOT_FOUND,
     })

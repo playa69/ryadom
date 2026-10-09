@@ -28,7 +28,7 @@ import { PASSWORD, call, json, makeApp, mockAgent, ok, refusedWith, signUpAndIn 
 const { app, resetLimits } = makeApp()
 
 describe('REST диалогов', () => {
-  it('старт ничего о режиме и клиенте агенту не передаёт, отвечает диалогом', async () => {
+  it('старт передаёт агенту только голос человека (по умолчанию мужской), режим и клиента нет, отвечает диалогом', async () => {
     resetLimits()
     const { user, tokens } = await signUpAndIn(app)
     const { calls } = mockAgent({
@@ -42,11 +42,37 @@ describe('REST диалогов', () => {
         'X-App-Version': '12',
       }),
     )
-    expect(started).toEqual({ dialogId: 'd-7', resumed: true, greeting: 'Продолжим?', sinceLastDialogHours: 48 })
+    expect(started).toEqual({
+      dialogId: 'd-7',
+      resumed: true,
+      greeting: 'Продолжим?',
+      sinceLastDialogHours: 48,
+    })
 
     const agentCall = calls.at(-1)!
     expect(agentCall.url.pathname).toBe(`/v1/users/${user.id}/dialogs`)
-    expect(agentCall.body).toBe('')
+    expect(JSON.parse(agentCall.body)).toEqual({ voice: 'male' })
+  })
+
+  it('выбранный в профиле голос уходит агенту при каждом старте и ответом не отдаётся', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-9', resumed: false, voice: 'female' }),
+    })
+
+    ok(await call(app, 'PATCH', '/api/auth/me', { voice: 'female' }, tokens.accessToken))
+    const started = ok<StartDialogApiResponse>(
+      await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken),
+    )
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
+    // The voice is the profile's business: the dialog answer keeps its shape.
+    expect(started).toEqual({ dialogId: 'd-9', resumed: false, greeting: null, sinceLastDialogHours: null })
+
+    ok(await call(app, 'PATCH', '/api/auth/me', { voice: 'male' }, tokens.accessToken))
+    ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
   })
 
   it('старый клиент шлёт режим, новый нет — оба получают диалог', async () => {
@@ -57,7 +83,9 @@ describe('REST диалогов', () => {
     })
 
     for (const body of [{ mode: DialogMode.Vent }, {}]) {
-      const started = ok<StartDialogApiResponse>(await call(app, 'POST', '/api/dialogs', body, tokens.accessToken))
+      const started = ok<StartDialogApiResponse>(
+        await call(app, 'POST', '/api/dialogs', body, tokens.accessToken),
+      )
       expect(started).toMatchObject({ dialogId: 'd-8', resumed: false })
     }
   })
@@ -81,7 +109,9 @@ describe('REST диалогов', () => {
         }),
     })
 
-    const listed = ok<ListDialogsApiResponse>(await call(app, 'GET', '/api/dialogs', undefined, tokens.accessToken))
+    const listed = ok<ListDialogsApiResponse>(
+      await call(app, 'GET', '/api/dialogs', undefined, tokens.accessToken),
+    )
     expect(listed.items[0]).toMatchObject({
       dialogId: 'd-1',
       startedAt: '2026-10-01T20:00:00.000Z',
@@ -100,7 +130,9 @@ describe('REST диалогов', () => {
     )
 
     mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'boom' }, 502) })
-    const response = await app.request('/api/dialogs/d-x', { headers: { Authorization: `Bearer ${tokens.accessToken}` } })
+    const response = await app.request('/api/dialogs/d-x', {
+      headers: { Authorization: `Bearer ${tokens.accessToken}` },
+    })
     expect(response.status).toBe(503)
   })
 
@@ -127,7 +159,9 @@ describe('REST диалогов', () => {
     expect(started.status).toBe(401)
     expect(calls).toEqual([])
     // The session that was kept still starts a dialog.
-    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-kept', resumed: false }) })
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-kept', resumed: false }),
+    })
     ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
   })
 })
@@ -216,7 +250,9 @@ async function startGatewayServer(agentUrl: string) {
       socket.destroy()
       return
     }
-    wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws as never, { env, jwt, sessions }, request))
+    wss.handleUpgrade(request, socket, head, (ws) =>
+      handleDialogSocket(ws as never, { env, jwt, sessions }, request),
+    )
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 50))
   const { port } = server.address() as AddressInfo
@@ -288,12 +324,17 @@ describe('WebSocket-шлюз', () => {
     client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'тяжело' }))
     await vi.waitFor(() =>
       expect(agentSide.received).toEqual(
-        expect.arrayContaining([expect.objectContaining({ type: 'user_message', id: 'c-1', text: 'тяжело' })]),
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'user_message', id: 'c-1', text: 'тяжело' }),
+        ]),
       ),
     )
 
     agentSide.socket.send(JSON.stringify({ type: 'ack', id: 'c-1', messageId: 'm-1' }))
-    expect(await nextFrame(client, DialogServerFrame.Ack)).toMatchObject({ clientId: 'c-1', messageId: 'm-1' })
+    expect(await nextFrame(client, DialogServerFrame.Ack)).toMatchObject({
+      clientId: 'c-1',
+      messageId: 'm-1',
+    })
 
     client.close()
   })
@@ -440,7 +481,9 @@ describe('WebSocket-шлюз', () => {
       const { accessToken } = await gateway.signIn()
       const client = new WebSocket(gateway.wsUrl)
       await waitOpen(client)
-      client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: `d-roll-${index}` }))
+      client.send(
+        JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: `d-roll-${index}` }),
+      )
       await agent.waitFor(`d-roll-${index}`)
       clients.push(client)
     }
@@ -459,7 +502,11 @@ describe('WebSocket-шлюз', () => {
     closeAllDialogSessions(600)
     // All three got the code, and none later than the spread allows.
     const codes = await Promise.all(closing)
-    expect(codes).toEqual([DialogCloseCode.Restarting, DialogCloseCode.Restarting, DialogCloseCode.Restarting])
+    expect(codes).toEqual([
+      DialogCloseCode.Restarting,
+      DialogCloseCode.Restarting,
+      DialogCloseCode.Restarting,
+    ])
     expect(Math.max(...closedAt)).toBeLessThan(1500)
   })
 
@@ -558,7 +605,9 @@ describe('WebSocket-шлюз', () => {
       const client = new WebSocket(gateway.wsUrl)
       await waitOpen(client)
 
-      client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-late-hello' }))
+      client.send(
+        JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-late-hello' }),
+      )
 
       const error = await nextFrame(client, DialogServerFrame.Error)
       expect(error.code).toBe(DialogWsErrorCode.UNAUTHORIZED)
@@ -572,7 +621,9 @@ describe('WebSocket-шлюз', () => {
       const client = new WebSocket(gateway.wsUrl)
       await waitOpen(client)
 
-      client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-unknown-session' }))
+      client.send(
+        JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-unknown-session' }),
+      )
 
       expect((await nextFrame(client, DialogServerFrame.Error)).code).toBe(DialogWsErrorCode.UNAUTHORIZED)
     })

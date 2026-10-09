@@ -1,8 +1,20 @@
-import { Block, BlockTitle, Button, Icon, List, ListItem, Navbar, Page, f7 } from 'framework7-react'
+import {
+  Block,
+  BlockTitle,
+  Button,
+  Icon,
+  List,
+  ListItem,
+  Navbar,
+  Page,
+  Segmented,
+  f7,
+} from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { apiErrorText, getCurrentUser, updateProfile } from '../../../lib/api'
 import { getVersionInfo } from '../../../lib/device'
+import { DEFAULT_AGENT_VOICE, type AgentVoice } from '@ryadom/contracts/api/auth/me'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { ENV_SWITCHER_TAPS } from '../../../lib/env'
 import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
@@ -24,6 +36,8 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   const versionTaps = useRef(0)
   const user = auth.user
   const userId = user?.id ?? null
+  // The voice the agent speaks with; it is saved on the account and applies from the next conversation.
+  const voice: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
   // An anonymous account has no address and no password; one that linked an address and has not
   // entered the code yet is waiting for the second step.
   const noEmail = user?.email === null
@@ -37,7 +51,13 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
     if (!userId) return
     getCurrentUser()
       .then((me) =>
-        updateUser({ email: me.email, name: me.name, isEmailConfirmed: me.isEmailConfirmed, createdAt: me.createdAt }),
+        updateUser({
+          email: me.email,
+          name: me.name,
+          isEmailConfirmed: me.isEmailConfirmed,
+          createdAt: me.createdAt,
+          voice: me.voice,
+        }),
       )
       .catch(() => {})
   }, [userId, updateUser])
@@ -89,6 +109,20 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
       undefined,
       user?.name ?? '',
     )
+  }
+
+  function handleVoice(next: AgentVoice) {
+    if (next === voice) return
+    void updateProfile({ voice: next })
+      .then((me) => {
+        updateUser({ voice: me.voice })
+        f7.toast.create({ text: 'Голос сохранён', closeTimeout: 1500 }).open()
+      })
+      .catch((error: unknown) => {
+        f7.toast
+          .create({ text: apiErrorText(error, {}, 'Не получилось сохранить голос'), closeTimeout: 2500 })
+          .open()
+      })
   }
 
   function handleSwitchAccount() {
@@ -173,6 +207,25 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
           </p>
         </Block>
       )}
+      </section>
+
+      <section className="rd-profile-group" data-testid="voice-section">
+        <BlockTitle>Голос агента</BlockTitle>
+        <Block strong inset className="rd-voice">
+          <Segmented strong tag="div" data-testid="voice-choice">
+            <Button active={voice === 'male'} data-testid="voice-male" onClick={() => handleVoice('male')}>
+              Мужской
+            </Button>
+            <Button
+              active={voice === 'female'}
+              data-testid="voice-female"
+              onClick={() => handleVoice('female')}
+            >
+              Женский
+            </Button>
+          </Segmented>
+          <p className="rd-caption">Применится со следующего разговора и на всех твоих устройствах.</p>
+        </Block>
       </section>
 
       <section className="rd-profile-group">

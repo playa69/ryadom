@@ -6,7 +6,7 @@
 # configMapKeyRef: PUBLIC_WEB_URL и APP_ENV. ПРАВИЛО: здесь — всё статическое и
 # несекретное, в Secret'ах (app-secrets, app-smtp; значения хранятся локально у
 # администратора, в git их нет) — только секреты: DB_PASSWORD, AUTH_SECRET,
-# MOBILE_JWT_SECRET, REDIS_PASSWORD, AGENT_API_TOKEN, SMTP_PASSWORD.
+# MOBILE_JWT_SECRET, REDIS_PASSWORD, AGENT_INTERNAL_TOKEN, SMTP_PASSWORD.
 # DATABASE_URL в Secret'ах нет: Deployment'ы собирают его из DB_* отсюда и
 # DB_PASSWORD из Secret'а. Список админов — отдельный ConfigMap
 # admin/00-config.yaml, только для админки (API его получать не должен).

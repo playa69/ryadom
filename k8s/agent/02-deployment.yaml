@@ -1,0 +1,117 @@
+# =============================================================================
+# Deployment agent — упрощённый агент: шаблонные ответы + озвучка (ns agent)
+# =============================================================================
+# Образ cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:<тег> (agent/Dockerfile; сборка и push —
+# k8s/agent/README.md). Тег в манифесте должен совпадать с отправленным; latest не используем.
+#
+# РОВНО 1 РЕПЛИКА и strategy Recreate: диалоги лежат в памяти процесса, поэтому вторая
+# реплика не увидит чужие диалоги (404), а при каждом перезапуске (в том числе при выкате новой
+# версии) все диалоги агента пропадают. Настоящее хранилище появится вместе с полноценным агентом.
+#
+# Пробы — только httpGet (NetworkPolicy пускает kubelet на :15020, istio переписывает пробы
+# на pilot-agent; tcpSocket был бы заблокирован). /health отвечает всегда, пока жив процесс.
+# readOnlyRootFilesystem + emptyDir /tmp: запас на временные файлы (проверено: агент с этими
+# ограничениями отвечает и озвучивает; если под упадёт с EROFS — найти путь в логах).
+# Секреты — из Secret agent-secrets (создаётся командой `kubectl create secret`, не из git).
+# terminationGracePeriodSeconds 30: на SIGTERM агент закрывает сокеты кодом 1012 (restart).
+# =============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: agent
+  labels:
+    app: agent
+    app.kubernetes.io/part-of: ryadom
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        # agent/Dockerfile: useradd --uid 10001; числовой uid нужен kubelet'у
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.1.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8001
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: agent-config
+          env:
+            - name: AGENT_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: AGENT_INTERNAL_TOKEN
+            # Ключ прокси Qwen TTS (принадлежит только агенту; не общий токен между сервисами)
+            - name: AGENT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: AGENT_API_TOKEN
+            # Ключ SaluteSpeech: пока его нет, ключа в Secret'е тоже нет, и озвучка идёт через Qwen
+            - name: SALUTE_SPEECH_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: SALUTE_SPEECH_AUTH_KEY
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 3
+            failureThreshold: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8001
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
