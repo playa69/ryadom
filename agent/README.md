@@ -81,7 +81,8 @@ AGENT_INTERNAL_TOKEN=<токен> TTS_MODE=espeak LLM_MODE=template uv run uvico
 ## Проверка
 
 ```bash
-uv run pytest                                   # 139 тестов: REST, WebSocket, голос, озвучка, провайдеры речи, чат и распознавание
+uv run pytest                                   # 146 тестов: REST, WebSocket, голос, озвучка, провайдеры речи, чат и распознавание
+uv run python scripts/prompt_check.py           # ручная проверка промпта на живой модели (LLM_MODE=proxy): набор диалогов и ответы
 uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> --wav reply.wav [--voice female]
 ```
 

@@ -129,6 +129,54 @@ def test_chat_messages_start_with_the_person_and_are_limited():
     assert messages[1]["role"] == "user"
 
 
+# ─── Промпт и шаблоны: оффтоп и хорошее настроение ────────────────────────────
+
+
+def test_chat_messages_carry_the_offtopic_and_good_mood_rules():
+    from app.services.dialog_store import Message
+
+    offtopic = [
+        Message("1", "user", "Как приготовить лазанью?", "t"),
+        Message("2", "assistant", "Это слои пасты, соуса и бешамеля. Кстати, как прошёл твой день?", "t"),
+        Message("3", "user", "А при какой температуре?", "t"),
+    ]
+    messages = chat_messages(offtopic, 12)
+    assert messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    # Модель видит свой прошлый ответ: по нему она решает, пора ли снова напоминать.
+    assert [m["role"] for m in messages[1:]] == ["user", "assistant", "user"]
+
+    prompt = SYSTEM_PROMPT.lower()
+    assert "одно-два предложения" in prompt and "рецептов" in prompt  # оффтоп: кратко, без пошаговых инструкций
+    assert "без отказа" in prompt
+    assert "погоду" in prompt and "не видишь" in prompt  # не выдумывает то, чего не знает
+    assert "как прошёл день или что на душе" in prompt  # возврат к эмоциям
+    assert "раз в две-три реплики, не в каждой" in prompt
+    assert "порадуйся" in prompt and "есть ли ещё что-то" in prompt  # хорошее настроение
+    assert "не ищи проблем" in prompt
+    assert "и радость тоже" in prompt  # «сначала признай чувство» — и для радости
+    # Голосовой формат и прежние правила на месте.
+    assert "одно-три предложения" in prompt and "эмодзи" in prompt and "не задавай два вопроса" in prompt
+
+
+@pytest.mark.parametrize("reply", REPLIES)
+def test_template_replies_do_not_assume_a_problem(reply):
+    lower = reply.lower()
+    for word in ("тяжело", "задело", "обид", "устал", "случилось", "помогло"):
+        assert word not in lower
+    assert reply.count("?") <= 1  # не больше одного вопроса за реплику
+
+
+def test_good_mood_in_template_mode_gets_a_neutral_reply(user_id):
+    with make_client() as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            send_user_message(ws, "c-1", "У меня был прекрасный день!")
+            frames = read_frames(ws, reply_done)
+
+    assert not has(frames, "safety")
+    assert final_text(frames) == REPLIES[0]
+
+
 # ─── Распознавание речи ───────────────────────────────────────────────────────
 
 
