@@ -211,11 +211,7 @@ export default function DialogPage({
           // The agent has started to answer (or the line is gone): nothing is awaited any more.
           if (next !== 'ready') setAwaitingReply(false)
         },
-        onMessages: (list) => {
-          // A reply is read out only to someone who is on the voice and not talking themselves.
-          replyVoice.observe(list, modeRef.current === 'voice' && !recordingRef.current)
-          setMessages(list)
-        },
+        onMessages: setMessages,
         onSpeech: (messageId, phase) =>
           phase === 'start' ? startAgentSpeech(messageId) : replyVoice.agentSpeechEnded(messageId),
         onTranscript: (text, final) => {

@@ -6,6 +6,7 @@
 
 import re
 from collections.abc import Sequence
+from difflib import SequenceMatcher
 
 from app.services.dialog_store import Message
 
@@ -63,13 +64,83 @@ def next_reply(index: int) -> str:
 
 
 def chat_messages(history: Sequence[Message], limit: int) -> list[dict[str, str]]:
-    """Что видит модель: системный промпт и последние `limit` сообщений диалога, начиная с реплики человека."""
+    """Что видит модель: системный промпт и последние `limit` сообщений диалога, начиная с реплики человека.
+
+    Реплики человека подряд (он договаривал мысль после паузы) склеиваются в одну: модель ждёт чередования.
+    """
     recent = list(history[-limit:])
     while recent and recent[0].role != "user":
         recent.pop(0)
-    return [{"role": "system", "content": SYSTEM_PROMPT}, *({"role": m.role, "content": m.text} for m in recent)]
+    messages: list[dict[str, str]] = []
+    for m in recent:
+        if messages and messages[-1]["role"] == "user" and m.role == "user":
+            messages[-1]["content"] += " " + m.text
+        else:
+            messages.append({"role": m.role, "content": m.text})
+    return [{"role": "system", "content": SYSTEM_PROMPT}, *messages]
+
+
+# Конец предложения: знаки, возможные закрывающие кавычки и скобки, и сразу за ними пробел или конец текста.
+# «3.5» и «т.е.» без пробела за точкой предложение не заканчивают.
+_SENTENCE_END = re.compile(r"[.!?…]+[»\"')\]]*(?=\s|$)")
+
+
+def take_sentences(buffer: str, final: bool = False) -> tuple[list[str], str]:
+    """Готовые предложения из накопленного текста и остаток.
+
+    Пока текст пишется (`final=False`), предложение, которое упирается в конец буфера, не отдаётся: за точкой ещё
+    может прийти «..» или «?!». `final=True` отдаёт и недописанный хвост.
+    """
+    sentences: list[str] = []
+    start = 0
+    for match in _SENTENCE_END.finditer(buffer):
+        if match.end() == len(buffer) and not final:
+            break
+        sentence = buffer[start : match.end()].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = match.end()
+    rest = buffer[start:]
+    if final:
+        if rest.strip():
+            sentences.append(rest.strip())
+        rest = ""
+    return sentences, rest
 
 
 def split_sentences(text: str) -> list[str]:
     """Предложения для озвучки: первое звучит, пока остальные ещё синтезируются."""
-    return [part.strip() for part in re.findall(r"[^.!?…]+[.!?…]*", text) if part.strip()]
+    return take_sentences(text, final=True)[0]
+
+
+# Фраза на этих словах не заканчивается: человек остановился, чтобы подумать, и продолжит.
+_OPEN_ENDINGS = frozenset(
+    "и но а что потому как если когда чтобы чтоб или то ну вот просто типа короче ещё только хотя будто словно "
+    "например значит в во на с со к ко по о об от до из за для при про у не ни же бы ли".split()
+)
+
+
+def looks_unfinished(text: str) -> bool:
+    """Оборвана ли мысль: запятая, двоеточие или многоточие в конце либо слово, после которого фраза не кончается."""
+    tail = text.strip()
+    if not tail or tail[-1] in "!?":
+        return False
+    if tail[-1] in ",;:—-…" or tail.endswith(".."):
+        return True
+    words = re.findall(r"\w+", tail.lower())
+    return bool(words) and words[-1] in _OPEN_ENDINGS
+
+
+def is_echo(heard: str, spoken: str) -> bool:
+    """Распознанное — это слова самого агента, пойманные микрофоном: подряд идёт не меньше 80% услышанного.
+
+    Нужно только для реплик, начатых поверх озвучки (перебивание): там динамик и слышит микрофон.
+    """
+    heard_words = re.findall(r"\w+", heard.lower())
+    spoken_words = re.findall(r"\w+", spoken.lower())
+    if len(heard_words) < 3 or not spoken_words:
+        return False
+    run = SequenceMatcher(None, heard_words, spoken_words, autojunk=False).find_longest_match(
+        0, len(heard_words), 0, len(spoken_words)
+    )
+    return run.size / len(heard_words) >= 0.8

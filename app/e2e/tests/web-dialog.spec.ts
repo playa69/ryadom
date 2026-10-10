@@ -389,10 +389,11 @@ test('голос в вебе: расшифровка в ленте, обрыв �
 })
 
 /**
- * An agent whose speech is down sends text only. The sphere must not go mute: it reads the greeting and
- * the replies with the app's own voice, and listening still waits for the greeting.
+ * An agent whose speech is down sends text only. The sphere still reads the greeting with the app's own
+ * voice (listening waits for it), but never a reply: a platform voice stepping in over a slow agent made
+ * replies sound twice.
  */
-test('агент без озвучки: шар в вебе читает приветствие и ответ своим голосом', async ({ page }) => {
+test('агент без озвучки: шар в вебе читает приветствие, но не ответ', async ({ page }) => {
   test.setTimeout(120_000)
   await setAgentSpeech('none')
   try {
@@ -412,8 +413,9 @@ test('агент без озвучки: шар в вебе читает прив
     await stop.click()
     await expect(caption).not.toHaveText(greeting, { timeout: 30_000 })
     await expect(caption).toHaveText(/[.!?…]$/, { timeout: 30_000 })
-    const reply = ((await caption.textContent()) ?? '').trim()
-    await expectSpoken(page, greeting, reply)
+    // The old fallback stepped in after 0.9 s: wait well past that before checking that nothing was said.
+    await page.waitForTimeout(2_000)
+    await expectSpoken(page, greeting)
   } finally {
     await setAgentSpeech('auto')
   }

@@ -1,7 +1,12 @@
 /**
- * The sphere's own voice for the words the agent did not speak itself: the greeting (it comes over
- * REST, as text) and any reply the agent sent without speech frames. The agent's own speech
- * always wins; this only fills the silence, so a voice screen is never mute.
+ * The sphere's own voice for the one thing the agent may not speak itself: the greeting (it comes
+ * over REST, as text). The agent's own speech always wins; this only fills the silence, so a voice
+ * screen is never mute on arrival.
+ *
+ * Replies are deliberately not here. The agent voices every reply, and its first sound can take a few
+ * seconds (a cloud synthesis behind a proxy); a platform voice stepping in after a short wait made the
+ * same reply sound twice, first robotic and then in the agent's voice, or both at once. A reply the agent
+ * cannot voice arrives as text with an `error VOICE_UNAVAILABLE`, which the screen shows.
  *
  * It uses the platform's speech synthesis, so there is nothing to download and no audio leaves the
  * device. The engine is injected: tests drive a fake one, and a platform without synthesis simply
@@ -61,7 +66,7 @@ const LANGUAGE = 'ru-RU'
 const RATE = 0.95
 /** Some engines drop a long utterance halfway; sentences stay well short of that. */
 const CHUNK_MAX = 220
-/** How long the agent has to start its own speech for a reply before ours does. */
+/** How long the agent has to start its own speech for the greeting before ours does. */
 const AGENT_GRACE_MS = 900
 /** The id the agent voices the greeting under: the greeting is not a message of the feed. */
 export const GREETING_ID = 'greeting'
@@ -91,18 +96,9 @@ export function sentencesOf(text: string): string[] {
   return chunks
 }
 
-interface ObservedMessage {
-  id: string
-  role: 'user' | 'assistant'
-  text: string
-  streaming?: boolean
-}
-
 export class ReplyVoice {
   /** Messages the agent has promised to speak (it sent `tts_start` for them). */
   private readonly voiced = new Set<string>()
-  /** Replies seen being written; only those are spoken when complete, never old history. */
-  private readonly live = new Set<string>()
   /** Messages whose speech the agent has finished (it sent `tts_end`). */
   private readonly finished = new Set<string>()
   private readonly startWaiters = new Map<string, Array<(started: boolean) => void>>()
@@ -221,31 +217,6 @@ export class ReplyVoice {
       if (this.cancellations !== mine) return
       await drained()
     }
-  }
-
-  /**
-   * Looks at the feed as the socket reports it: a reply that was being written and is now complete is
-   * spoken, when `enabled` (the person is on the voice and not talking themselves). History that merely
-   * arrives is not.
-   */
-  observe(messages: readonly ObservedMessage[], enabled: boolean): void {
-    for (const message of messages) {
-      if (message.role !== 'assistant') continue
-      if (message.streaming) this.live.add(message.id)
-      else if (this.live.delete(message.id) && enabled && message.text) this.reply(message.id, message.text)
-    }
-  }
-
-  /** A complete reply: speaks it unless the agent speaks it itself within the grace time. */
-  reply(messageId: string, text: string): void {
-    if (!this.engine || this.voiced.has(messageId)) return
-    const timer = setTimeout(() => {
-      this.timers.delete(timer)
-      if (this.voiced.has(messageId)) return
-      this.spokenId = messageId
-      void this.say(text, messageId)
-    }, this.graceMs)
-    this.timers.add(timer)
   }
 
   /** Speaks `text` and resolves when done, cut off, or given up on. Never rejects. */

@@ -65,8 +65,8 @@ def create_app(
             app.state.chat.name if app.state.chat else "none",
             app.state.recognizer.name if app.state.recognizer else "none",
         )
-        # Звук должен начаться за 0,9 с после текста, иначе клиент прочтёт его сам, а облачный синтез
-        # медленнее. Всё, что агент говорит, шаблонное: готовим звук всех фраз заранее.
+        # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а облачный синтез медленнее.
+        # Фиксированные фразы (приветствия, шаблоны, кризисный ответ) готовим заранее; ответы модели так не подготовить.
         warm_up = None
         if isinstance(app.state.tts, CachedTts):
             sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]

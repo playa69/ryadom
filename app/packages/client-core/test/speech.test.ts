@@ -109,20 +109,20 @@ describe('ReplyVoice.say', () => {
 })
 
 describe('ReplyVoice.cancel', () => {
-  it('обрывает речь, отпускает ждущих и снимает ответ, который вот-вот зазвучал бы', async () => {
+  it('обрывает речь и отпускает ждущих начала речи агента', async () => {
     const { engine, spoken } = fakeEngine()
     const voice = new ReplyVoice(engine)
     let done = false
     void voice.say('Привет.').then(() => (done = true))
-    voice.reply('m1', 'Ответ.')
+    const agentStarted = voice.agentStarts('m1')
 
     voice.cancel()
     await vi.advanceTimersByTimeAsync(5000)
 
     expect(done).toBe(true)
+    await expect(agentStarted).resolves.toBe(false)
     expect(voice.speaking).toBe(false)
     expect(engine.cancels).toBeGreaterThan(0)
-    // До движка дошло только приветствие.
     expect(spoken.map((u) => u.text)).toEqual(['Привет.'])
   })
 
@@ -134,81 +134,6 @@ describe('ReplyVoice.cancel', () => {
     void voice.say('Новое.')
     spoken[0]!.onend?.()
     expect(voice.speaking).toBe(true)
-  })
-})
-
-describe('ReplyVoice.reply', () => {
-  it('читает ответ, который агент не озвучил, после времени ожидания', async () => {
-    const { engine, spoken } = fakeEngine()
-    const voice = new ReplyVoice(engine, 900)
-    voice.reply('m1', 'Звучит тяжело.')
-
-    await vi.advanceTimersByTimeAsync(800)
-    expect(spoken).toHaveLength(0)
-    await vi.advanceTimersByTimeAsync(200)
-    expect(spoken.map((u) => u.text)).toEqual(['Звучит тяжело.'])
-  })
-
-  it('если агент озвучил сам — наш голос молчит', async () => {
-    const { engine, spoken } = fakeEngine()
-    const voice = new ReplyVoice(engine, 900)
-    voice.reply('m1', 'Звучит тяжело.')
-    voice.agentSpoke('m1')
-
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(spoken).toHaveLength(0)
-  })
-
-  it('речь агента, начавшаяся при нашей, забирает слово себе', async () => {
-    const { engine } = fakeEngine()
-    const voice = new ReplyVoice(engine, 900)
-    voice.reply('m1', 'Звучит тяжело.')
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(voice.speaking).toBe(true)
-
-    voice.agentSpoke('m1')
-    expect(voice.speaking).toBe(false)
-  })
-
-  it('озвучка другого сообщения этот ответ не заглушает', async () => {
-    const { engine, spoken } = fakeEngine()
-    const voice = new ReplyVoice(engine, 900)
-    voice.agentSpoke('other')
-    voice.reply('m1', 'Звучит тяжело.')
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(spoken).toHaveLength(1)
-  })
-})
-
-describe('ReplyVoice.observe', () => {
-  const writing = { id: 'm1', role: 'assistant' as const, text: 'Звуч', streaming: true }
-  const complete = { id: 'm1', role: 'assistant' as const, text: 'Звучит тяжело.' }
-
-  it('читает ответ, который писался на глазах, когда он дописан', async () => {
-    const { engine, spoken } = fakeEngine()
-    const voice = new ReplyVoice(engine, 0)
-    voice.observe([writing], true)
-    voice.observe([complete], true)
-    await vi.advanceTimersByTimeAsync(10)
-    expect(spoken.map((u) => u.text)).toEqual(['Звучит тяжело.'])
-  })
-
-  it('не зачитывает историю, которая просто пришла, и реплики самого человека', async () => {
-    const { engine, spoken } = fakeEngine()
-    const voice = new ReplyVoice(engine, 0)
-    voice.observe([complete, { id: 'u1', role: 'user', text: 'Мне тревожно' }], true)
-    await vi.advanceTimersByTimeAsync(10)
-    expect(spoken).toHaveLength(0)
-  })
-
-  it('пока человек читает или говорит сам — молчит и потом не навёрстывает', async () => {
-    const { engine, spoken } = fakeEngine()
-    const voice = new ReplyVoice(engine, 0)
-    voice.observe([writing], false)
-    voice.observe([complete], false)
-    voice.observe([complete], true)
-    await vi.advanceTimersByTimeAsync(10)
-    expect(spoken).toHaveLength(0)
   })
 })
 
