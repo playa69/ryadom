@@ -52,12 +52,14 @@ describe('GET /api/analytics/config', () => {
     // The sensitive switches are off until someone turns them on; the harmless ones are on.
     expect(config.features).toEqual({
       sessionReplay: false,
-      surveys: false,
-      autocapture: false,
-      heatmaps: false,
+      clickCapture: false,
+      heatmapCapture: false,
       errorTracking: true,
       webVitals: true,
       featureFlags: true,
+      surveys: false,
+      autocapture: false,
+      heatmaps: false,
     })
   })
 
@@ -66,7 +68,6 @@ describe('GET /api/analytics/config', () => {
       env: {
         ...POSTHOG,
         POSTHOG_SESSION_REPLAY: 'true',
-        POSTHOG_SURVEYS: '1',
         POSTHOG_AUTOCAPTURE: 'on',
         POSTHOG_HEATMAPS: 'yes',
         POSTHOG_ERROR_TRACKING: 'false',
@@ -77,12 +78,16 @@ describe('GET /api/analytics/config', () => {
     const { features } = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
     expect(features).toEqual({
       sessionReplay: true,
-      surveys: true,
-      autocapture: true,
-      heatmaps: true,
+      clickCapture: true,
+      heatmapCapture: true,
       errorTracking: false,
       webVitals: false,
       featureFlags: false,
+      // The names old clients read stay off whatever the switches say: they cannot strip element text
+      // or page addresses, so a ConfigMap change must never turn those on in them (and surveys are gone).
+      surveys: false,
+      autocapture: false,
+      heatmaps: false,
     })
   })
 

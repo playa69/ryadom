@@ -106,7 +106,7 @@ export default function SessionsPage({ f7router }: { f7router: Router.Router }) 
   const others = sessions?.filter((session) => !session.current) ?? []
 
   return (
-    <Page name="sessions">
+    <Page name="sessions" className="ph-no-capture">
       <Navbar backLink="Профиль" title="Устройства и сессии" />
 
       {sessions === null && !error && (

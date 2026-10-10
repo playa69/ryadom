@@ -73,7 +73,7 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
   }
 
   return (
-    <Page name="register" className="rd-page-auth">
+    <Page name="register" className="rd-page-auth ph-no-capture">
       <Navbar backLink="Назад" transparent />
       <div className="rd-auth-head">
         <h1 className="rd-title">Давай знакомиться</h1>

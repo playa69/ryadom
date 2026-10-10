@@ -38,7 +38,9 @@ const DEFAULT_TEXT = 'Позвони по одному из номеров — �
  * button are on screen without scrolling; a single column of everything is about 440px tall.
  */
 const SHEET =
-  'max-h-[calc(100dvh-1rem)] short-wide:w-[min(94vw,720px)] short-wide:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] short-wide:grid-rows-[auto_auto_1fr_auto] short-wide:items-start short-wide:gap-x-5'
+  // `ph-no-capture`: what is tapped here is counted without a person (`trackAnonymous`); click autocapture
+  // would attach it to one.
+  'ph-no-capture max-h-[calc(100dvh-1rem)] short-wide:w-[min(94vw,720px)] short-wide:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] short-wide:grid-rows-[auto_auto_1fr_auto] short-wide:items-start short-wide:gap-x-5'
 
 /** Intro and the safety note: readable tone, and tighter when the sheet is in two columns. */
 const TEXT = 'text-base leading-[1.55] text-dim short-wide:text-[0.9375rem] short-wide:leading-[1.4]'
@@ -111,7 +113,7 @@ export function SosButton({ className }: { className?: string }) {
       // product focus ring replaces the variant's faint red one: this is the control to find in a bad moment.
       className={cn(
         BUTTON,
-        'gap-1.5 bg-clip-border px-4 text-[0.8125rem] font-bold tracking-[0.04em] text-sos hover:bg-danger-soft hover:brightness-120 focus-visible:border-danger-line',
+        'ph-no-capture gap-1.5 bg-clip-border px-4 text-[0.8125rem] font-bold tracking-[0.04em] text-sos hover:bg-danger-soft hover:brightness-120 focus-visible:border-danger-line',
         className,
       )}
       onClick={() => {

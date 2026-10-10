@@ -36,14 +36,28 @@ function onClickWith<E>(onClick: ((event: E) => void) | undefined, tracking: Tra
   }
 }
 
+/**
+ * A tap on a hotline is counted without a browser (`trackAnonymous`). Click autocapture would count it
+ * again under the browser's own id, so the SDK is told to leave that link alone (`ph-no-capture`).
+ */
+function withNoCaptureForHotline(className: string | undefined, tracking: Tracking): string | undefined {
+  if ('store' in tracking || tracking.cta !== 'hotline') return className
+  return className ? `${className} ph-no-capture` : 'ph-no-capture'
+}
+
 /** A plain `<a>`: for addresses outside the site, `mailto:`, `tel:` and in-page anchors. */
-export function TrackedLink({ tracking, onClick, ...props }: ComponentProps<'a'> & { tracking: Tracking }) {
-  return <a {...props} onClick={onClickWith(onClick, tracking)} />
+export function TrackedLink({ tracking, onClick, className, ...props }: ComponentProps<'a'> & { tracking: Tracking }) {
+  return <a {...props} className={withNoCaptureForHotline(className, tracking)} onClick={onClickWith(onClick, tracking)} />
 }
 
 /** A `next/link`: for routes of the site, which keep their client-side navigation. */
-export function TrackedRouteLink({ tracking, onClick, ...props }: ComponentProps<typeof Link> & { tracking: Tracking }) {
-  return <Link {...props} onClick={onClickWith(onClick, tracking)} />
+export function TrackedRouteLink({
+  tracking,
+  onClick,
+  className,
+  ...props
+}: ComponentProps<typeof Link> & { tracking: Tracking }) {
+  return <Link {...props} className={withNoCaptureForHotline(className, tracking)} onClick={onClickWith(onClick, tracking)} />
 }
 
 /**

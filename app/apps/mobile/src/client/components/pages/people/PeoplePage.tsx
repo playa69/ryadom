@@ -9,7 +9,7 @@ import { HOTLINES, telHref } from '../../../lib/hotlines'
  */
 export default function PeoplePage() {
   return (
-    <Page name="people">
+    <Page name="people" className="ph-no-capture">
       <Navbar backLink="Назад" title="Люди рядом" />
 
       <BlockTitle>Позвонить прямо сейчас</BlockTitle>
@@ -17,7 +17,7 @@ export default function PeoplePage() {
         {HOTLINES.map((hotline) => (
           <a
             key={hotline.phone}
-            className="rd-hotline"
+            className="rd-hotline ph-no-capture"
             href={telHref(hotline.phone)}
             onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })}
           >

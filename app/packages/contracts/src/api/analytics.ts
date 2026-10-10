@@ -18,20 +18,50 @@ export interface AnalyticsFeatures {
   /**
    * Session replay. Off unless the server turns it on, and when it is on every input and every piece
    * of text is masked: a replay shows the layout and the taps, never the conversation.
+   * Legal risk (Russia), HIGH: a recording of behaviour on screen; even masked it may show the person's
+   * state (152-FZ art. 10, written consent). Only with a separate consent and an updated policy.
    */
   sessionReplay: boolean
-  /** PostHog surveys (NPS and the like) shown as a pop-up inside the app. */
-  surveys: boolean
-  /** Click autocapture. It records the text of the clicked element, so it is off by default. */
-  autocapture: boolean
-  /** Heatmaps: where on a screen people tap. Coordinates and element selectors, no text; off by default. */
-  heatmaps: boolean
-  /** Unhandled errors and rejections of the client, reported as exceptions. */
+  /**
+   * Clicks and dead clicks as the structure of the page (which element, where in the markup), never
+   * the text or the attributes of the element: the client strips them before anything is sent.
+   * Legal risk (Russia), MEDIUM: events tied to the account id describe behaviour in detail (art. 5
+   * parts 1-2); if the scrubbing ever lets text through it is page content or data about the person
+   * (art. 10). Crisis paths and screens with content carry `ph-no-capture`.
+   */
+  clickCapture: boolean
+  /**
+   * Heatmaps: where on a screen people tap. Coordinates and the route, no text. Keep OFF for now.
+   * Legal risk (Russia), MEDIUM until reworked: the SDK knows nothing of `ph-no-capture`, so a tap on SOS
+   * or a hotline becomes a point under the account id and defeats the anonymous crisis counting; the
+   * event also takes the same cross-border path as every other (art. 12, art. 18 part 5).
+   */
+  heatmapCapture: boolean
+  /**
+   * Unhandled errors and rejections of the client, reported as exceptions.
+   * Legal risk (Russia), LOW-MEDIUM: an error's text and stack could hold page data (art. 5 part 5); the
+   * client makes the text impersonal and scrubs the frames' addresses.
+   */
   errorTracking: boolean
-  /** Core Web Vitals and page load timings. */
+  /**
+   * Core Web Vitals and page load timings.
+   * Legal risk (Russia), LOW: timings and device data; attribution is off.
+   */
   webVitals: boolean
-  /** Feature flags evaluated for the person. */
+  /**
+   * Feature flags evaluated for the person.
+   * Legal risk (Russia), LOW-MEDIUM: every launch sends the recipient the account id and `account_kind`,
+   * a transfer even without events; not requested after the person opts out.
+   */
   featureFlags: boolean
+  /**
+   * Read by clients shipped before the capabilities above existed (their `autocapture` and `heatmaps`
+   * could not strip element text and page addresses; `surveys` is gone from the product). The server
+   * sends `false` always, so a switch flipped in the ConfigMap never turns those on in an old client.
+   */
+  autocapture: false
+  heatmaps: false
+  surveys: false
 }
 
 export interface AnalyticsConfigApiResponse {

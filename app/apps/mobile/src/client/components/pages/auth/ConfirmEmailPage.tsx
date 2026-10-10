@@ -92,7 +92,7 @@ export default function ConfirmEmailPage({
   }
 
   return (
-    <Page name="confirm-email" className="rd-page-auth">
+    <Page name="confirm-email" className="rd-page-auth ph-no-capture">
       <Navbar backLink="Назад" transparent />
       <div className="rd-done">
         <span className="rd-done-icon">

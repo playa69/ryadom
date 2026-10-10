@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { PostHog } from 'posthog-node'
 import type { AnalyticsAdmin } from './admin'
 import { AnalyticsEvent, type AnalyticsEventArgs, type AnalyticsTraits } from './events'
-import { sanitizeProperties } from './sanitize'
+import { roundedToHour, sanitizeProperties } from './sanitize'
 
 /**
  * Server-side analytics (services/api). The facts that change state are reported from here, because
@@ -17,7 +17,13 @@ import { sanitizeProperties } from './sanitize'
 
 /** The slice of the PostHog client that is used, so a test can hand in a stand-in. */
 export interface ServerAnalyticsClient {
-  capture(message: { distinctId: string; event: string; properties?: Record<string, unknown>; disableGeoip?: boolean }): void
+  capture(message: {
+    distinctId: string
+    event: string
+    properties?: Record<string, unknown>
+    disableGeoip?: boolean
+    timestamp?: Date
+  }): void
   identify(message: { distinctId: string; properties?: Record<string, unknown>; disableGeoip?: boolean }): void
   isFeatureEnabled(key: string, distinctId: string): Promise<boolean | undefined>
   captureException(error: unknown, distinctId?: string, additionalProperties?: Record<string | number, unknown>): void
@@ -234,6 +240,9 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
           event,
           properties: { ...sanitizeProperties(args[0]), ...common, $process_person_profile: false },
           disableGeoip: true,
+          // Dated to the hour, so the minute of an event about nobody cannot be set beside the minute of
+          // the same person's own activity (see `roundedToHour`).
+          timestamp: roundedToHour(),
         }),
       )
     },

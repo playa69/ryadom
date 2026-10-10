@@ -166,7 +166,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   }
 
   return (
-    <Page name="profile">
+    <Page name="profile" className="ph-no-capture">
       <Navbar title="Профиль" />
 
       <div className="rd-profile-head">
@@ -309,8 +309,9 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
       </List>
       <Block>
         <p className="rd-caption">
-          Считаем нажатия и открытые экраны, чтобы понять, что чинить. Того, что ты говоришь и пишешь, там нет —
-          никогда. Выбор относится ко всему аккаунту, на всех твоих устройствах.
+          Мы собираем обезличенные сведения о том, как работает «Рядом»: какие экраны открывают, куда нажимают,
+          где бывают ошибки. Имени, почты и того, что ты говоришь и пишешь, там нет. Выбор относится ко всему
+          аккаунту, на всех твоих устройствах.
         </p>
       </Block>
       </section>

@@ -67,7 +67,7 @@ export default function DeleteAccountPage() {
   }
 
   return (
-    <Page name="delete-account">
+    <Page name="delete-account" className="ph-no-capture">
       <Navbar backLink="Профиль" title="Удаление аккаунта" />
 
       <div className="rd-note rd-note--danger">

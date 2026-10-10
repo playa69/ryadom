@@ -58,7 +58,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   }
 
   return (
-    <Page name="welcome" className="rd-page-auth">
+    <Page name="welcome" className="rd-page-auth ph-no-capture">
       <div className="rd-auth-head rd-auth-head--top">
         <div className="rd-auth-orb" aria-hidden="true" />
         <button type="button" className="rd-logo-button" onClick={onLogoTap} aria-label="Рядом">

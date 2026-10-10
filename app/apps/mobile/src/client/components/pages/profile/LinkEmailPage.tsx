@@ -167,7 +167,7 @@ export default function LinkEmailPage({
 
   if (step === 'code') {
     return (
-      <Page name="link-email-code" className="rd-page-auth">
+      <Page name="link-email-code" className="rd-page-auth ph-no-capture">
         <Navbar backLink="Профиль" transparent />
         <div className="rd-done">
           <span className="rd-done-icon">
@@ -218,7 +218,7 @@ export default function LinkEmailPage({
   }
 
   return (
-    <Page name="link-email" className="rd-page-auth">
+    <Page name="link-email" className="rd-page-auth ph-no-capture">
       <Navbar backLink="Профиль" title="Почта для входа" transparent />
       <div className="rd-done">
         <p className="rd-muted">

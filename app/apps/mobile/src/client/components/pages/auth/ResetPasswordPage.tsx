@@ -69,7 +69,7 @@ export default function ResetPasswordPage({ f7router, email }: { f7router: Route
   }
 
   return (
-    <Page name="reset-password" className="rd-page-auth">
+    <Page name="reset-password" className="rd-page-auth ph-no-capture">
       <Navbar backLink="Назад" transparent />
       <div className="rd-auth-head">
         <h1 className="rd-title">Код и новый пароль</h1>

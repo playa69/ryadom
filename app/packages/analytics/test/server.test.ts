@@ -61,6 +61,18 @@ describe('createServerAnalytics', () => {
     expect(first!.distinctId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
+  it('анонимное событие датируется началом часа, событие о человеке своим временем', () => {
+    const client = fakeClient()
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
+    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
+    analytics.capture('user-1', AnalyticsEvent.EmailConfirmed)
+    const [anonymous, person] = client.capture.mock.calls.map((call) => call[0])
+    expect(anonymous!.timestamp).toBeInstanceOf(Date)
+    expect(anonymous!.timestamp!.getTime() % 3_600_000).toBe(0)
+    expect(Date.now() - anonymous!.timestamp!.getTime()).toBeLessThan(3_600_000 + 1000)
+    expect(person!.timestamp).toBeUndefined()
+  })
+
   it('identify передаёт только признаки аккаунта', () => {
     const client = fakeClient()
     const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })

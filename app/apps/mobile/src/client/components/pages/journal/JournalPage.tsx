@@ -50,7 +50,7 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
 
   return (
     // A conversation may have ended on another tab since the list was loaded.
-    <Page name="journal" className="rd-journal-page" onPageTabShow={() => void journal.refresh()}>
+    <Page name="journal" className="rd-journal-page ph-no-capture" onPageTabShow={() => void journal.refresh()}>
       <Navbar title="Журнал" />
       {/* slot="fixed": this page has a Navbar, and framework7 only lifts known slot names out of
           .page-content. Left at the default slot, the button was trapped inside .page-content's
