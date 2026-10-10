@@ -140,8 +140,8 @@ class DialogStore:
         dialog.voice = voice
         self._voice_prefs[dialog.user_id] = voice
 
-    def add_message(self, dialog: Dialog, role: str, text: str) -> Message:
-        message = Message(id=str(uuid.uuid4()), role=role, text=text, created_at=now_iso())
+    def add_message(self, dialog: Dialog, role: str, text: str, message_id: str | None = None) -> Message:
+        message = Message(id=message_id or str(uuid.uuid4()), role=role, text=text, created_at=now_iso())
         dialog.messages.append(message)
         return message
 

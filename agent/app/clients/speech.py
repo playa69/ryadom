@@ -20,7 +20,7 @@ import uuid
 import wave
 from array import array
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from typing import Literal, Protocol
 
 import httpx
@@ -50,6 +50,16 @@ class TextToSpeech(Protocol):
         ...
 
     async def aclose(self) -> None: ...
+
+
+async def pcm_stream(tts: TextToSpeech, text: str, voice: Voice) -> AsyncIterator[bytes]:
+    """Звук куском за куском. Провайдер, умеющий отдавать звук потоком (`stream`), отдаёт его, остальные целиком."""
+    stream = getattr(tts, "stream", None)
+    if stream is None:
+        yield await tts.synthesize(text, voice)
+        return
+    async for piece in stream(text, voice):
+        yield piece
 
 
 # ─── Формат кадров и аудио ────────────────────────────────────────────────────
@@ -261,20 +271,51 @@ class QwenTts:
         voices: dict[Voice, str],
         timeout_seconds: int = 30,
         client: httpx.AsyncClient | None = None,
+        streaming: bool = True,
     ) -> None:
         self._url = f"{base_url.rstrip('/')}/audio/speech"
         self._api_key = api_key
         self._model = model
         self._voices = voices
+        self._streaming = streaming
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+
+    def _request(self, text: str, voice: Voice) -> dict:
+        return {
+            "headers": {"Authorization": f"Bearer {self._api_key}"},
+            "json": {"model": self._model, "input": text, "voice": self._voices[voice], "response_format": "pcm"},
+        }
+
+    async def stream(self, text: str, voice: Voice) -> AsyncIterator[bytes]:
+        """Звук по мере прихода: прокси отдаёт его кусками, и первые 200 мс можно играть, не дожидаясь конца фразы.
+
+        С `streaming=False` (`QWEN_TTS_STREAM=false`) отдаёт всё одним куском, как `synthesize`.
+        """
+        if not self._streaming:
+            yield await self.synthesize(text, voice)
+            return
+        carry, total = b"", 0
+        try:
+            async with self._client.stream("POST", self._url, **self._request(text, voice)) as response:
+                if response.status_code != 200:
+                    body = (await response.aread()).decode(errors="replace")
+                    hint = " (проверьте голос и формат: у модели только loongjohn/longanhuan_v3.6 и mp3/pcm)" if response.status_code >= 500 else ""
+                    raise TtsError(f"Qwen TTS ответил {response.status_code}{hint}: {body[:200]}")
+                async for chunk in response.aiter_bytes():
+                    data = carry + chunk
+                    whole = len(data) // 2 * 2  # сэмпл — два байта: нечётный хвост ждёт следующий кусок
+                    carry = data[whole:]
+                    if whole:
+                        total += whole
+                        yield data[:whole]
+        except httpx.HTTPError as error:
+            raise TtsError(f"Qwen TTS не ответил: {error}") from error
+        if not total:
+            raise TtsError("Qwen TTS вернул пустое аудио")
 
     async def synthesize(self, text: str, voice: Voice) -> bytes:
         try:
-            response = await self._client.post(
-                self._url,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json={"model": self._model, "input": text, "voice": self._voices[voice], "response_format": "pcm"},
-            )
+            response = await self._client.post(self._url, **self._request(text, voice))
         except httpx.HTTPError as error:
             raise TtsError(f"Qwen TTS не ответил: {error}") from error
         if response.status_code != 200:
@@ -310,10 +351,27 @@ class CachedTts:
             self._items.move_to_end(key)
             return cached
         pcm = await self._inner.synthesize(text, voice)  # отказ не запоминается
+        self._remember(key, pcm)
+        return pcm
+
+    def _remember(self, key: tuple[Voice, str], pcm: bytes) -> None:
         self._items[key] = pcm
         while len(self._items) > self._max_items:
             self._items.popitem(last=False)
-        return pcm
+
+    async def stream(self, text: str, voice: Voice) -> AsyncIterator[bytes]:
+        """Запомненное отдаётся сразу целиком; новое идёт потоком и запоминается, только если дошло до конца."""
+        key = (voice, text)
+        cached = self._items.get(key)
+        if cached is not None:
+            self._items.move_to_end(key)
+            yield cached
+            return
+        parts: list[bytes] = []
+        async for piece in pcm_stream(self._inner, text, voice):
+            parts.append(piece)
+            yield piece
+        self._remember(key, b"".join(parts))
 
     async def warm_up(self, texts: Iterable[str]) -> None:
         """Озвучить заранее; отказ провайдера не страшен: фраза озвучится при первом обращении."""
@@ -365,6 +423,7 @@ def _build_provider(settings: SpeechSettings) -> TextToSpeech | None:
             model=settings.qwen_model,
             voices={"male": settings.qwen_voice_male, "female": settings.qwen_voice_female},
             timeout_seconds=settings.qwen_timeout_seconds,
+            streaming=settings.qwen_stream,
         )
 
     if shutil.which(settings.espeak_binary) is None:  # mode == "espeak"

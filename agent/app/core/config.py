@@ -57,6 +57,8 @@ class DialogSettings(BaseAppSettings):
     # Самая длинная голосовая реплика: клиент закрывает её сам на этой же секунде, а всё сверх неё агент
     # отбрасывает, чтобы память соединения не росла без предела (5 минут PCM16 16 кГц — около 9,6 МБ).
     voice_turn_max_seconds: int = Field(validation_alias="VOICE_TURN_MAX_SECONDS", default=300, ge=1, le=600)
+    # Реплика оборвана на полуслове («и…», «потому что»): ответ ждёт столько, не договорит ли человек. 0 — не ждать.
+    incomplete_hold_ms: int = Field(validation_alias="INCOMPLETE_HOLD_MS", default=1500, ge=0, le=10_000)
 
 
 class SpeechSettings(BaseAppSettings):
@@ -101,6 +103,9 @@ class SpeechSettings(BaseAppSettings):
     qwen_voice_male: str = Field(validation_alias="QWEN_TTS_VOICE_MALE", default="loongjohn")
     qwen_voice_female: str = Field(validation_alias="QWEN_TTS_VOICE_FEMALE", default="longanhuan_v3.6")
     qwen_timeout_seconds: int = Field(validation_alias="QWEN_TTS_TIMEOUT_SECONDS", default=30, ge=1)
+    # Читать звук Qwen потоком: прокси отдаёт его кусками, и первый звук идёт раньше (проверено живым замером,
+    # см. scripts/latency_probe.py). false — ждать фразу целиком, как раньше.
+    qwen_stream: bool = Field(validation_alias="QWEN_TTS_STREAM", default=True)
 
 
 class LlmSettings(BaseAppSettings):

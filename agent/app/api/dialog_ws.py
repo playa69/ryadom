@@ -11,32 +11,41 @@ import logging
 import math
 import re
 import time
+import uuid
 from array import array
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.api.deps import active_tts, canonical_user_id, token_ok
-from app.clients.llm import STT_RATE, ChatModel, ModelError, Recognizer
-from app.clients.speech import VOICES, TextToSpeech, Voice, pcm_chunks, tts_frame
+from app.clients.llm import STT_RATE, ChatModel, ModelError, Recognizer, ReplyTruncated
+from app.clients.speech import FRAME_BYTES, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
 from app.core.metrics import (
+    VOICE_ECHO_TOTAL,
     VOICE_FALSE_INTERRUPTIONS_TOTAL,
+    VOICE_HELD_TURNS_TOTAL,
     VOICE_INTERRUPTIONS_TOTAL,
+    VOICE_LATENCY_SECONDS,
     VOICE_TURN_END_DELAY_SECONDS,
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
-from app.services.dialog_store import Dialog, DialogStore
+from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.replies import (
     CRISIS_REPLY,
     CRISIS_SAFETY_TEXT,
     chat_messages,
     is_crisis,
+    is_echo,
+    looks_unfinished,
     next_reply,
     split_sentences,
+    take_sentences,
 )
 
 logger = logging.getLogger("agent.ws")
@@ -55,6 +64,8 @@ MAX_AUDIO_BYTES = STT_RATE * 2 * APP_CONFIG.dialog.voice_turn_max_seconds
 SILENCE_RMS = 100
 # Ответ модели длиннее — обрезаем: озвучка и экран рассчитаны на короткую реплику.
 MAX_REPLY_CHARS = 1200
+# Сколько предложений ответа синтезируется одновременно: звучащее и следующее. Больше не надо, а прокси общий.
+SPEECH_PREFETCH = 2
 
 
 def is_silence(pcm: bytes) -> bool:
@@ -65,6 +76,60 @@ def is_silence(pcm: bytes) -> bool:
     if not picked:
         return True
     return math.sqrt(sum(x * x for x in picked) / len(picked)) < SILENCE_RMS
+
+
+@dataclass
+class Turn:
+    """Один ход: от чего считать задержку. `started` — конец реплики человека или его набранное сообщение (monotonic)."""
+
+    started: float | None = None
+
+
+class SpeechFeed:
+    """Куски текста для озвучки одного сообщения: `add` по мере появления предложений, `close` в конце.
+
+    Кусок — одно предложение. Пробовали озвучивать первое отдельно, а остальные одним запросом ради связной интонации
+    между предложениями (настройка `TTS_JOIN_REST`): на слух разницы с Qwen не было, скорости это не добавляло, и опцию
+    убрали.
+    """
+
+    def __init__(self) -> None:
+        self.chunks: asyncio.Queue[str | None] = asyncio.Queue()
+
+    def add(self, sentence: str) -> None:
+        self.chunks.put_nowait(sentence)
+
+    def close(self) -> None:
+        self.chunks.put_nowait(None)
+
+
+class Synthesis:
+    """Синтез одного куска текста, который наполняет `pieces` звуком по мере прихода от провайдера.
+
+    В очереди куски PCM, затем `None` (конец) или исключение (отказ провайдера). Читает тот, кто озвучивает.
+    """
+
+    def __init__(self, tts: TextToSpeech, text: str, voice: Voice, first: bool) -> None:
+        self.pieces: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+        self.task = asyncio.create_task(self._run(tts, text, voice, first))
+
+    async def _run(self, tts: TextToSpeech, text: str, voice: Voice, first: bool) -> None:
+        began = time.monotonic()
+        seen = False
+        try:
+            async for piece in pcm_stream(tts, text, voice):
+                if first and not seen:
+                    VOICE_LATENCY_SECONDS.labels("tts_first").observe(time.monotonic() - began)
+                seen = True
+                self.pieces.put_nowait(piece)
+            self.pieces.put_nowait(None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self.pieces.put_nowait(error)
+
+    def cancel(self) -> None:
+        self.task.cancel()
 
 
 class DialogSession:
@@ -104,6 +169,9 @@ class DialogSession:
         # Озвучку перебили, и следующая голосовая реплика — ответ на это перебивание.
         self._interrupted = False
         self._turn_interrupts = False
+        # Реплика, оборванная на полуслове: ответ на неё ждёт, не договорит ли человек (см. `_hold`).
+        self._held: Turn | None = None
+        self._hold_timer: asyncio.Task[None] | None = None
 
     # ─── отправка ─────────────────────────────────────────────────────────────
 
@@ -148,6 +216,7 @@ class DialogSession:
         finally:
             self._closed = True
             worker.cancel()
+            self._pause_hold()
             for task in self._speech_tasks:
                 task.cancel()
             await asyncio.gather(worker, *self._speech_tasks, return_exceptions=True)
@@ -178,6 +247,7 @@ class DialogSession:
             case "user_message":
                 await self._on_user_message(frame)
             case "audio_start":
+                self._pause_hold()  # человек заговорил снова: пока он говорит, ответ на прошлую реплику не идёт
                 self._audio_open = True
                 self._audio_frames = 0
                 self._audio = bytearray()
@@ -210,6 +280,7 @@ class DialogSession:
         if not isinstance(text, str) or not text.strip():
             return
         self._interrupted = False  # перебили, чтобы написать: это не голосовая реплика
+        self._drop_hold()  # ответ на набранное сообщение отвечает и на оборванную реплику перед ним
         dialog = self._dialog
         # Клиент повторяет реплику, пока нет ack: тот же id — то же сообщение, без второго ответа.
         if client_id and client_id in dialog.client_ids:
@@ -222,7 +293,8 @@ class DialogSession:
         crisis = is_crisis(text)
         if crisis:
             await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
-        self._jobs.put_nowait(lambda: self._reply(crisis))
+        turn = Turn(started=time.monotonic())
+        self._jobs.put_nowait(lambda: self._reply(crisis, turn))
 
     def _on_audio_frame(self, data: bytes) -> None:
         if self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN:
@@ -254,9 +326,11 @@ class DialogSession:
         self._last_voiced, self._turn_interrupts = None, False
         if frames == 0:
             self._count_false_interruption(interrupts)
+            self._release_held()  # это было ложное «человек заговорил»: оборванной реплике надо ответить
             await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
             return
-        self._jobs.put_nowait(lambda: self._voice_turn(frames, pcm, interrupts))
+        turn = Turn(started=time.monotonic())
+        self._jobs.put_nowait(lambda: self._voice_turn(frames, pcm, interrupts, turn))
 
     def _count_false_interruption(self, interrupts: bool) -> None:
         """Перебили, а сказать нечего: детектор принял за речь эхо голоса агента или шум. Текст не пишется."""
@@ -264,21 +338,75 @@ class DialogSession:
             VOICE_FALSE_INTERRUPTIONS_TOTAL.inc()
             logger.info("false interruption dialog=%s", self._dialog.id)
 
-    async def _voice_turn(self, frames: int, pcm: bytes, interrupts: bool = False) -> None:
+    async def _voice_turn(self, frames: int, pcm: bytes, interrupts: bool = False, turn: Turn | None = None) -> None:
+        turn = turn or Turn(started=time.monotonic())
         text = await self._recognize(frames, pcm)
         if text is None:
+            self._release_held()
             return  # распознавание не сработало, error уже ушёл
-        if not text:
+        if self._recognizer is not None and text and turn.started is not None:
+            VOICE_LATENCY_SECONDS.labels("stt").observe(time.monotonic() - turn.started)
+        if not text or (interrupts and self._is_echo(text)):
             self._count_false_interruption(interrupts)
+            self._release_held()
             await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
             return
+        self._held = None  # ответ на эту реплику отвечает и на оборванную перед ней
         message = self._store.add_message(self._dialog, "user", text[:MAX_USER_TEXT])
         # На голосовую реплику ack не нужен: final-транскрипт несёт id сохранённого сообщения.
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
         crisis = is_crisis(message.text)
         if crisis:
             await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
-        await self._reply(crisis)
+        elif APP_CONFIG.dialog.incomplete_hold_ms and looks_unfinished(message.text):
+            self._hold(turn)
+            return
+        await self._reply(crisis, turn)
+
+    def _is_echo(self, heard: str) -> bool:
+        """Услышанное при перебивании — слова самого агента (последний ответ или приветствие), а не человека."""
+        spoken = [m.text for m in reversed(self._dialog.messages) if m.role == "assistant"][:1]
+        if self._dialog.greeting:
+            spoken.append(self._dialog.greeting)
+        if not any(is_echo(heard, text) for text in spoken):
+            return False
+        VOICE_ECHO_TOTAL.inc()
+        logger.info("echo of the agent heard as speech dialog=%s", self._dialog.id)
+        return True
+
+    # ─── оборванная на полуслове реплика ──────────────────────────────────────
+
+    def _hold(self, turn: Turn) -> None:
+        """Реплика оборвана на союзе, запятой, многоточии: отвечать сразу значит перебить человека на середине мысли.
+
+        Ответ откладывается на `INCOMPLETE_HOLD_MS`. Если человек заговорит раньше, ответом на оба куска будет один
+        (модель видит их как одну реплику); если нет, ответ уходит по таймеру.
+        """
+        VOICE_HELD_TURNS_TOTAL.inc()
+        self._held = turn
+        self._hold_timer = asyncio.create_task(self._hold_expires())
+
+    async def _hold_expires(self) -> None:
+        await asyncio.sleep(APP_CONFIG.dialog.incomplete_hold_ms / 1000)
+        self._hold_timer = None
+        self._release_held()
+
+    def _pause_hold(self) -> None:
+        """Таймер остановлен, но ответ на оборванную реплику не забыт: если новая реплика окажется шумом, он уйдёт."""
+        if self._hold_timer is not None:
+            self._hold_timer.cancel()
+            self._hold_timer = None
+
+    def _drop_hold(self) -> None:
+        self._pause_hold()
+        self._held = None
+
+    def _release_held(self) -> None:
+        """Ответить на оборванную реплику сейчас."""
+        held, self._held = self._held, None
+        self._pause_hold()
+        if held is not None and not self._closed:
+            self._jobs.put_nowait(lambda: self._reply(False, held))
 
     async def _recognize(self, frames: int, pcm: bytes) -> str | None:
         """Текст реплики; "" — тишина; None — распознавание недоступно (`error VOICE_UNAVAILABLE` уже ушёл)."""
@@ -311,85 +439,240 @@ class DialogSession:
 
     # ─── ответ ────────────────────────────────────────────────────────────────
 
-    async def _generate(self) -> str:
-        """Ответ модели по истории диалога. Отказ, таймаут или пустой ответ — следующий шаблон: без ответа не остаёмся."""
-        dialog = self._dialog
-        if self._chat is not None:
-            try:
-                async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
-                    text = await self._chat.complete(chat_messages(dialog.messages, APP_CONFIG.llm.history_messages))
-                if text:
-                    return text[:MAX_REPLY_CHARS]
-                logger.warning("chat returned nothing dialog=%s, using a template", dialog.id)
-            except (ModelError, TimeoutError) as error:
-                logger.warning("chat failed dialog=%s, using a template: %s", dialog.id, error)
-        text = next_reply(dialog.reply_index)
-        dialog.reply_index += 1
+    def _template(self) -> str:
+        """Следующий шаблонный ответ: когда модель недоступна, молчит или это `LLM_MODE=template`."""
+        text = next_reply(self._dialog.reply_index)
+        self._dialog.reply_index += 1
         return text
 
-    async def _reply(self, crisis: bool) -> None:
-        dialog = self._dialog
-        text = CRISIS_REPLY if crisis else await self._generate()
-        # Законченный ответ лежит в истории сразу: после обрыва клиент найдёт его там.
-        message = self._store.add_message(dialog, "assistant", text)
+    @staticmethod
+    async def _fixed(text: str) -> AsyncIterator[str]:
+        """Готовый текст как поток предложений: шаблон и кризисный ответ идут тем же путём, что и ответ модели."""
+        for sentence in split_sentences(text):
+            yield sentence
 
-        await self._send({"type": "assistant_start", "messageId": message.id})
-        # Голос стартует вместе с текстом: первое предложение звучит, пока дописывается остальное.
-        self._speak_in_background(message.id, text)
-        # Дельты в сумме дают ровно текст ответа: assistant_end.text совпадает с их склейкой.
-        for piece in re.findall(r"\S+\s*", text):
-            if self._closed:
-                return
-            if self._stream_delay:
-                await asyncio.sleep(self._stream_delay)
-            await self._send({"type": "assistant_delta", "messageId": message.id, "text": piece})
-        await self._send({"type": "assistant_end", "messageId": message.id, "text": text})
+    async def _model_sentences(self) -> AsyncIterator[str]:
+        """Предложения ответа модели по мере написания. Отказ или таймаут поднимаются, когда до них доходит очередь."""
+        out: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        pump = asyncio.create_task(self._pump_chat(out))
+        try:
+            while (item := await out.get()) is not None:
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            pump.cancel()  # не ждём: сам разберётся с потоком модели, а тот, кто читает ответ, не должен ждать сеть
+
+    async def _pump_chat(self, out: asyncio.Queue[str | Exception | None]) -> None:
+        """Читает поток модели и складывает готовые предложения в очередь. Таймаут — на модель, а не на тех, кто читает."""
+        assert self._chat is not None
+        messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages)
+        buffer, total, full = "", 0, False
+
+        def offer(sentence: str) -> bool:
+            """Положить предложение в очередь; False, если ответ уже дошёл до предела длины."""
+            nonlocal total
+            if total and total + len(sentence) > MAX_REPLY_CHARS:
+                return False
+            total += len(sentence) + 1
+            out.put_nowait(sentence[:MAX_REPLY_CHARS])
+            return True
+
+        try:
+            async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
+                try:
+                    async with aclosing(self._chat.stream(messages)) as stream:
+                        async for piece in stream:
+                            buffer += piece
+                            sentences, buffer = take_sentences(buffer)
+                            full = not all(offer(sentence) for sentence in sentences)
+                            if full:
+                                break  # дальше читать незачем: остальное не влезет
+                except ReplyTruncated:
+                    buffer = ""  # оборван по лимиту токенов: недописанный хвост не берём
+                if not full:
+                    for sentence in take_sentences(buffer, final=True)[0]:
+                        if not offer(sentence):
+                            break
+            out.put_nowait(None)
+        except (ModelError, TimeoutError) as error:
+            out.put_nowait(error)
+
+    async def _reply(self, crisis: bool, turn: Turn | None = None) -> None:
+        """Ответ потоком: первое предложение уходит в текст и в озвучку, как только модель его дописала."""
+        dialog = self._dialog
+        turn = turn or Turn(started=time.monotonic())
+        message_id = str(uuid.uuid4())
+        sentences: list[str] = []
+        speech: SpeechFeed | None = None
+        message: Message | None = None
+        began = time.monotonic()
+
+        async def deliver(source: AsyncIterator[str]) -> None:
+            nonlocal speech, message
+            async with aclosing(source) as stream:
+                async for sentence in stream:
+                    if self._closed:
+                        return
+                    prefix = " " if sentences else ""
+                    if not sentences:
+                        VOICE_LATENCY_SECONDS.labels("first_sentence").observe(time.monotonic() - began)
+                        await self._send({"type": "assistant_start", "messageId": message_id})
+                        speech = self._start_speech(message_id, turn)
+                    sentences.append(sentence)
+                    # Ответ лежит в истории с первого предложения и дописывается: порядок сообщений тот, что видит человек,
+                    # а после обрыва клиент найдёт там всё, что успело прозвучать и показаться.
+                    if message is None:
+                        message = self._store.add_message(dialog, "assistant", sentence, message_id)
+                    else:
+                        message.text = " ".join(sentences)
+                    if speech is not None:
+                        speech.add(sentence)
+                    # Дельты в сумме дают ровно текст ответа: предложения через пробел, как в assistant_end.text.
+                    for piece in re.findall(r"\S+\s*", sentence):
+                        if self._closed:
+                            return
+                        if self._stream_delay:
+                            await asyncio.sleep(self._stream_delay)
+                        await self._send({"type": "assistant_delta", "messageId": message_id, "text": prefix + piece})
+                        prefix = ""
+
+        try:
+            if crisis:
+                await deliver(self._fixed(CRISIS_REPLY))
+            else:
+                if self._chat is not None:
+                    try:
+                        await deliver(self._model_sentences())
+                    except (ModelError, TimeoutError) as error:
+                        # После первых предложений отказ не страшен: человек уже слышит начало, договариваем им.
+                        logger.warning("chat failed dialog=%s: %s", dialog.id, error)
+                    else:
+                        if not sentences:
+                            logger.warning("chat returned nothing dialog=%s, using a template", dialog.id)
+                if not sentences:
+                    await deliver(self._fixed(self._template()))
+        finally:
+            if speech is not None:
+                speech.close()
+        if sentences and not self._closed:
+            await self._send({"type": "assistant_end", "messageId": message_id, "text": " ".join(sentences)})
 
     # ─── озвучка ──────────────────────────────────────────────────────────────
 
-    def _speak_in_background(self, message_id: str, text: str) -> None:
+    def _start_speech(self, message_id: str, turn: Turn | None) -> SpeechFeed | None:
+        """Озвучка сообщения, которое ещё пишется: куски текста подаются в `SpeechFeed.add`, `close` — конец."""
         tts = self._tts_source()
-        if tts is None or not text:
-            return
-        task = asyncio.create_task(self._speak(tts, message_id, text, self._dialog.voice))
+        if tts is None:
+            return None
+        feed = SpeechFeed()
+        task = asyncio.create_task(self._speak(tts, message_id, feed.chunks, self._dialog.voice, turn))
         self._speech_tasks.add(task)
         task.add_done_callback(self._speech_tasks.discard)
+        return feed
 
-    async def _speak(self, tts: TextToSpeech, message_id: str, text: str, voice: Voice) -> None:
-        """tts_start → кадры 0x02 → tts_end, по предложениям. `tts_start` уходит, когда готов первый звук."""
+    def _speak_in_background(self, message_id: str, text: str) -> None:
+        """Озвучка готового текста (приветствие)."""
+        feed = self._start_speech(message_id, None)
+        if feed is None:
+            return
+        for sentence in split_sentences(text):
+            feed.add(sentence)
+        feed.close()
+
+    async def _speak(
+        self,
+        tts: TextToSpeech,
+        message_id: str,
+        chunks: asyncio.Queue[str | None],
+        voice: Voice,
+        turn: Turn | None = None,
+    ) -> None:
+        """tts_start → кадры 0x02 → tts_end, по кускам текста. `tts_start` уходит с первым готовым кадром.
+
+        Куски приходят по мере написания ответа. Звук каждого читается потоком (если провайдер так умеет): кадр по
+        200 мс уходит, как только набрался, не дожидаясь конца фразы. Синтез идёт с опережением (`SPEECH_PREFETCH`):
+        пока звучит один кусок, следующий уже готовится, и между ними нет паузы на запрос к провайдеру. Кадры идут
+        строго по порядку.
+        """
         async with self._speech_lock:
             if message_id in self._cancelled:
                 return
             started = False
             sequence = 0
+            slots = asyncio.Semaphore(SPEECH_PREFETCH)
+            syntheses: asyncio.Queue[Synthesis | None] = asyncio.Queue()
+            planned: list[Synthesis] = []
+
+            async def plan() -> None:
+                first = True
+                while (text := await chunks.get()) is not None:
+                    await slots.acquire()
+                    synthesis = Synthesis(tts, text, voice, first)
+                    first = False
+                    planned.append(synthesis)
+                    syntheses.put_nowait(synthesis)
+                syntheses.put_nowait(None)
+
+            async def send_frame(pcm: bytes) -> bool:
+                """Отправить кадр; False, если озвучку прервали или сокет закрыт."""
+                nonlocal started, sequence
+                if self._closed or message_id in self._cancelled:
+                    return False
+                if not started:
+                    await self._send({"type": "tts_start", "messageId": message_id})
+                    started = True
+                    self._first_sound(message_id, turn)
+                await self._send_audio(tts_frame(sequence, pcm))
+                sequence += 1
+                if self._frame_interval:
+                    await asyncio.sleep(self._frame_interval)
+                return True
+
+            planner = asyncio.create_task(plan())
             try:
-                for sentence in split_sentences(text):
-                    if self._closed or message_id in self._cancelled:
-                        break
-                    pcm = await tts.synthesize(sentence, voice)
-                    if self._closed or message_id in self._cancelled:
-                        break  # перебили, пока синтезировалось: не начинаем озвучку
-                    if not started:
-                        await self._send({"type": "tts_start", "messageId": message_id})
-                        started = True
-                    for chunk in pcm_chunks(pcm):
-                        if self._closed or message_id in self._cancelled:
+                while (synthesis := await syntheses.get()) is not None:
+                    pending = bytearray()
+                    interrupted = False
+                    while (piece := await synthesis.pieces.get()) is not None:
+                        if isinstance(piece, Exception):
+                            raise piece
+                        pending += piece
+                        while len(pending) >= FRAME_BYTES:
+                            frame = bytes(pending[:FRAME_BYTES])
+                            del pending[:FRAME_BYTES]
+                            if not await send_frame(frame):
+                                interrupted = True
+                                break
+                        if interrupted:
                             break
-                        await self._send_audio(tts_frame(sequence, chunk))
-                        sequence += 1
-                        if self._frame_interval:
-                            await asyncio.sleep(self._frame_interval)
+                    if interrupted or (pending and not await send_frame(bytes(pending))):
+                        break
+                    slots.release()
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                # Озвучка упала: текст дойдёт, а приложение прочитает ответ своим голосом.
+                # Озвучка упала: текст дойдёт, а человек увидит, что голос недоступен.
                 logger.warning("tts failed dialog=%s message=%s: %s", self._dialog.id, message_id, error)
                 if not self._voice_error_sent:
                     self._voice_error_sent = True
                     await self._send({"type": "error", "code": "VOICE_UNAVAILABLE", "message": "Озвучка недоступна"})
             finally:
+                # Недозвученное (перебили, обрыв, отказ) не синтезируем дальше. Отменённые задачи не ждём: их отказы
+                # уже лежат в очередях звука, а ожидание затягивало завершение сессии (см. `run`).
+                planner.cancel()
+                for synthesis in planned:
+                    synthesis.cancel()
                 if started:
                     await self._send({"type": "tts_end", "messageId": message_id})
+
+    def _first_sound(self, message_id: str, turn: Turn | None) -> None:
+        """Первый звук ответа ушёл: сколько человек ждал с конца своей реплики. Без текстов и без id в метрике."""
+        if turn is None or turn.started is None:
+            return
+        seconds = time.monotonic() - turn.started
+        VOICE_LATENCY_SECONDS.labels("first_sound").observe(seconds)
+        logger.info("first sound dialog=%s message=%s ms=%d", self._dialog.id, message_id, seconds * 1000)
 
 
 async def _deny(websocket: WebSocket, status: int, code: str, message: str) -> None:

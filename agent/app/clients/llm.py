@@ -5,9 +5,11 @@
 пишутся только модель, время и размер, сами реплики — никогда.
 """
 
+import json
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 import httpx
@@ -27,10 +29,18 @@ class ModelError(Exception):
     """Модель не ответила или ответила мусором."""
 
 
+class ReplyTruncated(ModelError):
+    """Ответ оборвался по лимиту токенов: поток прислал всё, что успел, последнее предложение может быть незаконченным."""
+
+
 class ChatModel(Protocol):
     name: str
 
     async def complete(self, messages: list[ChatMessage]) -> str: ...
+
+    def stream(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
+        """Ответ кусками по мере написания. Оборванный по лимиту токенов поток кончается `ReplyTruncated`."""
+        ...
 
     async def aclose(self) -> None: ...
 
@@ -102,6 +112,59 @@ class ProxyChat:
             len(text),
         )
         return text
+
+    async def stream(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
+        """Тот же запрос со `stream: true`: куски текста по мере написания (SSE `data: {...}` и `data: [DONE]`)."""
+        started = time.perf_counter()
+        first_ms: int | None = None
+        chars = 0
+        finish: str | None = None
+        try:
+            async with self._client.stream(
+                "POST",
+                self._url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={
+                    "model": self._model,
+                    "messages": messages,
+                    "max_tokens": self._max_tokens,
+                    "temperature": self._temperature,
+                    "stream": True,
+                },
+            ) as response:
+                if response.status_code != 200:
+                    body = (await response.aread()).decode(errors="replace")
+                    raise ModelError(f"Чат-модель ответила {response.status_code}: {body[:200]}")
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue  # комментарии-«пульс» и пустые строки SSE
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        choice = json.loads(payload)["choices"][0]
+                    except (ValueError, KeyError, IndexError, TypeError):
+                        continue  # служебный кусок без выбора (например, с расходом токенов)
+                    finish = choice.get("finish_reason") or finish
+                    piece = (choice.get("delta") or {}).get("content") or ""
+                    if piece:
+                        if first_ms is None:
+                            first_ms = int((time.perf_counter() - started) * 1000)
+                        chars += len(piece)
+                        yield piece
+        except httpx.HTTPError as error:
+            raise ModelError(f"Чат-модель не ответила: {error!r}") from error
+        logger.info(
+            "chat stream model=%s first_ms=%s ms=%d messages=%d chars=%d finish=%s",
+            self._model,
+            first_ms,
+            (time.perf_counter() - started) * 1000,
+            len(messages),
+            chars,
+            finish,
+        )
+        if finish == "length":
+            raise ReplyTruncated("ответ оборван по лимиту токенов")
 
     async def aclose(self) -> None:
         await self._client.aclose()

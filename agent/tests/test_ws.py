@@ -11,6 +11,7 @@ from starlette.testclient import WebSocketDenialResponse
 from app.services.replies import CRISIS_REPLY, CRISIS_SAFETY_TEXT
 from tests.conftest import (
     AUTH,
+    FakeChat,
     FakeTts,
     audio_in_frame,
     has,
@@ -287,6 +288,66 @@ def test_reply_is_voiced_and_voices_never_interleave(voice_client, voice, user_i
     # озвучка идёт строго по порядку: между start первого и start второго нет чужих кадров
     positions = [i for i, (k, b) in enumerate(frames) if k == "json" and b["type"] in ("tts_start", "tts_end")]
     assert [frames[i][1]["type"] for i in positions] == ["tts_start", "tts_end", "tts_start", "tts_end"]
+
+
+class OverlapTts(FakeTts):
+    """Озвучка, которая запоминает, сколько запросов к ней шло одновременно."""
+
+    def __init__(self, delay: float) -> None:
+        super().__init__(delay=delay)
+        self.running = 0
+        self.most_running = 0
+
+    async def synthesize(self, text: str, voice: str = "male") -> bytes:
+        self.running += 1
+        self.most_running = max(self.most_running, self.running)
+        try:
+            return await super().synthesize(text, voice)
+        finally:
+            self.running -= 1
+
+
+def test_next_sentence_is_synthesized_while_the_previous_one_is_sent(user_id):
+    """Пока звучит предложение, следующее уже синтезируется (но не все сразу), а кадры идут по порядку."""
+    tts = OverlapTts(delay=0.05)
+    chat = FakeChat(reply="Раз. Два. Три. Четыре.")
+    with make_client(tts, chat=chat) as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+            tts.calls.clear()
+            tts.most_running = 0
+            send_user_message(ws, "c-1", "привет")
+            frames = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
+
+    assert tts.calls == ["Раз.", "Два.", "Три.", "Четыре."]
+    assert tts.most_running == 2  # звучащее и следующее, не четыре сразу
+    sequences = [struct.unpack(">BI", frame[:5])[1] for frame in binary_frames(frames)]
+    assert sequences == list(range(len(sequences))) and len(sequences) == 12  # 4 предложения по 3 кадра
+    order = types(frames)
+    assert order.count("tts_start") == 1 and order.index("tts_start") < order.index("tts_end")
+
+
+def test_a_failing_second_sentence_reports_one_error_and_closes_the_speech(user_id):
+    """Отказ синтеза на втором предложении: первое прозвучало, ошибка одна, tts_end уходит."""
+
+    class FailsOnSecond(FakeTts):
+        async def synthesize(self, text: str, voice: str = "male") -> bytes:
+            if text == "Два.":
+                from app.clients.speech import TtsError
+
+                raise TtsError("синтез сломан в тесте")
+            return await super().synthesize(text, voice)
+
+    with make_client(FailsOnSecond(), chat=FakeChat(reply="Раз. Два. Три.")) as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+            send_user_message(ws, "c-1", "привет")
+            frames = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
+
+    assert has(frames, "error", code="VOICE_UNAVAILABLE") and types(frames).count("error") == 1
+    assert len(binary_frames(frames)) == 3  # одно предложение: два кадра по 200 мс и неполный третий
 
 
 def test_tts_cancel_stops_the_message_speech(user_id):

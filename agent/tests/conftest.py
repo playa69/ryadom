@@ -3,9 +3,10 @@
 import asyncio
 import json
 import os
+import re
 import struct
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
 
 # Конфиг читается при импорте приложения (fail-fast), поэтому env задаём до него.
@@ -16,6 +17,7 @@ os.environ["TTS_FRAME_INTERVAL_MS"] = "0"
 os.environ["TTS_MODE"] = "none"
 os.environ["LLM_MODE"] = "template"
 os.environ["LLM_TIMEOUT_SECONDS"] = "1"  # тест зависшей модели ждёт ровно столько
+os.environ["INCOMPLETE_HOLD_MS"] = "400"  # пауза для оборванной на полуслове реплики: в бою 1500, тесты не ждут столько
 os.environ.pop("SALUTE_SPEECH_AUTH_KEY", None)
 os.environ.pop("AGENT_API_TOKEN", None)
 
@@ -62,10 +64,21 @@ class FakeChat:
 
     name = "fake-chat"
 
-    def __init__(self, reply: str = "Я рядом, расскажи ещё.", delay: float = 0.0, fail: bool = False) -> None:
+    def __init__(
+        self,
+        reply: str = "Я рядом, расскажи ещё.",
+        delay: float = 0.0,
+        fail: bool = False,
+        pieces: list[str] | None = None,
+        piece_delay: float = 0.0,
+        truncated: bool = False,
+    ) -> None:
         self.reply = reply
         self.delay = delay
         self.fail = fail
+        self.pieces = pieces
+        self.piece_delay = piece_delay
+        self.truncated = truncated
         self.calls: list[list[dict[str, str]]] = []
 
     async def complete(self, messages: list[dict[str, str]]) -> str:
@@ -77,6 +90,24 @@ class FakeChat:
 
             raise ModelError("модель сломана в тесте")
         return self.reply
+
+    async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+        """Ответ по словам, как стрим настоящей модели. `pieces` задаёт свою нарезку, `truncated` — обрыв по токенам."""
+        self.calls.append(messages)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail:
+            from app.clients.llm import ModelError
+
+            raise ModelError("модель сломана в тесте")
+        for piece in self.pieces if self.pieces is not None else re.findall(r"\S+\s*", self.reply):
+            yield piece
+            if self.piece_delay:
+                await asyncio.sleep(self.piece_delay)
+        if self.truncated:
+            from app.clients.llm import ReplyTruncated
+
+            raise ReplyTruncated("оборван по токенам в тесте")
 
     async def aclose(self) -> None:
         return None
