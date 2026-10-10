@@ -594,7 +594,7 @@ ConfigMap'ах (в git).** Значения секретов хранятся л
 |---|---|---|
 | Статика, несекретное | ConfigMap `app-config` ([00-app-config.yaml](app/00-app-config.yaml)) | `DB_HOST/PORT/NAME/USER`, публичные URL, `TRUSTED_PROXY_HOPS`, `REDIS_*` адреса, флаги |
 | Статика только админки | ConfigMap `app-admin-config` ([admin/00-config.yaml](app/admin/00-config.yaml)) | `ADMIN_EMAILS` (в API он попадать не должен) |
-| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), позже `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`; `SMTP_PASSWORD` |
+| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`; `SMTP_PASSWORD` |
 
 `DATABASE_URL` нигде не хранится: Deployment'ы собирают его из `DB_*`
 (ConfigMap) и `DB_PASSWORD` (Secret). `REDIS_PASSWORD` в `app-secrets` — копия
@@ -608,14 +608,6 @@ generic ... --from-env-file=...` (именно `create`, а не `apply`, что
 
 ### Что сознательно выключено на первом выкате
 
-- **Почта** (`EMAIL_TRANSPORT=console`): провайдер выбран — Yandex Cloud
-  Postbox, egress на :465 описан в `07-network-policy-prod-apps.yaml`, SMTP-хост
-  и порт — в `00-app-config.yaml`; осталось завести DNS-записи и API-ключ
-  (раздел «DNS и почта: что сделать руками») и переключить транспорт.
-  Вход в админку идёт по коду из письма, поэтому сейчас код берётся из лога:
-  `kubectl -n prod logs deploy/app-admin | grep -i "console transport"`.
-  Побочный эффект: все коды (привязка почты, сброс пароля) попадают в логи и
-  Loki — на время `console` это приемлемо, для реальных пользователей нет.
 - **Agent** (`AGENT_API_URL` — `http://agent.agent.svc.cluster.local:8001`): манифесты
   упрощённого агента подготовлены в `k8s/agent/` (шаблонные ответы + озвучка Qwen TTS,
   см. `k8s/agent/README.md`), но **в кластер ещё не выкатывались**. Пока агента нет, api
@@ -623,6 +615,11 @@ generic ... --from-env-file=...` (именно `create`, а не `apply`, что
 - 1 реплика на сервис: ресурсов в кластере впритык (см. «Доступные ресурсы»).
 
 ### DNS и почта: что сделать руками (Yandex Cloud, консоль)
+
+Почта включена: `EMAIL_TRANSPORT=smtp`, письма уходят через Postbox (регистрация,
+подтверждение и сброс пароля, код входа в админку). Шаги ниже описывают, как это
+настраивалось; пригодятся при смене домена или ключа. В режиме `console` коды
+писались бы только в лог (и в Loki), поэтому для реальных пользователей он не годится.
 
 Все записи — в Cloud DNS, зона `slyshu-ryadom` (NS домена уже у Yandex Cloud,
 в reg.ru ничего заводить не нужно). Имена в зоне — относительные. Для самих сервисов
@@ -653,12 +650,14 @@ Postbox ([документация](https://yandex.cloud/ru/docs/postbox/quickst
    документации они не описаны).
 5. Секрет в кластер: `kubectl -n prod create secret generic app-smtp
    --from-env-file=<файл с одной строкой SMTP_PASSWORD=...>` (нужен админский
-   kubeconfig). Затем в `00-app-config.yaml` раскомментировать `SMTP_USER`,
+   kubeconfig). Затем в `00-app-config.yaml` задать `SMTP_USER`,
    `EMAIL_TRANSPORT: "smtp"` и применить вместе с
-   `07-network-policy-prod-apps.yaml` (там egress на :465).
-6. До отключения `console` убедиться, что письмо доходит на `ADMIN_EMAILS`:
-   вход в админку идёт по коду из письма. Откат — вернуть `console` и взять код
-   из лога.
+   `07-network-policy-prod-apps.yaml` (там egress на :465). Транспорт читается при
+   старте, поэтому после `apply` нужен `rollout restart` app-api и app-admin.
+6. До перезапуска app-admin убедиться, что письмо доходит на `ADMIN_EMAILS`
+   (проверить на app-api): вход в админку идёт по коду из письма. Откат — вернуть
+   `console`, перезапустить оба сервиса и взять код из лога:
+   `kubectl -n prod logs deploy/app-admin | grep -i "console transport"`.
 
 Входящей почты у домена нет (Postbox только отправляет): `support@` и ответы на
 `noreply@` пока уходят в никуда — нужны MX (напр. Яндекс 360 для домена) и
