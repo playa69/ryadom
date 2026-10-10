@@ -25,6 +25,7 @@ import {
   Tile,
 } from './_components/home-parts'
 import { HeroPhone } from './_components/home-phone'
+import { TrackedLink } from './_components/tracked'
 
 /** A lit squircle above each mode: a glyph to scan the grid by; the title carries the meaning. */
 function ModeMark({ icon: Icon }: { icon: LucideIcon }) {
@@ -74,7 +75,7 @@ export default async function LandingPage() {
               Голосовой собеседник, который выслушает в любой момент. Без оценок, без очереди,
               без записи на приём.
             </p>
-            <CtaButtons appUrl={env.appUrl} className="min-[720.02px]:max-[880.02px]:justify-center" />
+            <CtaButtons appUrl={env.appUrl} placement="hero" className="min-[720.02px]:max-[880.02px]:justify-center" />
             <p className="mb-4 text-[15px] text-dim">
               Бесплатно на старте. Работает в браузере и на телефоне. 18+
             </p>
@@ -233,12 +234,13 @@ export default async function LandingPage() {
                 </ItemTitle>
                 {/* A bare inline link is only as tall as its text line, about 30px, for the numbers a
                     person in crisis is meant to tap first: min-h gives it a real target. */}
-                <a
+                <TrackedLink
                   className={cn('order-first inline-flex min-h-11 items-center rounded-sm text-[22px] font-[650] text-brand-400 hover:underline min-[720.02px]:max-[1024px]:row-span-2', FOCUS_RING)}
                   href={telHref(hotline.phone)}
+                  tracking={{ cta: 'hotline', placement: 'safety' }}
                 >
                   {hotline.phone}
-                </a>
+                </TrackedLink>
                 <ItemDescription className="line-clamp-none text-sm leading-[1.6] text-balance">{hotline.note}</ItemDescription>
               </Item>
             ))}
@@ -300,7 +302,7 @@ export default async function LandingPage() {
             <p className="text-[18px] text-dim min-[720.02px]:text-[19px] min-[1280px]:text-[21px]">
               Регистрация занимает минуту и требует только почту.
             </p>
-            <CtaButtons appUrl={env.appUrl} className="mb-0 justify-center min-[720.02px]:mb-0" />
+            <CtaButtons appUrl={env.appUrl} placement="closing" className="mb-0 justify-center min-[720.02px]:mb-0" />
           </div>
         </Section>
       </main>

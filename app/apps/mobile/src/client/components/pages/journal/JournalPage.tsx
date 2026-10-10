@@ -1,3 +1,5 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Navbar, Page, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useRef } from 'react'
@@ -41,6 +43,7 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
   }, [isWide, openId, f7router])
 
   function openEntry(dialogId: string) {
+    track(AnalyticsEvent.JournalEntryOpened)
     journal.open(dialogId)
     if (!isWide) f7router.navigate(`/journal/${dialogId}/`)
   }
@@ -52,7 +55,7 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
       {/* slot="fixed": this page has a Navbar, and framework7 only lifts known slot names out of
           .page-content. Left at the default slot, the button was trapped inside .page-content's
           own stacking context and rendered invisible under the navbar (design review). */}
-      <SosButton slot="fixed" />
+      <SosButton slot="fixed" source="header" />
 
       <div className="rd-split">
         <div className="rd-split-side">

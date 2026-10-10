@@ -63,6 +63,12 @@ export const RATE_LIMITS = {
    * address behind carrier NAT.
    */
   deviceLogin: { perIp: { limit: 30, windowMs: 60 * 60_000 } },
+  /**
+   * The analytics proxy. The SDK batches, so a busy tab sends a request every few seconds and a
+   * session recording a few more; this leaves room for a household or a carrier-NAT address and
+   * still stops a script from using the proxy as a free relay to PostHog.
+   */
+  ingest: { perIp: { limit: 1200, windowMs: 60_000 } },
   /** Starting a dialog: protection against an accidental loop in the client. */
   dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
 } as const

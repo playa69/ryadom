@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { AnalyticsProvider } from '@/lib/analytics-provider'
 import { AuthProvider } from '@/lib/auth'
 import { NoticeProvider } from '@/components/Notice'
 import { SosProvider } from '@/components/Sos'
@@ -20,9 +21,11 @@ if (typeof document !== 'undefined') {
 export default function Providers({ apiBase, children }: { apiBase: string; children: ReactNode }) {
   return (
     <AuthProvider apiBase={apiBase}>
-      <NoticeProvider>
-        <SosProvider>{children}</SosProvider>
-      </NoticeProvider>
+      <AnalyticsProvider apiBase={apiBase}>
+        <NoticeProvider>
+          <SosProvider>{children}</SosProvider>
+        </NoticeProvider>
+      </AnalyticsProvider>
     </AuthProvider>
   )
 }

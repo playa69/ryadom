@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { readHandsFree, writeHandsFree } from '@ryadom/client-core/voice/hands-free'
 import { NativeCheckbox } from '@ryadom/ui/components/native-checkbox'
 import { WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
@@ -21,6 +23,7 @@ export default function ProfileHandsFree() {
           onChange={(event) => {
             writeHandsFree(WEB_HANDS_FREE_KEY, event.target.checked)
             setOn(event.target.checked)
+            track(AnalyticsEvent.HandsFreeToggled, { enabled: event.target.checked })
           }}
         />
         <span className="flex flex-col gap-1">

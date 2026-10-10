@@ -433,7 +433,7 @@ describe('сценарии, которые завершают сессии', () 
       new ResetPasswordOperation({ email: user.email, code, newPassword: 'brand-new-password' }),
     )
 
-    expect(reset).toEqual({ success: true })
+    expect(reset).toEqual({ success: true, userId: user.id })
     expect(await isActive(first.tokenId)).toBe(false)
     expect(await isActive(second.tokenId)).toBe(false)
   })

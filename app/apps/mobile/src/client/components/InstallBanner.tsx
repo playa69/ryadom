@@ -1,5 +1,7 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Icon } from 'framework7-react'
-import { useEffect, useReducer, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { canPromptInstall, isAppInstalled, onInstallPromptChange, triggerInstallPrompt } from '../lib/install-prompt'
 import { isInAppBrowser, isIos } from '../lib/platform'
 
@@ -29,11 +31,22 @@ export default function InstallBanner() {
 
   useEffect(() => onInstallPromptChange(refresh), [])
 
-  if (dismissed || isAppInstalled()) return null
-
+  const visible = !dismissed && !isAppInstalled()
   const installable = canPromptInstall()
 
+  // Once per page load, when the banner first appears. The iOS hint is told apart: there is no install button there.
+  const shown = useRef(false)
+  useEffect(() => {
+    if (!visible || shown.current) return
+    shown.current = true
+    const iosHint = !installable && !isInAppBrowser() && isIos()
+    track(AnalyticsEvent.InstallPrompt, { action: iosHint ? 'ios_instructions' : 'shown' })
+  }, [visible, installable])
+
+  if (!visible) return null
+
   const close = () => {
+    track(AnalyticsEvent.InstallPrompt, { action: 'dismissed' })
     try {
       localStorage.setItem(DISMISSED_KEY, String(Date.now()))
     } catch {

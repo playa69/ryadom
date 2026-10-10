@@ -2,11 +2,14 @@
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { DialogApiErrorCode, type DialogApiResponse } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { Button } from '@ryadom/ui/components/button'
 import { Skeleton } from '@ryadom/ui/components/skeleton'
 import { cn } from '@ryadom/ui/lib/utils'
+import { useOnceFor } from '@/lib/analytics'
 import { useClient } from '@/lib/auth'
 import { useJournal } from '@/lib/journal'
 import { BUTTON } from './controls'
@@ -97,6 +100,8 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
   }
 
   const dialog = load.status === 'ready' ? load.dialog : null
+  // Counted once the conversation has actually opened, not while it loads or when it cannot be found.
+  useOnceFor(dialog ? dialogId : null, () => track(AnalyticsEvent.JournalEntryOpened))
   // The title comes from the list row while the transcript loads, so the heading does not flash "Разговор".
   const head = dialog ?? items?.find((item) => item.dialogId === dialogId) ?? null
 

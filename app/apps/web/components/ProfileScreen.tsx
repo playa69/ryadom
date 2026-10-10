@@ -18,6 +18,7 @@ import LinkEmailForm from './ProfileLinkEmail'
 import { useNotice } from './Notice'
 import { Busy, FIELD_FOCUS, ModalActions, ModalText, ProfileButton, SettingsSection } from './ProfileParts'
 import { Page } from './Page'
+import ProfileAnalytics from './ProfileAnalytics'
 import ProfileRow from './ProfileRow'
 import ProfileHandsFree from './ProfileHandsFree'
 import ProfileVoice from './ProfileVoice'
@@ -234,6 +235,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
       </SettingsSection>
 
       <SettingsSection title="Приложение">
+        <ProfileAnalytics />
         <li>
           <ProfileRow
             icon="info"

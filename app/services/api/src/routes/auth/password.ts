@@ -7,6 +7,7 @@ import {
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { ChangePasswordApiErrorCode } from '@ryadom/contracts/api/auth/password'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
@@ -21,7 +22,7 @@ const changeBody = z.object({
   newPassword: z.string().min(1),
 })
 
-export function passwordRoutes(app: Hono<AppEnv>, { jwt }: RouteDeps): void {
+export function passwordRoutes(app: Hono<AppEnv>, { jwt, analytics }: RouteDeps): void {
   app.post(ApiPath.Password, requireAuth(jwt), jsonBody(changeBody), async (c) => {
     const body = c.req.valid('json')
     const newPassword = inputOrNull(passwordInputSchema, body.newPassword)
@@ -49,6 +50,7 @@ export function passwordRoutes(app: Hono<AppEnv>, { jwt }: RouteDeps): void {
           return assertNever(result.error)
       }
     }
+    analytics.capture(userId, AnalyticsEvent.PasswordChanged)
     return apiOk(c, null)
   })
 }

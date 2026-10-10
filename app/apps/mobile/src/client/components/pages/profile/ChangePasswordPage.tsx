@@ -3,6 +3,7 @@ import type { Router } from 'framework7/types'
 import { useState } from 'react'
 import { ChangePasswordApiErrorCode } from '@ryadom/contracts/api/auth/password'
 import { InputLimit } from '@ryadom/contracts/api/limits'
+import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, changePassword, codeText } from '../../../lib/api'
 import { passwordProblem } from '../../../lib/validation'
 import PasswordInput from '../../PasswordInput'
@@ -24,23 +25,30 @@ export default function ChangePasswordPage({ f7router }: { f7router: Router.Rout
   const [error, setError] = useState('')
 
   async function handleSave() {
-    if (!currentPassword || !newPassword || !confirmPassword) return setError('Заполни все поля')
+    const invalid = (message: string) => {
+      reportForm('change_password', 'invalid')
+      setError(message)
+    }
+    if (!currentPassword || !newPassword || !confirmPassword) return invalid('Заполни все поля')
     const problem = passwordProblem(newPassword)
-    if (problem) return setError(problem)
-    if (newPassword !== confirmPassword) return setError('Пароли не совпадают')
-    if (newPassword === currentPassword) return setError('Новый пароль должен отличаться от текущего')
+    if (problem) return invalid(problem)
+    if (newPassword !== confirmPassword) return invalid('Пароли не совпадают')
+    if (newPassword === currentPassword) return invalid('Новый пароль должен отличаться от текущего')
 
     setError('')
     setLoading(true)
     try {
       const result = await changePassword(currentPassword, newPassword)
       if (!result.ok) {
+        reportForm('change_password', outcomeFromCode(result.code))
         setError(codeText(CHANGE_PASSWORD_ERRORS, result.code, FALLBACK))
         return
       }
+      reportForm('change_password', 'success')
       f7.toast.create({ text: 'Пароль изменён', closeTimeout: 2000 }).open()
       f7router.back()
     } catch (err) {
+      reportForm('change_password', outcomeFromError(err))
       setError(apiErrorText(err, { byStatus: { 422: `Пароль — от ${InputLimit.PasswordMin} символов` } }, FALLBACK))
     } finally {
       setLoading(false)

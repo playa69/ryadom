@@ -1,0 +1,283 @@
+/**
+ * The product analytics event catalog: the one list of what «Рядом» reports to PostHog and with what.
+ *
+ * Rules for everything in here (they are what keeps this file safe to extend):
+ *
+ * - **No content.** Never a message, a transcript, a takeaway, a name, an email, a phone number or a
+ *   token. A property is a boolean, a number, or a short value from a fixed set. `sanitize.ts` drops
+ *   what looks like free text anyway, but the catalog is the first line of defence.
+ * - **Pseudonymous people.** A person is their account id (a random UUID), never the email. Events
+ *   about a crisis signal are reported without any person at all (`SafetySignal`).
+ * - **`object_verb`, snake_case, past tense** for facts that already happened (`dialog_ended`), so the
+ *   names read the same in funnels and in SQL.
+ * - Server events are the source of truth for anything that changes state (an account, a session, a
+ *   dialog): they cannot be lost to an ad blocker or a closed tab. Client events describe what only
+ *   the screen knows (a tap, a toggle, a prompt shown).
+ *
+ * To add an event: add the member here, its properties to `AnalyticsEventProperties`, and use it.
+ * The TypeScript compiler then rejects a call that passes anything else.
+ */
+export enum AnalyticsEvent {
+  // ── Server: accounts and sessions (services/api) ────────────────────────────────────────────
+  /** A new account exists. An email account is created unconfirmed; an anonymous one on first launch. */
+  AccountCreated = 'account_created',
+  /** The six-digit code from the email was accepted. */
+  EmailConfirmed = 'email_confirmed',
+  LoggedIn = 'user_logged_in',
+  LoggedOut = 'user_logged_out',
+  /** One session ended by the person from the list of sessions. */
+  SessionRevoked = 'session_revoked',
+  PasswordChanged = 'password_changed',
+  PasswordResetRequested = 'password_reset_requested',
+  PasswordResetCompleted = 'password_reset_completed',
+  /** An anonymous account got an email and became a regular one. */
+  EmailLinked = 'email_linked',
+  /** The first screen: age, "this is not therapy", terms and personal data. */
+  ConsentsAccepted = 'consents_accepted',
+  /** Which fields of the profile changed, never their values. */
+  ProfileUpdated = 'profile_updated',
+  AccountDeleted = 'account_deleted',
+
+  // ── Server: dialogs (services/api) ──────────────────────────────────────────────────────────
+  DialogStarted = 'dialog_started',
+  /** The conversation finished properly: the agent confirmed the end. */
+  DialogEnded = 'dialog_ended',
+  /** The connection went away before the dialog ended (a dropped network, an idle timeout, a deploy). */
+  DialogInterrupted = 'dialog_interrupted',
+  /**
+   * The agent raised the safety frame. Reported with NO person attached: it counts how often the
+   * hotlines were shown, and must not become a record of who was in crisis.
+   */
+  SafetySignal = 'safety_signal',
+
+  // ── Client: the whole app ───────────────────────────────────────────────────────────────────
+  /** A launch of the app or a new page load, once per start. */
+  AppOpened = 'app_opened',
+  CtaClicked = 'cta_clicked',
+  AuthFormSubmitted = 'auth_form_submitted',
+  EmailCodeResent = 'email_code_resent',
+
+  // ── Client: the dialog screen ───────────────────────────────────────────────────────────────
+  DialogScreenOpened = 'dialog_screen_opened',
+  /** The text of the message is never sent: only its size class and how it was entered. */
+  DialogMessageSent = 'dialog_message_sent',
+  DialogVoiceToggled = 'dialog_voice_toggled',
+  HandsFreeToggled = 'hands_free_toggled',
+  DialogEndSheetOpened = 'dialog_end_sheet_opened',
+  DialogEndSubmitted = 'dialog_end_submitted',
+  SosOpened = 'sos_opened',
+  HotlineCalled = 'hotline_called',
+  BreathingStarted = 'breathing_started',
+  /** Something about voice did not work: it tells the product where speech breaks for people. */
+  VoiceProblem = 'voice_problem',
+
+  // ── Client: other screens ───────────────────────────────────────────────────────────────────
+  JournalEntryOpened = 'journal_entry_opened',
+  DeleteAccountStep = 'delete_account_step',
+  /** The "add to home screen" banner and the install prompt. */
+  InstallPrompt = 'install_prompt',
+  /** A new web build, an OTA bundle or a store release was offered, accepted or dismissed. */
+  AppUpdate = 'app_update',
+  OfflineShown = 'offline_shown',
+
+  // ── Client: the landing ─────────────────────────────────────────────────────────────────────
+  FaqOpened = 'faq_opened',
+  StoreLinkClicked = 'store_link_clicked',
+}
+
+/** Where the code runs. `pwa` is the web build installed to the home screen or opened from it. */
+export type AnalyticsPlatform = 'web' | 'pwa' | 'android' | 'ios' | 'landing'
+
+/** How an account signs in or was made. */
+export type AccountKind = 'email' | 'anonymous'
+
+/** A coarse classification of a number of characters, so that no exact length of a message leaves the device. */
+export type SizeClass = 'short' | 'medium' | 'long'
+
+export type AuthForm =
+  | 'login'
+  | 'register'
+  | 'confirm_email'
+  | 'forgot_password'
+  | 'reset_password'
+  | 'link_email'
+  | 'change_password'
+  | 'device_start'
+
+/** What happened to a form: `invalid` is a validation message the person saw, `rejected` is the server saying no. */
+export type FormOutcome = 'success' | 'invalid' | 'rejected' | 'rate_limited' | 'error'
+
+/** The calls to action that can be told apart on the landing and on the first screens. */
+export type CtaId =
+  | 'open_web_app'
+  | 'start_anonymous'
+  | 'register'
+  | 'login'
+  | 'install_pwa'
+  | 'download_android'
+  | 'download_page'
+  | 'see_how_it_works'
+  | 'contact_support'
+  | 'hotline'
+
+export type StoreLink = 'google_play' | 'rustore' | 'app_store' | 'apk' | 'pwa' | 'web_app'
+
+export type VoiceProblemReason =
+  | 'permission_denied'
+  | 'no_microphone'
+  | 'unsupported'
+  | 'asr_unavailable'
+  | 'tts_unavailable'
+  | 'playback_failed'
+
+/**
+ * Why a dialog's connection went away before the dialog ended. A rollout (`1012`) and a second
+ * connection of the same person (`4009`) are planned closes after which the client comes back to the
+ * same dialog; they are not interruptions of the person's conversation and are not reported.
+ */
+export type DialogInterruptReason =
+  | 'client_closed'
+  | 'idle'
+  | 'max_duration'
+  | 'agent_unavailable'
+  | 'unauthorized'
+  | 'rate_limited'
+  | 'other'
+
+export type AppUpdateKind = 'service_worker' | 'ota' | 'store'
+export type AppUpdateAction = 'available' | 'applied' | 'dismissed' | 'forced'
+export type InstallPromptAction = 'shown' | 'accepted' | 'dismissed' | 'ios_instructions'
+
+export type SafetyLevelName = 'concern' | 'crisis'
+
+export type DeleteAccountStepName = 'opened' | 'confirmed' | 'cancelled'
+
+export type ProfileField = 'name' | 'voice'
+
+export type PasswordChangeKind = 'change' | 'reset'
+
+/** Properties that every event of a platform carries are added by the SDK wrapper, not here. */
+export type NoProperties = Record<never, never>
+
+export interface AnalyticsEventProperties {
+  [AnalyticsEvent.AccountCreated]: { kind: AccountKind }
+  [AnalyticsEvent.EmailConfirmed]: NoProperties
+  [AnalyticsEvent.LoggedIn]: { method: 'password' | 'device' | 'email_code' }
+  [AnalyticsEvent.LoggedOut]: { all_devices: boolean }
+  [AnalyticsEvent.SessionRevoked]: NoProperties
+  [AnalyticsEvent.PasswordChanged]: NoProperties
+  [AnalyticsEvent.PasswordResetRequested]: NoProperties
+  [AnalyticsEvent.PasswordResetCompleted]: NoProperties
+  [AnalyticsEvent.EmailLinked]: NoProperties
+  [AnalyticsEvent.ConsentsAccepted]: { policy_version: string }
+  [AnalyticsEvent.ProfileUpdated]: { fields: ProfileField[] }
+  [AnalyticsEvent.AccountDeleted]: NoProperties
+
+  [AnalyticsEvent.DialogStarted]: { resumed: boolean; hours_since_last: number | null }
+  [AnalyticsEvent.DialogEnded]: {
+    via: 'socket' | 'rest'
+    /**
+     * The three counters below are of the connection that ended the dialog, not of the whole dialog:
+     * after a planned close (a rollout, a second tab) the client reconnects and they start again.
+     * Absent when the end came over REST.
+     */
+    duration_s?: number
+    user_messages?: number
+    assistant_messages?: number
+    has_takeaway: boolean
+    /** after minus before, -9..9; absent unless both were given. Negative means the tension went down. */
+    tension_delta?: number
+    tension_improved?: boolean
+  }
+  [AnalyticsEvent.DialogInterrupted]: {
+    reason: DialogInterruptReason
+    duration_s: number
+    user_messages: number
+  }
+  [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
+
+  [AnalyticsEvent.AppOpened]: { standalone: boolean; first_launch?: boolean }
+  [AnalyticsEvent.CtaClicked]: { cta: CtaId; placement: string }
+  [AnalyticsEvent.AuthFormSubmitted]: { form: AuthForm; outcome: FormOutcome }
+  [AnalyticsEvent.EmailCodeResent]: { form: 'confirm_email' | 'reset_password' }
+
+  [AnalyticsEvent.DialogScreenOpened]: { resumed: boolean }
+  [AnalyticsEvent.DialogMessageSent]: { input: 'text' | 'voice'; size: SizeClass }
+  [AnalyticsEvent.DialogVoiceToggled]: { enabled: boolean }
+  [AnalyticsEvent.HandsFreeToggled]: { enabled: boolean }
+  [AnalyticsEvent.DialogEndSheetOpened]: NoProperties
+  /**
+   * The tension itself is never sent: the server reports how it changed, in `DialogEnded`.
+   * `skipped` is true when the sheet was closed with nothing filled in (no takeaway and no tension).
+   */
+  [AnalyticsEvent.DialogEndSubmitted]: { has_takeaway: boolean; gave_tension: boolean; skipped: boolean }
+  /** Send with `trackAnonymous`: how often SOS is opened, not who opened it. */
+  [AnalyticsEvent.SosOpened]: { source: 'header' | 'dialog' | 'safety_frame' | 'home' | 'menu' }
+  /** Send with `trackAnonymous`: a tap on a hotline's number, not whose. */
+  [AnalyticsEvent.HotlineCalled]: { hotline: string }
+  [AnalyticsEvent.BreathingStarted]: { source: 'home' | 'dialog' | 'sos' }
+  [AnalyticsEvent.VoiceProblem]: { reason: VoiceProblemReason }
+
+  [AnalyticsEvent.JournalEntryOpened]: NoProperties
+  [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }
+  [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
+  [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
+  [AnalyticsEvent.OfflineShown]: NoProperties
+
+  [AnalyticsEvent.FaqOpened]: { question: string }
+  [AnalyticsEvent.StoreLinkClicked]: { store: StoreLink }
+}
+
+/**
+ * The arguments of `track(event, ...args)`: the properties are required when the event has any
+ * and omitted when it has none.
+ */
+export type AnalyticsEventArgs<E extends AnalyticsEvent> = NoProperties extends AnalyticsEventProperties[E]
+  ? [properties?: AnalyticsEventProperties[E]]
+  : [properties: AnalyticsEventProperties[E]]
+
+/** What is known about a person, set once on sign-in. Never an email or a name. */
+export interface AnalyticsTraits {
+  account_kind: AccountKind
+}
+
+/** Properties are a closed set of shapes, which is what `sanitizeProperties` enforces at run time. */
+export type PropertyValue = string | number | boolean | null | undefined | readonly (string | number | boolean)[]
+
+/** An anonymous account has no address; the address itself is never reported. */
+export function accountKindOf(user: { email: string | null }): AccountKind {
+  return user.email === null ? 'anonymous' : 'email'
+}
+
+/**
+ * How a form ended, from the HTTP status of the failed request. One mapping for every client, so the
+ * same answer of the server lands in the same bucket on every platform:
+ *
+ * - `rate_limited`: 429;
+ * - `invalid`: 422, the server's own input rule, a message the person can act on;
+ * - `rejected`: the other 4xx, the server saying no (a wrong password, a taken address);
+ * - `error`: no answer at all, a 5xx, and 400, which means our client sent something the server did
+ *   not understand: a bug of ours, never a mistake of the person.
+ */
+export function formOutcomeFromStatus(status: number): FormOutcome {
+  if (status === 429) return 'rate_limited'
+  if (status === 422) return 'invalid'
+  if (status === 400) return 'error'
+  if (status >= 400 && status < 500) return 'rejected'
+  return 'error'
+}
+
+/**
+ * How a form ended when the server answered 200 with a named rule (`{ status: false, errorCode }`):
+ * a refusal, except "too many attempts", which is a limit. Every contract enum spells it the same.
+ */
+export function formOutcomeFromCode(code: string): FormOutcome {
+  return code === 'TOO_MANY_ATTEMPTS' ? 'rate_limited' : 'rejected'
+}
+
+/** A size class for a number of characters: 0-80 short, 81-400 medium, more long. */
+export function sizeClass(chars: number): SizeClass {
+  if (chars <= 80) return 'short'
+  if (chars <= 400) return 'medium'
+  return 'long'
+}

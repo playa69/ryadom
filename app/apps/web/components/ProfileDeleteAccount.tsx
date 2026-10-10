@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation'
 import { useId, useState, type ComponentProps, type ReactNode } from 'react'
 import { Mail, MessageSquareText, TriangleAlert, UserX, type LucideIcon } from 'lucide-react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent, type DeleteAccountStepName } from '@ryadom/analytics/events'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { Alert, AlertDescription, AlertTitle } from '@ryadom/ui/components/alert'
 import { Card, CardContent } from '@ryadom/ui/components/card'
@@ -10,6 +12,7 @@ import { Checkbox } from '@ryadom/ui/components/checkbox'
 import { Field, FieldLabel } from '@ryadom/ui/components/field'
 import { Item, ItemContent } from '@ryadom/ui/components/item'
 import { cn } from '@ryadom/ui/lib/utils'
+import { useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { FOCUS_RING } from './controls'
 import Modal from './Modal'
@@ -66,9 +69,19 @@ export default function ProfileDeleteAccount() {
   const [done, setDone] = useState(false)
   const consentId = useId()
 
+  // The steps of the way to the end, never who or why: the server reports the deletion itself.
+  const step = (name: DeleteAccountStepName) => track(AnalyticsEvent.DeleteAccountStep, { step: name })
+  useOnceFor('opened', () => step('opened'))
+
+  function cancelConfirm() {
+    step('cancelled')
+    setConfirmOpen(false)
+  }
+
   async function runDeletion() {
     // aria-busy does not stop the keyboard: Enter on the busy button still clicks it.
     if (loading) return
+    step('confirmed')
     setConfirmOpen(false)
     setError('')
     setLoading(true)
@@ -184,11 +197,11 @@ export default function ProfileDeleteAccount() {
         </p>
       </div>
 
-      <Modal open={confirmOpen} onClose={() => setConfirmOpen(false)} title="Удалить аккаунт?">
+      <Modal open={confirmOpen} onClose={cancelConfirm} title="Удалить аккаунт?">
         <ModalText>Аккаунт и все разговоры будут удалены навсегда. Отменить это нельзя.</ModalText>
         {/* Cancel comes first, so the dialog opens with the safe answer focused. */}
         <ModalActions>
-          <ProfileButton type="button" variant="outline" onClick={() => setConfirmOpen(false)}>
+          <ProfileButton type="button" variant="outline" onClick={cancelConfirm}>
             Отмена
           </ProfileButton>
           <ProfileButton

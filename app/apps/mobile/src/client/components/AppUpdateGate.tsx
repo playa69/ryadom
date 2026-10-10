@@ -1,5 +1,6 @@
 import { Button, Icon, Preloader } from 'framework7-react'
 import { useEffect, useState } from 'react'
+import { reportAppUpdate } from '../lib/analytics'
 import { APP_UPDATE_EVENT, dismissStoreBanner, type UpdateUiState } from '../lib/app-update'
 import { getWebUrl } from '../lib/env'
 import { openExternal } from '../lib/links'
@@ -124,7 +125,10 @@ export default function AppUpdateGate() {
           type="button"
           className="rd-banner-close"
           aria-label="Скрыть"
-          onClick={() => setDismissedKind('web-update')}
+          onClick={() => {
+            reportAppUpdate('service_worker', 'dismissed')
+            setDismissedKind('web-update')
+          }}
         >
           <Icon f7="xmark" size={16} />
         </button>

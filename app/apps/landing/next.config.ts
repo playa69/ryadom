@@ -10,8 +10,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // The dev-mode badge sits over the bottom-left corner, where the rail's SOS button is, and swallows clicks.
   devIndicators: false,
-  // The shared shadcn components ship TypeScript sources, so Next compiles them itself.
-  transpilePackages: ['@ryadom/design', '@ryadom/ui'],
+  // The shared shadcn components and the analytics package ship TypeScript sources, so Next compiles them itself.
+  transpilePackages: ['@ryadom/analytics', '@ryadom/design', '@ryadom/ui'],
   reactStrictMode: true,
 }
 

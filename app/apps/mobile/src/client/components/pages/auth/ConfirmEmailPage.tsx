@@ -1,7 +1,10 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, Button, Icon, Navbar, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useState } from 'react'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
+import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, codeText, confirmEmail, login, resendConfirmation } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
 import CodeInput from '../../CodeInput'
@@ -45,15 +48,22 @@ export default function ConfirmEmailPage({
   }, [cooldown])
 
   async function handleConfirm(value = code) {
-    if (value.length !== 6) return setError('Код — шесть цифр из письма')
+    if (value.length !== 6) {
+      reportForm('confirm_email', 'invalid')
+      return setError('Код — шесть цифр из письма')
+    }
     setError('')
     setLoading(true)
+    let confirmed = false
     try {
       const result = await confirmEmail(email, value)
       if (!result.ok) {
+        reportForm('confirm_email', outcomeFromCode(result.code))
         setError(codeText(CONFIRM_ERRORS, result.code, 'Не получилось подтвердить почту'))
         return
       }
+      confirmed = true
+      reportForm('confirm_email', 'success')
       if (password) {
         const { user, tokens } = await login(email, password)
         await storeLogin(user, tokens, { consent: consented })
@@ -62,6 +72,8 @@ export default function ConfirmEmailPage({
       f7.toast.create({ text: 'Почта подтверждена — можно входить', closeTimeout: 2500 }).open()
       f7router.navigate('/login/', { clearPreviousHistory: true })
     } catch (err) {
+      // After the code was accepted a failure belongs to the sign-in that follows, not to this form.
+      if (!confirmed) reportForm('confirm_email', outcomeFromError(err))
       setError(apiErrorText(err, {}, 'Не получилось подтвердить почту'))
     } finally {
       setLoading(false)
@@ -72,6 +84,7 @@ export default function ConfirmEmailPage({
     setCooldown(RESEND_COOLDOWN_SEC)
     try {
       await resendConfirmation(email)
+      track(AnalyticsEvent.EmailCodeResent, { form: 'confirm_email' })
       f7.toast.create({ text: 'Отправили новый код', closeTimeout: 2500 }).open()
     } catch {
       f7.toast.create({ text: 'Не получилось отправить письмо', closeTimeout: 2500 }).open()

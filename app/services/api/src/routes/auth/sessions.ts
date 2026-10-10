@@ -1,5 +1,6 @@
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { EndSessionApiErrorCode, type ListSessionsApiResponse } from '@ryadom/contracts/api/auth/sessions'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiOk, apiRefused } from '../../lib/api-response'
@@ -24,7 +25,7 @@ const logoutAllBody = z.object({
   keepCurrent: z.boolean(),
 })
 
-export function sessionsRoutes(app: Hono<AppEnv>, { jwt, sessions }: RouteDeps): void {
+export function sessionsRoutes(app: Hono<AppEnv>, { jwt, sessions, analytics }: RouteDeps): void {
   const requireOpenSession = requireActiveSession(sessions)
 
   app.get(ApiPath.Sessions, requireAuth(jwt), requireOpenSession, async (c) => {
@@ -40,6 +41,7 @@ export function sessionsRoutes(app: Hono<AppEnv>, { jwt, sessions }: RouteDeps):
     if (!(await sessions.endOne(userId, c.req.param('sessionId')))) {
       return apiRefused(c, EndSessionApiErrorCode.SESSION_NOT_FOUND, 'No such session')
     }
+    analytics.capture(userId, AnalyticsEvent.SessionRevoked)
     return apiOk(c, null)
   })
 
@@ -47,6 +49,7 @@ export function sessionsRoutes(app: Hono<AppEnv>, { jwt, sessions }: RouteDeps):
     const { userId, sessionId } = authUser(c)
     const { keepCurrent } = c.req.valid('json')
     await sessions.endAll(userId, keepCurrent ? sessionId : null)
+    analytics.capture(userId, AnalyticsEvent.LoggedOut, { all_devices: true })
     return apiOk(c, null)
   })
 }

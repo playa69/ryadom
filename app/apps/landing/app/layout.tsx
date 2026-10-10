@@ -1,8 +1,11 @@
 import type { Metadata, Viewport } from 'next'
+import { connection } from 'next/server'
 // Same package the app uses, so the two never fetch different builds of the same typeface and
 // this site never reaches Google Fonts for it.
 import '@fontsource-variable/inter/wght.css'
 import './globals.css'
+import { getWebEnv } from '@/lib/env'
+import { AnalyticsBoot } from './_components/analytics-boot'
 
 export const metadata: Metadata = {
   title: 'Рядом — когда нужно, чтобы кто-то был рядом',
@@ -32,10 +35,21 @@ export const viewport: Viewport = {
 const SKY =
   'bg-[image:var(--ryadom-stars),radial-gradient(85%_55%_at_50%_-8%,var(--ryadom-bloom-teal),transparent_72%),radial-gradient(65%_55%_at_100%_52%,var(--ryadom-bloom-indigo),transparent_72%),radial-gradient(75%_36%_at_0%_64%,var(--ryadom-bloom-violet),transparent_72%)] [background-attachment:scroll,fixed,fixed,fixed]'
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+/**
+ * Like the pages, rendered per request: the API address comes from the container's environment
+ * rather than the moment of the build. Every page already does this, so only the 404 page, which
+ * was prerendered, is rendered on demand now.
+ */
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  await connection()
+  const env = getWebEnv()
+
   return (
     <html lang="ru" className="dark">
-      <body className={SKY}>{children}</body>
+      <body className={SKY}>
+        <AnalyticsBoot apiBase={env.apiUrl} />
+        {children}
+      </body>
     </html>
   )
 }

@@ -7,8 +7,10 @@ import {
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { DeviceLoginApiResponse } from '@ryadom/contracts/api/auth/device'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { identifyUser } from '../../lib/analytics'
 import { apiError, apiOk } from '../../lib/api-response'
 import { clientDevice } from '../../lib/client-device'
 import type { AppEnv, RouteDeps } from '../../lib/context'
@@ -28,7 +30,7 @@ const bodySchema = z.object({
   deviceKey: z.string().min(1).max(500),
 })
 
-export function deviceRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions }: RouteDeps): void {
+export function deviceRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions, analytics }: RouteDeps): void {
   app.post(
     ApiPath.DeviceLogin,
     limitByIp(rateLimiter, 'device-login', RATE_LIMITS.deviceLogin.perIp),
@@ -57,6 +59,9 @@ export function deviceRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions 
         tokens: await sessions.start(result.user.id, clientDevice(c)),
         isNewAccount: result.isNewAccount,
       }
+      identifyUser(analytics, result.user)
+      if (result.isNewAccount) analytics.capture(result.user.id, AnalyticsEvent.AccountCreated, { kind: 'anonymous' })
+      analytics.capture(result.user.id, AnalyticsEvent.LoggedIn, { method: 'device' })
       return apiOk(c, response)
     },
   )

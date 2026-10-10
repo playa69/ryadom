@@ -1,7 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { identify, reconcileOptOut, resetIdentity } from '@ryadom/analytics/browser'
+import { accountKindOf } from '@ryadom/analytics/events'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AuthTokensApiResponse } from '@ryadom/contracts/api/auth/shared'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
-import { acceptConsents, forgetDevice, setSessionEndHandler } from './api'
+import { acceptConsents, forgetDevice, getCurrentUser, setSessionEndHandler, updateProfile } from './api'
 import {
   endSession as clearSession,
   restoreSession,
@@ -118,6 +120,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     journal.reset()
     setAuth({ ...ANONYMOUS, entry: 'login' })
   }, [])
+
+  // Who the analytics events belong to: set for a sign-in, a restored session and a change of the account's
+  // kind (an address linked); cleared when the session ends, however it ends. The id, never the email.
+  const userId = auth.user?.id ?? null
+  const kind = auth.user ? accountKindOf(auth.user) : null
+  const identified = useRef(false)
+  useEffect(() => {
+    if (userId && kind) {
+      identify(userId, { account_kind: kind })
+      identified.current = true
+    } else if (identified.current) {
+      identified.current = false
+      resetIdentity()
+    }
+  }, [userId, kind])
+
+  // A "no" is the account's, not the device's: after sign-in the two are brought together, so that opting
+  // out on one device silences the others and a "no" said before signing in reaches the server. The stored
+  // user has no such field, hence one read of the profile per signed-in account.
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    getCurrentUser()
+      .then((me) => {
+        if (cancelled) return
+        return reconcileOptOut(me.analyticsOptOut, (optOut) => updateProfile({ analyticsOptOut: optOut }))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   // The API layer cannot import the store (that would be a cycle), so it uses this subscription.
   useEffect(() => {

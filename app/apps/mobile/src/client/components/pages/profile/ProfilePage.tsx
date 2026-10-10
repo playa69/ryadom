@@ -1,3 +1,6 @@
+import { setAnalyticsOptOut, track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { useAnalyticsOptOut } from '@ryadom/analytics/react'
 import {
   Block,
   BlockTitle,
@@ -42,6 +45,8 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   const voice: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
   // Hands-free belongs to this device, not the account: it applies from the next conversation.
   const [handsFree, setHandsFree] = useState(() => readHandsFree(HANDS_FREE_KEY))
+  // Reporting of taps and counts is on until the person turns it off; this device only, like hands-free.
+  const analyticsOptedOut = useAnalyticsOptOut()
   // An anonymous account has no address and no password; one that linked an address and has not
   // entered the code yet is waiting for the second step.
   const noEmail = user?.email === null
@@ -113,6 +118,29 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
       undefined,
       user?.name ?? '',
     )
+  }
+
+  /**
+   * The choice about analytics belongs to the account: the server keeps it and then reports nothing about the
+   * person from any device. Turning it off takes effect here at once and the account is told afterwards (a
+   * failure is retried at the next sign-in). Turning it back on goes the other way round: the account first,
+   * and the device starts reporting only once the account has agreed, so a failed call cannot leave the two
+   * disagreeing.
+   */
+  async function changeAnalytics(optOut: boolean) {
+    if (optOut) {
+      setAnalyticsOptOut(true)
+      await updateProfile({ analyticsOptOut: true }).catch(() => {})
+      return
+    }
+    try {
+      await updateProfile({ analyticsOptOut: false })
+      setAnalyticsOptOut(false)
+    } catch (error) {
+      f7.toast
+        .create({ text: apiErrorText(error, {}, 'Не получилось включить. Попробуй чуть позже'), closeTimeout: 2500 })
+        .open()
+    }
   }
 
   function handleVoice(next: AgentVoice) {
@@ -238,6 +266,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
               onToggleChange={(on: boolean) => {
                 writeHandsFree(HANDS_FREE_KEY, on)
                 setHandsFree(on)
+                track(AnalyticsEvent.HandsFreeToggled, { enabled: on })
               }}
             />
           </ListItem>
@@ -274,7 +303,16 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
             <Icon slot="media" f7="antenna_radiowaves_left_right" />
           </ListItem>
         )}
+        <ListItem title="Помогать улучшать «Рядом»" data-testid="analytics-toggle">
+          <Toggle slot="after" checked={!analyticsOptedOut} onToggleChange={(on: boolean) => void changeAnalytics(!on)} />
+        </ListItem>
       </List>
+      <Block>
+        <p className="rd-caption">
+          Считаем нажатия и открытые экраны, чтобы понять, что чинить. Того, что ты говоришь и пишешь, там нет —
+          никогда. Выбор относится ко всему аккаунту, на всех твоих устройствах.
+        </p>
+      </Block>
       </section>
 
       <section className="rd-profile-group">

@@ -13,6 +13,8 @@ export interface UserDTO {
   isEmailConfirmed: boolean
   isDeleted: boolean
   deletedAt: Date | null
+  /** The person asked for product analytics to be off for their account (`users.properties.analytics.optOut`). */
+  analyticsOptOut: boolean
   /** The last sign-in, session refresh or conversation; what the retention of anonymous accounts counts from. */
   lastActiveAt: Date
   createdAt: Date
@@ -25,6 +27,14 @@ export type SortOrder = 'asc' | 'desc'
 /** Key under `users.properties` that holds the personal data archive of a deleted account. */
 export const DELETION_ARCHIVE_KEY = 'deletion'
 
+/** Key under `users.properties` that holds the person's analytics choice: `{ optOut: boolean }`. */
+export const ANALYTICS_PREFS_KEY = 'analytics'
+
+function readAnalyticsOptOut(properties: UserRow['properties']): boolean {
+  const prefs = properties?.[ANALYTICS_PREFS_KEY]
+  return typeof prefs === 'object' && prefs !== null && (prefs as { optOut?: unknown }).optOut === true
+}
+
 export function toUserDTO(row: UserRow): UserDTO {
   return {
     id: row.id,
@@ -35,6 +45,7 @@ export function toUserDTO(row: UserRow): UserDTO {
     isEmailConfirmed: row.isEmailConfirmed,
     isDeleted: row.isDeleted,
     deletedAt: row.deletedAt,
+    analyticsOptOut: readAnalyticsOptOut(row.properties),
     lastActiveAt: row.lastActiveAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

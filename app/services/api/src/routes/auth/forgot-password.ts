@@ -1,6 +1,7 @@
 import { ForgotPasswordOperation, forgotPasswordProcess } from '@ryadom/core/processes/forgot-password'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk } from '../../lib/api-response'
 import type { AppEnv, RouteDeps } from '../../lib/context'
@@ -16,7 +17,7 @@ const bodySchema = z.object({
   email: z.string().trim().min(1).max(254),
 })
 
-export function forgotPasswordRoutes(app: Hono<AppEnv>, { rateLimiter, logger }: RouteDeps): void {
+export function forgotPasswordRoutes(app: Hono<AppEnv>, { rateLimiter, logger, analytics }: RouteDeps): void {
   app.post(
     ApiPath.ForgotPassword,
     limitByIp(rateLimiter, 'forgot-password', RATE_LIMITS.emailCode.perIp),
@@ -26,6 +27,8 @@ export function forgotPasswordRoutes(app: Hono<AppEnv>, { rateLimiter, logger }:
       if (!(await rateLimiter.hit(`email:forgot:${email}`, RATE_LIMITS.emailCode.perEmail))) {
         return apiError(c, 429, 'Too many codes requested for this email')
       }
+      // Counted without a person, and for every request: whether the address exists must stay unknowable.
+      analytics.captureAnonymous(AnalyticsEvent.PasswordResetRequested)
       try {
         await forgotPasswordProcess.execute(new ForgotPasswordOperation({ email }))
       } catch (error) {

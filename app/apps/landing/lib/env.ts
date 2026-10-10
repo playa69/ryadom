@@ -16,6 +16,11 @@ export interface WebEnv {
   googlePlayUrl: string | null
   appStoreUrl: string | null
   supportEmail: string
+  /**
+   * The origin of the API, no path: where product analytics reads its settings and sends events
+   * (through the API's own proxy). In production it is the site's own host.
+   */
+  apiUrl: string
 }
 
 function optional(value: string | undefined): string | null {
@@ -38,5 +43,8 @@ export function getWebEnv(): WebEnv {
     googlePlayUrl: optional(process.env.PUBLIC_GOOGLE_PLAY_URL),
     appStoreUrl: optional(process.env.PUBLIC_APP_STORE_URL),
     supportEmail: process.env.PUBLIC_SUPPORT_EMAIL?.trim() || 'support@ryadom.app',
+    // Only analytics uses it; no link on the site leads there. It is the API's origin, so a path in
+    // the value would double in the request addresses.
+    apiUrl: optional(process.env.PUBLIC_APP_URL) ?? 'http://localhost:3002',
   }
 }

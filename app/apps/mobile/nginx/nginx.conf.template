@@ -77,7 +77,10 @@ http {
     # Headers are set only here: a location that has its own add_header drops all inherited ones.
     # The CSP is the one the API used to send. connect-src has ws: and wss: because a dialog runs over a
     # WebSocket to the same origin; media-src has blob: for playing back speech; framing is denied.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+    # worker-src has blob: for the analytics SDK's session-recording worker (off unless the server turns
+    # replay on); product analytics themselves go to /api/ingest on this origin, so connect-src and
+    # script-src need nothing else.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
     add_header X-Robots-Tag "noindex" always;
     add_header X-Content-Type-Options "nosniff" always;
     # No `always`: an error response must not be marked immutable.

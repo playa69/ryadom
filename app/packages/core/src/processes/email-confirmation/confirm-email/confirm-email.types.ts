@@ -7,4 +7,5 @@ export enum ConfirmEmailOperationErrorCode {
 }
 
 export type ConfirmEmailResult =
-  { success: true } | { success: false; error: ConfirmEmailOperationErrorCode }
+  | { success: true; userId: string }
+  | { success: false; error: ConfirmEmailOperationErrorCode }

@@ -6,8 +6,10 @@ import {
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { LoginApiResponse } from '@ryadom/contracts/api/auth/shared'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { identifyUser } from '../../lib/analytics'
 import { apiError, apiOk } from '../../lib/api-response'
 import { clientDevice } from '../../lib/client-device'
 import type { AppEnv, RouteDeps } from '../../lib/context'
@@ -26,7 +28,7 @@ const bodySchema = z.object({
   password: z.string().min(1).max(1024),
 })
 
-export function loginRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions }: RouteDeps): void {
+export function loginRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions, analytics }: RouteDeps): void {
   app.post(
     ApiPath.Login,
     limitByIp(rateLimiter, 'login', RATE_LIMITS.attempt.perIp),
@@ -55,6 +57,8 @@ export function loginRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions }
         user: toAuthUser(result.user),
         tokens: await sessions.start(result.user.id, clientDevice(c)),
       }
+      identifyUser(analytics, result.user)
+      analytics.capture(result.user.id, AnalyticsEvent.LoggedIn, { method: 'password' })
       return apiOk(c, response)
     },
   )

@@ -1,3 +1,5 @@
+import { trackAnonymous } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, BlockTitle, Navbar, Page } from 'framework7-react'
 import { HOTLINES, telHref } from '../../../lib/hotlines'
 
@@ -13,7 +15,12 @@ export default function PeoplePage() {
       <BlockTitle>Позвонить прямо сейчас</BlockTitle>
       <Block className="rd-hotlines">
         {HOTLINES.map((hotline) => (
-          <a key={hotline.phone} className="rd-hotline" href={telHref(hotline.phone)}>
+          <a
+            key={hotline.phone}
+            className="rd-hotline"
+            href={telHref(hotline.phone)}
+            onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })}
+          >
             <span className="rd-hotline-name">{hotline.name}</span>
             <span className="rd-hotline-phone">{hotline.phone}</span>
           </a>

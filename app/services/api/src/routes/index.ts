@@ -1,5 +1,6 @@
 import type { Hono } from 'hono'
 import type { AppEnv, RouteDeps } from '../lib/context'
+import { analyticsRoutes } from './analytics'
 import { appStatusRoutes } from './app-status'
 import { confirmEmailRoutes } from './auth/confirm-email'
 import { consentsRoutes } from './auth/consents'
@@ -23,6 +24,7 @@ import { otaBundleRoutes } from './ota-bundle'
 export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   healthRoutes(app, deps)
   appStatusRoutes(app, deps)
+  analyticsRoutes(app, deps)
   otaBundleRoutes(app, deps)
 
   registerRoutes(app, deps)

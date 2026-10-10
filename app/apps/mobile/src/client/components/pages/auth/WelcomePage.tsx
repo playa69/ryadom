@@ -1,7 +1,10 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, Button, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState } from 'react'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import { outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, deviceLogin } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
 import { useEnvSwitcherTaps } from '../../../lib/use-env-switcher'
@@ -28,7 +31,10 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   const signedIn = auth.isAuthenticated
 
   async function handleStart() {
+    // Only the anonymous start is a form of its own; for a signed-in account this screen is the terms gate.
+    if (!signedIn) track(AnalyticsEvent.CtaClicked, { cta: 'start_anonymous', placement: 'welcome' })
     if (!allConsented(consent)) {
+      if (!signedIn) reportForm('device_start', 'invalid')
       setError('Чтобы начать, нужны все три согласия')
       return
     }
@@ -41,8 +47,10 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
       } else {
         const { user, tokens } = await deviceLogin()
         await login(user, tokens, { consent: true })
+        reportForm('device_start', 'success')
       }
     } catch (err) {
+      if (!signedIn) reportForm('device_start', outcomeFromError(err))
       setError(apiErrorText(err, {}, 'Не получилось начать. Попробуй ещё раз'))
     } finally {
       setLoading(false)
@@ -86,7 +94,10 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
             large
             outline
             disabled={loading}
-            onClick={() => f7router.navigate('/login/')}
+            onClick={() => {
+              track(AnalyticsEvent.CtaClicked, { cta: 'login', placement: 'welcome' })
+              f7router.navigate('/login/')
+            }}
             data-testid="have-account"
           >
             У меня уже есть аккаунт

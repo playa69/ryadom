@@ -1,3 +1,5 @@
+import { reportAppUpdate } from './analytics'
+
 /**
  * Service worker registration for the web build.
  *
@@ -44,6 +46,7 @@ export function initServiceWorker(onUpdateAvailable: () => void): () => void {
 
 /** The "Update" button: activate the waiting worker and reload. */
 export function applyServiceWorkerUpdate(): void {
+  reportAppUpdate('service_worker', 'applied')
   let reloaded = false
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloaded) return

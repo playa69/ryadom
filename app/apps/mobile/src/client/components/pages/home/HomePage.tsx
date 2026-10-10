@@ -103,7 +103,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
       {/* slot="fixed" keeps the button outside .page-content: without it the button is
           absolutely positioned relative to the scroll container and would scroll away with
           the page the moment its content grows taller than the screen (design review). */}
-      <SosButton slot="fixed" />
+      <SosButton slot="fixed" source="home" />
       {/* One column on a phone; from WIDE the circle and the actions stand side by side. */}
       <div className="rd-home">
         <div className="rd-home-orb">
@@ -169,7 +169,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                   Линии помощи, а со временем&nbsp;— группы поддержки и специалисты. Разговор со мной не
                   заменяет живых людей.
                 </p>
-                <Button small round outline onClick={() => openSos()}>
+                <Button small round outline onClick={() => openSos({ source: 'home' })}>
                   Посмотреть
                 </Button>
               </div>

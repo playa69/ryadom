@@ -3,9 +3,12 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { ANONYMOUS_RETENTION_DAYS, POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { Button } from '@ryadom/ui/components/button'
+import { formOutcome, trackForm } from '@/lib/analytics'
 import { useAuth } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
 import { ConsentGroup, NO_CONSENT, allConsented, firstMissingConsent } from '../_components/consent-group'
@@ -49,7 +52,10 @@ export default function WelcomeScreen() {
 
   async function submit() {
     if (loading) return
+    // Signed in, this screen only records the agreement (the server reports it); the start is for newcomers.
+    if (!signedIn) track(AnalyticsEvent.CtaClicked, { cta: 'start_anonymous', placement: 'welcome' })
     if (!allConsented(consent)) {
+      if (!signedIn) trackForm('device_start', 'invalid')
       setProblem({ text: 'Чтобы начать, нужны все три согласия', field: firstMissingConsent(consent) })
       focusField(formRef.current, firstMissingConsent(consent))
       return
@@ -65,8 +71,10 @@ export default function WelcomeScreen() {
       } else {
         // On success the (auth) frame sees the session and moves on to /home.
         await startAnonymously({ consent: true })
+        trackForm('device_start', 'success')
       }
     } catch (err) {
+      if (!signedIn) trackForm('device_start', formOutcome(err))
       setProblem({ text: apiErrorText(err, {}, 'Не получилось начать. Попробуй ещё раз') })
     } finally {
       setLoading(false)
@@ -98,7 +106,11 @@ export default function WelcomeScreen() {
           <SubmitButton loading={loading}>{signedIn ? 'Продолжить' : 'Начать'}</SubmitButton>
           {!signedIn && (
             <Button asChild variant="outline" className={OUTLINE_BUTTON}>
-              <Link href="/login" data-testid="have-account">
+              <Link
+                href="/login"
+                data-testid="have-account"
+                onClick={() => track(AnalyticsEvent.CtaClicked, { cta: 'login', placement: 'welcome' })}
+              >
                 У меня уже есть аккаунт
               </Link>
             </Button>

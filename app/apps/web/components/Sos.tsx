@@ -2,6 +2,8 @@
 
 import { Phone } from 'lucide-react'
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { trackAnonymous } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
 import { HOTLINES } from '@ryadom/client-core/hotlines'
 import { Button } from '@ryadom/ui/components/button'
@@ -112,7 +114,11 @@ export function SosButton({ className }: { className?: string }) {
         'gap-1.5 bg-clip-border px-4 text-[0.8125rem] font-bold tracking-[0.04em] text-sos hover:bg-danger-soft hover:brightness-120 focus-visible:border-danger-line',
         className,
       )}
-      onClick={() => openSos()}
+      onClick={() => {
+        // A count of how often SOS is opened, attached to nobody.
+        trackAnonymous(AnalyticsEvent.SosOpened, { source: 'header' })
+        openSos()
+      }}
     >
       <Phone className="size-3.5" aria-hidden="true" />
       SOS

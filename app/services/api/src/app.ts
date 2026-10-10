@@ -1,3 +1,4 @@
+import { createIngestProxy } from '@ryadom/analytics/ingest-proxy'
 import { AgentUnavailableError, resolveClientIp } from '@ryadom/core/shared'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
@@ -9,6 +10,7 @@ import { apiError, type TransportErrorStatus } from './lib/api-response'
 import type { AppDeps, AppEnv } from './lib/context'
 import { createJwt } from './lib/jwt'
 import { createSessions } from './lib/sessions'
+import { limitByIp, RATE_LIMITS } from './lib/rate-limit'
 import { tracing } from './lib/tracing'
 import { versionGate } from './lib/version-gate'
 import { registerAllRoutes } from './routes'
@@ -20,9 +22,12 @@ import { registerAllRoutes } from './routes'
  * 2. request log, so the status and duration of every response are visible;
  * 3. CORS, before the gate: the app calls from `https://localhost` (WebView), and without CORS
  *    headers even a 426 looks to it like a dropped connection;
- * 4. body size limit;
- * 5. version gate, before the routes: an outdated client gets 426 before its body is parsed;
- * 6. `/api/*` routes; anything without a matching route gets a JSON 404.
+ * 4. the analytics proxy (`/api/ingest/*`), only when analytics are on. It sits above the body limit
+ *    and the version gate on purpose: a session-recording chunk is far over 64 KB, and PostHog's SDK
+ *    sends none of the app's headers, so it must not be judged by them;
+ * 5. body size limit;
+ * 6. version gate, before the routes: an outdated client gets 426 before its body is parsed;
+ * 7. `/api/*` routes; anything without a matching route gets a JSON 404.
  *
  * The API serves no client: the PWA is its own image (apps/mobile/Dockerfile).
  */
@@ -57,7 +62,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       appVersion: c.req.header(AppHeader.AppVersion),
       jsVersion: c.req.header(AppHeader.JsVersion),
     }
-    if (c.req.path === ApiPath.Health) logger.debug(entry, 'request')
+    // Probes and the analytics firehose (a request every few seconds per open tab) stay out of the info log.
+    if (c.req.path === ApiPath.Health || c.req.path.startsWith(`${ApiPath.Ingest}/`)) logger.debug(entry, 'request')
     else logger.info(entry, 'request')
   })
 
@@ -80,6 +86,23 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       maxAge: 600,
     }),
   )
+
+  // A reverse proxy to PostHog for the clients' analytics (see packages/analytics). Without a project
+  // key there is nothing to proxy to, so the path simply does not exist.
+  if (deps.analytics.enabled) {
+    const ingest = createIngestProxy({
+      ingestHost: deps.env.POSTHOG_HOST,
+      assetsHost: deps.env.POSTHOG_ASSETS_HOST,
+      basePath: ApiPath.Ingest,
+      // A session-recording chunk is the largest thing the SDK sends.
+      maxBodyBytes: 4 * 1024 * 1024,
+    })
+    app.all(
+      `${ApiPath.Ingest}/*`,
+      limitByIp(deps.rateLimiter, 'ingest', RATE_LIMITS.ingest.perIp),
+      (c) => ingest(c.req.raw),
+    )
+  }
 
   app.use(
     '*',

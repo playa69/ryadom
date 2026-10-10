@@ -157,6 +157,54 @@ const appShape = {
   MOBILE_IOS_STORE_URL: z.preprocess(emptyToUndefined, z.url().optional()),
   MOBILE_IOS_MIN_VERSION_CODE: optionalInt(0).transform((value) => value ?? 0),
   MOBILE_IOS_LATEST_VERSION_CODE: optionalInt(0).transform((value) => value ?? 0),
+  /**
+   * Product analytics (PostHog). The project token is public by design (it only lets events in), so
+   * it belongs in the ConfigMap rather than a Secret. Empty switches analytics off altogether: the
+   * server reports nothing, `/api/ingest` is a 404 and the clients are told not to load the SDK.
+   * What the clients do with it is decided here and handed to them by `GET /api/analytics/config`.
+   */
+  POSTHOG_KEY: optionalString,
+  /** Where events go. The EU cloud keeps the data in the EU. */
+  POSTHOG_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.i.posthog.com')),
+  /** Where the SDK's lazy-loaded scripts come from (replay, surveys, error tracking). */
+  POSTHOG_ASSETS_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu-assets.i.posthog.com')),
+  /** The PostHog web app, for links such as the toolbar, and the host of its management API. */
+  POSTHOG_UI_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.posthog.com')),
+  /**
+   * What lets the server erase a person from PostHog when their account is deleted («erase
+   * everything» is a promise of the product). A personal API key with the `person:write` scope: a
+   * SECRET, unlike the project token, so it belongs in the Secret, never the ConfigMap. Needs both
+   * variables: with one of them missing (say the ConfigMap is applied before the Secret exists) the
+   * server still starts and analytics still work, but a deleted account's pseudonymous profile stays
+   * in PostHog until someone removes it by hand, and the server says so in the log at startup.
+   * Deliberately not a startup failure: an optional analytics feature must not keep the API down.
+   */
+  POSTHOG_PERSONAL_API_KEY: optionalString,
+  POSTHOG_PROJECT_ID: z.preprocess(
+    emptyToUndefined,
+    z.string().regex(/^\d+$/, 'must be the numeric id of the PostHog project').optional(),
+  ),
+  /**
+   * Whether erasing a deleted account's person in PostHog also erases that person's events. On by
+   * default: «erase everything». Off keeps the events (the profile and recordings still go), so past
+   * activity can still be counted; the events are then pseudonymous (an account id, no text, no email)
+   * and not anonymous while the deletion archive in the database still maps that id to a person.
+   */
+  POSTHOG_ERASE_EVENTS: booleanFlag.transform((value) => value ?? true),
+  /** Session replay with every piece of text and every input masked. Off: it is the most sensitive switch there is. */
+  POSTHOG_SESSION_REPLAY: booleanFlag.transform((value) => value ?? false),
+  /** In-app surveys. Off: a pop-up in the middle of someone's bad day is a product decision. */
+  POSTHOG_SURVEYS: booleanFlag.transform((value) => value ?? false),
+  /** Click autocapture records the text of what was clicked, so it is off unless someone asks. */
+  POSTHOG_AUTOCAPTURE: booleanFlag.transform((value) => value ?? false),
+  /** Heatmaps (where people tap): coordinates and selectors, no text. Off until someone wants them. */
+  POSTHOG_HEATMAPS: booleanFlag.transform((value) => value ?? false),
+  /** Unhandled errors of the clients, reported as exceptions. */
+  POSTHOG_ERROR_TRACKING: booleanFlag.transform((value) => value ?? true),
+  /** Core Web Vitals and page load timings. */
+  POSTHOG_WEB_VITALS: booleanFlag.transform((value) => value ?? true),
+  /** Feature flags for the clients (and `analytics.isFeatureEnabled` on the server). */
+  POSTHOG_FEATURE_FLAGS: booleanFlag.transform((value) => value ?? true),
 }
 
 const adminShape = {

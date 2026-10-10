@@ -27,6 +27,14 @@ export enum ApiPath {
   Dialogs = '/api/dialogs',
   /** WebSocket: the stream of a single dialog. */
   DialogsWs = '/api/dialogs/ws',
+
+  /** Open: which analytics features are on and the (public) PostHog project token. */
+  AnalyticsConfig = '/api/analytics/config',
+  /**
+   * Prefix only: our reverse proxy to PostHog. The SDK is configured with this as its `api_host`
+   * and appends its own paths (`/e`, `/flags`, `/static/...`).
+   */
+  Ingest = '/api/ingest',
 }
 
 /** `/api/dialogs/:id` and `/api/dialogs/:id/end` are built from the dialog id. */

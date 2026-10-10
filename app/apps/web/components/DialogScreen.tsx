@@ -4,6 +4,8 @@ import { ArrowDown, CircleCheck } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import {
   DialogApiErrorCode,
   DialogWsErrorCode,
@@ -40,6 +42,7 @@ import { Button } from '@ryadom/ui/components/button'
 import type { OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { appPath } from '@/lib/base-path'
 import { WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
@@ -112,6 +115,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const { openSos } = useSos()
 
   const start = readDialogStart(dialogId)
+  // A dialog started from home says whether the server resumed one; any other way in (a reload, the
+  // history, a link) is a return to a conversation that already exists.
+  useOnceFor(dialogId, () => track(AnalyticsEvent.DialogScreenOpened, { resumed: start?.resumed ?? true }))
   const [messages, setMessages] = useState<DialogMessageView[]>(() => greetingMessages(start?.greeting))
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [view, setView] = useState<DialogView>(() => initialDialogView(dialogId))
@@ -260,12 +266,16 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
 
     // Taken once, here: a browser "back" to this dialog later must not send the text again.
     const handoff = takeDialogHandoff(dialogId)
-    if (handoff?.draft) draft.current = handoff.draft
+    if (handoff?.draft) {
+      draft.current = handoff.draft
+      // Taken exactly once, so this is the one place the first message from home is counted.
+      track(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(handoff.draft.length) })
+    }
     if (handoff?.listen) {
       listenOnReady.current = true
       // The agent's greeting is about to arrive as audio. The tap that led here still counts as the person's
       // gesture, and the player must be awake before the frames.
-      void voicePlayer.unlock().catch(() => undefined)
+      void voicePlayer.unlock().catch(() => trackVoiceProblem('playback_failed'))
     }
 
     const handlers: DialogSocketHandlers = {
@@ -298,8 +308,14 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         setHearing(final ? '' : text)
         // Nothing was heard (a cough, the agent's own echo): no answer is coming, so nothing is awaited.
         if (final && !text) setAwaitingReply(false)
+        // The words are never reported: only that a spoken message went out, and how long it was.
+        if (final && text) {
+          track(AnalyticsEvent.DialogMessageSent, { input: 'voice', size: sizeClass(text.length) })
+        }
       },
       onAudio: (frame) => voicePlayer.enqueue(frame),
+      // Not reported from here on purpose: the server already counts this signal (safety_signal), with no
+      // person attached; a second count from a signed-in screen would only risk pointing at who was in crisis.
       onSafety: (_level, text, hotlines) => latest.current.openSos({ text, hotlines }),
       onEnded: (result) => finish(result),
       onError: (code, message) => {
@@ -427,6 +443,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   )
 
   function send(text: string) {
+    track(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(text.length) })
     follow()
     socket.current?.sendMessage(text)
     setAwaitingReply(true)
@@ -450,6 +467,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       }
     }
     if (!isCaptureSupported()) {
+      trackVoiceProblem('unsupported')
       refuse(MIC_UNSUPPORTED_TEXT)
       return
     }
@@ -460,7 +478,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       player.current?.stop()
       voice.current?.cancel()
       socket.current?.interruptSpeech()
-      await player.current?.unlock().catch(() => undefined)
+      await player.current?.unlock().catch(() => trackVoiceProblem('playback_failed'))
       // The worklet is a file of this app (public/), so under a URL prefix it is served from there.
       const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
         workletUrl: appPath('/voice-worklet.js'),
@@ -477,6 +495,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       markRecording(true)
       setAwaitingReply(false)
     } catch (error) {
+      trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
       refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
     } finally {
       micStarting.current = false
@@ -514,7 +533,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     micStarting.current = true
     try {
       if (!automatic) hush()
-      await player.current?.unlock().catch(() => undefined)
+      await player.current?.unlock().catch(() => trackVoiceProblem('playback_failed'))
       const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
         workletUrl: appPath('/voice-worklet.js'),
         gated: true,
@@ -537,6 +556,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setMicOpen(true)
       setPaused(null)
     } catch (error) {
+      trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
       refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
     } finally {
       micStarting.current = false
@@ -592,6 +612,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   }
 
   async function showText() {
+    track(AnalyticsEvent.DialogVoiceToggled, { enabled: false })
     hush()
     if (handsFree) await pauseMic('manual')
     else await finishUtterance()
@@ -600,6 +621,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   }
 
   function showVoice() {
+    track(AnalyticsEvent.DialogVoiceToggled, { enabled: true })
     viewRef.current = 'voice'
     setView('voice')
     // Choosing the voice is asking to speak: no second tap.
@@ -608,6 +630,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   }
 
   function openEnd() {
+    track(AnalyticsEvent.DialogEndSheetOpened)
     // The conversation is being ended: no utterance is wanted, and no answer to it.
     hush()
     void stopRecording()
@@ -616,6 +639,13 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   }
 
   async function submitEnd(takeaway: string | null, tensionAfter: number | null) {
+    // Whether there is a takeaway and whether the scale was answered, never what either says;
+    // "skipped" is the sheet closed with nothing filled in.
+    track(AnalyticsEvent.DialogEndSubmitted, {
+      has_takeaway: takeaway !== null,
+      gave_tension: tensionAfter !== null,
+      skipped: takeaway === null && tensionAfter === null,
+    })
     setEnding(true)
     setEndError('')
     const live = socket.current

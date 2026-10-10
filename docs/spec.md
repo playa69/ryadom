@@ -217,7 +217,7 @@ flowchart LR
 | Классификаторы | ruBERT-класс, в РФ | Список ключевых слов | План: двухступенчатый классификатор |
 | Память | PostgreSQL + pgvector | Нет (диалоги в памяти процесса) | План: собственная БД агента (`add-agent-service` D6); Cognee — кандидат, решение не принято |
 | Фон | Celery/Arq | Нет у агента; у шлюза — ежечасная очистка анонимных аккаунтов | План |
-| Аналитика | AppMetrica + ClickHouse | Prometheus-метрики голоса; ClickHouse нет | План |
+| Аналитика | AppMetrica + ClickHouse | Продуктовая: PostHog Cloud (EU), события клиентов и сервера идут через собственный прокси `/api/ingest`, без текстов и ПДн ([docs/analytics.md](analytics.md)); технические метрики голоса — Prometheus. AppMetrica и ClickHouse не используются | Реализовано; решение зафиксировано в docs/analytics.md |
 | Трейсинг LLM | Langfuse | Langfuse развёрнут (ns `infra`), агент его не использует | План |
 | Логи | — | Loki + Prometheus + Grafana (ns `monitoring`); агент пишет stdlib `logging` | План: loguru по logging-rules |
 | Инфраструктура | Облако РФ, GitLab CI | Timeweb Cloud k8s + Istio Gateway API + cert-manager; Yandex Cloud: S3, DNS, Container Registry | — |

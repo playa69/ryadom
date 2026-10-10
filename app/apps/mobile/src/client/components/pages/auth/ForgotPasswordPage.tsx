@@ -1,6 +1,7 @@
 import { Block, Button, List, ListInput, Navbar, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
+import { outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, requestPasswordReset } from '../../../lib/api'
 
 /**
@@ -14,13 +15,18 @@ export default function ForgotPasswordPage({ f7router }: { f7router: Router.Rout
 
   async function handleSubmit() {
     const trimmed = email.trim().toLowerCase()
-    if (!trimmed) return setError('Напиши почту')
+    if (!trimmed) {
+      reportForm('forgot_password', 'invalid')
+      return setError('Напиши почту')
+    }
     setError('')
     setLoading(true)
     try {
       await requestPasswordReset(trimmed)
+      reportForm('forgot_password', 'success')
       f7router.navigate('/reset-password/', { props: { email: trimmed } })
     } catch (err) {
+      reportForm('forgot_password', outcomeFromError(err))
       setError(apiErrorText(err, {}, 'Не получилось отправить код. Попробуй ещё раз'))
     } finally {
       setLoading(false)

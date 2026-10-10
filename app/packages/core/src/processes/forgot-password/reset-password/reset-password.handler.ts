@@ -98,6 +98,6 @@ export class ResetPasswordOperationHandler implements RequestHandler<ResetPasswo
       }
     })
     createLogger('forgot-password').info('Password reset', { userId })
-    return { success: true }
+    return { success: true, userId }
   }
 }

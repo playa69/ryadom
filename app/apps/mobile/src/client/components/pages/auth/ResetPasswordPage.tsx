@@ -3,6 +3,7 @@ import type { Router } from 'framework7/types'
 import { useState } from 'react'
 import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import { InputLimit } from '@ryadom/contracts/api/limits'
+import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, codeText, login, resetPassword } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
 import { passwordProblem } from '../../../lib/validation'
@@ -28,22 +29,32 @@ export default function ResetPasswordPage({ f7router, email }: { f7router: Route
   const [error, setError] = useState('')
 
   async function handleSubmit() {
-    if (code.length !== 6) return setError('Код — шесть цифр из письма')
+    const invalid = (message: string) => {
+      reportForm('reset_password', 'invalid')
+      setError(message)
+    }
+    if (code.length !== 6) return invalid('Код — шесть цифр из письма')
     const problem = passwordProblem(password)
-    if (problem) return setError(problem)
+    if (problem) return invalid(problem)
 
     setError('')
     setLoading(true)
+    let changed = false
     try {
       const result = await resetPassword(email, code, password)
       if (!result.ok) {
+        reportForm('reset_password', outcomeFromCode(result.code))
         setError(codeText(RESET_ERRORS, result.code, 'Не получилось сменить пароль'))
         return
       }
+      changed = true
+      reportForm('reset_password', 'success')
       const { user, tokens } = await login(email, password)
       await storeLogin(user, tokens)
       f7.toast.create({ text: 'Пароль изменён', closeTimeout: 2000 }).open()
     } catch (err) {
+      // After the password was changed a failure belongs to the sign-in that follows, not to this form.
+      if (!changed) reportForm('reset_password', outcomeFromError(err))
       setError(
         apiErrorText(
           err,

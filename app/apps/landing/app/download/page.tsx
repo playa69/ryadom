@@ -6,6 +6,7 @@ import { cn } from '@ryadom/ui/lib/utils'
 import { getWebEnv } from '@/lib/env'
 import { SiteFooter, SiteHeader } from '../_components/chrome'
 import { Tile } from '../_components/home-parts'
+import { TrackedLink } from '../_components/tracked'
 import {
   ButtonRow,
   inlineLink,
@@ -90,7 +91,9 @@ export default async function DownloadPage() {
             </p>
             <ButtonRow className="mt-6">
               <Button asChild className={cn(pageButton, pageButtonLift)}>
-                <a href={env.appUrl}>Открыть в браузере</a>
+                <TrackedLink href={env.appUrl} tracking={{ store: 'web_app' }}>
+                  Открыть в браузере
+                </TrackedLink>
               </Button>
             </ButtonRow>
           </Platform>
@@ -100,17 +103,23 @@ export default async function DownloadPage() {
               <ButtonRow className="mt-4">
                 {env.rustoreUrl && (
                   <Button asChild className={cn(pageButton, pageButtonLift)}>
-                    <a href={env.rustoreUrl}>RuStore</a>
+                    <TrackedLink href={env.rustoreUrl} tracking={{ store: 'rustore' }}>
+                      RuStore
+                    </TrackedLink>
                   </Button>
                 )}
                 {env.googlePlayUrl && (
                   <Button asChild variant="outline" className={cn(pageButton, pageButtonOutline)}>
-                    <a href={env.googlePlayUrl}>Google Play</a>
+                    <TrackedLink href={env.googlePlayUrl} tracking={{ store: 'google_play' }}>
+                      Google Play
+                    </TrackedLink>
                   </Button>
                 )}
                 {env.androidApkUrl && (
                   <Button asChild variant="outline" className={cn(pageButton, pageButtonOutline)}>
-                    <a href={env.androidApkUrl}>Скачать APK</a>
+                    <TrackedLink href={env.androidApkUrl} tracking={{ store: 'apk' }}>
+                      Скачать APK
+                    </TrackedLink>
                   </Button>
                 )}
               </ButtonRow>
@@ -121,9 +130,13 @@ export default async function DownloadPage() {
                   <>
                     {' '}
                     или{' '}
-                    <a className={inlineLink} href="#install">
+                    <TrackedLink
+                      className={inlineLink}
+                      href="#install"
+                      tracking={{ cta: 'install_pwa', placement: 'download-page-android' }}
+                    >
                       установите «Рядом» из браузера
-                    </a>
+                    </TrackedLink>
                   </>
                 )}
                 .
@@ -141,7 +154,9 @@ export default async function DownloadPage() {
             {env.appStoreUrl ? (
               <ButtonRow className="mt-4">
                 <Button asChild className={cn(pageButton, pageButtonLift)}>
-                  <a href={env.appStoreUrl}>App Store</a>
+                  <TrackedLink href={env.appStoreUrl} tracking={{ store: 'app_store' }}>
+                    App Store
+                  </TrackedLink>
                 </Button>
               </ButtonRow>
             ) : (
@@ -151,9 +166,13 @@ export default async function DownloadPage() {
                   <>
                     {' '}
                     или{' '}
-                    <a className={inlineLink} href="#install">
+                    <TrackedLink
+                      className={inlineLink}
+                      href="#install"
+                      tracking={{ cta: 'install_pwa', placement: 'download-page-ios' }}
+                    >
                       установите «Рядом» на домашний экран
-                    </a>
+                    </TrackedLink>
                   </>
                 )}
                 .
@@ -195,7 +214,9 @@ export default async function DownloadPage() {
               </div>
               <ButtonRow className="mt-6">
                 <Button asChild className={cn(pageButton, pageButtonLift)}>
-                  <a href={env.pwaUrl}>Открыть и установить</a>
+                  <TrackedLink href={env.pwaUrl} tracking={{ store: 'pwa' }}>
+                    Открыть и установить
+                  </TrackedLink>
                 </Button>
               </ButtonRow>
             </Platform>
@@ -204,9 +225,13 @@ export default async function DownloadPage() {
 
         <p className="text-[15px] text-muted-foreground">
           Не получается установить? Напишите на{' '}
-          <a className={inlineLink} href={`mailto:${env.supportEmail}`}>
+          <TrackedLink
+            className={inlineLink}
+            href={`mailto:${env.supportEmail}`}
+            tracking={{ cta: 'contact_support', placement: 'download-page' }}
+          >
             {env.supportEmail}
-          </a>
+          </TrackedLink>
           . Что стирается при удалении аккаунта — на странице{' '}
           <Link className={inlineLink} href="/delete-account">
             удаления
