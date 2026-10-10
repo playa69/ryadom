@@ -1,7 +1,8 @@
 import { track } from '@ryadom/analytics/browser'
 import {
   AnalyticsEvent,
-  type AccountKind,
+  formOutcomeFromCode,
+  formOutcomeFromStatus,
   type AnalyticsPlatform,
   type AppUpdateAction,
   type AppUpdateKind,
@@ -28,29 +29,19 @@ export function analyticsPlatform(env: { android: boolean; ios: boolean; standal
   return env.standalone ? 'pwa' : 'web'
 }
 
-/** An anonymous account has no address; the address itself is never reported. */
-export function accountKind(user: { email: string | null }): AccountKind {
-  return user.email === null ? 'anonymous' : 'email'
-}
-
 // ── Forms ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * What a thrown API error means for a form. A 422 is the server's own validation message, other 4xx are
- * the server saying no (a wrong password, a taken address), 429 is the rate limit; no answer at all
- * (status 0), a 5xx and anything unexpected are errors.
+ * What a thrown API error means for a form. The mapping of statuses is shared by every client
+ * (`formOutcomeFromStatus`); an error that is not an API answer at all is an `error`.
  */
 export function outcomeFromError(error: unknown): FormOutcome {
-  if (!(error instanceof ApiError)) return 'error'
-  if (error.status === 429) return 'rate_limited'
-  if (error.status === 422) return 'invalid'
-  if (error.status >= 400 && error.status < 500) return 'rejected'
-  return 'error'
+  return error instanceof ApiError ? formOutcomeFromStatus(error.status) : 'error'
 }
 
 /** What a rule named by the server (a 200 with `ok: false`) means for a form. */
 export function outcomeFromCode(code: string): FormOutcome {
-  return code === 'TOO_MANY_ATTEMPTS' ? 'rate_limited' : 'rejected'
+  return formOutcomeFromCode(code)
 }
 
 export function reportForm(form: AuthForm, outcome: FormOutcome): void {

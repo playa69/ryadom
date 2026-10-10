@@ -120,6 +120,29 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
     )
   }
 
+  /**
+   * The choice about analytics belongs to the account: the server keeps it and then reports nothing about the
+   * person from any device. Turning it off takes effect here at once and the account is told afterwards (a
+   * failure is retried at the next sign-in). Turning it back on goes the other way round: the account first,
+   * and the device starts reporting only once the account has agreed, so a failed call cannot leave the two
+   * disagreeing.
+   */
+  async function changeAnalytics(optOut: boolean) {
+    if (optOut) {
+      setAnalyticsOptOut(true)
+      await updateProfile({ analyticsOptOut: true }).catch(() => {})
+      return
+    }
+    try {
+      await updateProfile({ analyticsOptOut: false })
+      setAnalyticsOptOut(false)
+    } catch (error) {
+      f7.toast
+        .create({ text: apiErrorText(error, {}, 'Не получилось включить. Попробуй чуть позже'), closeTimeout: 2500 })
+        .open()
+    }
+  }
+
   function handleVoice(next: AgentVoice) {
     if (next === voice) return
     void updateProfile({ voice: next })
@@ -281,13 +304,13 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
           </ListItem>
         )}
         <ListItem title="Помогать улучшать «Рядом»" data-testid="analytics-toggle">
-          <Toggle slot="after" checked={!analyticsOptedOut} onToggleChange={(on: boolean) => setAnalyticsOptOut(!on)} />
+          <Toggle slot="after" checked={!analyticsOptedOut} onToggleChange={(on: boolean) => void changeAnalytics(!on)} />
         </ListItem>
       </List>
       <Block>
         <p className="rd-caption">
           Считаем нажатия и открытые экраны, чтобы понять, что чинить. Того, что ты говоришь и пишешь, там нет —
-          никогда. Только на этом устройстве.
+          никогда. Выбор относится ко всему аккаунту, на всех твоих устройствах.
         </p>
       </Block>
       </section>

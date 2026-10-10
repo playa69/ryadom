@@ -7,6 +7,9 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics'
 import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { createAnalytics } from '../src/lib/analytics'
+import { parseEnv } from '../src/lib/env'
+import { createLogger } from '../src/lib/logger'
 import { RATE_LIMITS } from '../src/lib/rate-limit'
 import {
   PASSWORD,
@@ -26,12 +29,6 @@ const POSTHOG = { POSTHOG_KEY: 'phc_test_key' }
 
 function only(analytics: { events: RecordedEvent[] }, event: AnalyticsEvent): RecordedEvent[] {
   return analytics.events.filter((entry) => entry.event === event)
-}
-
-/** The report of a route that finishes it in the background (a lookup by email) arrives a tick later. */
-async function eventually(analytics: { events: RecordedEvent[] }, event: AnalyticsEvent): Promise<RecordedEvent> {
-  await vi.waitFor(() => expect(only(analytics, event)).toHaveLength(1))
-  return only(analytics, event)[0]!
 }
 
 describe('GET /api/analytics/config', () => {
@@ -253,11 +250,36 @@ describe('события сервера', () => {
     expect(analytics.identified).toContainEqual({ userId, traits: { account_kind: 'email' } })
 
     ok(await call(app, 'POST', '/api/auth/confirm-email', { email, code: codeFor(email) }))
-    expect((await eventually(analytics, AnalyticsEvent.EmailConfirmed)).userId).toBe(userId)
+    // The operation names the account itself, so there is no second lookup and no waiting.
+    expect(only(analytics, AnalyticsEvent.EmailConfirmed)).toEqual([
+      { userId, event: 'email_confirmed', properties: {} },
+    ])
 
     ok(await call(app, 'POST', '/api/auth/login', { email, password: PASSWORD }))
     expect(only(analytics, AnalyticsEvent.LoggedIn)).toEqual([
       { userId, event: 'user_logged_in', properties: { method: 'password' } },
+    ])
+  })
+
+  it('сброс пароля по коду: событие привязано к аккаунту без лишнего запроса', async () => {
+    const analytics = recordingAnalytics()
+    const { app } = makeApp({ analytics })
+    const { user } = await signUpAndIn(app)
+
+    ok(await call(app, 'POST', '/api/auth/forgot-password', { email: user.email }))
+    ok(
+      await call(app, 'POST', '/api/auth/reset-password', {
+        email: user.email,
+        code: codeFor(user.email),
+        newPassword: `${PASSWORD}-new`,
+      }),
+    )
+    expect(only(analytics, AnalyticsEvent.PasswordResetCompleted)).toEqual([
+      { userId: user.id, event: 'password_reset_completed', properties: {} },
+    ])
+    // The request for the code is counted without a person; the completed reset has one.
+    expect(only(analytics, AnalyticsEvent.PasswordResetRequested)).toEqual([
+      { userId: null, event: 'password_reset_requested', properties: {} },
     ])
   })
 
@@ -368,5 +390,104 @@ describe('события сервера', () => {
     for (const secret of [email, 'Секретное Имя', 'Секретный вывод', 'секретный заголовок', 'Аня', PASSWORD]) {
       expect(everything).not.toContain(secret)
     }
+  })
+})
+
+describe('отказ человека от аналитики (сервер его соблюдает)', () => {
+  /** The real analytics wrapper over a stand-in for PostHog's client: what would have been sent is visible. */
+  function realAnalytics() {
+    const client = {
+      capture: vi.fn(),
+      identify: vi.fn(),
+      isFeatureEnabled: vi.fn(async () => true),
+      captureException: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      on: vi.fn(),
+    }
+    const env = parseEnv({ ...process.env, ...POSTHOG })
+    const analytics = createAnalytics(env, createLogger('silent'), { client, erasureDelayMs: 0 })
+    return { client, analytics }
+  }
+
+  const sentFor = (client: { capture: ReturnType<typeof vi.fn> }, userId: string): string[] =>
+    client.capture.mock.calls
+      .map((call) => call[0] as { distinctId: string; event: string })
+      .filter((message) => message.distinctId === userId)
+      .map((message) => message.event)
+
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 60))
+
+  it('профиль по умолчанию говорит, что аналитика включена', async () => {
+    const { app } = makeApp()
+    const { tokens } = await signUpAndIn(app)
+    const me = ok<{ analyticsOptOut: boolean }>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    expect(me.analyticsOptOut).toBe(false)
+  })
+
+  it('после отказа сервер молчит о человеке на любом устройстве; о других говорит; возвращение включает снова', async () => {
+    const { client, analytics } = realAnalytics()
+    const { app } = makeApp({ env: POSTHOG, analytics })
+    mockAgent()
+    const email = uniqueEmail('quiet')
+    const quiet = await signUpAndIn(app, email)
+    await vi.waitFor(() => expect(sentFor(client, quiet.user.id).length).toBeGreaterThan(0))
+
+    const patched = ok<{ analyticsOptOut: boolean }>(
+      await call(app, 'PATCH', '/api/auth/me', { analyticsOptOut: true }, quiet.tokens.accessToken),
+    )
+    expect(patched.analyticsOptOut).toBe(true)
+
+    // Another device of the same person: a fresh sign-in and a conversation. Nothing about them leaves.
+    const before = sentFor(client, quiet.user.id).length
+    const identifiedBefore = client.identify.mock.calls.length
+    const phone = ok<{ tokens: { accessToken: string } }>(
+      await call(app, 'POST', '/api/auth/login', { email, password: PASSWORD }),
+    )
+    ok(await call(app, 'POST', '/api/dialogs', {}, phone.tokens.accessToken))
+    await settle()
+    expect(sentFor(client, quiet.user.id)).toHaveLength(before)
+    expect(client.identify.mock.calls.length).toBe(identifiedBefore)
+
+    // Somebody else is reported as usual.
+    const other = await signUpAndIn(app)
+    await vi.waitFor(() => expect(sentFor(client, other.user.id)).toContain('consents_accepted'))
+
+    // Turning it back on is the person's own act, and it counts from the next report.
+    ok(await call(app, 'PATCH', '/api/auth/me', { analyticsOptOut: false }, phone.tokens.accessToken))
+    ok(await call(app, 'POST', '/api/auth/login', { email, password: PASSWORD }))
+    await vi.waitFor(() => expect(sentFor(client, quiet.user.id).length).toBeGreaterThan(before))
+  })
+
+  it('само включение отказа не порождает события, и в профиль это не попадает как «изменение»', async () => {
+    const { client, analytics } = realAnalytics()
+    const { app } = makeApp({ env: POSTHOG, analytics })
+    const { user, tokens } = await signUpAndIn(app)
+    await vi.waitFor(() => expect(sentFor(client, user.id).length).toBeGreaterThan(0))
+    const before = sentFor(client, user.id).length
+
+    ok(await call(app, 'PATCH', '/api/auth/me', { analyticsOptOut: true }, tokens.accessToken))
+    await settle()
+    expect(sentFor(client, user.id)).toHaveLength(before)
+    expect(sentFor(client, user.id)).not.toContain('profile_updated')
+  })
+
+  it('PATCH без единого поля по-прежнему 422', async () => {
+    const { app } = makeApp()
+    const { tokens } = await signUpAndIn(app)
+    const response = await app.request('/api/auth/me', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.accessToken}` },
+      body: '{}',
+    })
+    expect(response.status).toBe(422)
+  })
+
+  it('о несуществующем или стёртом аккаунте событий нет', async () => {
+    const { client, analytics } = realAnalytics()
+    // A person who does not exist: the question is answered "gone", which counts as "no reports".
+    analytics.capture('00000000-0000-4000-8000-000000000000', AnalyticsEvent.SessionRevoked)
+    await settle()
+    expect(client.capture).not.toHaveBeenCalled()
   })
 })

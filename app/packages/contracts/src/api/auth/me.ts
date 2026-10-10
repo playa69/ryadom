@@ -2,9 +2,10 @@
  * The current user's profile:
  *
  * - `GET /api/auth/me` — the profile for the profile screen;
- * - `PATCH /api/auth/me` `{ name?, voice? }` — change the name (422 when empty or longer than
- *   `InputLimit.NameMax`) and/or the voice the agent speaks with (400 for a value other than
- *   `AgentVoice`); at least one field is required (422 for an empty body);
+ * - `PATCH /api/auth/me` `{ name?, voice?, analyticsOptOut? }` — change the name (422 when empty or
+ *   longer than `InputLimit.NameMax`), the voice the agent speaks with (400 for a value other than
+ *   `AgentVoice`) and/or whether product analytics are off for the account; at least one field is
+ *   required (422 for an empty body);
  * - `DELETE /api/auth/me` — "erase everything": the data held by the agent and the account itself
  *. The response is `null`, and a repeat is also a success. If the agent is
  *   unavailable it is a 503, because the promise "we erased everything" was not kept.
@@ -23,6 +24,11 @@ export interface MeApiResponse {
   consentVersion: string | null
   /** The voice the agent speaks with. Applies from the next conversation start. */
   voice: AgentVoice
+  /**
+   * The person turned product analytics off for their account. The server then reports nothing about
+   * them, on any device; the clients follow it (and tell the account about a "no" said before sign-in).
+   */
+  analyticsOptOut: boolean
 }
 
 /** The agent's voice by gender. The agent maps it to the voice of its speech provider. */
@@ -34,6 +40,7 @@ export const DEFAULT_AGENT_VOICE: AgentVoice = 'male'
 export interface UpdateMeApiRequest {
   name?: string
   voice?: AgentVoice
+  analyticsOptOut?: boolean
 }
 
 export enum MeApiErrorCode {

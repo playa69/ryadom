@@ -40,6 +40,20 @@ export interface ServerAnalyticsOptions {
   onError?: (error: unknown) => void
   /** Erases people from PostHog when their account is deleted. Without it `erasePerson` reports `not_configured`. */
   admin?: AnalyticsAdmin | undefined
+  /**
+   * Whether a person has turned analytics off in their profile. Asked before anything is reported
+   * about them, and the answer is remembered for `optOutTtlMs`. If the question cannot be answered the
+   * report is dropped, not sent: for a person who may have said no, silence is the safe side.
+   */
+  isOptedOut?: ((userId: string) => Promise<boolean>) | undefined
+  /** How long an answer of `isOptedOut` is remembered. */
+  optOutTtlMs?: number
+  /**
+   * How long `erasePerson` waits before asking PostHog to erase. The clients batch their events and
+   * send them a few seconds later; erasing at once would let a batch that was queued before the
+   * deletion arrive after it and create the person again. Pending erasures run at once on `shutdown`.
+   */
+  erasureDelayMs?: number
   /** For tests. */
   client?: ServerAnalyticsClient
 }
@@ -62,11 +76,14 @@ export interface ServerAnalytics {
   /** An error that was handled but is worth a look. */
   captureException(error: unknown, userId?: string, context?: object): void
   /**
-   * Erases a person and their history from PostHog, for an account that was just deleted. What is
-   * still queued for them is sent first, so a late event cannot bring the profile back.
+   * Erases a person from PostHog, for an account that was just deleted. It waits `erasureDelayMs`
+   * first (see the option) and sends what is queued for the person, so a late event cannot bring the
+   * profile back; the promise settles when the erasure has been requested.
    */
   erasePerson(userId: string): Promise<ErasureResult>
-  /** Sends what is queued. Called once on shutdown. */
+  /** Records a person's choice at once, so the next report already honours it (the answer is otherwise cached). */
+  setOptOut(userId: string, optOut: boolean): void
+  /** Sends what is queued and runs pending erasures. Called once on shutdown. */
   shutdown(): Promise<void>
 }
 
@@ -74,6 +91,7 @@ const DISABLED: ServerAnalytics = {
   enabled: false,
   canErase: false,
   erasePerson: async () => 'not_configured',
+  setOptOut() {},
   capture() {},
   captureAnonymous() {},
   identify() {},
@@ -84,6 +102,10 @@ const DISABLED: ServerAnalytics = {
 
 /** Waiting for the queue on shutdown must fit in the pod's grace period (see lib/shutdown.ts). */
 const SHUTDOWN_TIMEOUT_MS = 3_000
+const DEFAULT_OPT_OUT_TTL_MS = 60_000
+const DEFAULT_ERASURE_DELAY_MS = 30_000
+/** The remembered answers are bounded: the oldest is dropped past this many people. */
+const MAX_REMEMBERED_PEOPLE = 10_000
 
 export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAnalytics {
   const { key, host, appEnv, service, onError } = options
@@ -114,21 +136,89 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
     }
   }
 
+  // ── What people said about being reported on ──────────────────────────────────────────────
+  const optOutTtl = options.optOutTtlMs ?? DEFAULT_OPT_OUT_TTL_MS
+  const remembered = new Map<string, { optOut: boolean; until: number }>()
+  const asking = new Map<string, Promise<boolean>>()
+
+  const remember = (userId: string, optOut: boolean): void => {
+    if (!remembered.has(userId) && remembered.size >= MAX_REMEMBERED_PEOPLE) {
+      const oldest = remembered.keys().next().value
+      if (oldest !== undefined) remembered.delete(oldest)
+    }
+    remembered.set(userId, { optOut, until: Date.now() + optOutTtl })
+  }
+
+  /** The person's answer: remembered, or asked once however many reports wait on it. */
+  const optedOut = (userId: string): boolean | Promise<boolean> => {
+    const lookup = options.isOptedOut
+    if (!lookup) return false
+    const known = remembered.get(userId)
+    if (known && known.until > Date.now()) return known.optOut
+    let pending = asking.get(userId)
+    if (!pending) {
+      pending = lookup(userId)
+        .then((answer) => {
+          remember(userId, answer)
+          return answer
+        })
+        .finally(() => asking.delete(userId))
+      asking.set(userId, pending)
+    }
+    return pending
+  }
+
+  /** Runs `send` for a person unless they opted out; a question that fails to be answered drops the report. */
+  const forPerson = (userId: string, send: () => void): void => {
+    const answer = optedOut(userId)
+    if (typeof answer === 'boolean') {
+      if (!answer) safely(send)
+      return
+    }
+    answer.then((out) => (out ? undefined : safely(send)), (error: unknown) => onError?.(error))
+  }
+
+  // ── Erasing people ─────────────────────────────────────────────────────────────────────────
+  const erasureDelay = options.erasureDelayMs ?? DEFAULT_ERASURE_DELAY_MS
+  const pendingErasures = new Set<() => Promise<void>>()
+
+  const eraseNow = async (userId: string): Promise<ErasureResult> => {
+    if (!options.admin) return 'not_configured'
+    try {
+      await client.flush?.()
+      return (await options.admin.deletePerson(userId)) ? 'erased' : 'failed'
+    } catch (error) {
+      onError?.(error)
+      return 'failed'
+    }
+  }
+
   return {
     enabled: true,
     canErase: options.admin !== undefined,
-    async erasePerson(userId) {
-      if (!options.admin) return 'not_configured'
-      try {
-        await client.flush?.()
-        return (await options.admin.deletePerson(userId)) ? 'erased' : 'failed'
-      } catch (error) {
-        onError?.(error)
-        return 'failed'
-      }
+    erasePerson(userId) {
+      if (!options.admin) return Promise.resolve('not_configured')
+      if (erasureDelay <= 0) return eraseNow(userId)
+      return new Promise<ErasureResult>((resolve) => {
+        let started = false
+        const run = async (): Promise<void> => {
+          if (started) return
+          started = true
+          clearTimeout(timer)
+          pendingErasures.delete(run)
+          resolve(await eraseNow(userId))
+        }
+        const timer = setTimeout(() => void run(), erasureDelay)
+        // The timer alone must not keep the process alive; `shutdown` runs what is still waiting.
+        timer.unref?.()
+        pendingErasures.add(run)
+      })
+    },
+    setOptOut(userId, optOut) {
+      remember(userId, optOut)
     },
     capture(userId, event, ...args) {
-      safely(() =>
+      forPerson(userId, () =>
         client.capture({
           distinctId: userId,
           event,
@@ -148,12 +238,14 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
       )
     },
     identify(userId, traits) {
-      safely(() =>
+      forPerson(userId, () =>
         client.identify({ distinctId: userId, properties: sanitizeProperties(traits), disableGeoip: true }),
       )
     },
     async isFeatureEnabled(flag, userId) {
       try {
+        // A person who said no is not asked about for flags either: that request names them to PostHog.
+        if (await optedOut(userId)) return false
         return (await client.isFeatureEnabled(flag, userId)) === true
       } catch (error) {
         onError?.(error)
@@ -161,11 +253,13 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
       }
     },
     captureException(error, userId, context) {
-      safely(() =>
-        client.captureException(error, userId, { ...sanitizeProperties(context), ...common }),
-      )
+      const send = () => client.captureException(error, userId, { ...sanitizeProperties(context), ...common })
+      if (userId === undefined) safely(send)
+      else forPerson(userId, send)
     },
     async shutdown() {
+      // Erasures that were waiting for the clients' queues run now: the process will not be here later.
+      await Promise.allSettled([...pendingErasures].map((run) => run()))
       try {
         await client.shutdown(SHUTDOWN_TIMEOUT_MS)
       } catch (error) {

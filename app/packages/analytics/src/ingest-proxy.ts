@@ -38,6 +38,12 @@ export type IngestProxy = (request: Request) => Promise<Response>
 
 /** Paths served by the ingest host. `/e` is the classic capture endpoint, `/i/v0/e` the current one. */
 const INGEST_PREFIXES = ['/e', '/i/v0/e', '/batch', '/capture', '/s', '/flags', '/decide', '/engage', '/ses']
+/**
+ * Read-only paths on the ingest host: the list of surveys for a project token. The SDK asks for
+ * `${api_host}/api/surveys/?token=…` once surveys are on, and without this the switch would do nothing.
+ * Nothing else under `/api/` is served: that is PostHog's management API.
+ */
+const READ_PREFIXES = ['/api/surveys']
 /** Paths served by the assets host: the SDK's extension scripts and its remote config. */
 const ASSET_PREFIXES = ['/static', '/array']
 
@@ -64,6 +70,9 @@ export function routeIngestPath(
   if (ASSET_PREFIXES.some((prefix) => matchesPrefix(normalized, prefix))) {
     // Scripts and config are read, never written.
     return method === 'GET' || method === 'HEAD' ? { target: 'assets', path: normalized } : null
+  }
+  if (READ_PREFIXES.some((prefix) => matchesPrefix(normalized, prefix))) {
+    return method === 'GET' || method === 'HEAD' ? { target: 'ingest', path: normalized } : null
   }
   if (INGEST_PREFIXES.some((prefix) => matchesPrefix(normalized, prefix))) {
     return { target: 'ingest', path: normalized }

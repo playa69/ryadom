@@ -467,8 +467,10 @@ class DialogSession {
       case 'transcript': {
         const text = str('text')
         if (text === null) return
-        // A finished transcript is one spoken turn of the person; partial ones are not counted.
-        if (frame.final === true) this.userMessages += 1
+        // A finished transcript WITH TEXT is one spoken turn of the person. The agent also sends a final
+        // one with empty text for silence, an echo or a cough, and stores no message for it: that is not
+        // something the person said. Partial ones are not counted either.
+        if (frame.final === true && text.trim().length > 0) this.userMessages += 1
         const messageId = str('messageId')
         return this.toClient({
           type: DialogServerFrame.Transcript,

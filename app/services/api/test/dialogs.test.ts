@@ -418,9 +418,12 @@ describe('WebSocket-шлюз', () => {
 
     client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'секретная реплика' }))
     await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
-    // One spoken turn: only the final transcript counts, the partial one does not.
+    // One spoken turn: only the final transcript counts, the partial one does not. The agent also
+    // sends a final one with no text for silence or an echo, and stores no message for it.
     agentSide.socket.send(JSON.stringify({ type: 'transcript', text: 'ну', final: false }))
     agentSide.socket.send(JSON.stringify({ type: 'transcript', text: 'ну вот', final: true, messageId: 'm-9' }))
+    agentSide.socket.send(JSON.stringify({ type: 'transcript', text: '', final: true }))
+    agentSide.socket.send(JSON.stringify({ type: 'transcript', text: '   ', final: true }))
     agentSide.socket.send(JSON.stringify({ type: 'assistant_end', messageId: 'm-2', text: 'секретный ответ' }))
     client.send(JSON.stringify({ type: DialogClientFrame.End, takeaway: 'секретный вывод', tensionAfter: 3 }))
     await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'end' })))

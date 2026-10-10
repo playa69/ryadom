@@ -15,7 +15,10 @@ describe('formOutcome', () => {
 
   it('a validation answer is a message the person saw', () => {
     expect(formOutcome(new ApiError(422))).toBe('invalid')
-    expect(formOutcome(new ApiError(400))).toBe('invalid')
+  })
+
+  it('a 400 is our client sending something the server did not understand: an error, not the person', () => {
+    expect(formOutcome(new ApiError(400))).toBe('error')
   })
 
   it('too many requests is a limit, not a refusal', () => {

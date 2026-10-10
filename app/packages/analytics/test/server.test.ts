@@ -104,7 +104,7 @@ describe('createServerAnalytics', () => {
       flush: vi.fn(async () => void order.push('flush')),
     })
     const admin = { deletePerson: vi.fn(async () => (order.push('delete'), true)) }
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin })
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin, erasureDelayMs: 0 })
 
     expect(analytics.canErase).toBe(true)
     expect(await analytics.erasePerson('user-1')).toBe('erased')
@@ -119,6 +119,7 @@ describe('createServerAnalytics', () => {
       key: 'phc_test',
       client: fakeClient(),
       admin: { deletePerson: async () => false },
+      erasureDelayMs: 0,
     })
     expect(await refusing.erasePerson('user-1')).toBe('failed')
 
@@ -127,6 +128,116 @@ describe('createServerAnalytics', () => {
     expect(await withoutKey.erasePerson('user-1')).toBe('not_configured')
 
     expect(await createServerAnalytics({ ...base, key: '' }).erasePerson('user-1')).toBe('not_configured')
+  })
+
+  it('стирание откладывается: запоздавший клиентский батч не успевает воскресить профиль', async () => {
+    vi.useFakeTimers()
+    try {
+      const admin = { deletePerson: vi.fn(async () => true) }
+      const analytics = createServerAnalytics({
+        ...base,
+        key: 'phc_test',
+        client: fakeClient(),
+        admin,
+        erasureDelayMs: 30_000,
+      })
+      const outcome = analytics.erasePerson('user-1')
+      await vi.advanceTimersByTimeAsync(29_000)
+      expect(admin.deletePerson).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(admin.deletePerson).toHaveBeenCalledWith('user-1')
+      expect(await outcome).toBe('erased')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('остановка пода не теряет ожидающее стирание: оно исполняется сразу, ровно один раз', async () => {
+    const admin = { deletePerson: vi.fn(async () => true) }
+    const analytics = createServerAnalytics({
+      ...base,
+      key: 'phc_test',
+      client: fakeClient(),
+      admin,
+      erasureDelayMs: 60_000,
+    })
+    const outcome = analytics.erasePerson('user-1')
+    expect(admin.deletePerson).not.toHaveBeenCalled()
+    await analytics.shutdown()
+    expect(admin.deletePerson).toHaveBeenCalledTimes(1)
+    expect(await outcome).toBe('erased')
+  })
+
+  describe('отказ человека от аналитики', () => {
+    it('не отправляет ничего о человеке, который отказался; о других отправляет', async () => {
+      const client = fakeClient()
+      const isOptedOut = vi.fn(async (userId: string) => userId === 'quiet')
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut })
+
+      analytics.capture('quiet', AnalyticsEvent.LoggedOut, { all_devices: false })
+      analytics.identify('quiet', { account_kind: 'email' })
+      analytics.captureException(new Error('x'), 'quiet')
+      analytics.capture('talker', AnalyticsEvent.LoggedOut, { all_devices: false })
+      await vi.waitFor(() => expect(client.capture).toHaveBeenCalledTimes(1))
+
+      expect(client.capture.mock.calls[0]![0]).toMatchObject({ distinctId: 'talker' })
+      expect(client.identify).not.toHaveBeenCalled()
+      expect(client.captureException).not.toHaveBeenCalled()
+      expect(await analytics.isFeatureEnabled('beta', 'quiet')).toBe(false)
+      expect(client.isFeatureEnabled).not.toHaveBeenCalled()
+    })
+
+    it('спрашивает один раз на пачку событий и помнит ответ', async () => {
+      const client = fakeClient()
+      const isOptedOut = vi.fn(async () => false)
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut })
+
+      analytics.capture('u', AnalyticsEvent.LoggedOut, { all_devices: false })
+      analytics.capture('u', AnalyticsEvent.SessionRevoked)
+      analytics.capture('u', AnalyticsEvent.PasswordChanged)
+      await vi.waitFor(() => expect(client.capture).toHaveBeenCalledTimes(3))
+      analytics.capture('u', AnalyticsEvent.EmailLinked)
+      expect(client.capture).toHaveBeenCalledTimes(4)
+      expect(isOptedOut).toHaveBeenCalledTimes(1)
+    })
+
+    it('setOptOut действует сразу, не дожидаясь, пока забудется прежний ответ', async () => {
+      const client = fakeClient()
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut: async () => false })
+      analytics.capture('u', AnalyticsEvent.SessionRevoked)
+      await vi.waitFor(() => expect(client.capture).toHaveBeenCalledTimes(1))
+
+      analytics.setOptOut('u', true)
+      analytics.capture('u', AnalyticsEvent.SessionRevoked)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(client.capture).toHaveBeenCalledTimes(1)
+
+      analytics.setOptOut('u', false)
+      analytics.capture('u', AnalyticsEvent.SessionRevoked)
+      expect(client.capture).toHaveBeenCalledTimes(2)
+    })
+
+    it('если ответить на вопрос не удалось, событие отбрасывается, а не отправляется', async () => {
+      const onError = vi.fn()
+      const client = fakeClient()
+      const analytics = createServerAnalytics({
+        ...base,
+        key: 'phc_test',
+        client,
+        onError,
+        isOptedOut: async () => Promise.reject(new Error('db down')),
+      })
+      analytics.capture('u', AnalyticsEvent.SessionRevoked)
+      await vi.waitFor(() => expect(onError).toHaveBeenCalled())
+      expect(client.capture).not.toHaveBeenCalled()
+    })
+
+    it('анонимные события не зависят от выбора: у них нет человека', () => {
+      const client = fakeClient()
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut: async () => true })
+      analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
+      expect(client.capture).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('shutdown сбрасывает очередь с ограничением по времени', async () => {

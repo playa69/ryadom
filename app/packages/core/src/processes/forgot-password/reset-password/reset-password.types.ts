@@ -7,4 +7,5 @@ export enum ResetPasswordOperationErrorCode {
 }
 
 export type ResetPasswordResult =
-  { success: true } | { success: false; error: ResetPasswordOperationErrorCode }
+  | { success: true; userId: string }
+  | { success: false; error: ResetPasswordOperationErrorCode }

@@ -2,10 +2,17 @@
 
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, type ReactNode } from 'react'
-import { identify, resetIdentity, startAnalytics, track, trackPageview } from '@ryadom/analytics/browser'
-import { AnalyticsEvent, type AccountKind } from '@ryadom/analytics/events'
+import {
+  identify,
+  reconcileOptOut,
+  resetIdentity,
+  startAnalytics,
+  track,
+  trackPageview,
+} from '@ryadom/analytics/browser'
+import { AnalyticsEvent, accountKindOf, type AccountKind } from '@ryadom/analytics/events'
 import { isStandalone } from './analytics'
-import { useAuth } from './auth'
+import { useAuth, useClient } from './auth'
 
 /** Set once the page load has reported `app_opened`; a module lives exactly as long as the page does. */
 let opened = false
@@ -19,6 +26,7 @@ let opened = false
 export function AnalyticsProvider({ apiBase, children }: { apiBase: string; children: ReactNode }) {
   const pathname = usePathname()
   const { user } = useAuth()
+  const client = useClient()
 
   // Once per page load. The SDK reads its settings from the API itself, and calls made before it is
   // ready are queued by the package.
@@ -43,13 +51,31 @@ export function AnalyticsProvider({ apiBase, children }: { apiBase: string; chil
   // The person is the account's id and one trait. Sign-out (or another account taking over) forgets
   // them, so the next events belong to nobody.
   const userId = user?.id ?? null
-  const accountKind: AccountKind | null = user ? (user.email === null ? 'anonymous' : 'email') : null
+  const accountKind: AccountKind | null = user ? accountKindOf(user) : null
   const identified = useRef<string | null>(null)
   useEffect(() => {
     if (identified.current && identified.current !== userId) resetIdentity()
     if (userId && accountKind) identify(userId, { account_kind: accountKind })
     identified.current = userId
   }, [userId, accountKind])
+
+  // A "no" is the account's, not the browser's: after sign-in the two are brought together, so that
+  // opting out on one device silences the others and a "no" said before signing in reaches the server.
+  // The stored user has no such field, hence one read of the profile per signed-in account.
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    client
+      .getCurrentUser()
+      .then((me) => {
+        if (cancelled) return
+        return reconcileOptOut(me.analyticsOptOut, (optOut) => client.updateProfile({ analyticsOptOut: optOut }))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [userId, client])
 
   return children
 }

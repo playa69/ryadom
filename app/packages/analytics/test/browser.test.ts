@@ -8,6 +8,7 @@ import {
   identify,
   isAnalyticsOptedOut,
   loadAnalyticsConfig,
+  reconcileOptOut,
   resetAnalyticsForTests,
   resetIdentity,
   setAnalyticsOptOut,
@@ -287,6 +288,43 @@ describe('отказ от аналитики', () => {
     await started
     const options = posthog.init.mock.calls[0]![1] as unknown as { opt_out_capturing_by_default: boolean }
     expect(options.opt_out_capturing_by_default).toBe(true)
+  })
+})
+
+describe('согласование отказа устройства и аккаунта', () => {
+  it('отказался на другом устройстве: это устройство тоже замолкает', async () => {
+    const tellServer = vi.fn(async () => {})
+    await reconcileOptOut(true, tellServer)
+    expect(isAnalyticsOptedOut()).toBe(true)
+    expect(tellServer).not.toHaveBeenCalled()
+  })
+
+  it('отказался здесь до входа: аккаунту сообщают', async () => {
+    setAnalyticsOptOut(true)
+    const tellServer = vi.fn(async () => {})
+    await reconcileOptOut(false, tellServer)
+    expect(tellServer).toHaveBeenCalledWith(true)
+    expect(isAnalyticsOptedOut()).toBe(true)
+  })
+
+  it('оба согласны или оба за аналитику: ничего не меняется', async () => {
+    const tellServer = vi.fn(async () => {})
+    await reconcileOptOut(false, tellServer)
+    expect(isAnalyticsOptedOut()).toBe(false)
+    setAnalyticsOptOut(true)
+    await reconcileOptOut(true, tellServer)
+    expect(tellServer).not.toHaveBeenCalled()
+  })
+
+  it('включить аналитику обратно может только явное действие: согласование этого не делает', async () => {
+    setAnalyticsOptOut(true)
+    await reconcileOptOut(false, async () => {})
+    expect(isAnalyticsOptedOut()).toBe(true)
+  })
+
+  it('сбой сообщения аккаунту не выходит наружу', async () => {
+    setAnalyticsOptOut(true)
+    await expect(reconcileOptOut(false, async () => Promise.reject(new Error('offline')))).resolves.toBeUndefined()
   })
 })
 

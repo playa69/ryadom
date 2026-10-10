@@ -81,6 +81,24 @@ export function setAnalyticsOptOut(optOut: boolean): void {
   notify(optOutListeners)
 }
 
+/**
+ * Brings the device's choice and the account's choice together after sign-in. A "no" wins wherever it
+ * was said: opted out on another device, this device follows; opted out here before the account
+ * existed (or while signed out), the account is told. Turning analytics back on is a deliberate act
+ * that changes both (`setAnalyticsOptOut(false)` and the profile call), never a side effect of this.
+ *
+ * `tellServer` failing is not an error here: the device has already stopped reporting, and the next
+ * sign-in tries again.
+ */
+export async function reconcileOptOut(
+  serverOptOut: boolean,
+  tellServer: (optOut: boolean) => Promise<unknown>,
+): Promise<void> {
+  const local = isAnalyticsOptedOut()
+  if (serverOptOut && !local) setAnalyticsOptOut(true)
+  else if (local && !serverOptOut) await tellServer(true).catch(() => {})
+}
+
 export function subscribeAnalyticsOptOut(listener: () => void): () => void {
   optOutListeners.add(listener)
   return () => optOutListeners.delete(listener)

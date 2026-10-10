@@ -32,6 +32,7 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     consentsCompleted: consent.completed,
     consentVersion: consent.offerVersion,
     voice: user.agentVoice,
+    analyticsOptOut: user.analyticsOptOut,
   }
 }
 

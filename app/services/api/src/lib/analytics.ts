@@ -1,10 +1,10 @@
-import { GetUserByEmailQuery, GetUserByEmailQueryErrorCode, usersManager } from '@ryadom/core/managers/users-manager'
+import { GetUserByIdQuery, GetUserByIdQueryErrorCode, usersManager } from '@ryadom/core/managers/users-manager'
 import assertNever from 'assert-never'
 import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics'
 import type { DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
-import type { AccountKind, AnalyticsEventProperties, AnalyticsEvent } from '@ryadom/analytics/events'
+import { accountKindOf, type AnalyticsEventProperties, type AnalyticsEvent } from '@ryadom/analytics/events'
 import { createAnalyticsAdmin } from '@ryadom/analytics/admin'
-import { createServerAnalytics, type ServerAnalytics } from '@ryadom/analytics/server'
+import { createServerAnalytics, type ServerAnalytics, type ServerAnalyticsClient } from '@ryadom/analytics/server'
 import type { AppServerEnv } from './env'
 import type { Logger } from './logger'
 
@@ -38,7 +38,12 @@ export function hasInvalidProjectToken(env: Pick<AppServerEnv, 'POSTHOG_KEY'>): 
   return env.POSTHOG_KEY !== undefined && projectToken(env) === undefined
 }
 
-export function createAnalytics(env: AppServerEnv, logger: Logger): ServerAnalytics {
+export function createAnalytics(
+  env: AppServerEnv,
+  logger: Logger,
+  /** For tests: the PostHog client and the delay before erasing are replaced. */
+  overrides: { client?: ServerAnalyticsClient; erasureDelayMs?: number } = {},
+): ServerAnalytics {
   let lastLoggedAt = 0
   const admin =
     env.POSTHOG_PERSONAL_API_KEY && env.POSTHOG_PROJECT_ID
@@ -55,6 +60,10 @@ export function createAnalytics(env: AppServerEnv, logger: Logger): ServerAnalyt
     appEnv: env.APP_ENV,
     service: 'api',
     admin,
+    // Asked before anything is reported about a person, so "I turned it off" holds on the server too.
+    isOptedOut: accountOptedOut,
+    ...(overrides.client ? { client: overrides.client } : {}),
+    ...(overrides.erasureDelayMs !== undefined ? { erasureDelayMs: overrides.erasureDelayMs } : {}),
     onError: (error) => {
       const now = Date.now()
       if (now - lastLoggedAt < ERROR_LOG_INTERVAL_MS) return
@@ -85,34 +94,26 @@ export function toAnalyticsConfig(env: AppServerEnv): AnalyticsConfigApiResponse
   }
 }
 
-export function accountKind(user: { email: string | null }): AccountKind {
-  return user.email === null ? 'anonymous' : 'email'
-}
-
 /** Tells PostHog what kind of account a person has. Called on every sign-in; it costs one queued message. */
 export function identifyUser(analytics: ServerAnalytics, user: { id: string; email: string | null }): void {
-  analytics.identify(user.id, { account_kind: accountKind(user) })
+  analytics.identify(user.id, { account_kind: accountKindOf(user) })
 }
 
 /**
- * The account id for an email, for the two operations that answer only "done" (confirming an email
- * and resetting a password). Null when analytics are off, so no query runs, and when there is no such
- * account. A failure is swallowed: the person's request has already succeeded.
+ * Whether the account asked for analytics to be off. An account that is gone counts as opted out:
+ * nothing is reported about a person who has just been erased.
  */
-export async function userIdForEmail(analytics: ServerAnalytics, email: string): Promise<string | null> {
-  if (!analytics.enabled) return null
-  try {
-    const found = await usersManager.execute(new GetUserByEmailQuery({ email }))
-    if (found.success) return found.user.id
+async function accountOptedOut(userId: string): Promise<boolean> {
+  const found = await usersManager.execute(new GetUserByIdQuery({ userId }))
+  if (!found.success) {
     switch (found.error) {
-      case GetUserByEmailQueryErrorCode.USER_NOT_FOUND:
-        return null
+      case GetUserByIdQueryErrorCode.USER_NOT_FOUND:
+        return true
       default:
         return assertNever(found.error)
     }
-  } catch {
-    return null
   }
+  return found.user.analyticsOptOut || found.user.isDeleted
 }
 
 /** How a finished dialog went, from the summary the agent produced: the change in self-reported tension. */

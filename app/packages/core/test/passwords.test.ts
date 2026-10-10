@@ -68,7 +68,8 @@ describe('«не помню пароль»', () => {
     const letter = lastEmailTo(user.email)
     expect(letter.subject).toBe('Смена пароля')
 
-    expect(await reset(user.email, codeFromEmail(letter))).toEqual({ success: true })
+    // The result names the account, so a caller that wants to report the event need not look it up.
+    expect(await reset(user.email, codeFromEmail(letter))).toEqual({ success: true, userId: user.id })
     expect((await login(user.email, NEW_PASSWORD)).success).toBe(true)
   })
 
@@ -101,7 +102,7 @@ describe('«не помню пароль»', () => {
       success: false,
       error: ResetPasswordOperationErrorCode.CODE_INVALID,
     })
-    expect(await reset(user.email, second)).toEqual({ success: true })
+    expect(await reset(user.email, second)).toEqual({ success: true, userId: user.id })
   })
 
   it('истёкший код не работает; пять ошибок гасят код', async () => {

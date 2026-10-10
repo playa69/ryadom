@@ -53,6 +53,13 @@ describe('createAnalyticsAdmin', () => {
     })
   })
 
+  it('успех без тела (204) — тоже успех, а не ошибка разбора', async () => {
+    const empty = makeAdmin(() => new Response(null, { status: 204 }))
+    expect(await empty.admin.deletePerson('user-1')).toBe(true)
+    const blank = makeAdmin(() => new Response('  ', { status: 202 }))
+    expect(await blank.admin.deletePerson('user-1')).toBe(true)
+  })
+
   it('ошибки удаления, отказ и сбой сети — false, а не исключение', async () => {
     const withErrors = makeAdmin(
       () => new Response(JSON.stringify({ deletion_errors: [{ distinct_id: 'user-1' }] }), { status: 202 }),

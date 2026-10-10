@@ -176,7 +176,11 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.DialogStarted]: { resumed: boolean; hours_since_last: number | null }
   [AnalyticsEvent.DialogEnded]: {
     via: 'socket' | 'rest'
-    /** Seconds the socket was open; absent when the end came over REST. */
+    /**
+     * The three counters below are of the connection that ended the dialog, not of the whole dialog:
+     * after a planned close (a rollout, a second tab) the client reconnects and they start again.
+     * Absent when the end came over REST.
+     */
     duration_s?: number
     user_messages?: number
     assistant_messages?: number
@@ -239,6 +243,37 @@ export interface AnalyticsTraits {
 
 /** Properties are a closed set of shapes, which is what `sanitizeProperties` enforces at run time. */
 export type PropertyValue = string | number | boolean | null | undefined | readonly (string | number | boolean)[]
+
+/** An anonymous account has no address; the address itself is never reported. */
+export function accountKindOf(user: { email: string | null }): AccountKind {
+  return user.email === null ? 'anonymous' : 'email'
+}
+
+/**
+ * How a form ended, from the HTTP status of the failed request. One mapping for every client, so the
+ * same answer of the server lands in the same bucket on every platform:
+ *
+ * - `rate_limited`: 429;
+ * - `invalid`: 422, the server's own input rule, a message the person can act on;
+ * - `rejected`: the other 4xx, the server saying no (a wrong password, a taken address);
+ * - `error`: no answer at all, a 5xx, and 400, which means our client sent something the server did
+ *   not understand: a bug of ours, never a mistake of the person.
+ */
+export function formOutcomeFromStatus(status: number): FormOutcome {
+  if (status === 429) return 'rate_limited'
+  if (status === 422) return 'invalid'
+  if (status === 400) return 'error'
+  if (status >= 400 && status < 500) return 'rejected'
+  return 'error'
+}
+
+/**
+ * How a form ended when the server answered 200 with a named rule (`{ status: false, errorCode }`):
+ * a refusal, except "too many attempts", which is a limit. Every contract enum spells it the same.
+ */
+export function formOutcomeFromCode(code: string): FormOutcome {
+  return code === 'TOO_MANY_ATTEMPTS' ? 'rate_limited' : 'rejected'
+}
 
 /** A size class for a number of characters: 0-80 short, 81-400 medium, more long. */
 export function sizeClass(chars: number): SizeClass {

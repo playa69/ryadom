@@ -232,9 +232,14 @@ function scrubProperties(properties: Record<string, unknown>): void {
 export function scrubEvent<T extends ScrubbableEvent>(event: T | null): T | null {
   if (!event) return event
   if (event.properties) scrubProperties(event.properties)
-  if (event.$set) event.$set = sanitizeProperties(event.$set)
-  if (event.$set_once) event.$set_once = sanitizeProperties(event.$set_once)
-  if (event.$set) removeClickIdsAndContent(event.$set)
-  if (event.$set_once) removeClickIdsAndContent(event.$set_once)
+  // The person's properties carry the same URL fields as the event (`$initial_current_url`,
+  // `$initial_referrer`, …): a person profile is where a raw address would live the longest. They are
+  // scrubbed BEFORE the generic cleaning, which would cut a long URL at 120 characters mid-query.
+  for (const key of ['$set', '$set_once'] as const) {
+    const person = event[key]
+    if (!person) continue
+    scrubProperties(person)
+    event[key] = sanitizeProperties(person)
+  }
   return event
 }

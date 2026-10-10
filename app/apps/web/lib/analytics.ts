@@ -2,12 +2,12 @@ import { useEffect, useRef } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import {
   AnalyticsEvent,
+  formOutcomeFromCode,
+  formOutcomeFromStatus,
   type AuthForm,
   type FormOutcome,
   type VoiceProblemReason,
 } from '@ryadom/analytics/events'
-import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
-import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import { ApiError } from '@ryadom/client-core/errors'
 import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
 
@@ -17,28 +17,18 @@ import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
  * which form and how it ended, never what was typed.
  */
 
-/** The server named a rule that was broken, and the rule is "too many tries": a limit, not a refusal. */
-const RATE_LIMITED_CODES: ReadonlySet<string> = new Set([
-  ConfirmEmailApiErrorCode.TOO_MANY_ATTEMPTS,
-  ResetPasswordApiErrorCode.TOO_MANY_ATTEMPTS,
-])
-
 /**
- * How a form ended, from the error its request threw. `invalid` is a validation message (400/422),
- * `rejected` is the server saying no (the other 4xx, a wrong password included), `error` is the
- * request not getting a proper answer (no connection, a 5xx, anything unexpected).
+ * How a form ended, from the error its request threw. The mapping of statuses is shared by every
+ * client (`formOutcomeFromStatus`); an error that is not an API answer at all (no connection, a bug)
+ * is an `error`.
  */
 export function formOutcome(error: unknown): FormOutcome {
-  if (!(error instanceof ApiError)) return 'error'
-  if (error.status === 429) return 'rate_limited'
-  if (error.status === 400 || error.status === 422) return 'invalid'
-  if (error.status >= 400 && error.status < 500) return 'rejected'
-  return 'error'
+  return error instanceof ApiError ? formOutcomeFromStatus(error.status) : 'error'
 }
 
 /** How a form ended when the server answered 200 with `{ ok: false, code }`: a refusal, or a limit. */
 export function codeOutcome(code: string): FormOutcome {
-  return RATE_LIMITED_CODES.has(code) ? 'rate_limited' : 'rejected'
+  return formOutcomeFromCode(code)
 }
 
 export function trackForm(form: AuthForm, outcome: FormOutcome): void {

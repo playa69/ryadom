@@ -2,6 +2,8 @@ import { nameInputSchema } from '@ryadom/core/config'
 import {
   GetUserByIdQuery,
   GetUserByIdQueryErrorCode,
+  SetUserAnalyticsOptOutCommand,
+  SetUserAnalyticsOptOutCommandErrorCode,
   UpdateUserNameCommand,
   UpdateUserNameCommandErrorCode,
   UpdateUserVoiceCommand,
@@ -27,11 +29,15 @@ import { toMe } from '../../lib/mappers'
 import { jsonBody } from '../../lib/request'
 import { inputOrNull } from '../../lib/rules'
 
-/** Profile: GET, PATCH (name and/or the agent's voice), DELETE ("erase everything"). */
+/**
+ * Profile: GET, PATCH (name, the agent's voice and/or the person's choice about product analytics),
+ * DELETE ("erase everything").
+ */
 
 const patchBody = z.object({
   name: z.string().optional(),
   voice: z.enum(AGENT_VOICES).optional(),
+  analyticsOptOut: z.boolean().optional(),
 })
 
 /** The profile in contract shape; null means there is no such user. Shared by GET and PATCH. */
@@ -59,14 +65,30 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
   /** The profile can change the name and the agent's voice; the email never changes at all. */
   app.patch(ApiPath.Me, requireAuth(jwt), jsonBody(patchBody), async (c) => {
     const body = c.req.valid('json')
-    if (body.name === undefined && body.voice === undefined) {
-      return apiError(c, 422, 'Nothing to update: send name and/or voice')
+    if (body.name === undefined && body.voice === undefined && body.analyticsOptOut === undefined) {
+      return apiError(c, 422, 'Nothing to update: send name, voice and/or analyticsOptOut')
     }
     // Both are checked before anything is written: a bad name must not leave a half-applied change.
     const name = body.name === undefined ? undefined : inputOrNull(nameInputSchema, body.name)
     if (name === null) return apiError(c, 422, 'Name length is out of range')
 
     const { userId } = authUser(c)
+    // First, so that a "no" said together with other changes already silences their report.
+    if (body.analyticsOptOut !== undefined) {
+      const updated = await usersManager.execute(
+        new SetUserAnalyticsOptOutCommand({ userId, optOut: body.analyticsOptOut }),
+      )
+      if (!updated.success) {
+        switch (updated.error) {
+          case SetUserAnalyticsOptOutCommandErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
+          default:
+            return assertNever(updated.error)
+        }
+      }
+      // The server remembers the answer for a minute; this makes the choice count from the next report.
+      analytics.setOptOut(userId, body.analyticsOptOut)
+    }
     if (name !== undefined) {
       const updated = await usersManager.execute(new UpdateUserNameCommand({ userId, name }))
       if (!updated.success) {
@@ -90,11 +112,12 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
       }
     }
 
-    // Which fields changed, never what they changed to.
+    // Which fields changed, never what they changed to. The analytics choice is not one of them: a
+    // report about turning reports off would be the thing the person just asked not to have.
     const fields: ProfileField[] = []
     if (name !== undefined) fields.push('name')
     if (body.voice !== undefined) fields.push('voice')
-    analytics.capture(userId, AnalyticsEvent.ProfileUpdated, { fields })
+    if (fields.length > 0) analytics.capture(userId, AnalyticsEvent.ProfileUpdated, { fields })
 
     const me = await readMe(userId)
     if (!me) return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')

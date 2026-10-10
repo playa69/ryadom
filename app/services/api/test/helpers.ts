@@ -47,6 +47,9 @@ export function recordingAnalytics(): RecordingAnalytics {
       erased.push(userId)
       return 'erased'
     },
+    // The stand-in records everything it is given; honouring the choice is the real wrapper's job and is
+    // tested against it (analytics.test.ts, "отказ человека от аналитики").
+    setOptOut: () => {},
     capture: (userId, event, ...args) => void events.push({ userId, event, properties: { ...args[0] } }),
     captureAnonymous: (event, ...args) => void events.push({ userId: null, event, properties: { ...args[0] } }),
     identify: (userId, traits) => void identified.push({ userId, traits: { ...traits } }),
@@ -61,6 +64,7 @@ const DISABLED_ANALYTICS: ServerAnalytics = {
   enabled: false,
   canErase: false,
   erasePerson: async () => 'not_configured',
+  setOptOut() {},
   capture() {},
   captureAnonymous() {},
   identify() {},

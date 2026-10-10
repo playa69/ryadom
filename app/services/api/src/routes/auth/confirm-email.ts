@@ -10,7 +10,6 @@ import { z } from 'zod'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import { ApiPath } from '@ryadom/contracts/api/paths'
-import { userIdForEmail } from '../../lib/analytics'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { limitByIp, RATE_LIMITS } from '../../lib/rate-limit'
@@ -51,11 +50,7 @@ export function confirmEmailRoutes(app: Hono<AppEnv>, { rateLimiter, analytics }
             return assertNever(result.error)
         }
       }
-      // The operation answers only "done", so the account is looked up for the report, in the
-      // background: the person's request does not wait for it.
-      void userIdForEmail(analytics, email).then((userId) => {
-        if (userId) analytics.capture(userId, AnalyticsEvent.EmailConfirmed)
-      })
+      analytics.capture(result.userId, AnalyticsEvent.EmailConfirmed)
       return apiOk(c, null)
     },
   )

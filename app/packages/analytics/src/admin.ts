@@ -55,7 +55,11 @@ export function createAnalyticsAdmin(options: AnalyticsAdminOptions): AnalyticsA
           signal: AbortSignal.timeout(timeoutMs),
         })
         if (!response.ok) return false
-        const result = (await response.json()) as { deletion_errors?: unknown[] }
+        // 202 carries a JSON report, but an accepted request with an empty body (204) is as much a
+        // success: only a report that lists errors makes it one.
+        const text = await response.text()
+        if (!text.trim()) return true
+        const result = JSON.parse(text) as { deletion_errors?: unknown[] }
         return !result.deletion_errors || result.deletion_errors.length === 0
       } catch {
         return false

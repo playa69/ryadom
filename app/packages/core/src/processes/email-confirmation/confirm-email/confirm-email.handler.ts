@@ -78,6 +78,6 @@ export class ConfirmEmailOperationHandler implements RequestHandler<ConfirmEmail
       await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
     })
     logger.info('Email confirmed', { userId })
-    return { success: true }
+    return { success: true, userId }
   }
 }

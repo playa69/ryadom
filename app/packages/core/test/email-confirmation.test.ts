@@ -37,7 +37,8 @@ describe('подтверждение почты', () => {
   it('повторное подтверждение тем же кодом — CODE_INVALID', async () => {
     const user = await registerUser()
     const code = codeFromEmail(lastEmailTo(user.email))
-    expect((await confirm(user.email, code)).success).toBe(true)
+    // The result names the account, so a caller that wants to report the event need not look it up.
+    expect(await confirm(user.email, code)).toEqual({ success: true, userId: user.id })
     expect(await confirm(user.email, code)).toEqual({
       success: false,
       error: ConfirmEmailOperationErrorCode.CODE_INVALID,

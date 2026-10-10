@@ -10,7 +10,6 @@ const sdk = vi.hoisted(() => ({ track: vi.fn() }))
 vi.mock('@ryadom/analytics/browser', () => ({ track: sdk.track }))
 
 import {
-  accountKind,
   analyticsPlatform,
   micFailureReason,
   outcomeFromCode,
@@ -36,19 +35,16 @@ describe('платформа аналитики', () => {
   })
 })
 
-describe('вид аккаунта', () => {
-  it('без почты аккаунт анонимный, с почтой обычный', () => {
-    expect(accountKind({ email: null })).toBe('anonymous')
-    expect(accountKind({ email: 'a@example.com' })).toBe('email')
-  })
-})
-
-describe('исход формы по ошибке', () => {
+describe('исход формы по ошибке (общее отображение статусов, как в вебе)', () => {
   it('429 это лимит, 422 это проверка сервера, остальные 4xx это отказ', () => {
     expect(outcomeFromError(new ApiError(429))).toBe('rate_limited')
     expect(outcomeFromError(new ApiError(422))).toBe('invalid')
     expect(outcomeFromError(new ApiError(401))).toBe('rejected')
     expect(outcomeFromError(new ApiError(409, 'TAKEN'))).toBe('rejected')
+  })
+
+  it('400 это наш баг, а не ошибка человека: на всех платформах одинаково', () => {
+    expect(outcomeFromError(new ApiError(400))).toBe('error')
   })
 
   it('нет связи, 5xx и чужие ошибки это error', () => {

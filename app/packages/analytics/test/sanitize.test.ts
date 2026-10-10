@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest'
+import { accountKindOf, formOutcomeFromCode, formOutcomeFromStatus } from '../src/events'
 import { isDeniedKey, normalizePath, sanitizeProperties, sanitizeUrl, scrubEvent } from '../src/sanitize'
+
+describe('исходы форм и вид аккаунта (общие для всех клиентов)', () => {
+  it('статус ответа: лимит, проверка сервера, отказ, ошибка', () => {
+    expect(formOutcomeFromStatus(429)).toBe('rate_limited')
+    expect(formOutcomeFromStatus(422)).toBe('invalid')
+    expect(formOutcomeFromStatus(401)).toBe('rejected')
+    expect(formOutcomeFromStatus(403)).toBe('rejected')
+    expect(formOutcomeFromStatus(409)).toBe('rejected')
+    expect(formOutcomeFromStatus(500)).toBe('error')
+    expect(formOutcomeFromStatus(503)).toBe('error')
+    expect(formOutcomeFromStatus(0)).toBe('error')
+  })
+
+  it('400 это наш баг (клиент прислал непонятное), а не ошибка человека', () => {
+    expect(formOutcomeFromStatus(400)).toBe('error')
+  })
+
+  it('код правила сервера: «слишком много попыток» это лимит, остальное отказ', () => {
+    expect(formOutcomeFromCode('TOO_MANY_ATTEMPTS')).toBe('rate_limited')
+    expect(formOutcomeFromCode('CODE_INVALID')).toBe('rejected')
+    expect(formOutcomeFromCode('A_CODE_FROM_A_NEWER_SERVER')).toBe('rejected')
+  })
+
+  it('аккаунт без почты анонимный', () => {
+    expect(accountKindOf({ email: null })).toBe('anonymous')
+    expect(accountKindOf({ email: 'a@b.co' })).toBe('email')
+  })
+})
 
 describe('sanitizeProperties', () => {
   it('оставляет булевы, числа, короткие строки и массивы из них', () => {
@@ -132,6 +161,37 @@ describe('scrubEvent', () => {
     const scrubbed = scrubEvent(event)!
     expect(scrubbed.properties).toEqual({ utm_source: 'tg', $browser: 'Chrome' })
     expect(scrubbed.$set_once).toEqual({ $initial_utm_source: 'tg' })
+  })
+
+  it('профиль человека ($set, $set_once) очищается так же, как событие: адреса, пути, id', () => {
+    const event = {
+      properties: {},
+      $set_once: {
+        $initial_current_url:
+          'https://example.com/app/dialog/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f?utm_source=tg&secret=abc&fbclid=zzz#frag',
+        $initial_referrer: 'https://www.google.com/search?q=как+справиться',
+        $initial_pathname: '/dialog/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f',
+        $initial_fbclid: 'zzz',
+        $initial_browser: 'Chrome',
+      },
+      $set: {
+        $current_url: 'https://example.com/app/reset-password?token=abc',
+        $pathname: '/journal/123456',
+        account_kind: 'email',
+      },
+    }
+    const scrubbed = scrubEvent(event)!
+    expect(scrubbed.$set_once).toEqual({
+      $initial_current_url: 'https://example.com/app/dialog/:id?utm_source=tg',
+      $initial_referrer: 'https://www.google.com/search',
+      $initial_pathname: '/dialog/:id',
+      $initial_browser: 'Chrome',
+    })
+    expect(scrubbed.$set).toEqual({
+      $current_url: 'https://example.com/app/reset-password',
+      $pathname: '/journal/:id',
+      account_kind: 'email',
+    })
   })
 
   it('$direct остаётся как есть', () => {
