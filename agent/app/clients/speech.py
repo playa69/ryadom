@@ -29,6 +29,11 @@ from app.core.config import SpeechSettings
 
 logger = logging.getLogger("agent.speech")
 
+# Соединения с прокси живут дольше 5 секунд простоя (по умолчанию в httpx): между репликами человека обычно 5-30 с,
+# и каждая реплика начиналась бы с нового TCP+TLS (замер: +0,07-0,2 с на каждый из трёх запросов хода). Прокси
+# держит простаивающее соединение не меньше минуты (проверено), а закрытое им httpx замечает и открывает заново.
+KEEPALIVE_LIMITS = httpx.Limits(keepalive_expiry=60)
+
 Voice = Literal["male", "female"]
 VOICES: tuple[Voice, ...] = ("male", "female")
 
@@ -197,7 +202,7 @@ class SaluteTts:
         self._auth_key = auth_key
         self._scope = scope
         self._voices = voices
-        self._client = client or httpx.AsyncClient(timeout=timeout_seconds, verify=ca_bundle or True)
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds, verify=ca_bundle or True, limits=KEEPALIVE_LIMITS)
         self._token: str | None = None
         self._expires_at = 0.0
         self._lock = asyncio.Lock()
@@ -278,7 +283,7 @@ class QwenTts:
         self._model = model
         self._voices = voices
         self._streaming = streaming
-        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds, limits=KEEPALIVE_LIMITS)
 
     def _request(self, text: str, voice: Voice) -> dict:
         return {

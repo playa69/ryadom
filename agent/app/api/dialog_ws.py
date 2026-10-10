@@ -159,6 +159,8 @@ class DialogSession:
         self._speech_lock = asyncio.Lock()
         self._jobs: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue()
         self._speech_tasks: set[asyncio.Task[None]] = set()
+        # Озвучка, которая идёт или ждёт своей очереди, по сообщению: её можно оборвать, не дожидаясь провайдера.
+        self._speeches: dict[str, asyncio.Task[None]] = {}
         self._cancelled: set[str] = set()
         self._voice_error_sent = False
         self._audio_open = False
@@ -263,7 +265,7 @@ class DialogSession:
             case "tts_cancel":
                 message_id = frame.get("messageId")
                 if isinstance(message_id, str):
-                    self._cancelled.add(message_id)
+                    self._cancel_speech(message_id)
                     VOICE_INTERRUPTIONS_TOTAL.inc()
                     # Перебили посреди реплики (она началась, пока агент думал) — это перебивание той же реплики.
                     if self._audio_open:
@@ -286,6 +288,7 @@ class DialogSession:
         if client_id and client_id in dialog.client_ids:
             await self._send({"type": "ack", "id": client_id, "messageId": dialog.client_ids[client_id]})
             return
+        self._supersede_speech()
         message = self._store.add_message(dialog, "user", text[:MAX_USER_TEXT])
         if client_id:
             dialog.client_ids[client_id] = message.id
@@ -352,6 +355,7 @@ class DialogSession:
             await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
             return
         self._held = None  # ответ на эту реплику отвечает и на оборванную перед ней
+        self._supersede_speech()
         message = self._store.add_message(self._dialog, "user", text[:MAX_USER_TEXT])
         # На голосовую реплику ack не нужен: final-транскрипт несёт id сохранённого сообщения.
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
@@ -560,6 +564,22 @@ class DialogSession:
 
     # ─── озвучка ──────────────────────────────────────────────────────────────
 
+    def _forget_speech(self, message_id: str, task: asyncio.Task[None]) -> None:
+        if self._speeches.get(message_id) is task:  # той же озвучки, а не новой под тем же id
+            del self._speeches[message_id]
+
+    def _cancel_speech(self, message_id: str) -> None:
+        """Озвучку сообщения прекратить сразу: флаг для кадров в пути и отмена задачи, которая могла застрять на провайдере."""
+        self._cancelled.add(message_id)
+        task = self._speeches.get(message_id)
+        if task is not None:
+            task.cancel()
+
+    def _supersede_speech(self) -> None:
+        """Человек сказал новое: недоговорённое агентом больше не нужно. Новая озвучка не ждёт, пока доиграет прошлая."""
+        for message_id in list(self._speeches):
+            self._cancel_speech(message_id)
+
     def _start_speech(self, message_id: str, turn: Turn | None) -> SpeechFeed | None:
         """Озвучка сообщения, которое ещё пишется: куски текста подаются в `SpeechFeed.add`, `close` — конец."""
         tts = self._tts_source()
@@ -568,7 +588,9 @@ class DialogSession:
         feed = SpeechFeed()
         task = asyncio.create_task(self._speak(tts, message_id, feed.chunks, self._dialog.voice, turn))
         self._speech_tasks.add(task)
+        self._speeches[message_id] = task
         task.add_done_callback(self._speech_tasks.discard)
+        task.add_done_callback(lambda done: self._forget_speech(message_id, done))
         return feed
 
     def _speak_in_background(self, message_id: str, text: str) -> None:
