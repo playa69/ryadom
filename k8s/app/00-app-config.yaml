@@ -39,9 +39,9 @@
 # На первом выкате сознательно выключено:
 #   ANONYMOUS_PURGE_DISABLED=true — часовая чистка анонимных аккаунтов шлёт
 #     стирание данных в agent; агента в кластере ещё нет (см. AGENT_API_URL).
-#   EMAIL_TRANSPORT=console — egress из prod разрешён только на :443, а SMTP
-#     (465/587) закрыт NetworkPolicy; письма пишутся в лог и не уходят.
-#     Для реальной почты: SMTP-провайдер + egress-правило + EMAIL_TRANSPORT=smtp.
+#
+# Почта идёт через Yandex Cloud Postbox (EMAIL_TRANSPORT=smtp): egress на :465
+# открыт политикой prod-allow-egress-smtp-postbox, пароль — Secret app-smtp.
 # =============================================================================
 
 ---
@@ -84,17 +84,17 @@ data:
   # Один доверенный прокси перед сервисами (см. шапку)
   TRUSTED_PROXY_HOPS: "1"
   # --- Почта: Yandex Cloud Postbox (см. шапку и README, «Почта: Yandex Cloud Postbox») ---
-  # ПЕРЕКЛЮЧЕНИЕ на реальную почту — три шага, строго по порядку: 1) адрес в Postbox
-  # подтверждён (DKIM = Success), 2) Secret app-smtp создан (SMTP_PASSWORD), 3) тут
-  # раскомментировать SMTP_USER и заменить console на smtp. До этого коды
-  # входа пишутся в лог (console).
-  EMAIL_TRANSPORT: "console"
+  # Адрес в Postbox подтверждён (DKIM = Success), Secret app-smtp (SMTP_PASSWORD)
+  # создан. Откат на лог вместо отправки — вернуть EMAIL_TRANSPORT: "console"
+  # и перезапустить app-api и app-admin (коды входа тогда пишутся в лог).
+  EMAIL_TRANSPORT: "smtp"
   EMAIL_FROM: "Рядом <noreply@xn----htbtgjker8b3a2c.xn--p1ai>"
   SMTP_HOST: "postbox.cloud.yandex.net"
   SMTP_PORT: "465"
   SMTP_SECURE: "true"
-  # SMTP_USER: ""     # идентификатор API-ключа Postbox (несекретный); секретная часть —
-  #                   # SMTP_PASSWORD в Secret app-smtp
+  # идентификатор API-ключа Postbox (несекретный); секретная часть — SMTP_PASSWORD
+  # в Secret app-smtp
+  SMTP_USER: "ajes403uog5d0ah3qfq7"
   # --- Agent (плейсхолдер: сервиса в кластере пока нет) ---
   # api стартует и без него (/api/health проверяет только БД), но диалоги
   # и стирание данных у агента не работают, пока он не появится.
