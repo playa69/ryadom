@@ -32,7 +32,6 @@ const CONFIG: AnalyticsConfigApiResponse = {
     errorTracking: true,
     webVitals: true,
     featureFlags: true,
-    surveys: false,
     autocapture: false,
     heatmaps: false,
   },
@@ -411,7 +410,7 @@ describe('buildSdkConfig: приватность по умолчанию', () =>
 
   it('имена, которые читают старые клиенты, ничего не включают в новом', () => {
     const old = buildSdkConfig(
-      { ...CONFIG, features: { ...CONFIG.features, surveys: false, autocapture: false, heatmaps: false } },
+      { ...CONFIG, features: { ...CONFIG.features, autocapture: false, heatmaps: false } },
       '',
     )
     expect(old.autocapture).toBe(false)

@@ -56,12 +56,11 @@ export interface AnalyticsFeatures {
   featureFlags: boolean
   /**
    * Read by clients shipped before the capabilities above existed (their `autocapture` and `heatmaps`
-   * could not strip element text and page addresses; `surveys` is gone from the product). The server
+   * could not strip element text and page addresses). The server
    * sends `false` always, so a switch flipped in the ConfigMap never turns those on in an old client.
    */
   autocapture: false
   heatmaps: false
-  surveys: false
 }
 
 export interface AnalyticsConfigApiResponse {

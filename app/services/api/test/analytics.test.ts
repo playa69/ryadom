@@ -57,7 +57,6 @@ describe('GET /api/analytics/config', () => {
       errorTracking: true,
       webVitals: true,
       featureFlags: true,
-      surveys: false,
       autocapture: false,
       heatmaps: false,
     })
@@ -84,8 +83,7 @@ describe('GET /api/analytics/config', () => {
       webVitals: false,
       featureFlags: false,
       // The names old clients read stay off whatever the switches say: they cannot strip element text
-      // or page addresses, so a ConfigMap change must never turn those on in them (and surveys are gone).
-      surveys: false,
+      // or page addresses, so a ConfigMap change must never turn those on in them.
       autocapture: false,
       heatmaps: false,
     })
