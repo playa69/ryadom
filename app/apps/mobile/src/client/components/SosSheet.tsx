@@ -1,3 +1,5 @@
+import { trackAnonymous } from '@ryadom/analytics/browser'
+import { AnalyticsEvent, type AnalyticsEventProperties } from '@ryadom/analytics/events'
 import { Button, Icon, Sheet } from 'framework7-react'
 import { useEffect, useState } from 'react'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
@@ -12,9 +14,13 @@ import { HOTLINES, telHref } from '../lib/hotlines'
 
 export const SOS_EVENT = 'ryadom:sos'
 
+export type SosSource = AnalyticsEventProperties[AnalyticsEvent.SosOpened]['source']
+
 export interface SosPayload {
   text?: string | null
   hotlines?: HotlineApiResponse[]
+  /** Where it was opened from, for analytics (counted without the person: see trackAnonymous). */
+  source?: SosSource
 }
 
 /** Open the help sheet from anywhere: the SOS button or a safety frame. */
@@ -31,9 +37,9 @@ export function openSos(payload: SosPayload = {}): void {
  * navbar wins by being outside that context entirely, not by a higher number. On pages with no
  * navbar (Home) the default slot happens to look right, which is why this went unnoticed there.
  */
-export function SosButton({ slot }: { slot?: string }) {
+export function SosButton({ slot, source }: { slot?: string; source: SosSource }) {
   return (
-    <button type="button" className="rd-sos-button" slot={slot} onClick={() => openSos()}>
+    <button type="button" className="rd-sos-button" slot={slot} onClick={() => openSos({ source })}>
       <Icon f7="phone_fill" size={15} />
       SOS
     </button>
@@ -46,8 +52,11 @@ export default function SosSheet() {
 
   useEffect(() => {
     function handler(event: Event) {
-      setPayload((event as CustomEvent<SosPayload>).detail ?? {})
+      const detail = (event as CustomEvent<SosPayload>).detail ?? {}
+      setPayload(detail)
       setOpened(true)
+      // Counted, not attributed: opening this sheet must not become a mark on the account.
+      if (detail.source) trackAnonymous(AnalyticsEvent.SosOpened, { source: detail.source })
     }
     window.addEventListener(SOS_EVENT, handler)
     return () => window.removeEventListener(SOS_EVENT, handler)
@@ -71,7 +80,12 @@ export default function SosSheet() {
             'Позвони по одному из номеров — там ответит человек. Это бесплатно и круглосуточно.'}
         </p>
         {hotlines.map((hotline) => (
-          <a key={hotline.phone} className="rd-hotline" href={telHref(hotline.phone)}>
+          <a
+            key={hotline.phone}
+            className="rd-hotline"
+            href={telHref(hotline.phone)}
+            onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })}
+          >
             <span className="rd-hotline-name">{hotline.name}</span>
             <span className="rd-hotline-phone">{hotline.phone}</span>
           </a>

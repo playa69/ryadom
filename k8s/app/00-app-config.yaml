@@ -6,7 +6,8 @@
 # configMapKeyRef: PUBLIC_WEB_URL и APP_ENV. ПРАВИЛО: здесь — всё статическое и
 # несекретное, в Secret'ах (app-secrets, app-smtp; значения хранятся локально у
 # администратора, в git их нет) — только секреты: DB_PASSWORD, AUTH_SECRET,
-# MOBILE_JWT_SECRET, REDIS_PASSWORD, AGENT_INTERNAL_TOKEN, SMTP_PASSWORD.
+# MOBILE_JWT_SECRET, REDIS_PASSWORD, AGENT_INTERNAL_TOKEN, SMTP_PASSWORD и
+# (необязательный) POSTHOG_PERSONAL_API_KEY.
 # DATABASE_URL в Secret'ах нет: Deployment'ы собирают его из DB_* отсюда и
 # DB_PASSWORD из Secret'а. Список админов — отдельный ConfigMap
 # admin/00-config.yaml, только для админки (API его получать не должен).
@@ -106,3 +107,32 @@ data:
   REDIS_SENTINEL_PORT: "26379"
   REDIS_MASTER_NAME: "mymaster"
   # (REDIS_PASSWORD — из Secret app-secrets, не из ConfigMap)
+  # --- Продуктовая аналитика: PostHog, EU cloud (docs/analytics.md) ---
+  # Токен проекта публичный (он только принимает события), поэтому лежит здесь, а не в Secret.
+  # Пустое значение выключает аналитику целиком: /api/ingest отвечает 404, клиентам сообщается
+  # «не включать». Клиенты ходят не в PostHog, а в /api/ingest этого же api (обратный прокси);
+  # сам api ходит на eu.i.posthog.com и eu-assets.i.posthog.com по :443, egress из prod это разрешает.
+  # Один проект на staging и prod: события различаются свойством app_env.
+  POSTHOG_KEY: "phc_njbSH77BQ5xtbWdJVDSCKMDbKQTUtN4ByWJ8Z6fHyk5m"
+  # Стирание профиля в PostHog при удалении аккаунта («стереть всё» — обещание продукта): нужен
+  # ещё личный ключ POSTHOG_PERSONAL_API_KEY (Secret app-secrets, право person:write только на этот
+  # проект). Пока ключа нет, api стартует и работает, а в журнале стоит предупреждение, что
+  # профили удалённых аккаунтов остаются в PostHog до ручной очистки.
+  POSTHOG_PROJECT_ID: "300786"
+  # Что стирать при удалении аккаунта: профиль и записи экрана стираются всегда. "false" оставляет
+  # события (счётчики и перечисления, без текстов и почты) под id аккаунта, чтобы по истории можно
+  # было считать, сколько людей было (DAU, воронки, удержание). Пока в БД архив удаления связывает
+  # этот id с почтой и именем, такие события псевдонимные, а не анонимные. "true" стирает и события.
+  POSTHOG_ERASE_EVENTS: "false"
+  # Необязательные возможности клиентов (значения по умолчанию; новое значение доходит до уже
+  # открытых клиентов за 5 минут, пересборка не нужна). Запись сессий пишется с маскированием
+  # всего текста и всех полей, но это самый чувствительный переключатель: включать осознанно и
+  # после обновления политики конфиденциальности; в самом PostHog «Record user sessions» тоже
+  # должно быть включено.
+  POSTHOG_SESSION_REPLAY: "false"
+  POSTHOG_SURVEYS: "false"
+  POSTHOG_AUTOCAPTURE: "false"
+  POSTHOG_HEATMAPS: "false"
+  POSTHOG_ERROR_TRACKING: "true"
+  POSTHOG_WEB_VITALS: "true"
+  POSTHOG_FEATURE_FLAGS: "true"

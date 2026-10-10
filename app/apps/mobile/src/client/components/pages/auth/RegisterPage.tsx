@@ -3,6 +3,7 @@ import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
 import { RegisterApiErrorCode } from '@ryadom/contracts/api/auth/register'
 import { InputLimit } from '@ryadom/contracts/api/limits'
+import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, codeText, register } from '../../../lib/api'
 import { nameProblem, passwordProblem } from '../../../lib/validation'
 import ConsentList, { NO_CONSENT, allConsented } from '../../ConsentList'
@@ -32,26 +33,33 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
   const [error, setError] = useState('')
 
   async function handleRegister() {
+    const invalid = (message: string) => {
+      reportForm('register', 'invalid')
+      setError(message)
+    }
     const trimmedEmail = email.trim().toLowerCase()
     const nameError = nameProblem(name)
-    if (nameError) return setError(nameError)
-    if (!trimmedEmail || !password) return setError('Введи почту и пароль')
+    if (nameError) return invalid(nameError)
+    if (!trimmedEmail || !password) return invalid('Введи почту и пароль')
     const problem = passwordProblem(password)
-    if (problem) return setError(problem)
-    if (!allConsented(consent)) return setError('Без всех трёх согласий аккаунт не создать')
+    if (problem) return invalid(problem)
+    if (!allConsented(consent)) return invalid('Без всех трёх согласий аккаунт не создать')
 
     setError('')
     setLoading(true)
     try {
       const result = await register(trimmedEmail, password, name.trim())
       if (!result.ok) {
+        reportForm('register', outcomeFromCode(result.code))
         setError(codeText(REGISTER_ERRORS, result.code, REGISTER_FALLBACK))
         return
       }
+      reportForm('register', 'success')
       // The agreement is recorded once the code is entered and the session starts: only then is there
       // an account to record it for.
       f7router.navigate('/confirm-email/', { props: { email: result.data.email, password, consented: true } })
     } catch (err) {
+      reportForm('register', outcomeFromError(err))
       setError(
         apiErrorText(
           err,

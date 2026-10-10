@@ -128,6 +128,14 @@ spec:
                   name: app-secrets
                   key: AGENT_INTERNAL_TOKEN
                   optional: true
+            # Личный ключ PostHog (право person:write): им api стирает профиль удалённого аккаунта.
+            # Необязателен: без него аналитика работает, но профили удалённых аккаунтов остаются в PostHog
+            - name: POSTHOG_PERSONAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: POSTHOG_PERSONAL_API_KEY
+                  optional: true
             # Пароль SMTP появится, когда будет провайдер почты (app-smtp, опц.); логин — SMTP_USER в app-config
             - name: SMTP_PASSWORD
               valueFrom:

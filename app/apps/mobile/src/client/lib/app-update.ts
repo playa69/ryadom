@@ -3,6 +3,7 @@ import { UpdateAvailability, type AppStatusApiResponse } from '@ryadom/contracts
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { reportAppUpdate } from './analytics'
 import { getVersionInfo } from './device'
 import { getApiBase, getEnvId } from './env'
 import { onNetworkChange } from './native'
@@ -175,8 +176,7 @@ async function doCheck(): Promise<void> {
 
 /**
  * Staying silent is not an option: the breakage would only surface at the moment the kill switch
- * is needed. The app has no analytics, so this goes to the console, which is visible in
- * the device logs and in debugging.
+ * is needed. It goes to the console, which is visible in the device logs and in debugging.
  */
 function reportCheckBroken(reason: 'http' | 'shape', context: Record<string, unknown>): void {
   console.error('app-status check broken', { reason, jsVersion: JS_VERSION, ...context })
@@ -189,6 +189,7 @@ async function handleStatus(status: AppStatusApiResponse): Promise<void> {
 
   // The native build below the minimum comes first: fresh JS will not run on it.
   if (status.runtimeUpdate === UpdateAvailability.Required) {
+    reportAppUpdate('store', 'forced', status.latestVersionCode)
     emit({ kind: 'store-required', ...links })
     return
   }
@@ -227,6 +228,7 @@ async function handleStatus(status: AppStatusApiResponse): Promise<void> {
         // Storage is unavailable, so the banner shows again. That is acceptable.
       }
       if (dismissed !== String(status.latestVersionCode)) {
+        reportAppUpdate('store', 'available', status.latestVersionCode)
         emit({ kind: 'store-banner', ...links, versionCode: status.latestVersionCode })
       }
       return
@@ -244,6 +246,7 @@ export function dismissStoreBanner(versionCode: number): void {
   } catch {
     // see handleStatus
   }
+  reportAppUpdate('store', 'dismissed', versionCode)
   emit({ kind: 'none' })
 }
 
@@ -281,6 +284,7 @@ async function getOrDownload(updater: Updater, status: AppStatusApiResponse) {
 }
 
 async function applyRequired(status: AppStatusApiResponse): Promise<void> {
+  reportAppUpdate('ota', 'forced', status.jsVersion ?? '')
   emit({ kind: 'js-updating' })
   try {
     const { plugin: updater } = await getUpdater()
@@ -301,6 +305,7 @@ async function downloadForNextLaunch(status: AppStatusApiResponse): Promise<void
   } catch {
     // see below
   }
+  reportAppUpdate('ota', 'available', status.jsVersion ?? '')
   try {
     const { plugin: updater } = await getUpdater()
     const bundle = await getOrDownload(updater, status)
@@ -340,10 +345,14 @@ async function detectNativeUpdate(): Promise<void> {
     if (versionCode !== null) {
       const stored = localStorage.getItem(LAST_VERSION_CODE_KEY)
       firstRunAfterNativeUpdate = stored !== null && stored !== String(versionCode)
+      if (firstRunAfterNativeUpdate) reportAppUpdate('store', 'applied', versionCode)
       localStorage.setItem(LAST_VERSION_CODE_KEY, String(versionCode))
     }
     // The next bundle has been applied, so the marker is no longer needed.
-    if (localStorage.getItem(NEXT_BUNDLE_KEY) === JS_VERSION) localStorage.removeItem(NEXT_BUNDLE_KEY)
+    if (localStorage.getItem(NEXT_BUNDLE_KEY) === JS_VERSION) {
+      reportAppUpdate('ota', 'applied', JS_VERSION)
+      localStorage.removeItem(NEXT_BUNDLE_KEY)
+    }
   } catch {
     // Storage is unavailable, so go on without the escalation and the marker.
   }
@@ -355,7 +364,12 @@ async function detectNativeUpdate(): Promise<void> {
  * worker replaces all of that.
  */
 export function initAppUpdates(): () => void {
-  if (isWebBuild()) return initServiceWorker(() => emit({ kind: 'web-update' }))
+  if (isWebBuild()) {
+    return initServiceWorker(() => {
+      reportAppUpdate('service_worker', 'available')
+      emit({ kind: 'web-update' })
+    })
+  }
   if (!isNative()) return () => {}
 
   confirmBundleReady()

@@ -7,6 +7,7 @@ import { initAppUpdates } from '../lib/app-update'
 import { initBackButton, initBackTrap } from '../lib/native'
 import { TAB_IDS } from '../lib/nav'
 import { isWebBuild } from '../lib/platform'
+import { initScreenTracking } from '../lib/screen-tracking'
 import { AuthProvider, useAuth } from '../lib/store'
 import AppUpdateGate from './AppUpdateGate'
 import { BrandMark } from './Brand'
@@ -68,7 +69,7 @@ function SignedInViews() {
         <div slot="before-inner" className="rd-rail-brand" aria-hidden="true">
           <BrandMark size={40} />
         </div>
-        <button slot="after-inner" type="button" className="rd-rail-sos" onClick={() => openSos()}>
+        <button slot="after-inner" type="button" className="rd-rail-sos" onClick={() => openSos({ source: 'menu' })}>
           <Icon f7="phone_fill" size={20} />
           SOS
         </button>
@@ -102,6 +103,7 @@ function Shell() {
   const gate = useConsentGate()
 
   useEffect(() => initAppUpdates(), [])
+  useEffect(() => initScreenTracking(), [])
   useEffect(() => initBackButton(), [])
   useEffect(() => initBackTrap(), [])
 

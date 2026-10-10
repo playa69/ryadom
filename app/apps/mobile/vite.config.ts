@@ -117,6 +117,9 @@ export default defineConfig(({ command, mode }) => {
           injectManifest: {
             // Framework7 CSS is bundled into one large file; otherwise the workbox warning fails the build.
             maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+            // The analytics SDK (~100 kB gzipped) is fetched on demand, and only when the server turned
+            // analytics on. Precaching it would make every install download it for nothing.
+            globIgnores: ['**/assets/posthog-*.js'],
           },
         }),
     ],
@@ -147,6 +150,14 @@ export default defineConfig(({ command, mode }) => {
       target: 'es2020',
       sourcemap: false,
       chunkSizeWarningLimit: 2000,
+      rollupOptions: {
+        output: {
+          // posthog-js is only ever imported dynamically (packages/analytics/src/browser.ts). Giving its
+          // chunk a name of its own keeps it out of the main bundle and lets the service worker skip it
+          // (see `globIgnores` above).
+          manualChunks: (id) => (/posthog-js|@posthog/.test(id.replaceAll('\\', '/')) ? 'posthog' : undefined),
+        },
+      },
     },
   }
 })

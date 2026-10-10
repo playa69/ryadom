@@ -1,5 +1,8 @@
 import type { IncomingMessage } from 'node:http'
+import assertNever from 'assert-never'
 import type { WebSocket } from 'ws'
+import { AnalyticsEvent, type DialogInterruptReason } from '@ryadom/analytics/events'
+import type { ServerAnalytics } from '@ryadom/analytics/server'
 import {
   bindRequestContext,
   createLogger,
@@ -20,6 +23,7 @@ import {
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
+import { tensionOutcome } from '../lib/analytics'
 import type { AppServerEnv } from '../lib/env'
 import { HOTLINES } from '../lib/hotlines'
 import type { Jwt } from '../lib/jwt'
@@ -50,6 +54,33 @@ export interface GatewayDeps {
   env: AppServerEnv
   jwt: Jwt
   sessions: Pick<Sessions, 'isActive'>
+  /** Product analytics: counts and outcomes of a dialog, never what was said. */
+  analytics: ServerAnalytics
+}
+
+/**
+ * Why a connection that did not end its dialog went away, in the catalog's terms. Null for the two
+ * planned closes (a rollout and a second connection of the same person): the client comes back to the
+ * same dialog, so they are not an interruption of the conversation and are not reported.
+ */
+function interruptReason(code: DialogCloseCode, reason: string): DialogInterruptReason | null {
+  switch (code) {
+    case DialogCloseCode.Restarting:
+    case DialogCloseCode.Superseded:
+      return null
+    case DialogCloseCode.Unauthorized:
+      return 'unauthorized'
+    case DialogCloseCode.RateLimited:
+      return 'rate_limited'
+    case DialogCloseCode.AgentUnavailable:
+      return 'agent_unavailable'
+    case DialogCloseCode.Done:
+      if (reason === 'idle') return 'idle'
+      if (reason === 'max duration reached') return 'max_duration'
+      return 'other'
+    default:
+      return assertNever(code)
+  }
 }
 
 interface AgentTextFrame {
@@ -64,6 +95,14 @@ class DialogSession {
   private dialogId: string | null = null
   /** The session of the access token from `hello`; null for a token that carries none. */
   private sessionId: string | null = null
+  // For analytics: how long the dialog ran and how much was said (counts only; the gateway never reads the text).
+  private openedAt = 0
+  private userMessages = 0
+  private assistantMessages = 0
+  private hasTakeaway = false
+  private outcomeReported = false
+  private plannedClose = false
+  private closeReason: DialogInterruptReason | null = null
   private checkingSession = false
   private helloTimer: NodeJS.Timeout
   private heartbeatTimer: NodeJS.Timeout | undefined
@@ -130,6 +169,9 @@ class DialogSession {
   private close(code: DialogCloseCode, reason: string): void {
     if (this.closed) return
     this.closed = true
+    const why = interruptReason(code, reason)
+    this.plannedClose = why === null
+    this.closeReason = why
     try {
       this.socket.close(code, reason)
     } catch {
@@ -143,7 +185,24 @@ class DialogSession {
     this.close(DialogCloseCode.Restarting, 'server is restarting')
   }
 
+  /**
+   * The connection is gone and the dialog was not ended through it: report it, unless it was a planned
+   * close, or nothing was said and the agent was fine (a reconnect that went nowhere is not news).
+   */
+  private reportInterruption(): void {
+    if (this.outcomeReported || this.plannedClose || !this.userId) return
+    this.outcomeReported = true
+    const reason = this.closeReason ?? 'client_closed'
+    if (this.userMessages === 0 && reason !== 'agent_unavailable') return
+    this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogInterrupted, {
+      reason,
+      duration_s: Math.round((Date.now() - this.openedAt) / 1000),
+      user_messages: this.userMessages,
+    })
+  }
+
   private dispose(): void {
+    this.reportInterruption()
     clearTimeout(this.helloTimer)
     clearInterval(this.heartbeatTimer)
     clearInterval(this.sessionTimer)
@@ -223,6 +282,7 @@ class DialogSession {
       case DialogClientFrame.Message:
         return this.onMessage(frame)
       case DialogClientFrame.End:
+        this.hasTakeaway = typeof frame.takeaway === 'string' && frame.takeaway.length > 0
         this.agent?.send({
           type: 'end',
           takeaway: typeof frame.takeaway === 'string' ? frame.takeaway : undefined,
@@ -266,6 +326,7 @@ class DialogSession {
     this.userId = payload.sub
     this.sessionId = payload.sid ?? null
     this.dialogId = dialogId
+    this.openedAt = Date.now()
     // The upgrade carried only what the client could put in headers; now the account is verified.
     updateRequestContext({ userId: this.userId })
 
@@ -309,6 +370,7 @@ class DialogSession {
       })
     }
     this.agent?.send({ type: 'user_message', id: clientId, text })
+    this.userMessages += 1
   }
 
   private startHeartbeat(): void {
@@ -405,6 +467,8 @@ class DialogSession {
       case 'transcript': {
         const text = str('text')
         if (text === null) return
+        // A finished transcript is one spoken turn of the person; partial ones are not counted.
+        if (frame.final === true) this.userMessages += 1
         const messageId = str('messageId')
         return this.toClient({
           type: DialogServerFrame.Transcript,
@@ -428,6 +492,7 @@ class DialogSession {
         const messageId = str('messageId')
         const text = str('text')
         if (!messageId || text === null) return
+        this.assistantMessages += 1
         return this.toClient({
           type: DialogServerFrame.AssistantEnd,
           messageId,
@@ -454,6 +519,8 @@ class DialogSession {
         // ours. The SOS screen must never open empty.
         // The agent raises this frame when help is needed now, so a frame without a level is a crisis.
         const level = frame.level === SafetyLevel.Concern ? SafetyLevel.Concern : SafetyLevel.Crisis
+        // Counted with no person attached: how often the hotlines were shown, not who needed them.
+        this.deps.analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level })
         const hotlines = Array.isArray(frame.hotlines) && frame.hotlines.length > 0
           ? (frame.hotlines as { name: string; phone: string }[])
           : HOTLINES
@@ -463,6 +530,17 @@ class DialogSession {
         // The agent builds the summary itself; its shape is already described by the contract
         // (DialogSummary).
         const summary = (frame.summary ?? null) as DialogSummaryApiResponse | null
+        if (this.userId && !this.outcomeReported) {
+          this.outcomeReported = true
+          this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogEnded, {
+            via: 'socket',
+            duration_s: Math.round((Date.now() - this.openedAt) / 1000),
+            user_messages: this.userMessages,
+            assistant_messages: this.assistantMessages,
+            has_takeaway: this.hasTakeaway,
+            ...tensionOutcome(summary),
+          })
+        }
         this.toClient({ type: DialogServerFrame.Ended, summary })
         return this.close(DialogCloseCode.Done, 'dialog ended')
       }

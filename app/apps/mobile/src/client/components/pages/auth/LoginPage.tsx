@@ -1,6 +1,9 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, Button, Link, List, ListInput, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
+import { outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, login } from '../../../lib/api'
 import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
 import { useAuth } from '../../../lib/store'
@@ -25,6 +28,7 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
 
   async function handleLogin() {
     if (!email.trim() || !password) {
+      reportForm('login', 'invalid')
       setError('Введи почту и пароль')
       return
     }
@@ -33,7 +37,9 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
     try {
       const { user, tokens } = await login(email.trim().toLowerCase(), password)
       await storeLogin(user, tokens)
+      reportForm('login', 'success')
     } catch (err) {
+      reportForm('login', outcomeFromError(err))
       setError(apiErrorText(err, { byStatus: { 401: 'Неверная почта или пароль' } }, 'Не получилось войти'))
     } finally {
       setLoading(false)
@@ -109,14 +115,28 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
         <Button fill large preloader loading={loading} disabled={loading} onClick={() => void handleLogin()}>
           Войти
         </Button>
-        <Button large outline onClick={() => f7router.navigate('/register/')} disabled={loading}>
+        <Button
+          large
+          outline
+          onClick={() => {
+            track(AnalyticsEvent.CtaClicked, { cta: 'register', placement: 'login' })
+            f7router.navigate('/register/')
+          }}
+          disabled={loading}
+        >
           Создать аккаунт
         </Button>
         <div className="rd-links">
           <Link onClick={() => f7router.navigate('/forgot-password/')}>Не помню пароль</Link>
           <Link onClick={showLoginHelp}>Не получается войти?</Link>
           {/* The way to the first screen, for someone who came here by mistake or is new. */}
-          <Link onClick={() => f7router.navigate('/welcome/')} data-testid="start-anonymously">
+          <Link
+            onClick={() => {
+              track(AnalyticsEvent.CtaClicked, { cta: 'start_anonymous', placement: 'login' })
+              f7router.navigate('/welcome/')
+            }}
+            data-testid="start-anonymously"
+          >
             Начать без регистрации
           </Link>
         </div>

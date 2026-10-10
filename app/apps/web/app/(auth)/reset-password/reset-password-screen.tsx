@@ -2,11 +2,13 @@
 
 import { useRouter } from 'next/navigation'
 import { useRef, useState } from 'react'
+import type { FormOutcome } from '@ryadom/analytics/events'
 import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { codeProblem, passwordProblem } from '@ryadom/client-core/validation'
 import { useNotice } from '@/components/Notice'
+import { codeOutcome, formOutcome, trackForm } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { useAuthFlow, useFlowEmail } from '../auth-flow'
 import { CodeField, PasswordField } from '../_components/fields'
@@ -52,7 +54,8 @@ function ResetForm({ email }: { email: string }) {
   const [loading, setLoading] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
 
-  function refuse(text: string, field: string) {
+  function refuse(text: string, field: string, outcome: FormOutcome = 'invalid') {
+    trackForm('reset_password', outcome)
     setProblem({ text, field })
     focusField(formRef.current, field)
   }
@@ -70,10 +73,15 @@ function ResetForm({ email }: { email: string }) {
     try {
       const result = await client.resetPassword(email, code, password)
       if (!result.ok) {
-        refuse(codeText(RESET_ERRORS, result.code, 'Не получилось сменить пароль'), 'code')
+        refuse(
+          codeText(RESET_ERRORS, result.code, 'Не получилось сменить пароль'),
+          'code',
+          codeOutcome(result.code),
+        )
         return
       }
       changed = true
+      trackForm('reset_password', 'success')
       clear()
       // On success the (auth) frame sees the session and moves on to /home.
       await login(email, password)
@@ -84,6 +92,7 @@ function ResetForm({ email }: { email: string }) {
         notify(SIGN_IN_FAILED, 'info')
         router.replace('/login')
       } else {
+        trackForm('reset_password', formOutcome(err))
         setProblem({ text: apiErrorText(err, {}, 'Не получилось сменить пароль') })
       }
     } finally {

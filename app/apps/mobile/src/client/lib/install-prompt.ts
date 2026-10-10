@@ -1,3 +1,5 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { isStandalone, isWebBuild } from './platform'
 
 /**
@@ -82,6 +84,7 @@ export async function triggerInstallPrompt(): Promise<boolean> {
   await prompt.prompt()
   const choice = await prompt.userChoice
   deferredPrompt = null
+  track(AnalyticsEvent.InstallPrompt, { action: choice.outcome })
   notify()
   return choice.outcome === 'accepted'
 }

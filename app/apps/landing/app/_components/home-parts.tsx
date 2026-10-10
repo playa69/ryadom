@@ -3,8 +3,8 @@ import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
 import { Card, CardContent } from '@ryadom/ui/components/card'
 import { cn } from '@ryadom/ui/lib/utils'
-import Link from 'next/link'
 import { FOCUS_RING, LIT_BUTTON } from './chrome'
+import { TrackedLink, TrackedRouteLink } from './tracked'
 
 /** The site's body text. <body> carries none, so each page root and each part with its own text base sets it. */
 export const COPY = 'text-[17px] leading-[1.6] text-pretty min-[1280px]:text-[18px]'
@@ -141,8 +141,8 @@ export function Tag({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** The two lit buttons; the hero and the closing panel repeat them. */
-export function CtaButtons({ appUrl, className }: { appUrl: string; className?: string }) {
+/** The two lit buttons; the hero and the closing panel repeat them. `placement` tells the two apart in analytics. */
+export function CtaButtons({ appUrl, placement, className }: { appUrl: string; placement: string; className?: string }) {
   // On a phone the buttons share the row evenly: a button that shrinks to its text looks accidental
   // next to a full-width one.
   // min-h, not h: at a very large text size the label wraps and the button grows instead of overflowing.
@@ -154,10 +154,14 @@ export function CtaButtons({ appUrl, className }: { appUrl: string; className?: 
   return (
     <div className={cn('mt-6 mb-3 flex flex-wrap gap-3 min-[720.02px]:mt-8 min-[720.02px]:mb-4', className)}>
       <Button asChild className={cn(size, LIT_BUTTON)}>
-        <a href={appUrl}>Открыть приложение</a>
+        <TrackedLink href={appUrl} tracking={{ cta: 'open_web_app', placement }}>
+          Открыть приложение
+        </TrackedLink>
       </Button>
       <Button asChild variant="outline" className={cn(size, outline)}>
-        <Link href="/download">Скачать на телефон</Link>
+        <TrackedRouteLink href="/download" tracking={{ cta: 'download_page', placement }}>
+          Скачать на телефон
+        </TrackedRouteLink>
       </Button>
     </div>
   )

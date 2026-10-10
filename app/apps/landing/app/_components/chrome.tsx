@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
+import { TrackedLink, TrackedRouteLink } from './tracked'
 
 /*
  * Breakpoints sit 0.02px above the old `max-width` limits (720, 880, 400): browser zoom gives
@@ -63,12 +64,14 @@ export function SiteHeader({ appUrl }: { appUrl: string }) {
           <Link className={cn(NAV_LINK, 'hidden min-[720.02px]:inline')} href="/#privacy">
             Приватность
           </Link>
-          <Link className={NAV_LINK} href="/download">
+          <TrackedRouteLink className={NAV_LINK} href="/download" tracking={{ cta: 'download_page', placement: 'nav' }}>
             Скачать
-          </Link>
+          </TrackedRouteLink>
           {/* min-h, not h: the button grows with a larger text size instead of clipping it. */}
           <Button asChild className={cn('h-auto min-h-12 px-6 leading-[1.6]', LIT_BUTTON)}>
-            <a href={appUrl}>Открыть</a>
+            <TrackedLink href={appUrl} tracking={{ cta: 'open_web_app', placement: 'nav' }}>
+              Открыть
+            </TrackedLink>
           </Button>
         </nav>
       </div>
@@ -118,9 +121,9 @@ export function SiteFooter({ supportEmail }: { supportEmail: string }) {
         </nav>
         <nav className="grid content-start gap-2">
           <strong className="font-medium text-foreground">Связь</strong>
-          <a className={FOOTER_LINK} href={`mailto:${supportEmail}`}>
+          <TrackedLink className={FOOTER_LINK} href={`mailto:${supportEmail}`} tracking={{ cta: 'contact_support', placement: 'footer' }}>
             {supportEmail}
-          </a>
+          </TrackedLink>
           <Link className={FOOTER_LINK} href="/download">
             Приложения
           </Link>

@@ -3,11 +3,14 @@
 import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { XIcon } from 'lucide-react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { Alert } from '@ryadom/ui/components/alert'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
 import Modal from '@/components/Modal'
+import { formOutcome, trackForm } from '@/lib/analytics'
 import { useAuth } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
 import { TextField, PasswordField } from '../_components/fields'
@@ -43,6 +46,7 @@ export default function LoginScreen() {
   const [helpOpen, setHelpOpen] = useState(false)
 
   function refuse(text: string, field: string) {
+    trackForm('login', 'invalid')
     setProblem({ text, field })
     focusField(formRef.current, field)
   }
@@ -58,7 +62,9 @@ export default function LoginScreen() {
     try {
       // On success the (auth) frame sees the session and moves on to /home.
       await login(address, password)
+      trackForm('login', 'success')
     } catch (err) {
+      trackForm('login', formOutcome(err))
       setProblem({
         text: apiErrorText(err, { byStatus: { 401: 'Неверная почта или пароль' } }, 'Не получилось войти'),
       })
@@ -127,7 +133,12 @@ export default function LoginScreen() {
           <FormError problem={problem} />
           <SubmitButton loading={loading}>Войти</SubmitButton>
           <Button asChild variant="outline" className={OUTLINE_BUTTON}>
-            <Link href="/register">Создать аккаунт</Link>
+            <Link
+              href="/register"
+              onClick={() => track(AnalyticsEvent.CtaClicked, { cta: 'register', placement: 'login' })}
+            >
+              Создать аккаунт
+            </Link>
           </Button>
         </AuthActions>
 
@@ -148,7 +159,11 @@ export default function LoginScreen() {
           </Button>
           {/* The way to the first screen, for someone who came here by mistake or is new. */}
           <Button asChild variant="link" size="sm" className={LINK_BUTTON}>
-            <Link href="/welcome" data-testid="start-anonymously">
+            <Link
+              href="/welcome"
+              data-testid="start-anonymously"
+              onClick={() => track(AnalyticsEvent.CtaClicked, { cta: 'start_anonymous', placement: 'login' })}
+            >
               Начать без регистрации
             </Link>
           </Button>

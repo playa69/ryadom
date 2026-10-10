@@ -1,5 +1,7 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, BlockTitle, Button, Icon, List, ListItem, Navbar, Page, f7 } from 'framework7-react'
-import { useState, type ChangeEvent } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
 import { apiErrorText, deleteAccount, forgetDevice } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
 
@@ -39,7 +41,10 @@ export default function DeleteAccountPage() {
   const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
 
+  useEffect(() => track(AnalyticsEvent.DeleteAccountStep, { step: 'opened' }), [])
+
   async function runDeletion() {
+    track(AnalyticsEvent.DeleteAccountStep, { step: 'confirmed' })
     setLoading(true)
     try {
       await deleteAccount()
@@ -113,6 +118,7 @@ export default function DeleteAccountPage() {
               'Аккаунт и все разговоры будут удалены навсегда. Отменить это нельзя.',
               'Удалить аккаунт?',
               () => void runDeletion(),
+              () => track(AnalyticsEvent.DeleteAccountStep, { step: 'cancelled' }),
             )
           }
         >

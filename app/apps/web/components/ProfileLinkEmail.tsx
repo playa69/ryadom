@@ -1,6 +1,8 @@
 'use client'
 
 import { useId, useState, type FormEvent } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent, type FormOutcome } from '@ryadom/analytics/events'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import { LinkEmailApiErrorCode } from '@ryadom/contracts/api/auth/link-email'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
@@ -9,6 +11,7 @@ import { codeProblem, passwordProblem } from '@ryadom/client-core/validation'
 import { Field, FieldError } from '@ryadom/ui/components/field'
 import { Input } from '@ryadom/ui/components/input'
 import { Label } from '@ryadom/ui/components/label'
+import { codeOutcome, formOutcome, trackForm } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { useNotice } from './Notice'
 import { Busy, FIELD_FOCUS, ModalActions, ModalText, ProfileButton } from './ProfileParts'
@@ -61,13 +64,19 @@ export default function LinkEmailForm({
   const fieldId = useId()
   const errorId = `${fieldId}-error`
 
+  /** A message the person sees; reported as the outcome of the form it belongs to. */
+  function refuse(form: 'link_email' | 'confirm_email', message: string, outcome: FormOutcome = 'invalid') {
+    trackForm(form, outcome)
+    setError(message)
+  }
+
   async function linkAddress(event: FormEvent) {
     event.preventDefault()
     if (busy) return
     const address = email.trim().toLowerCase()
-    if (!/^\S+@\S+\.\S+$/.test(address)) return setError('Проверь адрес почты')
+    if (!/^\S+@\S+\.\S+$/.test(address)) return refuse('link_email', 'Проверь адрес почты')
     const weak = passwordProblem(password)
-    if (weak) return setError(weak)
+    if (weak) return refuse('link_email', weak)
 
     setError('')
     setTaken(false)
@@ -75,14 +84,20 @@ export default function LinkEmailForm({
     try {
       const outcome = await client.linkEmail(address, password)
       if (!outcome.ok) {
-        setError(codeText(LINK_ERRORS, outcome.code, 'Не получилось привязать почту'))
+        refuse(
+          'link_email',
+          codeText(LINK_ERRORS, outcome.code, 'Не получилось привязать почту'),
+          codeOutcome(outcome.code),
+        )
         setTaken(outcome.code === LinkEmailApiErrorCode.EMAIL_TAKEN)
         return
       }
+      trackForm('link_email', 'success')
       setEmail(outcome.data.email)
       updateUser({ email: outcome.data.email, isEmailConfirmed: false })
       setStep('code')
     } catch (err) {
+      trackForm('link_email', formOutcome(err))
       setError(
         apiErrorText(
           err,
@@ -99,22 +114,28 @@ export default function LinkEmailForm({
     event.preventDefault()
     if (busy) return
     const invalid = codeProblem(code)
-    if (invalid) return setError(invalid)
+    if (invalid) return refuse('confirm_email', invalid)
 
     setError('')
     setBusy(true)
     try {
       const outcome = await client.confirmEmail(email, code)
       if (!outcome.ok) {
-        setError(codeText(CONFIRM_ERRORS, outcome.code, 'Не получилось подтвердить почту'))
+        refuse(
+          'confirm_email',
+          codeText(CONFIRM_ERRORS, outcome.code, 'Не получилось подтвердить почту'),
+          codeOutcome(outcome.code),
+        )
         return
       }
+      trackForm('confirm_email', 'success')
       updateUser({ isEmailConfirmed: true })
       // The account has a password now, and the server forgets the device's key with the confirmation.
       await client.forgetDevice()
       notify('Почта подтверждена: теперь в аккаунт можно войти с другого устройства', 'success')
       onDone()
     } catch (err) {
+      trackForm('confirm_email', formOutcome(err))
       setError(apiErrorText(err, {}, 'Не получилось подтвердить почту'))
     } finally {
       setBusy(false)
@@ -127,6 +148,7 @@ export default function LinkEmailForm({
     setError('')
     try {
       await client.resendConfirmation(email)
+      track(AnalyticsEvent.EmailCodeResent, { form: 'confirm_email' })
       notify('Отправили новый код', 'success')
     } catch (err) {
       notify(apiErrorText(err, {}, 'Не получилось отправить письмо'), 'error')

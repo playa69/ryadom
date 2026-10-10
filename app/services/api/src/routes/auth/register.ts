@@ -7,8 +7,10 @@ import {
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { RegisterApiErrorCode, type RegisterApiResponse } from '@ryadom/contracts/api/auth/register'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { identifyUser } from '../../lib/analytics'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { clientIp, limitByIp, RATE_LIMITS } from '../../lib/rate-limit'
@@ -26,7 +28,7 @@ const bodySchema = z.object({
   name: z.string(),
 })
 
-export function registerRoutes(app: Hono<AppEnv>, { rateLimiter }: RouteDeps): void {
+export function registerRoutes(app: Hono<AppEnv>, { rateLimiter, analytics }: RouteDeps): void {
   app.post(
     ApiPath.Register,
     limitByIp(rateLimiter, 'register', RATE_LIMITS.emailCode.perIp),
@@ -57,6 +59,9 @@ export function registerRoutes(app: Hono<AppEnv>, { rateLimiter }: RouteDeps): v
             return assertNever(result.error)
         }
       }
+
+      identifyUser(analytics, result.user)
+      analytics.capture(result.user.id, AnalyticsEvent.AccountCreated, { kind: 'email' })
 
       const response: RegisterApiResponse = { email, emailConfirmationRequired: true }
       return apiOk(c, response)

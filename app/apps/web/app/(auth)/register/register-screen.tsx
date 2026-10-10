@@ -2,10 +2,12 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import type { FormOutcome } from '@ryadom/analytics/events'
 import { RegisterApiErrorCode } from '@ryadom/contracts/api/auth/register'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { nameProblem, passwordProblem } from '@ryadom/client-core/validation'
+import { codeOutcome, formOutcome, trackForm } from '@/lib/analytics'
 import { useClient } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
 import { ConsentGroup, NO_CONSENT, allConsented, firstMissingConsent } from '../_components/consent-group'
@@ -52,7 +54,8 @@ export default function RegisterScreen() {
   const { clear } = flow
   useEffect(() => clear(), [clear])
 
-  function refuse(text: string, field: string) {
+  function refuse(text: string, field: string, outcome: FormOutcome = 'invalid') {
+    trackForm('register', outcome)
     setProblem({ text, field })
     focusField(formRef.current, field)
   }
@@ -75,14 +78,16 @@ export default function RegisterScreen() {
     try {
       const result = await client.register(address, password, name.trim())
       if (!result.ok) {
-        refuse(codeText(REGISTER_ERRORS, result.code, REGISTER_FALLBACK), 'email')
+        refuse(codeText(REGISTER_ERRORS, result.code, REGISTER_FALLBACK), 'email', codeOutcome(result.code))
         return
       }
+      trackForm('register', 'success')
       // The agreement is recorded once the code is entered and the session starts: only then is there
       // an account to record it for.
       flow.begin('confirm', result.data.email, password, true)
       router.push('/confirm-email')
     } catch (err) {
+      trackForm('register', formOutcome(err))
       setProblem({
         text: apiErrorText(
           err,

@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 
 /** Thin on purpose: what was already loaded stays readable offline, so the notice takes little room. */
 export default function OfflineBar() {
@@ -17,6 +19,11 @@ export default function OfflineBar() {
       window.removeEventListener('offline', sync)
     }
   }, [])
+
+  // Each time the bar appears (it starts hidden, so a page that loads online reports nothing).
+  useEffect(() => {
+    if (!online) track(AnalyticsEvent.OfflineShown)
+  }, [online])
 
   if (online) return null
   return (

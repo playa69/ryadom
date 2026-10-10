@@ -1,9 +1,12 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import { reportMicFailure, reportVoiceProblem } from '../../../lib/analytics'
 import {
   createDialogSocket,
   type DialogSocket,
@@ -68,16 +71,22 @@ const MIC_FAILED_TEXT = 'Не получилось включить микроф
  */
 const REPLY_WAIT_MS = 20_000
 
+/** The speaker would not start (a suspended or refused audio context): the agent cannot be heard. */
+const onPlaybackFailed = (): void => reportVoiceProblem('playback_failed')
+
 export default function DialogPage({
   f7router,
   dialogId,
   greeting,
+  resumed,
   sinceLastDialogHours,
   listen,
 }: {
   f7router: Router.Router
   dialogId: string
   greeting?: string | null
+  /** The server returned a conversation that was already open instead of starting a new one. */
+  resumed?: boolean
   sinceLastDialogHours?: number | null
   /** Opened by the talk button on home: start listening as soon as the connection is up. */
   listen?: boolean
@@ -115,6 +124,8 @@ export default function DialogPage({
   const stopWatching = useRef<(() => void) | null>(null)
   /** The agent is thinking or answering: silence now is not the person being idle. */
   const busy = useRef(false)
+  /** The person's turn is with the agent and no reply has begun: what the server's voice outage is put down to. */
+  const waitingForReply = useRef(false)
   const turnStartedAt = useRef(0)
   const replyWait = useRef(REPLY_WAIT_MS)
   const modeRef = useRef<Mode>(mode)
@@ -124,6 +135,12 @@ export default function DialogPage({
   useEffect(() => {
     modeRef.current = mode
   }, [mode])
+
+  // Once per conversation opened, not per render; `resumed` is what the server said when it started it.
+  useEffect(() => {
+    track(AnalyticsEvent.DialogScreenOpened, { resumed: resumed === true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogId])
 
   const markRecording = useCallback((on: boolean) => {
     recordingRef.current = on
@@ -176,7 +193,7 @@ export default function DialogPage({
     }
     // Home asked for the voice, so the agent's greeting is about to arrive as audio. The tap that led here
     // still counts as the person's gesture on desktop and in WebViews; the player must be awake before the frames.
-    if (listen) void voicePlayer.unlock().catch(() => undefined)
+    if (listen) void voicePlayer.unlock().catch(onPlaybackFailed)
 
     const dialog = createDialogSocket(
       dialogId,
@@ -202,15 +219,23 @@ export default function DialogPage({
         onSpeech: (messageId, phase) =>
           phase === 'start' ? startAgentSpeech(messageId) : replyVoice.agentSpeechEnded(messageId),
         onTranscript: (text, final) => {
+          // A voice turn the agent heard: only how long it was, in three sizes, never what was said.
+          if (final && text.trim()) {
+            track(AnalyticsEvent.DialogMessageSent, { input: 'voice', size: sizeClass(text.length) })
+          }
           setHearing(final ? '' : text)
           // Nothing was heard (a cough, the agent's own echo): no answer is coming, so nothing is awaited.
           if (final && !text) setAwaitingReply(false)
         },
         onAudio: (frame) => voicePlayer.enqueue(frame),
-        onSafety: (_level, text, hotlines) => openSos({ text, hotlines }),
+        onSafety: (_level, text, hotlines) => openSos({ text, hotlines, source: 'safety_frame' }),
         onEnded: (result) => setSummary(result),
         onError: (code, message) => {
           if (code === DialogWsErrorCode.VOICE_UNAVAILABLE) {
+            // The server does not say whether it was recognition or speech: a turn in flight points at recognition.
+            reportVoiceProblem(
+              recordingRef.current || waitingForReply.current ? 'asr_unavailable' : 'tts_unavailable',
+            )
             f7.toast
               .create({ text: 'Голос сейчас недоступен — можно писать текстом', closeTimeout: 3000 })
               .open()
@@ -257,6 +282,7 @@ export default function DialogPage({
 
   useEffect(() => {
     busy.current = awaitingReply || state === 'streaming'
+    waitingForReply.current = awaitingReply
   }, [awaitingReply, state])
 
   // The player's queue is not React state, so the screen asks it a few times a second.
@@ -295,6 +321,7 @@ export default function DialogPage({
         f7.toast.create({ text, closeTimeout: 4000 }).open()
       }
       if (!isCaptureSupported()) {
+        reportVoiceProblem('unsupported')
         if (automatic) fallBack(MIC_UNSUPPORTED_TEXT)
         else f7.dialog.alert(MIC_UNSUPPORTED_TEXT, 'Голос')
         return
@@ -307,7 +334,7 @@ export default function DialogPage({
         socket.current?.interruptSpeech()
         // The player is unlocked by the person's own tap (an iOS requirement). A refusal here only
         // means the agent will not be heard; it must not block the microphone.
-        await player.current?.unlock().catch(() => undefined)
+        await player.current?.unlock().catch(onPlaybackFailed)
         // The worklet is in public/: next to index.html, which under a PWA prefix is not the root.
         const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
           workletUrl: `${import.meta.env.BASE_URL}voice-worklet.js`,
@@ -323,6 +350,7 @@ export default function DialogPage({
         markRecording(true)
         setAwaitingReply(false)
       } catch (error) {
+        void reportMicFailure(error)
         const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
         if (automatic) fallBack(text)
         else f7.dialog.alert(text, 'Голос')
@@ -398,7 +426,7 @@ export default function DialogPage({
       micStarting.current = true
       try {
         if (!automatic) hush()
-        await player.current?.unlock().catch(() => undefined)
+        await player.current?.unlock().catch(onPlaybackFailed)
         const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
           workletUrl: `${import.meta.env.BASE_URL}voice-worklet.js`,
           gated: true,
@@ -420,6 +448,7 @@ export default function DialogPage({
         setMicOpen(true)
         setPaused(null)
       } catch (error) {
+        void reportMicFailure(error)
         const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
         if (automatic) {
           setMode('text')
@@ -471,6 +500,7 @@ export default function DialogPage({
   }
 
   async function showText() {
+    track(AnalyticsEvent.DialogVoiceToggled, { enabled: false })
     hush()
     if (handsFree) await closeMic(null, 'send')
     else await finishUtterance()
@@ -480,6 +510,7 @@ export default function DialogPage({
   }
 
   function showVoice() {
+    track(AnalyticsEvent.DialogVoiceToggled, { enabled: true })
     setMode('voice')
     // Choosing the voice is asking to speak: no second tap.
     modeRef.current = 'voice'
@@ -492,6 +523,8 @@ export default function DialogPage({
   const send = useCallback(() => {
     const text = draft.trim()
     if (!text) return
+    // Only how long it is, in three sizes: the message itself never leaves the conversation.
+    track(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(text.length) })
     socket.current?.sendMessage(text)
     setDraft('')
     setAwaitingReply(true)
@@ -507,6 +540,7 @@ export default function DialogPage({
   }
 
   function openEnd() {
+    track(AnalyticsEvent.DialogEndSheetOpened)
     hush()
     if (handsFree) void closeMic('manual', 'drop')
     else dropListening()
@@ -602,7 +636,7 @@ export default function DialogPage({
           slot="right"
           type="button"
           className="rd-banner-action rd-navbar-sos"
-          onClick={() => openSos()}
+          onClick={() => openSos({ source: 'dialog' })}
         >
           SOS
         </button>
@@ -733,6 +767,12 @@ export default function DialogPage({
         opened={endOpened}
         onClose={() => setEndOpened(false)}
         onSubmit={(takeaway, tension) => {
+          // Neither the takeaway nor the value on the scale is reported, only whether each was given.
+          track(AnalyticsEvent.DialogEndSubmitted, {
+            has_takeaway: takeaway !== null,
+            gave_tension: tension !== null,
+            skipped: takeaway === null && tension === null,
+          })
           socket.current?.end(takeaway, tension)
           // The summary arrives as an `ended` frame. If the agent stays silent or the socket is
           // already closed, we end it ourselves after two seconds: nobody should get stuck here.

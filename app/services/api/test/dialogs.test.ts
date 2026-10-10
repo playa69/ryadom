@@ -23,7 +23,17 @@ import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
 import { createSessions } from '../src/lib/sessions'
 import { parseEnv } from '../src/lib/env'
-import { PASSWORD, call, json, makeApp, mockAgent, ok, refusedWith, signUpAndIn } from './helpers'
+import {
+  PASSWORD,
+  call,
+  json,
+  makeApp,
+  mockAgent,
+  ok,
+  recordingAnalytics,
+  refusedWith,
+  signUpAndIn,
+} from './helpers'
 
 const { app, resetLimits } = makeApp()
 
@@ -242,6 +252,8 @@ async function startGatewayServer(agentUrl: string) {
   const { app: hono, resetLimits: resetGatewayLimits } = makeApp({ env: gatewayEnv })
   const jwt = createJwt(env.MOBILE_JWT_SECRET)
   const sessions = createSessions(jwt)
+  // What the gateway reports to PostHog is read back by the tests below.
+  const analytics = recordingAnalytics()
 
   const server = serve({ fetch: hono.fetch, port: 0, createServer }) as unknown as Server
   const wss = new WebSocketServer({ noServer: true })
@@ -251,7 +263,7 @@ async function startGatewayServer(agentUrl: string) {
       return
     }
     wss.handleUpgrade(request, socket, head, (ws) =>
-      handleDialogSocket(ws as never, { env, jwt, sessions }, request),
+      handleDialogSocket(ws as never, { env, jwt, sessions, analytics }, request),
     )
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 50))
@@ -260,6 +272,7 @@ async function startGatewayServer(agentUrl: string) {
     wsUrl: `ws://127.0.0.1:${port}${ApiPath.DialogsWs}`,
     jwt,
     sessions,
+    analytics,
     /** A real account with a registered session: the gateway asks the registry, so a token minted by hand would be refused. */
     async signIn() {
       resetGatewayLimits()
@@ -393,6 +406,97 @@ describe('WebSocket-шлюз', () => {
     // The SOS screen must not open empty even when the agent supplied no hotlines.
     expect((safety.hotlines as unknown[]).length).toBeGreaterThan(0)
 
+    client.close()
+  })
+
+  it('аналитика: завершённый диалог — счётчики реплик, длительность и перемена напряжения, но не текст', async () => {
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-an-1' }))
+    const agentSide = await agent.waitFor('d-an-1')
+
+    client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'секретная реплика' }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
+    // One spoken turn: only the final transcript counts, the partial one does not.
+    agentSide.socket.send(JSON.stringify({ type: 'transcript', text: 'ну', final: false }))
+    agentSide.socket.send(JSON.stringify({ type: 'transcript', text: 'ну вот', final: true, messageId: 'm-9' }))
+    agentSide.socket.send(JSON.stringify({ type: 'assistant_end', messageId: 'm-2', text: 'секретный ответ' }))
+    client.send(JSON.stringify({ type: DialogClientFrame.End, takeaway: 'секретный вывод', tensionAfter: 3 }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'end' })))
+    agentSide.socket.send(
+      JSON.stringify({
+        type: 'ended',
+        summary: { title: 'секретный заголовок', themes: [], tensionBefore: 7, tensionAfter: 3 },
+      }),
+    )
+    await nextFrame(client, DialogServerFrame.Ended)
+    await new Promise<void>((resolve) => client.once('close', () => resolve()))
+
+    const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toMatchObject({
+      event: 'dialog_ended',
+      properties: {
+        via: 'socket',
+        user_messages: 2,
+        assistant_messages: 1,
+        has_takeaway: true,
+        tension_delta: -4,
+        tension_improved: true,
+      },
+    })
+    expect(typeof mine[0]!.properties.duration_s).toBe('number')
+    expect(JSON.stringify(mine)).not.toMatch(/секретн/)
+  })
+
+  it('аналитика: клиент оборвал связь после реплики — dialog_interrupted, и ровно один раз', async () => {
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-an-2' }))
+    const agentSide = await agent.waitFor('d-an-2')
+    client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'привет' }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
+
+    client.close()
+    await vi.waitFor(() =>
+      expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toHaveLength(1),
+    )
+    // Give a possible duplicate (socket close after dispose) time to show itself.
+    await new Promise<void>((resolve) => setTimeout(resolve, 150))
+    const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toMatchObject({
+      event: 'dialog_interrupted',
+      properties: { reason: 'client_closed', user_messages: 1 },
+    })
+  })
+
+  it('аналитика: подключение без единой реплики ничего не сообщает (переподключения — не новость)', async () => {
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-an-3' }))
+    await agent.waitFor('d-an-3')
+    client.close()
+    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toEqual([])
+  })
+
+  it('аналитика: кризисный сигнал считается без человека', async () => {
+    const before = gateway.analytics.events.length
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-an-4' }))
+    const agentSide = await agent.waitFor('d-an-4')
+
+    agentSide.socket.send(JSON.stringify({ type: 'safety', level: 'crisis', text: 'я рядом' }))
+    await nextFrame(client, DialogServerFrame.Safety)
+
+    const signals = gateway.analytics.events.slice(before).filter((entry) => entry.event === 'safety_signal')
+    expect(signals).toEqual([{ userId: null, event: 'safety_signal', properties: { level: 'crisis' } }])
     client.close()
   })
 

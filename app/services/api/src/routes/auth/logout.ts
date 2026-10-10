@@ -1,5 +1,6 @@
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiOk } from '../../lib/api-response'
 import type { AppEnv, RouteDeps } from '../../lib/context'
@@ -19,7 +20,7 @@ const bodySchema = z.object({
   refreshToken: z.string().min(1),
 })
 
-export function logoutRoutes(app: Hono<AppEnv>, { jwt, sessions, rateLimiter }: RouteDeps): void {
+export function logoutRoutes(app: Hono<AppEnv>, { jwt, sessions, rateLimiter, analytics }: RouteDeps): void {
   app.post(
     ApiPath.Logout,
     limitByIp(rateLimiter, 'logout', RATE_LIMITS.attempt.perIp),
@@ -27,7 +28,10 @@ export function logoutRoutes(app: Hono<AppEnv>, { jwt, sessions, rateLimiter }: 
     async (c) => {
       const { refreshToken } = c.req.valid('json')
       const payload = await jwt.verifyToken(refreshToken, 'refresh')
-      if (payload?.jti) await sessions.end(payload.jti)
+      if (payload?.jti) {
+        await sessions.end(payload.jti)
+        analytics.capture(payload.sub, AnalyticsEvent.LoggedOut, { all_devices: false })
+      }
       return apiOk(c, null)
     },
   )

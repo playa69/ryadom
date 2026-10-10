@@ -442,6 +442,7 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 | [openspec/changes/](openspec/changes/) | Детальные проверяемые требования по capability (`agent-api` и др.) |
 | [agent/README.md](agent/README.md) | Агент: модели, метрики, запуск, проверка |
 | [k8s/README.md](k8s/README.md) | Кластер, доступы, порядок развёртывания |
+| [docs/analytics.md](docs/analytics.md) | Продуктовая аналитика (PostHog): каталог событий, приватность, переключатели, проверка после выката |
 | [docs/custdev/](docs/custdev/) | Кастдев: гайд интервью и выводы по анкетам |
 
 ---

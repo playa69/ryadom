@@ -17,6 +17,7 @@ import { consentsProcess, GetConsentStatusOperation } from '@ryadom/core/process
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent, type ProfileField } from '@ryadom/analytics/events'
 import { AGENT_VOICES, MeApiErrorCode, type MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
@@ -48,7 +49,7 @@ async function readMe(userId: string): Promise<MeApiResponse | null> {
   return toMe(found.user, status)
 }
 
-export function meRoutes(app: Hono<AppEnv>, { jwt, logger }: RouteDeps): void {
+export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDeps): void {
   app.get(ApiPath.Me, requireAuth(jwt), async (c) => {
     const me = await readMe(authUser(c).userId)
     if (!me) return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
@@ -89,6 +90,12 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger }: RouteDeps): void {
       }
     }
 
+    // Which fields changed, never what they changed to.
+    const fields: ProfileField[] = []
+    if (name !== undefined) fields.push('name')
+    if (body.voice !== undefined) fields.push('voice')
+    analytics.capture(userId, AnalyticsEvent.ProfileUpdated, { fields })
+
     const me = await readMe(userId)
     if (!me) return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
     return apiOk(c, me)
@@ -120,6 +127,14 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger }: RouteDeps): void {
       }
     }
     logger.info({ userId }, 'Аккаунт удалён по запросу пользователя')
+    // Counted without the person: someone who has just asked to be erased gets no new record of themselves.
+    analytics.captureAnonymous(AnalyticsEvent.AccountDeleted)
+    // «Erase everything» includes the pseudonymous profile in PostHog. In the background: the account is
+    // already gone, and the answer must not wait for another service. A failure is logged with the id
+    // so the profile can be removed by hand.
+    void analytics.erasePerson(userId).then((outcome) => {
+      if (outcome === 'failed') logger.warn({ userId }, 'Не удалось стереть профиль удалённого аккаунта в PostHog')
+    })
     return apiOk(c, null)
   })
 }

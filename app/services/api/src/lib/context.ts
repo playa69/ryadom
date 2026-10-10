@@ -1,3 +1,4 @@
+import type { ServerAnalytics } from '@ryadom/analytics/server'
 import type { AuthUser } from './auth-guard'
 import type { AppServerEnv } from './env'
 import type { Jwt } from './jwt'
@@ -22,6 +23,8 @@ export interface AppDeps {
   logger: Logger
   policy: PolicySource
   rateLimiter: RateLimiter
+  /** Product analytics. A no-op object when `POSTHOG_KEY` is empty, so callers never check. */
+  analytics: ServerAnalytics
 }
 
 /** Route dependencies: the same plus JWT keyed by `MOBILE_JWT_SECRET` and the sessions built on it. */

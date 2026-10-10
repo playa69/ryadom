@@ -7,6 +7,7 @@ import {
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import {
   AcceptConsentsApiErrorCode,
   type AcceptConsentsApiResponse,
@@ -30,7 +31,7 @@ const bodySchema = z.object({
   offerVersion: z.string(),
 })
 
-export function consentsRoutes(app: Hono<AppEnv>, { jwt }: RouteDeps): void {
+export function consentsRoutes(app: Hono<AppEnv>, { jwt, analytics }: RouteDeps): void {
   app.post(ApiPath.Consents, requireAuth(jwt), jsonBody(bodySchema), async (c) => {
     const body = c.req.valid('json')
     const offerVersion = inputOrNull(consentVersionInputSchema, body.offerVersion)
@@ -57,6 +58,7 @@ export function consentsRoutes(app: Hono<AppEnv>, { jwt }: RouteDeps): void {
           return assertNever(result.error)
       }
     }
+    analytics.capture(authUser(c).userId, AnalyticsEvent.ConsentsAccepted, { policy_version: offerVersion })
     const response: AcceptConsentsApiResponse = {
       consentsCompleted: true,
       acceptedAt: result.acceptedAt.toISOString(),

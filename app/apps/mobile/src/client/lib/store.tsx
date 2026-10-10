@@ -1,6 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { identify, resetIdentity } from '@ryadom/analytics/browser'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AuthTokensApiResponse } from '@ryadom/contracts/api/auth/shared'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
+import { accountKind } from './analytics'
 import { acceptConsents, forgetDevice, setSessionEndHandler } from './api'
 import {
   endSession as clearSession,
@@ -118,6 +120,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     journal.reset()
     setAuth({ ...ANONYMOUS, entry: 'login' })
   }, [])
+
+  // Who the analytics events belong to: set for a sign-in, a restored session and a change of the account's
+  // kind (an address linked); cleared when the session ends, however it ends. The id, never the email.
+  const userId = auth.user?.id ?? null
+  const kind = auth.user ? accountKind(auth.user) : null
+  const identified = useRef(false)
+  useEffect(() => {
+    if (userId && kind) {
+      identify(userId, { account_kind: kind })
+      identified.current = true
+    } else if (identified.current) {
+      identified.current = false
+      resetIdentity()
+    }
+  }, [userId, kind])
 
   // The API layer cannot import the store (that would be a cycle), so it uses this subscription.
   useEffect(() => {

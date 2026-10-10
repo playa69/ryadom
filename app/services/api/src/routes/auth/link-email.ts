@@ -7,6 +7,7 @@ import {
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { LinkEmailApiErrorCode, type LinkEmailApiResponse } from '@ryadom/contracts/api/auth/link-email'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
@@ -26,7 +27,7 @@ const bodySchema = z.object({
   password: z.string().min(1),
 })
 
-export function linkEmailRoutes(app: Hono<AppEnv>, { jwt, rateLimiter }: RouteDeps): void {
+export function linkEmailRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, analytics }: RouteDeps): void {
   app.post(
     ApiPath.LinkEmail,
     requireAuth(jwt),
@@ -63,6 +64,10 @@ export function linkEmailRoutes(app: Hono<AppEnv>, { jwt, rateLimiter }: RouteDe
             return assertNever(result.error)
         }
       }
+
+      const { userId } = authUser(c)
+      analytics.identify(userId, { account_kind: 'email' })
+      analytics.capture(userId, AnalyticsEvent.EmailLinked)
 
       const response: LinkEmailApiResponse = { email: result.email, emailConfirmationRequired: true }
       return apiOk(c, response)

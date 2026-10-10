@@ -1,3 +1,6 @@
+import { setAnalyticsOptOut, track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { useAnalyticsOptOut } from '@ryadom/analytics/react'
 import {
   Block,
   BlockTitle,
@@ -42,6 +45,8 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   const voice: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
   // Hands-free belongs to this device, not the account: it applies from the next conversation.
   const [handsFree, setHandsFree] = useState(() => readHandsFree(HANDS_FREE_KEY))
+  // Reporting of taps and counts is on until the person turns it off; this device only, like hands-free.
+  const analyticsOptedOut = useAnalyticsOptOut()
   // An anonymous account has no address and no password; one that linked an address and has not
   // entered the code yet is waiting for the second step.
   const noEmail = user?.email === null
@@ -238,6 +243,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
               onToggleChange={(on: boolean) => {
                 writeHandsFree(HANDS_FREE_KEY, on)
                 setHandsFree(on)
+                track(AnalyticsEvent.HandsFreeToggled, { enabled: on })
               }}
             />
           </ListItem>
@@ -274,7 +280,16 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
             <Icon slot="media" f7="antenna_radiowaves_left_right" />
           </ListItem>
         )}
+        <ListItem title="Помогать улучшать «Рядом»" data-testid="analytics-toggle">
+          <Toggle slot="after" checked={!analyticsOptedOut} onToggleChange={(on: boolean) => setAnalyticsOptOut(!on)} />
+        </ListItem>
       </List>
+      <Block>
+        <p className="rd-caption">
+          Считаем нажатия и открытые экраны, чтобы понять, что чинить. Того, что ты говоришь и пишешь, там нет —
+          никогда. Только на этом устройстве.
+        </p>
+      </Block>
       </section>
 
       <section className="rd-profile-group">

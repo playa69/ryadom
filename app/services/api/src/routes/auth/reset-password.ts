@@ -7,8 +7,10 @@ import {
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { userIdForEmail } from '../../lib/analytics'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { limitByIp, RATE_LIMITS } from '../../lib/rate-limit'
@@ -25,7 +27,7 @@ const bodySchema = z.object({
   newPassword: z.string().min(1),
 })
 
-export function resetPasswordRoutes(app: Hono<AppEnv>, { rateLimiter }: RouteDeps): void {
+export function resetPasswordRoutes(app: Hono<AppEnv>, { rateLimiter, analytics }: RouteDeps): void {
   app.post(
     ApiPath.ResetPassword,
     limitByIp(rateLimiter, 'reset-password', RATE_LIMITS.attempt.perIp),
@@ -52,6 +54,10 @@ export function resetPasswordRoutes(app: Hono<AppEnv>, { rateLimiter }: RouteDep
             return assertNever(result.error)
         }
       }
+      // The operation answers only "done": the account is looked up for the report, in the background.
+      void userIdForEmail(analytics, email).then((userId) => {
+        if (userId) analytics.capture(userId, AnalyticsEvent.PasswordResetCompleted)
+      })
       return apiOk(c, null)
     },
   )

@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { createApp } from './app'
 import { closeAllDialogSessions, handleDialogSocket } from './dialogs/gateway'
+import { createAnalytics, hasInvalidProjectToken } from './lib/analytics'
 import { purgeInactiveAnonymous } from './lib/anonymous-retention'
 import { shutdownCore } from './lib/core'
 import { EnvValidationError, parseEnv } from './lib/env'
@@ -44,6 +45,21 @@ const env = loadEnvOrExit()
 configureLogger({ redact: LOG_REDACT })
 startTelemetry()
 const logger = createLogger(env.LOG_LEVEL)
+// Product analytics (PostHog). A no-op object without POSTHOG_KEY; its queue is flushed on shutdown.
+const analytics = createAnalytics(env, logger)
+if (hasInvalidProjectToken(env)) {
+  // The value is deliberately not logged: if it is a personal API key, it is a secret.
+  logger.error(
+    'POSTHOG_KEY не похож на токен проекта PostHog (phc_…), аналитика выключена. ' +
+      'Личный ключ (phx_…) задаётся как POSTHOG_PERSONAL_API_KEY и никогда не отдаётся клиентам',
+  )
+}
+if (analytics.enabled && !analytics.canErase) {
+  logger.warn(
+    'Аналитика включена, но стирание профилей в PostHog при удалении аккаунта не настроено ' +
+      '(POSTHOG_PERSONAL_API_KEY и POSTHOG_PROJECT_ID): профили удалённых аккаунтов остаются, пока их не уберут вручную',
+  )
+}
 
 // Native axis from env, JS axis from the bundle baked into this image; fixed for
 // the life of the process, so nothing here needs to be re-read.
@@ -60,7 +76,7 @@ const rateLimiter = redis
         logger.warn({ err: error }, 'Redis недоступен: лимиты считаются в памяти этого пода'),
     })
   : memoryLimiter
-const app = createApp({ env, logger, policy, rateLimiter })
+const app = createApp({ env, logger, policy, rateLimiter, analytics })
 const jwt = createJwt(env.MOBILE_JWT_SECRET)
 
 // Refresh tokens that have long expired are of no use even for spotting a replay. Hourly is plenty:
@@ -97,7 +113,9 @@ server.on('upgrade', (request, socket, head) => {
     socket.destroy()
     return
   }
-  wss.handleUpgrade(request, socket, head, (ws) => handleDialogSocket(ws, { env, jwt, sessions }, request))
+  wss.handleUpgrade(request, socket, head, (ws) =>
+    handleDialogSocket(ws, { env, jwt, sessions, analytics }, request),
+  )
 })
 
 server.on('error', (error: NodeJS.ErrnoException) => {
@@ -115,7 +133,7 @@ const shutdown = createShutdown({
   closeServer: (done) => server.close(done),
   finish: () => {
     // Logging shuts down last so that it still records what happened while the DB pool closed.
-    void Promise.allSettled([shutdownCore(), redis?.quit()])
+    void Promise.allSettled([shutdownCore(), redis?.quit(), analytics.shutdown()])
       .finally(() => shutdownTelemetry())
       .finally(() => process.exit(0))
   },

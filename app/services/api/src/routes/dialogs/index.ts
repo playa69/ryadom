@@ -22,6 +22,8 @@ import {
 } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { tensionOutcome } from '../../lib/analytics'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
@@ -51,7 +53,7 @@ const endBody = z.object({
   tensionAfter: z.coerce.number().int().min(1).max(10).optional(),
 })
 
-export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }: RouteDeps): void {
+export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, analytics }: RouteDeps): void {
   // Starting a conversation is what an ended session must not be able to do on the access token it
   // still holds: it opens a dialog at the agent.
   app.post(
@@ -78,6 +80,11 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }:
         }
       }
       const response: StartDialogApiResponse = result.dialog
+      analytics.capture(userId, AnalyticsEvent.DialogStarted, {
+        resumed: result.dialog.resumed,
+        hours_since_last:
+          result.dialog.sinceLastDialogHours === null ? null : Math.round(result.dialog.sinceLastDialogHours),
+      })
       return apiOk(c, response)
     },
   )
@@ -146,6 +153,11 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }:
       }
     }
     const response: EndDialogApiResponse = { summary: toDialogSummary(result.summary) }
+    analytics.capture(authUser(c).userId, AnalyticsEvent.DialogEnded, {
+      via: 'rest',
+      has_takeaway: body.takeaway !== undefined && body.takeaway !== '',
+      ...tensionOutcome(response.summary),
+    })
     return apiOk(c, response)
   })
 }

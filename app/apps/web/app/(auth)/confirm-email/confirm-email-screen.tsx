@@ -3,12 +3,15 @@
 import { useRouter } from 'next/navigation'
 import { useRef, useState } from 'react'
 import { MailIcon } from 'lucide-react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent, type FormOutcome } from '@ryadom/analytics/events'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { codeProblem } from '@ryadom/client-core/validation'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
 import { useNotice } from '@/components/Notice'
+import { codeOutcome, formOutcome, trackForm } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { useAuthFlow, useFlowEmail } from '../auth-flow'
 import { CodeField } from '../_components/fields'
@@ -58,7 +61,8 @@ function ConfirmForm({ email }: { email: string }) {
   const [problem, setProblem] = useState<Problem | null>(null)
   const cooldown = useCooldown(RESEND_COOLDOWN_SEC)
 
-  function refuse(text: string) {
+  function refuse(text: string, outcome: FormOutcome = 'invalid') {
+    trackForm('confirm_email', outcome)
     setProblem({ text, field: 'code' })
     const input = formRef.current?.elements.namedItem('code')
     if (input instanceof HTMLInputElement) {
@@ -78,9 +82,13 @@ function ConfirmForm({ email }: { email: string }) {
     try {
       const result = await client.confirmEmail(email, value)
       if (!result.ok) {
-        refuse(codeText(CONFIRM_ERRORS, result.code, 'Не получилось подтвердить почту'))
+        refuse(
+          codeText(CONFIRM_ERRORS, result.code, 'Не получилось подтвердить почту'),
+          codeOutcome(result.code),
+        )
         return
       }
+      trackForm('confirm_email', 'success')
       const password = takePassword()
       const consented = takeConsent()
       clear()
@@ -97,6 +105,7 @@ function ConfirmForm({ email }: { email: string }) {
       notify('Почта подтверждена — можно входить', 'success')
       router.replace('/login')
     } catch (err) {
+      trackForm('confirm_email', formOutcome(err))
       setProblem({ text: apiErrorText(err, {}, 'Не получилось подтвердить почту'), field: 'code' })
     } finally {
       setLoading(false)
@@ -112,6 +121,7 @@ function ConfirmForm({ email }: { email: string }) {
     focusField(formRef.current, 'code')
     try {
       await client.resendConfirmation(email)
+      track(AnalyticsEvent.EmailCodeResent, { form: 'confirm_email' })
       notify('Отправили новый код', 'success')
     } catch (err) {
       notify(apiErrorText(err, {}, 'Не получилось отправить письмо'), 'error')

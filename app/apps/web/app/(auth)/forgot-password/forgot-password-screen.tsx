@@ -2,7 +2,10 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { apiErrorText } from '@ryadom/client-core/errors'
+import { formOutcome, trackForm } from '@/lib/analytics'
 import { useClient } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
 import { TextField } from '../_components/fields'
@@ -41,6 +44,7 @@ export default function ForgotPasswordScreen() {
     if (loading) return
     const address = email.trim().toLowerCase()
     if (!address) {
+      trackForm('forgot_password', 'invalid')
       setProblem({ text: 'Напиши почту', field: 'email' })
       focusField(formRef.current, 'email')
       return
@@ -50,9 +54,13 @@ export default function ForgotPasswordScreen() {
     setLoading(true)
     try {
       await client.requestPasswordReset(address)
+      trackForm('forgot_password', 'success')
+      // Coming back from the code screen with the same address is asking for a new code.
+      if (address === previous) track(AnalyticsEvent.EmailCodeResent, { form: 'reset_password' })
       flow.begin('reset', address)
       router.push('/reset-password')
     } catch (err) {
+      trackForm('forgot_password', formOutcome(err))
       setProblem({ text: apiErrorText(err, {}, 'Не получилось отправить код. Попробуй ещё раз') })
     } finally {
       setLoading(false)

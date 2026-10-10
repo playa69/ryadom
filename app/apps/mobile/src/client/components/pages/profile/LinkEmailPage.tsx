@@ -1,9 +1,12 @@
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, Button, Icon, List, ListInput, Navbar, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import { LinkEmailApiErrorCode } from '@ryadom/contracts/api/auth/link-email'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import {
   apiErrorText,
   codeText,
@@ -66,10 +69,14 @@ export default function LinkEmailPage({
   }, [cooldown])
 
   async function handleLink() {
+    const invalid = (message: string) => {
+      reportForm('link_email', 'invalid')
+      setError(message)
+    }
     const address = email.trim().toLowerCase()
-    if (!/^\S+@\S+\.\S+$/.test(address)) return setError('Проверь адрес почты')
+    if (!/^\S+@\S+\.\S+$/.test(address)) return invalid('Проверь адрес почты')
     const weak = passwordProblem(password)
-    if (weak) return setError(weak)
+    if (weak) return invalid(weak)
 
     setError('')
     setTaken(false)
@@ -77,15 +84,18 @@ export default function LinkEmailPage({
     try {
       const outcome = await linkEmail(address, password)
       if (!outcome.ok) {
+        reportForm('link_email', outcomeFromCode(outcome.code))
         setError(codeText(LINK_ERRORS, outcome.code, 'Не получилось привязать почту'))
         setTaken(outcome.code === LinkEmailApiErrorCode.EMAIL_TAKEN)
         return
       }
+      reportForm('link_email', 'success')
       setEmail(outcome.data.email)
       updateUser({ email: outcome.data.email, isEmailConfirmed: false })
       setCooldown(RESEND_COOLDOWN_SEC)
       setStep('code')
     } catch (err) {
+      reportForm('link_email', outcomeFromError(err))
       setError(
         apiErrorText(
           err,
@@ -99,15 +109,22 @@ export default function LinkEmailPage({
   }
 
   async function handleConfirm(value = code) {
-    if (value.length !== 6) return setError('Код — шесть цифр из письма')
+    if (value.length !== 6) {
+      reportForm('confirm_email', 'invalid')
+      return setError('Код — шесть цифр из письма')
+    }
     setError('')
     setLoading(true)
+    let confirmed = false
     try {
       const outcome = await confirmEmail(email, value)
       if (!outcome.ok) {
+        reportForm('confirm_email', outcomeFromCode(outcome.code))
         setError(codeText(CONFIRM_ERRORS, outcome.code, 'Не получилось подтвердить почту'))
         return
       }
+      confirmed = true
+      reportForm('confirm_email', 'success')
       updateUser({ isEmailConfirmed: true })
       // The account has a password now, and the server forgets the phone's key with the confirmation.
       await forgetDevice()
@@ -119,6 +136,8 @@ export default function LinkEmailPage({
         .open()
       f7router.back()
     } catch (err) {
+      // After the code was accepted a failure belongs to what follows, not to this form.
+      if (!confirmed) reportForm('confirm_email', outcomeFromError(err))
       setError(apiErrorText(err, {}, 'Не получилось подтвердить почту'))
     } finally {
       setLoading(false)
@@ -131,6 +150,7 @@ export default function LinkEmailPage({
     setError('')
     try {
       await resendConfirmation(email)
+      track(AnalyticsEvent.EmailCodeResent, { form: 'confirm_email' })
       f7.toast.create({ text: 'Отправили новый код', closeTimeout: 2500 }).open()
     } catch {
       f7.toast.create({ text: 'Не получилось отправить письмо', closeTimeout: 2500 }).open()

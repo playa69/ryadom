@@ -1,5 +1,9 @@
+'use client'
+
 import { Phone } from 'lucide-react'
 import type { ComponentProps } from 'react'
+import { trackAnonymous } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
 import { telHref } from '@ryadom/client-core/hotlines'
 import { Item, ItemActions, ItemContent } from '@ryadom/ui/components/item'
@@ -18,6 +22,7 @@ export default function Hotline({
   hotline,
   showCallIcon = false,
   className,
+  onClick,
   ...props
 }: { hotline: HotlineApiResponse; showCallIcon?: boolean } & Omit<ComponentProps<'a'>, 'href' | 'children'>) {
   return (
@@ -32,7 +37,15 @@ export default function Hotline({
         className,
       )}
     >
-      <a href={telHref(hotline.phone)} {...props}>
+      <a
+        href={telHref(hotline.phone)}
+        {...props}
+        onClick={(event) => {
+          // A count per line (a fixed public list), attached to nobody.
+          trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })
+          onClick?.(event)
+        }}
+      >
         <ItemContent className="gap-0.5">
           <span className="text-[0.9375rem] font-semibold text-foreground">{hotline.name}</span>
           <span className="text-[0.9375rem] font-bold text-sos">{hotline.phone}</span>

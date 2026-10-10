@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useId, useRef, useState, type ComponentProps, type FormEvent } from 'react'
+import type { FormOutcome } from '@ryadom/analytics/events'
 import { ChangePasswordApiErrorCode } from '@ryadom/contracts/api/auth/password'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
@@ -10,6 +11,7 @@ import { Card, CardContent } from '@ryadom/ui/components/card'
 import { Field, FieldDescription, FieldError, FieldGroup } from '@ryadom/ui/components/field'
 import { Label } from '@ryadom/ui/components/label'
 import { PasswordInput } from '@ryadom/ui/components/password-input'
+import { formOutcome, trackForm } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { useNotice } from './Notice'
 import { Page } from './Page'
@@ -46,7 +48,8 @@ export default function ProfileChangePassword() {
     repeatPassword: useRef<HTMLInputElement>(null),
   }
 
-  function fail(message: string, field: FieldName | null) {
+  function fail(message: string, field: FieldName | null, outcome: FormOutcome = 'invalid') {
+    trackForm('change_password', outcome)
     setError(message)
     setInvalidField(field)
     if (field) inputRefs[field].current?.focus()
@@ -78,15 +81,18 @@ export default function ProfileChangePassword() {
         fail(
           codeText(CHANGE_PASSWORD_ERRORS, result.code, FALLBACK),
           result.code === ChangePasswordApiErrorCode.INVALID_CURRENT_PASSWORD ? 'currentPassword' : null,
+          'rejected',
         )
         return
       }
+      trackForm('change_password', 'success')
       notify('Пароль изменён', 'success')
       router.replace('/profile')
     } catch (err) {
       fail(
         apiErrorText(err, { byStatus: { 422: `Пароль — от ${InputLimit.PasswordMin} символов` } }, FALLBACK),
         null,
+        formOutcome(err),
       )
     } finally {
       setLoading(false)

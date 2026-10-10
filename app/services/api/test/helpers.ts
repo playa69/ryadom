@@ -1,5 +1,6 @@
 import { expect, vi } from 'vitest'
 import type { Hono } from 'hono'
+import type { ServerAnalytics } from '@ryadom/analytics/server'
 import { getSentEmails } from '@ryadom/core/services/email-sender-service'
 import { createApp } from '../src/app'
 import type { AppEnv } from '../src/lib/context'
@@ -17,6 +18,57 @@ export function staticPolicy(policy: ReleasePolicy = EMPTY_POLICY): PolicySource
   return { get: () => policy }
 }
 
+/** One report the server made to PostHog. `userId` is null for an anonymous one. */
+export interface RecordedEvent {
+  userId: string | null
+  event: string
+  properties: Record<string, unknown>
+}
+
+/** A stand-in for product analytics that remembers what was reported instead of sending it. */
+export interface RecordingAnalytics extends ServerAnalytics {
+  events: RecordedEvent[]
+  identified: { userId: string; traits: Record<string, unknown> }[]
+  /** Accounts the server asked PostHog to erase. */
+  erased: string[]
+}
+
+export function recordingAnalytics(): RecordingAnalytics {
+  const events: RecordedEvent[] = []
+  const identified: RecordingAnalytics['identified'] = []
+  const erased: string[] = []
+  return {
+    enabled: true,
+    canErase: true,
+    events,
+    identified,
+    erased,
+    erasePerson: async (userId) => {
+      erased.push(userId)
+      return 'erased'
+    },
+    capture: (userId, event, ...args) => void events.push({ userId, event, properties: { ...args[0] } }),
+    captureAnonymous: (event, ...args) => void events.push({ userId: null, event, properties: { ...args[0] } }),
+    identify: (userId, traits) => void identified.push({ userId, traits: { ...traits } }),
+    isFeatureEnabled: async () => false,
+    captureException: () => {},
+    shutdown: async () => {},
+  }
+}
+
+/** What the app does when no PostHog key is configured: every call is a no-op. */
+const DISABLED_ANALYTICS: ServerAnalytics = {
+  enabled: false,
+  canErase: false,
+  erasePerson: async () => 'not_configured',
+  capture() {},
+  captureAnonymous() {},
+  identify() {},
+  isFeatureEnabled: async () => false,
+  captureException() {},
+  shutdown: async () => {},
+}
+
 export interface TestApp {
   app: Hono<AppEnv>
   /** Reset the rate limit counters between assertions within one test. */
@@ -29,6 +81,7 @@ export function makeApp(
     policy?: ReleasePolicy
     env?: Record<string, string>
     logger?: Logger
+    analytics?: ServerAnalytics
   } = {},
 ): TestApp {
   const rateLimiter = createRateLimiter()
@@ -37,6 +90,7 @@ export function makeApp(
     logger: options.logger ?? createLogger('silent'),
     policy: staticPolicy(options.policy),
     rateLimiter,
+    analytics: options.analytics ?? DISABLED_ANALYTICS,
   })
   return { app, resetLimits: () => rateLimiter.reset() }
 }
