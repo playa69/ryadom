@@ -223,8 +223,7 @@ function removeClickIdsAndContent(properties: Record<string, unknown>): void {
   }
   for (const key of CONTENT_PROPERTIES) delete properties[key]
   for (const key of Object.keys(properties)) {
-    if (key.startsWith('data-ph-capture-attribute-')) delete properties[key]
-    else if (CAMPAIGN_PROPERTY.test(key) && !(typeof properties[key] === 'string' && CAMPAIGN_VALUE.test(properties[key]))) {
+    if (CAMPAIGN_PROPERTY.test(key) && !(typeof properties[key] === 'string' && CAMPAIGN_VALUE.test(properties[key]))) {
       delete properties[key]
     }
   }
@@ -430,8 +429,10 @@ const QUOTED_IN_TEXT = /(["'`])(?:(?!\1)[\s\S])*\1/g
  * a person wrote. What stays is the kind of mistake: quoted pieces are emptied, addresses and mail
  * addresses replaced, the rest cut short.
  */
-function scrubErrorText(text: string): string {
+export function scrubErrorText(text: string): string {
+  // Cut first: the expressions below are quadratic on a long text, and what is cut is not sent anyway.
   return text
+    .slice(0, MAX_ERROR_TEXT * 8)
     .replace(URL_IN_TEXT, '<url>')
     .replace(EMAIL_IN_TEXT, '<email>')
     .replace(QUOTED_IN_TEXT, (_, quote: string) => `${quote}…${quote}`)
@@ -515,12 +516,23 @@ function scrubProperties(properties: Record<string, unknown>): void {
 }
 
 /**
+ * Screens whose very visit is about a person's hard moment: the list of hotlines (`/people`, under the
+ * base path of any client). A visit to one is not reported at all (not the page view, not how long it was
+ * open, not an error on it): a tap on a line is counted without a person by `trackAnonymous`, and the visit
+ * would count the same thing again under the account id.
+ */
+const CRISIS_ROUTE = /(?:^|\/)people\/?$/
+
+/**
  * For the SDK's `before_send` hook: fixes the URL fields of an event and clears the person
  * properties. Returns the same object, changed in place, because the hook expects the event back.
  */
 export function scrubEvent<T extends ScrubbableEvent>(event: T | null): T | null {
   if (!event) return event
   if (event.properties) scrubProperties(event.properties)
+  // Not reported at all: see CRISIS_ROUTE.
+  const path = event.properties?.$pathname
+  if (typeof path === 'string' && CRISIS_ROUTE.test(path)) return null
   // The person's properties carry the same URL fields as the event (`$initial_current_url`,
   // `$initial_referrer`, …): a person profile is where a raw address would live the longest. They are
   // scrubbed BEFORE the generic cleaning, which would cut a long URL at 120 characters mid-query.

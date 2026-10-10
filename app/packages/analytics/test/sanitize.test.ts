@@ -469,6 +469,20 @@ describe('sanitizeProperties на длинной строке', () => {
   })
 })
 
+describe('экран линий помощи', () => {
+  it('визит на «Люди рядом» не отправляется вовсе, под любым базовым путём', () => {
+    for (const pathname of ['/app/people', '/pwa/people/', '/people']) {
+      expect(scrubEvent({ properties: { $pathname: pathname, $current_url: `https://example.com${pathname}` } })).toBeNull()
+    }
+  })
+
+  it('другие экраны и похожие имена не затронуты', () => {
+    for (const pathname of ['/app/home', '/app/people-search', '/app/peoples', '/app/journal/people-x']) {
+      expect(scrubEvent({ properties: { $pathname: pathname } })).not.toBeNull()
+    }
+  })
+})
+
 describe('roundedToHour', () => {
   it('начало часа, минуты и секунды обнуляются', () => {
     expect(roundedToHour(new Date('2026-10-10T14:37:23.456Z')).toISOString()).toBe('2026-10-10T14:00:00.000Z')

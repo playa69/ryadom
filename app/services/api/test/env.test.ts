@@ -17,7 +17,7 @@ describe('настройка PostHog', () => {
     expect(env.POSTHOG_HOST).toBe('https://eu.i.posthog.com')
     expect(env.POSTHOG_ASSETS_HOST).toBe('https://eu-assets.i.posthog.com')
     expect(env.POSTHOG_UI_HOST).toBe('https://eu.posthog.com')
-    expect([env.POSTHOG_SESSION_REPLAY, env.POSTHOG_AUTOCAPTURE, env.POSTHOG_HEATMAPS]).toEqual([false, false, false])
+    expect([env.POSTHOG_SESSION_REPLAY, env.POSTHOG_CLICK_CAPTURE, env.POSTHOG_HEATMAP_CAPTURE]).toEqual([false, false, false])
   })
 
   it('стирание профилей нужно и ключу, и id проекта; если нет одного из них, под всё равно стартует', () => {

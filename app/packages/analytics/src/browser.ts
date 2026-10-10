@@ -79,7 +79,15 @@ export function setAnalyticsOptOut(optOut: boolean): void {
   } catch {
     // Storage may be blocked; the SDK's own flag below still applies for this session.
   }
-  whenReady((posthog) => (optOut ? posthog.opt_out_capturing() : posthog.opt_in_capturing()))
+  whenReady((posthog) => {
+    if (optOut) {
+      posthog.opt_out_capturing()
+      // The request for flags goes on after an opt-out unless it is switched off too.
+      posthog.set_config({ advanced_disable_flags: true })
+    } else {
+      posthog.opt_in_capturing()
+    }
+  })
   notify(optOutListeners)
 }
 
@@ -167,6 +175,12 @@ export const NEVER_CAPTURE = [
   '.popup',
   '.popover',
   '.actions-modal',
+  // The dimmed area behind a sheet or a dialog: a tap beside the SOS sheet is still a tap in the SOS sheet.
+  '.sheet-backdrop',
+  '.popup-backdrop',
+  '.actions-backdrop',
+  '.dialog-backdrop',
+  '.popover-backdrop',
 ]
 
 /**
@@ -257,9 +271,12 @@ export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: stri
       blockSelector: '[data-ph-block]',
       recordCrossOriginIframes: false,
     },
-    // Legal risk, LOW-MEDIUM: every launch sends the recipient the account id and `account_kind`, a transfer
-    // even without events. Not requested after the person opts out.
-    advanced_disable_flags: !features.featureFlags,
+    // Legal risk, MEDIUM: the request for flags goes around `before_send` and carries the stored initial
+    // properties of the person (full entry address with its query, referrer, account id, device id, time zone).
+    // Off in the ConfigMap; flags may be switched on only once the body of that request is scrubbed in the proxy.
+    // Also off for a person who opted out or sends "do not track": the request for flags carries the account id,
+    // the device id and the time zone, and the SDK does not hold it back for those (found by the review).
+    advanced_disable_flags: !features.featureFlags || readStoredOptOut() || doNotTrackEnabled(),
     // Nothing the product does not use is loaded. Surveys are not used: a pop-up with a question in
     // the middle of someone's bad day is not something this product does.
     disable_surveys: true,

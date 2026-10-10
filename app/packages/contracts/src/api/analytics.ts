@@ -50,8 +50,9 @@ export interface AnalyticsFeatures {
   webVitals: boolean
   /**
    * Feature flags evaluated for the person.
-   * Legal risk (Russia), LOW-MEDIUM: every launch sends the recipient the account id and `account_kind`,
-   * a transfer even without events; not requested after the person opts out.
+   * Legal risk (Russia), MEDIUM: the request for flags goes around the scrubbing of events and carries the
+   * stored initial properties of the person (full entry address with its query, referrer, account id, device
+   * id, time zone). Off in the ConfigMap; not sent after an opt-out or with "do not track".
    */
   featureFlags: boolean
   /**

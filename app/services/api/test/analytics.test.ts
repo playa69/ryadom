@@ -67,8 +67,8 @@ describe('GET /api/analytics/config', () => {
       env: {
         ...POSTHOG,
         POSTHOG_SESSION_REPLAY: 'true',
-        POSTHOG_AUTOCAPTURE: 'on',
-        POSTHOG_HEATMAPS: 'yes',
+        POSTHOG_CLICK_CAPTURE: 'on',
+        POSTHOG_HEATMAP_CAPTURE: 'yes',
         POSTHOG_ERROR_TRACKING: 'false',
         POSTHOG_WEB_VITALS: '0',
         POSTHOG_FEATURE_FLAGS: 'no',

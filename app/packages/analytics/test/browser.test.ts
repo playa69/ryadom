@@ -51,6 +51,7 @@ function fakePostHog() {
     captureException: vi.fn(),
     opt_out_capturing: vi.fn(),
     opt_in_capturing: vi.fn(),
+    set_config: vi.fn(),
     onFeatureFlags: vi.fn(),
     getFeatureFlag: vi.fn(() => 'variant' as string | boolean | undefined),
     isFeatureEnabled: vi.fn(() => true as boolean | undefined),
@@ -409,12 +410,31 @@ describe('buildSdkConfig: приватность по умолчанию', () =>
   })
 
   it('имена, которые читают старые клиенты, ничего не включают в новом', () => {
-    const old = buildSdkConfig(
-      { ...CONFIG, features: { ...CONFIG.features, autocapture: false, heatmaps: false } },
-      '',
-    )
+    // The old names are TRUE here, so that the test can fail: nothing may switch on because of them.
+    const old = buildSdkConfig({ ...CONFIG, features: { ...CONFIG.features, autocapture: true, heatmaps: true } as never }, '')
     expect(old.autocapture).toBe(false)
     expect(old.capture_heatmaps).toBe(false)
+  })
+
+  it('флаги не запрашиваются у отказавшегося и при Do Not Track: запрос несёт id аккаунта, устройство и пояс', () => {
+    const flagsOn = { ...CONFIG, features: { ...CONFIG.features, featureFlags: true } }
+    // An earlier test leaves "do not track" stubbed on `navigator`: start from a browser that does not send it.
+    vi.stubGlobal('navigator', {})
+    expect(buildSdkConfig(flagsOn, '').advanced_disable_flags).toBe(false)
+    localStorage.setItem('ryadom.analytics.optout', '1')
+    expect(buildSdkConfig(flagsOn, '').advanced_disable_flags).toBe(true)
+    localStorage.removeItem('ryadom.analytics.optout')
+    vi.stubGlobal('navigator', { doNotTrack: '1' })
+    expect(buildSdkConfig(flagsOn, '').advanced_disable_flags).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('отказ посреди сессии сразу выключает и запрос флагов', async () => {
+    const { posthog, started } = start({ ...CONFIG, features: { ...CONFIG.features, featureFlags: true } })
+    await started
+    setAnalyticsOptOut(true)
+    expect(posthog.opt_out_capturing).toHaveBeenCalled()
+    expect(posthog.set_config).toHaveBeenCalledWith({ advanced_disable_flags: true })
   })
 
   it('ответ старого API без новых полей не отдаёт решение настройкам проекта PostHog: всё выключено', () => {

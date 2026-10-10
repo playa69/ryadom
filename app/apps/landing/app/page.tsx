@@ -225,7 +225,7 @@ export default async function LandingPage() {
                 variant="outline"
                 className={cn(
                   COPY,
-                  'glass-2 relative min-h-0 flex-col flex-nowrap items-start gap-y-1 overflow-hidden rounded-lg px-[18px] py-3.5 [box-shadow:var(--ryadom-highlight),var(--ryadom-shadow-1)] min-[720.02px]:px-[22px] min-[720.02px]:py-4',
+                  'ph-no-capture glass-2 relative min-h-0 flex-col flex-nowrap items-start gap-y-1 overflow-hidden rounded-lg px-[18px] py-3.5 [box-shadow:var(--ryadom-highlight),var(--ryadom-shadow-1)] min-[720.02px]:px-[22px] min-[720.02px]:py-4',
                   'min-[720.02px]:max-[1024px]:grid min-[720.02px]:max-[1024px]:grid-cols-[13.5rem_1fr] min-[720.02px]:max-[1024px]:items-center min-[720.02px]:max-[1024px]:gap-x-6',
                 )}
               >
@@ -265,7 +265,7 @@ export default async function LandingPage() {
               Ни имени, ни телефона, ни входа через соцсети. Имя можно выдумать.
             </CheckItem>
             <CheckItem lead="Данные в России.">
-              Серверы и база — в РФ, обработка по 152-ФЗ.
+              Аккаунт и разговоры хранятся на серверах в РФ, обработка по 152-ФЗ.
             </CheckItem>
             <CheckItem lead="«Стереть всё» одной кнопкой.">
               Удаление аккаунта убирает и разговоры.

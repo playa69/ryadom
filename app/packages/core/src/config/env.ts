@@ -230,7 +230,7 @@ const appShape = {
    * conversation and profile screens data about the person (art. 10). SOS, hotlines and screens with
    * content carry `ph-no-capture`; so must every new crisis-path button.
    */
-  POSTHOG_AUTOCAPTURE: booleanFlag.transform((value) => value ?? false),
+  POSTHOG_CLICK_CAPTURE: booleanFlag.transform((value) => value ?? false),
   /**
    * Heatmaps (where people tap): coordinates and the route, no text. OFF, and meant to stay off for now.
    * RISK, MEDIUM until reworked: the SDK takes clicks and mouse moves at the `document` in the capture
@@ -239,7 +239,7 @@ const appShape = {
    * on only after the client cuts the points inside `ph-no-capture` (docs/analytics.md, "Тепловые карты").
    * The event also takes the same cross-border path as every other.
    */
-  POSTHOG_HEATMAPS: booleanFlag.transform((value) => value ?? false),
+  POSTHOG_HEATMAP_CAPTURE: booleanFlag.transform((value) => value ?? false),
   /**
    * Unhandled errors of the clients, reported as exceptions.
    * RISK, LOW-MEDIUM: an error's text and stack could hold page data (a name, a piece of typed text in an
@@ -257,8 +257,11 @@ const appShape = {
   POSTHOG_WEB_VITALS: booleanFlag.transform((value) => value ?? true),
   /**
    * Feature flags for the clients (and `analytics.isFeatureEnabled` on the server).
-   * RISK, LOW-MEDIUM: every launch sends the recipient the account id and `account_kind`, a transfer even
-   * without events. Not requested after the person opts out.
+   * OFF in the ConfigMap (there are no flags in the product). RISK, MEDIUM: the request for flags goes around
+   * the scrubbing of events and carries the stored initial properties of the person: the full entry address
+   * with its query (utm, click ids, anything), the referrer, the account id, the device id and the time zone.
+   * A transfer even without events. The client does not send it after an opt-out or with "do not track", but
+   * flags may be switched on only once the body of that request is scrubbed in the ingest proxy.
    */
   POSTHOG_FEATURE_FLAGS: booleanFlag.transform((value) => value ?? true),
 }

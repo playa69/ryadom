@@ -2,7 +2,21 @@ import { randomUUID } from 'node:crypto'
 import { PostHog } from 'posthog-node'
 import type { AnalyticsAdmin } from './admin'
 import { AnalyticsEvent, type AnalyticsEventArgs, type AnalyticsTraits } from './events'
-import { roundedToHour, sanitizeProperties } from './sanitize'
+import { roundedToHour, sanitizeProperties, scrubErrorText } from './sanitize'
+
+/**
+ * The error as it is reported: the same name, the text made impersonal (what is quoted, addresses and mail
+ * addresses replaced, short), and the frames as they are. An error of the server can carry a piece of what a
+ * person sent (a bad JSON body is quoted by the parser), and the report must not.
+ */
+function impersonalError(error: unknown): Error {
+  const source = error instanceof Error ? error : new Error(String(error))
+  const safe = new Error(scrubErrorText(source.message))
+  safe.name = source.name.replace(/[^A-Za-z0-9_.$ -]/g, '').slice(0, 80) || 'Error'
+  const frames = (source.stack ?? '').split('\n').filter((line) => /^\s+at /.test(line))
+  safe.stack = [`${safe.name}: ${safe.message}`, ...frames].join('\n')
+  return safe
+}
 
 /**
  * Server-side analytics (services/api). The facts that change state are reported from here, because
@@ -262,7 +276,7 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
       }
     },
     captureException(error, userId, context) {
-      const send = () => client.captureException(error, userId, { ...sanitizeProperties(context), ...common })
+      const send = () => client.captureException(impersonalError(error), userId, { ...sanitizeProperties(context), ...common })
       if (userId === undefined) safely(send)
       else forPerson(userId, send)
     },
