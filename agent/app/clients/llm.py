@@ -14,7 +14,7 @@ from typing import Protocol
 
 import httpx
 
-from app.clients.speech import pcm_to_wav
+from app.clients.speech import KEEPALIVE_LIMITS, pcm_to_wav
 from app.core.config import LlmSettings
 
 logger = logging.getLogger("agent.llm")
@@ -78,7 +78,7 @@ class ProxyChat:
         self._model = model
         self._max_tokens = max_tokens
         self._temperature = temperature
-        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds, limits=KEEPALIVE_LIMITS)
 
     async def complete(self, messages: list[ChatMessage]) -> str:
         started = time.perf_counter()
@@ -185,7 +185,7 @@ class ProxyWhisper:
         self._url = f"{base_url.rstrip('/')}/audio/transcriptions"
         self._api_key = api_key
         self._model = model
-        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds, limits=KEEPALIVE_LIMITS)
 
     async def transcribe(self, pcm: bytes) -> str:
         started = time.perf_counter()

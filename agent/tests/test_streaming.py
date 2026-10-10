@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import struct
 import time
 
@@ -557,3 +558,85 @@ def test_a_provider_that_dies_mid_sentence_reports_one_error_and_still_closes_th
 
     assert has(frames, "error", code="VOICE_UNAVAILABLE") and types(frames).count("error") == 1
     assert len([f for k, f in frames if k == "bin"]) >= 1  # начало успели услышать
+
+
+# ─── Скорость: новая реплика обрывает старую озвучку, соединения живут дольше ──
+
+
+class TwoReplies(FakeChat):
+    """Чат, который отвечает по очереди заранее заданными ответами."""
+
+    def __init__(self, *replies: str) -> None:
+        super().__init__()
+        self.replies = list(replies)
+
+    async def stream(self, messages):
+        self.calls.append(messages)
+        for piece in re.findall(r"\S+\s*", self.replies.pop(0)):
+            yield piece
+
+
+class StuckOnTheFirstReply(FakeTts):
+    """Провайдер, который на первом ответе отдаёт кадр и надолго замолкает (как медленный или зависший синтез)."""
+
+    async def stream(self, text: str, voice: str = "male"):
+        self.calls.append(text)
+        yield b"\x01\x00" * (FRAME_BYTES // 2)
+        if text.startswith("Первый"):
+            await asyncio.sleep(5)
+        yield b"\x02\x00" * (FRAME_BYTES // 2)
+
+
+def test_a_new_message_cuts_off_the_speech_that_is_still_going(user_id):
+    """Раньше озвучка следующего ответа ждала, пока прошлая договорится (в живой сессии это дало первый звук через 12 с)."""
+    tts = StuckOnTheFirstReply()
+    chat = TwoReplies("Первый ответ.", "Второй ответ.")
+    with make_client(tts, chat=chat) as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+            send_user_message(ws, "c-1", "раз")
+            first = read_frames(ws, lambda f: types(f).count("tts_start") == 1 and reply_done(f))
+            first_id = next(b["messageId"] for k, b in first if k == "json" and b["type"] == "tts_start")
+
+            sent = time.monotonic()
+            send_user_message(ws, "c-2", "два")
+            frames = read_frames(ws, lambda f: has(f, "tts_end", messageId=first_id) and types(f).count("tts_start") == 1)
+            waited = time.monotonic() - sent
+
+    assert has(frames, "tts_end", messageId=first_id)  # старая озвучка закрыта, а не висит
+    assert waited < 2.5  # синтез первого ответа заблокирован на 5 с: новый не ждёт его
+
+
+def test_the_next_reply_is_voiced_right_after_the_stuck_one_is_cut(user_id):
+    tts = StuckOnTheFirstReply()
+    chat = TwoReplies("Первый ответ.", "Второй ответ.")
+    with make_client(tts, chat=chat) as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+            send_user_message(ws, "c-1", "раз")
+            read_frames(ws, lambda f: types(f).count("tts_start") == 1 and reply_done(f))
+            sent = time.monotonic()
+            send_user_message(ws, "c-2", "два")
+            frames = read_frames(ws, lambda f: has(f, "assistant_end", text="Второй ответ.") and types(f).count("tts_start") == 1)
+            started_after = time.monotonic() - sent
+
+    second = [b["messageId"] for k, b in frames if k == "json" and b["type"] == "tts_start"]
+    assert len(second) == 1 and started_after < 2.5
+
+
+async def test_the_clients_keep_idle_connections_longer_than_httpx_does_by_default():
+    # Между репликами человека обычно 5-30 с: с умолчанием в 5 с каждый ход начинался бы с нового TCP+TLS.
+    from app.clients.llm import ProxyChat as Chat, ProxyWhisper
+    from app.clients.speech import SaluteTts
+
+    clients = [
+        Chat("https://p/v1", "k", "m", 200, 0.7, 15)._client,
+        ProxyWhisper("https://p/v1", "k", "m", 15)._client,
+        QwenTts("https://p/v1", "k", "m", QWEN_VOICES)._client,
+        SaluteTts("key", "scope", {"male": "a_24000", "female": "b_24000"})._client,
+    ]
+    for client in clients:
+        assert client._transport._pool._keepalive_expiry == 60
+        await client.aclose()
