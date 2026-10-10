@@ -39,7 +39,7 @@ export function openSos(payload: SosPayload = {}): void {
  */
 export function SosButton({ slot, source }: { slot?: string; source: SosSource }) {
   return (
-    <button type="button" className="rd-sos-button" slot={slot} onClick={() => openSos({ source })}>
+    <button type="button" className="rd-sos-button ph-no-capture" slot={slot} onClick={() => openSos({ source })}>
       <Icon f7="phone_fill" size={15} />
       SOS
     </button>
@@ -66,6 +66,7 @@ export default function SosSheet() {
 
   return (
     <Sheet
+      className="ph-no-capture"
       opened={opened}
       onSheetClosed={() => setOpened(false)}
       swipeToClose
@@ -82,7 +83,7 @@ export default function SosSheet() {
         {hotlines.map((hotline) => (
           <a
             key={hotline.phone}
-            className="rd-hotline"
+            className="rd-hotline ph-no-capture"
             href={telHref(hotline.phone)}
             onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })}
           >

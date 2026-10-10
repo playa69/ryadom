@@ -169,7 +169,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                   Линии помощи, а со временем&nbsp;— группы поддержки и специалисты. Разговор со мной не
                   заменяет живых людей.
                 </p>
-                <Button small round outline onClick={() => openSos({ source: 'home' })}>
+                <Button small round outline className="ph-no-capture" onClick={() => openSos({ source: 'home' })}>
                   Посмотреть
                 </Button>
               </div>

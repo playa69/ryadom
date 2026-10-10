@@ -30,12 +30,9 @@ describe('routeIngestPath', () => {
     expect(routeIngestPath('/array/phc_x/config.js', 'GET')?.target).toBe('assets')
   })
 
-  it('список опросов (нужен, когда опросы включены) читается, но не пишется', () => {
-    expect(routeIngestPath('/api/surveys/', 'GET')).toEqual({ target: 'ingest', path: '/api/surveys/' })
-    expect(routeIngestPath('/api/surveys/', 'POST')).toBeNull()
-    // The rest of /api/ is PostHog's management API and stays closed.
+  it('всё под /api/ закрыто: это управляющий API PostHog, опросов у нас нет', () => {
+    expect(routeIngestPath('/api/surveys/', 'GET')).toBeNull()
     expect(routeIngestPath('/api/projects/1/surveys/', 'GET')).toBeNull()
-    expect(routeIngestPath('/api/surveysx', 'GET')).toBeNull()
   })
 
   it('чужое не пропускает', () => {

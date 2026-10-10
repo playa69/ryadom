@@ -3,7 +3,7 @@ import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import type { AnalyticsEvent, AnalyticsEventArgs, AnalyticsPlatform, AnalyticsTraits } from './events'
-import { normalizePath, sanitizeProperties, scrubEvent } from './sanitize'
+import { normalizePath, roundedToHour, sanitizeProperties, scrubEvent } from './sanitize'
 
 /**
  * Product analytics in the browser and in the store builds' WebView: one module for the web app, the
@@ -18,9 +18,11 @@ import { normalizePath, sanitizeProperties, scrubEvent } from './sanitize'
  *    most) until the SDK is ready, and are dropped if analytics turn out to be off. A call site never
  *    has to ask "is it ready?".
  * 3. **Everything goes through our reverse proxy** (`/api/ingest`), never to a PostHog host.
- * 4. **Nothing personal.** Cookies are not used, autocapture is off unless the server turns it on,
- *    session replay is off unless the server turns it on and then masks all text and inputs, URLs are
- *    stripped of query strings and ids, and every property passes `sanitizeProperties`.
+ * 4. **Nothing personal.** Cookies are not used, click capture is off unless the server turns it on and
+ *    then reports the structure of the page, never its text (`mask_all_text`, and `scrubEvent` cuts what
+ *    is left), session replay is off unless the server turns it on and then masks all text and inputs,
+ *    URLs are stripped of query strings and ids, and every property passes `sanitizeProperties`. Elements
+ *    that carry the `ph-no-capture` class (SOS, hotlines, screens with a conversation) are never captured.
  * 5. **The person can opt out** (`setAnalyticsOptOut`), and a browser's Do Not Track is honoured.
  *
  * Nothing here throws: a failure of analytics must never become a failure of the app.
@@ -77,7 +79,15 @@ export function setAnalyticsOptOut(optOut: boolean): void {
   } catch {
     // Storage may be blocked; the SDK's own flag below still applies for this session.
   }
-  whenReady((posthog) => (optOut ? posthog.opt_out_capturing() : posthog.opt_in_capturing()))
+  whenReady((posthog) => {
+    if (optOut) {
+      posthog.opt_out_capturing()
+      // The request for flags goes on after an opt-out unless it is switched off too.
+      posthog.set_config({ advanced_disable_flags: true })
+    } else {
+      posthog.opt_in_capturing()
+    }
+  })
   notify(optOutListeners)
 }
 
@@ -144,29 +154,115 @@ async function defaultLoadSdk(): Promise<PostHog> {
   return (await import('posthog-js')).default
 }
 
-/** The SDK's settings for a server-provided configuration. Exported so a test can pin them down. */
+/**
+ * Elements (and everything inside them) that click capture, dead clicks and rage clicks never look at.
+ * `ph-no-capture` is put by hand on SOS, hotlines and screens with a conversation; the rest are the
+ * overlays that are drawn outside the screen that opened them (a Radix dialog is a portal in `body`, a
+ * Framework7 dialog, sheet or popup sits at the root of the app), where a tap is just as much about a
+ * person: a confirmation of deleting an account, an alert about the microphone. Giving a list replaces the
+ * SDK's own defaults, so those are repeated here.
+ */
+export const NEVER_CAPTURE = [
+  '.ph-no-capture',
+  '.ph-no-autocapture',
+  '[data-ph-no-autocapture]',
+  '.ph-no-deadclick',
+  '.ph-no-rageclick',
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+  '.dialog',
+  '.sheet-modal',
+  '.popup',
+  '.popover',
+  '.actions-modal',
+  // The dimmed area behind a sheet or a dialog: a tap beside the SOS sheet is still a tap in the SOS sheet.
+  '.sheet-backdrop',
+  '.popup-backdrop',
+  '.actions-backdrop',
+  '.dialog-backdrop',
+  '.popover-backdrop',
+]
+
+/**
+ * The SDK's settings for a server-provided configuration. Exported so a test can pin them down.
+ *
+ * Above every option stands its legal risk under Russian law, in short ("Legal risk"). A research summary
+ * from 2026-10-10, not a lawyer's opinion; sources and detail in docs/analytics.md ("Правовые риски").
+ * What is true of every option: events with an account id stay personal data of the operator (152-FZ
+ * art. 3 p. 1, 9, art. 13.1: "depersonalised" is not "not personal data"); they go to a processor abroad
+ * (cross-border transfer, art. 12: notify Roskomnadzor before it starts) through our proxy straight into a
+ * foreign database (localisation, art. 18 part 5); and the opt-out switch is not consent (art. 9).
+ */
 export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: string): Partial<PostHogConfig> {
-  const { features } = config
+  // Every switch is read as `=== true`: an answer from an older API has no such field, and an undefined
+  // would hand the decision to the PostHog project's own settings, which are on for several of them.
+  const on = (flag: boolean | undefined): boolean => flag === true
+  const features = {
+    sessionReplay: on(config.features.sessionReplay),
+    clickCapture: on(config.features.clickCapture),
+    heatmapCapture: on(config.features.heatmapCapture),
+    errorTracking: on(config.features.errorTracking),
+    webVitals: on(config.features.webVitals),
+    featureFlags: on(config.features.featureFlags),
+  }
   return {
     // The proxy, not a PostHog host: see ingest-proxy.ts.
     api_host: `${apiBase}${ApiPath.Ingest}`,
     ui_host: config.uiHost,
     // A person gets a profile only once they sign in; before that, events are anonymous and cheap.
+    // Legal risk, LOW: it keeps the visitor of the site out of person profiles; after sign-in the profile
+    // is the account id, a pseudonym that points at a person through our database.
     person_profiles: 'identified_only',
     // No cookies: localStorage is enough for one app on one origin, and needs no cookie banner.
+    // Legal risk, LOW-MEDIUM: a stable identifier on the device is personal data in the Roskomnadzor's view
+    // (it said so of cookies; nothing found on localStorage), so the policy must say it exists and how to
+    // refuse. In the EU the ePrivacy rules treat local storage like a cookie and usually ask for consent.
     persistence: 'localStorage',
+    // Legal risk, reduces it: a browser that says "do not track" reports nothing.
     respect_dnt: true,
+    // Legal risk, reduces it: advertising click ids that the SDK copies from the address are replaced with
+    // `<masked>` by the SDK itself (and removed by `scrubEvent`, which also knows `$session_entry_*`).
+    mask_personal_data_properties: true,
     // The address of the person is not sent (the proxy drops it as well).
+    // Legal risk, reduces it: the address is personal data, and it stops at our proxy.
     ip: false,
     // Page views are sent by the app itself, with the route and not the address, see `trackPageview`.
     capture_pageview: false,
-    capture_pageleave: false,
-    autocapture: features.autocapture,
-    capture_dead_clicks: false,
+    // How long a screen was open and how far it was scrolled; the address in it is scrubbed like any other.
+    // Legal risk, LOW: behaviour data tied to the account id (art. 5 parts 1-2, proportionality).
+    capture_pageleave: true,
+    // Clicks are the structure of the page: the SDK is told to leave the text out, and `scrubEvent`
+    // cuts what is left (text, links, ids, labels) in case a setting changes in a later version.
+    // Legal risk, MEDIUM: clicks tied to the account id describe behaviour in detail. If the scrubbing ever
+    // lets an element's text through, it is page content, and on conversation and profile screens data about
+    // the person's state (art. 10: written consent, higher fines). SOS, hotlines and screens with content
+    // carry `ph-no-capture`; every new crisis-path button must carry it too.
+    autocapture: features.clickCapture
+      ? { dom_event_allowlist: ['click'], capture_copied_text: false, css_selector_ignorelist: NEVER_CAPTURE }
+      : false,
+    // Legal risk, reduces it: no element text leaves the device.
+    mask_all_text: true,
+    mask_all_element_attributes: false,
+    // Legal risk, MEDIUM: the same as `autocapture` (dead clicks carry the same element data).
+    capture_dead_clicks: features.clickCapture ? { css_selector_ignorelist: NEVER_CAPTURE } : false,
+    // Rage clicks are part of click capture, and ignore the same elements.
+    rageclick: features.clickCapture ? { css_selector_ignorelist: NEVER_CAPTURE } : false,
     // Explicit either way: the project-level switch in PostHog is on, and the SDK would follow it.
-    capture_heatmaps: features.heatmaps,
+    // Legal risk, MEDIUM while it stays as it is: coordinates and the route, no text, addresses scrubbed, but
+    // the SDK takes clicks and mouse moves at the `document` in the capture phase and knows nothing of
+    // `ph-no-capture`, so a tap on SOS or on a hotline becomes a point under the account id. That defeats
+    // `trackAnonymous` for the crisis path. Off in the ConfigMap for that reason.
+    capture_heatmaps: features.heatmapCapture,
+    // Legal risk, LOW-MEDIUM: an error's text and stack could hold page data (a name, typed text in an engine
+    // message, a secret code in a frame's file address), art. 5 part 5 (minimisation); `scrubEvent` makes the
+    // text impersonal (quoted pieces, addresses and mail addresses replaced, 80 characters) and scrubs frames.
     capture_exceptions: features.errorTracking,
-    capture_performance: features.webVitals ? { web_vitals: true } : false,
+    // No attribution: it names the element and the resource that were slowest, which is page content.
+    // Legal risk, LOW: load timings and device data.
+    capture_performance: features.webVitals ? { web_vitals: true, web_vitals_attribution: false } : false,
+    // Legal risk, HIGH: a recording of behaviour on screen is the largest processing there is. Even masked it
+    // shows layout, pauses and taps on screens with personal content, possibly the person's state (art. 10).
+    // Only with a separate consent and an updated policy.
     disable_session_recording: !features.sessionReplay,
     session_recording: {
       // A replay shows the layout and the taps and nothing that was written or said.
@@ -175,9 +271,15 @@ export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: stri
       blockSelector: '[data-ph-block]',
       recordCrossOriginIframes: false,
     },
-    disable_surveys: !features.surveys,
-    advanced_disable_flags: !features.featureFlags,
-    // Nothing the product does not use is loaded.
+    // Legal risk, MEDIUM: the request for flags goes around `before_send` and carries the stored initial
+    // properties of the person (full entry address with its query, referrer, account id, device id, time zone).
+    // Off in the ConfigMap; flags may be switched on only once the body of that request is scrubbed in the proxy.
+    // Also off for a person who opted out or sends "do not track": the request for flags carries the account id,
+    // the device id and the time zone, and the SDK does not hold it back for those (found by the review).
+    advanced_disable_flags: !features.featureFlags || readStoredOptOut() || doNotTrackEnabled(),
+    // Nothing the product does not use is loaded. Surveys are not used: a pop-up with a question in
+    // the middle of someone's bad day is not something this product does.
+    disable_surveys: true,
     disable_web_experiments: true,
     disable_product_tours: true,
     disable_conversations: true,
@@ -204,6 +306,9 @@ export function startAnalytics(options: StartAnalyticsOptions): Promise<boolean>
         app_platform: options.platform,
         app_version: options.appVersion,
         app_env: config.environment,
+        // Our proxy is what PostHog sees, so its location would be the place of every person: the server's.
+        // The person's own time zone and language already travel with each event.
+        $geoip_disable: true,
       })
       posthog.onFeatureFlags(() => notify(flagListeners))
 
@@ -266,6 +371,9 @@ export function trackAnonymous<E extends AnalyticsEvent>(event: E, ...args: Anal
       api_key: anonymousChannel.key,
       event,
       distinct_id: randomId(),
+      // Dated to the hour: to the minute, an event about nobody could be matched to the same person's
+      // other events made at that minute.
+      timestamp: roundedToHour().toISOString(),
       properties: { ...properties, ...anonymousChannel.common, $process_person_profile: false, $geoip_disable: true },
     })
     void fetch(anonymousChannel.url, {

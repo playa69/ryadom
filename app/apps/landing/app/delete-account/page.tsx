@@ -71,9 +71,9 @@ export default async function DeleteAccountPage() {
           </TableHeader>
           <TableBody>
             <TableRow>
-              <TableCell data-label="Что">Обезличенная запись о самом факте удаления</TableCell>
-              <TableCell data-label="Зачем">Подтвердить, что обращение исполнено</TableCell>
-              <TableCell data-label="Насколько">Без вашей почты, имени и содержания разговоров</TableCell>
+              <TableCell data-label="Что">Запись об удалённом аккаунте</TableCell>
+              <TableCell data-label="Зачем">Выполнение обязательств по закону и защита законных интересов оператора</TableCell>
+              <TableCell data-label="Насколько">В пределах сроков, необходимых для этого</TableCell>
             </TableRow>
             <TableRow>
               <TableCell data-label="Что">Технические журналы серверов</TableCell>

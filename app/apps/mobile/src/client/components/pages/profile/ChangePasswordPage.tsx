@@ -58,7 +58,7 @@ export default function ChangePasswordPage({ f7router }: { f7router: Router.Rout
   const clear = () => setError('')
 
   return (
-    <Page name="change-password">
+    <Page name="change-password" className="ph-no-capture">
       <Navbar backLink="Профиль" title="Изменить пароль" />
       <List form className="rd-form">
         <PasswordInput

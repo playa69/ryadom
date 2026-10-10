@@ -84,12 +84,14 @@ export function toAnalyticsConfig(env: AppServerEnv): AnalyticsConfigApiResponse
     environment: env.APP_ENV,
     features: {
       sessionReplay: enabled && env.POSTHOG_SESSION_REPLAY,
-      surveys: enabled && env.POSTHOG_SURVEYS,
-      autocapture: enabled && env.POSTHOG_AUTOCAPTURE,
-      heatmaps: enabled && env.POSTHOG_HEATMAPS,
+      clickCapture: enabled && env.POSTHOG_CLICK_CAPTURE,
+      heatmapCapture: enabled && env.POSTHOG_HEATMAP_CAPTURE,
       errorTracking: enabled && env.POSTHOG_ERROR_TRACKING,
       webVitals: enabled && env.POSTHOG_WEB_VITALS,
       featureFlags: enabled && env.POSTHOG_FEATURE_FLAGS,
+      // Clients shipped before the new names read these two; they cannot strip what the new ones can.
+      autocapture: false,
+      heatmaps: false,
     },
   }
 }

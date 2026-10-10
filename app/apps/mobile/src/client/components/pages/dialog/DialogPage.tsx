@@ -626,12 +626,12 @@ export default function DialogPage({
   }, [subtitle, mode])
 
   return (
-    <Page name="dialog" className="rd-dialog-page rd-no-tabbar">
+    <Page name="dialog" className="rd-dialog-page rd-no-tabbar ph-no-capture">
       <Navbar backLink="Назад" title="Разговор">
         <button
           slot="right"
           type="button"
-          className="rd-banner-action rd-navbar-sos"
+          className="rd-banner-action rd-navbar-sos ph-no-capture"
           onClick={() => openSos({ source: 'dialog' })}
         >
           SOS

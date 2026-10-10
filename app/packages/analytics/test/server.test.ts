@@ -61,6 +61,31 @@ describe('createServerAnalytics', () => {
     expect(first!.distinctId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
+  it('анонимное событие датируется началом часа, событие о человеке своим временем', () => {
+    const client = fakeClient()
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
+    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
+    analytics.capture('user-1', AnalyticsEvent.EmailConfirmed)
+    const [anonymous, person] = client.capture.mock.calls.map((call) => call[0])
+    expect(anonymous!.timestamp).toBeInstanceOf(Date)
+    expect(anonymous!.timestamp!.getTime() % 3_600_000).toBe(0)
+    expect(Date.now() - anonymous!.timestamp!.getTime()).toBeLessThan(3_600_000 + 1000)
+    expect(person!.timestamp).toBeUndefined()
+  })
+
+  it('ошибка сервера уходит обезличенной: кусок введённого текста, адрес и почта заменены', () => {
+    const client = fakeClient()
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
+    const error = new SyntaxError(`Unexpected token 'П', "Привет, мне сегодня тяжело"... at https://app.example/x?code=SECRET, a@b.co`)
+    analytics.captureException(error)
+    const sent = client.captureException.mock.calls[0]![0] as Error
+    expect(sent.name).toBe('SyntaxError')
+    expect(sent.message).not.toMatch(/Привет|SECRET|a@b\.co/)
+    expect(sent.message.length).toBeLessThanOrEqual(80)
+    expect(sent.stack).not.toMatch(/Привет|SECRET/)
+    expect(sent.stack).toMatch(/^SyntaxError: /)
+  })
+
   it('identify передаёт только признаки аккаунта', () => {
     const client = fakeClient()
     const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })

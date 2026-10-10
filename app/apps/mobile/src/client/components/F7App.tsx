@@ -69,7 +69,7 @@ function SignedInViews() {
         <div slot="before-inner" className="rd-rail-brand" aria-hidden="true">
           <BrandMark size={40} />
         </div>
-        <button slot="after-inner" type="button" className="rd-rail-sos" onClick={() => openSos({ source: 'menu' })}>
+        <button slot="after-inner" type="button" className="rd-rail-sos ph-no-capture" onClick={() => openSos({ source: 'menu' })}>
           <Icon f7="phone_fill" size={20} />
           SOS
         </button>

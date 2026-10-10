@@ -122,7 +122,7 @@ export default function JournalEntryPage({ dialogId, f7router }: { dialogId: str
   }, [dialogId])
 
   return (
-    <Page name="journal-entry" onPageAfterIn={handOff}>
+    <Page name="journal-entry" className="ph-no-capture" onPageAfterIn={handOff}>
       <Navbar backLink="Журнал" title={title} onClickBack={() => journal.open(null)} />
       <JournalEntryBody dialogId={dialogId} />
     </Page>

@@ -162,11 +162,28 @@ const appShape = {
    * it belongs in the ConfigMap rather than a Secret. Empty switches analytics off altogether: the
    * server reports nothing, `/api/ingest` is a 404 and the clients are told not to load the SDK.
    * What the clients do with it is decided here and handed to them by `GET /api/analytics/config`.
+   *
+   * LEGAL RISKS (Russian law) of every option below, in short. A research summary from 2026-10-10, not a
+   * lawyer's opinion; sources and detail in docs/analytics.md ("Правовые риски"):
+   * - events with an account id stay personal data of the operator (152-FZ art. 3 p. 1, 9, art. 13.1):
+   *   "depersonalised" does not mean "not personal data", and they are never "anonymous";
+   * - a cloud analytics service abroad is a cross-border transfer (art. 3 p. 11, art. 12): Roskomnadzor must
+   *   be notified before it starts (part 3), the recipient must give the data of parts 4-5, processing is
+   *   delegated by contract (art. 6 part 3);
+   * - client events pass through our proxy straight into a foreign database and are recorded nowhere in
+   *   Russia: localisation risk, art. 18 part 5 (Administrative Code 13.11 part 8: RUB 1-6 m for a company);
+   * - no legal basis is settled: the opt-out switch is not consent (art. 9), and art. 6(1) p. 7 and p. 9 are
+   *   not confirmed in practice for product analytics; since 2025-09-01 consent is a separate document;
+   * - tension_* with an account id may count as health data (art. 10: written consent, higher fines).
+   * Each option carries its own risk on top of these.
+   *
+   * POSTHOG_KEY carries all of the above: if the notification (art. 12 part 3) is not filed and there is no
+   * contract with the recipient, the legally safer value is empty, which stops every report.
    */
   POSTHOG_KEY: optionalString,
   /** Where events go. The EU cloud keeps the data in the EU. */
   POSTHOG_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.i.posthog.com')),
-  /** Where the SDK's lazy-loaded scripts come from (replay, surveys, error tracking). */
+  /** Where the SDK's lazy-loaded scripts come from (replay, dead clicks, web vitals, error tracking). */
   POSTHOG_ASSETS_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu-assets.i.posthog.com')),
   /** The PostHog web app, for links such as the toolbar, and the host of its management API. */
   POSTHOG_UI_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.posthog.com')),
@@ -178,6 +195,10 @@ const appShape = {
    * server still starts and analytics still work, but a deleted account's pseudonymous profile stays
    * in PostHog until someone removes it by hand, and the server says so in the log at startup.
    * Deliberately not a startup failure: an optional analytics feature must not keep the API down.
+   *
+   * RISK of the key: it sits in the environment of a public API, and a leaked key with wide rights is a
+   * leak of the analytics data (art. 19 protection measures; Administrative Code 13.11 parts 15-16, 18:
+   * turnover-based fines). Give it the single scope `person:write` on the one project.
    */
   POSTHOG_PERSONAL_API_KEY: optionalString,
   POSTHOG_PROJECT_ID: z.preprocess(
@@ -189,21 +210,59 @@ const appShape = {
    * default: «erase everything». Off keeps the events (the profile and recordings still go), so past
    * activity can still be counted; the events are then pseudonymous (an account id, no text, no email)
    * and not anonymous while the deletion archive in the database still maps that id to a person.
+   *
+   * RISK of off: personal data kept longer than the purpose (art. 5 part 7) and, after withdrawal of consent
+   * or achievement of the purpose, due for destruction within 30 days (art. 21 parts 4-5).
    */
   POSTHOG_ERASE_EVENTS: booleanFlag.transform((value) => value ?? true),
-  /** Session replay with every piece of text and every input masked. Off: it is the most sensitive switch there is. */
+  /**
+   * Session replay with every piece of text and every input masked. Off: it is the most sensitive switch.
+   * RISK, HIGH: a recording of behaviour on screen is the largest processing there is. Even masked it shows
+   * layout, pauses and taps on screens with personal content, possibly the person's state (art. 10: written
+   * consent). Only with a separate consent and an updated policy. The recording's own events carry raw page
+   * addresses (secret codes among them): scrub those first.
+   */
   POSTHOG_SESSION_REPLAY: booleanFlag.transform((value) => value ?? false),
-  /** In-app surveys. Off: a pop-up in the middle of someone's bad day is a product decision. */
-  POSTHOG_SURVEYS: booleanFlag.transform((value) => value ?? false),
-  /** Click autocapture records the text of what was clicked, so it is off unless someone asks. */
-  POSTHOG_AUTOCAPTURE: booleanFlag.transform((value) => value ?? false),
-  /** Heatmaps (where people tap): coordinates and selectors, no text. Off until someone wants them. */
-  POSTHOG_HEATMAPS: booleanFlag.transform((value) => value ?? false),
-  /** Unhandled errors of the clients, reported as exceptions. */
+  /**
+   * Clicks, dead clicks and rage clicks as the structure of the page (the text is masked and cut).
+   * RISK, MEDIUM: the events carry the account id and describe behaviour in detail (art. 5 parts 1-2,
+   * proportionality). If the scrubbing ever lets an element's text through, it is page content, and on
+   * conversation and profile screens data about the person (art. 10). SOS, hotlines and screens with
+   * content carry `ph-no-capture`; so must every new crisis-path button.
+   */
+  POSTHOG_CLICK_CAPTURE: booleanFlag.transform((value) => value ?? false),
+  /**
+   * Heatmaps (where people tap): coordinates and the route, no text. OFF, and meant to stay off for now.
+   * RISK, MEDIUM until reworked: the SDK takes clicks and mouse moves at the `document` in the capture
+   * phase and knows nothing of `ph-no-capture`, so a tap on SOS or on a hotline becomes a point under the
+   * account id, which defeats `trackAnonymous` (and the hour-rounded time) for the crisis path. Switch it
+   * on only after the client cuts the points inside `ph-no-capture` (docs/analytics.md, "Тепловые карты").
+   * The event also takes the same cross-border path as every other.
+   */
+  POSTHOG_HEATMAP_CAPTURE: booleanFlag.transform((value) => value ?? false),
+  /**
+   * Unhandled errors of the clients, reported as exceptions.
+   * RISK, LOW-MEDIUM: an error's text and stack could hold page data (a name, a piece of typed text in an
+   * engine message, a page address with a secret code in a frame's file name), art. 5 part 5 (minimisation).
+   * In code the text is made impersonal (what is quoted, addresses and mail addresses are replaced, 80
+   * characters at most) and a frame keeps its line, column and a scrubbed file address. Clients shipped
+   * before 2026-10-10 do not do this.
+   */
   POSTHOG_ERROR_TRACKING: booleanFlag.transform((value) => value ?? true),
-  /** Core Web Vitals and page load timings. */
+  /**
+   * Core Web Vitals and page load timings.
+   * RISK, LOW: load timings and device data; attribution (which element and resource were slowest) is off
+   * and also cut in code.
+   */
   POSTHOG_WEB_VITALS: booleanFlag.transform((value) => value ?? true),
-  /** Feature flags for the clients (and `analytics.isFeatureEnabled` on the server). */
+  /**
+   * Feature flags for the clients (and `analytics.isFeatureEnabled` on the server).
+   * OFF in the ConfigMap (there are no flags in the product). RISK, MEDIUM: the request for flags goes around
+   * the scrubbing of events and carries the stored initial properties of the person: the full entry address
+   * with its query (utm, click ids, anything), the referrer, the account id, the device id and the time zone.
+   * A transfer even without events. The client does not send it after an opt-out or with "do not track", but
+   * flags may be switched on only once the body of that request is scrubbed in the ingest proxy.
+   */
   POSTHOG_FEATURE_FLAGS: booleanFlag.transform((value) => value ?? true),
 }
 

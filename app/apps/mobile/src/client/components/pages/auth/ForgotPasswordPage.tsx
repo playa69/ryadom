@@ -34,7 +34,7 @@ export default function ForgotPasswordPage({ f7router }: { f7router: Router.Rout
   }
 
   return (
-    <Page name="forgot-password" className="rd-page-auth">
+    <Page name="forgot-password" className="rd-page-auth ph-no-capture">
       <Navbar backLink="Назад" transparent />
       <div className="rd-auth-head">
         <h1 className="rd-title">Восстановим доступ</h1>

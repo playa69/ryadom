@@ -4,6 +4,7 @@ import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics
 import {
   buildSdkConfig,
   captureError,
+  NEVER_CAPTURE,
   getFeatureFlag,
   identify,
   isAnalyticsOptedOut,
@@ -26,12 +27,13 @@ const CONFIG: AnalyticsConfigApiResponse = {
   environment: 'staging',
   features: {
     sessionReplay: false,
-    surveys: false,
-    autocapture: false,
-    heatmaps: false,
+    clickCapture: false,
+    heatmapCapture: false,
     errorTracking: true,
     webVitals: true,
     featureFlags: true,
+    autocapture: false,
+    heatmaps: false,
   },
 }
 
@@ -49,6 +51,7 @@ function fakePostHog() {
     captureException: vi.fn(),
     opt_out_capturing: vi.fn(),
     opt_in_capturing: vi.fn(),
+    set_config: vi.fn(),
     onFeatureFlags: vi.fn(),
     getFeatureFlag: vi.fn(() => 'variant' as string | boolean | undefined),
     isFeatureEnabled: vi.fn(() => true as boolean | undefined),
@@ -116,7 +119,12 @@ describe('startAnalytics', () => {
     const [key, options] = posthog.init.mock.calls[0]! as unknown as [string, Record<string, unknown>]
     expect(key).toBe('phc_test')
     expect(options.api_host).toBe('https://api.test/api/ingest')
-    expect(posthog.register).toHaveBeenCalledWith({ app_platform: 'web', app_version: '1.2.3', app_env: 'staging' })
+    expect(posthog.register).toHaveBeenCalledWith({
+      app_platform: 'web',
+      app_version: '1.2.3',
+      app_env: 'staging',
+      $geoip_disable: true,
+    })
   })
 
   it('вызовы до готовности ждут в очереди и уходят по порядку', async () => {
@@ -236,6 +244,8 @@ describe('анонимные события', () => {
     expect(sent[1]!.body.properties).not.toHaveProperty('email')
     // A new id every time: two taps by one person cannot be joined into a history.
     expect(sent[0]!.body.distinct_id).not.toBe(sent[1]!.body.distinct_id)
+    // Dated to the hour: the minute of the tap cannot be set beside the same person's other events.
+    expect(String(sent[0]!.body.timestamp)).toMatch(/T\d{2}:00:00\.000Z$/)
     expect(sent[0]!.init.credentials).toBe('omit')
   })
 
@@ -331,16 +341,37 @@ describe('согласование отказа устройства и акка
 describe('buildSdkConfig: приватность по умолчанию', () => {
   const config = buildSdkConfig(CONFIG, 'https://api.test')
 
-  it('без cookie, без автосбора, без записи экрана, без опросов', () => {
+  it('без cookie, без автосбора, без записи экрана', () => {
     expect(config.persistence).toBe('localStorage')
     expect(config.autocapture).toBe(false)
+    expect(config.capture_dead_clicks).toBe(false)
     expect(config.capture_heatmaps).toBe(false)
     expect(config.disable_session_recording).toBe(true)
-    expect(config.disable_surveys).toBe(true)
     expect(config.person_profiles).toBe('identified_only')
     expect(config.respect_dnt).toBe(true)
     expect(config.capture_pageview).toBe(false)
     expect(config.ip).toBe(false)
+  })
+
+  it('без захвата кликов нет ни кликов, ни мёртвых, ни яростных', () => {
+    expect(config.autocapture).toBe(false)
+    expect(config.capture_dead_clicks).toBe(false)
+    expect(config.rageclick).toBe(false)
+  })
+
+  it('клики не снимаются на метке, в порталах и в окнах Framework7: там тоже действия человека', () => {
+    for (const selector of ['.ph-no-capture', '[role="dialog"]', '[role="alertdialog"]', '.dialog', '.sheet-modal', '.popup']) {
+      expect(NEVER_CAPTURE).toContain(selector)
+    }
+  })
+
+  it('уход со страницы отправляется всегда, текст элементов маскируется всегда', () => {
+    expect(config.capture_pageleave).toBe(true)
+    expect(config.mask_all_text).toBe(true)
+  })
+
+  it('веб-метрики без атрибуции: она называет элемент и ресурс страницы', () => {
+    expect(config.capture_performance).toEqual({ web_vitals: true, web_vitals_attribution: false })
   })
 
   it('запись экрана, если её включили на сервере, скрывает весь текст и все поля', () => {
@@ -351,15 +382,93 @@ describe('buildSdkConfig: приватность по умолчанию', () =>
 
   it('каждая возможность включается своим переключателем', () => {
     const all = buildSdkConfig(
-      { ...CONFIG, features: { sessionReplay: true, surveys: true, autocapture: true, heatmaps: true, errorTracking: false, webVitals: false, featureFlags: false } },
+      {
+        ...CONFIG,
+        features: {
+          ...CONFIG.features,
+          sessionReplay: true,
+          clickCapture: true,
+          heatmapCapture: true,
+          errorTracking: false,
+          webVitals: false,
+          featureFlags: false,
+        },
+      },
       '',
     )
-    expect(all.disable_surveys).toBe(false)
-    expect(all.autocapture).toBe(true)
+    expect(all.autocapture).toEqual({
+      dom_event_allowlist: ['click'],
+      capture_copied_text: false,
+      css_selector_ignorelist: NEVER_CAPTURE,
+    })
+    expect(all.capture_dead_clicks).toEqual({ css_selector_ignorelist: NEVER_CAPTURE })
+    expect(all.rageclick).toEqual({ css_selector_ignorelist: NEVER_CAPTURE })
     expect(all.capture_heatmaps).toBe(true)
     expect(all.capture_exceptions).toBe(false)
     expect(all.capture_performance).toBe(false)
     expect(all.advanced_disable_flags).toBe(true)
+  })
+
+  it('имена, которые читают старые клиенты, ничего не включают в новом', () => {
+    // The old names are TRUE here, so that the test can fail: nothing may switch on because of them.
+    const old = buildSdkConfig({ ...CONFIG, features: { ...CONFIG.features, autocapture: true, heatmaps: true } as never }, '')
+    expect(old.autocapture).toBe(false)
+    expect(old.capture_heatmaps).toBe(false)
+  })
+
+  it('флаги не запрашиваются у отказавшегося и при Do Not Track: запрос несёт id аккаунта, устройство и пояс', () => {
+    const flagsOn = { ...CONFIG, features: { ...CONFIG.features, featureFlags: true } }
+    // An earlier test leaves "do not track" stubbed on `navigator`: start from a browser that does not send it.
+    vi.stubGlobal('navigator', {})
+    expect(buildSdkConfig(flagsOn, '').advanced_disable_flags).toBe(false)
+    localStorage.setItem('ryadom.analytics.optout', '1')
+    expect(buildSdkConfig(flagsOn, '').advanced_disable_flags).toBe(true)
+    localStorage.removeItem('ryadom.analytics.optout')
+    vi.stubGlobal('navigator', { doNotTrack: '1' })
+    expect(buildSdkConfig(flagsOn, '').advanced_disable_flags).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('отказ посреди сессии сразу выключает и запрос флагов', async () => {
+    const { posthog, started } = start({ ...CONFIG, features: { ...CONFIG.features, featureFlags: true } })
+    await started
+    setAnalyticsOptOut(true)
+    expect(posthog.opt_out_capturing).toHaveBeenCalled()
+    expect(posthog.set_config).toHaveBeenCalledWith({ advanced_disable_flags: true })
+  })
+
+  it('ответ старого API без новых полей не отдаёт решение настройкам проекта PostHog: всё выключено', () => {
+    const old = buildSdkConfig({ ...CONFIG, features: {} as never }, '')
+    expect(old.autocapture).toBe(false)
+    expect(old.capture_dead_clicks).toBe(false)
+    expect(old.capture_heatmaps).toBe(false)
+    expect(old.capture_exceptions).toBe(false)
+    expect(old.capture_performance).toBe(false)
+    expect(old.disable_session_recording).toBe(true)
+    expect(old.advanced_disable_flags).toBe(true)
+  })
+
+  it('рекламные метки SDK сам заменяет на <masked>', () => {
+    expect(config.mask_personal_data_properties).toBe(true)
+  })
+
+  it('опросов в продукте нет: SDK их не грузит, что бы ни пришло с сервера', () => {
+    const everything = buildSdkConfig(
+      {
+        ...CONFIG,
+        features: { ...CONFIG.features, sessionReplay: true, clickCapture: true, heatmapCapture: true },
+      },
+      '',
+    )
+    expect(config.disable_surveys).toBe(true)
+    expect(everything.disable_surveys).toBe(true)
+    expect(everything).not.toHaveProperty('prepare_external_dependency_stylesheet')
+  })
+
+  it('SDK не определяет место по адресу сервера: геолокация выключена для всех событий', async () => {
+    const { posthog, started } = start(CONFIG)
+    await started
+    expect(posthog.register).toHaveBeenCalledWith(expect.objectContaining({ $geoip_disable: true }))
   })
 
   it('before_send чистит адреса событий', () => {

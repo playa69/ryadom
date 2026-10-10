@@ -34,6 +34,9 @@ export default function Hotline({
         // and a second backdrop filter per row only costs compositing. Hover keeps the lift, not an opaque fill.
         'min-h-11 flex-nowrap bg-glass p-4 shadow-(--ryadom-highlight) [a]:hover:bg-glass [a]:hover:brightness-[1.12]',
         FOCUS_RING,
+        // A tap on a line is counted by `trackAnonymous`, attached to nobody; click autocapture would attach
+        // it to the person, so the SDK is told to leave these rows alone.
+        'ph-no-capture',
         className,
       )}
     >
