@@ -20,8 +20,8 @@ export const metadata: Metadata = {
 }
 
 /**
- * Draft for a lawyer, not a finished document: the operator's legal details and the exact
- * retention periods are filled in before launch. The store listings link here, so
+ * Draft for a lawyer, not a finished document: the operator is named in the abstract (the owner of
+ * the service) until its details are added, in a separate task. The store listings link here, so
  * the page must exist and describe the real behaviour of the app.
  */
 export default async function PrivacyPage() {
@@ -42,8 +42,7 @@ export default async function PrivacyPage() {
 
         <h2>1. Кто обрабатывает данные</h2>
         <p>
-          Оператор персональных данных — <strong>[наименование юридического лица]</strong>, ОГРН{' '}
-          <strong>[ОГРН]</strong>, адрес <strong>[юридический адрес]</strong>. Вопросы об
+          Оператор персональных данных — владелец сервиса «Рядом» (далее — оператор). Вопросы об
           обработке данных: <a href={`mailto:${env.supportEmail}`}>{env.supportEmail}</a>.
         </p>
 
@@ -206,7 +205,7 @@ export default async function PrivacyPage() {
         <p>
           Удалить аккаунт и все разговоры можно самостоятельно из приложения — см.{' '}
           <Link href="/delete-account">страницу удаления</Link>. Прочие обращения направляйте на{' '}
-          <a href={`mailto:${env.supportEmail}`}>{env.supportEmail}</a>; ответ — в течение 30 дней.
+          <a href={`mailto:${env.supportEmail}`}>{env.supportEmail}</a>; ответ — в течение 10 рабочих дней.
         </p>
 
         <h2>11. Безопасность</h2>
