@@ -40,8 +40,8 @@
 #   ANONYMOUS_PURGE_DISABLED=true — часовая чистка анонимных аккаунтов шлёт
 #     стирание данных в agent; агента в кластере ещё нет (см. AGENT_API_URL).
 #
-# Почта идёт через Yandex Cloud Postbox (EMAIL_TRANSPORT=smtp): egress на :465
-# открыт политикой prod-allow-egress-smtp-postbox, пароль — Secret app-smtp.
+# Почта идёт через Unisender Go (EMAIL_TRANSPORT=smtp): egress на :465 открыт
+# политикой prod-allow-egress-smtp-postbox, пароль — Secret app-smtp.
 # =============================================================================
 
 ---
@@ -83,18 +83,23 @@ data:
   PUBLIC_SUPPORT_EMAIL: "totsamiynixon@yandex.ru"
   # Один доверенный прокси перед сервисами (см. шапку)
   TRUSTED_PROXY_HOPS: "1"
-  # --- Почта: Yandex Cloud Postbox (см. шапку и README, «Почта: Yandex Cloud Postbox») ---
-  # Адрес в Postbox подтверждён (DKIM = Success), Secret app-smtp (SMTP_PASSWORD)
-  # создан. Откат на лог вместо отправки — вернуть EMAIL_TRANSPORT: "console"
-  # и перезапустить app-api и app-admin (коды входа тогда пишутся в лог).
+  # --- Почта: Unisender Go (см. шапку и README, «Почта: Unisender Go») ---
+  # С 2026-10-11 письма идут через Unisender Go: Yandex Cloud Postbox
+  # (postbox.cloud.yandex.net, 158.160.78.193) перестал отвечать на TCP.
+  # Домен подтверждён, DKIM `gokey` и домен ссылок `email.` настроены, Secret
+  # app-smtp (SMTP_PASSWORD) заменён ключом Unisender. Откат на Postbox:
+  # SMTP_HOST: "postbox.cloud.yandex.net", SMTP_USER: "ajes403uog5d0ah3qfq7" и
+  # прежние значения SMTP_USER/SMTP_PASSWORD из предыдущей версии Lockbox-секрета
+  # ryadom-app-secrets. Откат на лог вместо отправки — EMAIL_TRANSPORT: "console"
+  # и перезапуск app-api и app-admin (коды входа тогда пишутся в лог).
   EMAIL_TRANSPORT: "smtp"
   EMAIL_FROM: "Рядом <noreply@xn----htbtgjker8b3a2c.xn--p1ai>"
-  SMTP_HOST: "postbox.cloud.yandex.net"
+  SMTP_HOST: "smtp.go2.unisender.ru"
   SMTP_PORT: "465"
   SMTP_SECURE: "true"
-  # идентификатор API-ключа Postbox (несекретный); секретная часть — SMTP_PASSWORD
-  # в Secret app-smtp
-  SMTP_USER: "ajes403uog5d0ah3qfq7"
+  # логин SMTP Unisender Go — идентификатор аккаунта (несекретный); секретная
+  # часть — SMTP_PASSWORD в Secret app-smtp
+  SMTP_USER: "8367702"
   # --- Agent (плейсхолдер: сервиса в кластере пока нет) ---
   # api стартует и без него (/api/health проверяет только БД), но диалоги
   # и стирание данных у агента не работают, пока он не появится.
