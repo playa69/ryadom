@@ -13,6 +13,7 @@ import {
   type User,
 } from './auth'
 import { journal } from './journal'
+import { resetMemoryState } from './memory'
 
 /**
  * The app session. The refresh token is read from secure storage asynchronously, so until it has
@@ -82,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (user: User, tokens: AuthTokensApiResponse, options: LoginOptions = {}) => {
     await startSession(user, tokens)
     journal.reset()
+    resetMemoryState()
     let current = user
     if (options.consent) {
       // Before the app learns it is signed in, so that its gate does not ask for what is just being
@@ -104,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const endSession = useCallback(async () => {
     await clearSession()
     journal.reset()
+    resetMemoryState()
     setAuth({ ...ANONYMOUS, entry: 'login' })
   }, [])
 
@@ -111,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async (options: { entry?: Entry } = {}) => {
     await signOut()
     journal.reset()
+    resetMemoryState()
     setAuth({ ...ANONYMOUS, entry: options.entry ?? 'login' })
   }, [])
 
@@ -118,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut()
     await forgetDevice()
     journal.reset()
+    resetMemoryState()
     setAuth({ ...ANONYMOUS, entry: 'login' })
   }, [])
 

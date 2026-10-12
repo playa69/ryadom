@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowDown, CircleCheck } from 'lucide-react'
+import { ArrowDown, CircleCheck, EyeOff } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -12,6 +12,8 @@ import {
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText } from '@ryadom/client-core/errors'
+import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import type {
   DialogMessageView,
   DialogSocket,
@@ -45,6 +47,7 @@ import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { appPath } from '@/lib/base-path'
+import { watchMemoryCard } from '@/lib/memory'
 import { WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
@@ -139,6 +142,21 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [endError, setEndError] = useState('')
   const [alert, setAlert] = useState<AlertState | null>(null)
   const [missing, setMissing] = useState(false)
+  /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
+  const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(start?.memoryMode)
+  /** What the end needs to decide whether to wait for the card "Я запомнил". */
+  const memoryWatch = useRef({
+    memoryMode,
+    memoryEnabled: start?.memoryEnabled ?? user?.memoryEnabled,
+    userId: user?.id,
+  })
+  useEffect(() => {
+    memoryWatch.current = {
+      memoryMode,
+      memoryEnabled: start?.memoryEnabled ?? user?.memoryEnabled,
+      userId: user?.id,
+    }
+  })
 
   const socket = useRef<DialogSocket | null>(null)
   const capture = useRef<VoiceCapture | null>(null)
@@ -224,6 +242,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setEnding(false)
       void stopRecording()
       voice.current?.cancel()
+      // What the conversation added to memory shows up on home as "Я запомнил" once the agent is done.
+      const { userId, ...memory } = memoryWatch.current
+      if (userId && shouldWatchMemoryChanges(memory)) void watchMemoryCard(client, dialogId, userId)
       setAlert({
         title: 'Спасибо, что поговорил(а)',
         text: summary?.title
@@ -232,7 +253,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         leaves: true,
       })
     },
-    [stopRecording],
+    [client, dialogId, stopRecording],
   )
 
   // The socket handlers outlive renders; they read the latest helpers through here.
@@ -342,6 +363,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
             return
           }
           history = result.data.messages.map(({ id, role, text }) => ({ id, role, text }))
+          if (result.data.memoryMode) setMemoryMode(result.data.memoryMode)
         } else if (result && result.code === DialogApiErrorCode.DIALOG_NOT_FOUND) {
           setMissing(true)
           return
@@ -755,6 +777,22 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           ) : undefined
         }
       />
+
+      {memoryMode === DialogMemoryMode.Off && (
+        <div className={cn(COLUMN, 'pt-3')}>
+          <p
+            className="flex items-start justify-center gap-2 rounded-lg border border-brand-line bg-brand-soft px-4 py-2 text-sm leading-snug text-dim"
+            role="note"
+            data-testid="dialog-incognito"
+          >
+            <EyeOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-brand-400" />
+            <span>
+              <b className="font-semibold text-foreground">Без памяти.</b> Этот разговор я не запомню, а сам
+              он удалится через сутки
+            </span>
+          </p>
+        </div>
+      )}
 
       {sinceDays !== null && view === 'voice' && (
         <p

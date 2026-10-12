@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useEffect, useId, useMemo, useState } from 'react'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import { dialogMemoryMark } from '@ryadom/client-core/memory'
 import { Alert } from '@ryadom/ui/components/alert'
 import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
@@ -33,6 +34,7 @@ const ROW_FOCUS =
 function JournalRow({ item }: { item: DialogListItemApiResponse }) {
   const themes = item.summary?.themes.join(', ')
   const tension = tensionLabel(item)
+  const memoryMark = dialogMemoryMark(item)
   return (
     <li className="border-b border-line last:border-b-0">
       {/* A real link, so "open in a new tab" works. */}
@@ -66,6 +68,17 @@ function JournalRow({ item }: { item: DialogListItemApiResponse }) {
           {!item.endedAt && (
             <Badge variant="soft" className={BADGE_COMPACT}>
               Не завершён
+            </Badge>
+          )}
+          {memoryMark && (
+            <Badge
+              variant="outline"
+              className={BADGE_COMPACT}
+              title={memoryMark.hint}
+              data-testid="journal-incognito"
+            >
+              {memoryMark.label}
+              <span className="sr-only">. {memoryMark.hint}</span>
             </Badge>
           )}
           {tension && (

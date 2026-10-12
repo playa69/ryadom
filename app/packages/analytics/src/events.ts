@@ -82,6 +82,23 @@ export enum AnalyticsEvent {
   AppUpdate = 'app_update',
   OfflineShown = 'offline_shown',
 
+  // ── Client: memory ──────────────────────────────────────────────────────────────────────────
+  // What the person does with memory, never what is remembered: no text, category or count of facts.
+  /** The screen "Профиль → Память" was opened. */
+  MemoryScreenOpened = 'memory_screen_opened',
+  /** The switch "Запоминать" took effect (on after the consent sheet, or off). */
+  MemoryEnabled = 'memory_enabled',
+  /** One action on one fact on the screen "Память"; `delete` is counted when the request goes, after "Вернуть" had its chance. */
+  MemoryFactAction = 'memory_fact_action',
+  /** "Забыть всё" was confirmed and done. */
+  MemoryForgetAll = 'memory_forget_all',
+  /** "Скачать мою память": the file was handed to the person. */
+  MemoryExport = 'memory_export',
+  /** The switch "Без памяти" on home, before a conversation. */
+  MemoryIncognitoToggled = 'memory_incognito_toggled',
+  /** A point of the card "Я запомнил" after a conversation was taken off or accepted. */
+  MemoryCardAction = 'memory_card_action',
+
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
   FaqOpened = 'faq_opened',
   StoreLinkClicked = 'store_link_clicked',
@@ -159,6 +176,12 @@ export type ResumeChoice = 'continue' | 'new' | 'dismissed'
 
 export type ProfileField = 'name' | 'voice'
 
+/** What was done with a fact of memory: the names are those of the buttons' meaning, never of the fact. */
+export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confirm' | 'accept' | 'decline'
+
+/** A point of the card "Я запомнил": taken off ("убрать") or accepted ("Запомнить"). */
+export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
+
 export type PasswordChangeKind = 'change' | 'reset'
 
 /** Properties that every event of a platform carries are added by the SDK wrapper, not here. */
@@ -226,6 +249,13 @@ export interface AnalyticsEventProperties {
 
   [AnalyticsEvent.JournalEntryOpened]: NoProperties
   [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }
+  [AnalyticsEvent.MemoryScreenOpened]: NoProperties
+  [AnalyticsEvent.MemoryEnabled]: { enabled: boolean }
+  [AnalyticsEvent.MemoryFactAction]: { action: MemoryFactActionName }
+  [AnalyticsEvent.MemoryForgetAll]: NoProperties
+  [AnalyticsEvent.MemoryExport]: NoProperties
+  [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
+  [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties

@@ -5,6 +5,7 @@ import { useEffect, useId, useState, type FormEvent } from 'react'
 import { LogOut, UserRound } from 'lucide-react'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { apiErrorText } from '@ryadom/client-core/errors'
+import { memoryInUse, memorySectionStatus, shouldShowMemorySection } from '@ryadom/client-core/memory'
 import { nameProblem } from '@ryadom/client-core/validation'
 import { Avatar, AvatarFallback } from '@ryadom/ui/components/avatar'
 import { Card, CardContent } from '@ryadom/ui/components/card'
@@ -41,6 +42,29 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const userId = user?.id ?? null
+  /**
+   * The section "Память": shown only when the feature works or the person has something there, and
+   * not at all when that cannot be learnt. Only the decision and a word are kept, never the facts.
+   */
+  const [memorySection, setMemorySection] = useState<{ status: string } | null>(null)
+
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    client
+      .getMemory()
+      .then((memory) => {
+        if (cancelled) return
+        setMemorySection(shouldShowMemorySection(memory) ? { status: memorySectionStatus(memory) } : null)
+        updateUser({ memoryEnabled: memoryInUse(memory) })
+      })
+      .catch(() => {
+        if (!cancelled) setMemorySection(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [client, userId, updateUser])
 
   // Sign-in returns only the basic fields; the rest of the profile comes from the server.
   useEffect(() => {
@@ -197,6 +221,24 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           </li>
         )}
       </SettingsSection>
+
+      {memorySection && (
+        <SettingsSection
+          title="Память"
+          testId="memory-section"
+          note="Важное из наших разговоров, чтобы не начинать с нуля. Включается только по твоему желанию."
+        >
+          <li>
+            <ProfileRow
+              icon="memory"
+              label="Что я помню"
+              value={memorySection.status}
+              href="/profile/memory"
+              testId="row-memory"
+            />
+          </li>
+        </SettingsSection>
+      )}
 
       <SettingsSection title="Поддержка">
         <li>

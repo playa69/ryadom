@@ -176,6 +176,19 @@ describe('отправка', () => {
     expect(posthog.capture).toHaveBeenCalledWith('dialog_message_sent', { input: 'text', size: 'short' })
   })
 
+  it('события памяти доходят со своими свойствами, а текст факта — нет', async () => {
+    const { posthog, started } = start(CONFIG)
+    await started
+    track(AnalyticsEvent.MemoryEnabled, { enabled: true })
+    track(AnalyticsEvent.MemoryIncognitoToggled, { on: true })
+    track(AnalyticsEvent.MemoryFactAction, { action: 'pin', text: 'Сестра Аня' } as never)
+    track(AnalyticsEvent.MemoryCardAction, { action: 'dismiss_item', note: 'поддерживает' } as never)
+    expect(posthog.capture).toHaveBeenCalledWith('memory_enabled', { enabled: true })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_incognito_toggled', { on: true })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_fact_action', { action: 'pin' })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_card_action', { action: 'dismiss_item' })
+  })
+
   it('просмотр экрана отправляется по маршруту, без идентификаторов и запроса', async () => {
     const { posthog, started } = start(CONFIG)
     await started

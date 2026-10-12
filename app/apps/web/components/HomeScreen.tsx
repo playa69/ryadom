@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, Heart, MessageCircle, Moon, type LucideIcon } from 'lucide-react'
+import { BookOpen, EyeOff, Heart, MessageCircle, Moon, type LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
@@ -11,17 +11,21 @@ import {
   StartDialogApiErrorCode,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
-import { shouldAskToResume } from '@ryadom/client-core/dialog-start'
+import { chosenMemoryMode, nextStartStep } from '@ryadom/client-core/dialog-start'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+import { memoryInUse } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
 import { useAuth, useClient } from '@/lib/auth'
+import { memoryCard } from '@/lib/memory'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import { BUTTON, FOCUS_RING } from './controls'
 import { rememberDialogStart } from './dialog-start'
+import MemoryCard from './MemoryCard'
 import ResumeDialogSheet from './ResumeDialogSheet'
 import { unlockSpeech } from '@ryadom/client-core/voice/speech'
 
@@ -32,6 +36,9 @@ import { unlockSpeech } from '@ryadom/client-core/voice/speech'
  * that opens on the voice and begins listening. If the person left a conversation unfinished (with
  * something said in it), the start waits for their answer: continue it, end it and begin a new one,
  * or close the question and stay here with the draft untouched.
+ *
+ * With memory on, a switch "Без памяти" beside the modes holds the next conversation without it, and
+ * after a conversation the card "Я запомнил" shows up here.
  *
  * In v0 only the venting mode works. The other modes exist in the contract, but enabling them
  * before the agent supports them would be a promise the product cannot keep.
@@ -86,14 +93,45 @@ export default function HomeScreen() {
   const [renewing, setRenewing] = useState(false)
   const [pendingError, setPendingError] = useState('')
 
+  const userId = user?.id ?? null
+  const memoryEnabled = user?.memoryEnabled
+  /** "Без памяти" for the next conversation; home starts without it every time. */
+  const [withoutMemory, setWithoutMemory] = useState(false)
+  const wanted = chosenMemoryMode(memoryEnabled, withoutMemory)
+
+  // Whether to offer "Без памяти" is asked each time home opens: the person's switch and whether the
+  // server uses memory at all can both change elsewhere. A failed request leaves what was known.
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    client
+      .getMemory()
+      .then((memory) => {
+        if (!cancelled) updateUser({ memoryEnabled: memoryInUse(memory) })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [client, userId, updateUser])
+
+  /** A start that says memory is off for the person is believed at once; "on" is left to the request above. */
+  function learnMemory(data: StartDialogApiResponse) {
+    if (data.memoryEnabled === false && memoryEnabled !== false) updateUser({ memoryEnabled: false })
+  }
+
   /** Hands a started dialog to the dialog screen, with what the person typed or asked for on home. */
   function openDialog(data: StartDialogApiResponse, draft: string, listen: boolean) {
+    // A new conversation makes the card of the previous one old news.
+    memoryCard.close()
     rememberDialogStart(
       data.dialogId,
       {
         greeting: data.greeting,
         resumed: data.resumed,
         sinceLastDialogHours: data.sinceLastDialogHours,
+        memoryMode: data.memoryMode,
+        memoryEnabled: data.memoryEnabled,
       },
       { draft, listen },
     )
@@ -109,7 +147,7 @@ export default function HomeScreen() {
     setLoading(true)
     let leaving = false
     try {
-      const result = await client.startDialog(mode)
+      let result = await client.startDialog(mode, { memory: wanted })
       // The handoff is armed only for a screen that is still here to push to the dialog: one armed for a
       // person who has left would wait for the next visit to that dialog and send the draft then.
       if (!alive.current) return
@@ -120,12 +158,23 @@ export default function HomeScreen() {
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
         return
       }
-      if (shouldAskToResume(result.data)) {
+      learnMemory(result.data)
+      const step = nextStartStep(result.data, wanted)
+      if (step === 'ask') {
         // Something was said in the conversation left open. Nothing changes until the person answers, and the
         // text they typed stays in the box; the press is released below so that the sheet's buttons can work.
         setPendingError('')
         setPending({ data: result.data, draft, listen })
         return
+      }
+      if (step === 'restart') {
+        // An empty open conversation in the other memory mode: nothing in it to lose, a new one in the chosen mode.
+        result = await client.startDialog(mode, { startNew: true, memory: wanted })
+        if (!alive.current) return
+        if (!result.ok) {
+          setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
+          return
+        }
       }
       openDialog(result.data, draft, listen)
       leaving = true
@@ -161,7 +210,7 @@ export default function HomeScreen() {
     setRenewing(true)
     let leaving = false
     try {
-      const result = await client.startDialog(mode, { startNew: true })
+      const result = await client.startDialog(mode, { startNew: true, memory: wanted })
       if (!alive.current) return
       if (!result.ok) {
         if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
@@ -243,6 +292,8 @@ export default function HomeScreen() {
             </p>
           )}
 
+          <MemoryCard />
+
           {/* Capped at the width of two chips per row until all four fit in one, so a narrow window gets a 2 + 2 grid, not 3 + 1. */}
           <div
             role="group"
@@ -288,6 +339,38 @@ export default function HomeScreen() {
             ))}
           </div>
 
+          {/* Only while memory is on: without it every conversation is "without memory" anyway. */}
+          {memoryEnabled === true && (
+            <div className="flex max-w-md flex-col items-center gap-1.5 text-center" data-testid="incognito">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-pressed={withoutMemory}
+                onClick={() => {
+                  const on = !withoutMemory
+                  setWithoutMemory(on)
+                  track(AnalyticsEvent.MemoryIncognitoToggled, { on })
+                }}
+                data-testid="incognito-toggle"
+                className={cn(
+                  BUTTON,
+                  'outline-none',
+                  'gap-1.5 border-input! px-3.5 text-sm text-dim enabled:hover:text-foreground',
+                  'aria-pressed:border-brand-line! aria-pressed:bg-brand-soft aria-pressed:text-foreground',
+                )}
+              >
+                <EyeOff aria-hidden="true" className={cn('size-4', withoutMemory && 'text-brand-400')} />
+                Без памяти
+              </Button>
+              <p className="text-xs leading-normal text-faint" aria-live="polite">
+                {withoutMemory
+                  ? 'Этот разговор я не запомню, а сам он удалится через сутки'
+                  : 'Можно провести следующий разговор так, чтобы я его не запомнил'}
+              </p>
+            </div>
+          )}
+
           <div className="flex max-w-[52ch] flex-col items-center pt-2 text-center short:pt-0">
             <p className="text-xs leading-normal text-faint">
               «Рядом»&nbsp;— самоподдержка, не психотерапия. В опасной ситуации звони&nbsp;112.
@@ -313,6 +396,12 @@ export default function HomeScreen() {
         onClose={dismissQuestion}
         busy={renewing}
         error={pendingError}
+        // A returned conversation keeps the mode it began in: "Без памяти" applies only to a new one.
+        note={
+          wanted === DialogMemoryMode.Off && pending?.data.memoryMode !== DialogMemoryMode.Off
+            ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
+            : undefined
+        }
       />
     </>
   )

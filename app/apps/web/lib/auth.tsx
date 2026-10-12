@@ -16,6 +16,7 @@ import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import type { RyadomClient } from '@ryadom/client-core/client'
 import type { User } from '@ryadom/client-core/storage'
 import { createWebClient } from './client'
+import { resetMemoryState } from './memory'
 
 export type AuthStatus = 'restoring' | 'anonymous' | 'authenticated'
 
@@ -65,6 +66,7 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
   // The client is built once but its callbacks must see current state setters.
   const handlers = useRef({
     onSessionEnd: () => {
+      resetMemoryState()
       setUser(null)
       setStatus('anonymous')
     },
@@ -106,6 +108,7 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
   const completeSession = useCallback(
     async (next: User, tokens: AuthTokensApiResponse, options: SessionOptions = {}) => {
       await client.startSession(next, tokens)
+      resetMemoryState()
       let current = next
       if (options.consent) {
         // Before the app learns it is signed in, so that its gate does not ask for what is just being
@@ -142,6 +145,7 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
 
   const logout = useCallback(async () => {
     await client.signOut()
+    resetMemoryState()
     setUser(null)
     setStatus('anonymous')
   }, [client])
@@ -149,6 +153,7 @@ export function AuthProvider({ apiBase, children }: { apiBase: string; children:
   const leaveAnonymousAccount = useCallback(async () => {
     await client.signOut()
     await client.forgetDevice()
+    resetMemoryState()
     setUser(null)
     setStatus('anonymous')
   }, [client])

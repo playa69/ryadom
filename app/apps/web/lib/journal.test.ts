@@ -3,6 +3,7 @@ import { ApiError } from '@ryadom/client-core/errors'
 import type { RyadomClient } from '@ryadom/client-core/client'
 import type { DialogListItemApiResponse, ListDialogsApiResponse } from '@ryadom/contracts/api/dialogs'
 import { DialogMode } from '@ryadom/contracts/api/dialogs'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { formatJournalDate, journal, tensionLabel } from './journal'
 
 // The hooks are not under test, and auth.tsx is JSX that a bare vitest run (tsconfig: jsx preserve) cannot parse.
@@ -12,7 +13,14 @@ function item(
   dialogId: string,
   summary: DialogListItemApiResponse['summary'] = null,
 ): DialogListItemApiResponse {
-  return { dialogId, mode: DialogMode.Vent, startedAt: '2026-10-01T11:30:00.000Z', endedAt: null, summary }
+  return {
+    dialogId,
+    mode: DialogMode.Vent,
+    startedAt: '2026-10-01T11:30:00.000Z',
+    endedAt: null,
+    summary,
+    memoryMode: DialogMemoryMode.On,
+  }
 }
 
 interface Deferred {

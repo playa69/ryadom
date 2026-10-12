@@ -45,4 +45,12 @@ export const {
   endDialog,
   getAppStatus,
   refreshSession,
+  getMemory,
+  setMemoryEnabled,
+  createMemoryFact,
+  updateMemoryFact,
+  forgetMemoryFact,
+  forgetAllMemory,
+  getMemoryChanges,
+  exportMemory,
 } = client
