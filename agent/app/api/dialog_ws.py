@@ -256,6 +256,7 @@ class DialogSession:
                 self._last_voiced = None
                 # tts_cancel прямо перед audio_start — перебивание голосом: реплику начинаем с чистого листа.
                 self._turn_interrupts, self._interrupted = self._interrupted, False
+                self._audio_started()
             case "audio_end":
                 await self._on_audio_end()
             case "set_voice":
@@ -297,7 +298,14 @@ class DialogSession:
         if crisis:
             await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
         turn = Turn(started=time.monotonic())
+        self._dispatch_text_turn(text, crisis, turn)
+
+    def _dispatch_text_turn(self, text: str, crisis: bool, turn: Turn) -> None:
+        """Ответ на набранное сообщение. Режим gemini_live подменяет это место (app/api/dialog_live.py)."""
         self._jobs.put_nowait(lambda: self._reply(crisis, turn))
+
+    def _audio_started(self) -> None:
+        """Началась голосовая реплика. Хук для режима gemini_live."""
 
     def _on_audio_frame(self, data: bytes) -> None:
         if self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN:
@@ -725,14 +733,22 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
     try:
         await websocket.accept()
         logger.info("socket opened dialog=%s", dialog.id)
-        session = DialogSession(
-            websocket,
-            store,
-            dialog,
-            lambda: active_tts(websocket.app),
-            websocket.app.state.chat,
-            websocket.app.state.recognizer,
-        )
+        live = websocket.app.state.live
+        if live is not None:  # VOICE_PIPELINE=gemini_live: речь в речь, чат и распознавание не нужны
+            from app.api.dialog_live import LiveDialogSession
+
+            session: DialogSession = LiveDialogSession(
+                websocket, store, dialog, lambda: active_tts(websocket.app), live
+            )
+        else:
+            session = DialogSession(
+                websocket,
+                store,
+                dialog,
+                lambda: active_tts(websocket.app),
+                websocket.app.state.chat,
+                websocket.app.state.recognizer,
+            )
         await session.run()
     finally:
         dialog.has_live_socket = False
