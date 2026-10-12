@@ -5,7 +5,7 @@
 
 | Файл | Что делает |
 |---|---|
-| `00-config.yaml` | ConfigMap `agent-config`: озвучка, голос по умолчанию, адрес прокси Qwen TTS |
+| `00-config.yaml` | ConfigMap `agent-config`: озвучка, голос по умолчанию, адрес прокси Qwen TTS, голосовой конвейер `VOICE_PIPELINE` (`cascade` по умолчанию) |
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
 | `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready` |
 | `../namespaces/manifests/08-network-policy-agent-service.yaml` | ingress `prod → agent:8001`, egress `prod → agent`, egress агента к прокси на `:4000` |
@@ -20,6 +20,7 @@
 | Secret | Namespace | Ключи |
 |---|---|---|
 | `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY` |
+| `agent-gemini` | `agent` | только для режима `gemini_live`: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`; Deployment читает их как необязательные |
 | `app-secrets` | `prod` | уже есть; ключ `AGENT_INTERNAL_TOKEN` с тем же значением, что у агента |
 
 Два разных секрета, не путать:
@@ -76,9 +77,9 @@ kubectl -n agent rollout status deploy/agent --timeout=180s
 # Изнутри кластера, тем же путём, каким ходит api (проверяет NetworkPolicy и DNS):
 kubectl -n prod exec deploy/app-api -- wget -qO- http://agent.agent.svc.cluster.local:8001/health      # {"status":"ok"}
 
-# Сам агент: провайдер озвучки должен быть qwen
+# Сам агент: провайдер озвучки должен быть qwen, конвейер cascade
 kubectl -n agent port-forward svc/agent 18001:8001 &
-curl -s http://127.0.0.1:18001/health/ready                                                           # {"status":"ok","tts":"qwen"}
+curl -s http://127.0.0.1:18001/health/ready          # {"status":"ok","pipeline":"cascade","tts":"qwen","llm":"proxy:…","stt":"proxy:…"}
 
 # Весь контракт по REST + WebSocket, с голосом (нужен внутренний токен; wav сохраняется для прослушивания)
 AGENT_INTERNAL_TOKEN=<токен> python agent/scripts/smoke.py --url http://127.0.0.1:18001 --voice female --wav reply.wav
@@ -98,6 +99,59 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts 
 новые образы `api`, `web` и `migrate` (миграция `0005_agent_voice` добавляет колонку `users.agent_voice`, по умолчанию
 `male`), поправить теги в `k8s/app/*/03-deployment.yaml` и `k8s/app/db/02-job-migrate.yaml` и применить как обычно:
 сначала Job миграции `app-migrate-0002`, затем Deployment'ы (см. `k8s/README.md`, «Новая версия»).
+
+## Режим gemini_live (речь в речь): подготовка и включение
+
+Режим добавляет PR «feat(agent): режим gemini_live». В кластере он **выключен**, пока в ConfigMap `VOICE_PIPELINE: "cascade"`
+(как сейчас в манифесте): образ с новым кодом ведёт себя как прежний каскад. Gemini API из России недоступен (из кластера проверено:
+`User location is not supported`), поэтому агент ходит через релей в Hetzner (`agent/relay/README.md`); из кластера релей
+доступен (проверено временным подом: DNS `sslip.io` резолвится, `/_relay_health` 200, без токена 403). Egress `:443` в ns `agent`
+уже разрешён (`05-network-policy-agent.yaml`), новые сетевые правила не нужны.
+
+Значения лежат в Yandex Lockbox, секрет `ryadom-gemini-live` (профиль `sber500-ryadom`; ключи `GEMINI_API_KEY`, `GEMINI_BASE_URL`,
+`GEMINI_RELAY_TOKEN` и `RELAY_SSH_PRIVATE_KEY` для доступа на сервер релея; защита от удаления включена). Существующие секреты
+(`ryadom-app-secrets`, Secret `agent-secrets`) не трогаются.
+
+Порядок, каждый шаг отдельным решением администратора:
+
+```powershell
+# 1. Образ ≥ 0.2.0 (в нём google-genai; сборка проверена локально: 343 МБ, не root, read-only rootfs, без capabilities).
+#    Сборка и push как в «Первом выкате», TAG=0.2.0; затем тег в 02-deployment.yaml отдельным коммитом deploy(agent).
+
+# 2. Secret agent-gemini из Lockbox (создаётся командой create, не apply; нужен admin kubeconfig и явное «да» пользователя):
+. "$env:USERPROFILE\.config\ryadom\bin\ryadom-secrets.ps1"
+New-RyadomK8sSecret -Namespace agent -Name agent-gemini -Source ryadom-gemini-live `
+  -Map @{ GEMINI_API_KEY = 'GEMINI_API_KEY'; GEMINI_BASE_URL = 'GEMINI_BASE_URL'; GEMINI_RELAY_TOKEN = 'GEMINI_RELAY_TOKEN' } -DryRun
+#    проверить и повторить без -DryRun, добавив -UserConfirmedAdmin
+
+# 3. Сначала выкатить новый образ в режиме cascade (ConfigMap без изменений) и убедиться, что агент здоров:
+#    kubectl apply -f k8s/agent/00-config.yaml -f k8s/agent/02-deployment.yaml ; rollout status ; /health/ready → "pipeline":"cascade"
+
+# 4. Включить режим: в 00-config.yaml VOICE_PIPELINE: "gemini_live", применить ConfigMap, перезапустить:
+#    kubectl apply -f k8s/agent/00-config.yaml ; kubectl -n agent rollout restart deploy/agent ; kubectl -n agent rollout status deploy/agent
+```
+
+Проверка после включения (порт-форвард как выше):
+
+```bash
+curl -s http://127.0.0.1:18001/health/ready      # "pipeline":"gemini-live:gemini-3.8-live", "tts":"gemini-live:gemini-3.8-live"
+python agent/scripts/live_smoke.py --url http://127.0.0.1:18001 --token <токен> --pcm-dir <каталог с PCM-репликами> --wav-dir <куда сохранить звук>
+kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live timeline|first sound|WARNING"
+```
+
+В журнале агента: `прогрев озвучки закончен: озвучено 12, не удалось 0` (около 20 с; пока идёт прогрев, приветствие может прочитать
+приложение своим голосом), строки `live timeline … ms: sent=… in_first=… out_first=… tts_start=…` (этапы хода в мс от конца реплики,
+без текстов) и `first sound … ms=` (на стенде 0,9-1,2 с против 2,6 с у каскада).
+
+**Откат:** вернуть `VOICE_PIPELINE: "cascade"`, применить ConfigMap, `kubectl -n agent rollout restart deploy/agent`. Secret `agent-gemini` может остаться.
+Образ с google-genai можно оставить: в режиме cascade он не используется.
+
+Что учесть до включения (подробности: `agent/relay/README.md`, «Ёмкость и лимиты»):
+
+- В PR #28 известны расхождения с каскадом (P1-P16 в `agent/tests/test_parity.py`, strict xfail), часть из них до включения в бою нужно закрыть.
+- Постоплата Gemini: контекст сессии оплачивается на каждый ход; задать `GEMINI_COMPRESSION_TRIGGER_TOKENS`/`GEMINI_COMPRESSION_TARGET_TOKENS`
+  (например 25000/8000), поставить бюджет Cloud Billing и ограничить ключ по IP релея.
+- Агент в памяти (Recreate): выкат и переключение режима обрывают текущие диалоги. Память пода в режиме Gemini на стенде около 100 МБ при лимите 384 МиБ.
 
 ## Ограничения (честно)
 
