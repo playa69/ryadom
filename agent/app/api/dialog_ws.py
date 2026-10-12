@@ -179,7 +179,7 @@ class DialogSession:
 
     def _memory_label(self) -> str:
         """Метка `memory` задержек: подмешана ли в этот разговор сводка памяти (чтение кэша, без диска и сети)."""
-        return "on" if self._store.memory_brief(self._dialog) else "off"
+        return "on" if self._store.memory_brief(self._dialog, count=False) else "off"
 
     # ─── отправка ─────────────────────────────────────────────────────────────
 

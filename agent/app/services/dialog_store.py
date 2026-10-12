@@ -108,7 +108,7 @@ class InvalidCursor(ValueError):
 class MemoryLink(Protocol):
     """Что хранилищу диалогов нужно от памяти агента (app/memory/service.py). Ни один метод не должен ронять разговор."""
 
-    def brief(self, dialog: Dialog) -> str:
+    def brief(self, dialog: Dialog, count: bool = True) -> str:
         """Сводка о человеке для этого разговора из кэша процесса: синхронно, без диска и сети (I3). Пустая — блока нет."""
         ...
 
@@ -300,13 +300,13 @@ class DialogStore:
             dialog.crisis_seen = True
             self._touch(dialog)
 
-    def memory_brief(self, dialog: Dialog) -> str:
+    def memory_brief(self, dialog: Dialog, count: bool = True) -> str:
         """Сводка памяти для разговора: пустая, если память не подключена, разговор «Без памяти» или что-то сломалось (I2, I3)."""
         memory = self.memory
         if memory is None or dialog.memory_mode != "on":
             return ""
         try:
-            return memory.brief(dialog) or ""
+            return memory.brief(dialog, count) or ""
         except Exception:  # noqa: BLE001 - любая ошибка памяти даёт разговор без сводки, а не ошибку разговора
             logger.exception("memory brief failed dialog=%s", dialog.id)
             return ""

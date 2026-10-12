@@ -234,7 +234,7 @@ class LiveDialogSession(DialogSession):
                 if not self._link_used:
                     return link  # на этой сессии ход ещё не вёлся: менять нечего (и цепочка смен невозможна)
                 self._refresh = True
-            if self._store.memory_brief(self._dialog) != self._brief_used:
+            if self._store.memory_brief(self._dialog, count=False) != self._brief_used:
                 self._refresh = True  # память изменилась: новая сессия с новой сводкой (или без неё)
             # Сюда приходят в начале нового хода (прошлый ответ к этому моменту уже закрыт `_begin`).
             if link is not None and not link.closed and link.voice == voice and not self._refresh:

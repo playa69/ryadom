@@ -180,15 +180,15 @@ class MemoryService:
 
     # ─── MemoryLink: то, что зовут хранилище и сессии разговора ───────────────
 
-    def brief(self, dialog: Dialog) -> str:
+    def brief(self, dialog: Dialog, count: bool = True) -> str:
         """Сводка для разговора из кэша процесса (I3). Только в режиме `on`, только при включённой памяти; иначе пусто."""
         if self.mode != "on" or dialog.memory_mode != "on":
             return ""
         current = self.cache.get(dialog.user_id)
+        if count:  # метки метрик и сверка Live-сессии читают сводку, но в промпт её не кладут: их не считаем
+            MEMORY_BRIEF_CACHE_TOTAL.labels("miss" if current is None else "hit" if current.text else "empty").inc()
         if current is None:
-            MEMORY_BRIEF_CACHE_TOTAL.labels("miss").inc()
             return ""
-        MEMORY_BRIEF_CACHE_TOTAL.labels("hit" if current.text else "empty").inc()
         return current.text
 
     def enabled(self, user_id: str) -> bool:
