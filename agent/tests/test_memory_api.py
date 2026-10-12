@@ -240,3 +240,14 @@ def test_health_shows_memory(tmp_path: Path) -> None:
         assert client.get(url(user()), headers=AUTH).json()["available"] is False
     with make_client(None, FakeModel()) as client:  # без диска памяти нет
         assert client.get("/health/ready").json()["memory"] == "off"
+
+
+def test_short_facts_built_from_slots_are_accepted(tmp_path: Path) -> None:
+    u = user()
+    with make_client(tmp_path / "a.sqlite3", FakeModel()) as client:
+        turn_on(client, u)
+        mom = add(client, u, "person", None, slots={"role": "мама"})
+        assert mom.status_code == 201 and mom.json()["text"] == "Мама"
+        tone = add(client, u, "style", None, slots={"form": "ty"})
+        assert tone.status_code == 201 and tone.json()["text"] == "На «ты»"
+        assert error(add(client, u, "works", "Бегать"))[2] == {"reason": "too_short"}  # свободный текст — от 8 знаков

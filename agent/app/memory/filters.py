@@ -158,8 +158,10 @@ def is_sensitive(text: str) -> bool:
 
 
 def length_reason(category: str, text: str) -> str | None:
+    """Длина вне 8–max_len. У стиля и близких текст собирает сервер из проверенных слотов («На «ты»», «Мама»): короткий —
+    это нормально, проверяется только верхний предел."""
     size = len(text.strip())
-    if size < R.MIN_TEXT:
+    if size < R.MIN_TEXT and category not in ("style", "person"):
         return "too_short"
     if size > R.MAX_TEXT[category]:
         return "too_long"

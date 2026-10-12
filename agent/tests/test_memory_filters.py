@@ -167,6 +167,13 @@ def test_length(category: str, text: str, reason: str) -> None:
     assert filters.length_reason(category, text) == reason
 
 
+def test_short_texts_built_from_slots_are_fine() -> None:
+    """«На «ты»» и «Мама» собраны сервером из слотов: короткие, но законные."""
+    assert filters.length_reason("style", filters.render_style_text({"form": "ty"})) is None
+    assert filters.length_reason("person", filters.render_person_text({"role": "мама"})) is None
+    assert filters.length_reason("person", "я" * 121) == "too_long"
+
+
 def test_style_slots() -> None:
     slots, reason = filters.validate_slots("style", {"address": "Марина", "form": "ty", "advice": "ask_first", "x": 1})
     assert reason is None and slots == {"address": "Марина", "form": "ty", "advice": "ask_first"}
