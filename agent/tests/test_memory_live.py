@@ -43,7 +43,8 @@ def first_instructions(client: TestClient, connector: FakeConnector, u: str, mem
     dialog = client.post(f"/v1/users/{u}/dialogs", json={"memory": memory, "new": True}, headers=AUTH).json()
     before = len(connector.links)
     with client.websocket_connect(ws_url(u, dialog["dialogId"]), headers=AUTH) as ws:
-        read_frames(ws, lambda f: has(f, "ready"))
+        # Дождаться конца приветствия: закрытие сокета посреди озвучки тестовый клиент Starlette превращает в отмену задачи.
+        read_frames(ws, lambda f: has(f, "tts_end", messageId="greeting"))
         wait(lambda: len(connector.links) > before)
     return connector.links[before].instructions
 
