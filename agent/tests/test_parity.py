@@ -36,8 +36,7 @@ tests/conftest.py) и против gemini_live (FakeConnector/FakeLink из test
   P4   расшифровка речи кусками, второй после начала ответа: транскрипт и история обрезаны, safety позже ответа модели
   P5   реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS при молчащей модели: ход закрывается посреди речи, ответа нет
   P6   второй отказ Gemini подряд не сообщается клиенту ни error, ни транскриптом
-  P7   модель не знает о набранной кризисной реплике и о кризисном ответе агента
-  P8   после кризиса голосом контекст модели хранит её выброшенный ответ вместо сказанного агентом
+  P7, P8 закрыты сменой сессии после кризиса (GEMINI_TEXT_CONTEXT): новая сессия получает историю с кризисным ответом агента
   P9   ограничение длины ответа (MAX_REPLY_CHARS) не действует
   P10  ответ без звука от Gemini не сопровождается error VOICE_UNAVAILABLE (каскад сообщает)
   P11  dev-переключатель озвучки (/dev/tts none) не выключает звук ответов
@@ -68,7 +67,7 @@ from starlette.testclient import WebSocketDenialResponse
 
 from app.api.dialog_live import PRE_ROLL_FRAMES
 from app.api.dialog_ws import MAX_AUDIO_BYTES, MAX_REPLY_CHARS
-from app.clients.gemini_live import LiveError, LiveEvent
+from app.clients.gemini_live import LiveError, LiveEvent, LiveHistory
 from app.clients.llm import ModelError
 from app.core.config import APP_CONFIG
 from app.main import create_app
@@ -121,6 +120,7 @@ def pinned_settings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFi
         ("transcript_wait_ms", 1000),
         ("history_messages", 12),
         ("session_resumption", True),
+        ("text_context", True),  # по умолчанию: прошлые реплики уходят в новую сессию отдельно от промпта
     ):
         monkeypatch.setattr(gemini, name, value)
     yield
@@ -189,8 +189,15 @@ Plan = Callable[["ScriptedLink", str | None, str], "list[LiveEvent | float]"]
 class ScriptedLink(FakeLink):
     """FakeLink с ответами по сценарию. `plan` задаёт события хода; число в списке — пауза в секундах."""
 
-    def __init__(self, cfg: "ScriptedConnector", voice: str, instructions: str, resume_handle: str | None = None) -> None:
-        super().__init__(voice, "", "", instructions, resume_handle)
+    def __init__(
+        self,
+        cfg: "ScriptedConnector",
+        voice: str,
+        instructions: str,
+        resume_handle: str | None = None,
+        history: LiveHistory | None = None,
+    ) -> None:
+        super().__init__(voice, "", "", instructions, resume_handle, history)
         self.cfg = cfg
         self.typed: list[str] = []
         self.heard_log: list[str] = []
@@ -284,11 +291,14 @@ class ScriptedConnector(FakeConnector):
         self.latency = latency
         self.piece_delay = piece_delay
 
-    async def open(self, voice: str, instructions: str, resume_handle: str | None = None) -> ScriptedLink:  # type: ignore[override]
+    async def open(  # type: ignore[override]
+        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+    ) -> ScriptedLink:
         self.open_calls.append((voice, resume_handle))
+        self.history_calls.append(history)
         if self.fail:
             raise LiveError("Gemini Live не открылся в тесте")
-        link = ScriptedLink(self, voice, instructions, resume_handle)
+        link = ScriptedLink(self, voice, instructions, resume_handle, history)
         self.links.append(link)
         return link
 
@@ -503,12 +513,14 @@ class Rig:
     # что видела модель
 
     def model_context(self) -> str:
-        """Всё, что модель знала к моменту последнего ответа: история для чата или инструкции, реплики и слова сессии Gemini."""
+        """Всё, что модель знала к моменту последнего ответа: история для чата или инструкции, прошлые реплики, загруженные в
+        сессию отдельно от промпта (text_context), реплики и слова сессии Gemini."""
         if self.chat is not None:
             return "\n".join(m["content"] for m in self.chat.calls[-1])
         assert self.connector is not None
         link = self.connector.links[-1]
-        return "\n".join([link.instructions, *link.typed, *link.heard_log, *link.reply_log[:-1]])
+        loaded = [text for _, text in link.history or []]
+        return "\n".join([link.instructions, *loaded, *link.typed, *link.heard_log, *link.reply_log[:-1]])
 
     def model_turns(self) -> int:
         """Сколько раз модель просили ответить."""
@@ -1489,10 +1501,7 @@ def sc_crisis_then_followup(r: Rig, voice: bool) -> Run:
         return r.done(c, dialog, barrier=False, context=context)
 
 
-@known_gap(
-    "P7 после набранной кризисной реплики модель не знает ни о ней, ни о кризисном ответе агента: запрос в Gemini не уходит, "
-    "контекст сессии им не пополняется"
-)
+# P7 закрыт: после кризиса сессия открывается заново (GEMINI_TEXT_CONTEXT), и история в ней содержит кризисную реплику и ответ агента.
 def test_the_model_knows_about_a_typed_crisis_in_the_next_answer() -> None:
     cascade, live = both(lambda r: sc_crisis_then_followup(r, voice=False), replies=["Я рядом. Расскажи, что случилось."])
     sound(cascade, closed_ends=True)
@@ -1501,9 +1510,7 @@ def test_the_model_knows_about_a_typed_crisis_in_the_next_answer() -> None:
     gap("Я слышу, что тебе очень тяжело" in live.extra["context"], "модель не знает, что агент ответил кризисным текстом")
 
 
-@known_gap(
-    "P8 после кризиса голосом в контексте модели лежит её выброшенный ответ, а не кризисный ответ, который услышал человек"
-)
+# P8 закрыт: новая сессия не помнит выброшенного ответа модели, в её истории то, что человек услышал на самом деле.
 def test_the_model_knows_what_the_agent_said_after_a_voice_crisis() -> None:
     cascade, live = both(
         lambda r: sc_crisis_then_followup(r, voice=True),

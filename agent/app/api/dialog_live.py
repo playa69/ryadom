@@ -28,10 +28,16 @@ from app.api.dialog_ws import (
     Turn,
     is_silence,
 )
-from app.clients.gemini_live import LiveConnector, LiveEvent, LiveLink
+from app.clients.gemini_live import LiveConnector, LiveEvent, LiveHistory, LiveLink
 from app.clients.speech import Voice
 from app.core.config import APP_CONFIG
-from app.core.metrics import VOICE_TURN_END_DELAY_SECONDS, VOICE_TURNS_TRUNCATED_TOTAL
+from app.core.metrics import (
+    GEMINI_CONTEXT_REFRESH_SECONDS,
+    GEMINI_CONTEXT_REFRESH_TOTAL,
+    GEMINI_TOKENS_TOTAL,
+    VOICE_TURN_END_DELAY_SECONDS,
+    VOICE_TURNS_TRUNCATED_TOTAL,
+)
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.replies import CRISIS_SAFETY_TEXT, SYSTEM_PROMPT, is_crisis
 
@@ -141,6 +147,8 @@ class LiveDialogSession(DialogSession):
         self._resume_handle: str | None = None
         # Google предупредил, что скоро закроет соединение: между репликами переоткрываем его заранее.
         self._refresh = False
+        self._rotation: asyncio.Task[None] | None = None  # смена сессии после ответа (GEMINI_TEXT_CONTEXT)
+        self._link_used = False  # на текущем соединении уже начат ход (иначе в нём нет аудио, которое стоило бы убрать)
         self._speech_turns: dict[str, LiveTurn] = {}
 
     def _first_sound(self, message_id: str, turn: Turn | None) -> None:
@@ -164,6 +172,8 @@ class LiveDialogSession(DialogSession):
         try:
             await super().run()
         finally:
+            if self._rotation is not None:
+                self._tasks.append(self._rotation)
             for task in self._tasks:
                 task.cancel()
             await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -172,27 +182,52 @@ class LiveDialogSession(DialogSession):
                     self._disarm_all(turn)
             self._release_link()
 
+    def _history(self) -> list[tuple[Literal["user", "model"], str]]:
+        """Последние сообщения диалога для новой сессии: (кто, текст). История начинается с реплики человека, подряд
+        идущие реплики одного автора склеены (так модель принимает её без ошибок)."""
+        messages = list(self._dialog.messages)
+        while messages and messages[-1].role == "user":  # это реплика, которую сейчас отправим
+            messages.pop()
+        if self._cfg.history_messages:
+            messages = messages[-self._cfg.history_messages :]
+        history: list[tuple[Literal["user", "model"], str]] = []
+        for message in messages:
+            role: Literal["user", "model"] = "user" if message.role == "user" else "model"
+            if not history and role == "model":
+                continue
+            if history and history[-1][0] == role:
+                history[-1] = (role, history[-1][1] + "\n" + message.text)
+            else:
+                history.append((role, message.text))
+        return history
+
     def _instructions(self, resumed: bool = False) -> str:
-        """Промпт агента и, при новом соединении посреди диалога, последние сообщения: модель не начинает с чистого листа.
+        """Промпт агента и, если история не уходит отдельными репликами, последние сообщения текстом: модель не начинает
+        с чистого листа.
 
         Возобновлённая по handle сессия помнит разговор сама (в том числе сжатый Google): текст ей не дублируем.
+        При GEMINI_TEXT_CONTEXT история загружается в сессию настоящими репликами (`_history`), в промпт её не кладём.
         """
-        history = list(self._dialog.messages)
-        while history and history[-1].role == "user":  # это реплика, которую сейчас отправим
-            history.pop()
-        history = history[-self._cfg.history_messages :] if self._cfg.history_messages and not resumed else []
+        history = [] if resumed or self._cfg.text_context else self._history()
         text = SYSTEM_PROMPT + LIVE_ADDENDUM
         if history:
-            lines = [("Человек" if m.role == "user" else "Ты") + ": " + m.text for m in history]
+            lines = [("Человек" if role == "user" else "Ты") + ": " + message for role, message in history]
             text += "\n\nУже сказано в этом разговоре (продолжай, не здоровайся заново):\n" + "\n".join(lines)
         return text
 
     # ─── соединение ───────────────────────────────────────────────────────────
 
-    async def _ensure_link(self) -> LiveLink | None:
+    async def _ensure_link(self, rotate: bool = False) -> LiveLink | None:
+        """Живое соединение с моделью. `rotate`: сменить его на свежее с текстовой историей, если человек ещё не заговорил."""
         async with self._link_lock:
             link = self._link
             voice = self._dialog.voice
+            if rotate:
+                if self._turn is not None or self._voice_turn is not None:
+                    return link  # новый ход уже начался: сессию сменим после его ответа
+                if not self._link_used:
+                    return link  # на этой сессии ход ещё не вёлся: менять нечего (и цепочка смен невозможна)
+                self._refresh = True
             # Сюда приходят в начале нового хода (прошлый ответ к этому моменту уже закрыт `_begin`).
             if link is not None and not link.closed and link.voice == voice and not self._refresh:
                 return link
@@ -201,7 +236,8 @@ class LiveDialogSession(DialogSession):
             self._refresh = False
             if voice_changed:
                 self._resume_handle = None  # голос у сессии один на всё соединение: новый голос — новая сессия
-            handle = self._resume_handle if self._cfg.session_resumption else None
+            # При text_context контекст приходит текстом, возобновлять сессию по handle (вместе с её аудио) не нужно.
+            handle = self._resume_handle if self._cfg.session_resumption and not self._cfg.text_context else None
             link = await self._open(voice, handle)
             if link is None and handle is not None:
                 # Handle не принят (устарел, сессия закрыта): начинаем заново, а контекст даём последними сообщениями.
@@ -210,18 +246,57 @@ class LiveDialogSession(DialogSession):
             if link is None:
                 return None
             self._link = link
+            self._link_used = False
             self._reader = asyncio.create_task(self._read(link))
             return link
 
     async def _open(self, voice: Voice, handle: str | None) -> LiveLink | None:
+        history: LiveHistory | None = self._history() if self._cfg.text_context and handle is None else None
         try:
-            link = await self._connector.open(voice, self._instructions(resumed=handle is not None), handle)
+            link = await self._connector.open(voice, self._instructions(resumed=handle is not None), handle, history or None)
         except Exception as error:  # noqa: BLE001
             logger.warning("gemini live not available dialog=%s resume=%s: %s", self._dialog.id, handle is not None, error)
             return None
         if handle is not None:
             logger.info("gemini live session resumed dialog=%s", self._dialog.id)
         return link
+
+    def _schedule_rotation(self) -> None:
+        if self._rotation is None or self._rotation.done():
+            self._rotation = asyncio.create_task(self._rotate())
+
+    async def _rotate(self) -> None:
+        """Ответ договорён и озвучен (turn_complete): меняем сессию на свежую, где прошлые реплики лежат текстом, а не
+        аудио. Идёт в фоне, пока человек думает; если он заговорил раньше, смена откладывается до следующего ответа."""
+        before, started = self._link, time.monotonic()
+        link = await self._ensure_link(rotate=True)
+        if link is before:
+            return
+        seconds = time.monotonic() - started
+        if link is None:
+            GEMINI_CONTEXT_REFRESH_TOTAL.labels("failed").inc()
+            logger.warning("live context refresh failed dialog=%s ms=%d", self._dialog.id, seconds * 1000)
+            return
+        GEMINI_CONTEXT_REFRESH_TOTAL.labels("ok").inc()
+        GEMINI_CONTEXT_REFRESH_SECONDS.observe(seconds)
+        logger.info(
+            "live context refreshed dialog=%s history_messages=%d ms=%d", self._dialog.id, len(self._history()), seconds * 1000
+        )
+
+    def _count_usage(self, usage: dict[str, int]) -> None:
+        """Токены хода из usage_metadata: prompt — весь контекст хода (оплачивается заново каждый ход), response — ответ."""
+        for key, value in usage.items():
+            direction, _, modality = key.partition("_")
+            GEMINI_TOKENS_TOTAL.labels(direction, modality).inc(value)
+        logger.info(
+            "live usage dialog=%s prompt=%d(text=%d audio=%d) response=%d(audio=%d)",
+            self._dialog.id,
+            usage.get("prompt_all", 0),
+            usage.get("prompt_text", 0),
+            usage.get("prompt_audio", 0),
+            usage.get("response_all", 0),
+            usage.get("response_audio", 0),
+        )
 
     async def _drop_link(self) -> None:
         reader, link = self._reader, self._link
@@ -239,6 +314,9 @@ class LiveDialogSession(DialogSession):
 
     async def _read(self, link: LiveLink) -> None:
         async for event in link.events():
+            if event.kind == "usage":  # учёт токенов не зависит от состояния хода
+                self._count_usage(event.usage or {})
+                continue
             self._events.put_nowait((link, event))
 
     async def _send_loop(self) -> None:
@@ -252,6 +330,7 @@ class LiveDialogSession(DialogSession):
                     if link is None:
                         self._events.put_nowait((None, LiveEvent("closed", text="не удалось открыть Gemini Live")))
                         continue
+                    self._link_used = True  # с этого момента на соединении есть ход
                     if kind == "start":
                         await link.activity_start()
                     else:
@@ -351,6 +430,7 @@ class LiveDialogSession(DialogSession):
 
     def _dispatch_text_turn(self, text: str, crisis: bool, turn: Turn) -> None:
         if crisis:  # кризис говорит фиксированный текст, модель в этот путь не входит
+            self._refresh_after_crisis()
             super()._dispatch_text_turn(text, crisis, turn)
             return
         live_turn = LiveTurn(kind="text", opened=True, started=turn.started)
@@ -423,6 +503,9 @@ class LiveDialogSession(DialogSession):
             if kind in ("generation_complete", "turn_complete"):
                 self._stale_until = 0.0
             return  # хвост прерванного ответа
+        if kind == "turn_complete" and turn is None and self._cfg.text_context:
+            self._schedule_rotation()  # ответ дозвучал, человек ещё молчит: самое время сменить сессию
+            return
         if turn is None:
             return
         self._touch(turn)
@@ -481,10 +564,17 @@ class LiveDialogSession(DialogSession):
         turn.user_saved = True
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
 
+    def _refresh_after_crisis(self) -> None:
+        """Кризисный обмен идёт без модели (или с выброшенным ответом): к следующему ходу сессия открывается заново, и в её
+        истории лежит то, что человек услышал на самом деле, то есть кризисный ответ агента, а не ответ модели."""
+        if self._cfg.text_context:
+            self._refresh = True
+
     async def _crisis(self, turn: LiveTurn) -> None:
         """Кризис: ответ модели не звучит и не показывается, вместо него фиксированный текст (как в каскаде)."""
         if turn.discarded:
             return
+        self._refresh_after_crisis()
         turn.discarded = True
         turn.opened = True
         turn.held.clear()
