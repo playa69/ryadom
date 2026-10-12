@@ -34,7 +34,7 @@ tests/conftest.py) и против gemini_live (FakeConnector/FakeLink из test
        отброшен как «хвост» (окно STALE_SECONDS длиннее задержки модели)
   P3b  набранная реплика посреди ответа обрывает его (у каскада реплика ждёт в очереди)
   P4   расшифровка речи кусками, второй после начала ответа: транскрипт и история обрезаны, safety позже ответа модели
-  P5   реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS при молчащей модели: ход закрывается посреди речи, ответа нет
+  P5   закрыт: реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS при молчащей модели (таймер молчания идёт после audio_end)
   P6   второй отказ Gemini подряд не сообщается клиенту ни error, ни транскриптом
   P7, P8 закрыты сменой сессии после кризиса (GEMINI_TEXT_CONTEXT): новая сессия получает историю с кризисным ответом агента
   P9   ограничение длины ответа (MAX_REPLY_CHARS) не действует
@@ -1293,10 +1293,7 @@ def sc_long_speech(r: Rig, pause: float) -> Run:
         return r.done(c, dialog, wait=2.5)
 
 
-@known_gap(
-    "P5 реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS, пока модель молчит: ход закрывается посреди речи, ответа нет "
-    "(premise: настоящий Gemini не шлёт события, пока человек говорит)"
-)
+# P5 закрыт: таймер молчания модели не идёт, пока человек ещё говорит (ходом считается время после audio_end).
 def test_a_long_utterance_survives_the_idle_timeout_of_a_silent_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)  # в бою 15 с
     cascade, live = both(lambda r: sc_long_speech(r, 1.6))

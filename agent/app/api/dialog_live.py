@@ -68,6 +68,7 @@ class LiveTurn:
     got_output: bool = False
     failed: bool = False
     user_saved: bool = False
+    ended: bool = False  # реплика человека закончена (audio_end): с этого момента ждём ответ модели и считаем её молчание
     held: list[LiveEvent] = field(default_factory=list)  # ответ, который ждёт расшифровки
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     message: Message | None = None
@@ -451,6 +452,7 @@ class LiveDialogSession(DialogSession):
 
     def _on_ended(self, turn: LiveTurn) -> None:
         self._stale_until = 0.0
+        turn.ended = True
         self._touch(turn)
 
     def _arm(self, turn: LiveTurn, name: str, delay: float) -> None:
@@ -468,7 +470,14 @@ class LiveDialogSession(DialogSession):
             self._disarm(turn, name)
 
     def _touch(self, turn: LiveTurn) -> None:
-        """Ход жив, пока от модели что-то приходит: иначе через GEMINI_IDLE_TIMEOUT_SECONDS он закрывается."""
+        """Ход жив, пока от модели что-то приходит: иначе через GEMINI_IDLE_TIMEOUT_SECONDS он закрывается.
+
+        Пока человек говорит, модель молчит, и таймер не идёт: иначе реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS (15 с, а в рассказе
+        «выговориться» это обычное дело) закрывалась бы посреди речи, и ответа на неё не было бы вовсе. Предел длины самой реплики
+        держит VOICE_TURN_MAX_SECONDS, а оборванное соединение закрывает сокет.
+        """
+        if turn.kind == "voice" and not turn.ended:
+            return
         self._arm(turn, "idle", self._cfg.idle_timeout_seconds)
 
     async def _on_timer(self, turn: LiveTurn, name: str) -> None:
