@@ -442,3 +442,33 @@ def test_set_voice_frame_switches_the_voice_of_the_next_reply(voice_client, voic
     # выбор запомнен: следующий диалог человека начинается женским голосом
     voice_client.post(f"/v1/users/{user_id}/dialogs/{dialog['dialogId']}/end", headers=AUTH)
     assert start_dialog(voice_client, user_id)["voice"] == "female"
+
+
+def test_live_socket_of_a_replaced_dialog_gets_ended_and_is_closed(client, user_id):
+    """Человек начал новый разговор с другого экрана: старый сокет узнаёт об этом и закрывается, а не пишет в завершённый диалог."""
+    first = start_dialog(client, user_id)
+    with client.websocket_connect(ws_url(user_id, first["dialogId"]), headers=AUTH) as ws:
+        send_user_message(ws, "c-1", "Мне плохо")
+        read_frames(ws, reply_done)
+        second = client.post(f"/v1/users/{user_id}/dialogs", json={"new": True}, headers=AUTH).json()
+        assert second["dialogId"] != first["dialogId"]
+        frames = read_frames(ws, lambda f: any(k == "close" for k, _ in f))
+    ended = [b for k, b in frames if k == "json" and b["type"] == "ended"]
+    assert len(ended) == 1 and ended[0]["summary"]["title"] == "Мне плохо"
+    assert frames[-1] == ("close", 1000)
+
+
+def test_socket_to_a_dialog_that_was_ended_elsewhere_is_closed_without_taking_messages(client, user_id):
+    """Экран A был без связи, а экран B начал новый разговор: A переподключается к завершённому диалогу и ничего в него не пишет."""
+    first = start_dialog(client, user_id)
+    with client.websocket_connect(ws_url(user_id, first["dialogId"]), headers=AUTH) as ws:
+        send_user_message(ws, "c-1", "Мне плохо")
+        read_frames(ws, reply_done)
+    second = client.post(f"/v1/users/{user_id}/dialogs", json={"new": True}, headers=AUTH).json()
+    assert second["dialogId"] != first["dialogId"]
+
+    with client.websocket_connect(ws_url(user_id, first["dialogId"]), headers=AUTH) as ws:
+        frames = read_frames(ws, lambda f: any(k == "close" for k, _ in f))
+    assert types(frames) == ["ready", "ended"] and frames[-1] == ("close", 1000)
+    history = client.get(f"/v1/users/{user_id}/dialogs/{first['dialogId']}", headers=AUTH).json()["messages"]
+    assert [m["role"] for m in history] == ["user", "assistant"]  # завершённый диалог не пополнился

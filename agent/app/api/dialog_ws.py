@@ -154,6 +154,7 @@ class DialogSession:
         self._frame_interval = APP_CONFIG.speech.tts_frame_interval_ms / 1000
 
         self._closed = False
+        self._replace_task: asyncio.Task[None] | None = None
         self._send_lock = asyncio.Lock()
         # Озвучки двух сообщений не перемежаются: каждая берёт замок целиком.
         self._speech_lock = asyncio.Lock()
@@ -197,9 +198,23 @@ class DialogSession:
 
     # ─── жизненный цикл ───────────────────────────────────────────────────────
 
+    def _replaced(self, summary: dict[str, Any]) -> None:
+        """Диалог завершён снаружи (человек начал новый разговор с другого экрана): сообщить и закрыть сокет."""
+        if not self._closed:
+            self._replace_task = asyncio.get_running_loop().create_task(self._close_replaced(summary))
+
+    async def _close_replaced(self, summary: dict[str, Any]) -> None:
+        await self._send({"type": "ended", "summary": summary})
+        self._closed = True
+        try:
+            await self._ws.close(code=1000)
+        except (RuntimeError, WebSocketDisconnect, OSError):
+            pass
+
     async def run(self) -> None:
         await self._send({"type": "ready"})
         dialog = self._dialog
+        dialog.on_replaced = self._replaced
         if dialog.greeting_pending:
             dialog.greeting_pending = False  # один раз на каждый POST …/dialogs, не на каждый сокет
             if dialog.greeting:
@@ -217,6 +232,7 @@ class DialogSession:
                     break
         finally:
             self._closed = True
+            dialog.on_replaced = None
             worker.cancel()
             self._pause_hold()
             for task in self._speech_tasks:
@@ -721,6 +737,8 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
 
     store: DialogStore = websocket.app.state.store
     canonical = canonical_user_id(user_id)
+    if canonical:
+        await store.ensure_user(canonical)  # после перезапуска диалоги человека поднимаются с диска
     dialog = store.get(canonical, dialog_id) if canonical else None
     # Чужой и несуществующий диалог неразличимы.
     if dialog is None:
@@ -729,10 +747,16 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
     if dialog.has_live_socket:
         return await _deny(websocket, 409, "AGENT_VALIDATION", "У диалога уже есть живое соединение")
 
-    dialog.has_live_socket = True
+    store.socket_opened(dialog)
     try:
         await websocket.accept()
         logger.info("socket opened dialog=%s", dialog.id)
+        if dialog.ended_at is not None:
+            # Диалог завершён (человек начал новый разговор с другого экрана, а этот был без связи): в него больше ничего не пишем.
+            await websocket.send_text(json.dumps({"v": 1, "type": "ready"}))
+            await websocket.send_text(json.dumps({"v": 1, "type": "ended", "summary": dialog.summary}, ensure_ascii=False))
+            await websocket.close(code=1000)
+            return
         live = websocket.app.state.live
         if live is not None:  # VOICE_PIPELINE=gemini_live: речь в речь, чат и распознавание не нужны
             from app.api.dialog_live import LiveDialogSession
@@ -751,5 +775,5 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             )
         await session.run()
     finally:
-        dialog.has_live_socket = False
+        store.socket_closed(dialog)
         logger.info("socket closed dialog=%s", dialog.id)

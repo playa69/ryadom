@@ -45,6 +45,19 @@ VOICE_HELD_TURNS_TOTAL = Counter(
     "Реплики, оборванные на полуслове (союз, запятая): ответ задержан, пока человек договаривает.",
 )
 
+# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase.
+DIALOG_DB_ERRORS_TOTAL = Counter(
+    "agent_dialog_db_errors_total",
+    "Сбои базы диалогов на диске: при сбое запись повторяется, диалоги остаются в памяти.",
+    ["op"],
+)
+
+DIALOG_DB_WRITE_SECONDS = Histogram(
+    "agent_dialog_db_write_seconds",
+    "Сколько занимает запись пачки изменённых диалогов на диск (фоновый поток).",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
 # Режим gemini_live. Токены берутся из usage_metadata ответа Gemini: на каждый ход приходит размер контекста этого хода
 # (prompt, то, что оплачивается заново на каждый ход) и сгенерированное (response). direction: prompt | response | total;
 # modality: text | audio | all.
