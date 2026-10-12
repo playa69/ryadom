@@ -67,7 +67,7 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
             [
                 DialogWrite(
                     dialog_id=dialog_id,
-                    row=(dialog_id, owner, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2),
+                    row=(dialog_id, owner, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2, "on", 0),
                     messages=[
                         ("m1", dialog_id, 0, "user", "Мне тревожно", "2026-10-12T10:00:01.000Z"),
                         ("m2", dialog_id, 1, "assistant", "Я рядом.", "2026-10-12T10:00:02.000Z"),

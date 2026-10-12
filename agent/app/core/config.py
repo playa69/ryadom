@@ -199,6 +199,42 @@ class GeminiSettings(BaseAppSettings):
     session_resumption: bool = Field(validation_alias="GEMINI_SESSION_RESUMPTION", default=True)
 
 
+class MemorySettings(BaseAppSettings):
+    """Долговременная память агента (спецификация памяти, раздел 14): факты о человеке между разговорами.
+
+    `MEMORY_MODE`:
+      off     память не извлекается и не подмешивается (по умолчанию). Чтение, экспорт и стирание памяти работают всегда
+      shadow  факты извлекаются только у людей, включивших память, но сводка в разговор не попадает (внутренняя проверка)
+      on      извлечение и сводка в разговоре
+    Память живёт в том же файле SQLite, что и диалоги: без `DIALOG_DB_PATH` режим принудительно `off`.
+
+    Извлечение идёт только через модель в РФ (прокси программы): Gemini и любые зарубежные адреса сюда не подставлять.
+    """
+
+    mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
+    # Сколько памяти уходит в голосовую модель: minimal — только как говорить и о чём не говорить (и мягкий тон после тяжёлого
+    # разговора); standard — плюс близкие (без имён), что помогает, планы, обстоятельства, прошлый разговор; full — с именами.
+    brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")
+    # Прокси и модель извлечения; пусто — те же, что у чата (LLM_BASE_URL, LLM_CHAT_MODEL). Ключ — AGENT_API_TOKEN.
+    llm_base_url: str | None = Field(validation_alias="MEMORY_LLM_BASE_URL", default=None)
+    llm_model: str | None = Field(validation_alias="MEMORY_LLM_MODEL", default=None)
+    llm_timeout_seconds: int = Field(validation_alias="MEMORY_LLM_TIMEOUT_SECONDS", default=60, ge=1)
+    llm_max_tokens: int = Field(validation_alias="MEMORY_LLM_MAX_TOKENS", default=1200, ge=64)
+    # Открытый диалог без новых реплик столько минут: извлечение ставится в очередь, диалог не завершается.
+    idle_minutes: int = Field(validation_alias="MEMORY_IDLE_MINUTES", default=20, ge=1)
+    maintenance_seconds: int = Field(validation_alias="MEMORY_MAINTENANCE_SECONDS", default=60, ge=1)
+    workers: int = Field(validation_alias="MEMORY_WORKERS", default=1, ge=1, le=3)
+    extract_max_chars: int = Field(validation_alias="MEMORY_EXTRACT_MAX_CHARS", default=16_000, ge=1000)
+    # Второй короткий вызов модели для пограничных фактов (чувствительная тема, но не запрещённая). Включение решает оценка.
+    classifier: Literal["off", "on"] = Field(validation_alias="MEMORY_CLASSIFIER", default="off")
+    # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
+    allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
+
+    @property
+    def allowed_users(self) -> frozenset[str]:
+        return frozenset(item.strip().lower() for item in self.allowlist.split(",") if item.strip())
+
+
 class Config:
     """Агрегатор доменных настроек. Неизменяемый синглтон — не мутировать."""
 
@@ -209,6 +245,7 @@ class Config:
     llm: LlmSettings = LlmSettings()
     voice: VoiceSettings = VoiceSettings()
     gemini: GeminiSettings = GeminiSettings()
+    memory: MemorySettings = MemorySettings()
 
 
 APP_CONFIG = Config()

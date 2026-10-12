@@ -13,6 +13,11 @@
   response_all       токены ответа
 
 Берутся из `agent_gemini_tokens_total` (usage_metadata Gemini) приращением за ход.
+
+Память (спецификация памяти, 16.5): `--memory-facts facts.jsonl` (строки `{"category", "text"}` или `{"category", "slots"}`)
+включает память человеку прогона и записывает ему эти факты до разговора, так что в системную инструкцию уходит сводка
+(агент запущен с `MEMORY_MODE=on` и нужным `MEMORY_BRIEF_LEVEL`). Два прогона, без и с `--memory-facts`, сравнивают входные
+токены (ожидание: ≈ +500 на ход) и первый звук (медиана, p95; порог — не больше +50 мс p95).
 """
 
 import argparse
@@ -40,6 +45,17 @@ async def counters(http: httpx.AsyncClient) -> dict[str, float]:
     return out
 
 
+async def remember(http: httpx.AsyncClient, auth: dict[str, str], user: str, facts: Path) -> None:
+    """Включить память человеку прогона и записать ему факты (как будто он написал их сам в разделе «Память»)."""
+    settings = await http.put(f"/v1/users/{user}/memory/settings", json={"enabled": True, "consentVersion": "bench"}, headers=auth)
+    settings.raise_for_status()
+    for line in facts.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            response = await http.post(f"/v1/users/{user}/memory/facts", json=json.loads(line), headers=auth)
+            print("факт:", response.status_code)
+    print("память:", (await http.get("/health/ready")).json().get("memory"))
+
+
 async def run(args) -> int:  # noqa: ANN001
     auth = {"Authorization": f"Bearer {args.token}"}
     ws_base = args.url.replace("http", "ws", 1)
@@ -49,6 +65,8 @@ async def run(args) -> int:  # noqa: ANN001
     async with httpx.AsyncClient(base_url=args.url, timeout=20) as http:
         print("готовность:", (await http.get("/health/ready")).json())
         user = str(uuid.uuid4())
+        if args.memory_facts:
+            await remember(http, auth, user, Path(args.memory_facts))
         dialog = (await http.post(f"/v1/users/{user}/dialogs", headers=auth)).json()["dialogId"]
         conn = await ls.open_socket(ws_base, auth, user, dialog)
         await conn.wait(0, lambda sl: ls.has(sl, "tts_end", messageId="greeting"), 20)  # приветствие
@@ -90,6 +108,8 @@ async def run(args) -> int:  # noqa: ANN001
         "first_sound_median_s": round(statistics.median(r["first_sound_s"] for r in ok), 2) if ok else None,
         "first_sound_mean_s": round(statistics.fmean(r["first_sound_s"] for r in ok), 2) if ok else None,
         "first_sound_max_s": max((r["first_sound_s"] for r in ok), default=None),
+        "first_sound_p95_s": round(statistics.quantiles([r["first_sound_s"] for r in ok], n=20)[-1], 2) if len(ok) >= 2 else None,
+        "memory": bool(args.memory_facts),
         "prompt_tokens_total": sum(r["prompt_all"] for r in ok),
         "prompt_audio_total": sum(r["prompt_audio"] for r in ok),
         "prompt_text_total": sum(r["prompt_text"] for r in ok),
@@ -112,6 +132,7 @@ if __name__ == "__main__":
     parser.add_argument("--pace", type=float, default=0.02, help="пауза между кадрами голоса, с (0,1 — реальное время)")
     parser.add_argument("--think", type=float, default=3.0, help="пауза «человек думает» после ответа, с")
     parser.add_argument("--label", default="")
+    parser.add_argument("--memory-facts", help="факты памяти (jsonl): прогон со сводкой в системной инструкции")
     parser.add_argument("--out")
     args = parser.parse_args()
     if not args.token:

@@ -1,6 +1,6 @@
 """Prometheus-метрики голосового диалога. Только счётчики и время: ни звука, ни текста, ни id в labels."""
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 VOICE_INTERRUPTIONS_TOTAL = Counter(
     "agent_voice_interruptions_total",
@@ -28,10 +28,11 @@ VOICE_TURNS_TRUNCATED_TOTAL = Counter(
 #   first_sentence начало обработки → первое предложение ответа готово (assistant_start)
 #   tts_first      синтез первого куска у провайдера озвучки
 #   first_sound    конец реплики человека (или его сообщение) → tts_start: то, что человек ощущает как паузу
+# label `memory`: on — в разговор подмешана сводка памяти, off — нет (сравнение задержки с памятью и без, MEM-15).
 VOICE_LATENCY_SECONDS = Histogram(
     "agent_voice_latency_seconds",
     "Задержки голосового ответа по этапам.",
-    ["stage"],
+    ["stage", "memory"],
     buckets=(0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0, 20.0),
 )
 
@@ -45,7 +46,7 @@ VOICE_HELD_TURNS_TOTAL = Counter(
     "Реплики, оборванные на полуслове (союз, запятая): ответ задержан, пока человек договаривает.",
 )
 
-# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase.
+# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase | delete.
 DIALOG_DB_ERRORS_TOTAL = Counter(
     "agent_dialog_db_errors_total",
     "Сбои базы диалогов на диске: при сбое запись повторяется, диалоги остаются в памяти.",
@@ -78,4 +79,67 @@ GEMINI_CONTEXT_REFRESH_SECONDS = Histogram(
     "agent_gemini_context_refresh_seconds",
     "Сколько занимает смена сессии: соединение и загрузка текстовой истории (в фоне, между репликами).",
     buckets=(0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 15.0),
+)
+
+# ─── Память агента (MEM-15). Только коды и счётчики: ни текстов фактов и реплик, ни id людей в labels (I4). ───
+
+# op: add | update | confirm | supersede | expire | user_delete | forget_all
+MEMORY_FACTS_TOTAL = Counter(
+    "agent_memory_facts_total",
+    "Изменения фактов памяти по операциям.",
+    ["op"],
+)
+
+MEMORY_EXTRACTION_SECONDS = Histogram(
+    "agent_memory_extraction_seconds",
+    "Сколько занимает одно задание извлечения памяти (вызов модели и запись).",
+    buckets=(1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 90.0, 120.0),
+)
+
+# result: done | skipped | failed; reason — код причины (ok, no_facts, too_short, crisis, model, parse…)
+MEMORY_EXTRACTION_TOTAL = Counter(
+    "agent_memory_extraction_total",
+    "Задания извлечения памяти по итогу.",
+    ["result", "reason"],
+)
+
+# reason: model | parse | timeout | db
+MEMORY_EXTRACTION_FAILURES_TOTAL = Counter(
+    "agent_memory_extraction_failures_total",
+    "Задания извлечения, окончательно не выполненные после всех попыток.",
+    ["reason"],
+)
+
+# reason: код класса чёрного списка или проверки (diagnosis, contact_pii, not_grounded, tombstone, full…)
+MEMORY_BLOCKED_TOTAL = Counter(
+    "agent_memory_blocked_total",
+    "Операции памяти, отброшенные серверными проверками.",
+    ["reason"],
+)
+
+MEMORY_BRIEF_TOKENS = Histogram(
+    "agent_memory_brief_tokens",
+    "Размер сводки памяти в токенах (оценка по знакам: 2,9 знака на токен).",
+    buckets=(50, 100, 200, 300, 400, 500, 600, 700, 800, 1000),
+)
+
+# result: hit | miss | empty
+MEMORY_BRIEF_CACHE_TOTAL = Counter(
+    "agent_memory_brief_cache_total",
+    "Чтения сводки из кэша процесса на горячем пути хода.",
+    ["result"],
+)
+
+# action: enable | disable | add | edit | active | pinned | confirm | delete | forget_all | export
+MEMORY_USER_ACTIONS_TOTAL = Counter(
+    "agent_memory_user_actions_total",
+    "Действия людей с памятью.",
+    ["action"],
+)
+
+# status: queued | running | done | skipped | failed
+MEMORY_JOBS = Gauge(
+    "agent_memory_jobs",
+    "Задания извлечения памяти в базе по статусам.",
+    ["status"],
 )
