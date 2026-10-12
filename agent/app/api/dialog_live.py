@@ -1,12 +1,18 @@
 """WebSocket диалога в режиме `VOICE_PIPELINE=gemini_live`: речь в речь через Gemini Live.
 
 Тот же протокол с клиентом, что у каскада (app/api/dialog_ws.py), но голос человека уходит прямо в Gemini Live, а ответ
-(текст и звук) приходит от него же. Распознавания и чат-модели здесь нет. Остаётся общим: приветствие и кризисный ответ
-(фиксированные фразы озвучивает тот же голос Gemini, дословно), перебивание, выбор голоса, сохранение диалога.
+(текст и звук) приходит от него же. Остаётся общим: приветствие и кризисный ответ (фиксированные фразы озвучивает тот же
+голос Gemini, дословно), перебивание, выбор голоса, сохранение диалога.
 
 Границы реплики задаёт клиент (`audio_start`/`audio_end`): агент передаёт их модели как начало и конец активности.
 Кризис проверяется на расшифровке реплики до того, как человек услышит или увидит хоть слово ответа: пока расшифровки
 нет, ответ модели ждёт (`GEMINI_TRANSCRIPT_WAIT_MS`); при кризисе ответ модели выбрасывается, говорит фиксированный текст.
+
+Откат на каскад (`GEMINI_FALLBACK`). Gemini не открылся, оборвался до ответа, не ответил за `GEMINI_FIRST_OUTPUT_TIMEOUT_SECONDS`
+или разомкнут размыкатель (app/services/breaker.py) — тогда именно эту реплику обрабатывает каскад: запись голоса (она
+сохраняется на время реплики) распознаёт whisper, ответ пишет чат-модель, говорит Qwen; без настроенного каскада отвечает
+шаблон. Человек этого не замечает, кроме смены голоса; ошибки он не получает. Если Gemini уже начал отвечать и оборвался
+посреди ответа, ответ договаривается без повторов, и клиент получает один `error VOICE_UNAVAILABLE`.
 """
 
 import asyncio
@@ -29,9 +35,22 @@ from app.api.dialog_ws import (
     is_silence,
 )
 from app.clients.gemini_live import LiveConnector, LiveEvent, LiveLink
-from app.clients.speech import Voice
+from app.clients.llm import ChatModel, Recognizer
+from app.clients.speech import TextToSpeech, Voice
 from app.core.config import APP_CONFIG
-from app.core.metrics import VOICE_TURN_END_DELAY_SECONDS, VOICE_TURNS_TRUNCATED_TOTAL
+from app.core.metrics import (
+    GEMINI_EVENTS_TOTAL,
+    GEMINI_RESUME_TOTAL,
+    GEMINI_TOKENS_TOTAL,
+    LIVE_STAGE_SECONDS,
+    LIVE_TRANSCRIPT_RECOVERY_TOTAL,
+    LIVE_TURNS_DROPPED_TOTAL,
+    PIPELINE_FALLBACK_TOTAL,
+    PIPELINE_REPLIES_TOTAL,
+    VOICE_TURN_END_DELAY_SECONDS,
+    VOICE_TURNS_TRUNCATED_TOTAL,
+)
+from app.services.breaker import CircuitBreaker
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.replies import CRISIS_SAFETY_TEXT, SYSTEM_PROMPT, is_crisis
 
@@ -41,6 +60,8 @@ logger = logging.getLogger("agent.live")
 PRE_ROLL_FRAMES = 5
 # Хвост ответа прерванной модели, которая ещё может прислать события, считается чужим столько секунд.
 STALE_SECONDS = 1.0
+# Причины отката, которые считаются сбоем Gemini для размыкателя (breaker_open — следствие, не причина).
+FAILURE_REASONS = frozenset({"connect_failed", "send_failed", "link_closed", "first_output_timeout"})
 
 LIVE_ADDENDUM = (
     "\n- Ты говоришь вслух живым голосом, как в разговоре: коротко, без пересказа сказанного человеком."
@@ -57,11 +78,16 @@ class LiveTurn:
     started: float = field(default_factory=time.monotonic)  # конец реплики человека или его сообщение
     heard: str = ""  # расшифровка голоса от модели
     opened: bool = False  # ответ можно показывать: реплика проверена и сохранена
-    discarded: bool = False  # эхо, тишина или кризис: ответ модели выбрасывается
+    discarded: bool = False  # эхо, тишина, кризис или откат на каскад: ответ модели выбрасывается
     generating: bool = True
     got_output: bool = False
     failed: bool = False
     user_saved: bool = False
+    via_cascade: bool = False  # Gemini для этой реплики даже не пробуем (размыкатель разомкнут)
+    fallback: bool = False  # реплика передана каскаду
+    recovery: str = ""  # итог восстановления расшифровки каскадом: recovered | empty | failed | unavailable
+    pcm: bytearray = field(default_factory=bytearray)  # запись голоса реплики: нужна каскаду при откате
+    frames: int = 0
     held: list[LiveEvent] = field(default_factory=list)  # ответ, который ждёт расшифровки
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     message: Message | None = None
@@ -120,10 +146,18 @@ class LiveDialogSession(DialogSession):
         dialog: Dialog,
         tts_source,  # noqa: ANN001
         connector: LiveConnector,
+        chat: ChatModel | None = None,
+        recognizer: Recognizer | None = None,
+        cascade_tts_source=None,  # noqa: ANN001
+        breaker: CircuitBreaker | None = None,
     ) -> None:
-        super().__init__(websocket, store, dialog, tts_source, None, None)
+        # chat и recognizer — запасной каскад (если настроен): им отвечает базовый класс, когда Gemini не ответил.
+        super().__init__(websocket, store, dialog, tts_source, chat, recognizer)
         self._connector = connector
         self._cfg = APP_CONFIG.gemini
+        self._breaker = breaker
+        self._cascade_tts_source = cascade_tts_source
+        self._cascade_reply = False  # идёт ответ, написанный каскадом (чат или шаблон): говорит голос каскада
         self._link: LiveLink | None = None
         self._link_lock = asyncio.Lock()
         self._reader: asyncio.Task[None] | None = None
@@ -135,13 +169,45 @@ class LiveDialogSession(DialogSession):
         self._act_started = False
         self._pre: list[bytes] = []
         self._sent_bytes = 0
-        self._voice_turn: LiveTurn | None = None
+        self._open_voice: LiveTurn | None = None  # голосовая реплика, которую человек говорит прямо сейчас
         self._unavailable_sent = False
         # Handle последней сессии Gemini: по нему соединение возобновляется с тем же контекстом разговора.
         self._resume_handle: str | None = None
         # Google предупредил, что скоро закроет соединение: между репликами переоткрываем его заранее.
         self._refresh = False
         self._speech_turns: dict[str, LiveTurn] = {}
+        self._usage_seen: dict[str, int] = {}
+
+    # ─── метки конвейера для метрик и озвучка ────────────────────────────────
+
+    def _reply_pipeline(self, crisis: bool) -> str:
+        return "gemini_live" if crisis else "cascade"  # фиксированный кризисный текст говорит голос Gemini
+
+    def _first_sound_pipeline(self, message_id: str) -> str:
+        return "gemini_live" if message_id in self._speech_turns else "cascade"
+
+    async def _reply(self, crisis: bool, turn: Turn | None = None) -> None:
+        # Ответ, написанный не Gemini (чат каскада или шаблон), говорит голос каскада; кризисный текст остаётся голосом Gemini.
+        self._cascade_reply = not crisis
+        try:
+            await super()._reply(crisis, turn)
+        finally:
+            self._cascade_reply = False
+
+    def _start_speech(self, message_id: str, turn: Turn | None) -> SpeechFeed | None:
+        tts: TextToSpeech | None = None
+        if self._cascade_reply and self._cascade_tts_source is not None:
+            tts = self._cascade_tts_source()
+        tts = tts or self._tts_source()
+        if tts is None:
+            return None
+        feed = SpeechFeed()
+        task = asyncio.create_task(self._speak(tts, message_id, feed.chunks, self._dialog.voice, turn))
+        self._speech_tasks.add(task)
+        self._speeches[message_id] = task
+        task.add_done_callback(self._speech_tasks.discard)
+        task.add_done_callback(lambda done: self._forget_speech(message_id, done))
+        return feed
 
     def _first_sound(self, message_id: str, turn: Turn | None) -> None:
         """Первый звук ответа ушёл клиенту: кроме общей задержки пишем, из каких этапов она сложилась."""
@@ -149,6 +215,9 @@ class LiveDialogSession(DialogSession):
         live_turn = self._speech_turns.pop(message_id, None)
         if live_turn is not None:
             live_turn.mark("tts_start")
+            for stage in ("in_first", "out_first", "gate", "tts_start"):
+                if stage in live_turn.marks:
+                    LIVE_STAGE_SECONDS.labels(stage).observe(live_turn.marks[stage] - live_turn.started)
             logger.info("live timeline dialog=%s kind=%s ms: %s", self._dialog.id, live_turn.kind, live_turn.timeline())
 
     # ─── жизненный цикл ───────────────────────────────────────────────────────
@@ -159,18 +228,25 @@ class LiveDialogSession(DialogSession):
         self._tasks = [
             asyncio.create_task(self._send_loop()),
             asyncio.create_task(self._pump()),
-            asyncio.create_task(self._ensure_link()),  # соединение готово к первой реплике
         ]
+        if self._gemini_blocked():
+            logger.info("gemini breaker is %s: connection not pre-opened dialog=%s", self._breaker.state if self._breaker else "-", self._dialog.id)
+        else:
+            self._tasks.append(asyncio.create_task(self._ensure_link()))  # соединение готово к первой реплике
         try:
             await super().run()
         finally:
             for task in self._tasks:
                 task.cancel()
             await asyncio.gather(*self._tasks, return_exceptions=True)
-            for turn in (self._turn, self._voice_turn):
+            for turn in (self._turn, self._open_voice):
                 if turn is not None:
                     self._disarm_all(turn)
             self._release_link()
+
+    def _gemini_blocked(self) -> bool:
+        """Размыкатель разомкнут: Gemini для новых реплик не пробуем, они идут в каскад (если откат разрешён)."""
+        return self._cfg.fallback and self._breaker is not None and not self._breaker.allow()
 
     def _instructions(self, resumed: bool = False) -> str:
         """Промпт агента и, при новом соединении посреди диалога, последние сообщения: модель не начинает с чистого листа.
@@ -206,7 +282,10 @@ class LiveDialogSession(DialogSession):
             if link is None and handle is not None:
                 # Handle не принят (устарел, сессия закрыта): начинаем заново, а контекст даём последними сообщениями.
                 self._resume_handle = None
+                GEMINI_RESUME_TOTAL.labels("rejected").inc()
                 link = await self._open(voice, None)
+            elif link is not None:
+                GEMINI_RESUME_TOTAL.labels("resumed" if handle is not None else "fresh").inc()
             if link is None:
                 return None
             self._link = link
@@ -217,7 +296,13 @@ class LiveDialogSession(DialogSession):
         try:
             link = await self._connector.open(voice, self._instructions(resumed=handle is not None), handle)
         except Exception as error:  # noqa: BLE001
-            logger.warning("gemini live not available dialog=%s resume=%s: %s", self._dialog.id, handle is not None, error)
+            logger.warning(
+                "gemini live not available dialog=%s resume=%s reason=%s: %s",
+                self._dialog.id,
+                handle is not None,
+                getattr(error, "reason", "other"),
+                error,
+            )
             return None
         if handle is not None:
             logger.info("gemini live session resumed dialog=%s", self._dialog.id)
@@ -246,11 +331,12 @@ class LiveDialogSession(DialogSession):
         while True:
             command = await self._out.get()
             kind = command[0]
+            owner: LiveTurn | None = command[-1] if isinstance(command[-1], LiveTurn) else None
             try:
                 if kind in ("start", "text"):
                     link = await self._ensure_link()
                     if link is None:
-                        self._events.put_nowait((None, LiveEvent("closed", text="не удалось открыть Gemini Live")))
+                        self._events.put_nowait(("fail", owner, "connect_failed"))
                         continue
                     if kind == "start":
                         await link.activity_start()
@@ -270,7 +356,7 @@ class LiveDialogSession(DialogSession):
                 raise
             except Exception as error:  # noqa: BLE001
                 logger.warning("gemini live send failed dialog=%s: %s", self._dialog.id, error)
-                self._events.put_nowait((self._link, LiveEvent("closed", text=str(error)[:200])))
+                self._events.put_nowait(("fail", owner or self._turn, "send_failed"))
 
     async def _pump(self) -> None:
         """Единственный, кто разбирает события модели и таймеры: состояние хода меняется только здесь."""
@@ -284,6 +370,9 @@ class LiveDialogSession(DialogSession):
                         self._on_ended(item[1])
                     case "timer":
                         await self._on_timer(item[1], item[2])
+                    case "fail":
+                        if item[1] is not None:
+                            await self._fallback(item[1], item[2])
                     case link:
                         if link is self._link:
                             await self._handle(item[1])
@@ -298,7 +387,7 @@ class LiveDialogSession(DialogSession):
         self._act_started = False
         self._pre = []
         self._sent_bytes = 0
-        self._voice_turn = None
+        self._open_voice = None
 
     def _on_audio_frame(self, data: bytes) -> None:
         if not (self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN):
@@ -314,21 +403,30 @@ class LiveDialogSession(DialogSession):
                 return
             self._act_started = True
             turn = LiveTurn(kind="voice", interrupts=self._turn_interrupts)
-            self._voice_turn = turn
-            self._events.put_nowait(("begin", turn))
-            self._out.put_nowait(("start",))
+            self._open_voice = turn
+            if self._gemini_blocked():
+                turn.via_cascade = True  # размыкатель разомкнут: запись копится только для каскада
+            else:
+                self._events.put_nowait(("begin", turn))
+                self._out.put_nowait(("start", turn))
             for piece in self._pre:
                 self._forward(piece)
             self._pre = []
         self._forward(pcm)
 
     def _forward(self, pcm: bytes) -> None:
+        turn = self._open_voice
         if self._sent_bytes >= MAX_AUDIO_BYTES:
             return
         self._sent_bytes += len(pcm)
         if self._sent_bytes >= MAX_AUDIO_BYTES:
             VOICE_TURNS_TRUNCATED_TOTAL.inc()
             logger.warning("voice turn reached the limit dialog=%s", self._dialog.id)
+        if turn is not None:
+            turn.pcm += pcm  # копия для каскада на случай отката (не длиннее предела реплики)
+            turn.frames += 1
+            if turn.via_cascade:
+                return
         self._out.put_nowait(("audio", pcm))
 
     async def _on_audio_end(self) -> None:
@@ -337,20 +435,29 @@ class LiveDialogSession(DialogSession):
         interrupts = self._turn_interrupts
         if self._last_voiced is not None:
             VOICE_TURN_END_DELAY_SECONDS.observe(time.monotonic() - self._last_voiced)
-        turn = self._voice_turn
+        turn = self._open_voice
         self._audio_open, self._audio_frames, self._audio = False, 0, bytearray()
         self._last_voiced, self._turn_interrupts = None, False
-        self._voice_turn, self._pre, self._act_started = None, [], False
+        self._open_voice, self._pre, self._act_started = None, [], False
         if turn is None:  # речи в записи не было
             self._count_false_interruption(interrupts)
+            LIVE_TURNS_DROPPED_TOTAL.labels("silence").inc()
             await self._send({"type": "transcript", "text": "", "final": True})
             return
         turn.started = time.monotonic()
+        if turn.via_cascade:
+            await self._fallback(turn, "breaker_open")
+            return
         self._events.put_nowait(("ended", turn))
         self._out.put_nowait(("end", turn))
 
     def _dispatch_text_turn(self, text: str, crisis: bool, turn: Turn) -> None:
         if crisis:  # кризис говорит фиксированный текст, модель в этот путь не входит
+            super()._dispatch_text_turn(text, crisis, turn)
+            return
+        if self._gemini_blocked():  # размыкатель разомкнут: отвечает каскад (чат-модель или шаблон)
+            PIPELINE_FALLBACK_TOTAL.labels("breaker_open").inc()
+            logger.warning("fallback dialog=%s kind=text reason=breaker_open -> cascade", self._dialog.id)
             super()._dispatch_text_turn(text, crisis, turn)
             return
         live_turn = LiveTurn(kind="text", opened=True, started=turn.started)
@@ -368,10 +475,18 @@ class LiveDialogSession(DialogSession):
             await self._finish(prev)
         self._turn = turn
         self._touch(turn)
+        if turn.kind == "text":
+            self._arm_first_output(turn)
 
     def _on_ended(self, turn: LiveTurn) -> None:
         self._stale_until = 0.0
         self._touch(turn)
+        self._arm_first_output(turn)
+
+    def _arm_first_output(self, turn: LiveTurn) -> None:
+        """Gemini должен начать отвечать за GEMINI_FIRST_OUTPUT_TIMEOUT_SECONDS, иначе реплика уходит каскаду."""
+        if self._cfg.fallback:
+            self._arm(turn, "first", self._cfg.first_output_timeout_seconds)
 
     def _arm(self, turn: LiveTurn, name: str, delay: float) -> None:
         self._disarm(turn, name)
@@ -396,10 +511,33 @@ class LiveDialogSession(DialogSession):
             return
         if name == "gate":
             if not turn.opened and not turn.discarded:
+                if turn.kind == "voice" and not turn.heard.strip():
+                    await self._recover_transcript(turn)
                 await self._open_gate(turn)
+        elif name == "first":
+            if not turn.got_output:
+                await self._fallback(turn, "first_output_timeout")
         elif name == "idle":
             logger.warning("live turn timed out dialog=%s", self._dialog.id)
             await self._finish(turn)
+
+    async def _recover_transcript(self, turn: LiveTurn) -> None:
+        """Gemini уже отвечает, а расшифровки реплики нет: слова человека не должны пропасть. Запись распознаёт whisper каскада."""
+        if self._recognizer is None or not turn.pcm or is_silence(bytes(turn.pcm)):
+            turn.recovery = "unavailable" if self._recognizer is None else "empty"
+        else:
+            try:
+                text = await asyncio.wait_for(
+                    self._recognizer.transcribe(bytes(turn.pcm)), timeout=self._cfg.transcript_recovery_seconds
+                )
+            except Exception as error:  # noqa: BLE001
+                logger.warning("transcript recovery failed dialog=%s: %s", self._dialog.id, error)
+                turn.recovery = "failed"
+            else:
+                turn.heard = (text or "").strip()
+                turn.recovery = "recovered" if turn.heard else "empty"
+        LIVE_TRANSCRIPT_RECOVERY_TOTAL.labels(turn.recovery).inc()
+        logger.info("transcript recovery dialog=%s result=%s", self._dialog.id, turn.recovery)
 
     async def _handle(self, event: LiveEvent) -> None:
         turn = self._turn
@@ -407,14 +545,20 @@ class LiveDialogSession(DialogSession):
         if kind == "closed":
             await self._on_closed(event.text)
             return
+        if kind == "usage":
+            self._count_usage(event.usage or {})
+            return
         if kind == "resumption":
             self._resume_handle = event.text
+            GEMINI_EVENTS_TOTAL.labels("resumption_handle").inc()
             return
         if kind == "go_away":
             logger.info("gemini live go_away dialog=%s time_left=%s", self._dialog.id, event.text)
+            GEMINI_EVENTS_TOTAL.labels("go_away").inc()
             self._refresh = True  # переоткроем между репликами, с возобновлением сессии
             return
         if kind == "interrupted":
+            GEMINI_EVENTS_TOTAL.labels("interrupted").inc()
             self._stale_until = 0.0
             if turn is not None and turn.got_output:
                 await self._finish(turn)
@@ -436,7 +580,10 @@ class LiveDialogSession(DialogSession):
                 await self._open_gate(turn)
             return
         if kind in ("audio", "output_text"):
+            if not turn.got_output and self._breaker is not None:
+                self._breaker.record_success()  # Gemini жив: он начал отвечать
             turn.got_output = True
+            self._disarm(turn, "first")
             turn.mark("out_first")
             if turn.discarded:
                 return
@@ -453,6 +600,21 @@ class LiveDialogSession(DialogSession):
             await self._finish(turn)
         # turn_complete приходит позже generation_complete (когда звук отыгран) и может попасть на следующий ход: не нужен.
 
+    def _count_usage(self, usage: dict[str, int]) -> None:
+        """Расход токенов по usage_metadata: итоги сессии приходят нарастающим счётом, в метрику идут приращения (приблизительно)."""
+        for key, value in usage.items():
+            delta = value - self._usage_seen.get(key, 0)
+            if delta < 0:  # счётчик сессии обнулился (новое соединение)
+                delta = value
+            self._usage_seen[key] = value
+            if delta <= 0:
+                continue
+            if key == "total":
+                GEMINI_TOKENS_TOTAL.labels("total", "all").inc(delta)
+            else:
+                direction, _, modality = key.partition("_")
+                GEMINI_TOKENS_TOTAL.labels(direction, modality).inc(delta)
+
     async def _open_gate(self, turn: LiveTurn) -> None:
         """Расшифровка реплики есть: проверить её и только тогда показать и озвучить ответ модели."""
         self._disarm(turn, "gate")
@@ -464,6 +626,9 @@ class LiveDialogSession(DialogSession):
                 turn.discarded = True
                 turn.held.clear()
                 self._count_false_interruption(turn.interrupts)
+                reason = "echo" if heard else ("transcript_missing" if turn.recovery in ("unavailable", "failed") else "silence")
+                LIVE_TURNS_DROPPED_TOTAL.labels(reason).inc()
+                logger.info("live turn dropped dialog=%s reason=%s", self._dialog.id, reason)
                 await self._send({"type": "transcript", "text": "", "final": True})
                 return
             if is_crisis(heard):
@@ -489,6 +654,7 @@ class LiveDialogSession(DialogSession):
         turn.opened = True
         turn.held.clear()
         self._disarm(turn, "gate")
+        self._disarm(turn, "first")
         if turn.assistant_started:
             self._cancel_speech(turn.message_id)  # ответ уже пошёл: обрываем звук, текст дописан не будет
         if turn.kind == "voice" and not turn.user_saved and turn.heard.strip():
@@ -497,6 +663,63 @@ class LiveDialogSession(DialogSession):
         self._supersede_speech()
         reply_turn = Turn(started=turn.started)
         self._jobs.put_nowait(lambda: self._reply(True, reply_turn))
+
+    # ─── откат на каскад ──────────────────────────────────────────────────────
+
+    async def _fallback(self, turn: LiveTurn, reason: str) -> None:
+        """Gemini не ответил на эту реплику: отвечает каскад (запись распознаёт whisper, ответ пишет чат-модель, говорит Qwen)."""
+        if turn.fallback or turn.discarded or turn.got_output:
+            return
+        turn.fallback = True
+        turn.discarded = True  # если Gemini всё же что-то пришлёт позже, это выбрасывается
+        turn.generating = False
+        turn.held.clear()
+        self._disarm_all(turn)
+        if self._turn is turn:
+            self._turn = None
+        if self._breaker is not None and reason in FAILURE_REASONS:
+            self._breaker.record_failure(reason)
+        if not self._cfg.fallback:
+            await self._fail_without_fallback(turn, reason)
+            return
+        PIPELINE_FALLBACK_TOTAL.labels(reason).inc()
+        logger.warning(
+            "fallback dialog=%s kind=%s reason=%s -> %s",
+            self._dialog.id,
+            turn.kind,
+            reason,
+            "cascade" if self._chat is not None else "template",
+        )
+        if reason != "breaker_open":
+            # Старое соединение может прислать ответ позже и испортить следующий ход: закрываем его, следующая реплика откроет новое
+            # (контекст вернётся последними сообщениями диалога, они уже включают ответ каскада).
+            self._resume_handle = None
+            await self._drop_link()
+        if turn.kind == "voice":
+            pcm, frames = bytes(turn.pcm), turn.frames
+            self._jobs.put_nowait(lambda: self._cascade_voice(turn, frames, pcm))
+        else:
+            reply_turn = Turn(started=turn.started)
+            self._jobs.put_nowait(lambda: self._reply(False, reply_turn))
+
+    async def _cascade_voice(self, turn: LiveTurn, frames: int, pcm: bytes) -> None:
+        # Голосовая реплика каскадом: распознавание, проверка на кризис, удержание оборванной фразы и ответ, как без Gemini.
+        await self._voice_turn(frames, pcm, turn.interrupts, Turn(started=turn.started))
+
+    async def _fail_without_fallback(self, turn: LiveTurn, reason: str) -> None:
+        """GEMINI_FALLBACK=false: каскад не используется, человеку сообщается об ошибке (как раньше)."""
+        turn.failed = True
+        logger.warning("gemini unavailable dialog=%s kind=%s reason=%s fallback=off", self._dialog.id, turn.kind, reason)
+        if not self._unavailable_sent:
+            self._unavailable_sent = True
+            await self._send({"type": "error", "code": "VOICE_UNAVAILABLE", "message": "Голосовая модель недоступна"})
+        if turn.kind == "text" or turn.heard.strip():
+            if turn.kind == "voice":
+                await self._save_voice(turn, turn.heard.strip())
+            reply_turn = Turn(started=turn.started)
+            self._jobs.put_nowait(lambda: self._reply(False, reply_turn))
+        elif turn.kind == "voice":
+            await self._send({"type": "transcript", "text": "", "final": True})
 
     # ─── выход: ответ модели человеку ─────────────────────────────────────────
 
@@ -563,21 +786,34 @@ class LiveDialogSession(DialogSession):
             turn.audio.put_nowait(None)
         if turn.assistant_started and turn.sent_text and not self._closed:
             await self._send({"type": "assistant_end", "messageId": turn.message_id, "text": turn.sent_text})
+            PIPELINE_REPLIES_TOTAL.labels("gemini_live", "gemini").inc()
+            logger.info(
+                "reply dialog=%s pipeline=gemini_live source=gemini ms=%d chars=%d",
+                self._dialog.id,
+                (time.monotonic() - turn.started) * 1000,
+                len(turn.sent_text),
+            )
         if not turn.assistant_started and not turn.discarded and (turn.kind == "text" or turn.user_saved or turn.failed):
-            # Модель промолчала или отказала: шаблонный ответ, как у каскада, чтобы человек не остался без ответа.
+            # Модель промолчала или отказала: ответ каскада (чат-модель или шаблон), чтобы человек не остался без ответа.
             if not turn.failed or turn.kind == "text" or turn.user_saved:
                 reply_turn = Turn(started=turn.started)
                 self._jobs.put_nowait(lambda: self._reply(False, reply_turn))
 
     async def _on_closed(self, reason: str) -> None:
         logger.warning("gemini live closed dialog=%s: %s", self._dialog.id, reason)
+        GEMINI_EVENTS_TOTAL.labels("closed").inc()
         link, self._link = self._link, None
         if link is not None:
             link.closed = True
         turn = self._turn
         if turn is None or not turn.generating:
             return  # соединение закрылось между репликами (в том числе по GoAway): к следующей реплике откроем заново
+        if not turn.got_output and self._cfg.fallback:
+            await self._fallback(turn, "link_closed")  # до ответа: реплику передаём каскаду, человек ошибки не увидит
+            return
         turn.failed = True
+        if self._breaker is not None:
+            self._breaker.record_failure("link_closed")
         if not self._unavailable_sent:
             self._unavailable_sent = True
             await self._send({"type": "error", "code": "VOICE_UNAVAILABLE", "message": "Голосовая модель недоступна"})

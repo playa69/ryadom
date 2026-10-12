@@ -21,12 +21,14 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-from app.api.deps import active_tts, canonical_user_id, token_ok
+from app.api.deps import active_cascade_tts, active_tts, canonical_user_id, token_ok
 from app.clients.llm import STT_RATE, ChatModel, ModelError, Recognizer, ReplyTruncated
 from app.clients.speech import FRAME_BYTES, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
 from app.core.metrics import (
+    PIPELINE_FIRST_SOUND_SECONDS,
+    PIPELINE_REPLIES_TOTAL,
     VOICE_ECHO_TOTAL,
     VOICE_FALSE_INTERRUPTIONS_TOTAL,
     VOICE_HELD_TURNS_TOTAL,
@@ -549,8 +551,10 @@ class DialogSession:
                         await self._send({"type": "assistant_delta", "messageId": message_id, "text": prefix + piece})
                         prefix = ""
 
+        source = "template"
         try:
             if crisis:
+                source = "crisis"
                 await deliver(self._fixed(CRISIS_REPLY))
             else:
                 if self._chat is not None:
@@ -562,6 +566,8 @@ class DialogSession:
                     else:
                         if not sentences:
                             logger.warning("chat returned nothing dialog=%s, using a template", dialog.id)
+                    if sentences:
+                        source = "chat"
                 if not sentences:
                     await deliver(self._fixed(self._template()))
         finally:
@@ -569,6 +575,9 @@ class DialogSession:
                 speech.close()
         if sentences and not self._closed:
             await self._send({"type": "assistant_end", "messageId": message_id, "text": " ".join(sentences)})
+            pipeline = self._reply_pipeline(crisis)
+            PIPELINE_REPLIES_TOTAL.labels(pipeline, source).inc()
+            logger.info("reply dialog=%s pipeline=%s source=%s ms=%d", dialog.id, pipeline, source, (time.monotonic() - began) * 1000)
 
     # ─── озвучка ──────────────────────────────────────────────────────────────
 
@@ -702,7 +711,16 @@ class DialogSession:
             return
         seconds = time.monotonic() - turn.started
         VOICE_LATENCY_SECONDS.labels("first_sound").observe(seconds)
+        PIPELINE_FIRST_SOUND_SECONDS.labels(self._first_sound_pipeline(message_id)).observe(seconds)
         logger.info("first sound dialog=%s message=%s ms=%d", self._dialog.id, message_id, seconds * 1000)
+
+    def _reply_pipeline(self, crisis: bool) -> str:
+        """Какому конвейеру засчитать ответ `_reply` (метка метрики); gemini_live засчитывает себе фиксированный кризисный ответ."""
+        return "cascade"
+
+    def _first_sound_pipeline(self, message_id: str) -> str:
+        """Каким конвейером произнесено сообщение (метка метрики). Режим gemini_live различает свои ответы и откат на каскад."""
+        return "cascade"
 
 
 async def _deny(websocket: WebSocket, status: int, code: str, message: str) -> None:
@@ -738,7 +756,15 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             from app.api.dialog_live import LiveDialogSession
 
             session: DialogSession = LiveDialogSession(
-                websocket, store, dialog, lambda: active_tts(websocket.app), live
+                websocket,
+                store,
+                dialog,
+                lambda: active_tts(websocket.app),
+                live,
+                chat=websocket.app.state.chat,  # запасной каскад: при недоступном Gemini отвечают они
+                recognizer=websocket.app.state.recognizer,
+                cascade_tts_source=lambda: active_cascade_tts(websocket.app),
+                breaker=websocket.app.state.breaker,
             )
         else:
             session = DialogSession(

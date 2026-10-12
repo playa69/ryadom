@@ -20,13 +20,19 @@ async def ready(request: Request) -> dict[str, str]:
     tts = active_tts(request.app)
     chat, recognizer = request.app.state.chat, request.app.state.recognizer
     live = request.app.state.live
-    return {
+    body = {
         "status": "ok",
         "pipeline": live.name if live else "cascade",
         "tts": tts.name if tts else "none",
         "llm": chat.name if chat else "none",
         "stt": recognizer.name if recognizer else "none",
     }
+    if live is not None:
+        # Готовность от Gemini не зависит: пока он лежит, реплики идут в каскад. Состояние видно здесь и в метриках.
+        breaker = request.app.state.breaker
+        body["gemini"] = breaker.state if breaker else "closed"
+        body["fallback"] = "cascade" if chat else "template"
+    return body
 
 
 @router.get("/version", include_in_schema=False)

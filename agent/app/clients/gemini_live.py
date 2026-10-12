@@ -11,6 +11,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from typing import Literal, Protocol
 
 from app.clients.speech import TtsError, Voice
 from app.core.config import GeminiSettings
+from app.core.metrics import GEMINI_ACTIVE_LINKS, GEMINI_CONNECT_FAILURES_TOTAL, GEMINI_CONNECT_SECONDS
 
 logger = logging.getLogger("agent.gemini")
 
@@ -32,12 +34,41 @@ EventKind = Literal[
     "interrupted",
     "resumption",  # text — handle, по которому сессию можно возобновить после обрыва
     "go_away",  # Google скоро закроет соединение: пора переоткрыть его между репликами
+    "usage",  # итоги токенов сессии (usage_metadata), только для метрик расхода
     "closed",
 ]
 
 
 class LiveError(Exception):
-    """Gemini Live не отвечает, отказал в доступе или закрыл соединение."""
+    """Gemini Live не отвечает, отказал в доступе или закрыл соединение. `reason` — для метрик и журнала (без деталей)."""
+
+    def __init__(self, message: str, reason: str = "other") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def classify_error(error: BaseException) -> str:
+    """Причина отказа одним словом: location | auth | quota | timeout | network | other (в метрику идёт только оно)."""
+    text = f"{type(error).__name__} {error}".lower()
+    if "location is not supported" in text or "user location" in text:
+        return "location"
+    if "api key" in text or "permission" in text or "403" in text or "401" in text or "1007" in text or "unauthenticated" in text:
+        return "auth"
+    if "quota" in text or "429" in text or "resource_exhausted" in text or "rate" in text and "limit" in text:
+        return "quota"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if any(w in text for w in ("connect", "dns", "name or service", "refused", "reset", "unreachable", "ssl", "closed", "eof")):
+        return "network"
+    return "other"
+
+
+def scrub(text: str, *secrets: str | None) -> str:
+    """Убрать из текста ошибки секреты (ключ, токен релея), прежде чем писать его в журнал."""
+    for secret in secrets:
+        if secret and len(secret) >= 8:
+            text = text.replace(secret, "<скрыто>")
+    return text
 
 
 @dataclass(slots=True)
@@ -45,6 +76,7 @@ class LiveEvent:
     kind: EventKind
     text: str = ""
     data: bytes = b""
+    usage: "dict[str, int] | None" = None  # для kind="usage": приращения токенов не считаем здесь, это текущие итоги сессии
 
 
 class LiveLink(Protocol):
@@ -91,6 +123,8 @@ class GeminiLiveLink:
         self._session = session
         self.voice: Voice = voice
         self.closed = False
+        self._released = False
+        GEMINI_ACTIVE_LINKS.inc()
 
     async def activity_start(self) -> None:
         await self._session.send_realtime_input(activity_start=self._types.ActivityStart())
@@ -126,6 +160,9 @@ class GeminiLiveLink:
 
     async def aclose(self) -> None:
         self.closed = True
+        if not self._released:
+            self._released = True
+            GEMINI_ACTIVE_LINKS.dec()
         try:
             await self._stack.aclose()
         except Exception as error:  # noqa: BLE001
@@ -161,6 +198,22 @@ def live_config(settings: GeminiSettings, voice_name: str, instructions: str, re
     return config
 
 
+def _usage(meta) -> dict[str, int]:  # noqa: ANN001
+    """Итоги токенов из usage_metadata: input/output по модальностям и total. Пусто, если метаданных нет."""
+    if meta is None:
+        return {}
+    out: dict[str, int] = {}
+    if meta.total_token_count:
+        out["total"] = int(meta.total_token_count)
+    for prefix, details in (("input", meta.prompt_tokens_details), ("output", meta.response_tokens_details)):
+        for item in details or []:
+            modality = str(getattr(item.modality, "value", item.modality) or "").lower()
+            kind = "audio" if "audio" in modality else "text" if "text" in modality else "other"
+            if item.token_count:
+                out[f"{prefix}_{kind}"] = out.get(f"{prefix}_{kind}", 0) + int(item.token_count)
+    return out
+
+
 def _translate(message) -> list[LiveEvent]:  # noqa: ANN001
     events: list[LiveEvent] = []
     if message.data:
@@ -170,6 +223,9 @@ def _translate(message) -> list[LiveEvent]:  # noqa: ANN001
         events.append(LiveEvent("resumption", text=update.new_handle))
     if message.go_away is not None:
         events.append(LiveEvent("go_away", text=str(message.go_away.time_left or "")))
+    usage = _usage(message.usage_metadata)
+    if usage:
+        events.append(LiveEvent("usage", usage=usage))
     content = message.server_content
     if content is None:
         return events
@@ -210,6 +266,7 @@ class GeminiLiveConnector:
     async def open(self, voice: Voice, instructions: str, resume_handle: str | None = None) -> GeminiLiveLink:
         config = live_config(self._settings, self._voices[voice], instructions, resume_handle)
         stack = AsyncExitStack()
+        started = time.monotonic()
         try:
             session = await asyncio.wait_for(
                 stack.enter_async_context(self._client.aio.live.connect(model=self._model, config=config)),
@@ -217,7 +274,15 @@ class GeminiLiveConnector:
             )
         except Exception as error:
             await stack.aclose()
-            raise LiveError(f"Gemini Live не открылся: {type(error).__name__}: {str(error)[:200]}") from error
+            reason = classify_error(error)
+            GEMINI_CONNECT_FAILURES_TOTAL.labels(reason).inc()
+            detail = scrub(
+                f"{type(error).__name__}: {str(error)[:200]}",
+                self._settings.api_key.get_secret_value() if self._settings.api_key else None,
+                self._settings.relay_token.get_secret_value() if self._settings.relay_token else None,
+            )
+            raise LiveError(f"Gemini Live не открылся ({reason}): {detail}", reason) from error
+        GEMINI_CONNECT_SECONDS.observe(time.monotonic() - started)
         return GeminiLiveLink(stack, session, voice)
 
     async def aclose(self) -> None:

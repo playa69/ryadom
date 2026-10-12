@@ -395,6 +395,44 @@ class CachedTts:
         await self._inner.aclose()
 
 
+class FailoverTts:
+    """Основная озвучка с запасной: фраза звучит основным голосом, а если он не ответил — запасным.
+
+    В режиме gemini_live основной — голос Gemini (приветствие и кризисный ответ дословно), запасной — Qwen каскада: при
+    недоступном Gemini человек всё равно слышит приветствие и кризисный ответ (другим голосом, но слышит).
+    """
+
+    def __init__(self, primary: TextToSpeech, secondary: TextToSpeech) -> None:
+        self.primary = primary
+        self.secondary = secondary
+        self.name = primary.name
+
+    async def synthesize(self, text: str, voice: Voice) -> bytes:
+        try:
+            return await self.primary.synthesize(text, voice)
+        except TtsError as error:
+            logger.warning("основная озвучка не ответила, запасная: %s", error)
+            return await self.secondary.synthesize(text, voice)
+
+    async def stream(self, text: str, voice: Voice) -> AsyncIterator[bytes]:
+        started = False
+        try:
+            async for piece in pcm_stream(self.primary, text, voice):
+                started = True
+                yield piece
+            return
+        except TtsError as error:
+            if started:  # уже звучит: переключаться посреди фразы нельзя
+                raise
+            logger.warning("основная озвучка не ответила, запасная: %s", error)
+        async for piece in pcm_stream(self.secondary, text, voice):
+            yield piece
+
+    async def aclose(self) -> None:
+        await self.primary.aclose()
+        await self.secondary.aclose()
+
+
 def build_tts(settings: SpeechSettings) -> TextToSpeech | None:
     """Выбрать провайдера озвучки по настройкам и обернуть его памятью фраз (`TTS_CACHE_ITEMS`)."""
     tts = _build_provider(settings)

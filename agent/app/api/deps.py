@@ -37,6 +37,11 @@ def active_tts(app: Any) -> TextToSpeech | None:
     return app.state.tts if app.state.tts_mode == "auto" else None
 
 
+def active_cascade_tts(app: Any) -> TextToSpeech | None:
+    """Озвучка каскада в режиме gemini_live: ею говорят ответы, написанные каскадом при откате (голос Qwen, если настроен)."""
+    return app.state.cascade_tts if app.state.tts_mode == "auto" else None
+
+
 def get_tts(request: Request) -> TextToSpeech | None:
     return active_tts(request.app)
 

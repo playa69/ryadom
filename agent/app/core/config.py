@@ -167,6 +167,18 @@ class GeminiSettings(BaseAppSettings):
     transcript_wait_ms: int = Field(validation_alias="GEMINI_TRANSCRIPT_WAIT_MS", default=1000, ge=0, le=5000)
     # Ответ, от которого нет событий дольше этого, считается оборванным.
     idle_timeout_seconds: int = Field(validation_alias="GEMINI_IDLE_TIMEOUT_SECONDS", default=15, ge=1)
+    # Откат на каскад. Gemini недоступен или молчит — реплика обрабатывается каскадом (whisper → чат-модель → Qwen TTS, если он
+    # настроен: LLM_MODE=proxy, TTS_MODE) или шаблоном, и приложение продолжает работать. false — без отката (только ошибка).
+    fallback: bool = Field(validation_alias="GEMINI_FALLBACK", default=True)
+    # Сколько секунд ждать первого ответа модели после конца реплики, прежде чем ответить каскадом (обычно ответ за ~1 с).
+    first_output_timeout_seconds: int = Field(validation_alias="GEMINI_FIRST_OUTPUT_TIMEOUT_SECONDS", default=5, ge=1)
+    # Размыкатель: столько сбоев подряд (не открылось, оборвалось до ответа, не ответило) — и новые реплики идут сразу в каскад,
+    # не тратя время на ожидание Gemini; фоновая проверка раз в GEMINI_BREAKER_COOLDOWN_SECONDS возвращает Gemini, когда он ожил.
+    breaker_failures: int = Field(validation_alias="GEMINI_BREAKER_FAILURES", default=3, ge=1)
+    breaker_cooldown_seconds: int = Field(validation_alias="GEMINI_BREAKER_COOLDOWN_SECONDS", default=30, ge=1)
+    # Расшифровка не пришла от Gemini, а он уже отвечает: столько секунд ждём распознавание записи каскадом (whisper), чтобы
+    # слова человека не пропали молча.
+    transcript_recovery_seconds: int = Field(validation_alias="GEMINI_TRANSCRIPT_RECOVERY_SECONDS", default=8, ge=1)
     # Сколько последних сообщений диалога модель получает при новом соединении (после переподключения, смены голоса).
     history_messages: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES", default=12, ge=0)
     # «Размышление» модели перед ответом (токены): -1 (по умолчанию) — параметр не отправляется, решает Google; 0 — выключено
