@@ -284,10 +284,10 @@ def test_session_config_has_compression_and_resumption() -> None:
     assert config.session_resumption is not None and config.session_resumption.handle == "h-1"
     assert config.realtime_input_config.automatic_activity_detection.disabled is True  # границы реплик задаёт клиент
     assert config.output_audio_transcription is not None and config.input_audio_transcription is not None
-    assert config.thinking_config is not None and config.thinking_config.thinking_budget == 0  # размышление выключено: быстрее на ~0,2 с
+    assert config.thinking_config is None  # по умолчанию (-1) параметр не отправляется: как решит Google
 
-    dynamic = live_config(GeminiSettings.model_validate({"GEMINI_THINKING_BUDGET": -1}), "Kore", "x")
-    assert dynamic.thinking_config is None  # -1: как решит Google
+    off = live_config(GeminiSettings.model_validate({"GEMINI_THINKING_BUDGET": 0}), "Kore", "x")
+    assert off.thinking_config is not None and off.thinking_config.thinking_budget == 0  # размышление выключено: быстрее на ~0,2 с
 
     plain = live_config(GeminiSettings.model_validate({"GEMINI_COMPRESSION": False, "GEMINI_SESSION_RESUMPTION": False}), "Kore", "x")
     assert plain.context_window_compression is None and plain.session_resumption is None

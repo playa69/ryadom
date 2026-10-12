@@ -55,6 +55,6 @@ data:
   # Secret `agent-gemini` и образ с google-genai (agent ≥ 0.2.0). Переключение: сменить значение, применить ConfigMap и
   # перезапустить агента (kubectl -n agent rollout restart deploy/agent). Откат: вернуть cascade. Подробно: README.md.
   VOICE_PIPELINE: "cascade"
-  # Остальные настройки gemini_live (голоса, сжатие контекста, возобновление, размышление) имеют разумные значения по
-  # умолчанию в коде; полный список — agent/README.md и agent/.env.example.
-  GEMINI_LIVE_MODEL: "gemini-3.8-live"
+  # Остальные настройки gemini_live (модель, голоса, сжатие контекста, возобновление сессии, размышление) намеренно не заданы:
+  # действуют значения по умолчанию из кода (нейтральные: размышление и пороги сжатия решает Google). Полный список и
+  # рекомендации (GEMINI_THINKING_BUDGET=0 для скорости, пороги сжатия для контроля расходов) — agent/README.md.

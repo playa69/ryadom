@@ -169,9 +169,10 @@ class GeminiSettings(BaseAppSettings):
     idle_timeout_seconds: int = Field(validation_alias="GEMINI_IDLE_TIMEOUT_SECONDS", default=15, ge=1)
     # Сколько последних сообщений диалога модель получает при новом соединении (после переподключения, смены голоса).
     history_messages: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES", default=12, ge=0)
-    # «Размышление» модели перед ответом (токены): 0 — выключено (замер на gemini-3.8-live: первый звук 0,79 с вместо 0,96 с, ответ
-    # короткий и тёплый, рассуждать нечем), >0 — предел, -1 — как решит Google. Кризисы модель не решает: их ловит агент.
-    thinking_budget: int = Field(validation_alias="GEMINI_THINKING_BUDGET", default=0, ge=-1)
+    # «Размышление» модели перед ответом (токены): -1 (по умолчанию) — параметр не отправляется, решает Google; 0 — выключено
+    # (замер на gemini-3.8-live: первый звук на ~0,2 с быстрее, ответы короткие и тёплые, рассуждать нечем); >0 — предел.
+    # Кризисы модель не решает: их ловит агент.
+    thinking_budget: int = Field(validation_alias="GEMINI_THINKING_BUDGET", default=-1, ge=-1)
     # Длинный разговор: когда контекст сессии подходит к пределу, Google сам сжимает его скользящим окном (самое старое
     # уходит, начало разговора и промпт остаются), и сессия не обрывается. Без сжатия голосовая сессия живёт ~15 минут.
     compression: bool = Field(validation_alias="GEMINI_COMPRESSION", default=True)
