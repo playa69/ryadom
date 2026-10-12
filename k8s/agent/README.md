@@ -108,9 +108,9 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts 
 доступен (проверено временным подом: DNS `sslip.io` резолвится, `/_relay_health` 200, без токена 403). Egress `:443` в ns `agent`
 уже разрешён (`05-network-policy-agent.yaml`), новые сетевые правила не нужны.
 
-Значения лежат в Yandex Lockbox, секрет `ryadom-gemini-live` (профиль `sber500-ryadom`; ключи `GEMINI_API_KEY`, `GEMINI_BASE_URL`,
-`GEMINI_RELAY_TOKEN` и `RELAY_SSH_PRIVATE_KEY` для доступа на сервер релея; защита от удаления включена). Существующие секреты
-(`ryadom-app-secrets`, Secret `agent-secrets`) не трогаются.
+Значения лежат в Yandex Lockbox, в общем секрете `ryadom-app-secrets` (профиль `sber500-ryadom`), новыми ключами: `GEMINI_API_KEY`,
+`GEMINI_BASE_URL`, `GEMINI_RELAY_TOKEN` и `GEMINI_RELAY_SSH_PRIVATE_KEY` (доступ на сервер релея, в кластер не уходит). Остальные
+ключи этого секрета не менялись. Kubernetes-секрет `agent-secrets` не трогается: для режима создаётся отдельный `agent-gemini`.
 
 Порядок, каждый шаг отдельным решением администратора:
 
@@ -120,7 +120,7 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts 
 
 # 2. Secret agent-gemini из Lockbox (создаётся командой create, не apply; нужен admin kubeconfig и явное «да» пользователя):
 . "$env:USERPROFILE\.config\ryadom\bin\ryadom-secrets.ps1"
-New-RyadomK8sSecret -Namespace agent -Name agent-gemini -Source ryadom-gemini-live `
+New-RyadomK8sSecret -Namespace agent -Name agent-gemini `
   -Map @{ GEMINI_API_KEY = 'GEMINI_API_KEY'; GEMINI_BASE_URL = 'GEMINI_BASE_URL'; GEMINI_RELAY_TOKEN = 'GEMINI_RELAY_TOKEN' } -DryRun
 #    проверить и повторить без -DryRun, добавив -UserConfirmedAdmin
 
