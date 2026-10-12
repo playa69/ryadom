@@ -10,11 +10,12 @@ import { StartDialogOperation } from './start-dialog.operation'
 import { StartDialogOperationErrorCode, type StartDialogResult } from './start-dialog.types'
 
 /**
- * Start a conversation or return to an open one. The dialog lives on the agent
- * side: we only check that the account is alive, not blocked and has agreed to the terms, and
- * pass its identifier. If
- * the agent is unavailable, `AgentUnavailableError` is thrown, the application answers 503 and
- * shows the help lines.
+ * Start a conversation or return to an open one. A plain start returns the open dialog (`resumed`,
+ * with its message count and last activity, so the client can ask the person whether to continue it);
+ * a new one is begun only on the explicit request (`startNew`), and then the agent ends the open
+ * dialog first. The dialog lives on the agent side: we only check that the account is alive, not
+ * blocked and has agreed to the terms, and pass its identifier. If the agent is unavailable,
+ * `AgentUnavailableError` is thrown, the application answers 503 and shows the help lines.
  */
 @requestHandler(StartDialogOperation)
 export class StartDialogOperationHandler implements RequestHandler<StartDialogOperation, StartDialogResult> {
@@ -41,12 +42,13 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
     const found = await usersManager.execute(new GetUserByIdQuery({ userId: operation.userId }))
     const voice = found.success ? found.user.agentVoice : undefined
     const started = await agentApiIntegration.execute(
-      new StartAgentDialogRequest({ userId: operation.userId, voice }),
+      new StartAgentDialogRequest({ userId: operation.userId, voice, startNew: operation.startNew }),
     )
     createLogger('dialogs').info('Dialog started', {
       userId: operation.userId,
       dialogId: started.dialogId,
       resumed: started.resumed,
+      startNew: operation.startNew,
     })
     return { success: true, dialog: started }
   }
