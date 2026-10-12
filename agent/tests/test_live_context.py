@@ -114,6 +114,15 @@ def make_session(connector: FakeConnector, *messages: tuple[str, str]) -> LiveDi
     return LiveDialogSession(None, store, dialog, lambda: None, connector)  # type: ignore[arg-type]
 
 
+def test_live_instructions_carry_the_russian_only_rule() -> None:
+    """Агент говорит только по-русски и на просьбу переключиться отвечает, что поддерживает только русский."""
+    session = make_session(FakeConnector())
+    for instructions in (session._instructions(), session._instructions(resumed=True)):
+        lower = instructions.lower()
+        assert "говори только по-русски" in lower and "поддерживаешь только русский" in lower
+        assert "на его языке" not in lower
+
+
 # ─── Смена сессии после ответа ────────────────────────────────────────────────────────────────────────────────────
 
 
