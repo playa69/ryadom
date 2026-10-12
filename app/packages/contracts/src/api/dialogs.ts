@@ -1,3 +1,5 @@
+import type { DialogMemoryMode } from './memory'
+
 /**
  * Dialogs: REST plus the WebSocket protocol between the client and the app.
  *
@@ -41,6 +43,12 @@ export interface StartDialogApiRequest {
    * keep getting that.
    */
   startNew?: boolean
+  /**
+   * `off` holds this conversation "without memory": the agent neither uses nor adds to what it remembers, and the
+   * conversation is deleted 24 hours after its last message. Only a new dialog takes it; a returned open one keeps
+   * its own (send `startNew` with it). Default `on`.
+   */
+  memory?: DialogMemoryMode
 }
 
 export interface StartDialogApiResponse {
@@ -55,6 +63,10 @@ export interface StartDialogApiResponse {
   messageCount: number
   /** When the returned dialog last moved (its last message or its end), ISO; null when unknown. */
   lastActivityAt: string | null
+  /** The memory mode of the returned dialog: a returned open one keeps the mode it was started with. */
+  memoryMode: DialogMemoryMode
+  /** Whether the person has memory turned on: the "without memory" switch is shown only then. */
+  memoryEnabled: boolean
 }
 
 export interface DialogSummaryApiResponse {
@@ -72,6 +84,8 @@ export interface DialogListItemApiResponse {
   startedAt: string
   endedAt: string | null
   summary: DialogSummaryApiResponse | null
+  /** `off`: a conversation "without memory", deleted 24 hours after its last message. */
+  memoryMode: DialogMemoryMode
 }
 
 export interface ListDialogsApiResponse {

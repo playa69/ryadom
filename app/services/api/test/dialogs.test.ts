@@ -17,6 +17,7 @@ import {
   type ListDialogsApiResponse,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
@@ -66,6 +67,8 @@ describe('REST диалогов', () => {
       sinceLastDialogHours: 48,
       messageCount: 5,
       lastActivityAt: '2026-10-01T20:12:00.000Z',
+      memoryMode: DialogMemoryMode.On,
+      memoryEnabled: false,
     })
 
     const agentCall = calls.at(-1)!
@@ -89,7 +92,42 @@ describe('REST диалогов', () => {
       sinceLastDialogHours: null,
       messageCount: 0,
       lastActivityAt: null,
+      memoryMode: DialogMemoryMode.On,
+      memoryEnabled: false,
     })
+  })
+
+  it('«без памяти»: memory: off уходит агенту, в ответе режим диалога и включена ли память у человека', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-6', resumed: false, memoryMode: 'off', memoryEnabled: true }),
+    })
+
+    const started = ok<StartDialogApiResponse>(
+      await call(
+        app,
+        'POST',
+        '/api/dialogs',
+        { startNew: true, memory: DialogMemoryMode.Off },
+        tokens.accessToken,
+      ),
+    )
+
+    expect(started).toMatchObject({ dialogId: 'd-6', memoryMode: DialogMemoryMode.Off, memoryEnabled: true })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
+  })
+
+  it('memory не из списка — 400, агента не трогаем', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent()
+
+    const response = await call(app, 'POST', '/api/dialogs', { memory: 'never' }, tokens.accessToken)
+
+    expect(response.status).toBe(400)
+    expect(calls).toEqual([])
   })
 
   it('startNew: true уходит агенту как new: true; без него старт ничего не завершает', async () => {
@@ -150,6 +188,8 @@ describe('REST диалогов', () => {
       sinceLastDialogHours: null,
       messageCount: 0,
       lastActivityAt: null,
+      memoryMode: DialogMemoryMode.On,
+      memoryEnabled: false,
     })
 
     ok(await call(app, 'PATCH', '/api/auth/me', { voice: 'male' }, tokens.accessToken))

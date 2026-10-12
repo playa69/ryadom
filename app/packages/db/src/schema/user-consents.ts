@@ -3,7 +3,8 @@ import { users } from './users'
 import type { UserConsentKind } from './types'
 
 /**
- * What a person agreed to and when, one row per kind and version. Accepting a new version of the
+ * What a person agreed to and when, one row per kind and version: the required kinds of the first
+ * screen and the optional ones (`memory`), see `types.ts`. Accepting a new version of the
  * terms adds rows and leaves the old ones: the record has to show what was agreed to at the time.
  *
  * It survives the account's deletion (the user row is only anonymized): it is the evidence that the

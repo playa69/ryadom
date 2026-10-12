@@ -20,6 +20,7 @@ import {
   type ListDialogsApiResponse,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
@@ -27,7 +28,13 @@ import { tensionOutcome } from '../../lib/analytics'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
-import { toDialog, toDialogListItem, toDialogSummary } from '../../lib/mappers'
+import {
+  fromDialogMemoryMode,
+  toDialog,
+  toDialogListItem,
+  toDialogMemoryMode,
+  toDialogSummary,
+} from '../../lib/mappers'
 import { RATE_LIMITS } from '../../lib/rate-limit'
 import { jsonBody, queryParams } from '../../lib/request'
 
@@ -43,6 +50,8 @@ const startBody = z.object({
   mode: z.enum(DialogMode).optional(),
   // The person's answer to "continue the open dialog or end it and begin a new one"; without it a start changes nothing.
   startNew: z.boolean().optional(),
+  // "Without memory" for a new dialog; a returned open one keeps its own mode.
+  memory: z.enum(DialogMemoryMode).optional(),
 })
 
 const listQuery = z.object({
@@ -68,8 +77,14 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
       if (!(await rateLimiter.hit(`user:dialog-start:${userId}`, RATE_LIMITS.dialogStart.perUser))) {
         return apiError(c, 429, 'Too many dialog starts')
       }
-      const { startNew } = c.req.valid('json')
-      const result = await dialogsProcess.execute(new StartDialogOperation({ userId, startNew }))
+      const { startNew, memory } = c.req.valid('json')
+      const result = await dialogsProcess.execute(
+        new StartDialogOperation({
+          userId,
+          startNew,
+          memory: memory === undefined ? undefined : fromDialogMemoryMode(memory),
+        }),
+      )
       if (!result.success) {
         switch (result.error) {
           case StartDialogOperationErrorCode.USER_NOT_FOUND:
@@ -82,7 +97,16 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
             return assertNever(result.error)
         }
       }
-      const response: StartDialogApiResponse = result.dialog
+      const response: StartDialogApiResponse = {
+        dialogId: result.dialog.dialogId,
+        resumed: result.dialog.resumed,
+        greeting: result.dialog.greeting,
+        sinceLastDialogHours: result.dialog.sinceLastDialogHours,
+        messageCount: result.dialog.messageCount,
+        lastActivityAt: result.dialog.lastActivityAt,
+        memoryMode: toDialogMemoryMode(result.dialog.memoryMode),
+        memoryEnabled: result.dialog.memoryEnabled,
+      }
       analytics.capture(userId, AnalyticsEvent.DialogStarted, {
         resumed: result.dialog.resumed,
         hours_since_last:
