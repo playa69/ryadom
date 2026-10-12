@@ -156,6 +156,9 @@ def test_chat_messages_carry_the_offtopic_and_good_mood_rules():
     assert "и радость тоже" in prompt  # «сначала признай чувство» — и для радости
     # Голосовой формат и прежние правила на месте.
     assert "одно-три предложения" in prompt and "эмодзи" in prompt and "не задавай два вопроса" in prompt
+    # Язык: только русский; на просьбу переключиться агент отвечает, что поддерживает только русский.
+    assert "говори только по-русски" in prompt and "поддерживаешь только русский" in prompt
+    assert "на его языке" not in prompt  # прежнее правило «отвечай на языке человека» снято
 
 
 @pytest.mark.parametrize("reply", REPLIES)

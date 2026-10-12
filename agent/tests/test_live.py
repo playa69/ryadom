@@ -8,7 +8,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.clients.gemini_live import LiveError, LiveEvent
+from app.clients.gemini_live import LiveError, LiveEvent, LiveHistory
+from app.core.config import APP_CONFIG
 from app.main import create_app
 from app.services.replies import CRISIS_REPLY
 from tests.conftest import (
@@ -28,11 +29,22 @@ from tests.conftest import (
 class FakeLink:
     """Соединение с моделью: на конец реплики отвечает заранее заданным текстом и звуком."""
 
-    def __init__(self, voice: str, reply: str, heard: str, instructions: str, resume_handle: str | None = None) -> None:
+    def __init__(
+        self,
+        voice: str,
+        reply: str,
+        heard: str,
+        instructions: str,
+        resume_handle: str | None = None,
+        history: LiveHistory | None = None,
+    ) -> None:
         self.voice = voice
         self.closed = False
         self.instructions = instructions
         self.resume_handle = resume_handle
+        self.history = history  # прошлые реплики, загруженные в сессию при открытии (text_context)
+        self.turn_complete = False  # после ответа слать turn_complete, как настоящая модель, когда звук дозвучал
+        self.usage: dict[str, int] | None = None  # токены хода, которые модель присылает вместе с turn_complete
         self.handle_to_issue = "handle-1"  # handle сессии, который «выдаёт Google» после каждого ответа
         self.signal: str | None = None  # "go_away" | "drop": что Google делает после ответа
         self.commands: list[tuple[Any, ...]] = []
@@ -49,10 +61,18 @@ class FakeLink:
         self._queue.put_nowait(LiveEvent("audio", data=FAKE_PCM))
         self._queue.put_nowait(LiveEvent("generation_complete"))
         self._queue.put_nowait(LiveEvent("resumption", text=self.handle_to_issue))
+        if self.usage:
+            self._queue.put_nowait(LiveEvent("usage", usage=dict(self.usage)))
+        if self.turn_complete:
+            self._queue.put_nowait(LiveEvent("turn_complete"))
         if self.signal == "go_away":
             self._queue.put_nowait(LiveEvent("go_away", text="30s"))
         elif self.signal == "drop":
             self._queue.put_nowait(LiveEvent("closed", text="соединение закрыто Google"))
+
+    def push(self, event: LiveEvent) -> None:
+        """Событие от модели, которое тест присылает сам, когда ему надо (из потока теста: `ws.portal.call(link.push, event)`)."""
+        self._queue.put_nowait(event)
 
     async def activity_start(self) -> None:
         self.commands.append(("start",))
@@ -95,20 +115,33 @@ class FakeConnector:
         fail: bool = False,
         reject_handles: bool = False,
         after_first_reply: str | None = None,
+        turn_complete: bool = False,
+        usage: dict[str, int] | None = None,
     ) -> None:
         self.reply = reply
         self.heard = heard
         self.fail = fail
         self.reject_handles = reject_handles  # Google не принимает handle (устарел)
         self.after_first_reply = after_first_reply  # "go_away" | "drop": судьба первого соединения
+        self.turn_complete = turn_complete  # модель шлёт turn_complete после каждого ответа
+        self.usage = usage  # и usage (токены хода) перед ним
+        self.fail_from: int | None = None  # с какого по счёту открытия (с 1) соединение не открывается
         self.links: list[FakeLink] = []
         self.open_calls: list[tuple[str, str | None]] = []
+        self.history_calls: list[LiveHistory | None] = []  # history каждого вызова open, в том числе неудачного
 
-    async def open(self, voice: str, instructions: str, resume_handle: str | None = None) -> FakeLink:
+    async def open(
+        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+    ) -> FakeLink:
         self.open_calls.append((voice, resume_handle))
+        self.history_calls.append(history)
         if self.fail or (resume_handle and self.reject_handles):
             raise LiveError("Gemini Live не открылся в тесте")
-        link = FakeLink(voice, self.reply, self.heard, instructions, resume_handle)
+        if self.fail_from is not None and len(self.open_calls) >= self.fail_from:
+            raise LiveError("Gemini Live не открылся в тесте")
+        link = FakeLink(voice, self.reply, self.heard, instructions, resume_handle, history)
+        link.turn_complete = self.turn_complete
+        link.usage = self.usage
         if not self.links:
             link.signal = self.after_first_reply
         self.links.append(link)
@@ -120,6 +153,20 @@ class FakeConnector:
 
 def make_live_client(connector: FakeConnector, tts: Any = None) -> TestClient:
     return TestClient(create_app(lambda: tts, lambda: (None, None), live_factory=lambda: connector))
+
+
+@pytest.fixture(autouse=True)
+def pinned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Настройки live не зависят от .env разработчика: контекст по умолчанию переносится текстом (GEMINI_TEXT_CONTEXT)."""
+    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40)):
+        monkeypatch.setattr(APP_CONFIG.gemini, name, value)
+
+
+@pytest.fixture
+def without_text_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Прежний путь: GEMINI_TEXT_CONTEXT=false, сессия живёт всё соединение, возобновляется по handle, а история при новом
+    соединении лежит в system instruction."""
+    monkeypatch.setattr(APP_CONFIG.gemini, "text_context", False)
 
 
 @pytest.fixture
@@ -250,6 +297,7 @@ def two_messages(client: TestClient, user_id: str) -> list[Any]:
     return first + second
 
 
+@pytest.mark.usefixtures("without_text_context")
 def test_go_away_reopens_the_session_with_the_handle(user_id: str) -> None:
     connector = FakeConnector(after_first_reply="go_away")
     with make_live_client(connector, FakeTts()) as client:
@@ -259,6 +307,7 @@ def test_go_away_reopens_the_session_with_the_handle(user_id: str) -> None:
     assert not has(frames, "error")
 
 
+@pytest.mark.usefixtures("without_text_context")
 def test_dropped_connection_between_turns_is_silent_and_resumed(user_id: str) -> None:
     connector = FakeConnector(after_first_reply="drop")
     with make_live_client(connector, FakeTts()) as client:
@@ -267,6 +316,7 @@ def test_dropped_connection_between_turns_is_silent_and_resumed(user_id: str) ->
     assert connector.open_calls == [("male", None), ("male", "handle-1")]
 
 
+@pytest.mark.usefixtures("without_text_context")
 def test_rejected_handle_falls_back_to_the_history(user_id: str) -> None:
     connector = FakeConnector(after_first_reply="drop", reject_handles=True)
     with make_live_client(connector, FakeTts()) as client:
@@ -277,9 +327,10 @@ def test_rejected_handle_falls_back_to_the_history(user_id: str) -> None:
 
 def test_session_config_has_compression_and_resumption() -> None:
     from app.clients.gemini_live import live_config
-    from app.core.config import APP_CONFIG, GeminiSettings
+    from app.core.config import GeminiSettings
 
-    config = live_config(APP_CONFIG.gemini, "Kore", "промпт", "h-1")
+    # Возобновление по handle относится к прежнему пути (GEMINI_TEXT_CONTEXT=false); при text_context его нет (test_live_context.py).
+    config = live_config(GeminiSettings.model_validate({"GEMINI_TEXT_CONTEXT": False}), "Kore", "промпт", "h-1")
     assert config.context_window_compression is not None and config.context_window_compression.sliding_window is not None
     assert config.session_resumption is not None and config.session_resumption.handle == "h-1"
     assert config.realtime_input_config.automatic_activity_detection.disabled is True  # границы реплик задаёт клиент
@@ -299,7 +350,11 @@ def test_session_config_has_compression_and_resumption() -> None:
     assert tuned.context_window_compression.sliding_window.target_tokens == 40000
 
 
-def test_voice_change_reconnects_with_the_history(live_client: TestClient, connector: FakeConnector, user_id: str) -> None:
+@pytest.mark.parametrize("text_context", [False, True], ids=["history-in-prompt", "history-as-turns"])
+def test_voice_change_reconnects_with_the_history(
+    live_client: TestClient, connector: FakeConnector, user_id: str, monkeypatch: pytest.MonkeyPatch, text_context: bool
+) -> None:
+    monkeypatch.setattr(APP_CONFIG.gemini, "text_context", text_context)
     dialog = start_dialog(live_client, user_id)
     with live_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
         send_user_message(ws, "c-1", "Первая реплика")
@@ -309,5 +364,11 @@ def test_voice_change_reconnects_with_the_history(live_client: TestClient, conne
         read_frames(ws, reply_done)
     assert [link.voice for link in connector.links][:1] == ["male"]
     second = next(link for link in connector.links if link.voice == "female" and any(c[0] == "text" for c in link.commands))
-    assert "Первая реплика" in second.instructions  # новое соединение помнит, о чём шла речь
-    assert "Вторая реплика" not in second.instructions  # а текущая реплика уходит отдельно, не дублируется
+    assert "Вторая реплика" not in second.instructions  # текущая реплика уходит отдельно, не дублируется
+    assert "Вторая реплика" not in json.dumps(second.history or [], ensure_ascii=False)
+    if text_context:  # новое соединение помнит, о чём шла речь: прошлые реплики загружены в сессию, в промпте их нет
+        assert second.history == [("user", "Первая реплика"), ("model", connector.reply)]
+        assert "Первая реплика" not in second.instructions
+    else:  # прежний путь: история текстом в system instruction
+        assert second.history is None
+        assert "Первая реплика" in second.instructions

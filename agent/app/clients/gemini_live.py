@@ -11,7 +11,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -32,8 +32,12 @@ EventKind = Literal[
     "interrupted",
     "resumption",  # text — handle, по которому сессию можно возобновить после обрыва
     "go_away",  # Google скоро закроет соединение: пора переоткрыть его между репликами
+    "usage",  # usage — токены хода (usage_metadata); приходит вместе с turn_complete
     "closed",
 ]
+
+# Прошлые реплики разговора для новой сессии: (кто, текст). Роль модели у Gemini — "model".
+LiveHistory = Sequence[tuple[Literal["user", "model"], str]]
 
 
 class LiveError(Exception):
@@ -45,6 +49,7 @@ class LiveEvent:
     kind: EventKind
     text: str = ""
     data: bytes = b""
+    usage: dict[str, int] | None = None
 
 
 class LiveLink(Protocol):
@@ -75,8 +80,11 @@ class LiveLink(Protocol):
 class LiveConnector(Protocol):
     name: str
 
-    async def open(self, voice: Voice, instructions: str, resume_handle: str | None = None) -> LiveLink:
-        """Новое соединение; с `resume_handle` — продолжение прежней сессии (контекст разговора остаётся у Google)."""
+    async def open(
+        self, voice: Voice, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+    ) -> LiveLink:
+        """Новое соединение; с `resume_handle` — продолжение прежней сессии (контекст разговора остаётся у Google),
+        с `history` — свежая сессия, в которую сразу загружены прошлые реплики текстом (модель на них не отвечает)."""
         ...
 
     async def aclose(self) -> None: ...
@@ -132,8 +140,18 @@ class GeminiLiveLink:
             logger.debug("закрытие Gemini Live: %s", error)
 
 
-def live_config(settings: GeminiSettings, voice_name: str, instructions: str, resume_handle: str | None = None):  # noqa: ANN201
-    """Настройки сессии Gemini Live: голос, промпт, расшифровки, ручные границы реплик, сжатие контекста, возобновление."""
+def live_config(
+    settings: GeminiSettings,
+    voice_name: str,
+    instructions: str,
+    resume_handle: str | None = None,
+    history: bool = False,
+):  # noqa: ANN201
+    """Настройки сессии Gemini Live: голос, промпт, расшифровки, ручные границы реплик, сжатие контекста, возобновление.
+
+    `history`: сессия начинается с загрузки прошлых реплик текстом (client_content до первого ввода, без ответа модели).
+    При `text_context` сессия живёт один ход и возобновлять её по handle незачем: контекст приходит текстом.
+    """
     from google.genai import types as t
 
     config = t.LiveConnectConfig(
@@ -156,15 +174,37 @@ def live_config(settings: GeminiSettings, voice_name: str, instructions: str, re
             trigger_tokens=settings.compression_trigger_tokens or None,
             sliding_window=t.SlidingWindow(target_tokens=settings.compression_target_tokens or None),
         )
-    if settings.session_resumption:
+    if settings.session_resumption and not settings.text_context:
         config.session_resumption = t.SessionResumptionConfig(handle=resume_handle)
+    if history:
+        config.history_config = t.HistoryConfig(initial_history_in_client_content=True)
     return config
+
+
+def _usage(meta) -> dict[str, int]:  # noqa: ANN001
+    """Токены одного хода из usage_metadata: prompt — весь контекст хода (оплачивается заново каждый ход), response — ответ."""
+    usage: dict[str, int] = {}
+    for direction, total, details in (
+        ("prompt", meta.prompt_token_count, meta.prompt_tokens_details),
+        ("response", meta.response_token_count, meta.response_tokens_details),
+    ):
+        if total:
+            usage[f"{direction}_all"] = int(total)
+        for item in details or []:
+            modality = str(getattr(item.modality, "name", item.modality)).lower()
+            if item.token_count:
+                usage[f"{direction}_{modality}"] = int(item.token_count)
+    return usage
 
 
 def _translate(message) -> list[LiveEvent]:  # noqa: ANN001
     events: list[LiveEvent] = []
     if message.data:
         events.append(LiveEvent("audio", data=message.data))
+    if message.usage_metadata is not None:
+        usage = _usage(message.usage_metadata)
+        if usage:
+            events.append(LiveEvent("usage", usage=usage))
     update = message.session_resumption_update
     if update is not None and update.resumable and update.new_handle:
         events.append(LiveEvent("resumption", text=update.new_handle))
@@ -207,14 +247,25 @@ class GeminiLiveConnector:
         self._client = genai.Client(api_key=settings.api_key.get_secret_value(), http_options=options)
         self.name = f"gemini-live:{self._model}"
 
-    async def open(self, voice: Voice, instructions: str, resume_handle: str | None = None) -> GeminiLiveLink:
-        config = live_config(self._settings, self._voices[voice], instructions, resume_handle)
+    async def open(
+        self, voice: Voice, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+    ) -> GeminiLiveLink:
+        config = live_config(self._settings, self._voices[voice], instructions, resume_handle, bool(history))
         stack = AsyncExitStack()
         try:
             session = await asyncio.wait_for(
                 stack.enter_async_context(self._client.aio.live.connect(model=self._model, config=config)),
                 timeout=self._timeout,
             )
+            if history:
+                # Прошлые реплики текстом, модель на них не отвечает; следующим пойдёт ввод человека.
+                turns = [
+                    self._types.Content(role=role, parts=[self._types.Part(text=text)]) for role, text in history
+                ]
+                await asyncio.wait_for(session.send_client_content(turns=turns, turn_complete=True), timeout=self._timeout)
+        except asyncio.CancelledError:
+            await stack.aclose()  # смену сессии отменили на полпути: наполовину открытое соединение не оставляем
+            raise
         except Exception as error:
             await stack.aclose()
             raise LiveError(f"Gemini Live не открылся: {type(error).__name__}: {str(error)[:200]}") from error
