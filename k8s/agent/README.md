@@ -102,8 +102,8 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts 
 
 ## Режим gemini_live (речь в речь): подготовка и включение
 
-Режим добавляет PR «feat(agent): режим gemini_live». В кластере он **выключен**, пока в ConfigMap `VOICE_PIPELINE: "cascade"`
-(как сейчас в манифесте): образ с новым кодом ведёт себя как прежний каскад. Gemini API из России недоступен (из кластера проверено:
+Режим добавляет PR «feat(agent): режим gemini_live». **С 2026-10-12 в кластере включён** (`VOICE_PIPELINE: "gemini_live"`, образ 0.2.0,
+Secret `agent-gemini` создан). С `VOICE_PIPELINE: "cascade"` тот же образ ведёт себя как прежний каскад. Gemini API из России недоступен (из кластера проверено:
 `User location is not supported`), поэтому агент ходит через релей в Hetzner (`agent/relay/README.md`); из кластера релей
 доступен (проверено временным подом: DNS `sslip.io` резолвится, `/_relay_health` 200, без токена 403). Egress `:443` в ns `agent`
 уже разрешён (`05-network-policy-agent.yaml`), новые сетевые правила не нужны.
