@@ -136,7 +136,7 @@ New-RyadomK8sSecret -Namespace agent -Name agent-gemini `
 ```bash
 curl -s http://127.0.0.1:18001/health/ready      # "pipeline":"gemini-live:gemini-3.8-live", "tts":"gemini-live:gemini-3.8-live"
 python agent/scripts/live_smoke.py --url http://127.0.0.1:18001 --token <токен> --pcm-dir <каталог с PCM-репликами> --wav-dir <куда сохранить звук>
-kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live timeline|first sound|WARNING"
+kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live timeline|live usage|live context|first sound|WARNING"
 ```
 
 В журнале агента: `прогрев озвучки закончен: озвучено 12, не удалось 0` (около 20 с; пока идёт прогрев, приветствие может прочитать
@@ -149,8 +149,10 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live 
 Что учесть до включения (подробности: `agent/relay/README.md`, «Ёмкость и лимиты»):
 
 - В PR #28 известны расхождения с каскадом (P1-P16 в `agent/tests/test_parity.py`, strict xfail), часть из них до включения в бою нужно закрыть.
-- Постоплата Gemini: контекст сессии оплачивается на каждый ход; задать `GEMINI_COMPRESSION_TRIGGER_TOKENS`/`GEMINI_COMPRESSION_TARGET_TOKENS`
-  (например 25000/8000), поставить бюджет Cloud Billing и ограничить ключ по IP релея.
+- Постоплата Gemini: контекст сессии оплачивается на каждый ход. С образом ≥ 0.3.0 по умолчанию включена оптимизация
+  `GEMINI_TEXT_CONTEXT` (после каждого ответа свежая сессия с историей текстом: на стенде -53% входных токенов за 12 ходов и цена хода
+  почти не растёт; скорость первого звука при нормальной паузе та же, схема и замеры в `agent/README.md`). Образ 0.2.0 её не содержит. Поставить бюджет
+  Cloud Billing и ограничить ключ по IP релея.
 - Агент в памяти (Recreate): выкат и переключение режима обрывают текущие диалоги. Память пода в режиме Gemini на стенде около 100 МБ при лимите 384 МиБ.
 
 ## Ограничения (честно)
