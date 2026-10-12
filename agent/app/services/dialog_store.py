@@ -1,17 +1,31 @@
-"""Диалоги в памяти процесса.
+"""Диалоги: рабочий набор в памяти процесса и копия на диске.
 
-Упрощение на этап проверки: данные исчезают при перезапуске и живут в одной реплике. Настоящее
-хранилище (БД агента, design D6) подставляется на место этого класса, интерфейс останется тем же.
+Весь код агента работает с `Message`/`Dialog` в памяти, как раньше. Если задан `DIALOG_DB_PATH`, хранилище подключает файл SQLite
+(`attach`, app/services/dialog_db.py): изменения дописываются в фоне, а диалоги человека загружаются с диска при первом обращении
+(`ensure_user`), поэтому они переживают перезапуск и выкат пода. Без файла хранилище, как раньше, только в памяти.
+Настоящая БД агента (design D6) подставляется на место `DialogDatabase`, интерфейс хранилища остаётся тем же.
+
+Запись устроена так, чтобы не трогать места, где код меняет сообщения на месте (ответ дописывается по словам):
+фоновая запись раз в `flush_interval` сравнивает диалоги, изменённые через хранилище или имеющие живой сокет, с тем, что уже
+записано, и пишет разницу одной транзакцией.
 """
 
+import asyncio
 import base64
 import binascii
+import logging
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.clients.speech import Voice
+from app.core.metrics import DIALOG_DB_ERRORS_TOTAL, DIALOG_DB_WRITE_SECONDS
+from app.services.dialog_db import DialogDatabase, DialogDbError, DialogWrite, StoredDialog, encode_summary
+
+logger = logging.getLogger("agent.dialogs")
 
 GREETING_NEW = "Я рядом. С чего начнём?"
 GREETING_RESUMED = "Продолжим, где остановились."
@@ -51,9 +65,19 @@ class Dialog:
     voice: Voice = "male"
     # Один живой сокет на диалог (specs/agent-api «Обрыв и переподключение»).
     has_live_socket: bool = False
+    # Зовёт хранилище, когда диалог завершён снаружи сокета (человек начал новый разговор с другого экрана): сокет сообщает
+    # `ended` и закрывается, а не продолжает писать в завершённый диалог. Ставит и снимает сессия; на диск не попадает.
+    on_replaced: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False, compare=False)
 
     def to_item(self) -> dict[str, Any]:
         return {"dialogId": self.id, "startedAt": self.started_at, "endedAt": self.ended_at, "summary": self.summary}
+
+    @property
+    def last_activity_at(self) -> str | None:
+        """Когда в диалоге что-то происходило в последний раз: завершение или последнее сообщение; у пустого открытого None."""
+        if self.ended_at:
+            return self.ended_at
+        return self.messages[-1].created_at if self.messages else None
 
 
 class InvalidCursor(ValueError):
@@ -74,6 +98,15 @@ def _decode_cursor(cursor: str) -> tuple[str, str]:
     return started_at, dialog_id
 
 
+@dataclass
+class _Persisted:
+    """Что по диалогу уже лежит на диске: следующая запись берёт только разницу."""
+
+    row: tuple[Any, ...]
+    messages: dict[str, str] = field(default_factory=dict)  # id сообщения → текст
+    client_ids: int = 0
+
+
 class DialogStore:
     def __init__(self, default_voice: Voice = "male") -> None:
         self._users: dict[str, dict[str, Dialog]] = {}
@@ -81,6 +114,22 @@ class DialogStore:
         # Последний выбор голоса человека: следующий диалог без явного голоса получит его.
         self._voice_prefs: dict[str, Voice] = {}
         self._last_started: datetime | None = None
+        # Диск. Всё ниже, кроме _db, нужно только при подключённой базе.
+        self._db: DialogDatabase | None = None
+        # Диск задан в настройках: пока он не подключён, стирание человека не может честно ответить «стёрто».
+        self._disk_required = False
+        self._flush_interval = 0.5
+        self._loaded: set[str] = set()
+        self._load_lock = asyncio.Lock()
+        self._flush_lock = asyncio.Lock()
+        self._dirty: dict[str, Dialog] = {}
+        self._watch: dict[str, Dialog] = {}  # диалоги с живым сокетом: их сообщения дописываются на месте
+        self._persisted: dict[str, _Persisted] = {}
+        self._persisted_prefs: dict[str, str] = {}
+        self._wake = asyncio.Event()
+        self._writer: asyncio.Task[None] | None = None
+
+    # ─── время ────────────────────────────────────────────────────────────────
 
     def _next_started_at(self) -> str:
         """Время старта диалога, строго возрастающее: журнал сортируется по нему, а два диалога в одну миллисекунду
@@ -92,6 +141,8 @@ class DialogStore:
         self._last_started = now
         return now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
+    # ─── диалоги ──────────────────────────────────────────────────────────────
+
     def _dialogs(self, user_id: str) -> dict[str, Dialog]:
         return self._users.setdefault(user_id, {})
 
@@ -102,27 +153,43 @@ class DialogStore:
     def open_dialog(self, user_id: str) -> Dialog | None:
         return next((d for d in self._dialogs(user_id).values() if d.ended_at is None), None)
 
-    def start(self, user_id: str, voice: Voice | None = None) -> tuple[Dialog, bool, int | None]:
+    def start(self, user_id: str, voice: Voice | None = None, new: bool = False) -> tuple[Dialog, bool, int | None]:
         """Начать или возобновить диалог. Возвращает (диалог, resumed, часов с прошлого разговора).
 
         `voice` — выбранный голос: запоминается как предпочтение человека; без него берётся прошлый выбор или голос по умолчанию.
+        `new` — начать новый разговор вместо возврата в открытый: открытый, если в нём есть сообщения, завершается так же, как
+        обычное завершение без слов человека (название по его первой реплике), остаётся в журнале, а его сокет получает `ended`.
+        Открытый диалог без сообщений и так «новый»: он переиспользуется, `resumed` ложь. Без `new` старт идемпотентен:
+        открытый диалог возвращается с `resumed`, ничего не меняется.
         """
-        hours = self._hours_since_last(user_id)
+        hours = self._hours_since_last(user_id)  # до завершения открытого: от последней активности человека, в том числе в нём
         existing = self.open_dialog(user_id)
+        resumed = existing is not None
+        if new and existing is not None:
+            resumed = False
+            if existing.messages:
+                summary = self.end(existing, None, None)
+                if existing.on_replaced is not None:
+                    existing.on_replaced(summary)
+                existing = None
+            # пустой открытый диалог: нечего ни завершать, ни продолжать, он остаётся и приветствует как новый
         dialog = existing or Dialog(id=str(uuid.uuid4()), user_id=user_id, started_at=self._next_started_at())
         self._dialogs(user_id)[dialog.id] = dialog
         if voice is not None:
             self._voice_prefs[user_id] = voice
         dialog.voice = voice or self._voice_prefs.get(user_id) or self._default_voice
-        dialog.greeting = GREETING_RESUMED if existing else GREETING_NEW
+        dialog.greeting = GREETING_RESUMED if resumed else GREETING_NEW
         dialog.greeting_pending = True
-        return dialog, existing is not None, hours
+        self._touch(dialog)
+        return dialog, resumed, hours
 
     def _hours_since_last(self, user_id: str) -> int | None:
-        ended = [d.ended_at for d in self._dialogs(user_id).values() if d.ended_at]
-        if not ended:
+        """Часов с последней активности человека: завершение прошлого разговора или последнее сообщение в открытом."""
+        stamps = [d.last_activity_at for d in self._dialogs(user_id).values()]
+        stamps = [s for s in stamps if s]
+        if not stamps:
             return None
-        last = datetime.fromisoformat(max(ended).replace("Z", "+00:00"))
+        last = datetime.fromisoformat(max(stamps).replace("Z", "+00:00"))
         return round((datetime.now(UTC) - last).total_seconds() / 3600)
 
     def list(self, user_id: str, limit: int, before: str | None) -> tuple[list[Dialog], str | None]:
@@ -139,10 +206,12 @@ class DialogStore:
         """Сменить голос идущего диалога; запоминается и как предпочтение человека."""
         dialog.voice = voice
         self._voice_prefs[dialog.user_id] = voice
+        self._touch(dialog)
 
     def add_message(self, dialog: Dialog, role: str, text: str, message_id: str | None = None) -> Message:
         message = Message(id=message_id or str(uuid.uuid4()), role=role, text=text, created_at=now_iso())
         dialog.messages.append(message)
+        self._touch(dialog)
         return message
 
     def end(self, dialog: Dialog, takeaway: str | None, tension_after: int | None) -> dict[str, Any]:
@@ -159,9 +228,249 @@ class DialogStore:
             "tensionBefore": None,
             "tensionAfter": tension_after,
         }
+        self._touch(dialog)
         return dialog.summary
 
     def erase_user(self, user_id: str) -> None:
-        """Стереть всё о человеке. Идемпотентно."""
-        self._users.pop(user_id, None)
+        """Стереть всё о человеке в памяти. Идемпотентно. На диске стирает `erase_user_durable`."""
+        for dialog_id in self._users.pop(user_id, {}):
+            self._dirty.pop(dialog_id, None)
+            self._watch.pop(dialog_id, None)
+            self._persisted.pop(dialog_id, None)
         self._voice_prefs.pop(user_id, None)
+        self._persisted_prefs.pop(user_id, None)
+
+    # ─── диск ─────────────────────────────────────────────────────────────────
+
+    @property
+    def persistent(self) -> bool:
+        return self._db is not None
+
+    def require_disk(self) -> None:
+        """Диск задан в настройках (`DIALOG_DB_PATH`). Если подключиться к нему не удалось, стирание человека отвечает ошибкой: файл
+        на томе при этом остаётся нетронутым, и приложение не должно считать данные стёртыми."""
+        self._disk_required = True
+
+    async def attach(self, db: DialogDatabase, flush_interval: float = 0.5) -> None:
+        """Подключить диск: открыть базу и запустить фоновую запись. Если база не открылась, исключение уходит вызывающему,
+        а хранилище остаётся в памяти."""
+        await asyncio.to_thread(db.open)
+        self._db = db
+        self._flush_interval = flush_interval
+        self._writer = asyncio.create_task(self._write_loop(), name="dialog-db-writer")
+
+    async def detach(self) -> None:
+        """Остановить фоновую запись, дописать всё несохранённое и закрыть базу."""
+        db = self._db
+        if db is None:
+            return
+        if self._writer is not None:
+            self._writer.cancel()
+            await asyncio.gather(self._writer, return_exceptions=True)
+            self._writer = None
+        # Всё, что ещё меняется на месте (идущие ответы), тоже попадает в последнюю запись.
+        self._dirty.update(self._watch)
+        await self.flush()
+        self._db = None
+        await asyncio.to_thread(db.close)
+
+    async def ensure_user(self, user_id: str) -> None:
+        """Загрузить диалоги человека с диска, если это ещё не сделано. Вызывать в начале каждого обращения по человеку.
+
+        Сбой чтения — исключение: лучше ответить ошибкой, чем показать человеку пустую историю и начать второй открытый диалог.
+        """
+        db = self._db
+        if db is None or user_id in self._loaded:
+            return
+        async with self._load_lock:
+            if user_id in self._loaded:
+                return
+            try:
+                stored, pref = await asyncio.to_thread(db.load_user, user_id)
+            except Exception:
+                DIALOG_DB_ERRORS_TOTAL.labels("load").inc()
+                logger.exception("dialog db load failed user=%s", user_id)
+                raise
+            dialogs = self._dialogs(user_id)
+            for item in stored:
+                if item.id in dialogs:
+                    continue
+                dialogs[item.id] = self._from_stored(item)
+                self._persisted[item.id] = self._snapshot_of(dialogs[item.id])
+            if pref in ("male", "female") and user_id not in self._voice_prefs:
+                self._voice_prefs[user_id] = pref  # type: ignore[assignment]
+            if pref:
+                self._persisted_prefs[user_id] = pref
+            self._loaded.add(user_id)
+            if stored:
+                logger.info("dialog db loaded user=%s dialogs=%d", user_id, len(stored))
+
+    @staticmethod
+    def _from_stored(item: StoredDialog) -> Dialog:
+        return Dialog(
+            id=item.id,
+            user_id=item.user_id,
+            started_at=item.started_at,
+            ended_at=item.ended_at,
+            summary=item.summary,
+            messages=[Message(id=m[0], role=m[1], text=m[2], created_at=m[3]) for m in item.messages],
+            greeting=item.greeting,
+            client_ids=dict(item.client_ids),
+            reply_index=item.reply_index,
+            voice=item.voice if item.voice in ("male", "female") else "male",  # type: ignore[arg-type]
+        )
+
+    @staticmethod
+    def _row_of(dialog: Dialog) -> tuple[Any, ...]:
+        return (
+            dialog.id,
+            dialog.user_id,
+            dialog.started_at,
+            dialog.ended_at,
+            encode_summary(dialog.summary),
+            dialog.greeting,
+            dialog.voice,
+            dialog.reply_index,
+        )
+
+    def _snapshot_of(self, dialog: Dialog) -> _Persisted:
+        return _Persisted(
+            row=self._row_of(dialog),
+            messages={m.id: m.text for m in dialog.messages},
+            client_ids=len(dialog.client_ids),
+        )
+
+    def _owns(self, dialog: Dialog) -> bool:
+        return self._users.get(dialog.user_id, {}).get(dialog.id) is dialog
+
+    def _touch(self, dialog: Dialog) -> None:
+        """Диалог изменён через хранилище: записать в ближайший тик. Стёртый человек на диск не возвращается."""
+        if self._db is None or not self._owns(dialog):
+            return
+        self._dirty[dialog.id] = dialog
+        self._wake.set()
+
+    def socket_opened(self, dialog: Dialog) -> None:
+        """У диалога живой сокет: ответы дописываются на месте, поэтому он сохраняется по таймеру, пока сокет жив."""
+        dialog.has_live_socket = True
+        if self._db is not None and self._owns(dialog):
+            self._watch[dialog.id] = dialog
+            self._wake.set()
+
+    def socket_closed(self, dialog: Dialog) -> None:
+        dialog.has_live_socket = False
+        self._watch.pop(dialog.id, None)
+        self._touch(dialog)
+
+    def _collect(self, dialog: Dialog) -> DialogWrite | None:
+        """Что в диалоге изменилось с прошлой записи; None, если ничего."""
+        known = self._persisted.get(dialog.id)
+        row = self._row_of(dialog)
+        messages = [
+            (m.id, dialog.id, position, m.role, m.text, m.created_at)
+            for position, m in enumerate(dialog.messages)
+            if known is None or known.messages.get(m.id) != m.text
+        ]
+        client_ids = (
+            [(dialog.id, client_id, message_id) for client_id, message_id in dialog.client_ids.items()]
+            if known is None or known.client_ids != len(dialog.client_ids)
+            else []
+        )
+        pref = self._voice_prefs.get(dialog.user_id)
+        pref_changed = pref is not None and self._persisted_prefs.get(dialog.user_id) != pref
+        if known is not None and known.row == row and not messages and not client_ids and not pref_changed:
+            return None
+        return DialogWrite(
+            dialog_id=dialog.id,
+            row=row,
+            messages=messages,
+            client_ids=client_ids,
+            pref=(dialog.user_id, pref) if pref_changed and pref is not None else None,
+        )
+
+    async def flush(self) -> bool:
+        """Записать на диск всё, что изменилось. True, если записано (или писать нечего)."""
+        if self._db is None:
+            return True
+        async with self._flush_lock:
+            db = self._db
+            if db is None:
+                return True
+            batch = {**self._dirty, **self._watch}
+            self._dirty.clear()
+            writes: list[tuple[Dialog, DialogWrite, _Persisted]] = []
+            try:
+                for dialog in batch.values():
+                    if not self._owns(dialog):
+                        continue
+                    write = self._collect(dialog)
+                    if write is not None:
+                        writes.append((dialog, write, self._snapshot_of(dialog)))
+            except Exception:
+                self._dirty.update(batch)  # сбой при подготовке записи не должен выбрасывать диалоги из очереди
+                raise
+            if not writes:
+                return True
+            started = time.monotonic()
+            try:
+                await asyncio.to_thread(db.apply, [write for _, write, _ in writes])
+                done, failed = writes, []
+            except Exception:
+                DIALOG_DB_ERRORS_TOTAL.labels("write").inc()
+                logger.exception("dialog db write failed dialogs=%d: retrying one by one", len(writes))
+                # Один «ядовитый» диалог не должен останавливать запись всем остальным: повторяем по одному.
+                done, failed = [], []
+                for item in writes:
+                    try:
+                        await asyncio.to_thread(db.apply, [item[1]])
+                        done.append(item)
+                    except Exception:
+                        DIALOG_DB_ERRORS_TOTAL.labels("write").inc()
+                        logger.exception("dialog db write failed dialog=%s: will retry", item[0].id)
+                        failed.append(item)
+            DIALOG_DB_WRITE_SECONDS.observe(time.monotonic() - started)
+            for dialog, write, snapshot in done:
+                if self._owns(dialog):  # человека могли стереть, пока шла запись
+                    self._persisted[dialog.id] = snapshot
+                    if write.pref is not None:
+                        self._persisted_prefs[write.pref[0]] = write.pref[1]
+            for dialog, _, _ in failed:
+                self._dirty[dialog.id] = dialog
+            return not failed
+
+    async def _write_loop(self) -> None:
+        backoff = 0.0
+        while True:
+            if not (self._dirty or self._watch):
+                self._wake.clear()
+                await self._wake.wait()
+            await asyncio.sleep(self._flush_interval + backoff)
+            try:
+                ok = await self.flush()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # писатель не должен умирать: без него диалоги больше не попадают на диск
+                DIALOG_DB_ERRORS_TOTAL.labels("write").inc()
+                logger.exception("dialog db writer iteration failed")
+                ok = False
+            backoff = 0.0 if ok else min((backoff * 2) or 1.0, 30.0)
+
+    async def erase_user_durable(self, user_id: str) -> None:
+        """Стереть всё о человеке в памяти и на диске. Идемпотентно. Исключение при сбое диска или если диск задан, но не подключён:
+        вызывающий (приложение) не должен считать данные стёртыми и может повторить."""
+        async with self._load_lock:  # не стирать посреди загрузки того же человека: прочитанное с диска иначе вернулось бы в память
+            self.erase_user(user_id)
+            db = self._db
+            if db is None:
+                if self._disk_required:
+                    DIALOG_DB_ERRORS_TOTAL.labels("erase").inc()
+                    raise DialogDbError("хранилище диалогов недоступно: стереть данные на диске сейчас нельзя")
+                return
+            async with self._flush_lock:  # ждём идущую запись, чтобы она не вернула стёртое
+                try:
+                    await asyncio.to_thread(db.erase_user, user_id)
+                except Exception:
+                    DIALOG_DB_ERRORS_TOTAL.labels("erase").inc()
+                    logger.exception("dialog db erase failed user=%s", user_id)
+                    raise
+            self._loaded.discard(user_id)

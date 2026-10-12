@@ -41,6 +41,8 @@ import { jsonBody, queryParams } from '../../lib/request'
 // goes nowhere; a second mode brings it back into the call, as an added field.
 const startBody = z.object({
   mode: z.enum(DialogMode).optional(),
+  // The person's answer to "continue the open dialog or end it and begin a new one"; without it a start changes nothing.
+  startNew: z.boolean().optional(),
 })
 
 const listQuery = z.object({
@@ -66,7 +68,8 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
       if (!(await rateLimiter.hit(`user:dialog-start:${userId}`, RATE_LIMITS.dialogStart.perUser))) {
         return apiError(c, 429, 'Too many dialog starts')
       }
-      const result = await dialogsProcess.execute(new StartDialogOperation({ userId }))
+      const { startNew } = c.req.valid('json')
+      const result = await dialogsProcess.execute(new StartDialogOperation({ userId, startNew }))
       if (!result.success) {
         switch (result.error) {
           case StartDialogOperationErrorCode.USER_NOT_FOUND:

@@ -11,6 +11,10 @@ export interface StartedDialog {
   resumed: boolean
   greeting: string | null
   sinceLastDialogHours: number | null
+  /** Messages in the returned dialog: 0 for a new or an empty one. */
+  messageCount: number
+  /** When the returned dialog last moved (its last message or its end), ISO; null when unknown. */
+  lastActivityAt: string | null
 }
 
 export type StartDialogResult =

@@ -211,19 +211,36 @@ const server = createServer(async (req, res) => {
 
   if (parts[3] !== 'dialogs') return json(res, 404, { error: 'not_found' })
 
-  // POST /v1/users/{userId}/dialogs - start a dialog or return the open one
+  // POST /v1/users/{userId}/dialogs - start a dialog or return the open one. A plain start changes
+  // nothing (the open dialog comes back `resumed`, with its message count and last activity, so the app
+  // can ask the person). `{ new: true }` asks for a fresh conversation: the open one is ended first and
+  // stays in the journal, unless it is empty, then it is simply reused; the answer is never `resumed`.
   if (parts.length === 4 && method === 'POST') {
     const body = await readBody(req)
-    const existing = openDialogOf(userId)
+    // Counted before the open dialog is ended, as the real agent does: "time since the last talk" skips it.
+    const sinceLastDialogHours = hoursSinceLastDialog(userId)
+    let existing = openDialogOf(userId)
+    const wantsNew = body.new === true
+    let resumed = Boolean(existing)
+    if (wantsNew && existing) {
+      resumed = false
+      if (existing.messages.length > 0) {
+        existing.endedAt = new Date().toISOString()
+        existing.summary = buildSummary(existing, null, null)
+        existing = null
+      }
+    }
     const dialog = existing ?? createDialog(userId)
-    dialog.greeting = existing ? 'Продолжим, где остановились.' : 'Я рядом. С чего начнём?'
+    dialog.greeting = resumed ? 'Продолжим, где остановились.' : 'Я рядом. С чего начнём?'
     // Voiced once, on the first socket after this start: a reconnect must not read it out again.
     dialog.greetingPending = true
     return json(res, 200, {
       dialogId: dialog.dialogId,
-      resumed: Boolean(existing),
+      resumed,
       greeting: dialog.greeting,
-      sinceLastDialogHours: hoursSinceLastDialog(userId),
+      sinceLastDialogHours,
+      messageCount: dialog.messages.length,
+      lastActivityAt: dialog.messages.at(-1)?.createdAt ?? dialog.endedAt,
     })
   }
 

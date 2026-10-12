@@ -38,12 +38,19 @@ import {
 const { app, resetLimits } = makeApp()
 
 describe('REST диалогов', () => {
-  it('старт передаёт агенту только голос человека (по умолчанию мужской), режим и клиента нет, отвечает диалогом', async () => {
+  it('старт передаёт агенту только голос человека (по умолчанию мужской), режим и клиента нет, отвечает диалогом с числом сообщений и временем последней активности', async () => {
     resetLimits()
     const { user, tokens } = await signUpAndIn(app)
     const { calls } = mockAgent({
       'POST http://agent.test/v1/users/*/dialogs': () =>
-        json({ dialogId: 'd-7', resumed: true, greeting: 'Продолжим?', sinceLastDialogHours: 48 }),
+        json({
+          dialogId: 'd-7',
+          resumed: true,
+          greeting: 'Продолжим?',
+          sinceLastDialogHours: 48,
+          messageCount: 5,
+          lastActivityAt: '2026-10-01T20:12:00.000Z',
+        }),
     })
 
     const started = ok<StartDialogApiResponse>(
@@ -57,11 +64,69 @@ describe('REST диалогов', () => {
       resumed: true,
       greeting: 'Продолжим?',
       sinceLastDialogHours: 48,
+      messageCount: 5,
+      lastActivityAt: '2026-10-01T20:12:00.000Z',
     })
 
     const agentCall = calls.at(-1)!
     expect(agentCall.url.pathname).toBe(`/v1/users/${user.id}/dialogs`)
     expect(JSON.parse(agentCall.body)).toEqual({ voice: 'male' })
+  })
+
+  it('агент не прислал messageCount и lastActivityAt — в ответе 0 и null, клиент ничего не спрашивает', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-5', resumed: true }),
+    })
+
+    const started = ok<StartDialogApiResponse>(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
+
+    expect(started).toEqual({
+      dialogId: 'd-5',
+      resumed: true,
+      greeting: null,
+      sinceLastDialogHours: null,
+      messageCount: 0,
+      lastActivityAt: null,
+    })
+  })
+
+  it('startNew: true уходит агенту как new: true; без него старт ничего не завершает', async () => {
+    resetLimits()
+    const { user, tokens } = await signUpAndIn(app)
+    const { calls, dialogs } = mockAgent()
+
+    const first = ok<StartDialogApiResponse>(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
+    expect(first).toMatchObject({ dialogId: 'd-1', resumed: false, messageCount: 0 })
+    dialogs.say(user.id, 3)
+
+    // The plain start finds the dialog the person left and hands it back with what the client needs to ask.
+    const again = ok<StartDialogApiResponse>(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
+    expect(again).toMatchObject({ dialogId: 'd-1', resumed: true, messageCount: 3 })
+    expect(typeof again.lastActivityAt).toBe('string')
+    expect(dialogs.ended).toEqual([])
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
+
+    // The person answered "end it and begin a new one".
+    const fresh = ok<StartDialogApiResponse>(
+      await call(app, 'POST', '/api/dialogs', { startNew: true }, tokens.accessToken),
+    )
+    expect(fresh).toMatchObject({ dialogId: 'd-2', resumed: false, messageCount: 0, lastActivityAt: null })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true })
+    expect(dialogs.ended).toEqual(['d-1'])
+    expect(dialogs.openOf(user.id)).toBe('d-2')
+  })
+
+  it('startNew не булево — 400, агента не трогаем', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent()
+
+    const response = await call(app, 'POST', '/api/dialogs', { startNew: 'yes' }, tokens.accessToken)
+
+    expect(response.status).toBe(400)
+    expect(calls).toEqual([])
   })
 
   it('выбранный в профиле голос уходит агенту при каждом старте и ответом не отдаётся', async () => {
@@ -78,7 +143,14 @@ describe('REST диалогов', () => {
     )
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
     // The voice is the profile's business: the dialog answer keeps its shape.
-    expect(started).toEqual({ dialogId: 'd-9', resumed: false, greeting: null, sinceLastDialogHours: null })
+    expect(started).toEqual({
+      dialogId: 'd-9',
+      resumed: false,
+      greeting: null,
+      sinceLastDialogHours: null,
+      messageCount: 0,
+      lastActivityAt: null,
+    })
 
     ok(await call(app, 'PATCH', '/api/auth/me', { voice: 'male' }, tokens.accessToken))
     ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))

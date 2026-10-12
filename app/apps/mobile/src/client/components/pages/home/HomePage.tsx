@@ -1,16 +1,22 @@
 import { Button, Icon, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useState } from 'react'
-import { DialogMode, StartDialogApiErrorCode } from '@ryadom/contracts/api/dialogs'
+import { useRef, useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { shouldAskToResume } from '@ryadom/client-core/dialog-start'
+import { DialogMode, StartDialogApiErrorCode, type StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText, codeText, startDialog } from '../../../lib/api'
 import { unlockSpeech } from '../../../lib/voice/speech'
 import { useAuth } from '../../../lib/store'
 import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import Breathing from '../../Breathing'
 import { SosButton, openSos } from '../../SosSheet'
+import ResumeDialogSheet from './ResumeDialogSheet'
 
 /**
- * Home screen: the breathing circle, one large talk button and the modes.
+ * Home screen: the breathing circle, one large talk button and the modes. If the person left a
+ * conversation unfinished (with something said in it), the talk button waits for their answer:
+ * continue it, end it and begin a new one, or close the question and stay here.
  *
  * In v0 only the venting mode works. The other modes exist in the contract, but enabling them
  * before the agent supports them would be a promise the product cannot keep.
@@ -47,6 +53,13 @@ const MODES: Array<{ id: DialogMode; label: string; hint: string; icon: string; 
   },
 ]
 
+/**
+ * How long a start stays locked after it navigated. The home page stays mounted under the dialog, so
+ * the lock cannot wait for an unmount; the transition takes a few hundred milliseconds, and a second tap
+ * inside it must not start (and so, now, end) a conversation again.
+ */
+const NAVIGATION_LOCK_MS = 1000
+
 const START_ERRORS: Record<StartDialogApiErrorCode, string> = {
   [StartDialogApiErrorCode.USER_NOT_FOUND]: 'Аккаунт недоступен. Войди заново',
   [StartDialogApiErrorCode.USER_INACTIVE]: 'Аккаунт заблокирован. Напиши нам, разберёмся',
@@ -68,11 +81,40 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  /** Set at once on a press, unlike `loading`: two taps in one tick would both see that as still false. */
+  const starting = useRef(false)
+  /** The unfinished conversation a start found: the question is open over it. */
+  const [prompt, setPrompt] = useState<StartDialogApiResponse | null>(null)
+  /** "End it and begin a new one" is in flight. */
+  const [renewing, setRenewing] = useState(false)
+  /** The question was answered (or its request is out): closing the sheet is then no "dismissed". */
+  const answered = useRef(false)
+
+  function release(navigated: boolean) {
+    if (navigated) setTimeout(() => (starting.current = false), NAVIGATION_LOCK_MS)
+    else starting.current = false
+  }
+
+  function openDialog(data: StartDialogApiResponse) {
+    f7router.navigate(`/dialog/${data.dialogId}/`, {
+      props: {
+        greeting: data.greeting,
+        resumed: data.resumed,
+        sinceLastDialogHours: data.sinceLastDialogHours,
+        // The button says "talk": the conversation opens on the voice screen and already listens.
+        listen: true,
+      },
+    })
+  }
+
   async function handleTalk() {
+    if (starting.current) return
     // The conversation opens on the voice and the sphere speaks first: speech is let through by this tap.
     unlockSpeech()
+    starting.current = true
     setError('')
     setLoading(true)
+    let navigated = false
     try {
       const result = await startDialog(mode)
       if (!result.ok) {
@@ -82,20 +124,69 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
         return
       }
-      f7router.navigate(`/dialog/${result.data.dialogId}/`, {
-        props: {
-          greeting: result.data.greeting,
-          resumed: result.data.resumed,
-          sinceLastDialogHours: result.data.sinceLastDialogHours,
-          // The button says "talk": the conversation opens on the voice screen and already listens.
-          listen: true,
-        },
-      })
+      if (shouldAskToResume(result.data)) {
+        // Something was said in the conversation left open. Nothing changes until the person answers.
+        answered.current = false
+        setPrompt(result.data)
+        return
+      }
+      openDialog(result.data)
+      navigated = true
     } catch (err) {
       setError(apiErrorText(err, {}, 'Не получилось начать разговор'))
     } finally {
       setLoading(false)
+      release(navigated)
     }
+  }
+
+  /** "Продолжить": the same dialog, as a start without a question used to open it. */
+  function continueDialog() {
+    if (!prompt || starting.current) return
+    unlockSpeech()
+    starting.current = true
+    answered.current = true
+    track(AnalyticsEvent.DialogResumeChoice, { choice: 'continue' })
+    openDialog(prompt)
+    setPrompt(null)
+    release(true)
+  }
+
+  /** "Завершить и начать новый": the second start, the one that ends the open dialog. */
+  async function startNew() {
+    if (!prompt || starting.current) return
+    unlockSpeech()
+    starting.current = true
+    answered.current = true
+    setRenewing(true)
+    let navigated = false
+    try {
+      const result = await startDialog(mode, { startNew: true })
+      if (!result.ok) {
+        if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
+        setError(codeText(START_ERRORS, result.code, 'Не получилось начать новый разговор'))
+        return
+      }
+      track(AnalyticsEvent.DialogResumeChoice, { choice: 'new' })
+      openDialog(result.data)
+      navigated = true
+    } catch (err) {
+      setError(apiErrorText(err, {}, 'Не получилось начать новый разговор'))
+    } finally {
+      // Either way the sheet goes: a failure is told under the talk button, where the person presses again.
+      setPrompt(null)
+      setRenewing(false)
+      release(navigated)
+    }
+  }
+
+  /** The button, a swipe or a tap outside: nothing is started or ended. Also called when the sheet closes after an answer. */
+  function closeQuestion() {
+    if (!answered.current) {
+      answered.current = true
+      track(AnalyticsEvent.DialogResumeChoice, { choice: 'dismissed' })
+    }
+    setPrompt(null)
   }
 
   return (
@@ -177,6 +268,14 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
           </div>
         </div>
       </div>
+
+      <ResumeDialogSheet
+        opened={prompt !== null}
+        busy={renewing}
+        onContinue={continueDialog}
+        onStartNew={() => void startNew()}
+        onClose={closeQuestion}
+      />
     </Page>
   )
 }

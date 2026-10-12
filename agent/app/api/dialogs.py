@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import Store, canonical_user_id, require_token
-from app.core.errors import dialog_not_found, validation_error
+from app.core.errors import AgentError, dialog_not_found, validation_error
 from app.services.dialog_store import InvalidCursor
 
 logger = logging.getLogger("agent.dialogs")
@@ -30,23 +30,34 @@ class EndBody(BaseModel):
 
 
 class StartBody(BaseModel):
-    """Тело `POST …/dialogs` необязательно. `voice` — голос озвучки по роду; без него берётся прошлый выбор человека."""
+    """Тело `POST …/dialogs` необязательно. `voice` — голос озвучки по роду; без него берётся прошлый выбор человека.
+
+    `new: true` — начать новый разговор, а не вернуться в открытый: открытый диалог с сообщениями завершается (в журнале он остаётся
+    завершённым), ответ с `resumed: false`. Без `new` старт идемпотентен и ничего не меняет: у человека не больше одного открытого
+    диалога, повтор возвращает его с `resumed: true`; клиент по `messageCount` решает, спросить ли «продолжить или завершить».
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     voice: Literal["male", "female"] | None = None
+    new: bool = False
 
 
 @router.post("/dialogs")
 async def start_dialog(user_id: str, store: Store, body: StartBody | None = None) -> dict[str, Any]:
-    dialog, resumed, hours = store.start(_user(user_id), (body or StartBody()).voice)
-    logger.info("dialog started dialog=%s resumed=%s voice=%s", dialog.id, resumed, dialog.voice)
+    start = body or StartBody()
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog, resumed, hours = store.start(user, start.voice, start.new)
+    logger.info("dialog started dialog=%s resumed=%s new=%s voice=%s", dialog.id, resumed, start.new, dialog.voice)
     return {
         "dialogId": dialog.id,
         "resumed": resumed,
         "greeting": dialog.greeting,
         "sinceLastDialogHours": hours,
         "voice": dialog.voice,
+        "messageCount": len(dialog.messages),
+        "lastActivityAt": dialog.last_activity_at,
     }
 
 
@@ -57,8 +68,10 @@ async def list_dialogs(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
     before: str | None = None,
 ) -> dict[str, Any]:
+    user = _user(user_id)
+    await store.ensure_user(user)
     try:
-        items, next_cursor = store.list(_user(user_id), limit, before)
+        items, next_cursor = store.list(user, limit, before)
     except InvalidCursor as error:
         raise validation_error("before принимает только значение из прошлого next") from error
     return {"items": [d.to_item() for d in items], "next": next_cursor}
@@ -66,7 +79,9 @@ async def list_dialogs(
 
 @router.get("/dialogs/{dialog_id}")
 async def get_dialog(user_id: str, dialog_id: str, store: Store) -> dict[str, Any]:
-    dialog = store.get(_user(user_id), dialog_id)
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog = store.get(user, dialog_id)
     if dialog is None:
         raise dialog_not_found()
     return {**dialog.to_item(), "messages": [m.to_json() for m in dialog.messages]}
@@ -74,7 +89,9 @@ async def get_dialog(user_id: str, dialog_id: str, store: Store) -> dict[str, An
 
 @router.post("/dialogs/{dialog_id}/end")
 async def end_dialog(user_id: str, dialog_id: str, store: Store, body: EndBody | None = None) -> dict[str, Any]:
-    dialog = store.get(_user(user_id), dialog_id)
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog = store.get(user, dialog_id)
     if dialog is None:
         raise dialog_not_found()
     body = body or EndBody()
@@ -83,5 +100,10 @@ async def end_dialog(user_id: str, dialog_id: str, store: Store, body: EndBody |
 
 @router.delete("", status_code=204)
 async def erase_user(user_id: str, store: Store) -> Response:
-    store.erase_user(_user(user_id))
+    try:
+        await store.erase_user_durable(_user(user_id))
+    except Exception as error:
+        # 204 означает «стёрто». Диск недоступен или сбойнул: приложение не должно удалять аккаунт, оно повторит позже.
+        logger.error("erase user failed: %s", type(error).__name__)
+        raise AgentError(503, "AGENT_INTERNAL", "Не удалось стереть данные, повторите позже") from error
     return Response(status_code=204)

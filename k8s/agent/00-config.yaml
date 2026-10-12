@@ -55,6 +55,9 @@ data:
   # Secret `agent-gemini` и образ с google-genai (agent ≥ 0.2.0). Переключение: сменить значение, применить ConfigMap и
   # перезапустить агента (kubectl -n agent rollout restart deploy/agent). Откат: вернуть cascade. Подробно: README.md.
   VOICE_PIPELINE: "gemini_live"
+  # Диалоги: файл SQLite на томе agent-data (03-pvc.yaml). Они переживают перезапуск и выкат пода. Не открылся файл — агент
+  # работает в памяти и громко пишет в журнал (ошибка), в /health/ready видно "dialogs": "memory".
+  DIALOG_DB_PATH: "/data/dialogs.sqlite3"
   # Остальные настройки gemini_live (модель, голоса, сжатие контекста, возобновление сессии, размышление) намеренно не заданы:
   # действуют значения по умолчанию из кода (нейтральные: размышление и пороги сжатия решает Google). Полный список и
   # рекомендации (GEMINI_THINKING_BUDGET=0 для скорости, пороги сжатия для контроля расходов) — agent/README.md.

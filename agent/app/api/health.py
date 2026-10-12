@@ -26,6 +26,8 @@ async def ready(request: Request) -> dict[str, str]:
         "tts": tts.name if tts else "none",
         "llm": chat.name if chat else "none",
         "stt": recognizer.name if recognizer else "none",
+        # sqlite: диалоги пишутся на диск и переживают перезапуск; memory: только в памяти (диск не задан или не открылся)
+        "dialogs": "sqlite" if request.app.state.store.persistent else "memory",
     }
 
 

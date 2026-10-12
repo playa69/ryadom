@@ -35,6 +35,12 @@ export enum StartDialogApiErrorCode {
 
 export interface StartDialogApiRequest {
   mode: DialogMode
+  /**
+   * The person chose to end the open dialog and begin a new one. Without it a start returns the open
+   * dialog as it is (`resumed`), so the client can ask what to do with it; builds that never send it
+   * keep getting that.
+   */
+  startNew?: boolean
 }
 
 export interface StartDialogApiResponse {
@@ -45,6 +51,10 @@ export interface StartDialogApiResponse {
   greeting: string | null
   /** How many hours passed since the previous conversation (time is part of the care). */
   sinceLastDialogHours: number | null
+  /** How many messages the returned dialog holds; 0 for a new or an empty one (nothing to ask the person about). */
+  messageCount: number
+  /** When the returned dialog last moved (its last message or its end), ISO; null when unknown. */
+  lastActivityAt: string | null
 }
 
 export interface DialogSummaryApiResponse {

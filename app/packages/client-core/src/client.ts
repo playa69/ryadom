@@ -592,8 +592,15 @@ export function createClient(config: ClientConfig) {
 
     // ─── dialogs ──────────────────────────────────────────────────────────────
 
-    startDialog: (mode: DialogMode): Promise<ApiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>> => {
-      const body: StartDialogApiRequest = { mode }
+    /**
+     * A plain start returns the open dialog if there is one (see `shouldAskToResume`); `startNew` is the
+     * person's answer "end it and begin a new one", and is sent only then.
+     */
+    startDialog: (
+      mode: DialogMode,
+      options: { startNew?: boolean } = {},
+    ): Promise<ApiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>> => {
+      const body: StartDialogApiRequest = options.startNew ? { mode, startNew: true } : { mode }
       return apiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>(ApiPath.Dialogs, {
         method: 'POST',
         body,

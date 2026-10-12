@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DialogMode } from '@ryadom/contracts/api/dialogs'
 import { createClient, type ClientConfig } from '../src/client'
 import { ApiError } from '../src/errors'
 import { envelope, makeToken, memoryStorage, userOf, type MemoryStorage } from './helpers'
@@ -264,6 +265,27 @@ describe('трассировка', () => {
     const traceIds = [0, 1, 2].map((call) => sentHeaders(call)['x-trace-id'])
     expect(new Set(traceIds).size).toBe(3)
     expect(sentHeaders(1)['x-client-id']).toBe('ryadom-web')
+  })
+})
+
+describe('начать разговор', () => {
+  const sentBody = (call: number): unknown => JSON.parse(String(fetchMock.mock.calls[call]![1]!.body))
+
+  it('простой старт шлёт только режим; startNew уходит, лишь когда человек его выбрал', async () => {
+    stubFetch()
+    const { client } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockImplementation(async () => envelope({ dialogId: 'd-1', resumed: false }))
+
+    await client.startDialog(DialogMode.Vent)
+    await client.startDialog(DialogMode.Vent, {})
+    await client.startDialog(DialogMode.Vent, { startNew: false })
+    await client.startDialog(DialogMode.Vent, { startNew: true })
+
+    expect(sentBody(0)).toEqual({ mode: DialogMode.Vent })
+    expect(sentBody(1)).toEqual({ mode: DialogMode.Vent })
+    expect(sentBody(2)).toEqual({ mode: DialogMode.Vent })
+    expect(sentBody(3)).toEqual({ mode: DialogMode.Vent, startNew: true })
   })
 })
 

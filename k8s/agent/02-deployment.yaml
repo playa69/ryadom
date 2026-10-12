@@ -45,6 +45,8 @@ spec:
         # agent/Dockerfile: useradd --uid 10001; числовой uid нужен kubelet'у
         runAsUser: 10001
         runAsGroup: 10001
+        # Том диалогов (agent-data) монтируется с этой группой, иначе non-root пользователь не смог бы писать в /data
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -126,6 +128,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # Диалоги (SQLite): переживают перезапуск и выкат; 03-pvc.yaml. Остальная файловая система read-only.
+            - name: data
+              mountPath: /data
           resources:
             requests:
               cpu: 50m
@@ -136,3 +141,6 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: agent-data

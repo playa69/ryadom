@@ -59,6 +59,12 @@ class DialogSettings(BaseAppSettings):
     voice_turn_max_seconds: int = Field(validation_alias="VOICE_TURN_MAX_SECONDS", default=300, ge=1, le=600)
     # Реплика оборвана на полуслове («и…», «потому что»): ответ ждёт столько, не договорит ли человек. 0 — не ждать.
     incomplete_hold_ms: int = Field(validation_alias="INCOMPLETE_HOLD_MS", default=1500, ge=0, le=10_000)
+    # Файл SQLite, в который дублируются диалоги: после перезапуска и выката агента они возвращаются. Путь должен лежать на томе
+    # пода (в k8s это PVC `agent-data`, /data/dialogs.sqlite3). Пусто — диалоги только в памяти и пропадают при перезапуске
+    # (тесты и разработка). Не открылся файл — агент работает в памяти и громко пишет об этом, а не падает.
+    db_path: str | None = Field(validation_alias="DIALOG_DB_PATH", default=None)
+    # Как часто записывать изменения диалогов на диск, мс (идущие ответы дописываются, поэтому не при каждом слове).
+    db_flush_ms: int = Field(validation_alias="DIALOG_DB_FLUSH_MS", default=500, ge=50, le=10_000)
 
 
 class SpeechSettings(BaseAppSettings):

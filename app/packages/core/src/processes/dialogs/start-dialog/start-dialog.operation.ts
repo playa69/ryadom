@@ -3,6 +3,11 @@ import type { StartDialogResult } from './start-dialog.types'
 
 export interface StartDialogOperationData {
   userId: string
+  /**
+   * The person chose to end the open dialog and begin a new one. Without it a start only returns the
+   * open dialog (if there is one) and changes nothing.
+   */
+  startNew?: boolean
 }
 
 export class StartDialogOperation extends RequestData<StartDialogResult> {
@@ -10,9 +15,11 @@ export class StartDialogOperation extends RequestData<StartDialogResult> {
   static readonly requestName = 'StartDialogOperation'
 
   public readonly userId: string
+  public readonly startNew: boolean
 
   constructor(data: StartDialogOperationData) {
     super()
     this.userId = data.userId
+    this.startNew = data.startNew === true
   }
 }

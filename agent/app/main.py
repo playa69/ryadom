@@ -1,7 +1,8 @@
 """Точка входа сервиса agent «Слышу Рядом».
 
 Упрощённый агент: контракт agent-api целиком (REST + WebSocket, текст и голос), ответы чат-модели
-и распознавание речи через прокси программы, озвучка Qwen TTS / SaluteSpeech / espeak-ng, диалоги в памяти.
+и распознавание речи через прокси программы, озвучка Qwen TTS / SaluteSpeech / espeak-ng, диалоги в памяти с копией
+на диске (DIALOG_DB_PATH): они переживают перезапуск и выкат пода.
 Нужен, чтобы проверить API, голос и интеграцию с приложением до появления настоящей логики
 (openspec/changes/add-agent-service).
 """
@@ -20,6 +21,8 @@ from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
 from app.core.config import APP_CONFIG
 from app.core.errors import install_error_handlers
+from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
+from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
 
@@ -54,8 +57,12 @@ def create_app(
     tts_factory: Callable[[], TextToSpeech | None] | None = None,
     models_factory: Callable[[], tuple[ChatModel | None, Recognizer | None]] | None = None,
     live_factory: Callable[[], "LiveConnector | None"] | None = None,
+    database_factory: Callable[[], DialogDatabase | None] | None = None,
 ) -> FastAPI:
     """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию озвучка и модели берутся из конфига.
+
+    `DIALOG_DB_PATH` (или `database_factory` в тестах) подключает диск к хранилищу диалогов; не открылся — диалоги остаются
+    в памяти, агент не падает, но пишет об этом в журнал (ошибка) и показывает `dialogs: memory` в `/health/ready`.
 
     `VOICE_PIPELINE=gemini_live` (или `live_factory` в тестах) включает речь в речь через Gemini Live: чат и
     распознавание не создаются, фиксированные фразы озвучивает тот же голос Gemini.
@@ -71,9 +78,24 @@ def create_app(
 
     factory = tts_factory or (lambda: build_tts(APP_CONFIG.speech))
     models = models_factory or (lambda: build_models(APP_CONFIG.llm))
+    make_database = database_factory or (
+        lambda: DialogDatabase(APP_CONFIG.dialog.db_path) if APP_CONFIG.dialog.db_path else None
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        store: DialogStore = app.state.store
+        database = make_database()
+        if database is not None:
+            store.require_disk()  # задан в настройках: пока не подключён, стирание людей отвечает ошибкой, а не «204»
+            try:
+                await store.attach(database, APP_CONFIG.dialog.db_flush_ms / 1000)
+            except Exception:  # noqa: BLE001
+                DIALOG_DB_ERRORS_TOTAL.labels("open").inc()
+                logger.exception(
+                    "dialog db is NOT available (%s): dialogs are kept in memory only and will be lost on restart",
+                    getattr(database, "path", "?"),
+                )
         live = live_factory() if live_factory is not None else None
         app.state.live = live
         if tts_factory is not None or live is None:
@@ -89,11 +111,12 @@ def create_app(
         else:
             app.state.chat, app.state.recognizer = models()
         logger.info(
-            "agent started: pipeline=%s tts=%s llm=%s stt=%s",
+            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s",
             live.name if live else "cascade",
             app.state.tts.name if app.state.tts else "none",
             app.state.chat.name if app.state.chat else "none",
             app.state.recognizer.name if app.state.recognizer else "none",
+            "sqlite" if store.persistent else "memory",
         )
         # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а облачный синтез медленнее.
         # Фиксированные фразы (приветствия, шаблоны, кризисный ответ) готовим заранее; ответы модели так не подготовить.
@@ -107,6 +130,7 @@ def create_app(
         finally:
             if warm_up is not None:
                 warm_up.cancel()
+            await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
             for client in (app.state.tts, app.state.chat, app.state.recognizer, live):
                 if client is not None:
                     await client.aclose()
