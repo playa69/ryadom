@@ -1,0 +1,56 @@
+#cloud-config
+# Релей к Gemini API: Caddy принимает HTTPS и WebSocket и проксирует их в generativelanguage.googleapis.com.
+# Нужен, потому что из России Google отвечает «User location is not supported». Подробности и ранбук: agent/relay/README.md.
+#
+# Это шаблон: перед созданием сервера __RELAY_TOKEN__ заменяется на случайный токен (hex, 48 символов); файл с токеном
+# в репозиторий не кладём. Имя хоста берётся из публичного IPv4 сервера: <ip через дефисы>.sslip.io, сертификат
+# Let's Encrypt Caddy получает сам (HTTP-01, порт 80).
+
+package_update: true
+package_upgrade: true
+packages:
+  - caddy
+  - ufw
+  - curl
+
+write_files:
+  - path: /usr/local/bin/gemini-relay-setup.sh
+    permissions: '0700'
+    content: |
+      #!/bin/sh
+      set -eu
+      TOKEN='__RELAY_TOKEN__'
+      IP=$(curl -fsS --retry 5 --retry-delay 2 http://169.254.169.254/hetzner/v1/metadata/public-ipv4)
+      HOST="$(echo "$IP" | tr . -).sslip.io"
+      cat > /etc/caddy/Caddyfile <<EOF
+      ${HOST} {
+        handle /_relay_health {
+          respond "ok" 200
+        }
+        @unauth not header X-Relay-Token ${TOKEN}
+        handle @unauth {
+          respond "forbidden" 403
+        }
+        handle {
+          reverse_proxy https://generativelanguage.googleapis.com {
+            header_up Host {upstream_hostport}
+            header_up -X-Relay-Token
+            flush_interval -1
+          }
+        }
+      }
+      EOF
+      chown root:caddy /etc/caddy/Caddyfile
+      chmod 0640 /etc/caddy/Caddyfile
+      echo "$HOST" > /root/relay-host.txt
+
+runcmd:
+  - [ ufw, allow, OpenSSH ]
+  - [ ufw, allow, 80/tcp ]
+  - [ ufw, allow, 443/tcp ]
+  - [ ufw, --force, enable ]
+  - [ sh, /usr/local/bin/gemini-relay-setup.sh ]
+  - [ systemctl, enable, caddy ]
+  - [ systemctl, restart, caddy ]
+  # SSH только по ключу
+  - [ sh, -c, "sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && systemctl reload ssh || true" ]
