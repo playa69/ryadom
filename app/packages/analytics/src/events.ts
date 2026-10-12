@@ -59,6 +59,8 @@ export enum AnalyticsEvent {
 
   // ── Client: the dialog screen ───────────────────────────────────────────────────────────────
   DialogScreenOpened = 'dialog_screen_opened',
+  /** Pressing "start" found an unfinished dialog and asked what to do with it: the answer. */
+  DialogResumeChoice = 'dialog_resume_choice',
   /** The text of the message is never sent: only its size class and how it was entered. */
   DialogMessageSent = 'dialog_message_sent',
   DialogVoiceToggled = 'dialog_voice_toggled',
@@ -152,6 +154,9 @@ export type SafetyLevelName = 'concern' | 'crisis'
 
 export type DeleteAccountStepName = 'opened' | 'confirmed' | 'cancelled'
 
+/** The person's answer to the unfinished dialog: go on with it, end it and begin a new one, or close the question. */
+export type ResumeChoice = 'continue' | 'new' | 'dismissed'
+
 export type ProfileField = 'name' | 'voice'
 
 export type PasswordChangeKind = 'change' | 'reset'
@@ -202,6 +207,7 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.EmailCodeResent]: { form: 'confirm_email' | 'reset_password' }
 
   [AnalyticsEvent.DialogScreenOpened]: { resumed: boolean }
+  [AnalyticsEvent.DialogResumeChoice]: { choice: ResumeChoice }
   [AnalyticsEvent.DialogMessageSent]: { input: 'text' | 'voice'; size: SizeClass }
   [AnalyticsEvent.DialogVoiceToggled]: { enabled: boolean }
   [AnalyticsEvent.HandsFreeToggled]: { enabled: boolean }

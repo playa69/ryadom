@@ -2,7 +2,7 @@
 
 import uuid
 
-from tests.conftest import AUTH, FakeTts, make_client, start_dialog
+from tests.conftest import AUTH, FakeTts, has, make_client, read_frames, send_user_message, start_dialog, ws_url
 
 
 def url(user_id: str, tail: str = "") -> str:
@@ -42,6 +42,83 @@ def test_start_after_end_opens_a_new_dialog_and_reports_hours(client, user_id):
     assert second["dialogId"] != first["dialogId"]
     assert second["resumed"] is False
     assert second["sinceLastDialogHours"] == 0
+
+
+def say_once(client, user_id, dialog_id, text="Мне сегодня тревожно", msg_id="c-1"):
+    """Одна реплика человека и ответ агента: в диалоге появляются два сообщения."""
+    with client.websocket_connect(ws_url(user_id, dialog_id), headers=AUTH) as ws:
+        send_user_message(ws, msg_id, text)
+        read_frames(ws, lambda f: has(f, "assistant_end"))
+
+
+def test_start_reports_how_much_has_been_said_so_the_client_can_ask(client, user_id):
+    fresh = start_dialog(client, user_id)
+    assert fresh["messageCount"] == 0 and fresh["lastActivityAt"] is None
+
+    say_once(client, user_id, fresh["dialogId"])
+    again = start_dialog(client, user_id)
+    assert again["resumed"] is True and again["dialogId"] == fresh["dialogId"]
+    assert again["messageCount"] == 2 and again["lastActivityAt"]  # реплика человека и ответ агента
+    assert again["greeting"] == "Продолжим, где остановились."
+
+
+def test_start_with_new_ends_the_open_dialog_and_opens_another(client, user_id):
+    first = start_dialog(client, user_id)
+    say_once(client, user_id, first["dialogId"])
+
+    second = client.post(url(user_id), json={"new": True}, headers=AUTH).json()
+    assert second["dialogId"] != first["dialogId"]
+    assert second["resumed"] is False and second["messageCount"] == 0
+    assert second["greeting"] == "Я рядом. С чего начнём?"
+
+    items = {i["dialogId"]: i for i in client.get(url(user_id), headers=AUTH).json()["items"]}
+    assert items[first["dialogId"]]["endedAt"] is not None
+    assert items[first["dialogId"]]["summary"]["title"] == "Мне сегодня тревожно"  # прежний остался в журнале завершённым
+    assert [i for i in items.values() if i["endedAt"] is None] == [items[second["dialogId"]]]  # открытый теперь один
+
+    again = start_dialog(client, user_id)  # обычный старт по-прежнему идемпотентен
+    assert again["dialogId"] == second["dialogId"] and again["resumed"] is True
+
+
+def test_plain_start_never_changes_an_open_dialog(client, user_id):
+    first = start_dialog(client, user_id)
+    say_once(client, user_id, first["dialogId"])
+    for _ in range(3):
+        assert start_dialog(client, user_id)["dialogId"] == first["dialogId"]
+    items = client.get(url(user_id), headers=AUTH).json()["items"]
+    assert [i["endedAt"] for i in items] == [None]  # вопрос «продолжить или завершить» ничего не завершает сам
+
+
+def test_start_with_new_reuses_an_open_dialog_nobody_has_spoken_in(client, user_id):
+    first = start_dialog(client, user_id)
+    second = client.post(url(user_id), json={"new": True}, headers=AUTH).json()
+    assert second["dialogId"] == first["dialogId"]  # пустой диалог и так новый: двойное нажатие не плодит пустых разговоров
+    assert second["resumed"] is False and second["greeting"] == "Я рядом. С чего начнём?"
+    assert len(client.get(url(user_id), headers=AUTH).json()["items"]) == 1
+
+
+def test_start_with_new_without_an_open_dialog_just_creates_one(client, user_id):
+    created = client.post(url(user_id), json={"new": True}, headers=AUTH).json()
+    assert created["resumed"] is False
+    assert len(client.get(url(user_id), headers=AUTH).json()["items"]) == 1
+
+
+def test_start_with_new_keeps_the_voice_choice(client, user_id):
+    start_dialog(client, user_id)
+    second = client.post(url(user_id), json={"new": True, "voice": "female"}, headers=AUTH).json()
+    assert second["voice"] == "female"
+    assert client.post(url(user_id), json={"new": True}, headers=AUTH).json()["voice"] == "female"  # выбор запомнен
+
+
+def test_hours_since_last_count_from_the_last_activity_including_the_open_dialog(client, user_id):
+    old = start_dialog(client, user_id)
+    client.post(url(user_id, f"/{old['dialogId']}/end"), headers=AUTH)
+    store = client.app.state.store
+    store.get(user_id, old["dialogId"]).ended_at = "2020-01-01T00:00:00.000Z"  # давний разговор
+    open_dialog = start_dialog(client, user_id)
+    say_once(client, user_id, open_dialog["dialogId"])  # вышел минуту назад из открытого
+    third = client.post(url(user_id), json={"new": True}, headers=AUTH).json()
+    assert third["sinceLastDialogHours"] == 0  # не «нас не было несколько лет» от давно завершённого
 
 
 def test_journal_is_paged_newest_first(client, user_id):

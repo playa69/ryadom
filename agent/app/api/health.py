@@ -19,11 +19,15 @@ async def ready(request: Request) -> dict[str, str]:
     # Модели и озвучка не обязательны для готовности: при их отказе агент отвечает шаблоном и текстом.
     tts = active_tts(request.app)
     chat, recognizer = request.app.state.chat, request.app.state.recognizer
+    live = request.app.state.live
     return {
         "status": "ok",
+        "pipeline": live.name if live else "cascade",
         "tts": tts.name if tts else "none",
         "llm": chat.name if chat else "none",
         "stt": recognizer.name if recognizer else "none",
+        # sqlite: диалоги пишутся на диск и переживают перезапуск; memory: только в памяти (диск не задан или не открылся)
+        "dialogs": "sqlite" if request.app.state.store.persistent else "memory",
     }
 
 

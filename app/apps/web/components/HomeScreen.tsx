@@ -4,7 +4,14 @@ import { BookOpen, Heart, MessageCircle, Moon, type LucideIcon } from 'lucide-re
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import { DialogMode, StartDialogApiErrorCode } from '@ryadom/contracts/api/dialogs'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import {
+  DialogMode,
+  StartDialogApiErrorCode,
+  type StartDialogApiResponse,
+} from '@ryadom/contracts/api/dialogs'
+import { shouldAskToResume } from '@ryadom/client-core/dialog-start'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
@@ -15,13 +22,16 @@ import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import { BUTTON, FOCUS_RING } from './controls'
 import { rememberDialogStart } from './dialog-start'
+import ResumeDialogSheet from './ResumeDialogSheet'
 import { unlockSpeech } from '@ryadom/client-core/voice/speech'
 
 /**
  * Home as the empty state of a chat app: the breathing sphere, a greeting, and the
  * input box in the middle of the page. Sending starts a conversation and carries the typed text
  * over as its first message; with nothing typed, "Поговорить" and the microphone both start one
- * that opens on the voice and begins listening.
+ * that opens on the voice and begins listening. If the person left a conversation unfinished (with
+ * something said in it), the start waits for their answer: continue it, end it and begin a new one,
+ * or close the question and stay here with the draft untouched.
  *
  * In v0 only the venting mode works. The other modes exist in the contract, but enabling them
  * before the agent supports them would be a promise the product cannot keep.
@@ -66,6 +76,30 @@ export default function HomeScreen() {
     }
   }, [])
 
+  /** The unfinished conversation a start found and the press that found it: the question is open over them. */
+  const [pending, setPending] = useState<{
+    data: StartDialogApiResponse
+    draft: string
+    listen: boolean
+  } | null>(null)
+  /** "End it and begin a new one" is in flight. */
+  const [renewing, setRenewing] = useState(false)
+  const [pendingError, setPendingError] = useState('')
+
+  /** Hands a started dialog to the dialog screen, with what the person typed or asked for on home. */
+  function openDialog(data: StartDialogApiResponse, draft: string, listen: boolean) {
+    rememberDialogStart(
+      data.dialogId,
+      {
+        greeting: data.greeting,
+        resumed: data.resumed,
+        sinceLastDialogHours: data.sinceLastDialogHours,
+      },
+      { draft, listen },
+    )
+    router.push(`/dialog/${encodeURIComponent(data.dialogId)}`)
+  }
+
   async function start(draft: string, listen: boolean) {
     if (starting.current) return
     // A conversation that opens on the voice has the sphere speak first: this press lets speech through.
@@ -86,16 +120,14 @@ export default function HomeScreen() {
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
         return
       }
-      rememberDialogStart(
-        result.data.dialogId,
-        {
-          greeting: result.data.greeting,
-          resumed: result.data.resumed,
-          sinceLastDialogHours: result.data.sinceLastDialogHours,
-        },
-        { draft, listen },
-      )
-      router.push(`/dialog/${encodeURIComponent(result.data.dialogId)}`)
+      if (shouldAskToResume(result.data)) {
+        // Something was said in the conversation left open. Nothing changes until the person answers, and the
+        // text they typed stays in the box; the press is released below so that the sheet's buttons can work.
+        setPendingError('')
+        setPending({ data: result.data, draft, listen })
+        return
+      }
+      openDialog(result.data, draft, listen)
       leaving = true
     } catch (err) {
       if (alive.current) setError(apiErrorText(err, {}, 'Не получилось начать разговор'))
@@ -107,6 +139,53 @@ export default function HomeScreen() {
         setLoading(false)
       }
     }
+  }
+
+  /** "Продолжить": the same dialog, as a start without a question used to open it. */
+  function continueDialog() {
+    if (!pending || starting.current) return
+    unlockSpeech()
+    starting.current = true
+    setLoading(true)
+    track(AnalyticsEvent.DialogResumeChoice, { choice: 'continue' })
+    openDialog(pending.data, pending.draft, pending.listen)
+    setPending(null)
+  }
+
+  /** "Завершить и начать новый": the second start, the one that ends the open dialog. */
+  async function startNew() {
+    if (!pending || starting.current) return
+    unlockSpeech()
+    starting.current = true
+    setPendingError('')
+    setRenewing(true)
+    let leaving = false
+    try {
+      const result = await client.startDialog(mode, { startNew: true })
+      if (!alive.current) return
+      if (!result.ok) {
+        if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
+        setPendingError(codeText(START_ERRORS, result.code, 'Не получилось начать новый разговор'))
+        return
+      }
+      track(AnalyticsEvent.DialogResumeChoice, { choice: 'new' })
+      openDialog(result.data, pending.draft, pending.listen)
+      setPending(null)
+      setLoading(true)
+      leaving = true
+    } catch (err) {
+      if (alive.current) setPendingError(apiErrorText(err, {}, 'Не получилось начать новый разговор'))
+    } finally {
+      if (!leaving) starting.current = false
+      if (alive.current) setRenewing(false)
+    }
+  }
+
+  /** Backdrop, Esc, "Закрыть": nothing is started or ended, the person stays here with the draft. */
+  function dismissQuestion() {
+    if (starting.current) return
+    track(AnalyticsEvent.DialogResumeChoice, { choice: 'dismissed' })
+    setPending(null)
   }
 
   return (
@@ -226,6 +305,15 @@ export default function HomeScreen() {
           </div>
         </div>
       </div>
+
+      <ResumeDialogSheet
+        open={pending !== null}
+        onContinue={continueDialog}
+        onStartNew={() => void startNew()}
+        onClose={dismissQuestion}
+        busy={renewing}
+        error={pendingError}
+      />
     </>
   )
 }

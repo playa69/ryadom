@@ -1,3 +1,6 @@
 # Shell-скрипты запускаются в WSL/Linux: при core.autocrlf=true на Windows git выкладывал бы их
 # с CRLF, и bash падает с «$'\r': command not found». Фиксируем LF независимо от настроек.
 *.sh text eol=lf
+
+# cloud-init релея Gemini читается на Linux-сервере: CRLF ломает cloud-config, фиксируем LF.
+agent/relay/*.yaml text eol=lf

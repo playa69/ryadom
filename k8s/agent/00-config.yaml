@@ -10,6 +10,10 @@
 #                          и распознавание речи; принадлежит только агенту, в app-secrets его нет
 #   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — сменить TTS_MODE на
 #                          salutespeech и перезапустить агента
+# Отдельный Secret `agent-gemini` (необязательный, нужен только в режиме gemini_live; создаётся
+# отдельно, существующий agent-secrets не трогаем): GEMINI_API_KEY (ключ Gemini API),
+# GEMINI_BASE_URL (адрес релея к Gemini API: из России Google недоступен напрямую),
+# GEMINI_RELAY_TOKEN (токен релея). Адрес релея тоже в Secret'е, а не здесь: в git его нет.
 # Режим озвучки TTS_MODE — не секрет, он ниже, в ConfigMap.
 #
 # Голос выбирает человек в профиле (мужской/женский), api передаёт его агенту при старте
@@ -46,3 +50,14 @@ data:
   LLM_CHAT_MODEL: "gigachat3.5-432b-a28b"
   STT_MODEL: "whisper-large-v3"
   LLM_TIMEOUT_SECONDS: "15"
+  # Голосовой конвейер. cascade = распознавание whisper → чат-модель → озвучка Qwen (боевой, всё, что выше);
+  # gemini_live = речь в речь через Gemini Live (одна модель слушает, отвечает и говорит). Для gemini_live нужны
+  # Secret `agent-gemini` и образ с google-genai (agent ≥ 0.2.0). Переключение: сменить значение, применить ConfigMap и
+  # перезапустить агента (kubectl -n agent rollout restart deploy/agent). Откат: вернуть cascade. Подробно: README.md.
+  VOICE_PIPELINE: "gemini_live"
+  # Диалоги: файл SQLite на томе agent-data (03-pvc.yaml). Они переживают перезапуск и выкат пода. Не открылся файл — агент
+  # работает в памяти и громко пишет в журнал (ошибка), в /health/ready видно "dialogs": "memory".
+  DIALOG_DB_PATH: "/data/dialogs.sqlite3"
+  # Остальные настройки gemini_live (модель, голоса, сжатие контекста, возобновление сессии, размышление) намеренно не заданы:
+  # действуют значения по умолчанию из кода (нейтральные: размышление и пороги сжатия решает Google). Полный список и
+  # рекомендации (GEMINI_THINKING_BUDGET=0 для скорости, пороги сжатия для контроля расходов) — agent/README.md.

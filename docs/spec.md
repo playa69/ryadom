@@ -276,7 +276,9 @@ flowchart LR
 ```mermaid title="Состояния диалога"
 stateDiagram-v2
   [*] --> Open: POST …/dialogs (нет открытого)
-  Open --> Open: POST …/dialogs (resumed=true)
+  Open --> Open: POST …/dialogs (resumed=true; клиент спрашивает, продолжить или завершить)
+  Open --> Open: POST …/dialogs {new: true} (диалог пустой: переиспользуется)
+  Open --> Ended: POST …/dialogs {new: true} (в диалоге есть сообщения; создаётся новый)
   Open --> Open: реплика → ответ
   Open --> Ended: кадр end / POST …/end
   Open --> Ended: агент завершает сам (план: антизависимый контур)
@@ -299,13 +301,15 @@ stateDiagram-v2
 
 Детальный контракт кадров и кодов — `openspec/changes/add-agent-service/specs/agent-api/spec.md`. Здесь — поведение и статус.
 
-### 6.1. Начало и возобновление диалога
+### 6.1. Начало, возобновление и новый диалог
 
 **`REQ-DLG-01`** — Начало диалога. Статус: **реализовано**.
-`POST /v1/users/{userId}/dialogs` с необязательным телом `{ voice? }` SHALL возвращать `{ dialogId, resumed, greeting, sinceLastDialogHours, voice }`. Операция идемпотентна (`INV-01`).
+`POST /v1/users/{userId}/dialogs` с необязательным телом `{ voice?, new? }` SHALL возвращать `{ dialogId, resumed, greeting, sinceLastDialogHours, voice, messageCount, lastActivityAt }`. Без `new` операция безопасна и идемпотентна (`INV-01`): ничего не меняет, открытый диалог возвращается как есть. Вопрос «продолжить или начать новый» решает клиент (`REQ-DLG-10`), а не агент.
 
-- WHEN открытого диалога нет THEN создаётся новый, `resumed=false`, `greeting = "Я рядом. С чего начнём?"`.
-- WHEN открытый диалог есть THEN возвращается он же, `resumed=true`, `greeting = "Продолжим, где остановились."`.
+- WHEN открытого диалога нет THEN создаётся новый, `resumed=false`, `greeting = "Я рядом. С чего начнём?"`, `messageCount=0`, `lastActivityAt=null`.
+- WHEN открытый диалог есть и `new` не передан THEN возвращается он же, `resumed=true`, `greeting = "Продолжим, где остановились."`, `messageCount` — сколько сообщений в нём, `lastActivityAt` — время его последнего сообщения или завершения (ISO), `null`, если их нет.
+- WHEN передан `new: true` и в открытом диалоге есть сообщения THEN он завершается (остаётся в журнале завершённым) и создаётся новый, `resumed=false`, `messageCount=0`.
+- WHEN передан `new: true`, а открытый диалог пуст (сообщений нет) THEN завершать нечего: он переиспользуется, `resumed=false`, `messageCount=0`.
 - WHEN передан `voice` THEN он запоминается как предпочтение человека и применяется к диалогу; без `voice` — прошлый выбор, иначе `TTS_DEFAULT_VOICE`.
 
 **`REQ-DLG-02`** — Время с прошлого разговора. Статус: **частично** — число считается и отдаётся клиенту, но не влияет на приветствие и генерацию.
@@ -313,6 +317,16 @@ stateDiagram-v2
 
 **`REQ-DLG-03`** — Приветствие. Статус: **реализовано**.
 Приветствие озвучивается под `messageId = "greeting"` один раз на каждый успешный `POST …/dialogs`, на первом сокете после него; при переподключении не повторяется. Приветствие в историю сообщений не пишется.
+
+**`REQ-DLG-10`** — Вопрос о незавершённом разговоре (клиент). Статус: **реализовано** (веб, PWA и мобильное приложение).
+Нажатие «Поговорить» или отправка с главного экрана сначала делает обычный старт (без `startNew`). Если ответ `resumed=true` и `messageCount > 0`, клиент показывает вопрос «Есть незавершённый разговор. Продолжить его или завершить и начать новый?».
+
+- WHEN человек выбирает «Продолжить» THEN клиент входит в этот же диалог с тем, что человек написал или попросил на главном экране (текст, микрофон).
+- WHEN человек выбирает «Завершить и начать новый» THEN клиент повторяет старт с `startNew: true` (шлюз передаёт его агенту как `new: true`) и входит в новый диалог с теми же текстом или микрофоном.
+- WHEN человек закрывает вопрос (кнопка «Закрыть», тап по фону, Esc, свайп) THEN ничего не начинается и не завершается, человек остаётся на главном экране, написанный текст сохраняется.
+- WHEN `resumed=true`, но `messageCount=0` THEN вопроса нет, клиент сразу продолжает; WHEN `resumed=false` THEN вопроса нет, входит в новый диалог.
+- Пока идёт второй старт, кнопки вопроса заблокированы; повторное нажатие не создаёт ещё один запрос.
+- Шлюз (`POST /api/dialogs`) принимает необязательное `startNew` и отдаёт `messageCount` и `lastActivityAt` (`0` и `null`, если агент их не прислал). Клиенты, не знающие про вопрос, продолжают работать как раньше: открытый диалог просто возвращается.
 
 ### 6.2. Реплика и ответ (WebSocket)
 
@@ -581,7 +595,7 @@ sequenceDiagram
   participant A as agent
   C->>G: POST /api/dialogs {mode}
   G->>A: POST /v1/users/{userId}/dialogs {voice}
-  A-->>G: {dialogId, resumed, greeting, sinceLastDialogHours}
+  A-->>G: {dialogId, resumed, greeting, sinceLastDialogHours, messageCount, lastActivityAt}
   G-->>C: то же
   C->>G: WS /api/dialogs/ws, hello {token, dialogId}
   G->>A: WS /v1/users/{userId}/dialogs/{dialogId}/ws (Bearer + заголовки трассировки)
@@ -605,7 +619,7 @@ sequenceDiagram
 
 | Метод | Путь | Ответ |
 |---|---|---|
-| `POST` | `/v1/users/{userId}/dialogs` | `200 {dialogId, resumed, greeting, sinceLastDialogHours, voice}` |
+| `POST` | `/v1/users/{userId}/dialogs` | `200 {dialogId, resumed, greeting, sinceLastDialogHours, voice, messageCount, lastActivityAt}`; тело `{voice?, new?}` |
 | `GET` | `/v1/users/{userId}/dialogs?limit&before` | `200 {items[], next}` |
 | `GET` | `/v1/users/{userId}/dialogs/{dialogId}` | `200 {…, messages[]}` / `404` |
 | `POST` | `/v1/users/{userId}/dialogs/{dialogId}/end` | `200 {summary}` / `404` |
@@ -813,6 +827,7 @@ sequenceDiagram
 | Требование | Код | Тесты |
 |---|---|---|
 | `REQ-DLG-01..03`, `REQ-DLG-08` | `agent/app/api/dialogs.py`, `agent/app/services/dialog_store.py` | `agent/tests/test_rest.py` |
+| `REQ-DLG-10` | `app/apps/web/components/HomeScreen.tsx`, `ResumeDialogSheet.tsx`; `app/apps/mobile/src/client/components/pages/home/HomePage.tsx`; `app/packages/client-core/src/dialog-start.ts`; `app/services/api/src/routes/dialogs/index.ts` | `app/packages/client-core/test/dialog-start.test.ts`, `app/services/api/test/dialogs.test.ts`, `app/packages/core/test/dialogs.test.ts` |
 | `REQ-DLG-04..07` | `agent/app/api/dialog_ws.py`, `agent/app/services/dialog_store.py` | `agent/tests/test_ws.py` |
 | `REQ-SAFE-01..02` | `agent/app/services/replies.py` (`CRISIS_WORDS`, `is_crisis`, `CRISIS_REPLY`) | `agent/tests/test_ws.py` |
 | `REQ-SAFE-04` | `app/services/api/src/lib/hotlines.ts`, `app/packages/client-core/src/hotlines.ts` | `app/e2e/tests/*-dialog.spec.ts` |

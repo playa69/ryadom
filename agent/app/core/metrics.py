@@ -44,3 +44,38 @@ VOICE_HELD_TURNS_TOTAL = Counter(
     "agent_voice_held_turns_total",
     "Реплики, оборванные на полуслове (союз, запятая): ответ задержан, пока человек договаривает.",
 )
+
+# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase.
+DIALOG_DB_ERRORS_TOTAL = Counter(
+    "agent_dialog_db_errors_total",
+    "Сбои базы диалогов на диске: при сбое запись повторяется, диалоги остаются в памяти.",
+    ["op"],
+)
+
+DIALOG_DB_WRITE_SECONDS = Histogram(
+    "agent_dialog_db_write_seconds",
+    "Сколько занимает запись пачки изменённых диалогов на диск (фоновый поток).",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+# Режим gemini_live. Токены берутся из usage_metadata ответа Gemini: на каждый ход приходит размер контекста этого хода
+# (prompt, то, что оплачивается заново на каждый ход) и сгенерированное (response). direction: prompt | response | total;
+# modality: text | audio | all.
+GEMINI_TOKENS_TOTAL = Counter(
+    "agent_gemini_tokens_total",
+    "Токены Gemini Live по usage_metadata: вход (контекст хода) и выход, по модальностям.",
+    ["direction", "modality"],
+)
+
+# result: ok | failed. Смена сессии после ответа (GEMINI_TEXT_CONTEXT): новая сессия с текстовой историей вместо накопленного аудио.
+GEMINI_CONTEXT_REFRESH_TOTAL = Counter(
+    "agent_gemini_context_refresh_total",
+    "Смены сессии Gemini Live с переносом контекста текстом.",
+    ["result"],
+)
+
+GEMINI_CONTEXT_REFRESH_SECONDS = Histogram(
+    "agent_gemini_context_refresh_seconds",
+    "Сколько занимает смена сессии: соединение и загрузка текстовой истории (в фоне, между репликами).",
+    buckets=(0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 15.0),
+)

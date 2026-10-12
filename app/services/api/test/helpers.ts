@@ -193,14 +193,72 @@ export function mockFetch(routes: Record<string, Route>) {
   return { fn, calls }
 }
 
+/**
+ * The agent's dialog start as the real one behaves: a person has at most one open dialog. A plain start
+ * changes nothing and returns it (`resumed: true`, with its `messageCount` and `lastActivityAt`). With
+ * `new: true` the open dialog is ended and a fresh one created (`resumed: false`), except that an empty
+ * one is just reused. Ids go d-1, d-2, ...; `say` puts messages into the person's open dialog.
+ */
+export function fakeAgentDialogs() {
+  let counter = 0
+  const open = new Map<string, { id: string; messages: number; lastActivityAt: string | null }>()
+  /** Dialogs a fresh start ended, in order. */
+  const ended: string[] = []
+  const route: Route = ({ url, body }) => {
+    const userId = decodeURIComponent(url.pathname.split('/')[3] ?? '')
+    const wantsNew = body !== '' && (JSON.parse(body) as { new?: unknown }).new === true
+    let current = open.get(userId)
+    if (current && !wantsNew) {
+      return json({
+        dialogId: current.id,
+        resumed: true,
+        greeting: 'Продолжим, где остановились.',
+        sinceLastDialogHours: null,
+        messageCount: current.messages,
+        lastActivityAt: current.lastActivityAt,
+      })
+    }
+    if (current && current.messages > 0) {
+      ended.push(current.id)
+      current = undefined
+    }
+    if (!current) {
+      counter += 1
+      current = { id: `d-${counter}`, messages: 0, lastActivityAt: null }
+      open.set(userId, current)
+    }
+    return json({
+      dialogId: current.id,
+      resumed: false,
+      greeting: 'Я рядом.',
+      sinceLastDialogHours: null,
+      messageCount: 0,
+      lastActivityAt: null,
+    })
+  }
+  return {
+    route,
+    ended,
+    openOf: (userId: string) => open.get(userId)?.id ?? null,
+    /** The person (or the agent) said something in the open dialog. */
+    say(userId: string, messages = 1) {
+      const current = open.get(userId)
+      if (!current) throw new Error(`${userId} has no open dialog`)
+      current.messages += messages
+      current.lastActivityAt = new Date().toISOString()
+    },
+  }
+}
+
 export function mockAgent(overrides: Record<string, Route> = {}) {
-  return mockFetch({
-    'POST http://agent.test/v1/users/*/dialogs': () =>
-      json({ dialogId: 'd-1', resumed: false, greeting: 'Я рядом.', sinceLastDialogHours: null }),
+  const dialogs = fakeAgentDialogs()
+  const stub = mockFetch({
+    'POST http://agent.test/v1/users/*/dialogs': dialogs.route,
     'GET http://agent.test/v1/users/*/dialogs': () => json({ items: [], next: null }),
     'DELETE http://agent.test/v1/users/*': () => new Response(null, { status: 204 }),
     ...overrides,
   })
+  return { ...stub, dialogs }
 }
 
 /** What the first screen of the app sends: all three agreements, in the version it showed. */

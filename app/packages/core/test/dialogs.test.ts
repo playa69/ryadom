@@ -13,38 +13,74 @@ import {
   StartDialogOperation,
   StartDialogOperationErrorCode,
 } from '../src/processes/dialogs'
+import { agentApiIntegration, StartAgentDialogRequest } from '../src/integrations/agent-api'
 import { UpdateUserVoiceCommand, usersManager } from '../src/managers/users-manager'
 import { AgentUnavailableError } from '../src/shared'
 import { blockDirectly, json, mockAgent, mockFetch, registerConfirmedUser } from './helpers'
 
 const start = (userId: string) => dialogsProcess.execute(new StartDialogOperation({ userId }))
+const startNew = (userId: string) =>
+  dialogsProcess.execute(new StartDialogOperation({ userId, startNew: true }))
 
 describe('начать разговор', () => {
   it('агенту уходит пользователь в пути и его голос (по умолчанию мужской), больше ничего; возвращает диалог', async () => {
     const user = await registerConfirmedUser()
     const { calls } = mockAgent({
       'POST http://agent.test/v1/users/*/dialogs': () =>
-        json({ dialogId: 'd-42', resumed: true, greeting: 'Продолжим?', sinceLastDialogHours: 72 }),
+        json({
+          dialogId: 'd-42',
+          resumed: true,
+          greeting: 'Продолжим?',
+          sinceLastDialogHours: 72,
+          messageCount: 6,
+          lastActivityAt: '2026-10-01T20:12:00.000Z',
+        }),
     })
 
     const result = await start(user.id)
     expect(result).toEqual({
       success: true,
-      dialog: { dialogId: 'd-42', resumed: true, greeting: 'Продолжим?', sinceLastDialogHours: 72 },
+      dialog: {
+        dialogId: 'd-42',
+        resumed: true,
+        greeting: 'Продолжим?',
+        sinceLastDialogHours: 72,
+        messageCount: 6,
+        lastActivityAt: '2026-10-01T20:12:00.000Z',
+      },
     })
 
     const call = calls.at(-1)!
+    expect(call.method).toBe('POST')
     expect(call.url.pathname).toBe(`/v1/users/${user.id}/dialogs`)
     expect(call.headers.get('Authorization')).toBe('Bearer test-agent-token')
-    // The body carries only the voice the person picked: nothing about the mode or the client.
+    // A plain start only carries the voice the person picked: no request for a new dialog, nothing about the mode or the client.
     expect(JSON.parse(call.body)).toEqual({ voice: 'male' })
+  })
+
+  it('агент не прислал messageCount и lastActivityAt (старый агент) — 0 и null: спрашивать не о чем', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-3', resumed: true, greeting: 'Продолжим?', sinceLastDialogHours: null }),
+    })
+
+    expect(await start(user.id)).toEqual({
+      success: true,
+      dialog: {
+        dialogId: 'd-3',
+        resumed: true,
+        greeting: 'Продолжим?',
+        sinceLastDialogHours: null,
+        messageCount: 0,
+        lastActivityAt: null,
+      },
+    })
   })
 
   it('голос из профиля уходит агенту при каждом старте: сменили — следующий диалог говорит иначе', async () => {
     const user = await registerConfirmedUser()
-    const { calls } = mockAgent({
-      'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-1', resumed: false }),
-    })
+    const { calls } = mockAgent()
 
     await start(user.id)
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
@@ -52,6 +88,99 @@ describe('начать разговор', () => {
     await usersManager.execute(new UpdateUserVoiceCommand({ userId: user.id, voice: 'female' }))
     await start(user.id)
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
+  })
+
+  it('startNew: агенту уходит new: true вместе с голосом', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent()
+
+    await startNew(user.id)
+
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true })
+  })
+
+  it('простой старт при открытом диалоге с репликами возвращает его же: resumed, messageCount и lastActivityAt, ничего не завершено', async () => {
+    const user = await registerConfirmedUser()
+    const { dialogs } = mockAgent()
+
+    const first = await start(user.id)
+    expect(first).toMatchObject({
+      success: true,
+      dialog: { dialogId: 'd-1', resumed: false, messageCount: 0, lastActivityAt: null },
+    })
+
+    // The person talked and left without finishing.
+    dialogs.say(user.id, 4)
+    const again = await start(user.id)
+    expect(again).toMatchObject({
+      success: true,
+      dialog: { dialogId: 'd-1', resumed: true, messageCount: 4 },
+    })
+    expect(again.success && typeof again.dialog.lastActivityAt).toBe('string')
+    expect(dialogs.ended).toEqual([])
+  })
+
+  it('startNew при открытом диалоге с репликами: другой dialogId, resumed: false, прежний завершён', async () => {
+    const user = await registerConfirmedUser()
+    const { calls, dialogs } = mockAgent()
+
+    await start(user.id)
+    dialogs.say(user.id, 2)
+    const fresh = await startNew(user.id)
+
+    expect(fresh).toMatchObject({
+      success: true,
+      dialog: { dialogId: 'd-2', resumed: false, messageCount: 0, lastActivityAt: null },
+    })
+    expect(dialogs.ended).toEqual(['d-1'])
+    expect(dialogs.openOf(user.id)).toBe('d-2')
+    // Only the second call asked for it.
+    expect(calls.map((call) => JSON.parse(call.body).new)).toEqual([undefined, true])
+  })
+
+  it('startNew при пустом открытом диалоге: тот же диалог переиспользуется, ничего не завершается', async () => {
+    const user = await registerConfirmedUser()
+    const { dialogs } = mockAgent()
+
+    await start(user.id)
+    const fresh = await startNew(user.id)
+
+    expect(fresh).toMatchObject({
+      success: true,
+      dialog: { dialogId: 'd-1', resumed: false, messageCount: 0 },
+    })
+    expect(dialogs.ended).toEqual([])
+  })
+
+  it('открытый диалог одного человека не трогает другого', async () => {
+    const first = await registerConfirmedUser()
+    const second = await registerConfirmedUser()
+    const { dialogs } = mockAgent()
+
+    await start(first.id)
+    dialogs.say(first.id)
+    await startNew(second.id)
+
+    expect(dialogs.ended).toEqual([])
+    expect(dialogs.openOf(first.id)).toBe('d-1')
+    expect(dialogs.openOf(second.id)).toBe('d-2')
+  })
+
+  it('запрос к агенту без флага и голоса уходит без тела; с одним флагом — { new: true }', async () => {
+    const userId = '00000000-0000-4000-8000-000000000001'
+    const { calls } = mockAgent()
+    const startAt = (data: { voice?: 'male' | 'female'; startNew?: boolean }) =>
+      agentApiIntegration.execute(new StartAgentDialogRequest({ userId, ...data }))
+
+    await startAt({})
+    expect(calls.at(-1)!.body).toBe('')
+    expect(calls.at(-1)!.headers.get('Content-Type')).toBeNull()
+
+    await startAt({ voice: 'female' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
+
+    await startAt({ startNew: true })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ new: true })
   })
 
   it('заблокированному и удалённому разговор недоступен', async () => {

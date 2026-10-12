@@ -59,6 +59,12 @@ class DialogSettings(BaseAppSettings):
     voice_turn_max_seconds: int = Field(validation_alias="VOICE_TURN_MAX_SECONDS", default=300, ge=1, le=600)
     # Реплика оборвана на полуслове («и…», «потому что»): ответ ждёт столько, не договорит ли человек. 0 — не ждать.
     incomplete_hold_ms: int = Field(validation_alias="INCOMPLETE_HOLD_MS", default=1500, ge=0, le=10_000)
+    # Файл SQLite, в который дублируются диалоги: после перезапуска и выката агента они возвращаются. Путь должен лежать на томе
+    # пода (в k8s это PVC `agent-data`, /data/dialogs.sqlite3). Пусто — диалоги только в памяти и пропадают при перезапуске
+    # (тесты и разработка). Не открылся файл — агент работает в памяти и громко пишет об этом, а не падает.
+    db_path: str | None = Field(validation_alias="DIALOG_DB_PATH", default=None)
+    # Как часто записывать изменения диалогов на диск, мс (идущие ответы дописываются, поэтому не при каждом слове).
+    db_flush_ms: int = Field(validation_alias="DIALOG_DB_FLUSH_MS", default=500, ge=50, le=10_000)
 
 
 class SpeechSettings(BaseAppSettings):
@@ -134,6 +140,65 @@ class LlmSettings(BaseAppSettings):
     temperature: float = Field(validation_alias="LLM_TEMPERATURE", default=0.7, ge=0, le=2)
 
 
+class VoiceSettings(BaseAppSettings):
+    """Каким путём идёт голосовой диалог.
+
+    `VOICE_PIPELINE`:
+      cascade      распознавание → чат-модель → озвучка (по умолчанию; настраивается `LLM_MODE` и `TTS_MODE`)
+      gemini_live  речь в речь через Gemini Live: слушает, отвечает и говорит одна модель (настраивается `GEMINI_*`)
+    """
+
+    pipeline: Literal["cascade", "gemini_live"] = Field(validation_alias="VOICE_PIPELINE", default="cascade")
+
+
+class GeminiSettings(BaseAppSettings):
+    """Gemini Live (`VOICE_PIPELINE=gemini_live`): речь в речь по WebSocket через SDK google-genai.
+
+    Нужен только в этом режиме; без `GEMINI_API_KEY` сервис в нём не стартует. Из России Google отвечает «User location is
+    not supported»: тогда `GEMINI_BASE_URL` указывает на прослойку в поддерживаемой стране (WebSocket-релей к
+    generativelanguage.googleapis.com).
+    """
+
+    api_key: SecretStr | None = Field(validation_alias="GEMINI_API_KEY", default=None)
+    # Адрес Gemini API (https://… или http://…, SDK сам берёт wss://… для Live). Пусто — напрямую в Google.
+    base_url: str | None = Field(validation_alias="GEMINI_BASE_URL", default=None)
+    # Токен релея (agent/relay): уходит заголовком X-Relay-Token на GEMINI_BASE_URL, релей без него отвечает 403.
+    relay_token: SecretStr | None = Field(validation_alias="GEMINI_RELAY_TOKEN", default=None)
+    live_model: str = Field(validation_alias="GEMINI_LIVE_MODEL", default="gemini-3.8-live")
+    # Голос выбирается по роду, как у остальных провайдеров; названия — встроенные голоса Gemini.
+    voice_male: str = Field(validation_alias="GEMINI_LIVE_VOICE_MALE", default="Charon")
+    voice_female: str = Field(validation_alias="GEMINI_LIVE_VOICE_FEMALE", default="Kore")
+    connect_timeout_seconds: int = Field(validation_alias="GEMINI_CONNECT_TIMEOUT_SECONDS", default=15, ge=1)
+    # Сколько ждать расшифровку реплики, прежде чем отдать человеку ответ: до этого момента агент проверяет реплику на кризис.
+    transcript_wait_ms: int = Field(validation_alias="GEMINI_TRANSCRIPT_WAIT_MS", default=1000, ge=0, le=5000)
+    # Ответ, от которого нет событий дольше этого, считается оборванным.
+    idle_timeout_seconds: int = Field(validation_alias="GEMINI_IDLE_TIMEOUT_SECONDS", default=15, ge=1)
+    # Сколько последних сообщений диалога модель получает текстом при новой сессии (после каждого ответа при
+    # GEMINI_TEXT_CONTEXT, а также после переподключения и смены голоса). 0 — весь диалог.
+    history_messages: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES", default=40, ge=0)
+    # Экономия на контексте: Gemini оплачивает весь контекст сессии на каждый ход, а голос человека и ответа копится в нём
+    # аудио-токенами (на стенде +300 токенов на ход, аудио дороже текста). Поэтому после каждого ответа агент открывает
+    # свежую сессию и кладёт в неё прошлые реплики текстом (history_config.initial_history_in_client_content): аудио в
+    # контексте остаётся только текущей реплики, а память о разговоре сохраняется. Старая сессия закрывается. Возобновление
+    # сессии по handle при включённой опции не используется (handle вернул бы накопленное аудио), сжатие контекста остаётся
+    # страховкой на случай очень длинной истории.
+    text_context: bool = Field(validation_alias="GEMINI_TEXT_CONTEXT", default=True)
+    # «Размышление» модели перед ответом (токены): -1 (по умолчанию) — параметр не отправляется, решает Google; 0 — выключено
+    # (замер на gemini-3.8-live: первый звук на ~0,2 с быстрее, ответы короткие и тёплые, рассуждать нечем); >0 — предел.
+    # Кризисы модель не решает: их ловит агент.
+    thinking_budget: int = Field(validation_alias="GEMINI_THINKING_BUDGET", default=-1, ge=-1)
+    # Длинный разговор: когда контекст сессии подходит к пределу, Google сам сжимает его скользящим окном (самое старое
+    # уходит, начало разговора и промпт остаются), и сессия не обрывается. Без сжатия голосовая сессия живёт ~15 минут.
+    compression: bool = Field(validation_alias="GEMINI_COMPRESSION", default=True)
+    # При каком размере контекста (токены) сжимать; 0 — решает Google (около 80% окна модели).
+    compression_trigger_tokens: int = Field(validation_alias="GEMINI_COMPRESSION_TRIGGER_TOKENS", default=0, ge=0)
+    # До какого размера сжимать (токены); 0 — решает Google.
+    compression_target_tokens: int = Field(validation_alias="GEMINI_COMPRESSION_TARGET_TOKENS", default=0, ge=0)
+    # Соединение живёт ограниченно (Google шлёт предупреждение GoAway): при возобновлении сессии по handle контекст
+    # разговора переживает переподключение. Без handle (или если он не принят) модель получает последние сообщения текстом.
+    session_resumption: bool = Field(validation_alias="GEMINI_SESSION_RESUMPTION", default=True)
+
+
 class Config:
     """Агрегатор доменных настроек. Неизменяемый синглтон — не мутировать."""
 
@@ -142,6 +207,8 @@ class Config:
     dialog: DialogSettings = DialogSettings()
     speech: SpeechSettings = SpeechSettings()
     llm: LlmSettings = LlmSettings()
+    voice: VoiceSettings = VoiceSettings()
+    gemini: GeminiSettings = GeminiSettings()
 
 
 APP_CONFIG = Config()

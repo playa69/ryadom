@@ -5,9 +5,10 @@
 
 | Файл | Что делает |
 |---|---|
-| `00-config.yaml` | ConfigMap `agent-config`: озвучка, голос по умолчанию, адрес прокси Qwen TTS |
+| `00-config.yaml` | ConfigMap `agent-config`: озвучка, голос по умолчанию, адрес прокси Qwen TTS, голосовой конвейер `VOICE_PIPELINE` (`cascade` по умолчанию) |
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
-| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready` |
+| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`, том диалогов в `/data` |
+| `03-pvc.yaml` | PVC `agent-data` (5 ГБ, сетевой диск Timeweb): файл SQLite с диалогами, они переживают выкат пода. Применять до Deployment'а |
 | `../namespaces/manifests/08-network-policy-agent-service.yaml` | ingress `prod → agent:8001`, egress `prod → agent`, egress агента к прокси на `:4000` |
 
 Наружу агент не публикуется (HTTPRoute нет): к нему ходят только `app-api` и `app-admin` по внутреннему токену.
@@ -20,6 +21,7 @@
 | Secret | Namespace | Ключи |
 |---|---|---|
 | `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY` |
+| `agent-gemini` | `agent` | только для режима `gemini_live`: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`; Deployment читает их как необязательные |
 | `app-secrets` | `prod` | уже есть; ключ `AGENT_INTERNAL_TOKEN` с тем же значением, что у агента |
 
 Два разных секрета, не путать:
@@ -76,9 +78,9 @@ kubectl -n agent rollout status deploy/agent --timeout=180s
 # Изнутри кластера, тем же путём, каким ходит api (проверяет NetworkPolicy и DNS):
 kubectl -n prod exec deploy/app-api -- wget -qO- http://agent.agent.svc.cluster.local:8001/health      # {"status":"ok"}
 
-# Сам агент: провайдер озвучки должен быть qwen
+# Сам агент: провайдер озвучки должен быть qwen, конвейер cascade
 kubectl -n agent port-forward svc/agent 18001:8001 &
-curl -s http://127.0.0.1:18001/health/ready                                                           # {"status":"ok","tts":"qwen"}
+curl -s http://127.0.0.1:18001/health/ready          # {"status":"ok","pipeline":"cascade","tts":"qwen","llm":"proxy:…","stt":"proxy:…"}
 
 # Весь контракт по REST + WebSocket, с голосом (нужен внутренний токен; wav сохраняется для прослушивания)
 AGENT_INTERNAL_TOKEN=<токен> python agent/scripts/smoke.py --url http://127.0.0.1:18001 --voice female --wav reply.wav
@@ -99,10 +101,96 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts 
 `male`), поправить теги в `k8s/app/*/03-deployment.yaml` и `k8s/app/db/02-job-migrate.yaml` и применить как обычно:
 сначала Job миграции `app-migrate-0002`, затем Deployment'ы (см. `k8s/README.md`, «Новая версия»).
 
+## Режим gemini_live (речь в речь): подготовка и включение
+
+Режим добавляет PR «feat(agent): режим gemini_live». **С 2026-10-12 в кластере включён** (`VOICE_PIPELINE: "gemini_live"`, образ 0.2.0,
+Secret `agent-gemini` создан). С `VOICE_PIPELINE: "cascade"` тот же образ ведёт себя как прежний каскад. Gemini API из России недоступен (из кластера проверено:
+`User location is not supported`), поэтому агент ходит через релей в Hetzner (`agent/relay/README.md`); из кластера релей
+доступен (проверено временным подом: DNS `sslip.io` резолвится, `/_relay_health` 200, без токена 403). Egress `:443` в ns `agent`
+уже разрешён (`05-network-policy-agent.yaml`), новые сетевые правила не нужны.
+
+Значения лежат в Yandex Lockbox, в общем секрете `ryadom-app-secrets` (профиль `sber500-ryadom`), новыми ключами: `GEMINI_API_KEY`,
+`GEMINI_BASE_URL`, `GEMINI_RELAY_TOKEN` и `GEMINI_RELAY_SSH_PRIVATE_KEY` (доступ на сервер релея, в кластер не уходит). Остальные
+ключи этого секрета не менялись. Kubernetes-секрет `agent-secrets` не трогается: для режима создаётся отдельный `agent-gemini`.
+
+Порядок, каждый шаг отдельным решением администратора:
+
+```powershell
+# 1. Образ ≥ 0.2.0 (в нём google-genai; сборка проверена локально: 343 МБ, не root, read-only rootfs, без capabilities).
+#    Сборка и push как в «Первом выкате», TAG=0.2.0; затем тег в 02-deployment.yaml отдельным коммитом deploy(agent).
+
+# 2. Secret agent-gemini из Lockbox (создаётся командой create, не apply; нужен admin kubeconfig и явное «да» пользователя):
+. "$env:USERPROFILE\.config\ryadom\bin\ryadom-secrets.ps1"
+New-RyadomK8sSecret -Namespace agent -Name agent-gemini `
+  -Map @{ GEMINI_API_KEY = 'GEMINI_API_KEY'; GEMINI_BASE_URL = 'GEMINI_BASE_URL'; GEMINI_RELAY_TOKEN = 'GEMINI_RELAY_TOKEN' } -DryRun
+#    проверить и повторить без -DryRun, добавив -UserConfirmedAdmin
+
+# 3. Сначала выкатить новый образ в режиме cascade (ConfigMap без изменений) и убедиться, что агент здоров:
+#    kubectl apply -f k8s/agent/00-config.yaml -f k8s/agent/02-deployment.yaml ; rollout status ; /health/ready → "pipeline":"cascade"
+
+# 4. Включить режим: в 00-config.yaml VOICE_PIPELINE: "gemini_live", применить ConfigMap, перезапустить:
+#    kubectl apply -f k8s/agent/00-config.yaml ; kubectl -n agent rollout restart deploy/agent ; kubectl -n agent rollout status deploy/agent
+```
+
+Проверка после включения (порт-форвард как выше):
+
+```bash
+curl -s http://127.0.0.1:18001/health/ready      # "pipeline":"gemini-live:gemini-3.8-live", "tts":"gemini-live:gemini-3.8-live"
+python agent/scripts/live_smoke.py --url http://127.0.0.1:18001 --token <токен> --pcm-dir <каталог с PCM-репликами> --wav-dir <куда сохранить звук>
+kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live timeline|live usage|live context|first sound|WARNING"
+```
+
+В журнале агента: `прогрев озвучки закончен: озвучено 12, не удалось 0` (около 20 с; пока идёт прогрев, приветствие может прочитать
+приложение своим голосом), строки `live timeline … ms: sent=… in_first=… out_first=… tts_start=…` (этапы хода в мс от конца реплики,
+без текстов) и `first sound … ms=` (на стенде 0,9-1,2 с против 2,6 с у каскада).
+
+**Откат:** вернуть `VOICE_PIPELINE: "cascade"`, применить ConfigMap, `kubectl -n agent rollout restart deploy/agent`. Secret `agent-gemini` может остаться.
+Образ с google-genai можно оставить: в режиме cascade он не используется.
+
+Что учесть до включения (подробности: `agent/relay/README.md`, «Ёмкость и лимиты»):
+
+- В PR #28 известны расхождения с каскадом (P1-P16 в `agent/tests/test_parity.py`, strict xfail), часть из них до включения в бою нужно закрыть.
+- Постоплата Gemini: контекст сессии оплачивается на каждый ход. С образом ≥ 0.3.0 по умолчанию включена оптимизация
+  `GEMINI_TEXT_CONTEXT` (после каждого ответа свежая сессия с историей текстом: на стенде -53% входных токенов за 12 ходов и цена хода
+  почти не растёт; скорость первого звука при нормальной паузе та же, схема и замеры в `agent/README.md`). Образ 0.2.0 её не содержит. Поставить бюджет
+  Cloud Billing и ограничить ключ по IP релея.
+- Агент в памяти (Recreate): выкат и переключение режима обрывают текущие диалоги. Память пода в режиме Gemini на стенде около 100 МБ при лимите 384 МиБ.
+
+## Хранилище диалогов (PVC `agent-data`)
+
+Диалоги дублируются в файл `/data/dialogs.sqlite3` на сетевом диске Timeweb (`DIALOG_DB_PATH` в `agent-config`, `03-pvc.yaml`). Порядок
+выката, когда тома ещё нет (нужен admin-kubeconfig, **каждый шаг отдельным решением администратора**):
+
+```bash
+kubectl apply -f k8s/agent/03-pvc.yaml                                            # диск создастся при первом запуске пода
+kubectl apply -f k8s/agent/00-config.yaml -f k8s/agent/02-deployment.yaml         # новый образ, том и DIALOG_DB_PATH
+kubectl -n agent rollout status deploy/agent --timeout=300s
+kubectl -n agent get pvc agent-data                                               # Bound
+kubectl -n agent logs deploy/agent | grep -E "dialog db|agent started"            # «dialog db opened … dialogs=N», «dialogs=sqlite»
+```
+
+Проверка из пода-соседа или порт-форвардом: `GET /health/ready` должен вернуть `"dialogs": "sqlite"` (если `"memory"`, диск не открылся,
+причина в журнале как `dialog db is NOT available`). Первый выкат с PVC стирает диалоги, которые были только в памяти старого пода
+(другого пути нет). Дальше выкаты их сохраняют.
+
+- **reclaimPolicy класса `Delete`**: `kubectl delete pvc agent-data` или удаление namespace удаляет диск вместе со всеми диалогами. PVC не
+  удалять. Бэкапов у диска нет (резервная копия, например периодический `sqlite3 … .backup` в объектное хранилище, или переезд на
+  PostgreSQL агента по design D6, отдельная задача).
+- **Откат образа** на версию без поддержки диска не трогает файл: он остаётся и подхватывается при следующем выкате. Но стирания людей
+  (`DELETE /v1/users/{userId}`), выполненные таким образом, файла не касаются: после отката на образ без диска и возврата на новый
+  повторите стирание тех, кого удалили в это окно. Откат манифеста без PVC оставляет диск в кластере.
+- Файл небольшой (сообщения весят сотни байт). Посмотреть содержимое: только `kubectl exec` под admin-kubeconfig
+  (`sqlite3` в образе нет: `python -c "import sqlite3; …"`); тексты разговоров людей без причины не читать.
+- Стирание человека (`DELETE /v1/users/{userId}`) удаляет и строки на диске (`secure_delete`) и усекает журнал WAL, так что в файлах
+  SQLite следов не остаётся. Если диск задан, но не подключился (`"dialogs": "memory"`), стирание отвечает `503`, а не `204`: приложение
+  повторит его, когда диск вернётся. Блоки сетевого диска и снимки провайдера под это обещание не подпадают.
+
 ## Ограничения (честно)
 
-- **Память, не база.** Диалоги агента живут в процессе: при перезапуске пода и при каждом выкате они пропадают. Реплика
-  одна, `strategy: Recreate`, поэтому на время выката агент недоступен (около минуты вместе с прогревом озвучки).
+- **Диалоги на диске, но без бэкапа.** Диалоги дублируются в SQLite на PVC `agent-data` и переживают перезапуск и выкат пода
+  (раздел «Хранилище диалогов»). Реплика одна, `strategy: Recreate`, поэтому на время выката агент недоступен (около минуты вместе с
+  прогревом озвучки, плюс отсоединение и присоединение диска, десятки секунд); текущие сокеты обрываются, а клиент переподключается к
+  тому же диалогу.
 - **Прогрев.** Первую минуту после старта приветствие может прочитать приложение своим голосом: Qwen через прокси отдаёт
   первый звук за 1-2 с, а клиент ждёт приветствие не больше 0,9 с. Ответы приложение само не читает.
 - **Прокси программы — внешняя зависимость.** Если он недоступен, агент отвечает текстом (`error VOICE_UNAVAILABLE`), а

@@ -45,11 +45,13 @@ spec:
         # agent/Dockerfile: useradd --uid 10001; числовой uid нужен kubelet'у
         runAsUser: 10001
         runAsGroup: 10001
+        # Том диалогов (agent-data) монтируется с этой группой, иначе non-root пользователь не смог бы писать в /data
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.1.5
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.4.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -81,6 +83,27 @@ spec:
                   name: agent-secrets
                   key: SALUTE_SPEECH_AUTH_KEY
                   optional: true
+            # Режим gemini_live (VOICE_PIPELINE в ConfigMap): Secret agent-gemini создаётся отдельно и нужен только в этом
+            # режиме. optional: пока Secret'а нет, каскад стартует как раньше, а в режиме gemini_live без ключа сервис не
+            # стартует (fail-fast). Адрес релея и его токен лежат в Secret'е, в git их нет.
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-gemini
+                  key: GEMINI_API_KEY
+                  optional: true
+            - name: GEMINI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-gemini
+                  key: GEMINI_BASE_URL
+                  optional: true
+            - name: GEMINI_RELAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-gemini
+                  key: GEMINI_RELAY_TOKEN
+                  optional: true
           startupProbe:
             httpGet:
               path: /health
@@ -105,6 +128,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # Диалоги (SQLite): переживают перезапуск и выкат; 03-pvc.yaml. Остальная файловая система read-only.
+            - name: data
+              mountPath: /data
           resources:
             requests:
               cpu: 50m
@@ -115,3 +141,6 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: agent-data

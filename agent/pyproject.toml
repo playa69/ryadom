@@ -13,6 +13,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.27",
     "prometheus-client>=0.20",
+    # Режим VOICE_PIPELINE=gemini_live (речь в речь через Gemini Live). Импортируется только в нём.
+    "google-genai>=2.0",
 ]
 
 [dependency-groups]
