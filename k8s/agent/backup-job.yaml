@@ -1,9 +1,9 @@
 # =============================================================================
-# Job: резервная копия файла диалогов агента (PVC agent-data) перед выкатом 0.5.0 — см. RUNBOOK-0.5.0.md
+# Job: резервная копия файла диалогов агента (PVC agent-data) перед выкатом agent 0.6.0 — см. RUNBOOK-0.6.0.md
 # =============================================================================
 # НЕ применяется автоматически: это шаблоны для администратора (admin-kubeconfig), каждый шаг по отдельной команде.
 #
-# Зачем. Агент 0.5.0 при старте переводит файл /data/dialogs.sqlite3 со схемы v1 на v2 (память агента). Агент 0.4.0 файл версии 2
+# Зачем. Агент 0.6.0 при старте переводит файл /data/dialogs.sqlite3 со схемы v1 на v2 (память агента). Агент 0.4.0 файл версии 2
 # не открывает (откат образа «молча» дал бы работу только в памяти). Единственный настоящий откат — вернуть копию, снятую ДО выката.
 # У диска agent-data нет бэкапов, а reclaimPolicy класса — Delete (k8s/agent/03-pvc.yaml).
 #
@@ -60,7 +60,7 @@ spec:
               import os, sqlite3, time
               src_path = "/data/dialogs.sqlite3"
               os.makedirs("/data/backups", exist_ok=True)
-              dst_path = "/data/backups/dialogs-before-0.5.0-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + ".sqlite3"
+              dst_path = "/data/backups/dialogs-before-agent-0.6.0-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + ".sqlite3"
               src = sqlite3.connect(src_path)
               dst = sqlite3.connect(dst_path)
               src.backup(dst)  # согласованный снимок: учитывает WAL, не копирует файл «сырым»
