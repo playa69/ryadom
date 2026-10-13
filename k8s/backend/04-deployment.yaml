@@ -43,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/backend/api:0.1.1
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/backend/api:0.1.2
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -128,7 +128,7 @@ spec:
               mountPath: /app/logs
           resources:
             requests:
-              cpu: 250m
+              cpu: 100m
               memory: 512Mi
             limits:
               cpu: 1000m
