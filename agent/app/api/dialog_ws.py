@@ -22,7 +22,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.api.deps import active_tts, canonical_user_id, token_ok
-from app.clients.llm import STT_RATE, ChatModel, ModelError, Recognizer, ReplyTruncated
+from app.clients.llm import STT_RATE, ChatModel, ModelError, ProxyChat, Recognizer, ReplyTruncated
 from app.clients.speech import FRAME_BYTES, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
@@ -35,6 +35,7 @@ from app.core.metrics import (
     VOICE_TURN_END_DELAY_SECONDS,
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
+from app.core.tracing import NullTracer, Observation, Tracer
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.replies import (
     CRISIS_REPLY,
@@ -83,6 +84,8 @@ class Turn:
     """Один ход: от чего считать задержку. `started` — конец реплики человека или его набранное сообщение (monotonic)."""
 
     started: float | None = None
+    # Трасса хода в Langfuse (app/core/tracing.py); None — ход без трейсинга (например, прогрев).
+    trace: Observation | None = None
 
 
 class SpeechFeed:
@@ -109,13 +112,29 @@ class Synthesis:
     В очереди куски PCM, затем `None` (конец) или исключение (отказ провайдера). Читает тот, кто озвучивает.
     """
 
-    def __init__(self, tts: TextToSpeech, text: str, voice: Voice, first: bool) -> None:
+    def __init__(
+        self,
+        tts: TextToSpeech,
+        text: str,
+        voice: Voice,
+        first: bool,
+        tracer: Tracer | None = None,
+        trace: Observation | None = None,
+    ) -> None:
         self.pieces: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
-        self.task = asyncio.create_task(self._run(tts, text, voice, first))
+        self.task = asyncio.create_task(self._run(tts, text, voice, first, tracer or NullTracer(), trace))
 
-    async def _run(self, tts: TextToSpeech, text: str, voice: Voice, first: bool) -> None:
+    async def _run(
+        self, tts: TextToSpeech, text: str, voice: Voice, first: bool, tracer: Tracer, trace: Observation | None
+    ) -> None:
         began = time.monotonic()
         seen = False
+        span = tracer.start_span(
+            trace,
+            name="tts",
+            input=text,
+            metadata={"model": getattr(tts, "name", "?"), "voice": voice, "first": first, "chars": len(text)},
+        )
         try:
             async for piece in pcm_stream(tts, text, voice):
                 if first and not seen:
@@ -124,9 +143,13 @@ class Synthesis:
                 self.pieces.put_nowait(piece)
             self.pieces.put_nowait(None)
         except asyncio.CancelledError:
+            span.update(metadata={"cancelled": True})
             raise
         except Exception as error:
+            span.update(level="ERROR", status=str(error)[:160])
             self.pieces.put_nowait(error)
+        finally:
+            span.end()
 
     def cancel(self) -> None:
         self.task.cancel()
@@ -141,6 +164,7 @@ class DialogSession:
         tts_source: Callable[[], TextToSpeech | None],
         chat: ChatModel | None = None,
         recognizer: Recognizer | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self._ws = websocket
         self._store = store
@@ -150,6 +174,10 @@ class DialogSession:
         self._recognizer = recognizer
         # Озвучка берётся при каждой реплике: dev-режим может выключить её на лету.
         self._tts_source = tts_source
+        # Трейсинг LLM-ходов (app/core/tracing.py); по умолчанию выключен (NullTracer).
+        self._tracer = tracer or NullTracer()
+        # Имя конвейера в метаданных трассы; режим gemini_live подменяет (app/api/dialog_live.py).
+        self._pipeline = "cascade"
         self._stream_delay = APP_CONFIG.dialog.stream_delay_ms / 1000
         self._frame_interval = APP_CONFIG.speech.tts_frame_interval_ms / 1000
 
@@ -235,6 +263,7 @@ class DialogSession:
             dialog.on_replaced = None
             worker.cancel()
             self._pause_hold()
+            self._end_held_trace()  # сокет закрыт: ответа на оборванную реплику уже не будет
             for task in self._speech_tasks:
                 task.cancel()
             await asyncio.gather(worker, *self._speech_tasks, return_exceptions=True)
@@ -318,6 +347,14 @@ class DialogSession:
 
     def _dispatch_text_turn(self, text: str, crisis: bool, turn: Turn) -> None:
         """Ответ на набранное сообщение. Режим gemini_live подменяет это место (app/api/dialog_live.py)."""
+        turn.trace = self._tracer.start_turn(
+            name="text_turn",
+            session_id=self._dialog.id,
+            user_id=self._dialog.user_id,
+            input=text,
+            metadata={"crisis": crisis},
+            tags=[self._pipeline],
+        )
         self._jobs.put_nowait(lambda: self._reply(crisis, turn))
 
     def _audio_started(self) -> None:
@@ -367,20 +404,35 @@ class DialogSession:
 
     async def _voice_turn(self, frames: int, pcm: bytes, interrupts: bool = False, turn: Turn | None = None) -> None:
         turn = turn or Turn(started=time.monotonic())
-        text = await self._recognize(frames, pcm)
+        turn.trace = self._tracer.start_turn(
+            name="voice_turn",
+            session_id=self._dialog.id,
+            user_id=self._dialog.user_id,
+            metadata={"frames": frames, "interrupts": interrupts},
+            tags=[self._pipeline],
+        )
+        text = await self._recognize(frames, pcm, turn.trace)
         if text is None:
+            turn.trace.update(level="ERROR", status="распознавание недоступно")
+            turn.trace.end()
+            turn.trace = None
             self._release_held()
             return  # распознавание не сработало, error уже ушёл
         if self._recognizer is not None and text and turn.started is not None:
             VOICE_LATENCY_SECONDS.labels("stt").observe(time.monotonic() - turn.started)
         if not text or (interrupts and self._is_echo(text)):
+            turn.trace.update(metadata={"discarded": True, "reason": "silence_or_echo"})
+            turn.trace.end()
+            turn.trace = None
             self._count_false_interruption(interrupts)
             self._release_held()
             await self._send({"type": "transcript", "text": "", "final": True})  # тишина: ни сообщения, ни ответа
             return
+        self._end_held_trace()
         self._held = None  # ответ на эту реплику отвечает и на оборванную перед ней
         self._supersede_speech()
         message = self._store.add_message(self._dialog, "user", text[:MAX_USER_TEXT])
+        turn.trace.update(input=message.text)
         # На голосовую реплику ack не нужен: final-транскрипт несёт id сохранённого сообщения.
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
         crisis = is_crisis(message.text)
@@ -427,7 +479,16 @@ class DialogSession:
 
     def _drop_hold(self) -> None:
         self._pause_hold()
+        self._end_held_trace()
         self._held = None
+
+    def _end_held_trace(self) -> None:
+        """Трассу оборванной реплики закрыть: отдельного ответа на неё не будет, ответит следующий ход."""
+        held = self._held
+        if held is not None and held.trace is not None:
+            held.trace.update(metadata={"merged_into_next": True})
+            held.trace.end()
+            held.trace = None
 
     def _release_held(self) -> None:
         """Ответить на оборванную реплику сейчас."""
@@ -436,7 +497,7 @@ class DialogSession:
         if held is not None and not self._closed:
             self._jobs.put_nowait(lambda: self._reply(False, held))
 
-    async def _recognize(self, frames: int, pcm: bytes) -> str | None:
+    async def _recognize(self, frames: int, pcm: bytes, trace: Observation | None = None) -> str | None:
         """Текст реплики; "" — тишина; None — распознавание недоступно (`error VOICE_UNAVAILABLE` уже ушёл)."""
         if self._recognizer is None:
             # Режим без моделей: текст реплики говорит только о её длительности.
@@ -444,13 +505,21 @@ class DialogSession:
             return f"[голосовая реплика, {seconds} с]"
         if is_silence(pcm):
             return ""
+        span = self._tracer.start_span(
+            trace, name="stt", metadata={"model": self._recognizer.name, "audio_bytes": len(pcm), "frames": frames}
+        )
         try:
             async with asyncio.timeout(APP_CONFIG.llm.stt_timeout_seconds):
-                return await self._recognizer.transcribe(pcm)
+                text = await self._recognizer.transcribe(pcm)
         except (ModelError, TimeoutError) as error:
+            span.update(level="ERROR", status=str(error)[:160])
+            span.end()
             logger.warning("stt failed dialog=%s: %s", self._dialog.id, error)
             await self._send({"type": "error", "code": "VOICE_UNAVAILABLE", "message": "Не удалось распознать речь"})
             return None
+        span.update(output=text, metadata={"chars": len(text)})
+        span.end()
+        return text
 
     async def _on_end(self, frame: dict[str, Any]) -> bool:
         takeaway = frame.get("takeaway") if isinstance(frame.get("takeaway"), str) else None
@@ -479,10 +548,10 @@ class DialogSession:
         for sentence in split_sentences(text):
             yield sentence
 
-    async def _model_sentences(self) -> AsyncIterator[str]:
+    async def _model_sentences(self, trace: Observation | None = None) -> AsyncIterator[str]:
         """Предложения ответа модели по мере написания. Отказ или таймаут поднимаются, когда до них доходит очередь."""
         out: asyncio.Queue[str | Exception | None] = asyncio.Queue()
-        pump = asyncio.create_task(self._pump_chat(out))
+        pump = asyncio.create_task(self._pump_chat(out, trace))
         try:
             while (item := await out.get()) is not None:
                 if isinstance(item, Exception):
@@ -491,11 +560,18 @@ class DialogSession:
         finally:
             pump.cancel()  # не ждём: сам разберётся с потоком модели, а тот, кто читает ответ, не должен ждать сеть
 
-    async def _pump_chat(self, out: asyncio.Queue[str | Exception | None]) -> None:
+    async def _pump_chat(self, out: asyncio.Queue[str | Exception | None], trace: Observation | None = None) -> None:
         """Читает поток модели и складывает готовые предложения в очередь. Таймаут — на модель, а не на тех, кто читает."""
         assert self._chat is not None
         messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages)
+        generation = self._tracer.start_generation(
+            trace, name="chat", model=self._chat.name, input=messages
+        )
+        # Расход токенов умеет отдавать только настоящий прокси (финальный SSE-кусок), у фейков и шаблонов его нет.
+        usage_sink: list[dict[str, Any]] | None = [] if isinstance(self._chat, ProxyChat) else None
         buffer, total, full = "", 0, False
+        truncated = False
+        emitted: list[str] = []
 
         def offer(sentence: str) -> bool:
             """Положить предложение в очередь; False, если ответ уже дошёл до предела длины."""
@@ -503,13 +579,18 @@ class DialogSession:
             if total and total + len(sentence) > MAX_REPLY_CHARS:
                 return False
             total += len(sentence) + 1
+            emitted.append(sentence[:MAX_REPLY_CHARS])
             out.put_nowait(sentence[:MAX_REPLY_CHARS])
             return True
 
         try:
             async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
                 try:
-                    async with aclosing(self._chat.stream(messages)) as stream:
+                    if usage_sink is not None:
+                        stream_ctx = self._chat.stream(messages, usage_sink=usage_sink)  # type: ignore[call-arg]
+                    else:
+                        stream_ctx = self._chat.stream(messages)
+                    async with aclosing(stream_ctx) as stream:
                         async for piece in stream:
                             buffer += piece
                             sentences, buffer = take_sentences(buffer)
@@ -517,14 +598,23 @@ class DialogSession:
                             if full:
                                 break  # дальше читать незачем: остальное не влезет
                 except ReplyTruncated:
+                    truncated = True
                     buffer = ""  # оборван по лимиту токенов: недописанный хвост не берём
                 if not full:
                     for sentence in take_sentences(buffer, final=True)[0]:
                         if not offer(sentence):
                             break
+            generation.update(
+                output=" ".join(emitted) or None,
+                usage=usage_sink[0] if usage_sink else None,
+                metadata={"truncated_by_tokens": truncated, "max_reply_chars_hit": full},
+            )
             out.put_nowait(None)
         except (ModelError, TimeoutError) as error:
+            generation.update(level="ERROR", status=str(error)[:200])
             out.put_nowait(error)
+        finally:
+            generation.end()
 
     async def _reply(self, crisis: bool, turn: Turn | None = None) -> None:
         """Ответ потоком: первое предложение уходит в текст и в озвучку, как только модель его дописала."""
@@ -535,6 +625,7 @@ class DialogSession:
         speech: SpeechFeed | None = None
         message: Message | None = None
         began = time.monotonic()
+        used_template = False
 
         async def deliver(source: AsyncIterator[str]) -> None:
             nonlocal speech, message
@@ -571,7 +662,7 @@ class DialogSession:
             else:
                 if self._chat is not None:
                     try:
-                        await deliver(self._model_sentences())
+                        await deliver(self._model_sentences(turn.trace))
                     except (ModelError, TimeoutError) as error:
                         # После первых предложений отказ не страшен: человек уже слышит начало, договариваем им.
                         logger.warning("chat failed dialog=%s: %s", dialog.id, error)
@@ -579,10 +670,18 @@ class DialogSession:
                         if not sentences:
                             logger.warning("chat returned nothing dialog=%s, using a template", dialog.id)
                 if not sentences:
+                    used_template = True
                     await deliver(self._fixed(self._template()))
         finally:
             if speech is not None:
                 speech.close()
+            if turn.trace is not None:
+                turn.trace.update(
+                    output=" ".join(sentences) or None,
+                    metadata={"crisis": crisis, "template": used_template},
+                )
+                turn.trace.end()
+                turn.trace = None
         if sentences and not self._closed:
             await self._send({"type": "assistant_end", "messageId": message_id, "text": " ".join(sentences)})
 
@@ -652,9 +751,10 @@ class DialogSession:
 
             async def plan() -> None:
                 first = True
+                turn_trace = turn.trace if turn is not None else None
                 while (text := await chunks.get()) is not None:
                     await slots.acquire()
-                    synthesis = Synthesis(tts, text, voice, first)
+                    synthesis = Synthesis(tts, text, voice, first, self._tracer, turn_trace)
                     first = False
                     planned.append(synthesis)
                     syntheses.put_nowait(synthesis)
@@ -758,11 +858,12 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             await websocket.close(code=1000)
             return
         live = websocket.app.state.live
+        tracer = websocket.app.state.tracer
         if live is not None:  # VOICE_PIPELINE=gemini_live: речь в речь, чат и распознавание не нужны
             from app.api.dialog_live import LiveDialogSession
 
             session: DialogSession = LiveDialogSession(
-                websocket, store, dialog, lambda: active_tts(websocket.app), live
+                websocket, store, dialog, lambda: active_tts(websocket.app), live, tracer
             )
         else:
             session = DialogSession(
@@ -772,6 +873,7 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
                 lambda: active_tts(websocket.app),
                 websocket.app.state.chat,
                 websocket.app.state.recognizer,
+                tracer,
             )
         await session.run()
     finally:

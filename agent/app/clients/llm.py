@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -38,8 +38,11 @@ class ChatModel(Protocol):
 
     async def complete(self, messages: list[ChatMessage]) -> str: ...
 
-    def stream(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
-        """Ответ кусками по мере написания. Оборванный по лимиту токенов поток кончается `ReplyTruncated`."""
+    def stream(self, messages: list[ChatMessage], usage_sink: list[dict[str, Any]] | None = None) -> AsyncIterator[str]:
+        """Ответ кусками по мере написания. Оборванный по лимиту токенов поток кончается `ReplyTruncated`.
+
+        `usage_sink` поддерживают не все реализации (ProxyChat — да): расход токенов хода, если модель его отдаёт.
+        """
         ...
 
     async def aclose(self) -> None: ...
@@ -113,8 +116,14 @@ class ProxyChat:
         )
         return text
 
-    async def stream(self, messages: list[ChatMessage]) -> AsyncIterator[str]:
-        """Тот же запрос со `stream: true`: куски текста по мере написания (SSE `data: {...}` и `data: [DONE]`)."""
+    async def stream(
+        self, messages: list[ChatMessage], usage_sink: list[dict[str, Any]] | None = None
+    ) -> AsyncIterator[str]:
+        """Тот же запрос со `stream: true`: куски текста по мере написания (SSE `data: {...}` и `data: [DONE]`).
+
+        `usage_sink` — необязательный список, куда кладётся расход токенов из финального служебного
+        куска (`{"choices": [], "usage": {...}}`), если прокси его присылает: для трейсинга (Langfuse).
+        """
         started = time.perf_counter()
         first_ms: int | None = None
         chars = 0
@@ -142,9 +151,18 @@ class ProxyChat:
                     if payload == "[DONE]":
                         break
                     try:
-                        choice = json.loads(payload)["choices"][0]
+                        data = json.loads(payload)
+                        choice = data["choices"][0]
                     except (ValueError, KeyError, IndexError, TypeError):
-                        continue  # служебный кусок без выбора (например, с расходом токенов)
+                        # Служебный кусок без выбора: в нём может лежать расход токенов.
+                        if usage_sink is not None:
+                            try:
+                                usage = json.loads(payload).get("usage")
+                            except ValueError:
+                                usage = None
+                            if isinstance(usage, dict):
+                                usage_sink.append(usage)
+                        continue
                     finish = choice.get("finish_reason") or finish
                     piece = (choice.get("delta") or {}).get("content") or ""
                     if piece:
