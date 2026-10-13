@@ -26,8 +26,11 @@ global:
 
 langfuse:
   # Образы — из зеркала cr.yandex (см. k8s/README.md «Реестр образов»).
+  # 3.225.0 — последняя v3 с образами на Docker Hub (chart 1.5.41, appVersion 3.224.1).
+  # Поднято с 3.15 ради OTel-эндпоинта /api/public/otel/v1/traces: в него пишет Python SDK v3
+  # (трейсинг агента, k8s/agent/00-config.yaml LANGFUSE_*), на 3.15 его ещё не было (404).
   image:
-    tag: "3.15"
+    tag: "3.225.0"
     pullSecrets:
       - name: registry-pull
 
@@ -69,12 +72,25 @@ langfuse:
     replicas: 1
     image:
       repository: cr.yandex/crpsqeamqpuvrkm5tpr9/langfuse/langfuse
+    # Init-скрипты (миграции ClickHouse и пр.) на новой версии могут идти дольше
+    # дефолтного бюджета проб (~50 с: period 10 × failureThreshold 3). 12 × 10 с ≈ 2,5 мин.
+    livenessProbe:
+      failureThreshold: 12
+    readinessProbe:
+      failureThreshold: 12
+    # Node в 3.225 при init (регистрация MCP-фичей) съедает >512 МБ heap —
+    # дефолтный лимит V8 (~512 МБ при лимите контейнера 1Gi) приводил к OOM
+    # "JavaScript heap out of memory" и CrashLoopBackOff. Поднимаем и heap, и лимит.
+    pod:
+      additionalEnv:
+        - name: NODE_OPTIONS
+          value: "--max-old-space-size=1536"
     resources:
       requests:
-        memory: "256Mi"
+        memory: "512Mi"
         cpu: "75m"
       limits:
-        memory: "1Gi"
+        memory: "2Gi"
         cpu: "600m"
 
   worker:
