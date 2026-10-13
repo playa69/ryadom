@@ -11,6 +11,7 @@ import {
   DialogWsErrorCode,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
+import type { RecapOutcome } from '@ryadom/client-core/dialog-recap'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
@@ -140,6 +141,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [endOpen, setEndOpen] = useState(false)
   const [ending, setEnding] = useState(false)
   const [endError, setEndError] = useState('')
+  // The closing sheet's recap of the conversation, asked for each time the sheet opens.
+  const [recap, setRecap] = useState<string | null>(null)
+  const [recapPending, setRecapPending] = useState(false)
+  const recapAsk = useRef(0)
   const [alert, setAlert] = useState<AlertState | null>(null)
   const [missing, setMissing] = useState(false)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
@@ -654,15 +659,35 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     void stopRecording()
     setEndError('')
     setEndOpen(true)
+    void askRecap()
   }
 
-  async function submitEnd(takeaway: string | null, tensionAfter: number | null) {
+  /**
+   * The agent's recap for the sheet's field. A later opening supersedes an earlier answer; a talk
+   * "without memory", one where the person has said nothing yet, and any failure leave the field as it is.
+   */
+  async function askRecap() {
+    if (memoryMode === DialogMemoryMode.Off || !messages.some((message) => message.role === 'user')) return
+    const ask = ++recapAsk.current
+    setRecapPending(true)
+    try {
+      const result = await client.dialogRecap(dialogId)
+      if (recapAsk.current === ask && result.ok && result.data.recap) setRecap(result.data.recap)
+    } catch {
+      // No recap: the person writes their own, as before.
+    } finally {
+      if (recapAsk.current === ask) setRecapPending(false)
+    }
+  }
+
+  async function submitEnd(takeaway: string | null, tensionAfter: number | null, recapOutcome: RecapOutcome) {
     // Whether there is a takeaway and whether the scale was answered, never what either says;
     // "skipped" is the sheet closed with nothing filled in.
     track(AnalyticsEvent.DialogEndSubmitted, {
       has_takeaway: takeaway !== null,
       gave_tension: tensionAfter !== null,
       skipped: takeaway === null && tensionAfter === null,
+      recap: recapOutcome,
     })
     setEnding(true)
     setEndError('')
@@ -885,7 +910,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       <DialogEndSheet
         open={endOpen}
         onClose={() => setEndOpen(false)}
-        onSubmit={(takeaway, tension) => void submitEnd(takeaway, tension)}
+        onSubmit={(takeaway, tension, recapOutcome) => void submitEnd(takeaway, tension, recapOutcome)}
+        recap={recap}
+        recapPending={recapPending}
         busy={ending}
         error={endError}
       />

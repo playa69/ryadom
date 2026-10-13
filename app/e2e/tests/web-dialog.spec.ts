@@ -15,6 +15,7 @@ import {
   openWebApp,
   pageTitle,
   registerAndConfirm,
+  startAnonymously,
   talkButton,
   uniqueEmail,
   watchCsp,
@@ -422,4 +423,39 @@ test('агент без озвучки: шар в вебе читает прив
   } finally {
     await setAgentSpeech('auto')
   }
+})
+
+/** The agent mock's recap (dev/agent-mock): the real one is written by a model from the conversation. */
+const RECAP = 'Говорили о том, что сейчас на душе. Пришли к тому, что стоит вернуться к этому завтра.'
+/** Over the 40 characters below which the agent gives no recap. */
+const LONG_MESSAGE = 'С братом поссорились из-за денег, и теперь непонятно, как начать разговор'
+
+test('итог разговора сам встаёт в «что забираешь с собой», и его можно поправить', async ({ page, shot }) => {
+  test.setTimeout(120_000)
+  await openWebApp(page)
+  // The first screen says what this is and what happens to the words, before anything is accepted.
+  await expect(page.getByText('поможет разобраться в мыслях')).toBeVisible()
+  await expect(page.getByText(/Голос не записывается, разговоры хранятся в России/)).toBeVisible()
+  await startAnonymously(page)
+
+  await homeInput(page).fill(LONG_MESSAGE)
+  await homeInput(page).press('Enter')
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(messages(page, 'assistant').last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
+
+  await page.getByTestId('dialog-end').click()
+  const takeaway = page.getByTestId('takeaway-input')
+  await expect(takeaway).toHaveValue(RECAP, { timeout: 15_000 })
+  await expect(page.getByTestId('takeaway-hint')).toContainText('Это итог разговора')
+  await shot(page, 'web-dialog-recap')
+
+  // The person's edit is what is kept: the recap itself is stored nowhere.
+  await takeaway.fill('Напишу брату завтра утром')
+  await expect(page.getByTestId('takeaway-hint')).toContainText('Одна фраза')
+  await modalButton(page, 'Завершить').click()
+  await expect(modal(page).getByRole('heading', { name: 'Спасибо, что поговорил(а)' })).toBeVisible({
+    timeout: 30_000,
+  })
+  await expect(page.getByTestId('alert-text')).toContainText('Напишу брату завтра утром')
 })

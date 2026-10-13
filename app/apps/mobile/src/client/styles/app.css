@@ -1330,7 +1330,8 @@ input:-webkit-autofill:focus {
 
 .rd-takeaway {
   width: 100%;
-  min-height: 80px;
+  /* Four lines: the recap the field starts with is a sentence or two and is read whole, not scrolled. */
+  min-height: 116px;
   padding: var(--ryadom-s-3);
   border: 1px solid var(--ryadom-line-strong);
   border-radius: var(--ryadom-r-m);

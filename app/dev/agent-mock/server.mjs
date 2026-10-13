@@ -120,6 +120,17 @@ function endDialog(dialog, takeaway, tensionAfter) {
   extractMemory(dialog)
 }
 
+/**
+ * A canned recap with the agent's rules for when there is none: a talk "without memory", one with a
+ * crisis and one where the person said under 40 characters get null. The real one is written by a model.
+ */
+function buildRecap(dialog) {
+  if (dialog.memoryMode === 'off' || dialog.crisisSeen) return null
+  const said = dialog.messages.filter((message) => message.role === 'user').map((message) => message.text)
+  if (said.join('').length < 40) return null
+  return 'Говорили о том, что сейчас на душе. Пришли к тому, что стоит вернуться к этому завтра.'
+}
+
 /** Conversations "without memory" are deleted 24 hours after their last message, as the agent does. */
 function purgeIncognito(userId) {
   const { dialogs } = userState(userId)
@@ -798,6 +809,12 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { ...listItem(dialog), messages: dialog.messages })
   }
 
+  // POST /v1/users/{userId}/dialogs/{dialogId}/recap - the closing sheet's recap; ends and stores nothing
+  if (parts.length === 6 && parts[5] === 'recap' && method === 'POST') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    return json(res, 200, { recap: buildRecap(dialog) })
+  }
+
   // POST /v1/users/{userId}/dialogs/{dialogId}/end
   if (parts.length === 6 && parts[5] === 'end' && method === 'POST') {
     if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
@@ -988,6 +1005,7 @@ wss.on('connection', (socket, request, context) => {
         send(socket, { type: 'ack', id: frame.id ?? message.id, messageId: message.id })
         // Help is needed now: the app shows its own helplines under the agent's words.
         if (crisis) {
+          dialog.crisisSeen = true
           send(socket, { type: 'safety', text: 'Если тебе сейчас опасно — позвони по одному из номеров ниже.' })
         }
         void streamAssistantReply(socket, dialog, crisis)

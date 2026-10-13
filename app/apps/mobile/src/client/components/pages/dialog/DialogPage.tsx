@@ -3,6 +3,7 @@ import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import type { RecapOutcome } from '@ryadom/client-core/dialog-recap'
 import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
@@ -15,7 +16,7 @@ import {
   type DialogMessageView,
   type DialogSocketState,
 } from '../../../lib/dialog-socket'
-import { getDialog } from '../../../lib/api'
+import { dialogRecap, getDialog } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
 import { watchMemoryCard } from '../../../lib/memory'
 import { openRoute } from '../../../lib/nav'
@@ -135,6 +136,10 @@ export default function DialogPage({
   /** The agent's voice is audible: the text can already be complete while the audio still plays. */
   const [voiceOut, setVoiceOut] = useState(false)
   const [endOpened, setEndOpened] = useState(false)
+  // The closing sheet's recap of the conversation, asked for each time the sheet opens.
+  const [recap, setRecap] = useState<string | null>(null)
+  const [recapPending, setRecapPending] = useState(false)
+  const recapAsk = useRef(0)
   const [summary, setSummary] = useState<DialogSummaryApiResponse | null | undefined>(undefined)
 
   const socket = useRef<DialogSocket | null>(null)
@@ -566,6 +571,25 @@ export default function DialogPage({
     if (handsFree) void closeMic('manual', 'drop')
     else dropListening()
     setEndOpened(true)
+    void askRecap()
+  }
+
+  /**
+   * The agent's recap for the sheet's field. A later opening supersedes an earlier answer; a talk
+   * "without memory", one where the person has said nothing yet, and any failure leave the field as it is.
+   */
+  async function askRecap() {
+    if (memoryMode === DialogMemoryMode.Off || !messages.some((message) => message.role === 'user')) return
+    const ask = ++recapAsk.current
+    setRecapPending(true)
+    try {
+      const result = await dialogRecap(dialogId)
+      if (recapAsk.current === ask && result.ok && result.data.recap) setRecap(result.data.recap)
+    } catch {
+      // No recap: the person writes their own, as before.
+    } finally {
+      if (recapAsk.current === ask) setRecapPending(false)
+    }
   }
 
   /*
@@ -803,12 +827,15 @@ export default function DialogPage({
       <DialogEndSheet
         opened={endOpened}
         onClose={() => setEndOpened(false)}
-        onSubmit={(takeaway, tension) => {
+        recap={recap}
+        recapPending={recapPending}
+        onSubmit={(takeaway, tension, recapOutcome: RecapOutcome) => {
           // Neither the takeaway nor the value on the scale is reported, only whether each was given.
           track(AnalyticsEvent.DialogEndSubmitted, {
             has_takeaway: takeaway !== null,
             gave_tension: tension !== null,
             skipped: takeaway === null && tension === null,
+            recap: recapOutcome,
           })
           socket.current?.end(takeaway, tension)
           // The summary arrives as an `ended` frame. If the agent stays silent or the socket is

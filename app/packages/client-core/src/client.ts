@@ -48,6 +48,7 @@ import type {
   DialogApiErrorCode,
   DialogApiResponse,
   DialogMode,
+  DialogRecapApiResponse,
   EndDialogApiRequest,
   EndDialogApiResponse,
   ListDialogsApiResponse,
@@ -74,7 +75,14 @@ import {
   type UpdateMemorySettingsApiRequest,
   type UpdateMemorySettingsApiResponse,
 } from '@ryadom/contracts/api/memory'
-import { ApiPath, dialogEndPath, dialogPath, memoryFactPath, sessionPath } from '@ryadom/contracts/api/paths'
+import {
+  ApiPath,
+  dialogEndPath,
+  dialogPath,
+  dialogRecapPath,
+  memoryFactPath,
+  sessionPath,
+} from '@ryadom/contracts/api/paths'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { newDeviceCredentials } from './device'
 import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from './dialog-socket'
@@ -644,6 +652,10 @@ export function createClient(config: ClientConfig) {
         method: 'POST',
         body: data,
       }),
+
+    /** The closing sheet's recap, `recap: null` when there is none. It ends and stores nothing. */
+    dialogRecap: (dialogId: string): Promise<ApiOutcome<DialogRecapApiResponse, DialogApiErrorCode>> =>
+      apiOutcome<DialogRecapApiResponse, DialogApiErrorCode>(dialogRecapPath(dialogId), { method: 'POST' }),
 
     /** A live dialog connection bound to this client's session and address. */
     createDialogSocket: (

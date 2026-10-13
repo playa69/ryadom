@@ -48,13 +48,17 @@ export enum ApiPath {
   Ingest = '/api/ingest',
 }
 
-/** `/api/dialogs/:id` and `/api/dialogs/:id/end` are built from the dialog id. */
+/** `/api/dialogs/:id`, `/api/dialogs/:id/end` and `/api/dialogs/:id/recap` are built from the dialog id. */
 export function dialogPath(dialogId: string): string {
   return `${ApiPath.Dialogs}/${encodeURIComponent(dialogId)}`
 }
 
 export function dialogEndPath(dialogId: string): string {
   return `${dialogPath(dialogId)}/end`
+}
+
+export function dialogRecapPath(dialogId: string): string {
+  return `${dialogPath(dialogId)}/recap`
 }
 
 /** `/api/memory/facts/:id`: one remembered fact of the person. */

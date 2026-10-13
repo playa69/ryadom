@@ -1,14 +1,15 @@
-"""REST диалогов: начать, журнал, история, завершить, стереть пользователя (specs/agent-api)."""
+"""REST диалогов: начать, журнал, история, итог, завершить, стереть пользователя (specs/agent-api)."""
 
 import logging
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import AgentError, dialog_not_found, validation_error
 from app.services.dialog_store import InvalidCursor
+from app.services.recap import make_recap
 
 logger = logging.getLogger("agent.dialogs")
 
@@ -97,6 +98,18 @@ async def get_dialog(user_id: str, dialog_id: str, store: Store) -> dict[str, An
     if dialog is None:
         raise dialog_not_found()
     return {**dialog.to_item(), "messages": [m.to_json() for m in dialog.messages]}
+
+
+@router.post("/dialogs/{dialog_id}/recap")
+async def recap_dialog(user_id: str, dialog_id: str, store: Store, request: Request) -> dict[str, Any]:
+    """Итог разговора для экрана завершения (app/services/recap.py). Ничего не меняет: разговор не завершается, итог нигде
+    не хранится. `recap: null` — итога нет: короткий разговор, «Без памяти», кризис, модель недоступна или не ответила."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog = store.get(user, dialog_id)
+    if dialog is None:
+        raise dialog_not_found()
+    return {"recap": await make_recap(request.app.state.recap, dialog)}
 
 
 @router.post("/dialogs/{dialog_id}/end")

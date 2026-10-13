@@ -42,6 +42,7 @@ export const {
   startDialog,
   listDialogs,
   getDialog,
+  dialogRecap,
   endDialog,
   getAppStatus,
   refreshSession,

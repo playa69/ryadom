@@ -202,6 +202,12 @@ export type DeleteAccountStepName = 'opened' | 'confirmed' | 'cancelled'
 /** The person's answer to the unfinished dialog: go on with it, end it and begin a new one, or close the question. */
 export type ResumeChoice = 'continue' | 'new' | 'dismissed'
 
+/**
+ * What became of the recap the closing sheet put into "what you take with you": none was offered,
+ * sent as it was, edited, or erased. Never the text.
+ */
+export type RecapOutcome = 'none' | 'kept' | 'edited' | 'cleared'
+
 export type ProfileField = 'name' | 'voice'
 
 /** What was done with a fact of memory: the names are those of the buttons' meaning, never of the fact. */
@@ -283,8 +289,14 @@ export interface AnalyticsEventProperties {
   /**
    * The tension itself is never sent: the server reports how it changed, in `DialogEnded`.
    * `skipped` is true when the sheet was closed with nothing filled in (no takeaway and no tension).
+   * `recap` is what became of the recap the sheet offered as the takeaway.
    */
-  [AnalyticsEvent.DialogEndSubmitted]: { has_takeaway: boolean; gave_tension: boolean; skipped: boolean }
+  [AnalyticsEvent.DialogEndSubmitted]: {
+    has_takeaway: boolean
+    gave_tension: boolean
+    skipped: boolean
+    recap: RecapOutcome
+  }
   /** Send with `trackAnonymous`: how often SOS is opened, not who opened it. */
   [AnalyticsEvent.SosOpened]: { source: 'header' | 'dialog' | 'safety_frame' | 'home' | 'menu' }
   /** Send with `trackAnonymous`: a tap on a hotline's number, not whose. */
