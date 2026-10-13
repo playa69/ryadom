@@ -183,7 +183,7 @@ def make_live_client(connector: FakeConnector, tts: Any = None) -> TestClient:
 @pytest.fixture(autouse=True)
 def pinned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Настройки live не зависят от .env разработчика: контекст по умолчанию переносится текстом (GEMINI_TEXT_CONTEXT)."""
-    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40)):
+    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40), ("rotate_every", 1)):
         monkeypatch.setattr(APP_CONFIG.gemini, name, value)
 
 

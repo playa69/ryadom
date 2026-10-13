@@ -95,7 +95,7 @@ def sample(name: str, **labels: str) -> float:
 @pytest.fixture
 def tune(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
     """Настройки Gemini для приложения, созданного после вызова: контекст текстом, как в проде, и всё, что передал тест."""
-    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40)):
+    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40), ("rotate_every", 1)):
         monkeypatch.setattr(APP_CONFIG.gemini, name, value)
 
     def apply(**values: Any) -> None:
