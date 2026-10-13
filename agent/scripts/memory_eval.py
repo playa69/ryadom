@@ -106,12 +106,14 @@ class Metered:
         self.chars_in = 0
         self.chars_out = 0
         self.calls = 0
+        self.answers: list[str] = []  # сырые ответы модели (синтетика набора) — для разбора, почему факт не сохранился
 
     async def complete(self, messages: list[dict[str, str]]) -> str:
         self.calls += 1
         self.chars_in += sum(len(m["content"]) for m in messages)
         answer = await self.model.complete(messages)
         self.chars_out += len(answer)
+        self.answers.append(answer)
         return answer
 
     async def aclose(self) -> None:
@@ -119,13 +121,23 @@ class Metered:
 
 
 def matches(label: dict[str, Any], fact: dict[str, Any]) -> bool:
-    if label.get("category") and label["category"] != fact["category"]:
+    """Факт соответствует метке: та же категория (метка может разрешать несколько) и близкий текст или те же слоты.
+    Метка `{"any": [...]}` — один и тот же смысл, который законно ложится в разные категории (граница или стиль)."""
+    if "any" in label:
+        return any(matches(option, fact) for option in label["any"])
+    category = label.get("category")
+    allowed = category if isinstance(category, list) else [category] if category else []
+    if allowed and fact["category"] not in allowed:
         return False
     if label.get("slots"):
         slots = fact.get("slots") or {}
         return all(slots.get(key) == value for key, value in label["slots"].items())
     text = label["text"]
-    return filters.similarity(text, fact["text"]) >= 0.45 or filters.grounded(text, [fact["text"]])
+    return (
+        filters.similarity(text, fact["text"]) >= 0.45
+        or filters.grounded(text, [fact["text"]])  # метка целиком есть в факте
+        or filters.grounded(fact["text"], [text])  # факт короче, но целиком про метку («Любит джаз»)
+    )
 
 
 def forbidden_hit(label: dict[str, Any], fact: dict[str, Any]) -> bool:
@@ -134,10 +146,33 @@ def forbidden_hit(label: dict[str, Any], fact: dict[str, Any]) -> bool:
     )
 
 
+def blocked_counts() -> dict[str, float]:
+    """Сколько операций отброшено проверками, по причинам (метрика agent_memory_blocked_total процесса)."""
+    from prometheus_client import REGISTRY
+
+    found: dict[str, float] = {}
+    for metric in REGISTRY.collect():
+        if metric.name == "agent_memory_blocked":
+            for sample in metric.samples:
+                if sample.name.endswith("_total"):
+                    found[sample.labels["reason"]] = sample.value
+    return found
+
+
+def delta(before: dict[str, float], after: dict[str, float]) -> dict[str, int]:
+    return {key: int(value - before.get(key, 0)) for key, value in after.items() if value - before.get(key, 0) > 0}
+
+
 async def run_dialogs(
-    service: Any, store: Any, user_id: str, dialogs: list[list[dict[str, str]]], crisis: bool = False
+    service: Any,
+    store: Any,
+    user_id: str,
+    dialogs: list[list[dict[str, str]]],
+    crisis: bool = False,
+    jobs: list[str] | None = None,
 ) -> list[float]:
-    """Провести диалоги по очереди одним человеком и извлечь память после каждого. Время заданий, с."""
+    """Провести диалоги по очереди одним человеком и извлечь память после каждого. Время заданий, с. В `jobs` — итог
+    каждого задания (статус и причина), чтобы видеть пропуски и сбои модели."""
     timings = []
     for messages in dialogs:
         dialog, _, _ = store.start(user_id, new=True)
@@ -152,9 +187,21 @@ async def run_dialogs(
         job = await asyncio.to_thread(service.db.run, lambda conn, d=dialog.id: S.get_job(conn, d))
         if job is not None and job.status == "queued":
             started = time.monotonic()
-            await service.process(job)
+            outcome = await service.process(job)
             timings.append(time.monotonic() - started)
+            for _ in range(2):  # как в агенте: упавшее задание повторяется (там — через 30 с и 2 мин, здесь — сразу)
+                if outcome != "retry":
+                    break
+                await asyncio.to_thread(
+                    service.db.run,
+                    lambda conn, d=dialog.id: conn.execute("UPDATE memory_jobs SET status='queued' WHERE dialog_id=?", (d,)),
+                )
+                retry = await asyncio.to_thread(service.db.run, lambda conn, d=dialog.id: S.get_job(conn, d))
+                outcome = await service.process(retry)
         await service.drain()
+        if jobs is not None:
+            final = await asyncio.to_thread(service.db.run, lambda conn, d=dialog.id: S.get_job(conn, d))
+            jobs.append(f"{final.status}:{final.skip_reason or final.last_error_code or ''}" if final else "нет задания")
     return timings
 
 
@@ -189,11 +236,15 @@ async def evaluate_extract(args: argparse.Namespace) -> dict[str, Any]:
                 await store.ensure_user(user_id)
                 await service.update_settings(user_id, True, "eval")
                 await asyncio.sleep(0.01)
-                timings += await run_dialogs(service, store, user_id, [item["messages"]], crisis=bool(item.get("crisis")))
+                blocked_before, answers_before, jobs = blocked_counts(), len(model.answers), []
+                timings += await run_dialogs(
+                    service, store, user_id, [item["messages"]], crisis=bool(item.get("crisis")), jobs=jobs
+                )
                 facts = (await service.get_memory(user_id))["facts"]
                 user_text = [m["text"] for m in item["messages"] if m["role"] == "user"]
                 labels = item["must"] + item["may"]
-                relevant = [f for f in facts if any(matches(label, f) for label in labels)]
+                # Пересказ разговора ожидается всегда (одна строка на человека); запрещённое в нём ловят утечки ниже.
+                relevant = [f for f in facts if f["category"] == "recap" or any(matches(label, f) for label in labels)]
                 fabricated = [
                     f for f in facts if f["category"] not in ("style", "recap") and not filters.grounded(f["text"], user_text)
                 ]
@@ -216,7 +267,20 @@ async def evaluate_extract(args: argparse.Namespace) -> dict[str, Any]:
                 totals["leaks"] += len(hits)
                 totals["active"] += len(active)
                 totals["duplicates"] += dups
-                details.append({"id": item["id"], "facts": [(f["category"], f["status"], f["text"]) for f in facts]})
+                details.append(
+                    {
+                        "id": item["id"],
+                        "facts": [(f["category"], f["status"], f["text"]) for f in facts],
+                        "missed": [
+                            label.get("text") or label.get("slots") or label.get("any")
+                            for label in item["must"]
+                            if label not in found
+                        ],
+                        "jobs": jobs,
+                        "blocked": delta(blocked_before, blocked_counts()),
+                        "answers": model.answers[answers_before:],
+                    }
+                )
             chain_checks = chain_ok = 0
             for chain in load("chains.jsonl", extra):
                 user_id = str(uuid.uuid4())
@@ -276,16 +340,25 @@ def print_extract(result: dict[str, Any]) -> bool:
     ]
     print(
         f"Модель: {result['model']}, вызовов: {result['calls']}, токенов на вызов ≈ {result['tokens_in_per_call']} вход / "
-        f"{result['tokens_out_per_call']} выход; цена на человека в месяц ≈ ${result['cost_per_person_month']:.3f}\n"
+        f"{result['tokens_out_per_call']} выход; цена на человека в месяц ≈ {result['cost_per_person_month']:.2f} "
+        "(в единицах цен --price-in/--price-out)\n"
     )
     print("| Метрика | Значение | Порог | Итог |\n|---|---|---|---|")
     for name, value, threshold, ok in rows:
         print(f"| {name} | {value} | {threshold} | {'OK' if ok else 'нет'} |")
     for item in result["details"]:
-        print(f"\n{item['id']}:")
+        print(f"\n{item['id']}: задания {item.get('jobs')}; отброшено проверками {item.get('blocked') or {}}")
         for category, status, text in item["facts"]:
             print(f"  [{category}/{status}] {text}")
+        for missed in item.get("missed") or []:
+            print(f"  не найдено «must»: {missed}")
+        if VERBOSE:
+            for answer in item.get("answers") or []:
+                print("  ответ модели: " + " ".join(answer.split())[:700])
     return all(ok for *_, ok in rows)
+
+
+VERBOSE = False
 
 
 def main() -> int:
@@ -295,11 +368,14 @@ def main() -> int:
     extract = sub.add_parser("extract", help="золотой набор через модель извлечения (нужен ключ прокси)")
     extract.add_argument("--model", required=True)
     extract.add_argument("--base-url", default="")
-    extract.add_argument("--price-in", type=float, default=0.0, help="$ за 1 млн входных токенов")
-    extract.add_argument("--price-out", type=float, default=0.0, help="$ за 1 млн выходных токенов")
+    extract.add_argument("--price-in", type=float, default=0.0, help="цена 1 млн входных токенов (в любых единицах)")
+    extract.add_argument("--price-out", type=float, default=0.0, help="цена 1 млн выходных токенов (в тех же единицах)")
     extract.add_argument("--extra", default="", help="каталог с дополнительными *.jsonl (вне репозитория)")
     extract.add_argument("--out", default="")
+    extract.add_argument("--verbose", action="store_true", help="печатать сырые ответы модели (тексты набора синтетические)")
     args = parser.parse_args()
+    global VERBOSE
+    VERBOSE = bool(getattr(args, "verbose", False))
     if args.mode == "filters":
         return 0 if print_filters(evaluate_filters(load("adversarial.jsonl"))) else 1
     result = asyncio.run(evaluate_extract(args))

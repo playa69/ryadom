@@ -684,6 +684,8 @@ class MemoryService:
             async with asyncio.timeout(self._cfg.llm_timeout_seconds * 2 + 5):
                 raw_ops, _ = await extractor.run_model(self.model, inp)
         except MemoryModelError as error:
+            # В тексте ошибки только код и статус (ответа модели там нет): видно, что именно сломалось у прокси.
+            logger.warning("memory model error dialog=%s: %s", current.dialog_id, error)
             return await self._fail(current, error.code)
         except extractor.ParseError:
             return await self._fail(current, "parse")

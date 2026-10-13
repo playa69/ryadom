@@ -55,6 +55,27 @@ def test_parse_is_tolerant() -> None:
     assert parse('Вот ответ: {"ops": [{"op": "add"}]} — готово') == ([{"op": "add"}], None)
 
 
+def test_broken_json_from_a_live_model_is_salvaged_op_by_op() -> None:
+    """Так отвечала GigaChat 3 Pro: обёртка ops повторена внутри операций, последняя оборвана на середине."""
+    nested = (
+        '{"ops":[{"op":"add","category":"person","slots":{"role":"сестра","name":"Аня"},"evidence":[4]},'
+        '{"ops":[{"op":"add","category":"situation","text":"Поругалась с мамой, есть \\"напряжение\\"","evidence":[0]},'
+        '{"ops":[{"op":"add","category":"works","text":"Обрыв на сер'
+    )
+    ops, skip = parse(nested)
+    assert [item["category"] for item in ops] == ["person", "situation"] and skip is None
+    assert ops[1]["text"] == 'Поругалась с мамой, есть "напряжение"'
+
+
+async def test_format_retry_is_a_normal_chat_turn(tmp_path: Path) -> None:
+    """Повтор после неразобранного ответа: прошлый ответ модели как assistant, затем напоминание — не два user подряд."""
+    store, service, model, u = await setup(tmp_path, "совсем не JSON", answer(op(evidence=[2])))
+    await run_job(service, await conversation(store, u))
+    roles = [message["role"] for message in model.calls[1]]
+    assert roles == ["system", "user", "assistant", "user"] and model.calls[1][2]["content"] == "совсем не JSON"
+    await close_env(store, service)
+
+
 async def test_fenced_answer_is_parsed_and_the_fact_saved(tmp_path: Path) -> None:
     store, service, _, u = await setup(tmp_path, "```json\n" + answer(op(evidence=[2])) + "\n```")
     dialog = await conversation(store, u)
@@ -127,7 +148,28 @@ async def test_server_filters_are_the_last_line(tmp_path: Path) -> None:
     )
     dialog = await conversation(store, u, *dialog_texts)
     assert await run_job(service, dialog) == "done"
-    assert await facts_of(service, u) == []
+    # Из всего предложенного остаётся только «Сестра»: негодное имя с фамилией отброшено, сам близкий — нет.
+    saved = await facts_of(service, u)
+    assert [(f.category, f.text, f.slots) for f in saved] == [("person", "Сестра", {"role": "сестра"})]
+    await close_env(store, service)
+
+
+async def test_model_slots_are_repaired_not_dropped(tmp_path: Path) -> None:
+    """Живая модель пишет роль по-английски и «ты» вместо имени, а в evidence добавляет реплику агента: факт сохраняется
+    по словам человека, лишнее отбрасывается."""
+    store, service, _, u = await setup(
+        tmp_path,
+        answer(
+            op(category="person", text=None, slots={"role": "sister", "name": "Аня", "note": "поддерживает"}, evidence=[0, 1]),
+            op(category="style", text=None, slots={"address": "ты", "form": "ty", "advice": "ask_first"}, evidence=[2]),
+            op(category="works", text="Помогают прогулки", evidence=[1]),  # только реплика агента — нельзя (I6)
+        ),
+    )
+    texts = ("Моя сестра Аня меня поддерживает", "Давай на ты, и без советов пока", "ну", "вот")
+    dialog = await conversation(store, u, *texts)
+    await run_job(service, dialog)
+    saved = sorted((f.category, f.text) for f in await facts_of(service, u))
+    assert saved == [("person", "Сестра Аня: поддерживает"), ("style", "На «ты»; без советов, пока не попросит")]
     await close_env(store, service)
 
 

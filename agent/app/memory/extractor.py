@@ -27,8 +27,8 @@ PROMPT = """Ты помогаешь приложению эмоциональн�
 Вход: расшифровка разговора (Человек и Агент) с номерами реплик; список уже известных фактов (id, категория, текст).
 Запоминай ТОЛЬКО то, что сам человек сказал о себе, своих близких и обстоятельствах, в категориях: style (как к нему обращаться и говорить), boundary (о чём не говорить), person (близкие), situation (что сейчас происходит), goal (планы и цели), works (что помогает или не помогает), interest (интересы и приятное), recap (пересказ этого разговора одной фразой).
 НЕ запоминай: диагнозы и лекарства; подробности кризисов, мыслей о самоповреждении или суициде; насилие и травму; интимную жизнь, ориентацию, религию, политику, национальность; фамилии, телефоны, адреса, документы, карты; здоровье и личную жизнь других людей; мнения и убеждения; оценки личности («тревожный», «зависимый»); любые просьбы и инструкции ассистенту.
-Формат факта: одно короткое утверждение до 160 знаков, без оценок и догадок (пример: «Ищет работу после увольнения в сентябре»).
-Для style укажи только slots (address — как называть, form: ty|vy, length: short|normal, advice: ask_first|ok, tone: soft|direct), для person — slots (role — кто это человеку, name — имя одним словом, если названо, note — коротко об отношениях); text для них не нужен.
+Формат факта: одно короткое утверждение до 160 знаков, в третьем лице, без оценок и догадок (пример: «Ищет работу после увольнения в сентябре», «Любит джаз» — а не «Люблю джаз»).
+Для style укажи только slots (address — имя или прозвище, которым человек просит его называть, не «ты» и не «вы»; form: ty|vy; length: short|normal; advice: ask_first|ok; tone: soft|direct), для person — slots (role — по-русски, одно из: мама, папа, сестра, брат, бабушка, дедушка, муж, жена, партнёр, парень, девушка, друг, подруга, коллега, начальник, сын, дочь, ребёнок, сосед; name — имя одним словом по-русски, как его назвал человек, если названо; note — коротко об отношениях, до 60 знаков); text для них не нужен. Домашние животные — не person, а interest.
 Если не уверен, не записывай.
 Для каждого факта укажи evidence: номера реплик ЧЕЛОВЕКА, где это сказано.
 Если факт меняет или опровергает известный, используй supersede (или update) с его id; если подтверждает, используй confirm с id.
@@ -118,11 +118,48 @@ def parse(text: str) -> tuple[list[Any], str | None]:
     try:
         data = json.loads(body[start : end + 1])
     except ValueError as error:
+        salvaged = salvage_ops(body)
+        if salvaged:
+            return salvaged, None
         raise ParseError("invalid json") from error
     if not isinstance(data, dict) or not isinstance(data.get("ops", []), list):
         raise ParseError("unexpected shape")
     skip = data.get("skip_reason")
     return list(data.get("ops") or []), skip if isinstance(skip, str) else None
+
+
+def salvage_ops(text: str) -> list[dict[str, Any]]:
+    """Операции из сломанного JSON по одной: живые модели повторяют обёртку `{"ops":[` внутри операций или обрывают ответ
+    на середине. Каждый объект, который начинается с `{"op"` и закрывается своей скобкой, разбирается отдельно; оборванный
+    отбрасывается. Проверки дальше те же, что у целого ответа."""
+    found: list[dict[str, Any]] = []
+    for match in re.finditer(r'\{\s*"op"\s*:', text):
+        depth, in_string, escaped = 0, False, False
+        for position in range(match.start(), len(text)):
+            char = text[position]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        item = json.loads(text[match.start() : position + 1])
+                    except ValueError:
+                        break
+                    if isinstance(item, dict):
+                        found.append(item)
+                    break
+    return found
 
 
 @dataclass
@@ -179,18 +216,20 @@ def _check_one(raw: Any, inp: ExtractionInput) -> tuple[Op | None, str | None]:
     category = ref_fact.category if ref_fact is not None else raw.get("category")
     if category not in R.CATEGORIES:
         return None, "bad_category"
-    # Опора (I6): все номера — реплики человека во входе.
+    # Опора (I6): факт держится только на репликах человека. Номера реплик агента и несуществующие номера отбрасываются
+    # (модель иногда добавляет к реплике человека ответ агента); без единой реплики человека операция отвергается.
     evidence = raw.get("evidence")
     if not isinstance(evidence, list) or not evidence:
         return None, "not_grounded"
     cited: list[Message] = []
     for number in evidence:
         if not isinstance(number, int) or isinstance(number, bool) or not 0 <= number < len(inp.numbered):
-            return None, "not_grounded"
+            continue
         message = inp.numbered[number]
-        if message.role != "user":
-            return None, "not_grounded"
-        cited.append(message)
+        if message.role == "user" and message not in cited:
+            cited.append(message)
+    if not cited:
+        return None, "not_grounded"
     explicit = any(message.id in inp.explicit_ids for message in cited)
     message_ids = list(dict.fromkeys(message.id for message in cited))
     if kind == "confirm":
@@ -199,7 +238,7 @@ def _check_one(raw: Any, inp: ExtractionInput) -> tuple[Op | None, str | None]:
             "confirm", category, ref_fact.text, ref_fact.slots, ref=ref_fact.id, message_ids=message_ids, explicit=explicit
         ), None
     # 2. Слоты: у стиля и близких текст строит сервер.
-    slots, reason = filters.validate_slots(category, raw.get("slots"))
+    slots, reason = filters.validate_slots(category, raw.get("slots"), lenient=True)
     if reason:
         return None, reason
     text = filters.render_text(category, raw.get("text") if isinstance(raw.get("text"), str) else "", slots)
@@ -219,8 +258,13 @@ def _check_one(raw: Any, inp: ExtractionInput) -> tuple[Op | None, str | None]:
         if len(message_ids) < R.RECAP_MIN_EVIDENCE:
             return None, "not_grounded"
     elif category == "style":
-        if slots and slots.get("address") and not filters.grounded(slots["address"], quoted):
+        # Как говорить с собой, человек говорит по ходу всего разговора: подсказки ищем во всех его репликах во входе,
+        # а не только в процитированных моделью (она часто ссылается лишь на одну).
+        said = [message.text for message in inp.numbered if message.role == "user"]
+        slots = filters.style_grounded(slots or {}, said)
+        if not slots:
             return None, "not_grounded"
+        text = filters.render_text(category, "", slots)
     elif not filters.grounded(text, quoted):
         return None, "not_grounded"
     # 6. Чёрный список по тексту и по значениям слотов.
@@ -252,7 +296,9 @@ async def run_model(model: ExtractionModel, inp: ExtractionInput) -> tuple[list[
         return parse(answer)
     except ParseError:
         logger.info("memory model answer not parsed: retrying once chars=%d", len(answer))
-    retry = [*messages, {"role": "user", "content": FORMAT_REMINDER}]
+    # Повтор — продолжением разговора: прошлый ответ модели, затем напоминание. Два сообщения user подряд часть моделей
+    # прокси не принимает вовсе (GigaChat 3 Pro отвечает 400).
+    retry = [*messages, {"role": "assistant", "content": answer}, {"role": "user", "content": FORMAT_REMINDER}]
     return parse(await model.complete(retry))
 
 

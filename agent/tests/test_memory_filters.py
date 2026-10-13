@@ -147,7 +147,7 @@ def test_slot_values_are_checked_too() -> None:
 def test_rule_stems_are_in_normal_form() -> None:
     """Стемы записаны в нормальной форме, иначе после нормализации текста они не совпадали бы никогда."""
     entries = [e for items in R.BLACKLIST.values() for e in items] + list(R.SENSITIVE) + list(R.CRISIS_METHODS)
-    entries += list(R.THIRD_PARTY_TOPICS)
+    entries += list(R.THIRD_PARTY_TOPICS) + [cue for cues in R.STYLE_CUES.values() for cue in cues]
     for entry in entries:
         if entry.startswith("~"):
             assert not re.search(r"([а-яёa-z])\1", entry), entry  # регулярные выражения тоже без повторов букв
@@ -194,6 +194,29 @@ def test_person_slots() -> None:
     assert filters.validate_slots("person", {"role": "сестра", "name": "аня"})[1] == "bad_slots"
     assert filters.validate_slots("person", {"role": "друг", "note": "я" * 61})[1] == "bad_slots"
     assert filters.validate_slots("works", {"role": "сестра"}) == (None, None)  # у остальных категорий слотов нет
+
+
+def test_style_keeps_only_what_the_person_said() -> None:
+    """Модель заполняет стиль «по умолчанию»: остаются только поля, о которых человек сказал сам."""
+    guessed = {"address": "Марина", "form": "ty", "length": "normal", "advice": "ok", "tone": "soft"}
+    said = ["Меня зовут Марина, давай на ты", "Только без советов, я просто хочу, чтобы меня выслушали"]
+    assert filters.style_grounded(guessed, said) == {"address": "Марина", "form": "ty"}
+    honest = {**guessed, "advice": "ask_first"}
+    assert filters.style_grounded(honest, said) == {"address": "Марина", "form": "ty", "advice": "ask_first"}
+    assert filters.style_grounded({"form": "vy", "tone": "soft"}, ["Подруга Оля очень заботливая"]) == {}
+    assert filters.style_grounded({"advice": "ask_first"}, ["мне не нравится, когда мне сразу дают советы"]) == {
+        "advice": "ask_first"
+    }
+
+
+def test_english_roles_and_pronoun_address_from_the_model() -> None:
+    assert filters.validate_slots("person", {"role": "Sister", "name": "Аня"}, lenient=True)[0] == {
+        "role": "сестра",
+        "name": "Аня",
+    }
+    assert filters.validate_slots("style", {"address": "ты", "form": "ty"}, lenient=True)[0] == {"form": "ty"}
+    assert filters.validate_slots("person", {"role": "друг", "note": "я" * 61}, lenient=True)[0] == {"role": "друг"}
+    assert filters.validate_slots("person", {"role": "друг", "note": "я" * 61})[1] == "bad_slots"  # ручной ввод — строго
 
 
 def test_grounding() -> None:

@@ -175,12 +175,17 @@ _NAME = re.compile(r"^[А-ЯЁA-Z][а-яёa-z]+(?:-[А-ЯЁA-Z]?[а-яёa-z]+)?$
 
 
 def canonical_role(role: str) -> str | None:
-    """Роль из словаря в том виде, как она пишется в карточке; None, если такой роли нет."""
-    return _ROLES.get(_base(" ".join(role.split())))
+    """Роль из словаря в том виде, как она пишется в карточке (английский синоним — тоже); None, если такой роли нет."""
+    key = _base(" ".join(role.split()))
+    return _ROLES.get(key) or R.ROLE_ALIASES.get(key)
 
 
-def validate_slots(category: str, slots: object) -> tuple[dict[str, str] | None, str | None]:
-    """Проверенные слоты (лишние поля отброшены) и код причины отказа. У категорий без слотов — (None, None)."""
+def validate_slots(category: str, slots: object, lenient: bool = False) -> tuple[dict[str, str] | None, str | None]:
+    """Проверенные слоты (лишние поля отброшены) и код причины отказа. У категорий без слотов — (None, None).
+
+    `lenient` — для предложений модели: негодное необязательное поле (имя не одним словом, слишком длинная заметка,
+    местоимение вместо имени в обращении) отбрасывается, а сам факт остаётся. Ручной ввод человека проверяется строго.
+    """
     if category not in ("style", "person"):
         return None, None
     if not isinstance(slots, dict):
@@ -192,10 +197,14 @@ def validate_slots(category: str, slots: object) -> tuple[dict[str, str] | None,
             if not isinstance(address, str):
                 return None, "bad_slots"
             address = " ".join(address.split())
+            if lenient and _base(address).strip("«»\"'") in R.ADDRESS_NOT_A_NAME:
+                address = ""
             if address:
                 if len(address) > R.STYLE_ADDRESS_MAX or any(ch.isdigit() for ch in address) or _LINKISH.search(address):
-                    return None, "bad_slots"
-                clean["address"] = address
+                    if not lenient:
+                        return None, "bad_slots"
+                else:
+                    clean["address"] = address
         for name, allowed in R.STYLE_SLOTS.items():
             value = slots.get(name)
             if value is None:
@@ -214,16 +223,19 @@ def validate_slots(category: str, slots: object) -> tuple[dict[str, str] | None,
             return None, "bad_slots"
         name = name.strip()
         if len(name) > R.PERSON_NAME_MAX or not _NAME.match(name):
-            return None, "bad_slots"
-        clean["name"] = name
+            if not lenient:
+                return None, "bad_slots"
+        else:
+            clean["name"] = name
     note = slots.get("note")
     if note is not None and note != "":
         if not isinstance(note, str):
             return None, "bad_slots"
         note = " ".join(note.split()).rstrip(".")
         if len(note) > R.PERSON_NOTE_MAX:
-            return None, "bad_slots"
-        if note:
+            if not lenient:
+                return None, "bad_slots"
+        elif note:
             clean["note"] = note
     return clean, None
 
@@ -238,6 +250,20 @@ _STYLE_WORDS = {
     ("tone", "soft"): "мягко",
     ("tone", "direct"): "прямо, без смягчений",
 }
+
+
+def style_grounded(slots: dict[str, str], quoted: Sequence[str]) -> dict[str, str]:
+    """Только те поля стиля, на которые есть опора в словах человека: имя — среди процитированных слов, остальное — по
+    подсказкам (`STYLE_CUES`). Пустой результат — стиль ни на чём не держится."""
+    variants = [variant for text in quoted for variant in forms(text)]
+    kept: dict[str, str] = {}
+    if slots.get("address") and grounded(slots["address"], quoted):
+        kept["address"] = slots["address"]
+    for name in ("form", "length", "advice", "tone"):
+        value = slots.get(name)
+        if value and _hits(R.STYLE_CUES.get((name, value), ()), variants):
+            kept[name] = value
+    return kept
 
 
 def style_phrase(slots: dict[str, str]) -> str:
