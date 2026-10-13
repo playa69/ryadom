@@ -476,7 +476,8 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 **Флаг.** Всё работает за `MEMORY_MODE` (`off` по умолчанию; `shadow` — факты извлекаются у включивших память, но в разговор не
 попадают; `on`). Без диска (`DIALOG_DB_PATH`) памяти нет: режим принудительно `off`. `/health/ready` показывает `"memory"`: `off`,
 `shadow`, `on` или `unavailable` (режим задан, а диск не открылся или нет модели извлечения: адреса прокси или ключа `AGENT_API_TOKEN`).
-Остальные `MEMORY_*` — в `app/core/config.py` (`MemorySettings`) и `k8s/agent/README.md`.
+Остальные `MEMORY_*` — в `app/core/config.py` (`MemorySettings`) и `k8s/agent/README.md`. В k8s память включена (`MEMORY_MODE: "on"`
+в `agent-config`).
 
 **Согласие.** Память выключена, пока человек сам не включил её с версией согласия (`PUT …/memory/settings`). Без этого агент ничего не
 читает в разговор и ничего не пишет (даже строк заданий). Каждое включение и выключение сдвигает «эпоху»: разговоры, начатые раньше, не
