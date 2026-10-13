@@ -2,3 +2,4 @@
 baseline*.json
 .pytest_cache/
 __pycache__/
+features*.json
