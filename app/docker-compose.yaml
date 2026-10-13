@@ -91,6 +91,7 @@ services:
       AGENT_TIMEOUT_MS: '10000'
       DIALOG_IDLE_TIMEOUT_SEC: '900'
       DIALOG_MAX_DURATION_SEC: '7200'
+      DIALOG_AUDIO_CODECS: opus,mulaw
       REDIS_ENABLED: 'true'
       REDIS_URL: redis://redis:6379
     ports:

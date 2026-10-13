@@ -1,14 +1,11 @@
-import {
-  AUDIO_FRAME_HEADER_BYTES,
-  AUDIO_TTS_SAMPLE_RATE,
-  AudioFrameKind,
-} from '@ryadom/contracts/api/dialogs'
 import { levelOf } from './level'
+import type { PcmChunk } from './tts-decoder'
 
 /**
- * Playback of the agent's voice: PCM16 frames at 24 kHz are queued as
- * `AudioBufferSourceNode`s stitched together on the context clock, so they play without clicks or
- * gaps on every platform, including iPhone, where Media Source Extensions are incomplete.
+ * Playback of the agent's voice: float samples, already decoded from whatever codec the connection
+ * uses (tts-decoder.ts), are queued as `AudioBufferSourceNode`s stitched together on the context
+ * clock, so they play without clicks or gaps on every platform, including iPhone, where Media Source
+ * Extensions are incomplete.
  *
  * The `AudioContext` is unlocked by the person's first tap (an iOS requirement), so `unlock()` is
  * called from a tap handler rather than on page load.
@@ -70,19 +67,12 @@ export class VoicePlayer {
     this.muted = false
   }
 
-  /** A frame from the socket. Other kinds are ignored, because the protocol may add more. */
-  enqueue(frame: ArrayBuffer): void {
-    if (!this.context || this.muted) return
-    if (frame.byteLength <= AUDIO_FRAME_HEADER_BYTES) return
-    const view = new DataView(frame)
-    if (view.getUint8(0) !== AudioFrameKind.Tts) return
+  /** Decoded speech from the socket, played right after what is already queued. */
+  enqueue(chunk: PcmChunk): void {
+    if (!this.context || this.muted || chunk.samples.length === 0) return
 
-    // The 5-byte header leaves the samples at an odd offset, where a typed array cannot start: copy them out.
-    const body = frame.slice(AUDIO_FRAME_HEADER_BYTES)
-    const samples = new Int16Array(body, 0, Math.floor(body.byteLength / 2))
-    const buffer = this.context.createBuffer(1, samples.length, AUDIO_TTS_SAMPLE_RATE)
-    const channel = buffer.getChannelData(0)
-    for (let i = 0; i < samples.length; i++) channel[i] = samples[i]! / 0x8000
+    const buffer = this.context.createBuffer(1, chunk.samples.length, chunk.sampleRate)
+    buffer.getChannelData(0).set(chunk.samples)
 
     const source = this.context.createBufferSource()
     source.buffer = buffer

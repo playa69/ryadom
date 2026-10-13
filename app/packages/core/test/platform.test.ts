@@ -69,6 +69,10 @@ describe('config', () => {
     expect(env.DIALOG_IDLE_TIMEOUT_SEC).toBe(900)
     expect(env.DIALOG_MAX_DURATION_SEC).toBe(7200)
     expect(env.DIALOG_SESSION_CHECK_SEC).toBe(30)
+    // Speech goes out as PCM16 until the codecs are switched on, so a new image changes nothing by itself.
+    expect(env.DIALOG_AUDIO_CODECS).toEqual(['pcm16'])
+    expect(env.DIALOG_OPUS_COMPLEXITY).toBe(5)
+    expect(env.DIALOG_OPUS_BITRATE).toBe(24_000)
     // No bucket manifest any more: the native axis defaults to "no gate, no banner".
     expect(env.MOBILE_ANDROID_MIN_VERSION_CODE).toBe(0)
     expect(env.MOBILE_ANDROID_LATEST_VERSION_CODE).toBe(0)
@@ -98,6 +102,34 @@ describe('config', () => {
       // The memory transport is allowed only locally: in production it would silently lose emails.
       expect(issues).toContain('EMAIL_TRANSPORT')
     }
+  })
+})
+
+describe('кодеки озвучки', () => {
+  const appEnv = { ...baseEnv, MOBILE_JWT_SECRET: 'y'.repeat(32) }
+
+  it('список через запятую, регистр и пробелы не важны; pcm16 добавляется всегда — его понимает любой клиент', () => {
+    expect(
+      loadEnv(appEnvSchema, { ...appEnv, DIALOG_AUDIO_CODECS: ' Opus, mulaw ' }).DIALOG_AUDIO_CODECS,
+    ).toEqual(['opus', 'mulaw', 'pcm16'])
+    expect(
+      loadEnv(appEnvSchema, { ...appEnv, DIALOG_AUDIO_CODECS: 'pcm16,opus' }).DIALOG_AUDIO_CODECS,
+    ).toEqual(['pcm16', 'opus'])
+    expect(loadEnv(appEnvSchema, { ...appEnv, DIALOG_AUDIO_CODECS: '' }).DIALOG_AUDIO_CODECS).toEqual([
+      'pcm16',
+    ])
+  })
+
+  it('опечатка в имени кодека и сложность вне 0..10 не дают стартовать', () => {
+    expect(() => loadEnv(appEnvSchema, { ...appEnv, DIALOG_AUDIO_CODECS: 'opus,aac' })).toThrow(
+      /DIALOG_AUDIO_CODECS/,
+    )
+    expect(() => loadEnv(appEnvSchema, { ...appEnv, DIALOG_OPUS_COMPLEXITY: '11' })).toThrow(
+      /DIALOG_OPUS_COMPLEXITY/,
+    )
+    expect(() => loadEnv(appEnvSchema, { ...appEnv, DIALOG_OPUS_BITRATE: '1000' })).toThrow(
+      /DIALOG_OPUS_BITRATE/,
+    )
   })
 })
 

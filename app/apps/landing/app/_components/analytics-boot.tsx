@@ -16,7 +16,7 @@ export function AnalyticsBoot({ apiBase }: { apiBase: string }) {
 
   useEffect(() => {
     // Not awaited; a second call (Strict Mode runs effects twice in development) returns the first.
-    void startAnalytics({ apiBase, platform: 'landing' })
+    void startAnalytics({ apiBase, platform: 'landing', appVersion: process.env.NEXT_PUBLIC_APP_VERSION || undefined })
   }, [apiBase])
 
   useEffect(() => {

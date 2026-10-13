@@ -9,6 +9,7 @@
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
 | `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`, том диалогов в `/data` |
 | `03-pvc.yaml` | PVC `agent-data` (5 ГБ, сетевой диск Timeweb): файл SQLite с диалогами, они переживают выкат пода. Применять до Deployment'а |
+| `04-servicemonitor.yaml` | ServiceMonitor: Prometheus собирает `/metrics` агента (расход моделей, задержки голоса, база диалогов). Применяет admin |
 | `../namespaces/manifests/08-network-policy-agent-service.yaml` | ingress `prod → agent:8001`, egress `prod → agent`, egress агента к прокси на `:4000` |
 
 Наружу агент не публикуется (HTTPRoute нет): к нему ходят только `app-api` и `app-admin` по внутреннему токену.
@@ -140,7 +141,7 @@ python agent/scripts/live_smoke.py --url http://127.0.0.1:18001 --token <ток�
 kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live timeline|live usage|live context|first sound|WARNING"
 ```
 
-В журнале агента: `прогрев озвучки закончен: озвучено 12, не удалось 0` (около 20 с; пока идёт прогрев, приветствие может прочитать
+В журнале агента: `прогрев озвучки закончен: озвучено 28, не удалось 0` (около полуминуты; пока идёт прогрев, приветствие может прочитать
 приложение своим голосом), строки `live timeline … ms: sent=… in_first=… out_first=… tts_start=…` (этапы хода в мс от конца реплики,
 без текстов) и `first sound … ms=` (на стенде 0,9-1,2 с против 2,6 с у каскада).
 
@@ -155,6 +156,40 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live 
   почти не растёт; скорость первого звука при нормальной паузе та же, схема и замеры в `agent/README.md`). Образ 0.2.0 её не содержит. Поставить бюджет
   Cloud Billing и ограничить ключ по IP релея.
 - Агент в памяти (Recreate): выкат и переключение режима обрывают текущие диалоги. Память пода в режиме Gemini на стенде около 100 МБ при лимите 384 МиБ.
+
+## Бюджет токенов Gemini (GEMINI_TPM_*)
+
+У проекта Google на Gemini один лимит на всех: 400 000 входных токенов в минуту (Tier 2; запросов в минуту и в сутки, числа сессий лимита нет).
+Сверх него Google закрывает соединение кодом 1011 «You exceeded your current quota», и при открытии сессии, и посреди хода. В нагрузочном тесте
+(150 диалогов) пик был 449 тыс. при лимите 400 тыс. Агент теперь сам ведёт окно в 60 секунд, после 1011 держит паузу и при желании переводит
+новые разговоры в каскад (устройство, уровни и метрики: `agent/README.md`, «Бюджет токенов в минуту»).
+
+Настройки (`agent-config`, `00-config.yaml`, новый образ агента с этим изменением, текущий прод 0.4.0 его не содержит; в кластер не применялось):
+
+| Ключ | В ConfigMap | Что |
+|---|---|---|
+| `GEMINI_TPM_LIMIT` | `400000` | лимит проекта; `0` выключает учёт целиком |
+| `GEMINI_TPM_ENFORCE` | `false` | `false` — только мерить и держать паузу после 1011; `true` — ещё и каскад для новых разговоров, шаблон вместо хода без бюджета |
+| `GEMINI_LAZY_OPEN` | `false` | `true` — сессия Gemini открывается по `audio_start` или набранному сообщению, а не заранее (экономит квоту; +около 1 с к первому звуку на набранный текст) |
+| `GEMINI_TPM_TRIM_AT`, `_ADMIT_AT`, `_HARD_AT` | не заданы (`0.6`, `0.7`, `0.9`) | пороги доли окна |
+| `GEMINI_HISTORY_MESSAGES_TIGHT` | не задан (`16`) | история новой сессии на уровне trim и выше |
+| `GEMINI_TPM_WAIT_MS` | не задан (`1500`) | сколько ход ждёт места в окне |
+| `GEMINI_QUOTA_COOLDOWN_SECONDS` | не задан (`5`) | начальная пауза после 1011, растёт вдвое до 60 с; `0` выключает |
+| `GEMINI_TPM_OPEN_FACTOR` | не задан (`1.0`) | оценка открытия = байты UTF-8 промпта и истории / 4 × коэффициент; подбирается по графику AI Studio |
+
+Порядок включения (каждый шаг отдельным решением администратора, ConfigMap применяется как обычно: `kubectl apply -f k8s/agent/00-config.yaml`,
+затем `kubectl -n agent rollout restart deploy/agent`):
+
+1. Новый образ агента и ConfigMap с `GEMINI_TPM_ENFORCE: "false"`. Сутки-двое сравнивать метрику `agent_gemini_tpm_window_tokens` с графиком
+   «Peak input tokens per minute» в AI Studio; если метрика ниже графика, поднять `GEMINI_TPM_OPEN_FACTOR`. Алерты: `agent_gemini_quota_errors_total`
+   растёт, `agent_gemini_budget_level` ≥ 2 дольше минуты.
+2. `GEMINI_TPM_ENFORCE: "true"`. До этого убедиться в журнале старта, что каскад собран: строка `gemini budget: limit=400000 enforce=True fallback:
+   llm=… stt=… tts=…` (в кластере `AGENT_API_TOKEN` и `LLM_*`/`QWEN_TTS_*` уже есть, `none` значит, чего-то не хватает: тогда новые разговоры останутся в
+   Gemini, а ходы без бюджета получат шаблон). Каскад тоже тратит прокси программы, не Google.
+3. `GEMINI_LAZY_OPEN: "true"` отдельно.
+
+**Откат:** вернуть значения (`GEMINI_TPM_ENFORCE: "false"`, `GEMINI_LAZY_OPEN: "false"`, при необходимости `GEMINI_TPM_LIMIT: "0"`), применить ConfigMap и
+перезапустить агент.
 
 ## Хранилище диалогов (PVC `agent-data`)
 
@@ -179,11 +214,85 @@ kubectl -n agent logs deploy/agent | grep -E "dialog db|agent started"          
 - **Откат образа** на версию без поддержки диска не трогает файл: он остаётся и подхватывается при следующем выкате. Но стирания людей
   (`DELETE /v1/users/{userId}`), выполненные таким образом, файла не касаются: после отката на образ без диска и возврата на новый
   повторите стирание тех, кого удалили в это окно. Откат манифеста без PVC оставляет диск в кластере.
+- **Схема файла v2 (память агента).** Образ с памятью при первом старте переводит файл из v1 в v2 одной транзакцией (новые колонки
+  диалогов и таблицы `memory_*`), при любом `MEMORY_MODE`. **Откат на образ со схемой v1 после этого не поддерживается**: старый
+  агент видит версию 2, отказывается открывать файл (`dialogs: memory` в `/health/ready`) и на стирание людей отвечает `503`.
+  Откат функции памяти — `MEMORY_MODE: "off"` в ConfigMap и `rollout restart`, а не откат образа. Копию файла «про запас» не делать:
+  копия не покрывается стиранием людей.
 - Файл небольшой (сообщения весят сотни байт). Посмотреть содержимое: только `kubectl exec` под admin-kubeconfig
   (`sqlite3` в образе нет: `python -c "import sqlite3; …"`); тексты разговоров людей без причины не читать.
 - Стирание человека (`DELETE /v1/users/{userId}`) удаляет и строки на диске (`secure_delete`) и усекает журнал WAL, так что в файлах
   SQLite следов не остаётся. Если диск задан, но не подключился (`"dialogs": "memory"`), стирание отвечает `503`, а не `204`: приложение
   повторит его, когда диск вернётся. Блоки сетевого диска и снимки провайдера под это обещание не подпадают.
+
+## Расход моделей: база и Prometheus
+
+Что и как считается, запросы SQL и PromQL — `agent/README.md`, «Расход моделей». В базе расход лежит в таблице `model_usage` того же
+файла, в сообщениях — `audio_seconds`. Схема дополняется сама при первом открытии новым агентом (таблица и столбец добавочные, идемпотентные). Версия файла при этом
+определяется памятью агента (см. ниже): с версии 2 откат образа на 0.4.0 не поддерживается.
+
+Чтобы расход был и в Prometheus, его нужно собирать. Всё ниже — под admin-kubeconfig (у `developer` нет прав на ServiceMonitor,
+NetworkPolicy и ns `monitoring`), каждый шаг отдельным решением администратора:
+
+```bash
+kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml        # ingress monitoring → agent:8001
+kubectl apply -f k8s/monitoring/manifests/01-network-policy.yaml              # egress prometheus → agent:8001
+kubectl apply -f k8s/agent/04-servicemonitor.yaml
+# Срок хранения 14 дней (values-prometheus.yaml): Prometheus перезапустится, метрики на PVC останутся
+helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring -f k8s/monitoring/values-prometheus.yaml --version 91.8.2
+```
+
+Проверка: в Prometheus UI (port-forward, см. `k8s/README.md`) таргет `serviceMonitor/agent/agent/0` в состоянии UP, запрос
+`agent_model_usage_total` отдаёт ряды после первого диалога. Хватает ли диска на 14 дней: `prometheus_tsdb_storage_blocks_bytes`
+через пару дней, умноженный на 14/дни, должен быть меньше `retentionSize` (3GB), иначе старые блоки уйдут раньше срока.
+
+Тот же расход может уходить в Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, трейс `model-usage`, без текстов).
+Это отдельный приёмник: `LANGFUSE_USAGE_SINK: "true"` в `agent-config` (по умолчанию `"false"`) и `LANGFUSE_ENABLED=true` с ключами в
+Secret `agent-secrets`. Расход ходов уже идёт в трассах трейсинга, поэтому оба сразу не включать: в Langfuse он задвоится. Сеть —
+отдельным решением:
+
+```bash
+kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml   # egress agent → infra:3000
+kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingress infra:3000 от ns agent
+```
+
+Ключи в Secret кладёт администратор (в git их нет), затем `kubectl -n agent rollout restart deploy/agent`. В журнале агента
+строка `langfuse usage sink on` или `off`.
+
+## Память агента (`MEMORY_*`)
+
+Агент помнит о человеке короткие факты между разговорами, только если человек сам включил память (спецификация —
+`docs/agent-memory-spec.md`, устройство — `agent/README.md`, раздел «Память»). **В манифесте память включена: `MEMORY_MODE: "on"`**
+(решение владельца, 2026-10-13; в коде по умолчанию `off`). Новых секретов нет: модель извлечения ходит через тот же прокси и
+`AGENT_API_TOKEN`; модель — `MEMORY_LLM_MODEL: "gigachat-3-pro"` по итогам сравнения на золотом наборе 2026-10-13 (без неё была бы
+чат-модель `LLM_CHAT_MODEL`). Список
+`MEMORY_ALLOWLIST` пуст: включить память в профиле может любой человек; без его согласия агент ничего не извлекает и не подмешивает.
+
+| Переменная | По умолчанию | Смысл |
+|---|---|---|
+| `MEMORY_MODE` | `off` | `off` / `shadow` (извлечение у включивших память, без сводки в разговоре) / `on` |
+| `MEMORY_BRIEF_LEVEL` | `minimal` | что уходит в голосовую модель: `minimal` (как говорить, о чём не говорить) / `standard` / `full` |
+| `MEMORY_LLM_BASE_URL`, `MEMORY_LLM_MODEL` | `LLM_BASE_URL`, `LLM_CHAT_MODEL` | прокси и модель извлечения (только в РФ; адреса Gemini код отвергает) |
+| `MEMORY_LLM_TIMEOUT_SECONDS`, `MEMORY_LLM_MAX_TOKENS` | 60, 1200 | |
+| `MEMORY_IDLE_MINUTES` | 20 | тишина в открытом диалоге, после которой ставится извлечение |
+| `MEMORY_MAINTENANCE_SECONDS` | 60 | период обслуживания: сроки, чистка, удаление разговоров «Без памяти» |
+| `MEMORY_WORKERS` | 1 | одновременных заданий извлечения (до 3) |
+| `MEMORY_EXTRACT_MAX_CHARS` | 16000 | вход модели извлечения |
+| `MEMORY_CLASSIFIER` | `off` | второй проход для пограничных фактов |
+| `MEMORY_ALLOWLIST` | пусто | UUID через запятую: включить память могут только они (бета) |
+
+Порядок выката (делает владелец, каждый шаг отдельным решением): 1) образ агента с памятью и ConfigMap с `MEMORY_MODE: "on"` — при
+старте схема файла переходит на v2, `/health/ready` → `"memory": "on"` (если `"unavailable"` — нет адреса прокси или ключа, причина в
+журнале); пока шлюз и клиенты старые, включить память некому, и агент ничего не извлекает; 2) образы `app`: шлюз с миграцией БД
+приложения `0006_memory_consent_events`, затем web и PWA — в профиле появляется раздел «Память». Спецификация (раздел 17) предлагала
+путь осторожнее: `shadow` на внутренних аккаунтах → бета с `MEMORY_ALLOWLIST` → общий доступ после порогов качества и согласований; он
+по-прежнему доступен теми же переменными.
+
+**Откат функции:** `MEMORY_MODE: "off"`, применить ConfigMap, `kubectl -n agent rollout restart deploy/agent`. Сводка пропадает со
+следующего хода, данные остаются (человек может прочитать, скачать и стереть их и при `off`). Откат образа на схему v1 — нет (выше).
+
+**Резервные копии.** Сейчас бэкапов файла нет, и для памяти они не вводятся. Когда появятся (PostgreSQL, D6): срок хранения копий —
+не больше 30 дней, а при восстановлении из копии заново применяется журнал стираний людей и «забыть всё».
 
 ## Ограничения (честно)
 

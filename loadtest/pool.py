@@ -63,7 +63,9 @@ def create(target: int) -> None:
     """Добирает пул до target аккаунтов, уважая лимит 30/час на IP."""
     pool = load_pool()
     while len(pool) < target:
-        device_id = secrets.token_urlsafe(24)[:48]
+        # Префикс `loadtest-` (ANALYTICS_TEST_DEVICE_PREFIX сервера) помечает аккаунт тестовым до первого события:
+        # его трафик не попадает в DAU и воронку продуктовой аналитики. Длина id по правилам API — 16–64 знака.
+        device_id = "loadtest-" + secrets.token_urlsafe(24)[:39]
         device_key = secrets.token_urlsafe(48)[:96]
         code, payload = api_post(
             "/api/auth/device", {"deviceId": device_id, "deviceKey": device_key}

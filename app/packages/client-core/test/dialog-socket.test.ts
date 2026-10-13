@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { DialogClientFrame, DialogCloseCode, DialogServerFrame } from '@ryadom/contracts/api/dialogs'
+import {
+  DialogClientFrame,
+  DialogCloseCode,
+  DialogServerFrame,
+  type TtsCodec,
+} from '@ryadom/contracts/api/dialogs'
 import {
   DialogSocket,
   type DialogMessageView,
@@ -7,6 +12,7 @@ import {
   type DialogSocketHandlers,
   type DialogSocketState,
 } from '../src/dialog-socket'
+import type { PcmChunk } from '../src/voice/tts-decoder'
 import { makeToken } from './helpers'
 
 class FakeWebSocket {
@@ -61,7 +67,7 @@ interface Harness {
   states: DialogSocketState[]
   feed(): DialogMessageView[]
   heard: { text: string; final: boolean }[]
-  audio: ArrayBuffer[]
+  audio: PcmChunk[]
   speech: { messageId: string; phase: 'start' | 'end' }[]
   safety: unknown[]
 }
@@ -71,12 +77,13 @@ function harness(
     greeting?: string | null
     loadHistory?: DialogSocketDeps['loadHistory']
     random?: () => number
+    ttsCodecs?: () => Promise<TtsCodec[]>
   } = {},
 ): Harness {
   const states: DialogSocketState[] = []
   let messages: DialogMessageView[] = []
   const heard: Harness['heard'] = []
-  const audio: ArrayBuffer[] = []
+  const audio: PcmChunk[] = []
   const speech: Harness['speech'] = []
   const safety: unknown[] = []
   const deps = {
@@ -92,6 +99,7 @@ function harness(
     loadHistory: options.loadHistory,
     // The middle of the spread: the delays of the schedule come out exactly.
     random: options.random ?? (() => 0.5),
+    ttsCodecs: options.ttsCodecs,
   }
   const handlers: DialogSocketHandlers = {
     onState: (state) => states.push(state),
@@ -151,6 +159,23 @@ describe('hello и токен', () => {
     h.deps.token = makeToken('a', 5)
     await connect(h, false)
     expect(h.deps.refreshSession).toHaveBeenCalledOnce()
+  })
+
+  it('hello называет кодеки озвучки, которые устройство умеет декодировать', async () => {
+    const h = harness({ ttsCodecs: async () => ['opus', 'mulaw', 'pcm16'] })
+    const ws = await connect(h, false)
+    expect(ws.framesOf(DialogClientFrame.Hello)[0]?.codecs).toEqual(['opus', 'mulaw', 'pcm16'])
+  })
+
+  it('без сведений о кодеках hello уходит без них: шлюз отдаст PCM16, как старым сборкам', async () => {
+    const h = harness()
+    const ws = await connect(h, false)
+    expect(ws.framesOf(DialogClientFrame.Hello)[0]).not.toHaveProperty('codecs')
+
+    // A probe that failed is the same as none.
+    const failed = harness({ ttsCodecs: () => Promise.reject(new Error('no WebAssembly')) })
+    const second = await connect(failed, false)
+    expect(second.framesOf(DialogClientFrame.Hello)[0]).not.toHaveProperty('codecs')
   })
 
   it('живой токен уходит как есть, без лишнего refresh', async () => {
@@ -526,12 +551,38 @@ describe('голос', () => {
     expect(h.feed()).toEqual([])
   })
 
-  it('бинарные кадры озвучки уходят плееру, текстовые — нет', async () => {
+  it('бинарные кадры озвучки уходят плееру сэмплами, текстовые — нет', async () => {
     const h = harness()
     const ws = await connect(h)
-    const frame = new Uint8Array([2, 0, 0, 0, 0, 1, 2]).buffer
-    ws.onmessage?.({ data: frame })
-    expect(h.audio).toEqual([frame])
+    // One PCM16 sample, 0x0201, right after the five bytes of the header.
+    ws.onmessage?.({ data: new Uint8Array([2, 0, 0, 0, 0, 1, 2]).buffer })
+    expect(h.audio).toEqual([{ samples: Float32Array.of(0x0201 / 0x8000), sampleRate: 24_000 }])
+  })
+
+  it('кадры декодируются кодеком из tts_start: μ-law по байту на сэмпл', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    ws.receive({ type: DialogServerFrame.TtsStart, messageId: 'm1', codec: 'mulaw', sampleRate: 24000 })
+    // μ-law 0xFF is silence, 0x80 the loudest positive sample.
+    ws.onmessage?.({ data: new Uint8Array([2, 0, 0, 0, 0, 0xff, 0x80]).buffer })
+    expect(h.audio).toHaveLength(1)
+    expect([...h.audio[0]!.samples]).toEqual([0, 32124 / 0x8000])
+  })
+
+  it('после перебивания кадры, что ещё летят, не декодируются — до следующего tts_start', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    const frame = () => new Uint8Array([2, 0, 0, 0, 0, 1, 2]).buffer
+    ws.receive({ type: DialogServerFrame.TtsStart, messageId: 'm1', codec: 'pcm16', sampleRate: 24000 })
+    ws.onmessage?.({ data: frame() })
+    h.socket.interruptSpeech()
+    ws.onmessage?.({ data: frame() })
+    expect(h.audio).toHaveLength(1)
+
+    ws.receive({ type: DialogServerFrame.TtsEnd, messageId: 'm1' })
+    ws.receive({ type: DialogServerFrame.TtsStart, messageId: 'm2', codec: 'pcm16', sampleRate: 24000 })
+    ws.onmessage?.({ data: frame() })
+    expect(h.audio).toHaveLength(2)
   })
 
   it('начало и конец речи агента сообщаются экрану: пока агент говорит, свой голос и микрофон ждут', async () => {

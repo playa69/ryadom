@@ -1,6 +1,6 @@
 /**
  * Application API paths. Parameters travel in the query string or the body; the only
- * path parameters are the dialog id and the session id.
+ * path parameters are the dialog id, the session id and the memory fact id.
  */
 export enum ApiPath {
   Health = '/api/health',
@@ -28,6 +28,17 @@ export enum ApiPath {
   /** WebSocket: the stream of a single dialog. */
   DialogsWs = '/api/dialogs/ws',
 
+  /** What the agent remembers about the person (`GET`) and "forget everything" (`DELETE`). */
+  Memory = '/api/memory',
+  /** The person's switch "Remember" and the consent to it. */
+  MemorySettings = '/api/memory/settings',
+  /** A fact the person writes themselves; `/api/memory/facts/:id` edits or forgets one. */
+  MemoryFacts = '/api/memory/facts',
+  /** What one conversation added to memory: `?dialogId=`. */
+  MemoryChanges = '/api/memory/changes',
+  /** "Download my memory". */
+  MemoryExport = '/api/memory/export',
+
   /** Open: which analytics features are on and the (public) PostHog project token. */
   AnalyticsConfig = '/api/analytics/config',
   /**
@@ -44,6 +55,11 @@ export function dialogPath(dialogId: string): string {
 
 export function dialogEndPath(dialogId: string): string {
   return `${dialogPath(dialogId)}/end`
+}
+
+/** `/api/memory/facts/:id`: one remembered fact of the person. */
+export function memoryFactPath(factId: string): string {
+  return `${ApiPath.MemoryFacts}/${encodeURIComponent(factId)}`
 }
 
 /** `/api/auth/sessions/:id`: one session of the person. */

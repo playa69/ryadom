@@ -4,8 +4,8 @@
 доменные Settings с validation_alias, SecretStr для секретов, fail-fast
 валидация, неизменяемый синглтон APP_CONFIG.
 
-Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима,
-трейсинг LLM в self-hosted Langfuse. Настройки БД и Redis вернутся вместе с полноценным агентом.
+Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима, трейсинг ходов и расход моделей
+в self-hosted Langfuse. Настройки БД и Redis вернутся вместе с полноценным агентом.
 """
 
 import logging
@@ -65,6 +65,15 @@ class DialogSettings(BaseAppSettings):
     db_path: str | None = Field(validation_alias="DIALOG_DB_PATH", default=None)
     # Как часто записывать изменения диалогов на диск, мс (идущие ответы дописываются, поэтому не при каждом слове).
     db_flush_ms: int = Field(validation_alias="DIALOG_DB_FLUSH_MS", default=500, ge=50, le=10_000)
+    # Выгрузка неактивных (только при диске): человек, к которому не обращались столько секунд, уходит из памяти пода, его
+    # диалоги остаются на диске и загружаются снова при следующем обращении (около миллисекунды). Живой сокет и незаписанные
+    # изменения держат человека в памяти. 0 — не выгружать по сроку.
+    idle_evict_seconds: int = Field(validation_alias="DIALOG_IDLE_EVICT_SECONDS", default=1800, ge=0)
+    # Мягкий потолок числа людей в памяти: сверх него выгружаются самые давние, не дожидаясь срока (кроме тех, кого держит
+    # сокет или незаписанное, и тех, кто обращался за последнюю минуту). 0 — без потолка.
+    max_users_in_memory: int = Field(validation_alias="DIALOG_MAX_USERS_IN_MEMORY", default=0, ge=0)
+    # Как часто проверять, кого выгрузить, и обновлять метрики памяти (agent_dialog_*_in_memory), секунды.
+    evict_interval_seconds: int = Field(validation_alias="DIALOG_EVICT_INTERVAL_SECONDS", default=60, ge=1, le=3600)
 
 
 class SpeechSettings(BaseAppSettings):
@@ -197,30 +206,129 @@ class GeminiSettings(BaseAppSettings):
     # Соединение живёт ограниченно (Google шлёт предупреждение GoAway): при возобновлении сессии по handle контекст
     # разговора переживает переподключение. Без handle (или если он не принят) модель получает последние сообщения текстом.
     session_resumption: bool = Field(validation_alias="GEMINI_SESSION_RESUMPTION", default=True)
+    # Лимит входных токенов в минуту (TPM) проекта Google: агент сам ведёт окно в 60 с по usage_metadata ходов
+    # (app/services/gemini_budget.py). 0 — учёт выключен целиком, поведение как без него. Прод (Tier 2): 400000.
+    tpm_limit: int = Field(validation_alias="GEMINI_TPM_LIMIT", default=0, ge=0)
+    # false — только мерить (окно, метрики, журнал) и не открывать сессии в паузе после 1011; true — ещё и допуск новых
+    # разговоров и деградация ходов по порогам ниже.
+    tpm_enforce: bool = Field(validation_alias="GEMINI_TPM_ENFORCE", default=False)
+    # Пороги доли окна от лимита: история новой сессии короче / новые разговоры в каскад / ход ждёт, потом шаблон без Gemini.
+    tpm_trim_at: float = Field(validation_alias="GEMINI_TPM_TRIM_AT", default=0.6, gt=0, le=1)
+    tpm_admit_at: float = Field(validation_alias="GEMINI_TPM_ADMIT_AT", default=0.7, gt=0, le=1)
+    tpm_hard_at: float = Field(validation_alias="GEMINI_TPM_HARD_AT", default=0.9, gt=0, le=1)
+    # Сколько сообщений истории получает новая сессия, когда окно выше GEMINI_TPM_TRIM_AT (при ENFORCE). 0 — не сокращать.
+    history_messages_tight: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES_TIGHT", default=16, ge=0)
+    # Сколько ход ждёт места в окне (или конца паузы после 1011), прежде чем уйти в шаблон, мс.
+    tpm_wait_ms: int = Field(validation_alias="GEMINI_TPM_WAIT_MS", default=1500, ge=0, le=10_000)
+    # Начальная пауза после отказа Google по квоте (1011), с: растёт вдвое с каждой новой ошибкой до 60 с, сбрасывается после
+    # удачных ходов. Действует и при GEMINI_TPM_ENFORCE=false (это защита, а не деградация); 0 — паузы нет.
+    quota_cooldown_seconds: float = Field(validation_alias="GEMINI_QUOTA_COOLDOWN_SECONDS", default=5, ge=0, le=60)
+    # Открытие сессии Google считает в TPM сразу, по размеру контекста и щедрее настоящих токенов (эксперимент: ≈ байты UTF-8
+    # системной инструкции и истории / 4). Оценка открытия = байты / 4 × этот коэффициент; 0 — открытия не считать.
+    tpm_open_factor: float = Field(validation_alias="GEMINI_TPM_OPEN_FACTOR", default=1.0, ge=0, le=10)
+    # Ленивое открытие: сессия открывается не заранее (при подключении сокета и сразу после ответа), а когда она нужна —
+    # по audio_start (открытие идёт, пока человек говорит) или по набранному сообщению. Неиспользованная сессия тратит квоту
+    # впустую (последняя смена после последнего ответа, сокет, где так и не заговорили). Набранное сообщение ждёт открытия
+    # (около 1 с). false — как раньше: сессия готова заранее.
+    lazy_open: bool = Field(validation_alias="GEMINI_LAZY_OPEN", default=False)
+
+    @model_validator(mode="after")
+    def _thresholds_in_order(self) -> "GeminiSettings":
+        if not self.tpm_trim_at <= self.tpm_admit_at <= self.tpm_hard_at:
+            raise ValueError("нужно GEMINI_TPM_TRIM_AT <= GEMINI_TPM_ADMIT_AT <= GEMINI_TPM_HARD_AT")
+        return self
+
+
+class MemorySettings(BaseAppSettings):
+    """Долговременная память агента (спецификация памяти, раздел 14): факты о человеке между разговорами.
+
+    `MEMORY_MODE`:
+      off     память не извлекается и не подмешивается (по умолчанию). Чтение, экспорт и стирание памяти работают всегда
+      shadow  факты извлекаются только у людей, включивших память, но сводка в разговор не попадает (внутренняя проверка)
+      on      извлечение и сводка в разговоре
+    Память живёт в том же файле SQLite, что и диалоги: без `DIALOG_DB_PATH` режим принудительно `off`.
+
+    Извлечение идёт только через модель в РФ (прокси программы): Gemini и любые зарубежные адреса сюда не подставлять.
+    """
+
+    mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
+    # Сколько памяти уходит в голосовую модель: minimal — только как говорить и о чём не говорить (и мягкий тон после тяжёлого
+    # разговора); standard — плюс близкие (без имён), что помогает, планы, обстоятельства, прошлый разговор; full — с именами.
+    brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")
+    # Прокси и модель извлечения; пусто — те же, что у чата (LLM_BASE_URL, LLM_CHAT_MODEL). Ключ — AGENT_API_TOKEN.
+    llm_base_url: str | None = Field(validation_alias="MEMORY_LLM_BASE_URL", default=None)
+    llm_model: str | None = Field(validation_alias="MEMORY_LLM_MODEL", default=None)
+    llm_timeout_seconds: int = Field(validation_alias="MEMORY_LLM_TIMEOUT_SECONDS", default=60, ge=1)
+    llm_max_tokens: int = Field(validation_alias="MEMORY_LLM_MAX_TOKENS", default=1200, ge=64)
+    # Открытый диалог без новых реплик столько минут: извлечение ставится в очередь, диалог не завершается.
+    idle_minutes: int = Field(validation_alias="MEMORY_IDLE_MINUTES", default=20, ge=1)
+    maintenance_seconds: int = Field(validation_alias="MEMORY_MAINTENANCE_SECONDS", default=60, ge=1)
+    workers: int = Field(validation_alias="MEMORY_WORKERS", default=1, ge=1, le=3)
+    extract_max_chars: int = Field(validation_alias="MEMORY_EXTRACT_MAX_CHARS", default=16_000, ge=1000)
+    # Второй короткий вызов модели для пограничных фактов (чувствительная тема, но не запрещённая). Включение решает оценка.
+    classifier: Literal["off", "on"] = Field(validation_alias="MEMORY_CLASSIFIER", default="off")
+    # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
+    allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
+
+    @property
+    def allowed_users(self) -> frozenset[str]:
+        return frozenset(item.strip().lower() for item in self.allowlist.split(",") if item.strip())
+
+
+class MemoryReclaimSettings(BaseAppSettings):
+    """Возврат памяти процесса системе (app/core/reclaim.py).
+
+    После нагрузки память процесса не опускалась: освобождённое Python и glibc держат у себя, а остатки закрытых соединений
+    ждут редкой полной сборки мусора. Раз в `MEMORY_RECLAIM_SECONDS` агент собирает мусор и отдаёт свободные страницы кучи
+    системе (`malloc_trim`, только Linux с glibc; в других ОС этот шаг пропускается).
+    """
+
+    # Как часто возвращать память, секунды. 0 — не возвращать (заморозка стартовых объектов для сборщика остаётся).
+    seconds: int = Field(validation_alias="MEMORY_RECLAIM_SECONDS", default=60, ge=0)
 
 
 class LangfuseSettings(BaseAppSettings):
-    """Трейсинг LLM-ходов в self-hosted Langfuse (ns `infra`, тот же RU-кластер, что и БД диалогов).
+    """Langfuse (self-hosted, ns `infra`, тот же RU-кластер, что и БД диалогов): трейсинг LLM-ходов и приёмник расхода моделей.
 
-    По умолчанию выключен: агент работает как раньше (NullTracer). При `LANGFUSE_ENABLED=true`
-    оба ключа обязательны — без них сервис не стартует (fail-fast). Ключи проекта (pk-lf/sk-lf)
-    лежат в Secret `agent-secrets`, в ConfigMap их быть не должно.
+    По умолчанию всё выключено: агент работает как раньше (NullTracer, приёмника нет). При `LANGFUSE_ENABLED=true`
+    оба ключа обязательны — без них сервис не стартует (fail-fast). Ключи проекта (pk-lf/sk-lf) лежат в Secret
+    `agent-secrets`, в ConfigMap их быть не должно.
 
-    `LANGFUSE_TRACE_TEXT=false` — в Langfuse уходят только длины реплик, токены и задержки,
-    сами тексты маскируются.
+    Трейсинг (`app/core/tracing.py`): трасса на каждый ход. `LANGFUSE_TRACE_TEXT=false` (по умолчанию) — уходят число символов
+    и слов, длительность речи, токены и задержки, сами тексты маскируются; `true` — тексты реплик людей и агента уходят в
+    Langfuse, только для локальной отладки (в проде нельзя).
+
+    Приёмник расхода (`app/services/langfuse_usage.py`, README «Расход моделей»): только числа, без текстов, отдельная трасса
+    `model-usage`. Расход ходов уже есть в трассах трейсинга, поэтому приёмник включается отдельно (`LANGFUSE_USAGE_SINK=true`):
+    при включённых обоих расход в Langfuse задвоится.
     """
 
     enabled: bool = Field(validation_alias="LANGFUSE_ENABLED", default=False)
     host: str = Field(validation_alias="LANGFUSE_HOST", default="http://langfuse-web.infra.svc.cluster.local:3000")
     public_key: SecretStr | None = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default=None)
     secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
-    trace_text: bool = Field(validation_alias="LANGFUSE_TRACE_TEXT", default=True)
+    trace_text: bool = Field(validation_alias="LANGFUSE_TRACE_TEXT", default=False)
+    usage_sink: bool = Field(validation_alias="LANGFUSE_USAGE_SINK", default=False)
+    flush_seconds: float = Field(validation_alias="LANGFUSE_FLUSH_SECONDS", default=5, ge=0.2, le=60)
+    timeout_seconds: int = Field(validation_alias="LANGFUSE_TIMEOUT_SECONDS", default=5, ge=1, le=30)
 
     @model_validator(mode="after")
     def _keys_required_when_enabled(self) -> "LangfuseSettings":
-        if self.enabled and (self.public_key is None or self.secret_key is None):
+        if self.enabled and not (self._key(self.public_key) and self._key(self.secret_key)):
             raise ValueError("LANGFUSE_ENABLED=true, но не заданы LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY")
+        host = self.host.strip()
+        if host and not host.startswith(("http://", "https://")):
+            raise ValueError("LANGFUSE_HOST должен начинаться с http:// или https://")
         return self
+
+    @staticmethod
+    def _key(value: SecretStr | None) -> str:
+        return value.get_secret_value().strip() if value is not None else ""
+
+    @property
+    def usage_sink_active(self) -> bool:
+        """Приёмник расхода работает, только если включён Langfuse и отдельно приёмник."""
+        return bool(self.enabled and self.usage_sink and self.host.strip())
 
 
 class Config:
@@ -234,6 +342,8 @@ class Config:
     voice: VoiceSettings = VoiceSettings()
     gemini: GeminiSettings = GeminiSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
+    memory: MemorySettings = MemorySettings()
+    memory_reclaim: MemoryReclaimSettings = MemoryReclaimSettings()
 
 
 APP_CONFIG = Config()

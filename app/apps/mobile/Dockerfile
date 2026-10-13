@@ -30,8 +30,10 @@ COPY . .
 RUN --mount=type=cache,id=ryadom-pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter "@ryadom/mobile..."
 ARG PWA_BASE_PATH=""
+# The image tag, reported to analytics as app_version (--build-arg RELEASE=0.4.0); empty falls back to package.json.
+ARG RELEASE=""
 # The web build needs no VITE_* variables: the API is the same origin and the rest arrives at runtime.
-RUN PWA_BASE="$PWA_BASE_PATH" pnpm --filter @ryadom/mobile build:pwa
+RUN PWA_BASE="$PWA_BASE_PATH" RELEASE="$RELEASE" pnpm --filter @ryadom/mobile build:pwa
 
 
 FROM nginxinc/nginx-unprivileged:1.30-alpine-slim AS runtime

@@ -51,7 +51,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.5.1
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.6.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -130,14 +130,15 @@ spec:
               path: /health/ready
               port: 8001
             periodSeconds: 10
-            timeoutSeconds: 3
+            timeoutSeconds: 5
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
               port: 8001
             periodSeconds: 20
-            timeoutSeconds: 3
+            # Под нагрузкой цикл событий агента занят секундами: короткий таймаут перезапускал бы под вместе со всеми разговорами.
+            timeoutSeconds: 10
             failureThreshold: 6
           volumeMounts:
             - name: tmp
@@ -146,12 +147,15 @@ spec:
             - name: data
               mountPath: /data
           resources:
+            # Нагрузочный тест 13.10: ~0,1 CPU-с на ход, при лимите 500m агент упирался в троттлинг (до 60%) и на 7 минут выпал из
+            # проб готовности; память росла до 330 МиБ (лимит 384Mi), пик при одновременных разговорах ~3 МиБ на разговор.
+            # Запрос выше прежних 50m: планировщик не должен считать агента почти бесплатным (узел с агентом в тесте был занят на 79–94%).
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 250m
+              memory: 256Mi
             limits:
-              cpu: 500m
-              memory: 384Mi
+              cpu: 1000m
+              memory: 768Mi
       volumes:
         - name: tmp
           emptyDir: {}

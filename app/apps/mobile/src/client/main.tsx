@@ -32,7 +32,7 @@ async function start(): Promise<void> {
   void startAnalytics({
     apiBase: getApiBase(),
     platform: analyticsPlatform({ android: isAndroid(), ios: isIosNative(), standalone: isStandalone() }),
-    appVersion: __APP_VERSION__,
+    appVersion: __RELEASE__,
   })
   track(AnalyticsEvent.AppOpened, { standalone: isNative() || isStandalone() })
   initSystemBarsStyle()

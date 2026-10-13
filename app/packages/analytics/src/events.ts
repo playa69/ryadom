@@ -40,10 +40,24 @@ export enum AnalyticsEvent {
 
   // ── Server: dialogs (services/api) ──────────────────────────────────────────────────────────
   DialogStarted = 'dialog_started',
+  /**
+   * One reply of the person was accepted by the server (typed, or a spoken turn the agent heard and wrote
+   * down). The first one in a dialog is THE target action of the product: the person said something and
+   * the conversation began. `dialog_started` is not that (the screen can open and stay silent), and
+   * `dialog_ended` is not either (most people just close the app). The server reports it, so an ad blocker
+   * or a closed tab cannot lose it.
+   */
+  DialogTurn = 'dialog_turn',
   /** The conversation finished properly: the agent confirmed the end. */
   DialogEnded = 'dialog_ended',
   /** The connection went away before the dialog ended (a dropped network, an idle timeout, a deploy). */
   DialogInterrupted = 'dialog_interrupted',
+  /**
+   * The agent called one of its components for a dialog (speech recognition, the safety check, the model,
+   * speech synthesis, memory). It is the log behind the "calls to the solution per DAU" figure: one event
+   * per real call, with no prompt, no text and no vendor error attached.
+   */
+  ComponentCalled = 'component_called',
   /**
    * The agent raised the safety frame. Reported with NO person attached: it counts how often the
    * hotlines were shown, and must not become a record of who was in crisis.
@@ -81,6 +95,23 @@ export enum AnalyticsEvent {
   /** A new web build, an OTA bundle or a store release was offered, accepted or dismissed. */
   AppUpdate = 'app_update',
   OfflineShown = 'offline_shown',
+
+  // ── Client: memory ──────────────────────────────────────────────────────────────────────────
+  // What the person does with memory, never what is remembered: no text, category or count of facts.
+  /** The screen "Профиль → Память" was opened. */
+  MemoryScreenOpened = 'memory_screen_opened',
+  /** The switch "Запоминать" took effect (on after the consent sheet, or off). */
+  MemoryEnabled = 'memory_enabled',
+  /** One action on one fact on the screen "Память"; `delete` is counted when the request goes, after "Вернуть" had its chance. */
+  MemoryFactAction = 'memory_fact_action',
+  /** "Забыть всё" was confirmed and done. */
+  MemoryForgetAll = 'memory_forget_all',
+  /** "Скачать мою память": the file was handed to the person. */
+  MemoryExport = 'memory_export',
+  /** The switch "Без памяти" on home, before a conversation. */
+  MemoryIncognitoToggled = 'memory_incognito_toggled',
+  /** A point of the card "Я запомнил" after a conversation was taken off or accepted. */
+  MemoryCardAction = 'memory_card_action',
 
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
   FaqOpened = 'faq_opened',
@@ -146,6 +177,20 @@ export type DialogInterruptReason =
   | 'rate_limited'
   | 'other'
 
+/**
+ * Whose traffic an account is: `real` people, or `test` (load tests, scripted checks) and `internal` (the team).
+ * It is stored on the account and attached to every event of the person, so a figure can be taken without
+ * the traffic that is not people, and the organiser can see in the raw log which accounts are not counted.
+ */
+export type TrafficType = 'real' | 'test' | 'internal'
+
+/** The parts of the agent that answer a person. `memory` is the look-up of the person's long-term memory for a reply (only when memory is on). */
+export const COMPONENT_NAMES = ['stt', 'safety', 'llm', 'live', 'tts', 'memory'] as const
+export type ComponentName = (typeof COMPONENT_NAMES)[number]
+
+/** `ok` is an answer, `error` is a call that failed. A repeat served from the cache is `ok` with `cached: true`. */
+export type ComponentOutcome = 'ok' | 'error'
+
 export type AppUpdateKind = 'service_worker' | 'ota' | 'store'
 export type AppUpdateAction = 'available' | 'applied' | 'dismissed' | 'forced'
 export type InstallPromptAction = 'shown' | 'accepted' | 'dismissed' | 'ios_instructions'
@@ -158,6 +203,12 @@ export type DeleteAccountStepName = 'opened' | 'confirmed' | 'cancelled'
 export type ResumeChoice = 'continue' | 'new' | 'dismissed'
 
 export type ProfileField = 'name' | 'voice'
+
+/** What was done with a fact of memory: the names are those of the buttons' meaning, never of the fact. */
+export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confirm' | 'accept' | 'decline'
+
+/** A point of the card "Я запомнил": taken off ("убрать") or accepted ("Запомнить"). */
+export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
 
 export type PasswordChangeKind = 'change' | 'reset'
 
@@ -178,14 +229,23 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.ProfileUpdated]: { fields: ProfileField[] }
   [AnalyticsEvent.AccountDeleted]: NoProperties
 
-  [AnalyticsEvent.DialogStarted]: { resumed: boolean; hours_since_last: number | null }
+  /**
+   * `dialog_id` is the dialog's own random id (the one in the agent's database and the journal). It is on
+   * every event of a dialog, so a start, its replies and its end can be put together; without it a figure
+   * can only be matched per person.
+   */
+  [AnalyticsEvent.DialogStarted]: { dialog_id?: string; resumed: boolean; hours_since_last: number | null }
+  [AnalyticsEvent.DialogTurn]: { dialog_id?: string; input: 'text' | 'voice' }
   [AnalyticsEvent.DialogEnded]: {
+    dialog_id?: string
     via: 'socket' | 'rest'
     /**
-     * The three counters below are of the connection that ended the dialog, not of the whole dialog:
-     * after a planned close (a rollout, a second tab) the client reconnects and they start again.
-     * Absent when the end came over REST.
+     * `dialog`: `user_messages` and `assistant_messages` count the whole dialog, over every connection and a
+     * rollout in between (the agent counts them). `connection`: only the connection that ended it, which is
+     * all the server knows when the agent did not say (an agent older than this field).
      */
+    counts?: 'dialog' | 'connection'
+    /** Of the connection that ended the dialog; absent when the end came over REST. */
     duration_s?: number
     user_messages?: number
     assistant_messages?: number
@@ -195,9 +255,17 @@ export interface AnalyticsEventProperties {
     tension_improved?: boolean
   }
   [AnalyticsEvent.DialogInterrupted]: {
+    dialog_id?: string
     reason: DialogInterruptReason
+    /** Of this connection, not of the whole dialog: a dialog can have several. */
     duration_s: number
     user_messages: number
+  }
+  [AnalyticsEvent.ComponentCalled]: {
+    dialog_id?: string
+    component: ComponentName
+    outcome: ComponentOutcome
+    cached: boolean
   }
   [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
 
@@ -226,6 +294,13 @@ export interface AnalyticsEventProperties {
 
   [AnalyticsEvent.JournalEntryOpened]: NoProperties
   [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }
+  [AnalyticsEvent.MemoryScreenOpened]: NoProperties
+  [AnalyticsEvent.MemoryEnabled]: { enabled: boolean }
+  [AnalyticsEvent.MemoryFactAction]: { action: MemoryFactActionName }
+  [AnalyticsEvent.MemoryForgetAll]: NoProperties
+  [AnalyticsEvent.MemoryExport]: NoProperties
+  [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
+  [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties
@@ -245,6 +320,8 @@ export type AnalyticsEventArgs<E extends AnalyticsEvent> = NoProperties extends 
 /** What is known about a person, set once on sign-in. Never an email or a name. */
 export interface AnalyticsTraits {
   account_kind: AccountKind
+  /** Absent means `real`; set by the server only, from the account. */
+  traffic_type?: TrafficType
 }
 
 /** Properties are a closed set of shapes, which is what `sanitizeProperties` enforces at run time. */

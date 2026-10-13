@@ -46,14 +46,42 @@ export const REFRESH_TOKEN_REVOKE_REASONS = ['rotated', 'signed_out', 'revoked']
 export type RefreshTokenRevokeReason = (typeof REFRESH_TOKEN_REVOKE_REASONS)[number]
 
 /**
- * What a person agreed to (`user_consents.kind`). All three are given on one screen, and a chat
- * with the agent is closed until each has been recorded.
+ * What a person must agree to before anything else (`user_consents.kind`). All three are given on
+ * one screen, and a chat with the agent is closed until each has been recorded.
  *
  * - `age_confirmed`: the person is 18 or older;
  * - `disclaimer`: the service is self-help, not therapy or medical care;
  * - `offer`: the terms of use and the processing of personal data, in the version that was shown.
  *
+ * Only the required ones belong here: the first screen, the chat gate and the consent status walk
+ * this list, so an optional kind added to it would close the chat to everyone and get recorded for
+ * everyone who accepts the first screen. Optional kinds go to `OPTIONAL_CONSENT_KINDS`.
+ *
  * These values are stored in the column, so they must not be changed.
  */
 export const USER_CONSENT_KINDS = ['age_confirmed', 'disclaimer', 'offer'] as const
-export type UserConsentKind = (typeof USER_CONSENT_KINDS)[number]
+export type RequiredUserConsentKind = (typeof USER_CONSENT_KINDS)[number]
+
+/**
+ * What a person may agree to on top, each on its own sheet and at any time; nothing is closed to
+ * someone who has not.
+ *
+ * - `memory`: the agent remembers what the person tells it between conversations. Recorded when the
+ *   person turns memory on, in the version of the memory sheet that was shown; turning it on and off
+ *   is traced in `memory_consent_events`.
+ *
+ * These values are stored in the column, so they must not be changed.
+ */
+export const OPTIONAL_CONSENT_KINDS = ['memory'] as const
+export type OptionalUserConsentKind = (typeof OPTIONAL_CONSENT_KINDS)[number]
+
+export type UserConsentKind = RequiredUserConsentKind | OptionalUserConsentKind
+
+/**
+ * What a person did with their consent to memory (`memory_consent_events.action`): `granted` when
+ * they turned memory on after the consent sheet, `revoked` when they turned it off.
+ *
+ * These values are stored in the column, so they must not be changed.
+ */
+export const MEMORY_CONSENT_ACTIONS = ['granted', 'revoked'] as const
+export type MemoryConsentAction = (typeof MEMORY_CONSENT_ACTIONS)[number]

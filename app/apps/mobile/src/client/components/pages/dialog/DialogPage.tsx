@@ -3,8 +3,10 @@ import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { reportMicFailure, reportVoiceProblem } from '../../../lib/analytics'
 import {
@@ -13,7 +15,9 @@ import {
   type DialogMessageView,
   type DialogSocketState,
 } from '../../../lib/dialog-socket'
+import { getDialog } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
+import { watchMemoryCard } from '../../../lib/memory'
 import { openRoute } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
 import {
@@ -80,6 +84,8 @@ export default function DialogPage({
   greeting,
   resumed,
   sinceLastDialogHours,
+  memoryMode: startedMemoryMode,
+  memoryEnabled,
   listen,
 }: {
   f7router: Router.Router
@@ -88,11 +94,30 @@ export default function DialogPage({
   /** The server returned a conversation that was already open instead of starting a new one. */
   resumed?: boolean
   sinceLastDialogHours?: number | null
+  /** `off`: the conversation is held "without memory". Unknown when opened other than from home. */
+  memoryMode?: DialogMemoryMode
+  /** Whether the person's memory was on when the conversation started. */
+  memoryEnabled?: boolean
   /** Opened by the talk button on home: start listening as soon as the connection is up. */
   listen?: boolean
 }) {
   const { auth } = useAuth()
   const user = auth.user
+  const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(startedMemoryMode)
+
+  // Opened other than from home: the dialog itself says whether it is held without memory.
+  useEffect(() => {
+    if (startedMemoryMode !== undefined) return
+    let cancelled = false
+    getDialog(dialogId)
+      .then((result) => {
+        if (!cancelled && result.ok) setMemoryMode(result.data.memoryMode)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [dialogId, startedMemoryMode])
   const [messages, setMessages] = useState<DialogMessageView[]>([])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
@@ -223,7 +248,7 @@ export default function DialogPage({
           // Nothing was heard (a cough, the agent's own echo): no answer is coming, so nothing is awaited.
           if (final && !text) setAwaitingReply(false)
         },
-        onAudio: (frame) => voicePlayer.enqueue(frame),
+        onAudio: (speech) => voicePlayer.enqueue(speech),
         onSafety: (_level, text, hotlines) => openSos({ text, hotlines, source: 'safety_frame' }),
         onEnded: (result) => setSummary(result),
         onError: (code, message) => {
@@ -553,6 +578,13 @@ export default function DialogPage({
     setEndOpened(false)
     // The journal lives on another tab; on a wide screen its list is visible right away.
     void journal.refresh()
+    // What the conversation added to memory shows up on home as "Я запомнил" once the agent is done.
+    if (
+      user &&
+      shouldWatchMemoryChanges({ memoryMode, memoryEnabled: memoryEnabled ?? user.memoryEnabled })
+    ) {
+      void watchMemoryCard(dialogId, user.id)
+    }
     const text = summary?.title
       ? `Забираешь с собой: ${summary.title}`
       : 'Разговор завершён. Я рядом, когда понадоблюсь.'
@@ -637,6 +669,15 @@ export default function DialogPage({
           SOS
         </button>
       </Navbar>
+
+      {memoryMode === DialogMemoryMode.Off && (
+        <div className="rd-incognito-mark" role="note" data-testid="dialog-incognito">
+          <Icon f7="eye_slash" size={16} />
+          <span>
+            <b>Без памяти.</b> Этот разговор я не запомню, а сам он удалится через сутки
+          </span>
+        </div>
+      )}
 
       {sinceLastDialogHours !== null && sinceLastDialogHours !== undefined && sinceLastDialogHours >= 24 && (
         <div className="rd-dialog-status">

@@ -145,6 +145,7 @@ async def test_stream_gives_pieces_and_skips_service_lines():
 
     assert await collect(proxy_chat(handler)) == ["Я ", "рядом."]
     assert seen[0]["stream"] is True and seen[0]["model"] == "model"
+    assert seen[0]["stream_options"] == {"include_usage": True}  # без него прокси не присылает расход в потоке
 
 
 async def test_stream_cut_by_the_token_limit_raises_after_the_pieces():
@@ -274,7 +275,10 @@ def test_sentences_are_voiced_one_by_one(user_id):
 
 def test_time_to_first_sound_and_first_sentence_are_measured(voice_client, user_id):
     def count(stage: str) -> float:
-        return REGISTRY.get_sample_value("agent_voice_latency_seconds_count", {"stage": stage}) or 0.0
+        return sum(
+            REGISTRY.get_sample_value("agent_voice_latency_seconds_count", {"stage": stage, "memory": memory}) or 0.0
+            for memory in ("on", "off")
+        )
 
     before = {stage: count(stage) for stage in ("first_sentence", "tts_first", "first_sound")}
     dialog = start_dialog(voice_client, user_id)

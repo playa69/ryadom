@@ -23,3 +23,6 @@ export const webDialogViewKey = (dialogId: string): string => `${WEB_STORAGE_PRE
 
 /** The "Разговор без рук" setting of this browser (localStorage); see client-core/voice/hands-free. */
 export const WEB_HANDS_FREE_KEY = `${WEB_STORAGE_PREFIX}hands-free`
+
+/** "Скрывать тексты" of the screen "Память" in this browser (localStorage); see client-core/memory. */
+export const WEB_MEMORY_HIDDEN_KEY = `${WEB_STORAGE_PREFIX}memory-hidden`

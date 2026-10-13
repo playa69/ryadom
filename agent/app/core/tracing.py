@@ -7,8 +7,9 @@
 
 По умолчанию выключен (`NullTracer`): без `LANGFUSE_ENABLED` агент работает ровно как раньше.
 Трейсинг никогда не влияет на диалог: сбой записи — warning в журнал, а не исключение наружу.
-Тексты реплик уходят только при `LANGFUSE_TRACE_TEXT=true`, иначе вместо них — длины; Langfuse
-self-hosted в том же RU-кластере, где уже лежат сами диалоги (SQLite на томе пода).
+Тексты реплик по умолчанию в Langfuse НЕ уходят (`LANGFUSE_TRACE_TEXT=false`): вместо них число символов и слов,
+длительность речи, токены и задержки этапов. `LANGFUSE_TRACE_TEXT=true` только для локальной отладки: в проде тексты
+реплик людей в трейсинг отправлять нельзя.
 """
 
 import asyncio
@@ -21,17 +22,38 @@ logger = logging.getLogger("agent.tracing")
 
 
 def _mask(value: Any, trace_text: bool) -> Any:
-    """Тексты реплик при выключенном `trace_text` заменяются их длиной; всё остальное проходит как есть."""
+    """Тексты реплик при выключенном `trace_text` заменяются числом символов и слов. Незнакомые типы тоже скрываются."""
     if trace_text or value is None:
         return value
     if isinstance(value, str):
-        return f"[скрыто, {len(value)} симв.]"
+        return f"[скрыто: {len(value)} симв., {len(value.split())} сл.]"
     if isinstance(value, list):  # сообщения чата: [{"role": ..., "content": ...}]
         return [
-            {"role": m.get("role"), "content": _mask(str(m.get("content") or ""), False)} if isinstance(m, dict) else m
+            {"role": m.get("role"), "content": _mask(str(m.get("content") or ""), False)} if isinstance(m, dict) else "[скрыто]"
             for m in value
         ]
-    return value
+    return "[скрыто]"
+
+
+MAX_PLAIN_METADATA_CHARS = 64
+
+
+def _mask_status(status: str | None, trace_text: bool) -> str | None:
+    """Статус ошибки. Тело ответа провайдера после двоеточия может нести кусок реплики, поэтому без текстов оно отбрасывается."""
+    if trace_text or not status:
+        return status
+    return status.split(":", 1)[0][:80]
+
+
+def _mask_metadata(metadata: dict[str, Any] | None, trace_text: bool) -> dict[str, Any] | None:
+    """Метаданные — числа, флаги и короткие имена без пробелов (модель, голос, причина). Строка с пробелами или длиннее
+    MAX_PLAIN_METADATA_CHARS скорее всего чей-то текст, её не отправляем."""
+    if trace_text or metadata is None:
+        return metadata
+    return {
+        key: "[скрыто]" if isinstance(value, str) and (len(value) > MAX_PLAIN_METADATA_CHARS or len(value.split()) > 1) else value
+        for key, value in metadata.items()
+    }
 
 
 def _usage_details(usage: dict[str, Any] | None) -> dict[str, int] | None:
@@ -167,11 +189,11 @@ class LangfuseObservation:
         if details:
             kwargs["usage_details"] = details
         if metadata is not None:
-            kwargs["metadata"] = metadata
+            kwargs["metadata"] = _mask_metadata(metadata, self._trace_text)
         if level is not None:
             kwargs["level"] = level
         if status is not None:
-            kwargs["status_message"] = status
+            kwargs["status_message"] = _mask_status(status, self._trace_text)
         if not kwargs:
             return
         try:
@@ -223,7 +245,7 @@ class LangfuseTracer:
         """Корень трассы хода: generation с привязкой к сессии диалога и человеку."""
         try:
             generation = self._client.start_generation(
-                name=name, model=model, input=_mask(input, self._trace_text), metadata=metadata
+                name=name, model=model, input=_mask(input, self._trace_text), metadata=_mask_metadata(metadata, self._trace_text)
             )
             generation.update_trace(session_id=session_id, user_id=user_id, tags=tags)
             return LangfuseObservation(generation, self._trace_text)
@@ -248,7 +270,7 @@ class LangfuseTracer:
             return NULL_OBSERVATION
         try:
             generation = parent.raw.start_generation(
-                name=name, model=model, input=_mask(input, self._trace_text), metadata=metadata
+                name=name, model=model, input=_mask(input, self._trace_text), metadata=_mask_metadata(metadata, self._trace_text)
             )
             return LangfuseObservation(generation, self._trace_text)
         except Exception as error:  # noqa: BLE001
@@ -269,7 +291,9 @@ class LangfuseTracer:
             logger.debug("langfuse child %s skipped: parent trace already ended", name)
             return NULL_OBSERVATION
         try:
-            span = parent.raw.start_span(name=name, input=_mask(input, self._trace_text), metadata=metadata)
+            span = parent.raw.start_span(
+                name=name, input=_mask(input, self._trace_text), metadata=_mask_metadata(metadata, self._trace_text)
+            )
             return LangfuseObservation(span, self._trace_text)
         except Exception as error:  # noqa: BLE001
             logger.warning("langfuse span start failed: %s", error)
@@ -286,4 +310,6 @@ def build_tracer(settings: LangfuseSettings) -> Tracer:
     """Tracer по настройкам: выключен — NullTracer, включен — LangfuseTracer."""
     if not settings.enabled:
         return NullTracer()
+    if settings.trace_text:
+        logger.warning("LANGFUSE_TRACE_TEXT=true: тексты реплик людей и агента уходят в Langfuse (только для локальной отладки)")
     return LangfuseTracer(settings)

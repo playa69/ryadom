@@ -118,13 +118,18 @@ export default defineConfig(({ command, mode }) => {
             // Framework7 CSS is bundled into one large file; otherwise the workbox warning fails the build.
             maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
             // The analytics SDK (~100 kB gzipped) is fetched on demand, and only when the server turned
-            // analytics on. Precaching it would make every install download it for nothing.
-            globIgnores: ['**/assets/posthog-*.js'],
+            // analytics on. Precaching it would make every install download it for nothing. The same goes
+            // for the WASM Opus decoder (~67 kB gzipped): only a browser without one of its own (iOS
+            // before 26, Firefox on Android) fetches it, when a dialog opens; if it cannot, voice is μ-law.
+            globIgnores: ['**/assets/posthog-*.js', '**/assets/opus-decoder-*.js'],
           },
         }),
     ],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
+      // What analytics report as `app_version`: the image tag (`RELEASE`) when the build has one. `__APP_VERSION__`
+      // is not that: the native update check compares it, so it stays the package's version.
+      __RELEASE__: JSON.stringify(process.env.RELEASE?.trim() || pkg.version),
     },
     server: {
       port: 5174,
@@ -152,10 +157,15 @@ export default defineConfig(({ command, mode }) => {
       chunkSizeWarningLimit: 2000,
       rollupOptions: {
         output: {
-          // posthog-js is only ever imported dynamically (packages/analytics/src/browser.ts). Giving its
-          // chunk a name of its own keeps it out of the main bundle and lets the service worker skip it
-          // (see `globIgnores` above).
-          manualChunks: (id) => (/posthog-js|@posthog/.test(id.replaceAll('\\', '/')) ? 'posthog' : undefined),
+          // posthog-js and opus-decoder are only ever imported dynamically (packages/analytics/src/browser.ts,
+          // packages/client-core/src/voice/opus.ts). Giving each a chunk of its own keeps it out of the main
+          // bundle and lets the service worker skip it (see `globIgnores` above).
+          manualChunks: (id) => {
+            const path = id.replaceAll('\\', '/')
+            if (/posthog-js|@posthog/.test(path)) return 'posthog'
+            if (/opus-decoder|@wasm-audio-decoders|simple-yenc|@eshaz\/web-worker/.test(path)) return 'opus-decoder'
+            return undefined
+          },
         },
       },
     },

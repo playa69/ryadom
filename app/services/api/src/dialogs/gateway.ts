@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http'
 import assertNever from 'assert-never'
 import type { WebSocket } from 'ws'
-import { AnalyticsEvent, type DialogInterruptReason } from '@ryadom/analytics/events'
+import { AnalyticsEvent, COMPONENT_NAMES, type ComponentName, type DialogInterruptReason } from '@ryadom/analytics/events'
 import type { ServerAnalytics } from '@ryadom/analytics/server'
 import {
   bindRequestContext,
@@ -12,6 +12,7 @@ import {
 } from '@ryadom/core/shared'
 import {
   AUDIO_FRAME_HEADER_BYTES,
+  AUDIO_TTS_SAMPLE_RATE,
   AudioFrameKind,
   DIALOG_PROTOCOL_VERSION,
   DialogClientFrame,
@@ -21,23 +22,27 @@ import {
   SafetyLevel,
   type DialogServerMessage,
   type DialogSummaryApiResponse,
+  type TtsCodec,
 } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
-import { tensionOutcome } from '../lib/analytics'
+import { dialogIdProperty, messageCounts, tensionOutcome } from '../lib/analytics'
 import type { AppServerEnv } from '../lib/env'
 import { HOTLINES } from '../lib/hotlines'
 import type { Jwt } from '../lib/jwt'
 import { openAgentSocket, type AgentSocket } from './agent-socket'
 import { isDraining } from '../lib/lifecycle'
 import type { Sessions } from '../lib/sessions'
+import { InOrder } from './in-order'
 import { DIALOG_LIMITS } from './limits'
+import { createSpeechEncoder, pickTtsCodec, type SpeechEncoder } from './tts-codec'
 
 /**
  * Gateway for a single dialog: the client socket against the socket to the agent.
  *
  * What it does: verifies the token from the `hello` frame, keeps one active connection per person,
- * enforces the limits, translates frames in both directions and closes everything once either side
- * is gone. What it does not do: interpret or store message content, or write text to the logs.
+ * enforces the limits, translates frames in both directions, re-encodes the agent's speech into the
+ * codec the client asked for (tts-codec.ts) and closes everything once either side is gone. What it
+ * does not do: interpret or store message content, or write text to the logs.
  *
  * The signature of an access token proves nothing about the session once it has been issued, and a
  * dialog lasts far longer than a token is meant to be trusted. So the session is asked about when
@@ -83,6 +88,12 @@ function interruptReason(code: DialogCloseCode, reason: string): DialogInterrupt
   }
 }
 
+/** What the agent adds to a summary for analytics: replies in the whole dialog. */
+interface AgentSummaryCounts {
+  userMessages?: unknown
+  assistantMessages?: unknown
+}
+
 interface AgentTextFrame {
   type?: unknown
   [key: string]: unknown
@@ -115,6 +126,16 @@ class DialogSession {
   private lastRefill = Date.now()
   private lastAudioRefill = Date.now()
   private closed = false
+  /** The codec of the agent's speech on this connection, from `hello.codecs`. */
+  private codec: TtsCodec = 'pcm16'
+  /** The encoder of the speech being voiced now; a new one for each `tts_start`. */
+  private speech: SpeechEncoder | null = null
+  /** The agent's frames, in its order, while Opus speech is being encoded off the main thread. */
+  private readonly toClientInOrder = new InOrder((error) => this.onSpeechError(error))
+  private speechErrorLogged = false
+  // How much speech the codec saved: bytes from the agent and bytes to the client, for the log at the end.
+  private speechBytesIn = 0
+  private speechBytesOut = 0
   /**
    * Frames are handled one at a time, in arrival order. `hello` is asynchronous (it verifies the
    * token signature) while the client may send a message right after it, for example one queued
@@ -195,6 +216,7 @@ class DialogSession {
     const reason = this.closeReason ?? 'client_closed'
     if (this.userMessages === 0 && reason !== 'agent_unavailable') return
     this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogInterrupted, {
+      ...dialogIdProperty(this.dialogId),
       reason,
       duration_s: Math.round((Date.now() - this.openedAt) / 1000),
       user_messages: this.userMessages,
@@ -203,6 +225,10 @@ class DialogSession {
 
   private dispose(): void {
     this.reportInterruption()
+    this.reportSpeechBytes()
+    this.toClientInOrder.stop()
+    this.speech?.close()
+    this.speech = null
     clearTimeout(this.helloTimer)
     clearInterval(this.heartbeatTimer)
     clearInterval(this.sessionTimer)
@@ -327,6 +353,7 @@ class DialogSession {
     this.sessionId = payload.sid ?? null
     this.dialogId = dialogId
     this.openedAt = Date.now()
+    this.codec = pickTtsCodec(frame.codecs, this.deps.env.DIALOG_AUDIO_CODECS)
     // The upgrade carried only what the client could put in headers; now the account is verified.
     updateRequestContext({ userId: this.userId })
 
@@ -369,8 +396,17 @@ class DialogSession {
         message: 'too many messages',
       })
     }
+    // A reply the agent never got (it is not connected yet or just left) is not a turn of the conversation.
+    const forwarded = this.agent?.connected === true
     this.agent?.send({ type: 'user_message', id: clientId, text })
     this.userMessages += 1
+    if (forwarded) this.reportTurn('text')
+  }
+
+  /** One accepted reply of the person: the target action of the product (see `AnalyticsEvent.DialogTurn`). Never its text. */
+  private reportTurn(input: 'text' | 'voice'): void {
+    if (!this.userId) return
+    this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogTurn, { ...dialogIdProperty(this.dialogId), input })
   }
 
   private startHeartbeat(): void {
@@ -421,17 +457,16 @@ class DialogSession {
       },
       {
         onOpen: () => {
-          this.logger.info('Соединение с агентом открыто', { userId, dialogId })
+          this.logger.info('Соединение с агентом открыто', { userId, dialogId, codec: this.codec })
         },
-        onText: (frame) => this.fromAgent(frame as AgentTextFrame),
-        onBinary: (data) => {
-          // Speech goes to the client as is: the gateway does not re-encode it.
-          if (this.socket.readyState === this.socket.OPEN) this.socket.send(data, { binary: true })
-        },
+        onText: (frame) => this.onAgentText(frame as AgentTextFrame),
+        onBinary: (data) => this.onAgentSpeech(data),
         onClose: (code, reason) => {
           this.logger.info('Агент закрыл соединение', { userId, dialogId, code, reason })
-          // The agent is gone, so there is nothing left to continue the conversation with.
-          this.close(code === 1000 ? DialogCloseCode.Done : DialogCloseCode.AgentUnavailable, reason || 'agent closed')
+          // The agent is gone, so there is nothing left to continue the conversation with. What it said
+          // before closing (its `ended`, the last of its speech still in the encoder) goes out first.
+          const closeCode = code === 1000 ? DialogCloseCode.Done : DialogCloseCode.AgentUnavailable
+          this.toClientInOrder.push(null, () => this.close(closeCode, reason || 'agent closed'))
         },
         onError: (error) => {
           this.logger.warn('Ошибка соединения с агентом', error, { userId, dialogId })
@@ -443,6 +478,73 @@ class DialogSession {
         },
       },
     )
+  }
+
+  /**
+   * A text frame of the agent. The speech encoder follows `tts_start` and `tts_end` the moment they
+   * arrive, since the audio after them belongs to the next speech; the frame itself reaches the client
+   * in its turn, after the audio that came before it (which Opus may still be encoding).
+   */
+  private onAgentText(frame: AgentTextFrame): void {
+    if (frame.type === 'tts_start') this.startSpeech()
+    else if (frame.type === 'tts_end') this.endSpeech()
+    this.toClientInOrder.push(frame, (ready) => this.fromAgent(ready))
+  }
+
+  /** A binary frame of the agent: its speech, re-encoded for the client. */
+  private onAgentSpeech(data: Buffer): void {
+    this.speechBytesIn += data.length
+    // Audio without `tts_start` (the agent never sends it, but the protocol allows it) still gets the codec.
+    const speech = this.speech ?? this.startSpeech()
+    this.toClientInOrder.push(speech.frame(data), (frame) => this.sendSpeech(frame))
+  }
+
+  private startSpeech(): SpeechEncoder {
+    // A speech the agent never ended is ended here, so its tail is not lost.
+    this.endSpeech()
+    this.speech = createSpeechEncoder(this.codec, {
+      bitrate: this.deps.env.DIALOG_OPUS_BITRATE,
+      complexity: this.deps.env.DIALOG_OPUS_COMPLEXITY,
+    })
+    return this.speech
+  }
+
+  private endSpeech(): void {
+    const speech = this.speech
+    this.speech = null
+    const tail = speech?.finish()
+    if (tail) this.toClientInOrder.push(tail, (frame) => this.sendSpeech(frame))
+  }
+
+  private sendSpeech(frame: Buffer | null): void {
+    if (!frame || this.socket.readyState !== this.socket.OPEN) return
+    this.speechBytesOut += frame.length
+    this.socket.send(frame, { binary: true })
+  }
+
+  /** The encoder failed (its worker died): that speech goes on without the rest of its audio. Logged once. */
+  private onSpeechError(error: unknown): void {
+    if (this.speechErrorLogged) return
+    this.speechErrorLogged = true
+    this.logger.warn('Не удалось закодировать озвучку', error, {
+      userId: this.userId,
+      dialogId: this.dialogId,
+      codec: this.codec,
+    })
+  }
+
+  /** What the codec of this connection did to the size of the agent's speech. Counts only, never the sound. */
+  private reportSpeechBytes(): void {
+    if (this.speechBytesIn === 0) return
+    const bytesIn = this.speechBytesIn
+    this.speechBytesIn = 0
+    this.logger.info('Озвучка за соединение', {
+      userId: this.userId,
+      dialogId: this.dialogId,
+      codec: this.codec,
+      bytesIn,
+      bytesOut: this.speechBytesOut,
+    })
   }
 
   /** Agent frames are translated into our protocol: fields are copied by name, the rest is dropped. */
@@ -470,7 +572,10 @@ class DialogSession {
         // A finished transcript WITH TEXT is one spoken turn of the person. The agent also sends a final
         // one with empty text for silence, an echo or a cough, and stores no message for it: that is not
         // something the person said. Partial ones are not counted either.
-        if (frame.final === true && text.trim().length > 0) this.userMessages += 1
+        if (frame.final === true && text.trim().length > 0) {
+          this.userMessages += 1
+          this.reportTurn('voice')
+        }
         const messageId = str('messageId')
         return this.toClient({
           type: DialogServerFrame.Transcript,
@@ -504,17 +609,31 @@ class DialogSession {
       case 'tts_start': {
         const messageId = str('messageId')
         if (!messageId) return
+        // The agent's speech is 24 kHz by its contract, and the encoders are made for it.
         return this.toClient({
           type: DialogServerFrame.TtsStart,
           messageId,
-          codec: 'pcm16',
-          sampleRate: num('sampleRate') ?? 24_000,
+          codec: this.codec,
+          sampleRate: AUDIO_TTS_SAMPLE_RATE,
         })
       }
       case 'tts_end': {
         const messageId = str('messageId')
         if (!messageId) return
         return this.toClient({ type: DialogServerFrame.TtsEnd, messageId })
+      }
+      case 'component': {
+        // One real call of one of the agent's parts for this dialog: a name, how it went, whether it was cached.
+        // Nothing else of the frame is read, so a prompt or a vendor's error text cannot reach a report.
+        const component = COMPONENT_NAMES.find((name) => name === frame.component) as ComponentName | undefined
+        if (!component || !this.userId) return
+        this.deps.analytics.capture(this.userId, AnalyticsEvent.ComponentCalled, {
+          ...dialogIdProperty(this.dialogId),
+          component,
+          outcome: frame.outcome === 'error' ? 'error' : 'ok',
+          cached: frame.cached === true,
+        })
+        return
       }
       case 'safety': {
         // The hotlines in this frame are always filled in: if the agent gave none, we substitute
@@ -531,14 +650,17 @@ class DialogSession {
       case 'ended': {
         // The agent builds the summary itself; its shape is already described by the contract
         // (DialogSummary).
-        const summary = (frame.summary ?? null) as DialogSummaryApiResponse | null
+        const raw = (frame.summary ?? null) as (DialogSummaryApiResponse & AgentSummaryCounts) | null
+        // The counts of the whole dialog are for analytics only: they are not part of the contract with clients.
+        const { userMessages: _user, assistantMessages: _assistant, ...publicSummary } = raw ?? {}
+        const summary = raw ? (publicSummary as DialogSummaryApiResponse) : null
         if (this.userId && !this.outcomeReported) {
           this.outcomeReported = true
           this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogEnded, {
+            ...dialogIdProperty(this.dialogId),
             via: 'socket',
             duration_s: Math.round((Date.now() - this.openedAt) / 1000),
-            user_messages: this.userMessages,
-            assistant_messages: this.assistantMessages,
+            ...messageCounts(raw, { user: this.userMessages, assistant: this.assistantMessages }),
             has_takeaway: this.hasTakeaway,
             ...tensionOutcome(summary),
           })

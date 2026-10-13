@@ -10,8 +10,8 @@
 #                          и распознавание речи; принадлежит только агенту, в app-secrets его нет
 #   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — сменить TTS_MODE на
 #                          salutespeech и перезапустить агента
-#   LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY   ключи проекта ryadom в self-hosted Langfuse
-#                          (pk-lf…/sk-lf…; создаются в UI Langfuse, нужны при LANGFUSE_ENABLED=true)
+#   LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY   ключи проекта ryadom в self-hosted Langfuse (pk-lf…/sk-lf…; создаются в UI
+#                          Langfuse, нужны при LANGFUSE_ENABLED=true). Адрес — LANGFUSE_HOST ниже, не секрет.
 # Отдельный Secret `agent-gemini` (необязательный, нужен только в режиме gemini_live; создаётся
 # отдельно, существующий agent-secrets не трогаем): GEMINI_API_KEY (ключ Gemini API),
 # GEMINI_BASE_URL (адрес релея к Gemini API: из России Google недоступен напрямую),
@@ -32,6 +32,8 @@ metadata:
     app.kubernetes.io/part-of: ryadom
 data:
   APP_PORT: "8001"
+  # Версия агента: отдаёт GET /version и ставится тегом в трассы Langfuse. Держать равной тегу образа (02-deployment.yaml).
+  APP_VERSION: "0.6.0"
   # Озвучка: auto = SaluteSpeech (если есть ключ) → Qwen TTS → espeak-ng → без озвучки
   TTS_MODE: "qwen"                    # qwen | salutespeech
   TTS_DEFAULT_VOICE: "male"
@@ -59,14 +61,61 @@ data:
   VOICE_PIPELINE: "gemini_live"
   # Трейсинг LLM-ходов в self-hosted Langfuse (ns infra): трасса на ход диалога (расшифровка → ответ,
   # токены Gemini, задержки этапов), сессия = диалог. Ключи — в Secret `agent-secrets` (см. шапку).
-  # Тексты реплик уходят только при LANGFUSE_TRACE_TEXT=true (иначе — длины); Langfuse в том же
-  # RU-кластере, что и БД диалогов. Откат: LANGFUSE_ENABLED=false + rollout restart.
+  # Тексты реплик в Langfuse НЕ уходят (решение владельца 2026-10-13): вместо них число символов и слов, длительность речи,
+  # токены и задержки. LANGFUSE_TRACE_TEXT=true только для локальной отладки, в проде не включать.
+  # Откат: LANGFUSE_ENABLED=false + rollout restart.
   LANGFUSE_ENABLED: "true"
   LANGFUSE_HOST: "http://langfuse-web.infra.svc.cluster.local:3000"
-  LANGFUSE_TRACE_TEXT: "true"
+  LANGFUSE_TRACE_TEXT: "false"
+  # Отдельный приёмник расхода моделей (числа без текстов, трасса model-usage). Расход ходов уже идёт в трассах выше, поэтому
+  # включать приёмник вместе с трейсингом не нужно: в Langfuse он задвоится. Нужен, если трейсинг выключен.
+  LANGFUSE_USAGE_SINK: "false"
   # Диалоги: файл SQLite на томе agent-data (03-pvc.yaml). Они переживают перезапуск и выкат пода. Не открылся файл — агент
   # работает в памяти и громко пишет в журнал (ошибка), в /health/ready видно "dialogs": "memory".
   DIALOG_DB_PATH: "/data/dialogs.sqlite3"
+  # Память агента (docs/agent-memory-spec.md, agent/README.md «Память»). ВЫКАТ В ТРИ ШАГА (решение владельца, 2026-10-13):
+  #   шаг 1 — MEMORY_MODE "off" (выкачен 13.10 около 23:15 МСК). Схема файла диалогов мигрировала 1 → 2 при старте агента (откат
+  #           образа на предыдущей версии после этого невозможен без копии файла, см. k8s/agent/RUNBOOK-0.6.0.md), факты не
+  #           извлекались и не подмешивались, клиенты не показывали экран «Память» (client-core/src/memory.ts: режим off);
+  #   шаг 2 — этот манифест: MEMORY_MODE "on" по решению владельца (14.10): извлечение фактов у тех, кто включил память, и сводка в
+  #           разговоре; экран «Память» виден всем. Минуя "shadow" (извлечение без сводки в разговоре).
+  # Память работает только у тех, кто сам включил её в профиле с согласием; MEMORY_ALLOWLIST пуст — включить может любой. Модель
+  # извлечения по умолчанию — LLM_CHAT_MODEL (своя — MEMORY_LLM_MODEL), в голосовую модель уходит уровень MEMORY_BRIEF_LEVEL.
+  # Откат функции — снова "off" (данные остаются, чтение, экспорт и стирание работают).
+  MEMORY_MODE: "on"
+  # Явно то, что влияет на приватность (значения равны умолчаниям кода): в модель уходит минимум (как говорить и о чём не говорить,
+  # мягкий тон после тяжёлого разговора), второй классификатор пограничных фактов выключен, ограничения по списку людей нет.
+  MEMORY_BRIEF_LEVEL: "minimal"
+  MEMORY_CLASSIFIER: "off"
+  MEMORY_ALLOWLIST: ""
+  # Модель извлечения фактов — по итогам сравнения на золотом наборе (2026-10-13, scripts/memory_eval.py): GigaChat 3 Pro
+  # точнее и дешевле GigaChat 3.5 (точность 1,00 против 0,85, полнота 0,92 против 0,75); модель в РФ, тот же прокси и ключ.
+  MEMORY_LLM_MODEL: "gigachat-3-pro"
+  # Бюджет входных токенов Gemini Live в минуту (agent/README.md, «Бюджет токенов в минуту»). У проекта Google лимит один на всех:
+  # Tier 2 = 400000 токенов в минуту; сверх него Google закрывает соединение кодом 1011 «exceeded your current quota».
+  # LIMIT 0 выключает учёт целиком. ENFORCE=false: агент только меряет (метрики agent_gemini_tpm_window_tokens и
+  # agent_gemini_budget_level, строки журнала «gemini budget …») и после 1011 не открывает новые сессии GEMINI_QUOTA_COOLDOWN_SECONDS
+  # (5 с по умолчанию, растёт до 60); поведение разговоров не меняется. ENFORCE=true включает деградацию: новые разговоры при
+  # заполнении окна идут в каскад (LLM_*, STT_MODEL, TTS_MODE/QWEN_TTS_* выше), ходы ждут места и при нехватке получают шаблон.
+  # Включать вторым шагом, после сравнения метрики с графиком AI Studio.
+  GEMINI_TPM_LIMIT: "400000"
+  GEMINI_TPM_ENFORCE: "false"
+  # Ленивое открытие сессии Gemini (по audio_start или набранному сообщению, а не заранее и не сразу после ответа): экономит квоту,
+  # но к первому звуку на набранный текст добавляет около секунды. Включать отдельным решением. Остальные пороги и ожидания
+  # (GEMINI_TPM_TRIM_AT/ADMIT_AT/HARD_AT, GEMINI_HISTORY_MESSAGES_TIGHT, GEMINI_TPM_WAIT_MS, GEMINI_TPM_OPEN_FACTOR) не заданы:
+  # значения по умолчанию из кода.
+  GEMINI_LAZY_OPEN: "false"
+  # Возврат памяти системе (agent/README.md, «Память процесса»): раз в столько секунд сборка мусора и malloc_trim. Без него RSS после
+  # нагрузки остаётся на пике (в нагрузочном тесте 79 → 330 МиБ при лимите 384Mi) и не опускается. В коде по умолчанию 60; здесь 30:
+  # на стенде после 150 человек RSS 160 МиБ против 286 при 60 с, цена прохода в покое — единицы миллисекунд. 0 = выключено.
+  MEMORY_RECLAIM_SECONDS: "30"
   # Остальные настройки gemini_live (модель, голоса, сжатие контекста, возобновление сессии, размышление) намеренно не заданы:
   # действуют значения по умолчанию из кода (нейтральные: размышление и пороги сжатия решает Google). Полный список и
   # рекомендации (GEMINI_THINKING_BUDGET=0 для скорости, пороги сжатия для контроля расходов) — agent/README.md.
+  # Диалоги в памяти пода (agent/README.md «Выгрузка неактивных»; образы до неё эти ключи просто не читают): человек без обращений
+  # 30 минут выгружается из памяти и загружается с диска при следующем обращении (~1 мс). Потолок — страховка памяти пода (лимит 384Mi, 02-deployment.yaml):
+  # человек с одним диалогом из 40 сообщений — ~29 КиБ, с двадцатью — до ~0,6 МиБ; сверх 500 человек выгружаются самые давние.
+  # Живой сокет и незаписанное на диск держат человека в памяти. Без DIALOG_DB_PATH выгрузки нет.
+  DIALOG_IDLE_EVICT_SECONDS: "1800"
+  DIALOG_MAX_USERS_IN_MEMORY: "500"
+  DIALOG_EVICT_INTERVAL_SECONDS: "60"

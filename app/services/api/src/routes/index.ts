@@ -18,6 +18,7 @@ import { resetPasswordRoutes } from './auth/reset-password'
 import { sessionsRoutes } from './auth/sessions'
 import { dialogsRoutes } from './dialogs'
 import { healthRoutes } from './health'
+import { memoryRoutes } from './memory'
 import { otaBundleRoutes } from './ota-bundle'
 
 /** Every route of the application. The contracts live in src/shared/api. */
@@ -43,4 +44,5 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   resetPasswordRoutes(app, deps)
 
   dialogsRoutes(app, deps)
+  memoryRoutes(app, deps)
 }

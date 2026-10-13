@@ -9,6 +9,9 @@ export interface AgentDialogSummaryResponse {
   /** Self-reported tension before and after the conversation, 1-10. */
   tensionBefore?: number | null
   tensionAfter?: number | null
+  /** What was said in the whole dialog (the agent counts it); absent from an agent that does not. For analytics only. */
+  userMessages?: number | null
+  assistantMessages?: number | null
 }
 
 export interface AgentDialogListItemResponse {
@@ -16,6 +19,8 @@ export interface AgentDialogListItemResponse {
   startedAt: string
   endedAt: string | null
   summary: AgentDialogSummaryResponse | null
+  /** `off`: a conversation "without memory". Absent from an agent without memory, which means `on`. */
+  memoryMode?: string
 }
 
 export interface AgentMessageResponse {

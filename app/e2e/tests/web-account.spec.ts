@@ -197,13 +197,15 @@ test('профиль: разделы, строки и подстраницы', a
   await registerAndConfirm(page, uniqueEmail('web-settings'))
   await openProfile(page)
 
-  // ── the page: one h1 in the header, six sections, a column in the middle ──
+  // ── the page: one h1 in the header, seven sections (the memory one shows while the agent has memory on; the mock agent has it
+  // on), a column in the middle ──
   await expect(pageTitle(page)).toHaveCount(1)
   await expect(page).toHaveTitle('Профиль — Рядом')
   await expect(page.getByTestId('profile-name')).toHaveText('Тест')
   const main = page.getByRole('main')
   await expect(main.getByRole('heading', { level: 2 })).toHaveText([
     'Безопасность',
+    'Память',
     'Поддержка',
     'Документы',
     'Голос агента',

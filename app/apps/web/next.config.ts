@@ -4,10 +4,15 @@ import type { NextConfig } from 'next'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 
-/** The version of this package, reported with analytics events as `app_version`. */
-const { version } = JSON.parse(readFileSync(path.join(import.meta.dirname, 'package.json'), 'utf8')) as {
+const { version: packageVersion } = JSON.parse(readFileSync(path.join(import.meta.dirname, 'package.json'), 'utf8')) as {
   version: string
 }
+
+/**
+ * The build reported with analytics events as `app_version`: the image tag (`--build-arg RELEASE`), so a figure
+ * can be split by what was running. package.json says 0.1.0 whatever is deployed, which is why it is only the fallback.
+ */
+const version = process.env.RELEASE?.trim() || packageVersion
 
 /**
  * The URL prefix the web client is published under on a shared host (`/app`), empty when it has a
@@ -32,7 +37,11 @@ const nextConfig: NextConfig = {
   // Read by `lib/base-path.ts` (the prefix) and `lib/analytics-provider.tsx` (the version) in client code.
   env: { NEXT_PUBLIC_BASE_PATH: basePath, NEXT_PUBLIC_APP_VERSION: version },
   outputFileTracingRoot: repoRoot,
-  turbopack: { root: repoRoot },
+  turbopack: {
+    root: repoRoot,
+    // See lib/web-worker-shim.ts: a dependency of the WASM Opus decoder that the server build cannot bundle.
+    resolveAlias: { '@eshaz/web-worker': './lib/web-worker-shim.ts' },
+  },
   transpilePackages: [
     '@ryadom/analytics',
     '@ryadom/client-core',

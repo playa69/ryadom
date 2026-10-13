@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { PostHog } from 'posthog-node'
 import type { AnalyticsAdmin } from './admin'
-import { AnalyticsEvent, type AnalyticsEventArgs, type AnalyticsTraits } from './events'
+import { AnalyticsEvent, type AnalyticsEventArgs, type AnalyticsTraits, type TrafficType } from './events'
 import { roundedToHour, sanitizeProperties, scrubErrorText } from './sanitize'
 
 /**
@@ -61,13 +61,16 @@ export interface ServerAnalyticsOptions {
   /** Erases people from PostHog when their account is deleted. Without it `erasePerson` reports `not_configured`. */
   admin?: AnalyticsAdmin | undefined
   /**
-   * Whether a person has turned analytics off in their profile. Asked before anything is reported
-   * about them, and the answer is remembered for `optOutTtlMs`. If the question cannot be answered the
-   * report is dropped, not sent: for a person who may have said no, silence is the safe side.
+   * What the account says about being reported on: whether the person turned analytics off in their
+   * profile, and whose traffic the account is. Asked before anything is reported about the person, and the
+   * answer is remembered for `optOutTtlMs`. If the question cannot be answered the report is dropped, not
+   * sent: for a person who may have said no, silence is the safe side.
    */
-  isOptedOut?: ((userId: string) => Promise<boolean>) | undefined
-  /** How long an answer of `isOptedOut` is remembered. */
+  accountState?: ((userId: string) => Promise<AccountAnalyticsState>) | undefined
+  /** How long an answer of `accountState` is remembered. */
   optOutTtlMs?: number
+  /** The build that reports (the image tag), sent as `app_version` so a figure can be split by release. */
+  release?: string | undefined
   /**
    * How long `erasePerson` waits before asking PostHog to erase. The clients batch their events and
    * send them a few seconds later; erasing at once would let a batch that was queued before the
@@ -77,6 +80,14 @@ export interface ServerAnalyticsOptions {
   /** For tests. */
   client?: ServerAnalyticsClient
 }
+
+/** What an account says about being reported on (see `ServerAnalyticsOptions.accountState`). */
+export interface AccountAnalyticsState {
+  optOut: boolean
+  trafficType: TrafficType
+}
+
+const REAL_PERSON: AccountAnalyticsState = { optOut: false, trafficType: 'real' }
 
 /** The outcome of erasing a person: `not_configured` when no personal API key was given. */
 export type ErasureResult = 'erased' | 'failed' | 'not_configured'
@@ -146,7 +157,8 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
 
   client.on?.('error', (error) => onError?.(error))
 
-  const common = { app_env: appEnv, service }
+  // `app_version` is the image tag of this build; without it the field is left out rather than guessed.
+  const common = { app_env: appEnv, service, ...(options.release ? { app_version: options.release } : {}) }
 
   const safely = (action: () => void): void => {
     try {
@@ -156,25 +168,25 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
     }
   }
 
-  // ── What people said about being reported on ──────────────────────────────────────────────
+  // ── What accounts said about being reported on ────────────────────────────────────────────
   const optOutTtl = options.optOutTtlMs ?? DEFAULT_OPT_OUT_TTL_MS
-  const remembered = new Map<string, { optOut: boolean; until: number }>()
-  const asking = new Map<string, Promise<boolean>>()
+  const remembered = new Map<string, { state: AccountAnalyticsState; until: number }>()
+  const asking = new Map<string, Promise<AccountAnalyticsState>>()
 
-  const remember = (userId: string, optOut: boolean): void => {
+  const remember = (userId: string, state: AccountAnalyticsState): void => {
     if (!remembered.has(userId) && remembered.size >= MAX_REMEMBERED_PEOPLE) {
       const oldest = remembered.keys().next().value
       if (oldest !== undefined) remembered.delete(oldest)
     }
-    remembered.set(userId, { optOut, until: Date.now() + optOutTtl })
+    remembered.set(userId, { state, until: Date.now() + optOutTtl })
   }
 
-  /** The person's answer: remembered, or asked once however many reports wait on it. */
-  const optedOut = (userId: string): boolean | Promise<boolean> => {
-    const lookup = options.isOptedOut
-    if (!lookup) return false
+  /** The account's answer: remembered, or asked once however many reports wait on it. */
+  const stateOf = (userId: string): AccountAnalyticsState | Promise<AccountAnalyticsState> => {
+    const lookup = options.accountState
+    if (!lookup) return REAL_PERSON
     const known = remembered.get(userId)
-    if (known && known.until > Date.now()) return known.optOut
+    if (known && known.until > Date.now()) return known.state
     let pending = asking.get(userId)
     if (!pending) {
       pending = lookup(userId)
@@ -188,14 +200,17 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
     return pending
   }
 
-  /** Runs `send` for a person unless they opted out; a question that fails to be answered drops the report. */
-  const forPerson = (userId: string, send: () => void): void => {
-    const answer = optedOut(userId)
-    if (typeof answer === 'boolean') {
-      if (!answer) safely(send)
+  /**
+   * Runs `send` for a person unless they opted out, with what the account says; a question that fails to be
+   * answered drops the report.
+   */
+  const forPerson = (userId: string, send: (state: AccountAnalyticsState) => void): void => {
+    const answer = stateOf(userId)
+    if (!('then' in answer)) {
+      if (!answer.optOut) safely(() => send(answer))
       return
     }
-    answer.then((out) => (out ? undefined : safely(send)), (error: unknown) => onError?.(error))
+    answer.then((state) => (state.optOut ? undefined : safely(() => send(state))), (error: unknown) => onError?.(error))
   }
 
   // ── Erasing people ─────────────────────────────────────────────────────────────────────────
@@ -235,14 +250,18 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
       })
     },
     setOptOut(userId, optOut) {
-      remember(userId, optOut)
+      const known = remembered.get(userId)
+      if (optOut) remember(userId, { optOut: true, trafficType: known?.state.trafficType ?? 'real' })
+      // Turning it back on: the traffic type of an account nobody asked about yet is not guessed, the next report asks.
+      else if (known) remember(userId, { ...known.state, optOut: false })
+      else remembered.delete(userId)
     },
     capture(userId, event, ...args) {
-      forPerson(userId, () =>
+      forPerson(userId, (state) =>
         client.capture({
           distinctId: userId,
           event,
-          properties: { ...sanitizeProperties(args[0]), ...common },
+          properties: { ...sanitizeProperties(args[0]), ...common, traffic_type: state.trafficType },
           disableGeoip: true,
         }),
       )
@@ -261,14 +280,19 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
       )
     },
     identify(userId, traits) {
-      forPerson(userId, () =>
-        client.identify({ distinctId: userId, properties: sanitizeProperties(traits), disableGeoip: true }),
+      // The traffic type is the account's, never the caller's: it is set here from what the account says.
+      forPerson(userId, (state) =>
+        client.identify({
+          distinctId: userId,
+          properties: { ...sanitizeProperties(traits), traffic_type: state.trafficType },
+          disableGeoip: true,
+        }),
       )
     },
     async isFeatureEnabled(flag, userId) {
       try {
         // A person who said no is not asked about for flags either: that request names them to PostHog.
-        if (await optedOut(userId)) return false
+        if ((await stateOf(userId)).optOut) return false
         return (await client.isFeatureEnabled(flag, userId)) === true
       } catch (error) {
         onError?.(error)

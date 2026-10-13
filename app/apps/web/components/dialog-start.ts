@@ -1,3 +1,5 @@
+import type { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+
 /**
  * What `POST /api/dialogs` returned, handed from the home screen to the dialog screen. The dialog
  * id is the only thing in the URL: the greeting and the "we were apart" hint stay out of it, where
@@ -10,6 +12,10 @@ export interface DialogStart {
   greeting: string | null
   resumed: boolean
   sinceLastDialogHours: number | null
+  /** `off`: held "without memory" (the screen says so). Absent from a gateway that predates memory. */
+  memoryMode?: DialogMemoryMode
+  /** Whether the person's memory was on when it started: the card "Я запомнил" is awaited only then. */
+  memoryEnabled?: boolean
 }
 
 /**

@@ -18,6 +18,13 @@
 #
 # readOnlyRootFilesystem + emptyDir /tmp. Если под упадёт с EROFS — это
 # приложение пишет в файловую систему: найти путь в логах и добавить emptyDir.
+#
+# CPU limit 1000m (было 500m): шлюз перекодирует озвучку агента в Opus
+# (DIALOG_AUDIO_CODECS в app-config) в отдельном worker-потоке — ≈9 мс CPU на 1 с
+# речи (WASM, сложность 5), а агент шлёт кадры вдвое быстрее реального времени,
+# то есть ≈2% ядра на каждый говорящий диалог в моменте, плюс сам Node. С 500m
+# троттлинг CFS при десятке одновременных ответов дал бы рывки звука. request не
+# меняется: в покое шлюз почти ничего не тратит.
 # terminationGracePeriodSeconds 60: на SIGTERM api отвечает 503 на health,
 # закрывает сокеты и завершает работу (lib/shutdown.ts).
 # =============================================================================
@@ -58,7 +65,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/api:0.5.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/api:0.6.1
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -172,7 +179,7 @@ spec:
               cpu: 100m
               memory: 192Mi
             limits:
-              cpu: 500m
+              cpu: 1000m
               memory: 384Mi
       volumes:
         - name: tmp

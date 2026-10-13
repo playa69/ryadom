@@ -1,0 +1,11 @@
+# Точечный патч app-config для выката 0.6.0: только новые ключи сжатия озвучки (api 0.6.1).
+#
+# Почему не `kubectl apply -f 00-app-config.yaml`: живой app-config ушёл вперёд от файла (почтовый транспорт переведён на другого
+# провайдера, ключи SMTP_* в проде другие), и apply целиком вернул бы старые значения и сломал письма. Патч добавляет только эти ключи
+# и ничего другого не трогает:
+#   kubectl -n prod patch configmap app-config --type merge --patch-file k8s/app/00-app-config-audio.patch.yaml
+# Тот же набор ключей лежит и в 00-app-config.yaml (для новой установки); значения должны совпадать.
+data:
+  DIALOG_AUDIO_CODECS: "opus,mulaw,pcm16"
+  DIALOG_OPUS_COMPLEXITY: "5"
+  DIALOG_OPUS_BITRATE: "24000"

@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
 import { DialogMode } from '@ryadom/contracts/api/dialogs'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { groupJournal } from './journal-groups'
 
 function at(iso: string, id = iso): DialogListItemApiResponse {
-  return { dialogId: id, mode: DialogMode.Vent, startedAt: iso, endedAt: null, summary: null }
+  return {
+    dialogId: id,
+    mode: DialogMode.Vent,
+    startedAt: iso,
+    endedAt: null,
+    summary: null,
+    memoryMode: DialogMemoryMode.On,
+  }
 }
 
 // 15:00 local on a Wednesday.

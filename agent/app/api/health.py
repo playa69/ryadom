@@ -20,6 +20,7 @@ async def ready(request: Request) -> dict[str, str]:
     tts = active_tts(request.app)
     chat, recognizer = request.app.state.chat, request.app.state.recognizer
     live = request.app.state.live
+    memory = getattr(request.app.state, "memory", None)
     return {
         "status": "ok",
         "pipeline": live.name if live else "cascade",
@@ -28,6 +29,8 @@ async def ready(request: Request) -> dict[str, str]:
         "stt": recognizer.name if recognizer else "none",
         # sqlite: диалоги пишутся на диск и переживают перезапуск; memory: только в памяти (диск не задан или не открылся)
         "dialogs": "sqlite" if request.app.state.store.persistent else "memory",
+        # Память агента: off | shadow | on | unavailable (режим задан, но диск или модель извлечения не готовы)
+        "memory": memory.status() if memory is not None else "off",
     }
 
 

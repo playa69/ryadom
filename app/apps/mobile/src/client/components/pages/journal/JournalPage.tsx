@@ -4,6 +4,7 @@ import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Navbar, Page, Prel
 import type { Router } from 'framework7/types'
 import { useEffect, useRef } from 'react'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
+import { dialogMemoryMark } from '@ryadom/client-core/memory'
 import { journal, useJournal } from '../../../lib/journal'
 import { TAB_IDS } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
@@ -100,21 +101,34 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
               )}
               <BlockTitle>Разговоры</BlockTitle>
               <List inset strong dividers mediaList className="rd-menu">
-                {items.map((item) => (
-                  <ListItem
-                    key={item.dialogId}
-                    link
-                    className={
-                      isWide && openId === item.dialogId ? 'rd-journal-item rd-journal-item--open' : 'rd-journal-item'
-                    }
-                    data-testid="journal-item"
-                    title={nbspDash(item.summary?.title ?? 'Разговор')}
-                    subtitle={formatJournalDate(item.startedAt)}
-                    text={item.summary?.themes.join(', ')}
-                    after={tensionLabel(item) ?? undefined}
-                    onClick={() => openEntry(item.dialogId)}
-                  />
-                ))}
+                {items.map((item) => {
+                  const mark = dialogMemoryMark(item)
+                  return (
+                    <ListItem
+                      key={item.dialogId}
+                      link
+                      className={
+                        isWide && openId === item.dialogId ? 'rd-journal-item rd-journal-item--open' : 'rd-journal-item'
+                      }
+                      data-testid="journal-item"
+                      title={nbspDash(item.summary?.title ?? 'Разговор')}
+                      subtitle={mark ? undefined : formatJournalDate(item.startedAt)}
+                      text={item.summary?.themes.join(', ')}
+                      after={tensionLabel(item) ?? undefined}
+                      onClick={() => openEntry(item.dialogId)}
+                    >
+                      {/* A conversation "without memory" says so beside its date: it is deleted a day after it went quiet. */}
+                      {mark && (
+                        <span slot="subtitle">
+                          {formatJournalDate(item.startedAt)}
+                          <span className="rd-journal-mark" data-testid="journal-incognito">
+                            {mark.label} · удалится через сутки
+                          </span>
+                        </span>
+                      )}
+                    </ListItem>
+                  )
+                })}
               </List>
               <Block>
                 <p className="rd-caption">

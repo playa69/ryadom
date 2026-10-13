@@ -57,7 +57,24 @@ import type {
 } from '@ryadom/contracts/api/dialogs'
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { AppHeader } from '@ryadom/contracts/api/headers'
-import { ApiPath, dialogEndPath, dialogPath, sessionPath } from '@ryadom/contracts/api/paths'
+import {
+  DialogMemoryMode,
+  MEMORY_CONSENT_VERSION,
+  type CreateMemoryFactApiErrorCode,
+  type CreateMemoryFactApiRequest,
+  type ForgetMemoryApiErrorCode,
+  type MemoryApiResponse,
+  type MemoryChangesApiErrorCode,
+  type MemoryChangesApiResponse,
+  type MemoryExportApiResponse,
+  type MemoryFactApiResponse,
+  type UpdateMemoryFactApiErrorCode,
+  type UpdateMemoryFactApiRequest,
+  type UpdateMemorySettingsApiErrorCode,
+  type UpdateMemorySettingsApiRequest,
+  type UpdateMemorySettingsApiResponse,
+} from '@ryadom/contracts/api/memory'
+import { ApiPath, dialogEndPath, dialogPath, memoryFactPath, sessionPath } from '@ryadom/contracts/api/paths'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { newDeviceCredentials } from './device'
 import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from './dialog-socket'
@@ -65,6 +82,7 @@ import { ApiError, NETWORK_ERROR_STATUS, type ApiOutcome } from './errors'
 import { isTokenValid, tokenSubject } from './jwt'
 import type { SessionStorage, User } from './storage'
 import { createTracing } from './tracing'
+import { supportedTtsCodecs } from './voice/tts-decoder'
 
 /**
  * The API client, one instance per app. Everything the two apps do differently is passed in
@@ -593,14 +611,18 @@ export function createClient(config: ClientConfig) {
     // ─── dialogs ──────────────────────────────────────────────────────────────
 
     /**
-     * A plain start returns the open dialog if there is one (see `shouldAskToResume`); `startNew` is the
-     * person's answer "end it and begin a new one", and is sent only then.
+     * A plain start returns the open dialog if there is one (see `nextStartStep`); `startNew` is the
+     * person's answer "end it and begin a new one", and is sent only then. `memory` goes out only as
+     * `off` (a conversation "without memory"): `on` is the server's default, so a start that asks for
+     * nothing special looks exactly as it did before memory existed.
      */
     startDialog: (
       mode: DialogMode,
-      options: { startNew?: boolean } = {},
+      options: { startNew?: boolean; memory?: DialogMemoryMode } = {},
     ): Promise<ApiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>> => {
-      const body: StartDialogApiRequest = options.startNew ? { mode, startNew: true } : { mode }
+      const body: StartDialogApiRequest = { mode }
+      if (options.startNew) body.startNew = true
+      if (options.memory === DialogMemoryMode.Off) body.memory = DialogMemoryMode.Off
       return apiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>(ApiPath.Dialogs, {
         method: 'POST',
         body,
@@ -634,6 +656,8 @@ export function createClient(config: ClientConfig) {
           getAccessToken: () => accessToken,
           refreshSession,
           wsBase: () => config.wsBase(),
+          // The agent's speech in the smallest codec this device decodes (Opus, else μ-law).
+          ttsCodecs: () => supportedTtsCodecs(),
           // The fallback after a drop, for an agent that cannot replay what the person missed.
           loadHistory: async (): Promise<DialogMessageView[] | null> => {
             const result = await getDialog(dialogId).catch(() => null)
@@ -648,6 +672,73 @@ export function createClient(config: ClientConfig) {
 
     getAppStatus: (query: string): Promise<AppStatusApiResponse> =>
       apiFetch<AppStatusApiResponse>(`${ApiPath.AppStatus}?${query}`),
+
+    // ─── memory ───────────────────────────────────────────────────────────────
+    // What comes back holds the person's own words: the screens show it and keep it in memory only,
+    // never in logs, analytics or storage.
+
+    /** Everything the agent remembers and the person's switch. Works even while memory is off or unavailable. */
+    getMemory: (): Promise<MemoryApiResponse> => apiFetch<MemoryApiResponse>(ApiPath.Memory),
+
+    /**
+     * The switch "Запоминать". Turning it on is the person's answer to the consent sheet of this build
+     * (`MEMORY_CONSENT_VERSION`), which the server records; turning it off deletes nothing.
+     */
+    setMemoryEnabled: (
+      enabled: boolean,
+    ): Promise<ApiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>> => {
+      const body: UpdateMemorySettingsApiRequest = enabled
+        ? { enabled: true, consentAccepted: true, consentVersion: MEMORY_CONSENT_VERSION }
+        : { enabled: false }
+      return apiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>(
+        ApiPath.MemorySettings,
+        {
+          method: 'PUT',
+          body,
+        },
+      )
+    },
+
+    /** A fact the person writes themselves: it is theirs and pinned. */
+    createMemoryFact: (
+      fact: CreateMemoryFactApiRequest,
+    ): Promise<ApiOutcome<MemoryFactApiResponse, CreateMemoryFactApiErrorCode>> =>
+      apiOutcome<MemoryFactApiResponse, CreateMemoryFactApiErrorCode>(ApiPath.MemoryFacts, {
+        method: 'POST',
+        body: fact,
+      }),
+
+    /** One change at a time: a correction, "Запомнить", pin or unpin, or "Верно". */
+    updateMemoryFact: (
+      factId: string,
+      change: UpdateMemoryFactApiRequest,
+    ): Promise<ApiOutcome<MemoryFactApiResponse, UpdateMemoryFactApiErrorCode>> =>
+      apiOutcome<MemoryFactApiResponse, UpdateMemoryFactApiErrorCode>(memoryFactPath(factId), {
+        method: 'PATCH',
+        body: change,
+      }),
+
+    /** "Забыть" and "Не запоминать". A fact that is gone already counts as forgotten. */
+    forgetMemoryFact: async (factId: string): Promise<ApiOutcome<void, ForgetMemoryApiErrorCode>> =>
+      voidOutcome(
+        await apiOutcome<null, ForgetMemoryApiErrorCode>(memoryFactPath(factId), { method: 'DELETE' }),
+      ),
+
+    /** "Забыть всё": the facts go, the conversations and the switch stay. */
+    forgetAllMemory: async (): Promise<ApiOutcome<void, ForgetMemoryApiErrorCode>> =>
+      voidOutcome(await apiOutcome<null, ForgetMemoryApiErrorCode>(ApiPath.Memory, { method: 'DELETE' })),
+
+    /** What one conversation added to memory, for the card "Я запомнил" (see `pollMemoryChanges`). */
+    getMemoryChanges: (
+      dialogId: string,
+    ): Promise<ApiOutcome<MemoryChangesApiResponse, MemoryChangesApiErrorCode>> =>
+      apiOutcome<MemoryChangesApiResponse, MemoryChangesApiErrorCode>(
+        `${ApiPath.MemoryChanges}?dialogId=${encodeURIComponent(dialogId)}`,
+      ),
+
+    /** "Скачать мою память": everything, guesses and proposed facts included. */
+    exportMemory: (): Promise<MemoryExportApiResponse> =>
+      apiFetch<MemoryExportApiResponse>(ApiPath.MemoryExport),
   }
 }
 

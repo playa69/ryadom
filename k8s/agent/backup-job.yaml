@@ -1,0 +1,99 @@
+# =============================================================================
+# Job: резервная копия файла диалогов агента (PVC agent-data) перед выкатом agent 0.6.0 — см. RUNBOOK-0.6.0.md
+# =============================================================================
+# НЕ применяется автоматически: это шаблоны для администратора (admin-kubeconfig), каждый шаг по отдельной команде.
+#
+# Зачем. Агент 0.6.0 при старте переводит файл /data/dialogs.sqlite3 со схемы v1 на v2 (память агента). Агент 0.4.0 файл версии 2
+# не открывает (откат образа «молча» дал бы работу только в памяти). Единственный настоящий откат — вернуть копию, снятую ДО выката.
+# У диска agent-data нет бэкапов, а reclaimPolicy класса — Delete (k8s/agent/03-pvc.yaml).
+#
+# Порядок: 1) `kubectl -n agent scale deploy/agent --replicas=0` и дождаться, пока под исчезнет (SIGTERM дописывает всё на диск);
+# 2) применить этот файл (Job agent-db-backup); 3) убедиться по журналу, что копия целая (integrity_check = ok, счётчики совпали);
+# 4) вынести копию с кластера через под из backup-reader.yaml и `kubectl cp`; 5) вернуть `--replicas=1`.
+#
+# Образ — прежний агент 0.4.0 (уже на узлах, в нём есть Python с модулем sqlite3 и нет лишнего). Копия кладётся на тот же том в
+# /data/backups: она защищает от сбоя миграции и логических ошибок, но НЕ от потери самого диска, поэтому копию нужно вынести
+# с кластера (шаг 4). Том RWO: пока агент не остановлен, Job не запустится на другом узле.
+# Istio-sidecar в ns agent включён: без отключения инъекции Job не завершится (sidecar живёт вечно).
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-db-backup
+  namespace: agent
+  labels:
+    app: agent-db-backup
+    app.kubernetes.io/part-of: ryadom
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: agent-db-backup
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backup
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.4.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command: ["python", "-c"]
+          args:
+            - |
+              import os, sqlite3, time
+              src_path = "/data/dialogs.sqlite3"
+              os.makedirs("/data/backups", exist_ok=True)
+              dst_path = "/data/backups/dialogs-before-agent-0.6.0-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + ".sqlite3"
+              src = sqlite3.connect(src_path)
+              dst = sqlite3.connect(dst_path)
+              src.backup(dst)  # согласованный снимок: учитывает WAL, не копирует файл «сырым»
+              dst.commit()
+              def facts(conn):
+                  return {
+                      "user_version": conn.execute("PRAGMA user_version").fetchone()[0],
+                      "dialogs": conn.execute("SELECT COUNT(*) FROM dialogs").fetchone()[0],
+                      "messages": conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0],
+                  }
+              before, after = facts(src), facts(dst)
+              check = dst.execute("PRAGMA integrity_check").fetchone()[0]
+              print("source:", before)
+              print("copy:  ", after)
+              print("integrity_check:", check)
+              print("file:", dst_path, os.path.getsize(dst_path), "bytes")
+              src.close(); dst.close()
+              raise SystemExit(0 if (check == "ok" and before == after) else 1)
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: tmp
+          emptyDir: {}

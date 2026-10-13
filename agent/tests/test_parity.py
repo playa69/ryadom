@@ -591,7 +591,9 @@ def text_shape(frames: list[Frame]) -> list[str]:
             out.append(f"close:{body}")
             continue
         name = body["type"]
-        if name in ("tts_start", "tts_end"):
+        # `component` — отчёт шлюзу об обращении к компоненту: каскад и речь в речь зовут разные части, и на
+        # сходство кадров для клиента он не влияет (клиент его не получает, шлюз превращает в событие аналитики).
+        if name in ("tts_start", "tts_end", "component"):
             continue
         if name == "transcript":
             name = "transcript:" + ("partial" if not body.get("final") else "final" if body.get("text") else "empty")
@@ -705,6 +707,13 @@ def contract(frames: list[Frame], closed_ends: bool = True) -> list[str]:
             if not isinstance(body.get("summary"), dict):
                 bad.append(f"ended без summary (#{i})")
             ended = True
+        elif name == "component":
+            if body.get("component") not in ("stt", "safety", "llm", "live", "tts", "memory"):
+                bad.append(f"component с неизвестным названием {body.get('component')!r} (#{i})")
+            elif body.get("outcome") not in ("ok", "error") or not isinstance(body.get("cached"), bool):
+                bad.append(f"component без исхода или признака cached (#{i})")
+            elif set(body) - {"v", "type", "component", "outcome", "cached"}:
+                bad.append(f"в component лишние поля {sorted(set(body) - {'v', 'type', 'component', 'outcome', 'cached'})} (#{i})")
         else:
             bad.append(f"неизвестный тип кадра {name!r} (#{i})")
     if window is not None and closed_ends:

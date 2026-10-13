@@ -41,9 +41,14 @@ prometheus:
       repository: crpsqeamqpuvrkm5tpr9/prometheus/prometheus
     imagePullSecrets:
       - name: registry-pull
-    retention: 3d
+    # 14 дней (было 3d): расход моделей агента (agent_model_usage_total) и
+    # знаменатели (диалоги, секунды речи) нужны за две недели.
+    retention: 14d
     # 3GB из PVC 5Gi: headroom под wal/compaction. Потеря метрик при переполнении
     # недопустима — Prometheus останавливает ingestion при упоре в диск.
+    # Срабатывает раньше retention: если 14 дней не помещаются в 3GB, старые
+    # блоки удаляются раньше срока (проверять prometheus_tsdb_storage_blocks_bytes;
+    # не хватает — сначала увеличить PVC, потом retentionSize).
     retentionSize: 3GB
     # Подбирать ВСЕ ServiceMonitor/PodMonitor/PrometheusRule/Probe в кластере
     # (не только созданные этим чартом) — паттерн референса UnionApp.

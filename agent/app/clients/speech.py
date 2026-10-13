@@ -26,6 +26,7 @@ from typing import Literal, Protocol
 import httpx
 
 from app.core.config import SpeechSettings
+from app.services import usage as model_usage
 
 logger = logging.getLogger("agent.speech")
 
@@ -232,6 +233,7 @@ class SaluteTts:
             self._expires_at = expires_ms / 1000 if isinstance(expires_ms, int | float) else time.time() + 1800
             return self._token
 
+    @model_usage.counted("tts")
     async def synthesize(self, text: str, voice: Voice) -> bytes:
         for attempt in (1, 2):
             token = await self._access_token(force=attempt == 2)
@@ -291,6 +293,11 @@ class QwenTts:
             "json": {"model": self._model, "input": text, "voice": self._voices[voice], "response_format": "pcm"},
         }
 
+    def _record(self, text: str, pcm_bytes: int) -> None:
+        """Расход синтеза: токенов у модели нет, оплачиваются символы текста; выход — секунды полученного звука."""
+        model_usage.record(self._model, "tts", "input", "text", "chars", len(text))
+        model_usage.record(self._model, "tts", "output", "audio", "seconds", round(pcm_bytes / (2 * TTS_RATE), 3))
+
     async def stream(self, text: str, voice: Voice) -> AsyncIterator[bytes]:
         """Звук по мере прихода: прокси отдаёт его кусками, и первые 200 мс можно играть, не дожидаясь конца фразы.
 
@@ -299,13 +306,14 @@ class QwenTts:
         if not self._streaming:
             yield await self.synthesize(text, voice)
             return
-        carry, total = b"", 0
+        carry, total, accepted = b"", 0, False
         try:
             async with self._client.stream("POST", self._url, **self._request(text, voice)) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
                     hint = " (проверьте голос и формат: у модели только loongjohn/longanhuan_v3.6 и mp3/pcm)" if response.status_code >= 500 else ""
                     raise TtsError(f"Qwen TTS ответил {response.status_code}{hint}: {body[:200]}")
+                accepted = True
                 async for chunk in response.aiter_bytes():
                     data = carry + chunk
                     whole = len(data) // 2 * 2  # сэмпл — два байта: нечётный хвост ждёт следующий кусок
@@ -315,9 +323,16 @@ class QwenTts:
                         yield data[:whole]
         except httpx.HTTPError as error:
             raise TtsError(f"Qwen TTS не ответил: {error}") from error
+        finally:
+            if accepted:  # запрос принят: текст оплачен, даже если озвучку оборвали на середине
+                self._record(text, total)
+                model_usage.call("tts")
+            else:
+                model_usage.call("tts", "error")
         if not total:
             raise TtsError("Qwen TTS вернул пустое аудио")
 
+    @model_usage.counted("tts")
     async def synthesize(self, text: str, voice: Voice) -> bytes:
         try:
             response = await self._client.post(self._url, **self._request(text, voice))
@@ -327,6 +342,7 @@ class QwenTts:
             hint = " (проверьте голос и формат: у модели только loongjohn/longanhuan_v3.6 и mp3/pcm)" if response.status_code >= 500 else ""
             raise TtsError(f"Qwen TTS ответил {response.status_code}{hint}: {response.text[:200]}")
         pcm = response.content[: len(response.content) // 2 * 2]
+        self._record(text, len(pcm))
         if not pcm:
             raise TtsError("Qwen TTS вернул пустое аудио")
         return pcm
@@ -354,10 +370,15 @@ class CachedTts:
         cached = self._items.get(key)
         if cached is not None:
             self._items.move_to_end(key)
+            model_usage.call("tts", cached=True)  # провайдера не звали, но фраза человеку озвучена
             return cached
         pcm = await self._inner.synthesize(text, voice)  # отказ не запоминается
         self._remember(key, pcm)
         return pcm
+
+    def remembered(self, text: str, voice: Voice) -> bytes | None:
+        """Озвученная раньше фраза, без обращения к провайдеру (None, если её нет в памяти)."""
+        return self._items.get((voice, text))
 
     def _remember(self, key: tuple[Voice, str], pcm: bytes) -> None:
         self._items[key] = pcm
@@ -370,6 +391,7 @@ class CachedTts:
         cached = self._items.get(key)
         if cached is not None:
             self._items.move_to_end(key)
+            model_usage.call("tts", cached=True)
             yield cached
             return
         parts: list[bytes] = []
