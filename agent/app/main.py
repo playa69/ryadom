@@ -24,6 +24,7 @@ from app.core.errors import install_error_handlers
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
+from app.services.langfuse_usage import start_langfuse_sink
 from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
 
 if TYPE_CHECKING:
@@ -125,9 +126,12 @@ def create_app(
             phrases = (*GREETINGS, CRISIS_REPLY) if live is not None else SPOKEN_PHRASES
             sentences = [part for phrase in phrases for part in split_sentences(phrase)]
             warm_up = asyncio.create_task(app.state.tts.warm_up(sentences))
+        langfuse = start_langfuse_sink(APP_CONFIG.langfuse)
         try:
             yield
         finally:
+            if langfuse is not None:
+                langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются

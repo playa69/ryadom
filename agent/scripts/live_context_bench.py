@@ -12,7 +12,8 @@
   prompt_audio/text  из них аудио и текст
   response_all       токены ответа
 
-Берутся из `agent_gemini_tokens_total` (usage_metadata Gemini) приращением за ход.
+Берутся из `agent_model_usage_total{task="live",unit="tokens"}` (usage_metadata Gemini) приращением за ход: input здесь
+называется prompt, output — response, как в прежних замерах.
 """
 
 import argparse
@@ -33,8 +34,13 @@ import live_smoke as ls  # тот же каталог: клиент проток
 async def counters(http: httpx.AsyncClient) -> dict[str, float]:
     text = (await http.get("/metrics")).text
     out: dict[str, float] = {}
-    for m in re.finditer(r'^agent_gemini_tokens_total\{direction="(\w+)",modality="(\w+)"\} ([0-9.e+]+)', text, re.M):
-        out[f"{m[1]}_{m[2]}"] = float(m[3])
+    for m in re.finditer(r"^agent_model_usage_total\{([^}]*)\} ([0-9.e+]+)", text, re.M):
+        labels = dict(re.findall(r'(\w+)="([^"]*)"', m[1]))
+        if labels.get("task") != "live" or labels.get("unit") != "tokens":
+            continue
+        direction = {"input": "prompt", "output": "response"}[labels["direction"]]
+        for key in (f"{direction}_{labels['modality']}", f"{direction}_all"):
+            out[key] = out.get(key, 0.0) + float(m[2])
     for m in re.finditer(r'^agent_gemini_context_refresh_total\{result="(\w+)"\} ([0-9.e+]+)', text, re.M):
         out[f"refresh_{m[1]}"] = float(m[2])
     return out

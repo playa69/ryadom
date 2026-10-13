@@ -10,6 +10,8 @@
 #                          и распознавание речи; принадлежит только агенту, в app-secrets его нет
 #   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — сменить TTS_MODE на
 #                          salutespeech и перезапустить агента
+#   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY (необязательно) ключи проекта Langfuse: расход моделей.
+#                          Пока ключей нет, приёмник выключен. Адрес — LANGFUSE_HOST ниже, не секрет.
 # Отдельный Secret `agent-gemini` (необязательный, нужен только в режиме gemini_live; создаётся
 # отдельно, существующий agent-secrets не трогаем): GEMINI_API_KEY (ключ Gemini API),
 # GEMINI_BASE_URL (адрес релея к Gemini API: из России Google недоступен напрямую),
@@ -58,6 +60,8 @@ data:
   # Диалоги: файл SQLite на томе agent-data (03-pvc.yaml). Они переживают перезапуск и выкат пода. Не открылся файл — агент
   # работает в памяти и громко пишет в журнал (ошибка), в /health/ready видно "dialogs": "memory".
   DIALOG_DB_PATH: "/data/dialogs.sqlite3"
+  # Расход моделей в Langfuse (ns infra). Включается, только когда в agent-secrets есть оба ключа.
+  LANGFUSE_HOST: "http://langfuse-web.infra.svc.cluster.local:3000"
   # Остальные настройки gemini_live (модель, голоса, сжатие контекста, возобновление сессии, размышление) намеренно не заданы:
   # действуют значения по умолчанию из кода (нейтральные: размышление и пороги сжатия решает Google). Полный список и
   # рекомендации (GEMINI_THINKING_BUDGET=0 для скорости, пороги сжатия для контроля расходов) — agent/README.md.

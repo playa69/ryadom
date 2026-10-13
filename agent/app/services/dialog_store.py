@@ -16,14 +16,15 @@ import binascii
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.clients.speech import Voice
-from app.core.metrics import DIALOG_DB_ERRORS_TOTAL, DIALOG_DB_WRITE_SECONDS
+from app.core.metrics import DIALOG_DB_ERRORS_TOTAL, DIALOG_DB_WRITE_SECONDS, DIALOGS_TOTAL, SPEECH_SECONDS_TOTAL
 from app.services.dialog_db import DialogDatabase, DialogDbError, DialogWrite, StoredDialog, encode_summary
+from app.services.usage import Usage
 
 logger = logging.getLogger("agent.dialogs")
 
@@ -42,6 +43,8 @@ class Message:
     role: str  # "user" | "assistant"
     text: str
     created_at: str
+    # Сколько секунд речи в сообщении: голосовая реплика человека или озвучка ответа, дошедшая до клиента. Наружу не отдаётся.
+    audio_seconds: float | None = None
 
     def to_json(self) -> dict[str, str]:
         return {"id": self.id, "role": self.role, "text": self.text, "createdAt": self.created_at}
@@ -68,6 +71,8 @@ class Dialog:
     # Зовёт хранилище, когда диалог завершён снаружи сокета (человек начал новый разговор с другого экрана): сокет сообщает
     # `ended` и закрывается, а не продолжает писать в завершённый диалог. Ставит и снимает сессия; на диск не попадает.
     on_replaced: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False, compare=False)
+    # Расход моделей, ещё не записанный на диск (строки model_usage). Только при подключённой базе; в памяти не хранится дальше записи.
+    usage: list[tuple[Any, ...]] = field(default_factory=list, repr=False, compare=False)
 
     def to_item(self) -> dict[str, Any]:
         return {"dialogId": self.id, "startedAt": self.started_at, "endedAt": self.ended_at, "summary": self.summary}
@@ -103,7 +108,7 @@ class _Persisted:
     """Что по диалогу уже лежит на диске: следующая запись берёт только разницу."""
 
     row: tuple[Any, ...]
-    messages: dict[str, str] = field(default_factory=dict)  # id сообщения → текст
+    messages: dict[str, tuple[str, float | None]] = field(default_factory=dict)  # id сообщения → (текст, секунды речи)
     client_ids: int = 0
 
 
@@ -208,11 +213,54 @@ class DialogStore:
         self._voice_prefs[dialog.user_id] = voice
         self._touch(dialog)
 
-    def add_message(self, dialog: Dialog, role: str, text: str, message_id: str | None = None) -> Message:
-        message = Message(id=message_id or str(uuid.uuid4()), role=role, text=text, created_at=now_iso())
+    def add_message(
+        self, dialog: Dialog, role: str, text: str, message_id: str | None = None, audio_seconds: float | None = None
+    ) -> Message:
+        """`audio_seconds` — длительность голосовой реплики человека (у набранной её нет)."""
+        if role == "user":
+            if not any(m.role == "user" for m in dialog.messages):
+                DIALOGS_TOTAL.inc()
+            if audio_seconds:
+                SPEECH_SECONDS_TOTAL.labels("human").inc(audio_seconds)
+        message = Message(
+            id=message_id or str(uuid.uuid4()), role=role, text=text, created_at=now_iso(), audio_seconds=audio_seconds
+        )
         dialog.messages.append(message)
         self._touch(dialog)
         return message
+
+    def set_audio_seconds(self, dialog: Dialog, message_id: str, seconds: float) -> None:
+        """Озвучка ответа закончилась: сколько секунд звука дошло до клиента. Приветствие сообщением не является и не пишется."""
+        message = self.message(dialog, message_id)
+        if message is None or seconds <= 0:
+            return
+        SPEECH_SECONDS_TOTAL.labels("agent").inc(seconds)
+        message.audio_seconds = round((message.audio_seconds or 0) + seconds, 3)
+        self._touch(dialog)
+
+    @staticmethod
+    def message(dialog: Dialog, message_id: str | None) -> Message | None:
+        """Сообщение диалога по id; свежие ищутся первыми."""
+        if message_id is None:
+            return None
+        return next((m for m in reversed(dialog.messages) if m.id == message_id), None)
+
+    def add_usage(self, dialog: Dialog, message_id: str | None, spent: Iterable[Usage]) -> None:
+        """Записать расход моделей на сообщение диалога, а если такого сообщения нет (ответ выброшен, озвучена фраза), — на диалог.
+
+        Пишется только на диск (таблица model_usage); без базы общий счёт ведёт Prometheus (app/services/usage.py).
+        """
+        if self._db is None or not self._owns(dialog):
+            return
+        target = message_id if self.message(dialog, message_id) is not None else None
+        at = now_iso()
+        rows = [
+            (dialog.id, target, at, item.model, item.task, item.direction, item.modality, item.unit, item.amount)
+            for item in spent
+        ]
+        if rows:
+            dialog.usage.extend(rows)
+            self._touch(dialog)
 
     def end(self, dialog: Dialog, takeaway: str | None, tension_after: int | None) -> dict[str, Any]:
         """Завершить диалог. Повторный вызов отдаёт ту же сводку."""
@@ -313,7 +361,9 @@ class DialogStore:
             started_at=item.started_at,
             ended_at=item.ended_at,
             summary=item.summary,
-            messages=[Message(id=m[0], role=m[1], text=m[2], created_at=m[3]) for m in item.messages],
+            messages=[
+                Message(id=m[0], role=m[1], text=m[2], created_at=m[3], audio_seconds=m[4]) for m in item.messages
+            ],
             greeting=item.greeting,
             client_ids=dict(item.client_ids),
             reply_index=item.reply_index,
@@ -336,7 +386,7 @@ class DialogStore:
     def _snapshot_of(self, dialog: Dialog) -> _Persisted:
         return _Persisted(
             row=self._row_of(dialog),
-            messages={m.id: m.text for m in dialog.messages},
+            messages={m.id: (m.text, m.audio_seconds) for m in dialog.messages},
             client_ids=len(dialog.client_ids),
         )
 
@@ -367,10 +417,11 @@ class DialogStore:
         known = self._persisted.get(dialog.id)
         row = self._row_of(dialog)
         messages = [
-            (m.id, dialog.id, position, m.role, m.text, m.created_at)
+            (m.id, dialog.id, position, m.role, m.text, m.created_at, m.audio_seconds)
             for position, m in enumerate(dialog.messages)
-            if known is None or known.messages.get(m.id) != m.text
+            if known is None or known.messages.get(m.id) != (m.text, m.audio_seconds)
         ]
+        usage = list(dialog.usage)
         client_ids = (
             [(dialog.id, client_id, message_id) for client_id, message_id in dialog.client_ids.items()]
             if known is None or known.client_ids != len(dialog.client_ids)
@@ -378,7 +429,7 @@ class DialogStore:
         )
         pref = self._voice_prefs.get(dialog.user_id)
         pref_changed = pref is not None and self._persisted_prefs.get(dialog.user_id) != pref
-        if known is not None and known.row == row and not messages and not client_ids and not pref_changed:
+        if known is not None and known.row == row and not messages and not client_ids and not pref_changed and not usage:
             return None
         return DialogWrite(
             dialog_id=dialog.id,
@@ -386,6 +437,7 @@ class DialogStore:
             messages=messages,
             client_ids=client_ids,
             pref=(dialog.user_id, pref) if pref_changed and pref is not None else None,
+            usage=usage,
         )
 
     async def flush(self) -> bool:
@@ -434,6 +486,7 @@ class DialogStore:
                     self._persisted[dialog.id] = snapshot
                     if write.pref is not None:
                         self._persisted_prefs[write.pref[0]] = write.pref[1]
+                    del dialog.usage[: len(write.usage)]  # записанное; пришедшее во время записи уйдёт следующей
             for dialog, _, _ in failed:
                 self._dirty[dialog.id] = dialog
             return not failed

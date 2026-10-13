@@ -69,11 +69,15 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
                     dialog_id=dialog_id,
                     row=(dialog_id, owner, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2),
                     messages=[
-                        ("m1", dialog_id, 0, "user", "Мне тревожно", "2026-10-12T10:00:01.000Z"),
-                        ("m2", dialog_id, 1, "assistant", "Я рядом.", "2026-10-12T10:00:02.000Z"),
+                        ("m1", dialog_id, 0, "user", "Мне тревожно", "2026-10-12T10:00:01.000Z", 3.2),
+                        ("m2", dialog_id, 1, "assistant", "Я рядом.", "2026-10-12T10:00:02.000Z", None),
                     ],
                     client_ids=[(dialog_id, "c-1", "m1")],
                     pref=(owner, "female"),
+                    usage=[
+                        (dialog_id, "m2", "2026-10-12T10:00:03.000Z", "gemini", "live", "input", "audio", "tokens", 1000.0),
+                        (dialog_id, None, "2026-10-12T10:00:03.000Z", "gemini", "phrase", "output", "audio", "tokens", 80.0),
+                    ],
                 )
             ]
         )
@@ -82,6 +86,7 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
     loaded = dialogs[0]
     assert (loaded.id, loaded.voice, loaded.reply_index, loaded.greeting) == ("d1", "female", 2, "Привет")
     assert [m[2] for m in loaded.messages] == ["Мне тревожно", "Я рядом."]  # порядок сохранён
+    assert [m[4] for m in loaded.messages] == [3.2, None]  # секунды речи
     assert loaded.client_ids == {"c-1": "m1"}
 
     db.erase_user(user)
@@ -90,6 +95,49 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
     assert len(db.load_user(other)[0]) == 1  # чужой не тронут
     assert db.counts() == (1, 2)
     db.close()
+    with sqlite3.connect(tmp_path / "d.sqlite3") as conn:  # расход стёртого ушёл каскадом вместе с диалогом
+        assert conn.execute("SELECT dialog_id, COUNT(*) FROM model_usage GROUP BY dialog_id").fetchall() == [("d2", 2)]
+
+
+# Схема файла, записанного агентом 0.4.0 (версия 1 до учёта расхода): так выглядит файл на PVC в проде.
+SCHEMA_0_4_0 = """
+CREATE TABLE dialogs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, summary TEXT,
+    greeting TEXT, voice TEXT NOT NULL, reply_index INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE messages (id TEXT NOT NULL, dialog_id TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (dialog_id, id));
+CREATE TABLE client_ids (dialog_id TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE, client_id TEXT NOT NULL,
+    message_id TEXT NOT NULL, PRIMARY KEY (dialog_id, client_id));
+CREATE TABLE voice_prefs (user_id TEXT PRIMARY KEY, voice TEXT NOT NULL);
+INSERT INTO dialogs VALUES ('d1', 'u1', '2026-10-12T10:00:00.000Z', NULL, NULL, NULL, 'male', 0);
+INSERT INTO messages VALUES ('m1', 'd1', 0, 'user', 'Старое сообщение', '2026-10-12T10:00:01.000Z');
+PRAGMA user_version = 1;
+"""
+
+
+def test_file_of_the_previous_agent_gets_the_usage_table_and_keeps_its_version(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite3"
+    with sqlite3.connect(path) as raw:
+        raw.executescript(SCHEMA_0_4_0)
+    db = DialogDatabase(str(path))
+    db.open()
+    assert db.load_user("u1")[0][0].messages == [("m1", "user", "Старое сообщение", "2026-10-12T10:00:01.000Z", None)]
+    db.apply(
+        [
+            DialogWrite(
+                dialog_id="d1",
+                row=("d1", "u1", "2026-10-12T10:00:00.000Z", None, None, None, "male", 0),
+                usage=[("d1", "m1", "2026-10-12T10:00:02.000Z", "whisper", "stt", "input", "audio", "seconds", 2.5)],
+            )
+        ]
+    )
+    db.close()
+    again = DialogDatabase(str(path))
+    again.open()  # повторное обновление ничего не ломает
+    again.close()
+    with sqlite3.connect(path) as raw:
+        # Версия та же: агент 0.4.0 (откат образа) по-прежнему открывает этот файл.
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 1
+        assert raw.execute("SELECT message_id, amount FROM model_usage").fetchall() == [("m1", 2.5)]
 
 
 # ─── Хранилище с базой ────────────────────────────────────────────────────────────────────────────────────────────

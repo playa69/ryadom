@@ -6,6 +6,15 @@
 `load_user`, `apply`, `erase_user`.
 
 Схема версионируется через `PRAGMA user_version`. Все обращения идут из рабочего потока (`asyncio.to_thread`), по одному.
+
+Добавочные изменения (новая таблица, новый столбец, который может быть NULL) версию не меняют: их доделывает `_upgrade` при
+каждом открытии, а агент прошлой версии работает с таким файлом как раньше (пишет сообщения с явным списком столбцов, при стирании
+человека новые строки уходят каскадом). Так откат образа не оставляет агента без диска. Версия растёт только при несовместимых
+изменениях.
+
+Расход моделей (`model_usage`) — строки «модель, задача, input/output, модальность, единица, количество» по сообщению, которое
+этот вызов модели произвёл, или по диалогу (`message_id` NULL), если сообщения нет: ответ выброшен, озвучена фиксированная фраза.
+Агент их только дописывает и никогда не читает; это данные для отчётов (agent/README.md, «Расход моделей»).
 """
 
 import json
@@ -39,6 +48,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role       TEXT NOT NULL,
     text       TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    audio_seconds REAL,
     PRIMARY KEY (dialog_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_dialog_position ON messages (dialog_id, position);
@@ -53,6 +63,31 @@ CREATE TABLE IF NOT EXISTS voice_prefs (
     voice   TEXT NOT NULL
 );
 """
+
+# Добавлено поверх версии 1 (см. шапку): создаётся и в новом файле, и в старом.
+USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS model_usage (
+    dialog_id  TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
+    message_id TEXT,
+    created_at TEXT NOT NULL,
+    model      TEXT NOT NULL,
+    task       TEXT NOT NULL,
+    direction  TEXT NOT NULL,
+    modality   TEXT NOT NULL,
+    unit       TEXT NOT NULL,
+    amount     REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS model_usage_dialog ON model_usage (dialog_id, message_id);
+"""
+
+
+def _upgrade(conn: sqlite3.Connection) -> None:
+    """Добавочные изменения поверх версии 1; повторный вызов ничего не меняет."""
+    with conn:
+        conn.executescript(USAGE_SCHEMA)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+        if "audio_seconds" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN audio_seconds REAL")
 
 
 class DialogDbError(Exception):
@@ -71,7 +106,8 @@ class StoredDialog:
     greeting: str | None
     voice: str
     reply_index: int
-    messages: list[tuple[str, str, str, str]] = field(default_factory=list)  # (id, role, text, created_at) по порядку
+    # (id, role, text, created_at, audio_seconds) по порядку
+    messages: list[tuple[str, str, str, str, float | None]] = field(default_factory=list)
     client_ids: dict[str, str] = field(default_factory=dict)
 
 
@@ -81,9 +117,12 @@ class DialogWrite:
 
     dialog_id: str
     row: tuple[Any, ...]  # (id, user_id, started_at, ended_at, summary_json, greeting, voice, reply_index)
-    messages: list[tuple[Any, ...]] = field(default_factory=list)  # (id, dialog_id, position, role, text, created_at)
+    # (id, dialog_id, position, role, text, created_at, audio_seconds)
+    messages: list[tuple[Any, ...]] = field(default_factory=list)
     client_ids: list[tuple[str, str, str]] = field(default_factory=list)  # (dialog_id, client_id, message_id)
     pref: tuple[str, str] | None = None  # (user_id, voice), если выбор голоса изменился
+    # Новые строки расхода: (dialog_id, message_id, created_at, model, task, direction, modality, unit, amount)
+    usage: list[tuple[Any, ...]] = field(default_factory=list)
 
 
 def encode_summary(summary: dict[str, Any] | None) -> str | None:
@@ -125,6 +164,7 @@ class DialogDatabase:
                 with conn:
                     conn.executescript(SCHEMA)
                     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            _upgrade(conn)
             self._conn = conn
         except DialogDbError:
             raise
@@ -178,12 +218,12 @@ class DialogDatabase:
                     (user_id,),
                 )
             }
-            for dialog_id, message_id, role, text, created_at in conn.execute(
-                "SELECT m.dialog_id, m.id, m.role, m.text, m.created_at FROM messages m "
+            for dialog_id, message_id, role, text, created_at, audio_seconds in conn.execute(
+                "SELECT m.dialog_id, m.id, m.role, m.text, m.created_at, m.audio_seconds FROM messages m "
                 "JOIN dialogs d ON d.id = m.dialog_id WHERE d.user_id = ? ORDER BY m.dialog_id, m.position",
                 (user_id,),
             ):
-                dialogs[dialog_id].messages.append((message_id, role, text, created_at))
+                dialogs[dialog_id].messages.append((message_id, role, text, created_at, audio_seconds))
             for dialog_id, client_id, message_id in conn.execute(
                 "SELECT c.dialog_id, c.client_id, c.message_id FROM client_ids c "
                 "JOIN dialogs d ON d.id = c.dialog_id WHERE d.user_id = ?",
@@ -207,9 +247,15 @@ class DialogDatabase:
                         clean_row(write.row),
                     )
                     conn.executemany(
-                        "INSERT INTO messages (id, dialog_id, position, role, text, created_at) VALUES (?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT (dialog_id, id) DO UPDATE SET text = excluded.text, position = excluded.position",
+                        "INSERT INTO messages (id, dialog_id, position, role, text, created_at, audio_seconds) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (dialog_id, id) DO UPDATE SET "
+                        "text = excluded.text, position = excluded.position, audio_seconds = excluded.audio_seconds",
                         [clean_row(item) for item in write.messages],
+                    )
+                    conn.executemany(
+                        "INSERT INTO model_usage (dialog_id, message_id, created_at, model, task, direction, modality, unit, "
+                        "amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [clean_row(item) for item in write.usage],
                     )
                     conn.executemany(
                         "INSERT OR IGNORE INTO client_ids (dialog_id, client_id, message_id) VALUES (?, ?, ?)",
@@ -223,11 +269,11 @@ class DialogDatabase:
                         )
 
     def erase_user(self, user_id: str) -> None:
-        """Стереть всё о человеке (диалоги, сообщения, выбор голоса). Идемпотентно."""
+        """Стереть всё о человеке (диалоги, сообщения, расход моделей, выбор голоса). Идемпотентно."""
         with self._lock:
             conn = self._connection()
             with conn:
-                conn.execute("DELETE FROM dialogs WHERE user_id = ?", (user_id,))  # сообщения уходят каскадом
+                conn.execute("DELETE FROM dialogs WHERE user_id = ?", (user_id,))  # сообщения и расход уходят каскадом
                 conn.execute("DELETE FROM voice_prefs WHERE user_id = ?", (user_id,))
             # Прежние образы страниц с текстом лежат в журнале WAL до его усечения: без этого «стёрто» неправда для файла на диске.
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

@@ -50,7 +50,7 @@ loki:
           prefix: loki_index_
           period: 24h
   limits_config:
-    retention_period: 168h # 7d; Prometheus держит метрики 3d
+    retention_period: 168h # 7d; Prometheus держит метрики 14d
     volume_enabled: true
   compactor:
     retention_enabled: true

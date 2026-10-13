@@ -1,0 +1,35 @@
+# =============================================================================
+# ServiceMonitor agent — scrape /metrics агента Prometheus'ом (ns agent)
+# =============================================================================
+# Prometheus (kube-prometheus-stack, ns monitoring) подбирает ВСЕ
+# ServiceMonitor'ы кластера (serviceMonitorSelectorNilUsesHelmValues: false,
+# см. k8s/monitoring/values-prometheus.yaml). /metrics агента
+# (agent/app/core/metrics.py) — только счётчики и время, без id и текстов:
+# расход моделей (agent_model_usage_total), диалоги, секунды речи, задержки
+# голоса, база диалогов. Наружу не публикуется: у агента нет HTTPRoute.
+#
+# Сетевая сторона: ingress monitoring→:8001 в
+# namespaces/manifests/05-network-policy-agent.yaml
+# (agent-allow-ingress-monitoring-scrape) и egress prometheus→agent:8001
+# в monitoring/manifests/01-network-policy.yaml
+# (prometheus-allow-egress-scrape).
+# =============================================================================
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agent
+  namespace: agent
+  labels:
+    app: agent
+    app.kubernetes.io/part-of: ryadom
+spec:
+  selector:
+    matchLabels:
+      app: agent
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

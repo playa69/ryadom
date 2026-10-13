@@ -26,6 +26,7 @@ from typing import Literal, Protocol
 import httpx
 
 from app.core.config import SpeechSettings
+from app.services import usage as model_usage
 
 logger = logging.getLogger("agent.speech")
 
@@ -291,6 +292,11 @@ class QwenTts:
             "json": {"model": self._model, "input": text, "voice": self._voices[voice], "response_format": "pcm"},
         }
 
+    def _record(self, text: str, pcm_bytes: int) -> None:
+        """Расход синтеза: токенов у модели нет, оплачиваются символы текста; выход — секунды полученного звука."""
+        model_usage.record(self._model, "tts", "input", "text", "chars", len(text))
+        model_usage.record(self._model, "tts", "output", "audio", "seconds", round(pcm_bytes / (2 * TTS_RATE), 3))
+
     async def stream(self, text: str, voice: Voice) -> AsyncIterator[bytes]:
         """Звук по мере прихода: прокси отдаёт его кусками, и первые 200 мс можно играть, не дожидаясь конца фразы.
 
@@ -299,13 +305,14 @@ class QwenTts:
         if not self._streaming:
             yield await self.synthesize(text, voice)
             return
-        carry, total = b"", 0
+        carry, total, accepted = b"", 0, False
         try:
             async with self._client.stream("POST", self._url, **self._request(text, voice)) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
                     hint = " (проверьте голос и формат: у модели только loongjohn/longanhuan_v3.6 и mp3/pcm)" if response.status_code >= 500 else ""
                     raise TtsError(f"Qwen TTS ответил {response.status_code}{hint}: {body[:200]}")
+                accepted = True
                 async for chunk in response.aiter_bytes():
                     data = carry + chunk
                     whole = len(data) // 2 * 2  # сэмпл — два байта: нечётный хвост ждёт следующий кусок
@@ -315,6 +322,9 @@ class QwenTts:
                         yield data[:whole]
         except httpx.HTTPError as error:
             raise TtsError(f"Qwen TTS не ответил: {error}") from error
+        finally:
+            if accepted:  # запрос принят: текст оплачен, даже если озвучку оборвали на середине
+                self._record(text, total)
         if not total:
             raise TtsError("Qwen TTS вернул пустое аудио")
 
@@ -327,6 +337,7 @@ class QwenTts:
             hint = " (проверьте голос и формат: у модели только loongjohn/longanhuan_v3.6 и mp3/pcm)" if response.status_code >= 500 else ""
             raise TtsError(f"Qwen TTS ответил {response.status_code}{hint}: {response.text[:200]}")
         pcm = response.content[: len(response.content) // 2 * 2]
+        self._record(text, len(pcm))
         if not pcm:
             raise TtsError("Qwen TTS вернул пустое аудио")
         return pcm

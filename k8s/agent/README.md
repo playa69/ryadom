@@ -9,6 +9,7 @@
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
 | `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`, том диалогов в `/data` |
 | `03-pvc.yaml` | PVC `agent-data` (5 ГБ, сетевой диск Timeweb): файл SQLite с диалогами, они переживают выкат пода. Применять до Deployment'а |
+| `04-servicemonitor.yaml` | ServiceMonitor: Prometheus собирает `/metrics` агента (расход моделей, задержки голоса, база диалогов). Применяет admin |
 | `../namespaces/manifests/08-network-policy-agent-service.yaml` | ingress `prod → agent:8001`, egress `prod → agent`, egress агента к прокси на `:4000` |
 
 Наружу агент не публикуется (HTTPRoute нет): к нему ходят только `app-api` и `app-admin` по внутреннему токену.
@@ -184,6 +185,39 @@ kubectl -n agent logs deploy/agent | grep -E "dialog db|agent started"          
 - Стирание человека (`DELETE /v1/users/{userId}`) удаляет и строки на диске (`secure_delete`) и усекает журнал WAL, так что в файлах
   SQLite следов не остаётся. Если диск задан, но не подключился (`"dialogs": "memory"`), стирание отвечает `503`, а не `204`: приложение
   повторит его, когда диск вернётся. Блоки сетевого диска и снимки провайдера под это обещание не подпадают.
+
+## Расход моделей: база и Prometheus
+
+Что и как считается, запросы SQL и PromQL — `agent/README.md`, «Расход моделей». В базе расход лежит в таблице `model_usage` того же
+файла, в сообщениях — `audio_seconds`. Схема дополняется сама при первом открытии новым агентом, версия файла не меняется: откат
+образа на 0.4.0 работает с тем же файлом (новую таблицу и столбец старый агент не трогает, при стирании человека они уходят
+каскадом).
+
+Чтобы расход был и в Prometheus, его нужно собирать. Всё ниже — под admin-kubeconfig (у `developer` нет прав на ServiceMonitor,
+NetworkPolicy и ns `monitoring`), каждый шаг отдельным решением администратора:
+
+```bash
+kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml        # ingress monitoring → agent:8001
+kubectl apply -f k8s/monitoring/manifests/01-network-policy.yaml              # egress prometheus → agent:8001
+kubectl apply -f k8s/agent/04-servicemonitor.yaml
+# Срок хранения 14 дней (values-prometheus.yaml): Prometheus перезапустится, метрики на PVC останутся
+helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring -f k8s/monitoring/values-prometheus.yaml --version 91.8.2
+```
+
+Проверка: в Prometheus UI (port-forward, см. `k8s/README.md`) таргет `serviceMonitor/agent/agent/0` в состоянии UP, запрос
+`agent_model_usage_total` отдаёт ряды после первого диалога. Хватает ли диска на 14 дней: `prometheus_tsdb_storage_blocks_bytes`
+через пару дней, умноженный на 14/дни, должен быть меньше `retentionSize` (3GB), иначе старые блоки уйдут раньше срока.
+
+Тот же расход может уходить в Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, трейс `model-usage`, без текстов).
+Приёмник молчит, пока в Secret `agent-secrets` нет `LANGFUSE_PUBLIC_KEY` и `LANGFUSE_SECRET_KEY`. Сеть — отдельным решением:
+
+```bash
+kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml   # egress agent → infra:3000
+kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingress infra:3000 от ns agent
+```
+
+Ключи в Secret кладёт администратор (в git их нет), затем `kubectl -n agent rollout restart deploy/agent`. В журнале агента
+строка `langfuse usage sink on` или `off`.
 
 ## Ограничения (честно)
 

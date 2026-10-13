@@ -64,7 +64,7 @@ k8s/
         ├── 01-job-create-db.yaml   ← Job: роль+база langfuse в CNPG
         └── 02-gateway.yaml         ← ШАБЛОН HTTPRoute /langfuse на будущее, НЕ применять
 └── monitoring/
-    ├── values-prometheus.yaml      ← kube-prometheus-stack 91.8.2 (Alertmanager off, retention 3d)
+    ├── values-prometheus.yaml      ← kube-prometheus-stack 91.8.2 (Alertmanager off, retention 14d)
     ├── values-loki.yaml            ← grafana/loki 7.3.0 (SingleBinary, filesystem PVC 5Gi)
     ├── values-alloy.yaml           ← grafana/alloy 1.13.0 (DaemonSet, сбор логов → Loki)
     ├── dashboards/
@@ -447,7 +447,8 @@ subchart'ы; чарт 2.x = Langfuse v4 + valkey-io subchart с несовмес
 port-forward, наружу НЕ публикуется.
 
 - **kube-prometheus-stack 91.8.2** (`monitoring/values-prometheus.yaml`):
-  Prometheus (retention 3d / 3GB, PVC 5Gi NVMe), Grafana (PVC 2Gi),
+  Prometheus (retention 14d / 3GB, PVC 5Gi NVMe; что раньше упрётся, то и
+  действует), Grafana (PVC 2Gi),
   node-exporter (DaemonSet, hostNetwork :9100), kube-state-metrics.
   **Alertmanager отключён** осознанно — алертам некуда доставляться;
   включение = отдельный шаг. Managed control plane: scrape etcd/scheduler/
@@ -461,7 +462,9 @@ port-forward, наружу НЕ публикуется.
 Дополнительные scrape-jobs (additionalScrapeConfigs): `istio-proxy`
 (:15090, порт http-envoy-prom — сайдкары будущих приложений и сам
 ingressgateway), `cnpg` (инстансы ryadom-db :9187). Grafana datasource Loki
-добавлен через values (`grafana.additionalDataSources`).
+добавлен через values (`grafana.additionalDataSources`). Метрики приложений —
+через ServiceMonitor: `backend-api` (:8000) и `agent` (:8001,
+`agent/04-servicemonitor.yaml`: расход моделей, задержки голоса, база диалогов).
 
 Доступ к Grafana: `kubectl port-forward -n monitoring svc/prometheus-grafana
 3000:80` → http://localhost:3000, логин `admin`, пароль — ключ

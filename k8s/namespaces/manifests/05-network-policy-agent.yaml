@@ -54,10 +54,12 @@ spec:
 
 ---
 # Scrape от Prometheus (ns monitoring): :15090 — объединённые метрики
-# istio-сайдкаров (prometheus.io-аннотации istio, порт http-envoy-prom).
+# istio-сайдкаров (prometheus.io-аннотации istio, порт http-envoy-prom),
+# :8001 — /metrics самого агента (ServiceMonitor k8s/agent/04-servicemonitor.yaml:
+# расход моделей, задержки голоса, база диалогов).
 # Обратная сторона — egress-правило prometheus в
-# monitoring/manifests/01-network-policy.yaml: чтобы scrape заработал,
-# туда тоже нужно добавить egress в agent (по образцу prod).
+# monitoring/manifests/01-network-policy.yaml (для :8001 добавлено, для
+# :15090 агента — нет).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -75,6 +77,8 @@ spec:
       ports:
         - protocol: TCP
           port: 15090
+        - protocol: TCP
+          port: 8001
 
 ---
 # Pod-to-pod внутри namespace
@@ -133,6 +137,15 @@ spec:
         # Redis Sentinel
         - protocol: TCP
           port: 26379
+    # Langfuse (ns infra, :3000): приёмник расхода моделей. Обратная сторона —
+    # infra-allow-ingress-agent-langfuse в 02-network-policy-infra.yaml.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra
+      ports:
+        - protocol: TCP
+          port: 3000
     # Внешние HTTPS: LLM API, S3 (Yandex Object Storage) и т.д.
     # TODO: заменить 0.0.0.0/0 на конкретные CIDR/FQDN LLM-провайдеров,
     # если CNI позволяет. При переходе mesh на REGISTRY_ONLY эти же хосты

@@ -281,8 +281,9 @@ flowchart TD
   случай: ответ на такую реплику позже на остаток этих ~0,8 с). Сессию, на которой не было ни одного хода, не меняют (защита от
   цепочки смен). Неудавшуюся смену повторять не нужно: следующая реплика сама откроет сессию и загрузит историю.
 - **Учёт токенов.** Gemini присылает `usage_metadata` вместе с `turn_complete`, то есть через несколько секунд после
-  `generation_complete` (когда ответ дозвучал). Агент считает их в `agent_gemini_tokens_total` и пишет строку журнала
-  `live usage … prompt=… (text=… audio=…) response=…`; сессию меняет только после этого события.
+  `generation_complete` (когда ответ дозвучал). Агент записывает их как расход модели (раздел «Расход моделей»: на ответ
+  модели в базе и в `agent_model_usage_total`) и пишет строку журнала `live usage … input=…(text=… audio=…) output=…`;
+  сессию меняет только после этого события.
 - **Скорость: зависит от паузы перед следующей репликой.** Если человек заговорил почти сразу после смены сессии (через
   доли секунды), Gemini позже присылает расшифровку и первый звук приходит на 0,1-0,2 с позже (медиана 1,35-1,52 с против
   1,22-1,34 с в замерах с паузой 3 с, когда следующая реплика начиналась через 0,04-1,2 с после конца смены). С паузой 8 с, ближе к живому
@@ -325,11 +326,87 @@ flowchart TD
 | `agent_voice_held_turns_total` | реплики, оборванные на полуслове, ответ на которые задержан |
 | `agent_dialog_db_errors_total{op}` | сбои базы диалогов на диске (`open`, `load`, `write`, `erase`): запись повторяется, диалоги остаются в памяти |
 | `agent_dialog_db_write_seconds` | гистограмма: сколько занимает запись пачки изменённых диалогов на диск (в фоновом потоке) |
-| `agent_gemini_tokens_total{direction,modality}` | токены Gemini Live по `usage_metadata` каждого хода: `prompt` (весь контекст хода, оплачивается заново на каждый ход) и `response`; modality: `all`, `text`, `audio` |
+| `agent_model_usage_total{model,task,direction,modality,unit}` | расход моделей: токены, секунды аудио или символы (раздел «Расход моделей») |
+| `agent_dialogs_total` | диалоги, в которых человек сказал или написал хоть что-то (по его первой реплике) |
+| `agent_speech_seconds_total{speaker}` | секунды речи в сообщениях: `human` (голосовые реплики), `agent` (озвученные ответы, дошедшие до клиента) |
 | `agent_gemini_context_refresh_total{result}` | смены сессии после ответа (`GEMINI_TEXT_CONTEXT`): `ok` или `failed` |
 | `agent_gemini_context_refresh_seconds` | гистограмма: сколько занимает смена сессии (соединение и загрузка истории), идёт в фоне между репликами |
 
-В журнал на каждый ответ с голосом пишется строка `first sound dialog=… ms=…` и (для потока) `chat stream … first_ms=…`.
+В журнал на каждый ответ с голосом пишется строка `first sound dialog=… ms=…` и (для потока) `chat stream … first_ms=… tokens=…`.
+
+## Расход моделей
+
+Каждый вызов модели записывает, сколько она получила и выдала, в двух местах:
+
+- **база диалогов** (таблица `model_usage` в `DIALOG_DB_PATH`) — по сообщениям, для отчётов «на сообщение, на диалог, на минуту»;
+  стирается вместе с человеком (каскадом от `dialogs`);
+- **Prometheus** (`agent_model_usage_total`, без id) — общие суммы, которые стирание людей не трогает; в кластере хранятся 14 дней;
+- **Langfuse** (если заданы `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY` и `LANGFUSE_SECRET_KEY`) — те же числа пачкой на
+  `POST /api/public/ingestion`. В трейсе `model-usage` только модель, задача и количество; текста реплики нет. Это дашборд
+  по моделям дольше, чем 14 дней Prometheus. «На диалог» и «на минуту речи» по-прежнему считаются из базы: у Langfuse нет
+  знаменателя «минута речи». Отправка best-effort: сбой Langfuse не трогает базу и Prometheus.
+
+Что считается (единицы — как у провайдера):
+
+| Модель | `task` | `direction` / `modality` / `unit` | Откуда |
+|---|---|---|---|
+| Gemini Live (`GEMINI_LIVE_MODEL`) | `live` — ход речь в речь | input и output по модальностям (`text`, `audio`, `other` — часть итога без разбивки), output `thinking` (размышление); `tokens` | `usage_metadata` хода |
+| то же | `phrase` — озвучка приветствия и кризисного ответа | то же | `usage_metadata` фразы (дочитывается в фоне) |
+| чат-модель каскада (`LLM_CHAT_MODEL`) | `chat` | input/output `text`, `tokens` | `usage` ответа прокси |
+| распознавание каскада (`STT_MODEL`) | `stt` | input `audio`, `seconds` | длина отправленного звука (токенов у whisper нет) |
+| Qwen TTS каскада (`QWEN_TTS_MODEL`) | `tts` | input `text` `chars`, output `audio` `seconds` | длина текста и полученного звука |
+
+**На какое сообщение ложится расход.** На то, которое этот вызов произвёл: распознавание — на реплику человека, ответ
+(чат, Gemini) и его озвучка — на ответ агента. Если сообщения нет (ответ модели выброшен — кризис, эхо, тишина; модель
+промолчала; озвучено приветствие; usage пришёл не по ходу), — на диалог: `message_id` NULL. Прогрев фраз при старте пода
+ни к какому диалогу не относится и виден только в Prometheus. В сообщении (`messages.audio_seconds`) — сколько секунд в нём
+речи: длительность голосовой реплики человека (от `audio_start` до `audio_end`) или озвучки ответа, дошедшей до клиента.
+
+```sql
+-- model_usage: dialog_id, message_id (NULL — на диалог), created_at, model, task, direction, modality, unit, amount
+-- Расход на сообщение
+SELECT m.role, m.created_at, m.audio_seconds, u.model, u.task, u.direction, u.modality, u.unit, u.amount
+FROM model_usage u LEFT JOIN messages m ON m.dialog_id = u.dialog_id AND m.id = u.message_id
+WHERE u.dialog_id = :dialog ORDER BY u.created_at;
+
+-- В среднем на диалог и на минуту речи, по моделям, за период
+WITH d AS (SELECT id AS dialog_id FROM dialogs WHERE started_at >= '2026-10-13'
+           AND id IN (SELECT dialog_id FROM model_usage)),
+     speech AS (SELECT SUM(audio_seconds) / 60.0 AS minutes FROM messages WHERE dialog_id IN (SELECT dialog_id FROM d))
+SELECT model, task, direction, modality, unit,
+       SUM(amount) / (SELECT COUNT(*) FROM d)       AS per_dialog,
+       SUM(amount) / (SELECT minutes FROM speech)   AS per_speech_minute
+FROM model_usage WHERE dialog_id IN (SELECT dialog_id FROM d)
+GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 3, 4;
+```
+
+Минута по часам, а не по речи: `(julianday(COALESCE(ended_at, последнее сообщение)) - julianday(started_at)) * 1440` у
+`dialogs`; в неё входят паузы и время, когда диалог был открыт без разговора.
+
+В кластере `sqlite3` в образе нет; запрос — через Python в поде (`kubectl exec` под admin-kubeconfig), только на чтение и
+только по расходу и времени, тексты разговоров без причины не читать:
+
+```bash
+kubectl -n agent exec deploy/agent -- python -c "import sqlite3, sys
+db = sqlite3.connect('file:/data/dialogs.sqlite3?mode=ro', uri=True)
+for row in db.execute(sys.argv[1]): print(row)" "SELECT model, task, direction, modality, unit, SUM(amount) FROM model_usage GROUP BY 1,2,3,4,5"
+```
+
+То же из Prometheus (суммы по всем диалогам, включая стёртых людей):
+
+```promql
+# на диалог, по моделям, за 14 дней
+sum by (model, task, direction, modality, unit) (increase(agent_model_usage_total[14d]))
+  / scalar(sum(increase(agent_dialogs_total[14d])))
+# на минуту речи (человек и агент)
+sum by (model, task, direction, modality, unit) (increase(agent_model_usage_total[14d]))
+  / scalar(sum(increase(agent_speech_seconds_total[14d])) / 60)
+```
+
+Чего в учёте нет: разбивки входа Gemini на кэшированную и обычную части (кэш входит в input целиком); расхода чат-модели,
+если прокси не прислал `usage` (агент запрашивает его через `stream_options.include_usage`; в журнале тогда `tokens=none`);
+SaluteSpeech (не используется); ответа Gemini, по которому `usage` не пришёл (соединение оборвалось раньше `turn_complete`).
+Сверять с счётом провайдера.
 
 `scripts/latency_probe.py` замеряет прокси напрямую (чат со стримом и без, озвучка целиком и потоком) и показывает, где
 уходит время и собирает ли прокси звук целиком: `AGENT_API_TOKEN=… uv run python scripts/latency_probe.py --base-url …`.
