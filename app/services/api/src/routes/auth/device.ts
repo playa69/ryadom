@@ -1,4 +1,5 @@
 import { deviceIdInputSchema, deviceKeyInputSchema } from '@ryadom/core/config'
+import { SetUserTrafficTypeCommand, usersManager } from '@ryadom/core/managers/users-manager'
 import {
   authenticationProcess,
   DeviceLoginOperation,
@@ -30,7 +31,7 @@ const bodySchema = z.object({
   deviceKey: z.string().min(1).max(500),
 })
 
-export function deviceRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions, analytics }: RouteDeps): void {
+export function deviceRoutes(app: Hono<AppEnv>, { env, logger, rateLimiter, sessions, analytics }: RouteDeps): void {
   app.post(
     ApiPath.DeviceLogin,
     limitByIp(rateLimiter, 'device-login', RATE_LIMITS.deviceLogin.perIp),
@@ -58,6 +59,15 @@ export function deviceRoutes(app: Hono<AppEnv>, { logger, rateLimiter, sessions,
         user: toAuthUser(result.user),
         tokens: await sessions.start(result.user.id, clientDevice(c)),
         isNewAccount: result.isNewAccount,
+      }
+      // A load test's device ids carry a known prefix: such an account is marked before anything is reported about
+      // it, so none of its events is counted as a person's.
+      const testPrefix = env.ANALYTICS_TEST_DEVICE_PREFIX
+      if (result.isNewAccount && testPrefix !== '' && deviceId.startsWith(testPrefix)) {
+        const marked = await usersManager.execute(
+          new SetUserTrafficTypeCommand({ userId: result.user.id, trafficType: 'test' }),
+        )
+        if (!marked.success) logger.warn({ reason: marked.error }, 'Не удалось пометить тестовый аккаунт')
       }
       identifyUser(analytics, result.user)
       if (result.isNewAccount) analytics.capture(result.user.id, AnalyticsEvent.AccountCreated, { kind: 'anonymous' })

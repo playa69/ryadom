@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http'
 import assertNever from 'assert-never'
 import type { WebSocket } from 'ws'
-import { AnalyticsEvent, type DialogInterruptReason } from '@ryadom/analytics/events'
+import { AnalyticsEvent, COMPONENT_NAMES, type ComponentName, type DialogInterruptReason } from '@ryadom/analytics/events'
 import type { ServerAnalytics } from '@ryadom/analytics/server'
 import {
   bindRequestContext,
@@ -25,7 +25,7 @@ import {
   type TtsCodec,
 } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
-import { tensionOutcome } from '../lib/analytics'
+import { dialogIdProperty, messageCounts, tensionOutcome } from '../lib/analytics'
 import type { AppServerEnv } from '../lib/env'
 import { HOTLINES } from '../lib/hotlines'
 import type { Jwt } from '../lib/jwt'
@@ -86,6 +86,12 @@ function interruptReason(code: DialogCloseCode, reason: string): DialogInterrupt
     default:
       return assertNever(code)
   }
+}
+
+/** What the agent adds to a summary for analytics: replies in the whole dialog. */
+interface AgentSummaryCounts {
+  userMessages?: unknown
+  assistantMessages?: unknown
 }
 
 interface AgentTextFrame {
@@ -210,6 +216,7 @@ class DialogSession {
     const reason = this.closeReason ?? 'client_closed'
     if (this.userMessages === 0 && reason !== 'agent_unavailable') return
     this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogInterrupted, {
+      ...dialogIdProperty(this.dialogId),
       reason,
       duration_s: Math.round((Date.now() - this.openedAt) / 1000),
       user_messages: this.userMessages,
@@ -389,8 +396,17 @@ class DialogSession {
         message: 'too many messages',
       })
     }
+    // A reply the agent never got (it is not connected yet or just left) is not a turn of the conversation.
+    const forwarded = this.agent?.connected === true
     this.agent?.send({ type: 'user_message', id: clientId, text })
     this.userMessages += 1
+    if (forwarded) this.reportTurn('text')
+  }
+
+  /** One accepted reply of the person: the target action of the product (see `AnalyticsEvent.DialogTurn`). Never its text. */
+  private reportTurn(input: 'text' | 'voice'): void {
+    if (!this.userId) return
+    this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogTurn, { ...dialogIdProperty(this.dialogId), input })
   }
 
   private startHeartbeat(): void {
@@ -556,7 +572,10 @@ class DialogSession {
         // A finished transcript WITH TEXT is one spoken turn of the person. The agent also sends a final
         // one with empty text for silence, an echo or a cough, and stores no message for it: that is not
         // something the person said. Partial ones are not counted either.
-        if (frame.final === true && text.trim().length > 0) this.userMessages += 1
+        if (frame.final === true && text.trim().length > 0) {
+          this.userMessages += 1
+          this.reportTurn('voice')
+        }
         const messageId = str('messageId')
         return this.toClient({
           type: DialogServerFrame.Transcript,
@@ -603,6 +622,19 @@ class DialogSession {
         if (!messageId) return
         return this.toClient({ type: DialogServerFrame.TtsEnd, messageId })
       }
+      case 'component': {
+        // One real call of one of the agent's parts for this dialog: a name, how it went, whether it was cached.
+        // Nothing else of the frame is read, so a prompt or a vendor's error text cannot reach a report.
+        const component = COMPONENT_NAMES.find((name) => name === frame.component) as ComponentName | undefined
+        if (!component || !this.userId) return
+        this.deps.analytics.capture(this.userId, AnalyticsEvent.ComponentCalled, {
+          ...dialogIdProperty(this.dialogId),
+          component,
+          outcome: frame.outcome === 'error' ? 'error' : 'ok',
+          cached: frame.cached === true,
+        })
+        return
+      }
       case 'safety': {
         // The hotlines in this frame are always filled in: if the agent gave none, we substitute
         // ours. The SOS screen must never open empty.
@@ -618,14 +650,17 @@ class DialogSession {
       case 'ended': {
         // The agent builds the summary itself; its shape is already described by the contract
         // (DialogSummary).
-        const summary = (frame.summary ?? null) as DialogSummaryApiResponse | null
+        const raw = (frame.summary ?? null) as (DialogSummaryApiResponse & AgentSummaryCounts) | null
+        // The counts of the whole dialog are for analytics only: they are not part of the contract with clients.
+        const { userMessages: _user, assistantMessages: _assistant, ...publicSummary } = raw ?? {}
+        const summary = raw ? (publicSummary as DialogSummaryApiResponse) : null
         if (this.userId && !this.outcomeReported) {
           this.outcomeReported = true
           this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogEnded, {
+            ...dialogIdProperty(this.dialogId),
             via: 'socket',
             duration_s: Math.round((Date.now() - this.openedAt) / 1000),
-            user_messages: this.userMessages,
-            assistant_messages: this.assistantMessages,
+            ...messageCounts(raw, { user: this.userMessages, assistant: this.assistantMessages }),
             has_takeaway: this.hasTakeaway,
             ...tensionOutcome(summary),
           })

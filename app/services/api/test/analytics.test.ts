@@ -375,6 +375,41 @@ describe('события сервера', () => {
     })
   })
 
+  it('диалог по REST: dialog_id на старте и конце, счётчики за весь диалог берутся у агента', async () => {
+    const dialogId = '0b8e4f6a-3c1d-4e27-9a50-6d2f7c1b8e90'
+    const analytics = recordingAnalytics()
+    const { app } = makeApp({ analytics })
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId, resumed: true, sinceLastDialogHours: 3 }),
+      'POST http://agent.test/v1/users/*/dialogs/*/end': () =>
+        json({
+          summary: { title: 'Разговор', themes: [], tensionBefore: null, tensionAfter: 5, userMessages: 7, assistantMessages: 7 },
+        }),
+    })
+    const { tokens } = await signUpAndIn(app)
+
+    ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
+    expect(only(analytics, AnalyticsEvent.DialogStarted)[0]!.properties).toEqual({
+      dialog_id: dialogId,
+      resumed: true,
+      hours_since_last: 3,
+    })
+
+    const ended = ok<{ summary: Record<string, unknown> }>(
+      await call(app, 'POST', `/api/dialogs/${dialogId}/end`, { tensionAfter: 5 }, tokens.accessToken),
+    )
+    // The counts are not part of what the client is told.
+    expect(ended.summary).not.toHaveProperty('userMessages')
+    expect(only(analytics, AnalyticsEvent.DialogEnded)[0]!.properties).toEqual({
+      dialog_id: dialogId,
+      via: 'rest',
+      counts: 'dialog',
+      user_messages: 7,
+      assistant_messages: 7,
+      has_takeaway: false,
+    })
+  })
+
   it('что бы ни случилось, в отчётах нет ни почты, ни имени, ни текстов', async () => {
     const analytics = recordingAnalytics()
     const { app } = makeApp({ analytics })
@@ -492,5 +527,67 @@ describe('отказ человека от аналитики (сервер ег
     analytics.capture('00000000-0000-4000-8000-000000000000', AnalyticsEvent.SessionRevoked)
     await settle()
     expect(client.capture).not.toHaveBeenCalled()
+  })
+})
+
+describe('тип трафика аккаунта (сервер помечает и несёт его во всех событиях)', () => {
+  function realAnalytics() {
+    const client = {
+      capture: vi.fn(),
+      identify: vi.fn(),
+      isFeatureEnabled: vi.fn(async () => true),
+      captureException: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      on: vi.fn(),
+    }
+    const env = parseEnv({ ...process.env, ...POSTHOG, RELEASE: '9.9.9' })
+    return { client, analytics: createAnalytics(env, createLogger('silent'), { client, erasureDelayMs: 0 }) }
+  }
+
+  const propertiesOf = (client: { capture: ReturnType<typeof vi.fn> }, event: string) =>
+    client.capture.mock.calls
+      .map((call) => call[0] as { event: string; properties: Record<string, unknown> })
+      .filter((message) => message.event === event)
+      .map((message) => message.properties)
+
+  it('аккаунт, созданный устройством с префиксом нагрузочного теста, помечен test с первого же события', async () => {
+    const { client, analytics } = realAnalytics()
+    const { app } = makeApp({ env: POSTHOG, analytics })
+    ok(await call(app, 'POST', '/api/auth/device', { deviceId: 'loadtest-AbCdEf0123456789xyz', deviceKey: 'k'.repeat(40) }))
+
+    await vi.waitFor(() => expect(propertiesOf(client, 'account_created')).toHaveLength(1))
+    expect(propertiesOf(client, 'account_created')[0]).toMatchObject({ kind: 'anonymous', traffic_type: 'test', app_version: '9.9.9' })
+    expect(propertiesOf(client, 'user_logged_in')[0]).toMatchObject({ traffic_type: 'test' })
+    await vi.waitFor(() => expect(client.identify).toHaveBeenCalled())
+    expect(client.identify.mock.calls[0]![0].properties).toMatchObject({ traffic_type: 'test' })
+  })
+
+  it('обычное устройство остаётся real; префикс можно отключить пустым значением', async () => {
+    const { client, analytics } = realAnalytics()
+    const { app } = makeApp({ env: POSTHOG, analytics })
+    ok(await call(app, 'POST', '/api/auth/device', { deviceId: 'Zk3p9Qw7Lm2Vb8Nc4Xd6', deviceKey: 'k'.repeat(40) }))
+    await vi.waitFor(() => expect(propertiesOf(client, 'account_created')).toHaveLength(1))
+    expect(propertiesOf(client, 'account_created')[0]).toMatchObject({ traffic_type: 'real' })
+
+    const off = realAnalytics()
+    const { app: appOff } = makeApp({ env: { ...POSTHOG, ANALYTICS_TEST_DEVICE_PREFIX: '' }, analytics: off.analytics })
+    ok(await call(appOff, 'POST', '/api/auth/device', { deviceId: 'loadtest-AbCdEf0123456789xyz', deviceKey: 'k'.repeat(40) }))
+    await vi.waitFor(() => expect(propertiesOf(off.client, 'account_created')).toHaveLength(1))
+    expect(propertiesOf(off.client, 'account_created')[0]).toMatchObject({ traffic_type: 'real' })
+  })
+
+  it('повторный вход тестового устройства по-прежнему несёт test, а регистрация по почте — real', async () => {
+    const { client, analytics } = realAnalytics()
+    const { app } = makeApp({ env: POSTHOG, analytics })
+    const body = { deviceId: 'loadtest-Again0123456789xyz', deviceKey: 'k'.repeat(40) }
+    ok(await call(app, 'POST', '/api/auth/device', body))
+    ok(await call(app, 'POST', '/api/auth/device', body))
+    await vi.waitFor(() => expect(propertiesOf(client, 'user_logged_in')).toHaveLength(2))
+    expect(propertiesOf(client, 'user_logged_in').map((p) => p.traffic_type)).toEqual(['test', 'test'])
+
+    await signUpAndIn(app)
+    await vi.waitFor(() => expect(propertiesOf(client, 'consents_accepted')).toHaveLength(1))
+    expect(propertiesOf(client, 'consents_accepted')[0]).toMatchObject({ traffic_type: 'real' })
   })
 })

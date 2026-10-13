@@ -15,6 +15,9 @@ RUN npm install -g "pnpm@$(node -p "require('./package.json').packageManager.spl
 COPY . .
 RUN --mount=type=cache,id=ryadom-pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter "@ryadom/landing..."
+# The image tag, reported to analytics as app_version (--build-arg RELEASE=0.3.3); empty falls back to package.json.
+ARG RELEASE=""
+ENV RELEASE=$RELEASE
 RUN pnpm --filter @ryadom/landing build
 
 

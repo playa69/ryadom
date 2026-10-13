@@ -33,6 +33,7 @@ from app.memory import rules_ru as R
 from app.memory import store as S
 from app.memory.llm import ExtractionModel, MemoryModelError
 from app.memory.models import Fact, Job, Op, UserMemorySettings, days, iso
+from app.services import usage as model_usage
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import Dialog, DialogStore
 
@@ -187,6 +188,7 @@ class MemoryService:
         current = self.cache.get(dialog.user_id)
         if count:  # метки метрик и сверка Live-сессии читают сводку, но в промпт её не кладут: их не считаем
             MEMORY_BRIEF_CACHE_TOTAL.labels("miss" if current is None else "hit" if current.text else "empty").inc()
+            model_usage.call("memory")  # обращение к памяти: поиск сводки для этого ответа (не сама сводка и не её длина)
         if current is None:
             return ""
         return current.text

@@ -361,9 +361,29 @@ describe('завершение разговора', () => {
     )
     expect(result).toEqual({
       success: true,
-      summary: { title: 'Стало легче', themes: ['ссора'], tensionBefore: 8, tensionAfter: 5 },
+      // The agent did not count the whole dialog: the counts for analytics are unknown, not zero.
+      summary: {
+        title: 'Стало легче',
+        themes: ['ссора'],
+        tensionBefore: 8,
+        tensionAfter: 5,
+        userMessages: null,
+        assistantMessages: null,
+      },
     })
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ takeaway: 'Позвоню маме', tensionAfter: 5 })
+  })
+
+  it('сводка несёт счётчики реплик за весь диалог, если агент их посчитал', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/end': () =>
+        json({ summary: { title: 'Разговор', themes: [], userMessages: 9, assistantMessages: 8 } }),
+    })
+    const result = await dialogsProcess.execute(
+      new EndDialogOperation({ userId: user.id, dialogId: 'd-1', takeaway: null, tensionAfter: null }),
+    )
+    expect(result).toMatchObject({ success: true, summary: { userMessages: 9, assistantMessages: 8 } })
   })
 
   it('уже закрытый или чужой диалог — DIALOG_NOT_FOUND', async () => {

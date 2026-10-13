@@ -780,18 +780,22 @@ cd app                                                   # контекст сб
 FLAGS="--platform linux/amd64 --provenance=false --sbom=false --load"
 
 docker buildx build $FLAGS -f packages/db/Dockerfile   -t $REG/migrate:$TAG .
-docker buildx build $FLAGS -f apps/landing/Dockerfile  -t $REG/landing:$TAG .
-docker buildx build $FLAGS -f apps/web/Dockerfile      -t $REG/web:$TAG   --build-arg BASE_PATH=/app .
+docker buildx build $FLAGS -f apps/landing/Dockerfile  -t $REG/landing:$TAG --build-arg RELEASE=$TAG .
+docker buildx build $FLAGS -f apps/web/Dockerfile      -t $REG/web:$TAG   --build-arg BASE_PATH=/app --build-arg RELEASE=$TAG .
 docker buildx build $FLAGS -f apps/admin/Dockerfile    -t $REG/admin:$TAG --build-arg BASE_PATH=/admin .
-docker buildx build $FLAGS -f apps/mobile/Dockerfile   -t $REG/pwa:$TAG   --build-arg PWA_BASE_PATH=/pwa .
+docker buildx build $FLAGS -f apps/mobile/Dockerfile   -t $REG/pwa:$TAG   --build-arg PWA_BASE_PATH=/pwa --build-arg RELEASE=$TAG .
 docker buildx build $FLAGS -f services/api/Dockerfile  -t $REG/api:$TAG \
   --build-arg VITE_PROD_API_URL=$ORIGIN --build-arg VITE_PROD_WEB_URL=$ORIGIN \
+  --build-arg RELEASE=$TAG \
   --build-arg OTA_BUILD_NUMBER=$(git rev-list --count HEAD) .
 
 # push: ключ SA ryadom-registry-pusher — registry-pusher-key.json в корне репозитория
 cat ../registry-pusher-key.json | docker login --username json_key --password-stdin cr.yandex
 for n in migrate landing web admin pwa api; do docker push $REG/$n:$TAG; done
 ```
+
+`--build-arg RELEASE=$TAG` кладёт тег образа в события аналитики как `app_version` (веб, PWA, лендинг и api): без него
+в PostHog уйдёт версия из `package.json` (`0.1.0` при любом выкате), и данные нельзя будет разделить по релизам.
 
 `--provenance=false --sbom=false` и раздельные `build --load` + `push` нужны потому, что
 `docker push` образов с attestations падает в YCR на blob upload с «Permission denied»

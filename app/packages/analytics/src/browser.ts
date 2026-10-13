@@ -35,6 +35,11 @@ let client: PostHog | null = null
 let starting: Promise<boolean> | null = null
 /** What `trackAnonymous` needs after startup: it bypasses the SDK, so it has to know where and as whom to send. */
 let anonymousChannel: { url: string; key: string; common: Record<string, string> } | null = null
+/**
+ * The properties every event carries (platform, version, environment). The SDK keeps them as super properties,
+ * but `posthog.reset()` (sign-out) wipes those, and events after it lost them: they are put back in `before_send`.
+ */
+let commonProperties: Record<string, string> = {}
 const queue: Array<(posthog: PostHog) => void> = []
 const MAX_QUEUE = 50
 
@@ -284,7 +289,7 @@ export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: stri
     disable_product_tours: true,
     disable_conversations: true,
     opt_out_capturing_by_default: readStoredOptOut(),
-    before_send: (event) => scrubEvent(event),
+    before_send: (event) => scrubEvent(withCommonProperties(event)),
   }
 }
 
@@ -302,6 +307,11 @@ export function startAnalytics(options: StartAnalyticsOptions): Promise<boolean>
 
       const posthog = await (options.loadSdk ?? defaultLoadSdk)()
       posthog.init(config.key, buildSdkConfig(config, options.apiBase))
+      commonProperties = {
+        app_platform: options.platform,
+        app_version: options.appVersion ?? '',
+        app_env: config.environment,
+      }
       posthog.register({
         app_platform: options.platform,
         app_version: options.appVersion,
@@ -331,6 +341,16 @@ export function startAnalytics(options: StartAnalyticsOptions): Promise<boolean>
     }
   })()
   return starting
+}
+
+/** Fills in the common properties an event came without, e.g. after `reset()`; ones it already has are kept. */
+function withCommonProperties<T extends { properties?: Record<string, unknown> | undefined }>(event: T | null): T | null {
+  if (!event) return event
+  const properties = event.properties ?? (event.properties = {})
+  for (const [key, value] of Object.entries(commonProperties)) {
+    if (value !== '' && properties[key] === undefined) properties[key] = value
+  }
+  return event
 }
 
 function turnOff(): false {
@@ -459,6 +479,7 @@ export function resetAnalyticsForTests(): void {
   client = null
   starting = null
   anonymousChannel = null
+  commonProperties = {}
   queue.length = 0
   flagListeners.clear()
   optOutListeners.clear()

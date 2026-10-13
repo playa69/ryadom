@@ -12,6 +12,7 @@ from typing import Protocol
 import httpx
 
 from app.core.config import LlmSettings, MemorySettings
+from app.services import usage as model_usage
 
 logger = logging.getLogger("agent.memory")
 
@@ -51,6 +52,7 @@ class MemoryLlm:
         self._max_tokens = max_tokens
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
 
+    @model_usage.counted("memory")  # извлечение идёт в фоне после разговора: считается только в счётчике, без человека
     async def complete(self, messages: list[dict[str, str]]) -> str:
         started = time.perf_counter()
         try:

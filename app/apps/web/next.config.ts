@@ -4,10 +4,15 @@ import type { NextConfig } from 'next'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 
-/** The version of this package, reported with analytics events as `app_version`. */
-const { version } = JSON.parse(readFileSync(path.join(import.meta.dirname, 'package.json'), 'utf8')) as {
+const { version: packageVersion } = JSON.parse(readFileSync(path.join(import.meta.dirname, 'package.json'), 'utf8')) as {
   version: string
 }
+
+/**
+ * The build reported with analytics events as `app_version`: the image tag (`--build-arg RELEASE`), so a figure
+ * can be split by what was running. package.json says 0.1.0 whatever is deployed, which is why it is only the fallback.
+ */
+const version = process.env.RELEASE?.trim() || packageVersion
 
 /**
  * The URL prefix the web client is published under on a shared host (`/app`), empty when it has a

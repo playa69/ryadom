@@ -100,6 +100,7 @@ class ProxyChat:
         self._temperature = temperature
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds, limits=KEEPALIVE_LIMITS)
 
+    @model_usage.counted("llm")
     async def complete(self, messages: list[ChatMessage]) -> str:
         started = time.perf_counter()
         try:
@@ -136,6 +137,7 @@ class ProxyChat:
         )
         return text
 
+    @model_usage.counted_stream("llm")
     async def stream(
         self, messages: list[ChatMessage], usage_sink: list[dict[str, Any]] | None = None
     ) -> AsyncIterator[str]:
@@ -224,6 +226,7 @@ class ProxyWhisper:
         self._model = model
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds, limits=KEEPALIVE_LIMITS)
 
+    @model_usage.counted("stt")
     async def transcribe(self, pcm: bytes) -> str:
         started = time.perf_counter()
         try:

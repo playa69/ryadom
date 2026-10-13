@@ -364,6 +364,10 @@ class DialogStore:
             "themes": ["выговориться"],
             "tensionBefore": None,
             "tensionAfter": tension_after,
+            # Сколько реплик сказано за весь диалог (все соединения, выкаты между ними). Нужно только продуктовой
+            # аналитике шлюза: он видит лишь своё соединение. В контракт приложения эти поля не входят.
+            "userMessages": sum(1 for m in dialog.messages if m.role == "user"),
+            "assistantMessages": sum(1 for m in dialog.messages if m.role == "assistant"),
         }
         self._touch(dialog)
         memory = self.memory

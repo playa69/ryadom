@@ -28,13 +28,16 @@ RUN pnpm --filter @ryadom/api build
 # is fine for a local or CI check build, where nothing downloads the result. `zip` keeps forward
 # slashes in the archive, which the update plugin on the device requires.
 ARG OTA_BUILD_NUMBER
+# The image tag; the native bundles report it to analytics as app_version, the server reads it at run time too.
+ARG RELEASE=""
 ARG VITE_PROD_API_URL
 ARG VITE_PROD_WEB_URL
 ARG VITE_STAGING_API_URL
 ARG VITE_STAGING_WEB_URL
 # apps/mobile's vite.config.ts and build-ota-bundle.mjs read these from process.env, so a build
 # ARG must become an ENV before it reaches the RUN step below.
-ENV OTA_BUILD_NUMBER=$OTA_BUILD_NUMBER \
+ENV RELEASE=$RELEASE \
+    OTA_BUILD_NUMBER=$OTA_BUILD_NUMBER \
     VITE_PROD_API_URL=$VITE_PROD_API_URL \
     VITE_PROD_WEB_URL=$VITE_PROD_WEB_URL \
     VITE_STAGING_API_URL=$VITE_STAGING_API_URL \
@@ -44,8 +47,10 @@ RUN pnpm --filter @ryadom/mobile build:ota
 
 
 FROM node:24-alpine AS runtime
+ARG RELEASE=""
 ENV NODE_ENV=production \
-    PORT=3002
+    PORT=3002 \
+    RELEASE=$RELEASE
 WORKDIR /app
 
 # Native modules (argon2) for the image platform, at the versions recorded by the build.

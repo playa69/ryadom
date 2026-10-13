@@ -484,6 +484,21 @@ describe('buildSdkConfig: приватность по умолчанию', () =>
     expect(posthog.register).toHaveBeenCalledWith(expect.objectContaining({ $geoip_disable: true }))
   })
 
+  it('before_send возвращает платформу, версию и окружение событию, потерявшему их после reset()', async () => {
+    const { posthog, started } = start(CONFIG)
+    await started
+    const startConfig = posthog.init.mock.calls[0]![1]
+    const beforeSend = startConfig.before_send as (event: unknown) => { properties: Record<string, string> }
+
+    // `posthog.reset()` (sign-out) wipes the super properties; an event after it comes without them.
+    const lost = beforeSend({ properties: { $current_url: 'https://app.test/home' } })
+    expect(lost.properties).toMatchObject({ app_platform: 'web', app_version: '1.2.3', app_env: 'staging' })
+
+    // What the event already carries is not overwritten.
+    const own = beforeSend({ properties: { app_env: 'prod' } })
+    expect(own.properties.app_env).toBe('prod')
+  })
+
   it('before_send чистит адреса событий', () => {
     const beforeSend = config.before_send as (event: unknown) => { properties: Record<string, string> }
     const event = beforeSend({ properties: { $current_url: 'https://app.test/reset-password?token=abc' } })

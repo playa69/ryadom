@@ -15,11 +15,16 @@ export interface UserDTO {
   deletedAt: Date | null
   /** The person asked for product analytics to be off for their account (`users.properties.analytics.optOut`). */
   analyticsOptOut: boolean
+  /** Whose traffic the account is (`users.properties.traffic_type`); `real` when nobody marked it. */
+  trafficType: TrafficType
   /** The last sign-in, session refresh or conversation; what the retention of anonymous accounts counts from. */
   lastActiveAt: Date
   createdAt: Date
   updatedAt: Date
 }
+
+/** `real` people; `test` (load tests, scripted checks); `internal` (the team). Product analytics tags events with it. */
+export type TrafficType = 'real' | 'test' | 'internal'
 
 export type UserSearchSortBy = 'createdAt' | 'email' | 'name'
 export type SortOrder = 'asc' | 'desc'
@@ -29,6 +34,14 @@ export const DELETION_ARCHIVE_KEY = 'deletion'
 
 /** Key under `users.properties` that holds the person's analytics choice: `{ optOut: boolean }`. */
 export const ANALYTICS_PREFS_KEY = 'analytics'
+
+/** Key under `users.properties` that holds the account's traffic type; absent means `real`. */
+export const TRAFFIC_TYPE_KEY = 'traffic_type'
+
+function readTrafficType(properties: UserRow['properties']): TrafficType {
+  const value = properties?.[TRAFFIC_TYPE_KEY]
+  return value === 'test' || value === 'internal' ? value : 'real'
+}
 
 function readAnalyticsOptOut(properties: UserRow['properties']): boolean {
   const prefs = properties?.[ANALYTICS_PREFS_KEY]
@@ -46,6 +59,7 @@ export function toUserDTO(row: UserRow): UserDTO {
     isDeleted: row.isDeleted,
     deletedAt: row.deletedAt,
     analyticsOptOut: readAnalyticsOptOut(row.properties),
+    trafficType: readTrafficType(row.properties),
     lastActiveAt: row.lastActiveAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

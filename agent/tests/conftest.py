@@ -196,7 +196,14 @@ def read_frames(ws: Any, stop: Callable[[list[Frame]], bool], limit: int = 400) 
 
 
 def types(frames: list[Frame]) -> list[str]:
-    return [f[1]["type"] for f in frames if f[0] == "json"]
+    """Типы JSON-кадров по порядку. Кадры `component` (отчёт шлюзу об обращении к компоненту) не показаны: они идут
+    между кадрами ответа в зависимости от конвейера, и порядок ответа от них не зависит. Смотреть их — `components`."""
+    return [f[1]["type"] for f in frames if f[0] == "json" and f[1]["type"] != "component"]
+
+
+def components(frames: list[Frame]) -> list[tuple[str, str, bool]]:
+    """Обращения к компонентам, о которых сказал сокет: (название, исход, из памяти)."""
+    return [(f[1]["component"], f[1]["outcome"], f[1]["cached"]) for f in frames if f[0] == "json" and f[1]["type"] == "component"]
 
 
 def has(frames: list[Frame], frame_type: str, **fields: Any) -> bool:

@@ -6,6 +6,7 @@ import './commands/update-user-name/update-user-name.handler'
 import './commands/update-user-voice/update-user-voice.handler'
 import './commands/set-user-active/set-user-active.handler'
 import './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.handler'
+import './commands/set-user-traffic-type/set-user-traffic-type.handler'
 import './commands/set-user-deletion-archive/set-user-deletion-archive.handler'
 import './commands/soft-delete-user/soft-delete-user.handler'
 import './commands/touch-user-activity/touch-user-activity.handler'
@@ -33,6 +34,8 @@ export { SetUserActiveCommand } from './commands/set-user-active/set-user-active
 export type { SetUserActiveCommandData } from './commands/set-user-active/set-user-active.command'
 export { SetUserAnalyticsOptOutCommand } from './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.command'
 export type { SetUserAnalyticsOptOutCommandData } from './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.command'
+export { SetUserTrafficTypeCommand } from './commands/set-user-traffic-type/set-user-traffic-type.command'
+export type { SetUserTrafficTypeCommandData } from './commands/set-user-traffic-type/set-user-traffic-type.command'
 export { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
 export type { SetUserDeletionArchiveCommandData } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
 export { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
@@ -65,6 +68,8 @@ export type { SetUserActiveCommandResult } from './commands/set-user-active/set-
 export { SetUserActiveCommandErrorCode } from './commands/set-user-active/set-user-active.types'
 export type { SetUserAnalyticsOptOutCommandResult } from './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.types'
 export { SetUserAnalyticsOptOutCommandErrorCode } from './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.types'
+export type { SetUserTrafficTypeCommandResult } from './commands/set-user-traffic-type/set-user-traffic-type.types'
+export { SetUserTrafficTypeCommandErrorCode } from './commands/set-user-traffic-type/set-user-traffic-type.types'
 export type { SetUserDeletionArchiveCommandResult } from './commands/set-user-deletion-archive/set-user-deletion-archive.types'
 export { SetUserDeletionArchiveCommandErrorCode } from './commands/set-user-deletion-archive/set-user-deletion-archive.types'
 export type { SoftDeleteUserCommandResult } from './commands/soft-delete-user/soft-delete-user.types'
@@ -78,8 +83,8 @@ export { GetUserByEmailQueryErrorCode } from './queries/get-user-by-email/get-us
 export type { SearchUsersQueryResult } from './queries/search-users/search-users.types'
 export type { GetUserDeletionArchiveQueryResult } from './queries/get-user-deletion-archive/get-user-deletion-archive.types'
 export { GetUserDeletionArchiveQueryErrorCode } from './queries/get-user-deletion-archive/get-user-deletion-archive.types'
-export type { UserDTO, UserSearchSortBy, SortOrder } from './shared/user.dto'
-export { ANALYTICS_PREFS_KEY, DELETION_ARCHIVE_KEY } from './shared/user.dto'
+export type { UserDTO, UserSearchSortBy, SortOrder, TrafficType } from './shared/user.dto'
+export { ANALYTICS_PREFS_KEY, DELETION_ARCHIVE_KEY, TRAFFIC_TYPE_KEY } from './shared/user.dto'
 
 // 4. Union type
 import type { CreateUserCommand } from './commands/create-user/create-user.command'
@@ -89,6 +94,7 @@ import type { UpdateUserNameCommand } from './commands/update-user-name/update-u
 import type { UpdateUserVoiceCommand } from './commands/update-user-voice/update-user-voice.command'
 import type { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
 import type { SetUserAnalyticsOptOutCommand } from './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.command'
+import type { SetUserTrafficTypeCommand } from './commands/set-user-traffic-type/set-user-traffic-type.command'
 import type { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
 import type { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
 import type { TouchUserActivityCommand } from './commands/touch-user-activity/touch-user-activity.command'
@@ -106,6 +112,7 @@ export type UsersManagerRequests =
   | UpdateUserVoiceCommand
   | SetUserActiveCommand
   | SetUserAnalyticsOptOutCommand
+  | SetUserTrafficTypeCommand
   | SetUserDeletionArchiveCommand
   | SoftDeleteUserCommand
   | TouchUserActivityCommand

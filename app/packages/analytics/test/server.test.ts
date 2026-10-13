@@ -33,7 +33,7 @@ describe('createServerAnalytics', () => {
     expect(client.capture).toHaveBeenCalledWith({
       distinctId: 'user-1',
       event: 'account_created',
-      properties: { kind: 'email', app_env: 'staging', service: 'api' },
+      properties: { kind: 'email', app_env: 'staging', service: 'api', traffic_type: 'real' },
       disableGeoip: true,
     })
   })
@@ -47,7 +47,7 @@ describe('createServerAnalytics', () => {
       takeaway: 'тяжело',
     } as never)
     const { properties } = client.capture.mock.calls[0]![0]
-    expect(properties).toEqual({ fields: ['name'], app_env: 'staging', service: 'api' })
+    expect(properties).toEqual({ fields: ['name'], app_env: 'staging', service: 'api', traffic_type: 'real' })
   })
 
   it('анонимное событие не привязано к человеку и не создаёт профиль', () => {
@@ -92,7 +92,7 @@ describe('createServerAnalytics', () => {
     analytics.identify('user-1', { account_kind: 'anonymous' })
     expect(client.identify).toHaveBeenCalledWith({
       distinctId: 'user-1',
-      properties: { account_kind: 'anonymous' },
+      properties: { account_kind: 'anonymous', traffic_type: 'real' },
       disableGeoip: true,
     })
   })
@@ -193,11 +193,77 @@ describe('createServerAnalytics', () => {
     expect(await outcome).toBe('erased')
   })
 
+  describe('тип трафика аккаунта', () => {
+    it('каждое событие человека и его профиль несут traffic_type аккаунта', async () => {
+      const client = fakeClient()
+      const analytics = createServerAnalytics({
+        ...base,
+        key: 'phc_test',
+        client,
+        accountState: async (userId) => ({ optOut: false, trafficType: userId === 'bot' ? 'test' : 'real' }),
+      })
+      analytics.capture('bot', AnalyticsEvent.DialogTurn, { input: 'text' })
+      analytics.capture('human', AnalyticsEvent.DialogTurn, { input: 'text' })
+      analytics.identify('bot', { account_kind: 'anonymous' })
+      await vi.waitFor(() => expect(client.capture).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(client.identify).toHaveBeenCalledTimes(1))
+
+      const byUser = Object.fromEntries(client.capture.mock.calls.map(([m]) => [m.distinctId, m.properties]))
+      expect(byUser.bot).toMatchObject({ traffic_type: 'test' })
+      expect(byUser.human).toMatchObject({ traffic_type: 'real' })
+      expect(client.identify.mock.calls[0]![0].properties).toMatchObject({ traffic_type: 'test', account_kind: 'anonymous' })
+    })
+
+    it('вызывающий не может подставить traffic_type сам: его значение перекрывается аккаунтом', async () => {
+      const client = fakeClient()
+      const analytics = createServerAnalytics({
+        ...base,
+        key: 'phc_test',
+        client,
+        accountState: async () => ({ optOut: false, trafficType: 'test' }),
+      })
+      analytics.identify('u', { account_kind: 'email', traffic_type: 'real' })
+      await vi.waitFor(() => expect(client.identify).toHaveBeenCalledTimes(1))
+      expect(client.identify.mock.calls[0]![0].properties).toMatchObject({ traffic_type: 'test' })
+    })
+
+    it('без accountState аккаунт считается обычным', () => {
+      const client = fakeClient()
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
+      analytics.capture('u', AnalyticsEvent.DialogTurn, { input: 'voice' })
+      expect(client.capture.mock.calls[0]![0].properties).toMatchObject({ traffic_type: 'real' })
+    })
+
+    it('setOptOut(false) для аккаунта, о котором не спрашивали, не выдумывает тип трафика', async () => {
+      const client = fakeClient()
+      const accountState = vi.fn(async () => ({ optOut: false, trafficType: 'test' as const }))
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, accountState })
+      analytics.setOptOut('u', false)
+      analytics.capture('u', AnalyticsEvent.DialogTurn, { input: 'text' })
+      await vi.waitFor(() => expect(client.capture).toHaveBeenCalledTimes(1))
+      expect(accountState).toHaveBeenCalledTimes(1)
+      expect(client.capture.mock.calls[0]![0].properties).toMatchObject({ traffic_type: 'test' })
+    })
+  })
+
+  it('app_version берётся из релиза сборки и не выдумывается, когда его нет', () => {
+    const withRelease = fakeClient()
+    createServerAnalytics({ ...base, key: 'phc_test', client: withRelease, release: '0.6.0' }).capture(
+      'u',
+      AnalyticsEvent.EmailConfirmed,
+    )
+    expect(withRelease.capture.mock.calls[0]![0].properties).toMatchObject({ app_version: '0.6.0' })
+
+    const without = fakeClient()
+    createServerAnalytics({ ...base, key: 'phc_test', client: without }).capture('u', AnalyticsEvent.EmailConfirmed)
+    expect(without.capture.mock.calls[0]![0].properties).not.toHaveProperty('app_version')
+  })
+
   describe('отказ человека от аналитики', () => {
     it('не отправляет ничего о человеке, который отказался; о других отправляет', async () => {
       const client = fakeClient()
-      const isOptedOut = vi.fn(async (userId: string) => userId === 'quiet')
-      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut })
+      const accountState = vi.fn(async (userId: string) => ({ optOut: userId === 'quiet', trafficType: 'real' as const }))
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, accountState })
 
       analytics.capture('quiet', AnalyticsEvent.LoggedOut, { all_devices: false })
       analytics.identify('quiet', { account_kind: 'email' })
@@ -214,8 +280,8 @@ describe('createServerAnalytics', () => {
 
     it('спрашивает один раз на пачку событий и помнит ответ', async () => {
       const client = fakeClient()
-      const isOptedOut = vi.fn(async () => false)
-      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut })
+      const accountState = vi.fn(async () => ({ optOut: false, trafficType: 'real' as const }))
+      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, accountState })
 
       analytics.capture('u', AnalyticsEvent.LoggedOut, { all_devices: false })
       analytics.capture('u', AnalyticsEvent.SessionRevoked)
@@ -223,12 +289,17 @@ describe('createServerAnalytics', () => {
       await vi.waitFor(() => expect(client.capture).toHaveBeenCalledTimes(3))
       analytics.capture('u', AnalyticsEvent.EmailLinked)
       expect(client.capture).toHaveBeenCalledTimes(4)
-      expect(isOptedOut).toHaveBeenCalledTimes(1)
+      expect(accountState).toHaveBeenCalledTimes(1)
     })
 
     it('setOptOut действует сразу, не дожидаясь, пока забудется прежний ответ', async () => {
       const client = fakeClient()
-      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut: async () => false })
+      const analytics = createServerAnalytics({
+        ...base,
+        key: 'phc_test',
+        client,
+        accountState: async () => ({ optOut: false, trafficType: 'real' }),
+      })
       analytics.capture('u', AnalyticsEvent.SessionRevoked)
       await vi.waitFor(() => expect(client.capture).toHaveBeenCalledTimes(1))
 
@@ -250,7 +321,7 @@ describe('createServerAnalytics', () => {
         key: 'phc_test',
         client,
         onError,
-        isOptedOut: async () => Promise.reject(new Error('db down')),
+        accountState: async () => Promise.reject(new Error('db down')),
       })
       analytics.capture('u', AnalyticsEvent.SessionRevoked)
       await vi.waitFor(() => expect(onError).toHaveBeenCalled())
@@ -259,7 +330,12 @@ describe('createServerAnalytics', () => {
 
     it('анонимные события не зависят от выбора: у них нет человека', () => {
       const client = fakeClient()
-      const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, isOptedOut: async () => true })
+      const analytics = createServerAnalytics({
+        ...base,
+        key: 'phc_test',
+        client,
+        accountState: async () => ({ optOut: true, trafficType: 'real' }),
+      })
       analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
       expect(client.capture).toHaveBeenCalledTimes(1)
     })
