@@ -27,6 +27,9 @@ RUN --mount=type=cache,id=ryadom-pnpm-store,target=/root/.local/share/pnpm/store
     pnpm install --frozen-lockfile --filter "@ryadom/web..."
 ARG BASE_PATH=""
 ENV BASE_PATH=$BASE_PATH
+# The image tag, reported to analytics as app_version (--build-arg RELEASE=0.6.0); empty falls back to package.json.
+ARG RELEASE=""
+ENV RELEASE=$RELEASE
 RUN pnpm --filter @ryadom/web build
 
 

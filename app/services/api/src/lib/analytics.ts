@@ -4,7 +4,12 @@ import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics
 import type { DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { accountKindOf, type AnalyticsEventProperties, type AnalyticsEvent } from '@ryadom/analytics/events'
 import { createAnalyticsAdmin } from '@ryadom/analytics/admin'
-import { createServerAnalytics, type ServerAnalytics, type ServerAnalyticsClient } from '@ryadom/analytics/server'
+import {
+  createServerAnalytics,
+  type AccountAnalyticsState,
+  type ServerAnalytics,
+  type ServerAnalyticsClient,
+} from '@ryadom/analytics/server'
 import type { AppServerEnv } from './env'
 import type { Logger } from './logger'
 
@@ -60,8 +65,10 @@ export function createAnalytics(
     appEnv: env.APP_ENV,
     service: 'api',
     admin,
-    // Asked before anything is reported about a person, so "I turned it off" holds on the server too.
-    isOptedOut: accountOptedOut,
+    // Asked before anything is reported about a person, so "I turned it off" holds on the server too, and the
+    // account says whose traffic it is (people, a load test, the team).
+    accountState,
+    release: env.RELEASE,
     ...(overrides.client ? { client: overrides.client } : {}),
     ...(overrides.erasureDelayMs !== undefined ? { erasureDelayMs: overrides.erasureDelayMs } : {}),
     onError: (error) => {
@@ -102,20 +109,55 @@ export function identifyUser(analytics: ServerAnalytics, user: { id: string; ema
 }
 
 /**
- * Whether the account asked for analytics to be off. An account that is gone counts as opted out:
- * nothing is reported about a person who has just been erased.
+ * What the account says about being reported on: whether it asked for analytics to be off, and whose traffic it
+ * is. An account that is gone counts as opted out: nothing is reported about a person who has just been erased.
  */
-async function accountOptedOut(userId: string): Promise<boolean> {
+async function accountState(userId: string): Promise<AccountAnalyticsState> {
   const found = await usersManager.execute(new GetUserByIdQuery({ userId }))
   if (!found.success) {
     switch (found.error) {
       case GetUserByIdQueryErrorCode.USER_NOT_FOUND:
-        return true
+        return { optOut: true, trafficType: 'real' }
       default:
         return assertNever(found.error)
     }
   }
-  return found.user.analyticsOptOut || found.user.isDeleted
+  return {
+    optOut: found.user.analyticsOptOut || found.user.isDeleted,
+    trafficType: found.user.trafficType,
+  }
+}
+
+const DIALOG_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * The `dialog_id` property of an event: the dialog's own random id. Whatever is not an id (the socket takes the
+ * value from the client's first frame) is left out, not reported.
+ */
+export function dialogIdProperty(dialogId: string | null | undefined): { dialog_id?: string } {
+  return typeof dialogId === 'string' && DIALOG_ID.test(dialogId) ? { dialog_id: dialogId } : {}
+}
+
+function count(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
+}
+
+/**
+ * How much was said, for `dialog_ended`: the whole dialog when the agent counted it (it sees every connection and
+ * every rollout), otherwise what this connection saw, marked as such. Over REST there is no connection to fall
+ * back on, so the counts are left out.
+ */
+export function messageCounts(
+  summary: { userMessages?: unknown; assistantMessages?: unknown } | null | undefined,
+  connection?: { user: number; assistant: number },
+): Pick<AnalyticsEventProperties[AnalyticsEvent.DialogEnded], 'counts' | 'user_messages' | 'assistant_messages'> {
+  const user = count(summary?.userMessages)
+  const assistant = count(summary?.assistantMessages)
+  if (user !== undefined && assistant !== undefined) {
+    return { counts: 'dialog', user_messages: user, assistant_messages: assistant }
+  }
+  if (!connection) return {}
+  return { counts: 'connection', user_messages: connection.user, assistant_messages: connection.assistant }
 }
 
 /** How a finished dialog went, from the summary the agent produced: the change in self-reported tension. */

@@ -24,7 +24,7 @@ import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { tensionOutcome } from '../../lib/analytics'
+import { dialogIdProperty, messageCounts, tensionOutcome } from '../../lib/analytics'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
@@ -108,6 +108,7 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
         memoryEnabled: result.dialog.memoryEnabled,
       }
       analytics.capture(userId, AnalyticsEvent.DialogStarted, {
+        ...dialogIdProperty(result.dialog.dialogId),
         resumed: result.dialog.resumed,
         hours_since_last:
           result.dialog.sinceLastDialogHours === null ? null : Math.round(result.dialog.sinceLastDialogHours),
@@ -181,7 +182,9 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
     }
     const response: EndDialogApiResponse = { summary: toDialogSummary(result.summary) }
     analytics.capture(authUser(c).userId, AnalyticsEvent.DialogEnded, {
+      ...dialogIdProperty(c.req.param('dialogId')),
       via: 'rest',
+      ...messageCounts(result.summary),
       has_takeaway: body.takeaway !== undefined && body.takeaway !== '',
       ...tensionOutcome(response.summary),
     })

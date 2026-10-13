@@ -127,6 +127,9 @@ export default defineConfig(({ command, mode }) => {
     ],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
+      // What analytics report as `app_version`: the image tag (`RELEASE`) when the build has one. `__APP_VERSION__`
+      // is not that: the native update check compares it, so it stays the package's version.
+      __RELEASE__: JSON.stringify(process.env.RELEASE?.trim() || pkg.version),
     },
     server: {
       port: 5174,

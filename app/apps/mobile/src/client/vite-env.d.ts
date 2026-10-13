@@ -19,3 +19,6 @@ interface ImportMeta {
 
 /** Version from apps/mobile/package.json, also the build versionName and the OTA bundle version. */
 declare const __APP_VERSION__: string
+
+/** What analytics report as `app_version`: the build's release tag (`RELEASE`), else the package version. */
+declare const __RELEASE__: string

@@ -17,6 +17,9 @@ export interface DialogSummaryDTO {
   themes: string[]
   tensionBefore: number | null
   tensionAfter: number | null
+  /** Replies in the whole dialog, over every connection; null when the agent did not say. Not part of the app contract. */
+  userMessages: number | null
+  assistantMessages: number | null
 }
 
 export interface DialogListItemDTO {
@@ -52,6 +55,8 @@ export function toDialogSummaryDTO(summary: AgentDialogSummaryResponse | null): 
     themes: Array.isArray(summary.themes) ? summary.themes : [],
     tensionBefore: summary.tensionBefore ?? null,
     tensionAfter: summary.tensionAfter ?? null,
+    userMessages: summary.userMessages ?? null,
+    assistantMessages: summary.assistantMessages ?? null,
   }
 }
 

@@ -253,6 +253,18 @@ const appShape = {
    */
   POSTHOG_ERASE_EVENTS: booleanFlag.transform((value) => value ?? true),
   /**
+   * The build that runs (the image tag), sent with every analytics event as `app_version` so a figure can be
+   * split by release. Set at image build time (`--build-arg RELEASE=<tag>`); empty means the events carry none.
+   */
+  RELEASE: z.string().trim().max(64).optional(),
+  /**
+   * Accounts made by a device whose id starts with this are marked `test` (`users.properties.traffic_type`)
+   * and tagged so in every analytics event: the load tests' device ids carry it, which is how their traffic
+   * stays out of the figures without a hand-kept list. Empty switches the rule off. A real device id is
+   * random base64 and does not start with a word.
+   */
+  ANALYTICS_TEST_DEVICE_PREFIX: z.string().trim().max(32).default('loadtest-'),
+  /**
    * Session replay with every piece of text and every input masked. Off: it is the most sensitive switch.
    * RISK, HIGH: a recording of behaviour on screen is the largest processing there is. Even masked it shows
    * layout, pauses and taps on screens with personal content, possibly the person's state (art. 10: written

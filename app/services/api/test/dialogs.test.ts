@@ -565,11 +565,16 @@ describe('WebSocket-шлюз', () => {
     await new Promise<void>((resolve) => client.once('close', () => resolve()))
 
     const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
-    expect(mine).toHaveLength(1)
-    expect(mine[0]).toMatchObject({
+    // Two accepted replies (one typed, one spoken) are two turns; the end is one event.
+    expect(mine.map((entry) => entry.event)).toEqual(['dialog_turn', 'dialog_turn', 'dialog_ended'])
+    expect(mine.slice(0, 2).map((entry) => entry.properties.input)).toEqual(['text', 'voice'])
+    const ended = mine[2]!
+    expect(ended).toMatchObject({
       event: 'dialog_ended',
       properties: {
         via: 'socket',
+        // The agent did not count the whole dialog, so these are what this connection saw, and say so.
+        counts: 'connection',
         user_messages: 2,
         assistant_messages: 1,
         has_takeaway: true,
@@ -577,8 +582,92 @@ describe('WebSocket-шлюз', () => {
         tension_improved: true,
       },
     })
-    expect(typeof mine[0]!.properties.duration_s).toBe('number')
+    expect(typeof ended.properties.duration_s).toBe('number')
     expect(JSON.stringify(mine)).not.toMatch(/секретн/)
+  })
+
+  it('аналитика: у событий диалога есть dialog_id, а счётчики берутся за весь диалог, если их знает агент', async () => {
+    const dialogId = '6f1d6c1e-2f43-4a53-9d77-0a3d3a8f7b11'
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId }))
+    const agentSide = await agent.waitFor(dialogId)
+
+    client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'привет' }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
+    // The agent saw a dialog of 9 replies over three connections; this connection saw one.
+    agentSide.socket.send(
+      JSON.stringify({
+        type: 'ended',
+        summary: {
+          title: 'Разговор',
+          themes: [],
+          tensionBefore: null,
+          tensionAfter: null,
+          userMessages: 9,
+          assistantMessages: 9,
+        },
+      }),
+    )
+    const ended = await nextFrame(client, DialogServerFrame.Ended)
+    await new Promise<void>((resolve) => client.once('close', () => resolve()))
+
+    // The counts are for analytics: the client's summary is the contract's, nothing more.
+    expect(ended.summary).toEqual({ title: 'Разговор', themes: [], tensionBefore: null, tensionAfter: null })
+    const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
+    expect(mine.map((entry) => entry.event)).toEqual(['dialog_turn', 'dialog_ended'])
+    expect(mine[0]!.properties).toEqual({ dialog_id: dialogId, input: 'text' })
+    expect(mine[1]!.properties).toMatchObject({
+      dialog_id: dialogId,
+      counts: 'dialog',
+      user_messages: 9,
+      assistant_messages: 9,
+    })
+  })
+
+  it('аналитика: кадр component от агента становится component_called, лишнего из кадра не берётся', async () => {
+    const dialogId = 'a4b9f0c2-6d1e-4c70-8a55-1f2e9d3c4b21'
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId }))
+    const agentSide = await agent.waitFor(dialogId)
+
+    agentSide.socket.send(
+      JSON.stringify({ type: 'component', component: 'tts', outcome: 'ok', cached: true, prompt: 'секретный промпт' }),
+    )
+    agentSide.socket.send(
+      JSON.stringify({ type: 'component', component: 'llm', outcome: 'error', error: 'секретная ошибка вендора' }),
+    )
+    // A name outside the set is not reported: the report cannot be made to carry an arbitrary string.
+    agentSide.socket.send(JSON.stringify({ type: 'component', component: 'секретный компонент', outcome: 'ok' }))
+    await vi.waitFor(() =>
+      expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toHaveLength(2),
+    )
+
+    const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
+    expect(mine.map((entry) => [entry.event, entry.properties])).toEqual([
+      ['component_called', { dialog_id: dialogId, component: 'tts', outcome: 'ok', cached: true }],
+      ['component_called', { dialog_id: dialogId, component: 'llm', outcome: 'error', cached: false }],
+    ])
+    expect(JSON.stringify(mine)).not.toMatch(/секретн/)
+    client.close()
+  })
+
+  it('аналитика: идентификатор диалога, который не является идентификатором, в событие не попадает', async () => {
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'not-an-id-at-all' }))
+    const agentSide = await agent.waitFor('not-an-id-at-all')
+    client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'привет' }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
+    await vi.waitFor(() => expect(gateway.analytics.events.some((entry) => entry.userId === userId)).toBe(true))
+
+    const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
+    expect(mine[0]!.properties).toEqual({ input: 'text' })
+    client.close()
   })
 
   it('аналитика: клиент оборвал связь после реплики — dialog_interrupted, и ровно один раз', async () => {
@@ -591,17 +680,20 @@ describe('WebSocket-шлюз', () => {
     await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
 
     client.close()
-    await vi.waitFor(() =>
-      expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toHaveLength(1),
-    )
+    const interrupted = () =>
+      gateway.analytics.events.filter((entry) => entry.userId === userId && entry.event === 'dialog_interrupted')
+    await vi.waitFor(() => expect(interrupted()).toHaveLength(1))
     // Give a possible duplicate (socket close after dispose) time to show itself.
     await new Promise<void>((resolve) => setTimeout(resolve, 150))
-    const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
-    expect(mine).toHaveLength(1)
-    expect(mine[0]).toMatchObject({
+    expect(interrupted()).toHaveLength(1)
+    expect(interrupted()[0]).toMatchObject({
       event: 'dialog_interrupted',
       properties: { reason: 'client_closed', user_messages: 1 },
     })
+    // The reply itself was reported once, as a turn.
+    expect(
+      gateway.analytics.events.filter((entry) => entry.userId === userId && entry.event === 'dialog_turn'),
+    ).toHaveLength(1)
   })
 
   it('аналитика: подключение без единой реплики ничего не сообщает (переподключения — не новость)', async () => {
