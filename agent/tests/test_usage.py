@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import logging
 import sqlite3
 import time
 import uuid
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
@@ -105,6 +107,16 @@ async def test_qwen_records_characters_and_seconds_even_when_the_speech_is_cut()
             break  # человек перебил: дальше не слушаем
         await stream.aclose()  # type: ignore[attr-defined]
     assert cut == [Usage(model, "tts", "input", "text", "chars", 6), Usage(model, "tts", "output", "audio", "seconds", 0.5)]
+
+
+async def test_gemini_phrase_session_logs_its_voice_without_the_text(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="agent.gemini")
+    tts = GeminiLiveTts(FakeConnector(reply="Я рядом."))
+    assert await tts.synthesize("Тайная фраза", "female")
+    await asyncio.gather(*tts._drains)
+    [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("gemini live opened")]
+    assert "purpose=tts voice=female voice_name=fake-female model=fake-live-model phrase_chars=12 " in line
+    assert "Тайная" not in line
 
 
 async def test_gemini_phrase_usage_arrives_after_the_sound_and_is_read_in_the_background() -> None:

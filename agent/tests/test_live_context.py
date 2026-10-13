@@ -529,6 +529,24 @@ async def test_connector_loads_the_history_as_client_content(stub_connector: Gem
     assert connection.closed
 
 
+@pytest.mark.parametrize(("voice", "name"), [("male", "Charon"), ("female", "Kore")])
+async def test_connector_always_names_the_voice_to_google(stub_connector: GeminiLiveConnector, voice: str, name: str) -> None:
+    """Каждая сессия идёт с явным голосом (speech_config), в том числе без истории и озвучка фразы; имя голоса видно в соединении."""
+    for history in (None, [("user", "Привет"), ("model", "Я рядом")]):
+        StubClient.connections.clear()
+        link = await stub_connector.open(voice, "промпт", None, history)  # type: ignore[arg-type]
+        config = StubClient.connections[0][0]
+        assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == name
+        assert link.voice == voice and link.voice_name == name
+        await link.aclose()
+
+
+async def test_connector_refuses_an_unknown_voice_instead_of_picking_one(stub_connector: GeminiLiveConnector) -> None:
+    with pytest.raises(KeyError):
+        await stub_connector.open("child", "промпт")  # type: ignore[arg-type]
+    assert StubClient.connections == []  # к Google не обращались
+
+
 async def test_connector_without_history_sends_nothing(stub_connector: GeminiLiveConnector) -> None:
     link = await stub_connector.open("male", "промпт")
     assert StubClient.session.sent == []

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -44,6 +45,7 @@ class FakeLink:
         history: LiveHistory | None = None,
     ) -> None:
         self.voice = voice
+        self.voice_name = f"fake-{voice}"  # как у настоящего соединения: имя голоса Google, с которым открыта сессия
         self.closed = False
         self.instructions = instructions
         self.resume_handle = resume_handle
@@ -397,6 +399,25 @@ def test_session_config_has_compression_and_resumption() -> None:
     )
     assert tuned.context_window_compression.trigger_tokens == 90000
     assert tuned.context_window_compression.sliding_window.target_tokens == 40000
+
+
+def test_every_session_open_is_logged_with_its_voice(
+    live_client: TestClient, connector: FakeConnector, user_id: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Если человеку показалось, что голос сменился, это видно по журналу: диалог, цель открытия, голос и его имя у Google."""
+    caplog.set_level(logging.INFO, logger="agent.live")
+    dialog = start_dialog(live_client, user_id)
+    with live_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        send_user_message(ws, "c-1", "Первая реплика")
+        read_frames(ws, reply_done)
+        ws.send_text(json.dumps({"type": "set_voice", "voice": "female"}))
+        send_user_message(ws, "c-2", "Вторая реплика")
+        read_frames(ws, reply_done)
+    opened = [r.getMessage() for r in caplog.records if r.getMessage().startswith("gemini live opened")]
+    assert opened[0].startswith(f"gemini live opened dialog={dialog['dialogId']} purpose=start voice=male voice_name=fake-male ")
+    assert any("purpose=voice voice=female voice_name=fake-female" in line for line in opened)
+    assert all(f"model={APP_CONFIG.gemini.live_model} " in line and " ms=" in line for line in opened)
+    assert not any("Первая реплика" in line or "Вторая реплика" in line for line in opened)  # тексты реплик в журнал не идут
 
 
 @pytest.mark.parametrize("text_context", [False, True], ids=["history-in-prompt", "history-as-turns"])

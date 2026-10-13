@@ -12,6 +12,7 @@
 import asyncio
 import logging
 import re
+import time
 import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
@@ -99,6 +100,7 @@ class LiveLink(Protocol):
     """Живое соединение с моделью под один голос."""
 
     voice: Voice
+    voice_name: str  # имя голоса Google, с которым открыта сессия (Charon, Kore…): для журнала, чтобы смену голоса можно было разобрать
     closed: bool
 
     async def activity_start(self) -> None: ...
@@ -135,13 +137,14 @@ class LiveConnector(Protocol):
 
 
 class GeminiLiveLink:
-    def __init__(self, stack: AsyncExitStack, session, voice: Voice) -> None:  # noqa: ANN001
+    def __init__(self, stack: AsyncExitStack, session, voice: Voice, voice_name: str = "") -> None:  # noqa: ANN001
         from google.genai import types
 
         self._types = types
         self._stack = stack
         self._session = session
         self.voice: Voice = voice
+        self.voice_name = voice_name
         self.closed = False
         # Цикл в websockets (16.x): закрывая соединение, библиотека отменяет свою задачу keepalive и не забирает её
         # CancelledError. Задача держит исключение, его traceback — кадр keepalive() с self (соединением), а соединение —
@@ -325,7 +328,8 @@ class GeminiLiveConnector:
     async def open(
         self, voice: Voice, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
     ) -> GeminiLiveLink:
-        config = live_config(self._settings, self._voices[voice], instructions, resume_handle, bool(history))
+        voice_name = self._voices[voice]  # голос задаётся в каждой сессии; не male и не female — ошибка, а не молчаливая подмена
+        config = live_config(self._settings, voice_name, instructions, resume_handle, bool(history))
         stack = AsyncExitStack()
         try:
             session = await asyncio.wait_for(
@@ -344,7 +348,7 @@ class GeminiLiveConnector:
         except Exception as error:
             await stack.aclose()
             raise LiveError(f"Gemini Live не открылся: {type(error).__name__}: {str(error)[:200]}") from error
-        return GeminiLiveLink(stack, session, voice)
+        return GeminiLiveLink(stack, session, voice, voice_name)
 
     async def aclose(self) -> None:
         return None
@@ -386,6 +390,7 @@ class GeminiLiveTts:
         if budget is not None and budget.cooling():
             raise TtsError("Gemini Live: пауза после превышения квоты, фраза не озвучена")
         opening = budget.opening(budget.open_estimate([VERBATIM_INSTRUCTIONS])) if budget is not None else None
+        began = time.monotonic()
         try:
             link = await self._connector.open(voice, VERBATIM_INSTRUCTIONS)
         except BaseException as error:
@@ -397,6 +402,15 @@ class GeminiLiveTts:
             self._quota(str(error))
             raise TtsError(str(error)) from error
         GEMINI_OPENS_TOTAL.labels("tts", "ok").inc()
+        # Озвучка фразы открывает свою сессию: тот же голос, что у разговора, виден в журнале (текст фразы не пишем, только размер).
+        logger.info(
+            "gemini live opened purpose=tts voice=%s voice_name=%s model=%s phrase_chars=%d ms=%.0f",
+            voice,
+            getattr(link, "voice_name", ""),
+            self._model,
+            len(text),
+            (time.monotonic() - began) * 1000,
+        )
         session_opened(link)
         request = f"Произнеси дословно, без добавлений: «{text}»"
         reserved = None
