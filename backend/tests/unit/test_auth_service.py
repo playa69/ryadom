@@ -34,19 +34,25 @@ def _service(db_session) -> AuthService:
         auth_repository=AuthRepository(db_session),
         consent_repository=ConsentRepository(db_session),
         audit_log_repository=AuditLogRepository(db_session),
-        anti_spam_service=AntiSpamService(rate_limit_backend=InMemoryRateLimitBackend()),
+        anti_spam_service=AntiSpamService(
+            rate_limit_backend=InMemoryRateLimitBackend()
+        ),
         email_sender=SpyEmailSender(),
     )
 
 
 def _device_request(device_id: str, key: str = "device-key-1") -> DeviceLoginRequest:
-    return DeviceLoginRequest(device_id=uuid.UUID(device_id), device_key=key, platform="ios")
+    return DeviceLoginRequest(
+        device_id=uuid.UUID(device_id), device_key=key, platform="ios"
+    )
 
 
 async def test_device_login_first_time_creates_user(db_session):
     service = _service(db_session)
     device_id = str(uuid.uuid4())
-    response = await service.device_login(_device_request(device_id), context=_context())
+    response = await service.device_login(
+        _device_request(device_id), context=_context()
+    )
 
     assert response.is_new_user is True
     assert response.user.is_anonymous is True
@@ -73,13 +79,19 @@ async def test_device_login_repeat_is_idempotent(db_session):
 async def test_device_login_wrong_key_rejected(db_session):
     service = _service(db_session)
     device_id = str(uuid.uuid4())
-    await service.device_login(_device_request(device_id, key="right-key"), context=_context())
+    await service.device_login(
+        _device_request(device_id, key="right-key"), context=_context()
+    )
 
     with pytest.raises(InvalidCredentialsError):
-        await service.device_login(_device_request(device_id, key="wrong-key"), context=_context())
+        await service.device_login(
+            _device_request(device_id, key="wrong-key"), context=_context()
+        )
 
 
-async def _make_email_user(db_session, email="user@example.com", password="password-123"):
+async def _make_email_user(
+    db_session, email="user@example.com", password="password-123"
+):
     users = UserRepository(db_session)
     from app.core.security import hash_password
 
@@ -88,7 +100,10 @@ async def _make_email_user(db_session, email="user@example.com", password="passw
     )
     identities = AuthIdentityRepository(db_session)
     await identities.create(
-        user_id=user.id, kind="email", identifier=email, secret_hash=hash_password(password)
+        user_id=user.id,
+        kind="email",
+        identifier=email,
+        secret_hash=hash_password(password),
     )
     await db_session.commit()
     return user
@@ -117,7 +132,9 @@ async def test_email_login_anti_enumeration(db_session):
     with pytest.raises(InvalidCredentialsError) as no_user:
         await service.email_login(
             EmailLoginRequest(
-                email="ghost@example.com", password="password-123", device_id=uuid.uuid4()
+                email="ghost@example.com",
+                password="password-123",
+                device_id=uuid.uuid4(),
             ),
             context=_context(),
         )
@@ -125,7 +142,9 @@ async def test_email_login_anti_enumeration(db_session):
     with pytest.raises(InvalidCredentialsError) as bad_password:
         await service.email_login(
             EmailLoginRequest(
-                email="user@example.com", password="wrong-password", device_id=uuid.uuid4()
+                email="user@example.com",
+                password="wrong-password",
+                device_id=uuid.uuid4(),
             ),
             context=_context(),
         )
@@ -161,7 +180,9 @@ async def test_refresh_reuse_within_grace_window(db_session):
     login = await service.device_login(
         _device_request(str(uuid.uuid4())), context=_context()
     )
-    await service.refresh(RefreshRequest(refresh_token=login.refresh_token), context=_context())
+    await service.refresh(
+        RefreshRequest(refresh_token=login.refresh_token), context=_context()
+    )
 
     # Повтор того же токена в grace-окне 10 сек — новая пара без family kill
     second = await service.refresh(
@@ -191,7 +212,9 @@ async def test_refresh_replay_outside_grace_kills_family(db_session):
         )
 
     # Все refresh пользователя отозваны (family kill), включая свежий
-    assert await auth.get_active_refresh_token(hash_token(rotated.refresh_token)) is None
+    assert (
+        await auth.get_active_refresh_token(hash_token(rotated.refresh_token)) is None
+    )
     # Событие family-revoke в аудите
     audits = AuditLogRepository(db_session)
     count = await audits.count_recent(
@@ -206,7 +229,9 @@ async def test_refresh_replay_outside_grace_kills_family(db_session):
 async def test_refresh_unknown_token(db_session):
     service = _service(db_session)
     with pytest.raises(InvalidRefreshTokenError):
-        await service.refresh(RefreshRequest(refresh_token="unknown"), context=_context())
+        await service.refresh(
+            RefreshRequest(refresh_token="unknown"), context=_context()
+        )
 
 
 async def test_logout_revokes_and_is_idempotent(db_session):
@@ -228,5 +253,7 @@ async def test_logout_revokes_and_is_idempotent(db_session):
     assert first.message == second.message
 
     # Logout с неизвестным токеном — тоже успех
-    third = await service.logout(RefreshRequest(refresh_token="unknown"), context=_context())
+    third = await service.logout(
+        RefreshRequest(refresh_token="unknown"), context=_context()
+    )
     assert third.message == first.message

@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from pydantic import BaseModel
 
 from app.main import (
     app_error_handler,
@@ -14,7 +15,6 @@ from app.services.exceptions import (
     InvalidCredentialsError,
     RateLimitExceededError,
 )
-from pydantic import BaseModel
 
 
 def _mini_app() -> FastAPI:

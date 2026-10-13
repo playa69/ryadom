@@ -1,7 +1,6 @@
 """Юнит-тесты согласий и security-аудита (задачи 4.9, 4.10)."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -108,7 +107,9 @@ async def test_audit_event_written_on_login(db_session):
         auth_repository=AuthRepository(db_session),
         consent_repository=ConsentRepository(db_session),
         audit_log_repository=AuditLogRepository(db_session),
-        anti_spam_service=AntiSpamService(rate_limit_backend=InMemoryRateLimitBackend()),
+        anti_spam_service=AntiSpamService(
+            rate_limit_backend=InMemoryRateLimitBackend()
+        ),
         email_sender=SpyEmailSender(),
     )
     login = await service.device_login(

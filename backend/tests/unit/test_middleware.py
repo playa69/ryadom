@@ -1,6 +1,5 @@
 """Тесты middleware заголовков (задача 1.4) и security-заголовков (1.5)."""
 
-import json
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -116,7 +115,9 @@ async def test_security_headers_on_responses():
     async def other_ep():
         return {}
 
-    async with AsyncClient(transport=ASGITransport(app=mini), base_url="http://t") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=mini), base_url="http://t"
+    ) as client:
         auth_response = await client.get("/api/v1/auth/device")
         other_response = await client.get("/api/v1/other")
 

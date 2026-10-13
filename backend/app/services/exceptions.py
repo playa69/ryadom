@@ -116,6 +116,8 @@ class RateLimitExceededError(AppError):
         retry_after_seconds: int | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
-        headers = {"Retry-After": str(retry_after_seconds)} if retry_after_seconds else None
+        headers = (
+            {"Retry-After": str(retry_after_seconds)} if retry_after_seconds else None
+        )
         super().__init__(message, details=details, headers=headers)
         self.retry_after_seconds = retry_after_seconds

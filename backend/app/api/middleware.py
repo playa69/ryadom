@@ -57,7 +57,14 @@ async def request_context_middleware(
     )
 
     path = request.url.path
-    loggable = not any(path == ep or path.startswith(f"{ep}/") for ep in NON_LOGGED_ENDPOINTS if ep != "/") and path != "/"
+    loggable = (
+        not any(
+            path == ep or path.startswith(f"{ep}/")
+            for ep in NON_LOGGED_ENDPOINTS
+            if ep != "/"
+        )
+        and path != "/"
+    )
 
     started_at = time.monotonic()
     if loggable:
@@ -67,7 +74,9 @@ async def request_context_middleware(
 
     if loggable:
         duration_ms = int((time.monotonic() - started_at) * 1000)
-        logger.info(f"Ответ {request.method} {path} — {response.status_code} ({duration_ms} мс)")
+        logger.info(
+            f"Ответ {request.method} {path} — {response.status_code} ({duration_ms} мс)"
+        )
         logger.bind(
             target="metric",
             metric_name="backend_request_duration_ms",

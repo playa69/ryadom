@@ -6,7 +6,14 @@ from typing import Any
 
 from app.logger.context_vars import ContextLog
 
-__all__ = ["ContextLog", "Log", "Metric", "Event", "EventParam", "dataclass_as_json_str"]
+__all__ = [
+    "ContextLog",
+    "Event",
+    "EventParam",
+    "Log",
+    "Metric",
+    "dataclass_as_json_str",
+]
 
 
 @dataclass

@@ -1,6 +1,5 @@
 """Юнит-тесты репозиториев на тестовой БД (задачи 3.1–3.3)."""
 
-import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.core.security import hash_token
@@ -94,7 +93,9 @@ async def test_auth_repository_revoke_all_for_user(db_session):
     hashes = [hash_token(f"t{i}") for i in range(3)]
     for h in hashes:
         await auth.create_refresh_token(
-            user_id=user.id, token_hash=h, expires_at=datetime.now(UTC) + timedelta(days=30)
+            user_id=user.id,
+            token_hash=h,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
         )
     await db_session.commit()
     await auth.revoke_refresh_tokens_for_user(user.id)
@@ -111,7 +112,9 @@ async def test_auth_repository_password_reset_tokens(db_session):
     )
     old_hash = hash_token("old-reset")
     await auth.create_password_reset_token(
-        user_id=user.id, token_hash=old_hash, expires_at=datetime.now(UTC) + timedelta(minutes=30)
+        user_id=user.id,
+        token_hash=old_hash,
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )
     await db_session.commit()
 
@@ -122,7 +125,9 @@ async def test_auth_repository_password_reset_tokens(db_session):
 
     new_hash = hash_token("new-reset")
     reset = await auth.create_password_reset_token(
-        user_id=user.id, token_hash=new_hash, expires_at=datetime.now(UTC) + timedelta(minutes=30)
+        user_id=user.id,
+        token_hash=new_hash,
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )
     await db_session.commit()
     assert await auth.get_active_password_reset_token(new_hash) is not None

@@ -45,7 +45,9 @@ def anyio_backend() -> str:
 
 @pytest.fixture(scope="session")
 async def engine():
-    engine = create_async_engine(APP_CONFIG.pg.sqlalchemy_database_uri, pool_pre_ping=True)
+    engine = create_async_engine(
+        APP_CONFIG.pg.sqlalchemy_database_uri, pool_pre_ping=True
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -94,7 +96,9 @@ class SpyEmailSender:
     async def send_email_link_code(self, *, email: str, code: str) -> None:
         self.link_codes.append({"email": email, "code": code})
 
-    async def send_password_reset(self, *, email: str, reset_token: str, expires_at) -> None:
+    async def send_password_reset(
+        self, *, email: str, reset_token: str, expires_at
+    ) -> None:
         self.password_resets.append(
             {"email": email, "reset_token": reset_token, "expires_at": expires_at}
         )
@@ -119,8 +123,12 @@ async def client(spy_email_sender, fake_redis) -> AsyncIterator[AsyncClient]:
 
 # --- helpers ---
 
+
 def new_device_creds() -> dict[str, str]:
-    return {"device_id": str(uuid.uuid4()), "device_key": f"key-{uuid.uuid4().hex[:16]}"}
+    return {
+        "device_id": str(uuid.uuid4()),
+        "device_key": f"key-{uuid.uuid4().hex[:16]}",
+    }
 
 
 async def register_device(client: AsyncClient, **overrides) -> dict:

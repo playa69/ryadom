@@ -27,7 +27,9 @@ def _context() -> RequestSecurityContext:
 
 
 class FailingEmailSender(SpyEmailSender):
-    async def send_password_reset(self, *, email: str, reset_token: str, expires_at) -> None:
+    async def send_password_reset(
+        self, *, email: str, reset_token: str, expires_at
+    ) -> None:
         raise RuntimeError("SMTP down")
 
 
@@ -46,14 +48,19 @@ def _service(db_session, sender, backend=None) -> AuthService:
     )
 
 
-async def _make_email_user(db_session, email="reset@example.com", password="old-password-1"):
+async def _make_email_user(
+    db_session, email="reset@example.com", password="old-password-1"
+):
     users = UserRepository(db_session)
     identities = AuthIdentityRepository(db_session)
     user = await users.create_with_identity(
         kind="device", identifier=str(uuid.uuid4()), secret_hash=hash_password("dk")
     )
     await identities.create(
-        user_id=user.id, kind="email", identifier=email, secret_hash=hash_password(password)
+        user_id=user.id,
+        kind="email",
+        identifier=email,
+        secret_hash=hash_password(password),
     )
     await db_session.commit()
     return user
@@ -93,7 +100,9 @@ async def test_request_reset_unknown_email_same_response_cooldown_written(db_ses
 
     # Cooldown по хэшу email записан даже для несуществующего адреса
     (handle,) = build_contact_handles(email="ghost@example.com")
-    assert await backend.check_cooldown(f"cooldown:password_reset_contact:{handle.entity_id}")
+    assert await backend.check_cooldown(
+        f"cooldown:password_reset_contact:{handle.entity_id}"
+    )
 
 
 async def test_request_reset_invalidates_previous_tokens(db_session):
@@ -116,7 +125,9 @@ async def test_request_reset_invalidates_previous_tokens(db_session):
 
     auth = AuthRepository(db_session)
     assert await auth.get_active_password_reset_token(hash_token(first_token)) is None
-    assert await auth.get_active_password_reset_token(hash_token(second_token)) is not None
+    assert (
+        await auth.get_active_password_reset_token(hash_token(second_token)) is not None
+    )
 
 
 async def test_email_send_failure_rolls_back_transaction(db_session):
@@ -187,7 +198,9 @@ async def test_confirm_reset_invalid_token(db_session):
     service = _service(db_session, sender)
     with pytest.raises(InvalidResetTokenError):
         await service.confirm_password_reset(
-            PasswordResetConfirmRequest(token="no-such-token", new_password="new-password-9"),
+            PasswordResetConfirmRequest(
+                token="no-such-token", new_password="new-password-9"
+            ),
             context=_context(),
         )
 
@@ -207,6 +220,8 @@ async def test_confirm_reset_used_token(db_session):
     )
     with pytest.raises(InvalidResetTokenError):
         await service.confirm_password_reset(
-            PasswordResetConfirmRequest(token=reset_token, new_password="another-pass-1"),
+            PasswordResetConfirmRequest(
+                token=reset_token, new_password="another-pass-1"
+            ),
             context=_context(),
         )

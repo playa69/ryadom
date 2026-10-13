@@ -64,9 +64,7 @@ from app.services.exceptions import (
     ServiceUnavailableError,
 )
 
-_PASSWORD_RESET_NEUTRAL_MESSAGE = (
-    "Если аккаунт с таким email существует, мы отправили письмо со ссылкой для сброса пароля."
-)
+_PASSWORD_RESET_NEUTRAL_MESSAGE = "Если аккаунт с таким email существует, мы отправили письмо со ссылкой для сброса пароля."
 
 
 class AuthService:
@@ -111,11 +109,15 @@ class AuthService:
                 retry_after_seconds=decision.retry_after_seconds,
             )
             metrics.AUTH_RATE_LIMITED_TOTAL.labels(action="device_login").inc()
-            raise RateLimitExceededError(retry_after_seconds=decision.retry_after_seconds)
+            raise RateLimitExceededError(
+                retry_after_seconds=decision.retry_after_seconds
+            )
 
         device_id = str(payload.device_id)
         device_key = payload.device_key.get_secret_value()
-        identity = await self.identity_repository.get_by_kind_identifier("device", device_id)
+        identity = await self.identity_repository.get_by_kind_identifier(
+            "device", device_id
+        )
 
         is_new_user = False
         if identity is not None:
@@ -128,12 +130,16 @@ class AuthService:
                     extra_payload={"reason": "invalid_device_key"},
                 )
                 await self.session.commit()
-                metrics.AUTH_LOGIN_TOTAL.labels(flow="device", result="invalid_credentials").inc()
+                metrics.AUTH_LOGIN_TOTAL.labels(
+                    flow="device", result="invalid_credentials"
+                ).inc()
                 raise InvalidCredentialsError()
             user = await self.user_repository.get_by_id(identity.user_id)
             if user is None or not user.is_active:
                 await self.session.commit()
-                metrics.AUTH_LOGIN_TOTAL.labels(flow="device", result="invalid_credentials").inc()
+                metrics.AUTH_LOGIN_TOTAL.labels(
+                    flow="device", result="invalid_credentials"
+                ).inc()
                 raise InvalidCredentialsError()
         else:
             user = await self.user_repository.create_with_identity(
@@ -185,11 +191,15 @@ class AuthService:
                 retry_after_seconds=decision.retry_after_seconds,
             )
             metrics.AUTH_RATE_LIMITED_TOTAL.labels(action="email_login").inc()
-            raise RateLimitExceededError(retry_after_seconds=decision.retry_after_seconds)
+            raise RateLimitExceededError(
+                retry_after_seconds=decision.retry_after_seconds
+            )
 
         normalized_email = normalize_email(payload.email) or ""
         contact_handles = build_contact_handles(email=normalized_email)
-        identity = await self.identity_repository.get_by_kind_identifier("email", normalized_email)
+        identity = await self.identity_repository.get_by_kind_identifier(
+            "email", normalized_email
+        )
 
         user: User | None = None
         if identity is not None and verify_password(
@@ -207,11 +217,15 @@ class AuthService:
                 entity_id=contact_handles[0].entity_id if contact_handles else None,
                 context=context,
                 extra_payload={
-                    "email_masked": contact_handles[0].masked_value if contact_handles else None,
+                    "email_masked": contact_handles[0].masked_value
+                    if contact_handles
+                    else None,
                 },
             )
             await self.session.commit()
-            metrics.AUTH_LOGIN_TOTAL.labels(flow="email", result="invalid_credentials").inc()
+            metrics.AUTH_LOGIN_TOTAL.labels(
+                flow="email", result="invalid_credentials"
+            ).inc()
             raise InvalidCredentialsError()
 
         device_id = str(payload.device_id)
@@ -229,7 +243,9 @@ class AuthService:
             actor_user_id=user.id,
             context=context,
             extra_payload={
-                "email_masked": contact_handles[0].masked_value if contact_handles else None,
+                "email_masked": contact_handles[0].masked_value
+                if contact_handles
+                else None,
             },
         )
         await self.session.commit()
@@ -252,7 +268,9 @@ class AuthService:
         context: RequestSecurityContext,
     ) -> TokenPair:
         token_hash = hash_token(payload.refresh_token.get_secret_value())
-        current_refresh_token = await self.auth_repository.get_active_refresh_token(token_hash)
+        current_refresh_token = await self.auth_repository.get_active_refresh_token(
+            token_hash
+        )
 
         if current_refresh_token is not None:
             user = await self.user_repository.get_by_id(current_refresh_token.user_id)
@@ -260,7 +278,9 @@ class AuthService:
                 metrics.AUTH_REFRESH_TOTAL.labels(result="invalid").inc()
                 raise InvalidRefreshTokenError()
             metrics.AUTH_REFRESH_TOTAL.labels(result="rotated").inc()
-            return await self._issue_rotated_tokens(user, current_refresh_token, revoke=True)
+            return await self._issue_rotated_tokens(
+                user, current_refresh_token, revoke=True
+            )
 
         revoked_token = await self.auth_repository.get_refresh_token_by_hash(token_hash)
         if revoked_token is not None and revoked_token.revoked_at is not None:
@@ -278,14 +298,18 @@ class AuthService:
                         f"Повторное использование refresh-токена в grace-окне. user_id={user.id}"
                     )
                     metrics.AUTH_REFRESH_TOTAL.labels(result="grace_rotation").inc()
-                    return await self._issue_rotated_tokens(user, revoked_token, revoke=False)
+                    return await self._issue_rotated_tokens(
+                        user, revoked_token, revoke=False
+                    )
             else:
                 # Replay вне grace-окна — компрометация: отзыв всего семейства.
                 logger.warning(
                     "Replay refresh-токена вне grace-окна; "
                     f"отзыв всех токенов пользователя {revoked_token.user_id}"
                 )
-                await self.auth_repository.revoke_refresh_tokens_for_user(revoked_token.user_id)
+                await self.auth_repository.revoke_refresh_tokens_for_user(
+                    revoked_token.user_id
+                )
                 await self._record_audit_event(
                     action="auth.refresh.family_revoke",
                     entity_type="user",
@@ -352,11 +376,17 @@ class AuthService:
                 retry_after_seconds=decision.retry_after_seconds,
             )
             metrics.AUTH_RATE_LIMITED_TOTAL.labels(action="email_link").inc()
-            raise RateLimitExceededError(retry_after_seconds=decision.retry_after_seconds)
+            raise RateLimitExceededError(
+                retry_after_seconds=decision.retry_after_seconds
+            )
 
-        existing = await self.identity_repository.get_by_kind_identifier("email", normalized_email)
+        existing = await self.identity_repository.get_by_kind_identifier(
+            "email", normalized_email
+        )
         if existing is not None and existing.user_id != user.id:
-            metrics.AUTH_EMAIL_LINK_TOTAL.labels(stage="request", result="already_linked").inc()
+            metrics.AUTH_EMAIL_LINK_TOTAL.labels(
+                stage="request", result="already_linked"
+            ).inc()
             raise EmailAlreadyLinkedError()
 
         pending = await self.email_code_service.start(
@@ -377,7 +407,9 @@ class AuthService:
             actor_user_id=user.id,
             context=context,
             extra_payload={
-                "email_masked": contact_handles[0].masked_value if contact_handles else None,
+                "email_masked": contact_handles[0].masked_value
+                if contact_handles
+                else None,
             },
         )
         await self.session.commit()
@@ -408,12 +440,16 @@ class AuthService:
 
         existing = await self.identity_repository.get_by_kind_identifier("email", email)
         if existing is not None and existing.user_id != user.id:
-            metrics.AUTH_EMAIL_LINK_TOTAL.labels(stage="confirm", result="already_linked").inc()
+            metrics.AUTH_EMAIL_LINK_TOTAL.labels(
+                stage="confirm", result="already_linked"
+            ).inc()
             raise EmailAlreadyLinkedError()
 
         own_identity = await self.identity_repository.get_for_user(user.id, "email")
         if own_identity is not None:
-            await self.identity_repository.update_secret_hash(own_identity, password_hash)
+            await self.identity_repository.update_secret_hash(
+                own_identity, password_hash
+            )
         else:
             await self.identity_repository.create(
                 user_id=user.id,
@@ -464,9 +500,13 @@ class AuthService:
             )
 
         # Cooldown записывается даже для несуществующего адреса.
-        await self.anti_spam_service.record_password_reset_request(contact_handles=contact_handles)
+        await self.anti_spam_service.record_password_reset_request(
+            contact_handles=contact_handles
+        )
 
-        identity = await self.identity_repository.get_by_kind_identifier("email", normalized_email)
+        identity = await self.identity_repository.get_by_kind_identifier(
+            "email", normalized_email
+        )
         user: User | None = None
         if identity is not None:
             candidate = await self.user_repository.get_by_id(identity.user_id)
@@ -491,7 +531,9 @@ class AuthService:
             except Exception as exc:
                 await self.session.rollback()
                 logger.error(f"Отправка письма сброса пароля не удалась: {exc}")
-                metrics.AUTH_PASSWORD_RESET_REQUESTS_TOTAL.labels(result="send_failed").inc()
+                metrics.AUTH_PASSWORD_RESET_REQUESTS_TOTAL.labels(
+                    result="send_failed"
+                ).inc()
                 raise ServiceUnavailableError(
                     "Не удалось отправить письмо. Попробуйте позже."
                 ) from exc
@@ -502,7 +544,9 @@ class AuthService:
                 actor_user_id=user.id,
                 context=context,
                 extra_payload={
-                    "email_masked": contact_handles[0].masked_value if contact_handles else None,
+                    "email_masked": contact_handles[0].masked_value
+                    if contact_handles
+                    else None,
                 },
             )
 
@@ -518,22 +562,30 @@ class AuthService:
         *,
         context: RequestSecurityContext,
     ) -> MessageResponse:
-        decision = await self.anti_spam_service.evaluate_password_reset_confirm(context=context)
+        decision = await self.anti_spam_service.evaluate_password_reset_confirm(
+            context=context
+        )
         if not decision.allowed:
             await self._record_rate_limited(
                 action="auth.password_reset_confirm.rate_limited",
                 context=context,
                 retry_after_seconds=decision.retry_after_seconds,
             )
-            metrics.AUTH_RATE_LIMITED_TOTAL.labels(action="password_reset_confirm").inc()
-            raise RateLimitExceededError(retry_after_seconds=decision.retry_after_seconds)
+            metrics.AUTH_RATE_LIMITED_TOTAL.labels(
+                action="password_reset_confirm"
+            ).inc()
+            raise RateLimitExceededError(
+                retry_after_seconds=decision.retry_after_seconds
+            )
 
         reset_token = await self.auth_repository.get_active_password_reset_token(
             hash_token(payload.token.get_secret_value())
         )
         identity = None
         if reset_token is not None:
-            identity = await self.identity_repository.get_for_user(reset_token.user_id, "email")
+            identity = await self.identity_repository.get_for_user(
+                reset_token.user_id, "email"
+            )
 
         if reset_token is None or identity is None:
             await self._record_audit_event(
@@ -562,7 +614,7 @@ class AuthService:
 
         try:
             await self.email_sender.send_password_changed(email=identity.identifier)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — письмо best-effort, пароль уже сменён
             logger.error(f"Отправка уведомления о смене пароля не удалась: {exc}")
 
         return MessageResponse(message="Пароль обновлён.")
@@ -571,7 +623,9 @@ class AuthService:
     # Внутренние helpers
     # ------------------------------------------------------------------
 
-    async def _issue_token_pair(self, user: User, *, device_id: str | None) -> TokenPair:
+    async def _issue_token_pair(
+        self, user: User, *, device_id: str | None
+    ) -> TokenPair:
         access_token = create_access_token(str(user.id))
         refresh_token = create_refresh_token()
         await self.auth_repository.create_refresh_token(
@@ -597,7 +651,9 @@ class AuthService:
         """Выдаёт новую пару и ротирует текущий refresh (наследуя device_id)."""
         if revoke:
             await self.auth_repository.revoke_refresh_token(current_refresh_token)
-        token_pair = await self._issue_token_pair(user, device_id=current_refresh_token.device_id)
+        token_pair = await self._issue_token_pair(
+            user, device_id=current_refresh_token.device_id
+        )
         await self.session.commit()
         return token_pair
 

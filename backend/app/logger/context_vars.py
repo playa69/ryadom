@@ -20,9 +20,15 @@ class ContextVarsContainer:
 
     def __init__(self) -> None:
         self.x_trace_id_var: ContextVar[str | None] = ContextVar("rquid", default=None)
-        self.x_request_time_var: ContextVar[str | None] = ContextVar("rqtm", default=None)
-        self.x_client_id_var: ContextVar[str | None] = ContextVar("systemId", default=None)
-        self.x_aigw_session_id_var: ContextVar[str | None] = ContextVar("gwSessionId", default=None)
+        self.x_request_time_var: ContextVar[str | None] = ContextVar(
+            "rqtm", default=None
+        )
+        self.x_client_id_var: ContextVar[str | None] = ContextVar(
+            "systemId", default=None
+        )
+        self.x_aigw_session_id_var: ContextVar[str | None] = ContextVar(
+            "gwSessionId", default=None
+        )
         self.x_user_id_var: ContextVar[str | None] = ContextVar("userId", default=None)
 
     @property

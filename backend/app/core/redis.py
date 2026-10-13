@@ -26,10 +26,14 @@ def set_redis_client(client: Redis | None) -> None:
     _redis_client = client
 
 
-def _resolve_sentinel_hosts(sentinel_host: str, sentinel_port: int) -> list[tuple[str, int]]:
+def _resolve_sentinel_hosts(
+    sentinel_host: str, sentinel_port: int
+) -> list[tuple[str, int]]:
     """Резолвит headless-сервис Sentinel в список IP подов."""
     try:
-        infos = socket.getaddrinfo(sentinel_host, sentinel_port, socket.AF_INET, socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(
+            sentinel_host, sentinel_port, socket.AF_INET, socket.SOCK_STREAM
+        )
         hosts = list({(info[4][0], sentinel_port) for info in infos})
         logger.debug(f"Sentinel-хосты из {sentinel_host}: {hosts}")
         return hosts
@@ -68,7 +72,9 @@ async def create_redis_client(
     )
     client: Redis = sentinel.master_for(master_name)
     await client.ping()
-    logger.info(f"Redis подключён через Sentinel (hosts={sentinel_hosts}, master={master_name})")
+    logger.info(
+        f"Redis подключён через Sentinel (hosts={sentinel_hosts}, master={master_name})"
+    )
     return client
 
 

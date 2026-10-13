@@ -27,6 +27,8 @@ class PasswordResetToken(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     expires_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, index=True
     )
-    used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
     user: Mapped[User] = relationship(back_populates="password_reset_tokens")

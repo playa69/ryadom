@@ -57,7 +57,9 @@ def _is_trusted_proxy(direct_host: str | None, trusted_proxy_ips: list[str]) -> 
     try:
         host_ip = ip_address(direct_host)
     except ValueError:
-        logger.warning(f"Невалидный IP прямого соединения {direct_host!r}; XFF не доверяем")
+        logger.warning(
+            f"Невалидный IP прямого соединения {direct_host!r}; XFF не доверяем"
+        )
         return False
     for entry in trusted_proxy_ips:
         try:
@@ -196,7 +198,9 @@ async def get_current_user(
     битый/подделанный/без токена.
     """
     if credentials is None or credentials.scheme.lower() != "bearer":
-        raise TokenInvalidError("Требуется авторизация. Войдите в аккаунт.", headers=_WWW_AUTH)
+        raise TokenInvalidError(
+            "Требуется авторизация. Войдите в аккаунт.", headers=_WWW_AUTH
+        )
 
     try:
         payload = decode_and_validate_jwt(credentials.credentials)
@@ -210,7 +214,9 @@ async def get_current_user(
 
     user = await UserRepository(session).get_by_id(user_id)
     if user is None:
-        raise TokenInvalidError("Пользователь не найден. Войдите снова.", headers=_WWW_AUTH)
+        raise TokenInvalidError(
+            "Пользователь не найден. Войдите снова.", headers=_WWW_AUTH
+        )
     if not user.is_active:
         raise ForbiddenError("Аккаунт деактивирован. Обратитесь в поддержку.")
 

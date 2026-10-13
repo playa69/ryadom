@@ -2,13 +2,18 @@
 
 import time
 
-from app.services.rate_limit_service import InMemoryRateLimitBackend, NoOpRateLimitBackend
+from app.services.rate_limit_service import (
+    InMemoryRateLimitBackend,
+    NoOpRateLimitBackend,
+)
 
 
 async def test_sliding_window_allows_within_limit():
     backend = InMemoryRateLimitBackend()
     for expected_count in (1, 2, 3):
-        count, allowed = await backend.check_and_increment("k1", window_seconds=60, max_attempts=3)
+        count, allowed = await backend.check_and_increment(
+            "k1", window_seconds=60, max_attempts=3
+        )
         assert count == expected_count
         assert allowed
 
@@ -17,7 +22,9 @@ async def test_sliding_window_blocks_over_limit():
     backend = InMemoryRateLimitBackend()
     for _ in range(3):
         await backend.check_and_increment("k1", window_seconds=60, max_attempts=3)
-    count, allowed = await backend.check_and_increment("k1", window_seconds=60, max_attempts=3)
+    count, allowed = await backend.check_and_increment(
+        "k1", window_seconds=60, max_attempts=3
+    )
     assert count == 4
     assert not allowed
 
@@ -25,7 +32,9 @@ async def test_sliding_window_blocks_over_limit():
 async def test_sliding_window_expires_old_attempts():
     backend = InMemoryRateLimitBackend()
     backend._windows["k1"] = [time.time() - 120]  # попытка за пределами окна
-    count, allowed = await backend.check_and_increment("k1", window_seconds=60, max_attempts=1)
+    count, allowed = await backend.check_and_increment(
+        "k1", window_seconds=60, max_attempts=1
+    )
     assert count == 1
     assert allowed
 
@@ -58,6 +67,6 @@ async def test_cooldown_expired():
 
 async def test_noop_backend_always_allows():
     backend = NoOpRateLimitBackend()
-    count, allowed = await backend.check_and_increment("k", 1, 0)
+    _count, allowed = await backend.check_and_increment("k", 1, 0)
     assert allowed
     assert not await backend.check_cooldown("k")

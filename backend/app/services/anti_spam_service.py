@@ -88,7 +88,9 @@ class AntiSpamService:
     # Оценка до обработки
     # ------------------------------------------------------------------
 
-    async def evaluate_device_login(self, *, context: RequestSecurityContext) -> AntiSpamDecision:
+    async def evaluate_device_login(
+        self, *, context: RequestSecurityContext
+    ) -> AntiSpamDecision:
         """POST /auth/device — 20/час по IP."""
         return await self._evaluate_ip_limit(
             ip_address=context.ip_address,
@@ -97,7 +99,9 @@ class AntiSpamService:
             window_seconds=self.settings.device_login_rate_limit_window_seconds,
         )
 
-    async def evaluate_email_login(self, *, context: RequestSecurityContext) -> AntiSpamDecision:
+    async def evaluate_email_login(
+        self, *, context: RequestSecurityContext
+    ) -> AntiSpamDecision:
         """POST /auth/email/login — 10/5 мин по IP."""
         return await self._evaluate_ip_limit(
             ip_address=context.ip_address,
@@ -191,7 +195,7 @@ class AntiSpamService:
         window_seconds: int,
     ) -> AntiSpamDecision:
         key = f"rl:{action}:ip:{ip_address}"
-        count, allowed = await self.rate_limit_backend.check_and_increment(
+        _count, allowed = await self.rate_limit_backend.check_and_increment(
             key, window_seconds, max_attempts
         )
         if allowed:
@@ -218,7 +222,7 @@ class AntiSpamService:
     ) -> AntiSpamDecision:
         for contact_handle in contact_handles:
             key = f"rl:{action}:contact:{contact_handle.entity_id}"
-            count, allowed = await self.rate_limit_backend.check_and_increment(
+            _count, allowed = await self.rate_limit_backend.check_and_increment(
                 key, window_seconds, max_attempts
             )
             if not allowed:
@@ -266,7 +270,7 @@ def _calculate_retry_after_from_timestamp(
 
 
 def _hash_contact(kind: str, value: str) -> str:
-    return hashlib.sha256(f"{kind}:{value}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{kind}:{value}".encode()).hexdigest()
 
 
 def _mask_token(value: str) -> str:

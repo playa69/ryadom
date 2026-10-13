@@ -121,8 +121,12 @@ class EmailLinkCodeService:
             }
             if extra_payload:
                 payload_data.update(extra_payload)
-            await self.redis.set(pending_key, json.dumps(payload_data), ex=settings.code_ttl_seconds)
-            await self.redis.set(user_key, str(pending_token), ex=settings.code_ttl_seconds)
+            await self.redis.set(
+                pending_key, json.dumps(payload_data), ex=settings.code_ttl_seconds
+            )
+            await self.redis.set(
+                user_key, str(pending_token), ex=settings.code_ttl_seconds
+            )
         except RedisError as exc:
             logger.error(f"Хранилище email-кодов недоступно: {exc}")
             raise ServiceUnavailableError() from exc
@@ -130,12 +134,18 @@ class EmailLinkCodeService:
         try:
             await self.send_code(email=email, code=code)
         except Exception as exc:
-            logger.error(f"Отправка email-кода пользователю {user_id} не удалась: {exc}")
+            logger.error(
+                f"Отправка email-кода пользователю {user_id} не удалась: {exc}"
+            )
             try:
                 await self.redis.delete(pending_key, user_key)
             except RedisError:
-                logger.warning(f"Не удалось очистить ключи email-кода пользователя {user_id}")
-            raise ServiceUnavailableError("Не удалось отправить письмо с кодом. Попробуйте позже.") from exc
+                logger.warning(
+                    f"Не удалось очистить ключи email-кода пользователя {user_id}"
+                )
+            raise ServiceUnavailableError(
+                "Не удалось отправить письмо с кодом. Попробуйте позже."
+            ) from exc
 
         return EmailLinkPendingCode(
             pending_token=pending_token,
@@ -143,7 +153,9 @@ class EmailLinkCodeService:
             email_masked=mask_email_local(email),
         )
 
-    async def verify_code(self, *, pending_token: UUID, code: str) -> EmailLinkVerifiedCode:
+    async def verify_code(
+        self, *, pending_token: UUID, code: str
+    ) -> EmailLinkVerifiedCode:
         """Проверяет код; при успехе удаляет ключи (single-use).
 
         Raises:
@@ -168,7 +180,9 @@ class EmailLinkCodeService:
             attempts = int(data["attempts"])
             stored_code = str(data["code"])
         except (ValueError, KeyError, TypeError) as exc:
-            logger.error(f"Повреждённая pending-запись email-кода {pending_token}: {exc}")
+            logger.error(
+                f"Повреждённая pending-запись email-кода {pending_token}: {exc}"
+            )
             raise EmailCodeExpiredError() from exc
 
         user_key = f"{USER_KEY_PREFIX}{user_id}"
@@ -194,7 +208,9 @@ class EmailLinkCodeService:
             except RedisError as exc:
                 logger.error(f"Хранилище email-кодов недоступно: {exc}")
                 raise ServiceUnavailableError() from exc
-            raise EmailCodeInvalidError(details={"remaining_attempts": max_attempts - attempts})
+            raise EmailCodeInvalidError(
+                details={"remaining_attempts": max_attempts - attempts}
+            )
 
         await self._delete_keys(pending_key, user_key)
         return EmailLinkVerifiedCode(user_id=user_id, payload=data)

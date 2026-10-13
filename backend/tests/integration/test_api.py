@@ -3,8 +3,6 @@
 import uuid
 from datetime import timedelta
 
-import pytest
-
 from app.core.security import create_access_token, hash_token
 from tests.conftest import new_device_creds, register_device
 
@@ -24,9 +22,15 @@ class TestOpenApi:
             for method in spec["paths"][path]
         }
         expected = {
-            "deviceLogin", "linkEmail", "confirmEmailLink", "emailLogin",
-            "refreshTokens", "logout", "requestPasswordReset",
-            "confirmPasswordReset", "acceptConsents",
+            "deviceLogin",
+            "linkEmail",
+            "confirmEmailLink",
+            "emailLogin",
+            "refreshTokens",
+            "logout",
+            "requestPasswordReset",
+            "confirmPasswordReset",
+            "acceptConsents",
         }
         assert expected <= operation_ids
 
@@ -130,7 +134,6 @@ class TestRefreshLogout:
         # вне grace-окна — отклоняется. Сдвигаем revoked_at за пределы окна.
         from datetime import UTC, datetime, timedelta
 
-        from app.core.security import hash_token
         from app.repositories.auth_repository import AuthRepository
 
         auth = AuthRepository(db_session)
@@ -144,9 +147,7 @@ class TestRefreshLogout:
         assert refresh.status_code == 401
 
     async def test_logout_requires_bearer(self, client):
-        response = await client.post(
-            "/api/v1/auth/logout", json={"refresh_token": "x"}
-        )
+        response = await client.post("/api/v1/auth/logout", json={"refresh_token": "x"})
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "AUTH_TOKEN_INVALID"
 
@@ -318,7 +319,9 @@ class TestPasswordReset:
         assert ghost.status_code == 200
         assert ghost.json() == existing.json()
         # Письмо ушло только на существующий email
-        assert [m["email"] for m in spy_email_sender.password_resets] == ["reset@example.com"]
+        assert [m["email"] for m in spy_email_sender.password_resets] == [
+            "reset@example.com"
+        ]
 
     async def test_full_reset_flow(self, client, spy_email_sender):
         await self._link_email(client, spy_email_sender)
@@ -410,7 +413,9 @@ class TestConsents:
 
 class TestAuthGuards:
     async def test_expired_token_401_code(self, client):
-        expired = create_access_token(str(uuid.uuid4()), expires_delta=timedelta(seconds=-1))
+        expired = create_access_token(
+            str(uuid.uuid4()), expires_delta=timedelta(seconds=-1)
+        )
         response = await client.post(
             "/api/v1/users/me/consents",
             json={

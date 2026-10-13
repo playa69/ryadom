@@ -17,7 +17,9 @@ class AuthIdentityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_by_kind_identifier(self, kind: str, identifier: str) -> AuthIdentity | None:
+    async def get_by_kind_identifier(
+        self, kind: str, identifier: str
+    ) -> AuthIdentity | None:
         stmt = (
             select(AuthIdentity)
             .where(AuthIdentity.kind == kind, AuthIdentity.identifier == identifier)
@@ -53,7 +55,9 @@ class AuthIdentityRepository:
         await self.session.flush()
         return identity
 
-    async def update_secret_hash(self, identity: AuthIdentity, secret_hash: str) -> AuthIdentity:
+    async def update_secret_hash(
+        self, identity: AuthIdentity, secret_hash: str
+    ) -> AuthIdentity:
         identity.secret_hash = secret_hash
         self.session.add(identity)
         await self.session.flush()

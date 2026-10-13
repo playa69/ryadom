@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from app.core.config import APP_CONFIG, EmailCodeSettings
+from app.core.config import APP_CONFIG
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.auth_repository import AuthRepository
 from app.repositories.consent_repository import ConsentRepository
@@ -14,8 +14,8 @@ from app.schemas.auth import EmailLinkConfirmRequest, EmailLinkRequest
 from app.services.anti_spam_service import AntiSpamService, RequestSecurityContext
 from app.services.auth_service import AuthService
 from app.services.email_code_service import (
-    EmailLinkCodeService,
     PENDING_KEY_PREFIX,
+    EmailLinkCodeService,
     mask_email_local,
 )
 from app.services.exceptions import (
@@ -68,11 +68,17 @@ async def test_one_active_code_per_user(fake_redis):
     service = _code_service(fake_redis, sender)
     user_id = uuid.uuid4()
     first = await service.start(
-        user_id=user_id, email="a@b.co", rate_limit_key="u", send_rate_limit=10,
+        user_id=user_id,
+        email="a@b.co",
+        rate_limit_key="u",
+        send_rate_limit=10,
         send_rate_window_seconds=3600,
     )
     second = await service.start(
-        user_id=user_id, email="a@b.co", rate_limit_key="u", send_rate_limit=10,
+        user_id=user_id,
+        email="a@b.co",
+        rate_limit_key="u",
+        send_rate_limit=10,
         send_rate_window_seconds=3600,
     )
     # Первый код инвалидирован
@@ -87,8 +93,11 @@ async def test_send_rate_limit(fake_redis):
     with pytest.raises(RateLimitExceededError) as exc_info:
         for _ in range(3):
             await service.start(
-                user_id=uuid.uuid4(), email="a@b.co", rate_limit_key="same-user",
-                send_rate_limit=2, send_rate_window_seconds=3600,
+                user_id=uuid.uuid4(),
+                email="a@b.co",
+                rate_limit_key="same-user",
+                send_rate_limit=2,
+                send_rate_window_seconds=3600,
             )
     assert exc_info.value.retry_after_seconds == 3600
 
@@ -97,8 +106,12 @@ async def test_verify_success_single_use(fake_redis):
     sender = SpyEmailSender()
     service = _code_service(fake_redis, sender)
     pending = await service.start(
-        user_id=uuid.uuid4(), email="a@b.co", rate_limit_key="u", send_rate_limit=5,
-        send_rate_window_seconds=3600, extra_payload={"email": "a@b.co"},
+        user_id=uuid.uuid4(),
+        email="a@b.co",
+        rate_limit_key="u",
+        send_rate_limit=5,
+        send_rate_window_seconds=3600,
+        extra_payload={"email": "a@b.co"},
     )
     code = sender.link_codes[0]["code"]
     verified = await service.verify_code(pending_token=pending.pending_token, code=code)
@@ -112,7 +125,10 @@ async def test_verify_wrong_code_remaining_attempts(fake_redis):
     sender = SpyEmailSender()
     service = _code_service(fake_redis, sender)
     pending = await service.start(
-        user_id=uuid.uuid4(), email="a@b.co", rate_limit_key="u", send_rate_limit=5,
+        user_id=uuid.uuid4(),
+        email="a@b.co",
+        rate_limit_key="u",
+        send_rate_limit=5,
         send_rate_window_seconds=3600,
     )
     real_code = sender.link_codes[0]["code"]
@@ -127,7 +143,10 @@ async def test_verify_too_many_attempts_invalidates(fake_redis):
     sender = SpyEmailSender()
     service = _code_service(fake_redis, sender)
     pending = await service.start(
-        user_id=uuid.uuid4(), email="a@b.co", rate_limit_key="u", send_rate_limit=5,
+        user_id=uuid.uuid4(),
+        email="a@b.co",
+        rate_limit_key="u",
+        send_rate_limit=5,
         send_rate_window_seconds=3600,
     )
     real_code = sender.link_codes[0]["code"]
@@ -135,7 +154,9 @@ async def test_verify_too_many_attempts_invalidates(fake_redis):
     max_attempts = APP_CONFIG.email_code.max_attempts
     for _ in range(max_attempts - 1):
         with pytest.raises(EmailCodeInvalidError):
-            await service.verify_code(pending_token=pending.pending_token, code=wrong_code)
+            await service.verify_code(
+                pending_token=pending.pending_token, code=wrong_code
+            )
     with pytest.raises(EmailCodeTooManyAttemptsError):
         await service.verify_code(pending_token=pending.pending_token, code=wrong_code)
     # После исчерпания попыток даже верный код не принимается
@@ -165,7 +186,8 @@ async def test_link_and_confirm_email_full_flow(db_session, fake_redis):
     await db_session.commit()
 
     pending = await service.link_email(
-        user, EmailLinkRequest(email="new@example.com", password="password-123"),
+        user,
+        EmailLinkRequest(email="new@example.com", password="password-123"),
         context=_context(),
     )
     assert pending.expires_in == 600

@@ -43,7 +43,9 @@ class InterceptHandler(logging.Handler):
         while frame and frame.f_code.co_filename == logging.__file__:
             frame = frame.f_back
             depth += 1
-        loguru_logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        loguru_logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
 
 
 class LoguruPatcher:
@@ -82,7 +84,9 @@ class LoguruPatcher:
                 params=[
                     EventParam(name="request-Id", value=context_log.rqUId),
                     EventParam(name="request-Time", value=context_log.rqTime),
-                    EventParam(name="params", value=record["extra"].get("audit_params")),
+                    EventParam(
+                        name="params", value=record["extra"].get("audit_params")
+                    ),
                 ],
             )
         else:
@@ -97,7 +101,11 @@ class LoguruPatcher:
                 moduleName=str(record["name"]),
                 funcName=str(record["function"]),
                 message=message,
-                stackTrace=("".join(traceback.format_exception(*exception)) if exception else None),
+                stackTrace=(
+                    "".join(traceback.format_exception(*exception))
+                    if exception
+                    else None
+                ),
                 rqUId=context_log.rqUId,
                 rqTime=context_log.rqTime,
                 systemId=context_log.systemId,

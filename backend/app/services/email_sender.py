@@ -22,7 +22,9 @@ class EmailSender(Protocol):
         """Письмо с 6-значным кодом привязки email."""
         ...
 
-    async def send_password_reset(self, *, email: str, reset_token: str, expires_at: datetime) -> None:
+    async def send_password_reset(
+        self, *, email: str, reset_token: str, expires_at: datetime
+    ) -> None:
         """Письмо со ссылкой сброса пароля."""
         ...
 
@@ -42,16 +44,25 @@ class LogEmailSender:
             audit_params={"email": mask_email(email)},
         ).info("")
 
-    async def send_password_reset(self, *, email: str, reset_token: str, expires_at: datetime) -> None:
-        logger.info(f"Email-заглушка: письмо сброса пароля отправлено на {mask_email(email)}")
+    async def send_password_reset(
+        self, *, email: str, reset_token: str, expires_at: datetime
+    ) -> None:
+        logger.info(
+            f"Email-заглушка: письмо сброса пароля отправлено на {mask_email(email)}"
+        )
         logger.bind(
             target="audit-event",
             audit_event_name="PasswordResetEmailSent",
-            audit_params={"email": mask_email(email), "expires_at": expires_at.isoformat()},
+            audit_params={
+                "email": mask_email(email),
+                "expires_at": expires_at.isoformat(),
+            },
         ).info("")
 
     async def send_password_changed(self, *, email: str) -> None:
-        logger.info(f"Email-заглушка: уведомление о смене пароля отправлено на {mask_email(email)}")
+        logger.info(
+            f"Email-заглушка: уведомление о смене пароля отправлено на {mask_email(email)}"
+        )
         logger.bind(
             target="audit-event",
             audit_event_name="PasswordChangedEmailSent",

@@ -49,7 +49,9 @@ class AuthRepository:
         return result.scalar_one_or_none()
 
     async def get_refresh_token_by_hash(self, token_hash: str) -> RefreshToken | None:
-        stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash).limit(1)
+        stmt = (
+            select(RefreshToken).where(RefreshToken.token_hash == token_hash).limit(1)
+        )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -92,7 +94,9 @@ class AuthRepository:
         await self.session.flush()
         return reset_token
 
-    async def get_active_password_reset_token(self, token_hash: str) -> PasswordResetToken | None:
+    async def get_active_password_reset_token(
+        self, token_hash: str
+    ) -> PasswordResetToken | None:
         now = datetime.now(UTC)
         stmt = (
             select(PasswordResetToken)

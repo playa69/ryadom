@@ -37,7 +37,9 @@ class AppSettings(BaseAppSettings):
     port: int = Field(validation_alias="APP_PORT", default=8000)
     timezone: str = Field(validation_alias="TIMEZONE", default="Europe/Moscow")
     version: str = Field(validation_alias="APP_VERSION", default="0.1.0")
-    trusted_proxy_ips: list[str] = Field(validation_alias="TRUSTED_PROXY_IPS", default_factory=list)
+    trusted_proxy_ips: list[str] = Field(
+        validation_alias="TRUSTED_PROXY_IPS", default_factory=list
+    )
 
     @field_validator("trusted_proxy_ips", mode="before")
     @classmethod
@@ -51,7 +53,9 @@ class AppSettings(BaseAppSettings):
                 parsed = None
             if isinstance(parsed, list):
                 return [str(item) for item in parsed]
-        return cls.model_fields["trusted_proxy_ips"].get_default(call_default_factory=True)
+        return cls.model_fields["trusted_proxy_ips"].get_default(
+            call_default_factory=True
+        )
 
 
 class LogSettings(BaseAppSettings):
@@ -60,9 +64,13 @@ class LogSettings(BaseAppSettings):
     log_path: str = Field(validation_alias="LOG_PATH", default="./logs")
     log_file_name: str = Field(validation_alias="LOG_FILE_NAME", default="app.log")
     metric_path: str = Field(validation_alias="METRIC_PATH", default="./logs")
-    metric_file_name: str = Field(validation_alias="METRIC_FILE_NAME", default="app-metric.log")
+    metric_file_name: str = Field(
+        validation_alias="METRIC_FILE_NAME", default="app-metric.log"
+    )
     audit_log_path: str = Field(validation_alias="AUDIT_LOG_PATH", default="./logs")
-    audit_log_file_name: str = Field(validation_alias="AUDIT_LOG_FILE_NAME", default="events.log")
+    audit_log_file_name: str = Field(
+        validation_alias="AUDIT_LOG_FILE_NAME", default="events.log"
+    )
     log_rotation: str = Field(validation_alias="LOG_ROTATION", default="10 MB")
     mask_enabled: bool = Field(validation_alias="MASK_ENABLED", default=True)
 
@@ -130,30 +138,48 @@ class JWTSettings(BaseAppSettings):
 class EmailCodeSettings(BaseAppSettings):
     """Настройки флоу привязки email по 6-значному коду."""
 
-    code_ttl_seconds: int = Field(validation_alias="EMAIL_LINK_CODE_TTL_SECONDS", default=600, ge=60)
-    max_attempts: int = Field(validation_alias="EMAIL_LINK_MAX_ATTEMPTS", default=5, ge=1)
+    code_ttl_seconds: int = Field(
+        validation_alias="EMAIL_LINK_CODE_TTL_SECONDS", default=600, ge=60
+    )
+    max_attempts: int = Field(
+        validation_alias="EMAIL_LINK_MAX_ATTEMPTS", default=5, ge=1
+    )
 
 
 class SecuritySettings(BaseAppSettings):
     """Лимиты антиспама auth-контуров (specs/auth «Rate-limit и антиспам»)."""
 
-    device_login_rate_limit: int = Field(validation_alias="SECURITY_DEVICE_LOGIN_RATE_LIMIT", default=20, ge=1)
+    device_login_rate_limit: int = Field(
+        validation_alias="SECURITY_DEVICE_LOGIN_RATE_LIMIT", default=20, ge=1
+    )
     device_login_rate_limit_window_seconds: int = Field(
-        validation_alias="SECURITY_DEVICE_LOGIN_RATE_LIMIT_WINDOW_SECONDS", default=3600, ge=1
+        validation_alias="SECURITY_DEVICE_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        default=3600,
+        ge=1,
     )
-    email_login_rate_limit: int = Field(validation_alias="SECURITY_EMAIL_LOGIN_RATE_LIMIT", default=10, ge=1)
+    email_login_rate_limit: int = Field(
+        validation_alias="SECURITY_EMAIL_LOGIN_RATE_LIMIT", default=10, ge=1
+    )
     email_login_rate_limit_window_seconds: int = Field(
-        validation_alias="SECURITY_EMAIL_LOGIN_RATE_LIMIT_WINDOW_SECONDS", default=300, ge=1
+        validation_alias="SECURITY_EMAIL_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        default=300,
+        ge=1,
     )
-    email_link_rate_limit: int = Field(validation_alias="SECURITY_EMAIL_LINK_RATE_LIMIT", default=5, ge=1)
+    email_link_rate_limit: int = Field(
+        validation_alias="SECURITY_EMAIL_LINK_RATE_LIMIT", default=5, ge=1
+    )
     email_link_rate_limit_window_seconds: int = Field(
-        validation_alias="SECURITY_EMAIL_LINK_RATE_LIMIT_WINDOW_SECONDS", default=3600, ge=1
+        validation_alias="SECURITY_EMAIL_LINK_RATE_LIMIT_WINDOW_SECONDS",
+        default=3600,
+        ge=1,
     )
     password_reset_rate_limit: int = Field(
         validation_alias="SECURITY_PASSWORD_RESET_RATE_LIMIT", default=1, ge=1
     )
     password_reset_rate_limit_window_seconds: int = Field(
-        validation_alias="SECURITY_PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS", default=75600, ge=1
+        validation_alias="SECURITY_PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS",
+        default=75600,
+        ge=1,
     )
     password_reset_cooldown_seconds: int = Field(
         validation_alias="SECURITY_PASSWORD_RESET_COOLDOWN_SECONDS", default=75600, ge=1
@@ -162,7 +188,9 @@ class SecuritySettings(BaseAppSettings):
         validation_alias="SECURITY_PASSWORD_RESET_CONFIRM_RATE_LIMIT", default=10, ge=1
     )
     password_reset_confirm_rate_limit_window_seconds: int = Field(
-        validation_alias="SECURITY_PASSWORD_RESET_CONFIRM_RATE_LIMIT_WINDOW_SECONDS", default=300, ge=1
+        validation_alias="SECURITY_PASSWORD_RESET_CONFIRM_RATE_LIMIT_WINDOW_SECONDS",
+        default=300,
+        ge=1,
     )
 
 

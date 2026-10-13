@@ -17,7 +17,11 @@ async def test_auth_endpoints_fail_closed_without_redis(fake_redis):
             ("/api/v1/auth/device", new_device_creds()),
             (
                 "/api/v1/auth/email/login",
-                {"email": "a@b.co", "password": "password-1", "device_id": new_device_creds()["device_id"]},
+                {
+                    "email": "a@b.co",
+                    "password": "password-1",
+                    "device_id": new_device_creds()["device_id"],
+                },
             ),
             ("/api/v1/auth/password-reset/request", {"email": "a@b.co"}),
         ):

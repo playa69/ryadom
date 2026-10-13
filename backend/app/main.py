@@ -21,7 +21,12 @@ from app.api.middleware import request_context_middleware, security_headers_midd
 from app.api.router import api_v1_router
 from app.core.config import APP_CONFIG
 from app.core.db import dispose_engine, ping_database
-from app.core.redis import close_redis_client, create_redis_client, get_redis_client, set_redis_client
+from app.core.redis import (
+    close_redis_client,
+    create_redis_client,
+    get_redis_client,
+    set_redis_client,
+)
 from app.logger.logger import configure_logging
 from app.schemas.errors import ErrorCode, ErrorResponse, FieldErrorDetail
 from app.services.exceptions import AppError
@@ -49,8 +54,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("PostgreSQL доступен")
     except Exception as exc:
         if APP_CONFIG.pg.is_hard_health:
-            raise RuntimeError(f"PostgreSQL недоступен при PG_IS_HARD_HEALTH=true: {exc}") from exc
-        logger.warning(f"PostgreSQL недоступен, старт с деградацией (PG_IS_HARD_HEALTH=false): {exc}")
+            raise RuntimeError(
+                f"PostgreSQL недоступен при PG_IS_HARD_HEALTH=true: {exc}"
+            ) from exc
+        logger.warning(
+            f"PostgreSQL недоступен, старт с деградацией (PG_IS_HARD_HEALTH=false): {exc}"
+        )
 
     # Redis
     if APP_CONFIG.redis.enabled:
@@ -60,7 +69,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 sentinel_port=APP_CONFIG.redis.sentinel_port,
                 master_name=APP_CONFIG.redis.master_name,
                 password=(
-                    APP_CONFIG.redis.password.get_secret_value() if APP_CONFIG.redis.password else None
+                    APP_CONFIG.redis.password.get_secret_value()
+                    if APP_CONFIG.redis.password
+                    else None
                 ),
             )
             set_redis_client(client)
@@ -69,9 +80,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 raise RuntimeError(
                     f"Redis недоступен при REDIS_IS_HARD_HEALTH=true: {exc}"
                 ) from exc
-            logger.warning(f"Redis недоступен, старт с деградацией (REDIS_IS_HARD_HEALTH=false): {exc}")
+            logger.warning(
+                f"Redis недоступен, старт с деградацией (REDIS_IS_HARD_HEALTH=false): {exc}"
+            )
     else:
-        logger.warning("Redis отключён (REDIS_ENABLED=false) — auth-контуры fail-closed 503")
+        logger.warning(
+            "Redis отключён (REDIS_ENABLED=false) — auth-контуры fail-closed 503"
+        )
 
     yield
 
@@ -102,7 +117,9 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
     details = [
         FieldErrorDetail(
             field=str(error["loc"][-1]) if error["loc"] else "unknown",
@@ -111,15 +128,21 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         )
         for error in exc.errors()
     ]
-    error_response = ErrorResponse.from_code(ErrorCode.VALIDATION_ERROR, details=details)
+    error_response = ErrorResponse.from_code(
+        ErrorCode.VALIDATION_ERROR, details=details
+    )
     return JSONResponse(status_code=422, content=error_response.model_dump(mode="json"))
 
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+async def http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
     code = ErrorCode.NOT_FOUND if exc.status_code == 404 else ErrorCode.INTERNAL_ERROR
     error_response = ErrorResponse.from_code(code)
-    return JSONResponse(status_code=exc.status_code, content=error_response.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=exc.status_code, content=error_response.model_dump(mode="json")
+    )
 
 
 @app.exception_handler(Exception)
@@ -140,7 +163,7 @@ async def readiness() -> JSONResponse:
     try:
         await ping_database()
         checks["postgres"] = "ok"
-    except Exception:
+    except Exception:  # noqa: BLE001 — пробы не должны падать
         checks["postgres"] = "error"
 
     redis_client = get_redis_client()
@@ -150,7 +173,7 @@ async def readiness() -> JSONResponse:
         try:
             await redis_client.ping()
             checks["redis"] = "ok"
-        except Exception:
+        except Exception:  # noqa: BLE001 — пробы не должны падать
             checks["redis"] = "error"
 
     healthy = all(value in ("ok", "disabled") for value in checks.values())

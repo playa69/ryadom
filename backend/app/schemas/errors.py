@@ -71,7 +71,7 @@ class ErrorResponse(APIModel):
         code: ErrorCode,
         message: str | None = None,
         details: dict[str, Any] | list[FieldErrorDetail] | None = None,
-    ) -> "ErrorResponse":
+    ) -> ErrorResponse:
         """Создаёт ответ-ошибку по коду с RU-сообщением по умолчанию."""
         if message is None:
             message = _DEFAULT_MESSAGES.get(code, "Произошла ошибка")

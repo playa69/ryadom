@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any
 from uuid import uuid4
 
 import jwt
@@ -156,6 +157,8 @@ def decode_and_validate_jwt(
         raise TokenValidationError("Token payload is invalid.") from exc
 
     if validated_payload.token_type != expected_type:
-        raise TokenValidationError(f"Unexpected token type: expected '{expected_type.value}'.")
+        raise TokenValidationError(
+            f"Unexpected token type: expected '{expected_type.value}'."
+        )
 
     return validated_payload
