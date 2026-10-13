@@ -57,10 +57,9 @@ class LoguruPatcher:
 
 ## Форматы вывода
 
-**Консоль (stdout):**
-```
-INFO    | 2026-04-20 11:42:19.123 | trace-abc-123 | module_name | message
-```
+**Консоль (stdout):** тот же JSON, что и в `app.log` (`{extra[serialized]}`), по всем target'ам (log/metric/audit) — в k8s stdout забирает сборщик логов (Alloy → Loki), поэтому человекочитаемый текст в stdout не пишем.
+
+Стандартный `logging` (uvicorn и пр.) перехватывается `InterceptHandler`'ом на root-логгере и тоже уходит в loguru → JSON. Access-лог uvicorn отключается через `--log-config` (логгеры `uvicorn.*` без handlers, `uvicorn.access` на WARNING): запросы логирует middleware с rqUId и исключениями служебных эндпоинтов, дубли не нужны.
 
 **app.log (JSON, одна строка = одна запись):**
 ```json
