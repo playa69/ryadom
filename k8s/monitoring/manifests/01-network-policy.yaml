@@ -8,6 +8,7 @@
 # Обратная сторона scrape-правил (ingress от monitoring на scrape-порты):
 #   prod      :15090  — namespaces/manifests/01-network-policy-prod.yaml
 #   backend   :15090/:8000 — namespaces/manifests/06-network-policy-backend.yaml
+#   agent     :8001   — namespaces/manifests/05-network-policy-agent.yaml
 #   infra     :3000/9091 — namespaces/manifests/02-network-policy-infra.yaml
 #   ryadom-db :9187   — postgres/manifests/03-network-policy.yaml
 # kube-system (coredns :9153) и ноды (:10250/:9100) своих NP не имеют —
@@ -197,6 +198,14 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
+    # Метрики агента (:8001, ServiceMonitor k8s/agent/04-servicemonitor.yaml)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent
+      ports:
+        - protocol: TCP
+          port: 8001
     # Langfuse (:3000 UI/метрики, :9091 worker metrics) в infra
     - to:
         - namespaceSelector:
