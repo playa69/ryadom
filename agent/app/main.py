@@ -12,7 +12,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
@@ -52,6 +52,13 @@ def _quiet_service_endpoints() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, SkipServiceEndpoints) for f in access.filters):
         access.addFilter(SkipServiceEndpoints())
+
+
+def _telemetry_exclude(scope: dict[str, Any]) -> bool:
+    """Пробы kubelet и прочие служебные эндпоинты не трассируем: встроенная телеметрия FastAPI
+    (активируется сама, когда в образе появляется opentelemetry-sdk из langfuse) иначе забивает
+    Langfuse трассами GET /health каждые 10 секунд."""
+    return str(scope.get("path", "")).startswith(SkipServiceEndpoints.PREFIXES)
 
 
 def create_app(
@@ -140,7 +147,12 @@ def create_app(
                     await client.aclose()
             await tracer.aclose()  # отправить в Langfuse накопленные трассы
 
-    app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
+    app = FastAPI(
+        title="ryadom-agent",
+        version=APP_CONFIG.app.version,
+        lifespan=lifespan,
+        telemetry={"exclude": _telemetry_exclude},
+    )
     app.state.store = DialogStore(default_voice=APP_CONFIG.speech.default_voice)
     app.state.tts = None
     app.state.chat = None
