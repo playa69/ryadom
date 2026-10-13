@@ -21,6 +21,7 @@ from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
 from app.core.config import APP_CONFIG, MemorySettings
 from app.core.errors import install_error_handlers
+from app.core.reclaim import MemoryReclaimer
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
 from app.memory.llm import ExtractionModel, build_memory_llm
 from app.memory.service import MemoryService
@@ -198,11 +199,16 @@ def create_app(
             fallback_warm_up = asyncio.create_task(fallback.tts.warm_up(sentences))
         # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
         evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
+        # После прогрева стартовые объекты замораживаются для сборщика мусора, дальше память раз в MEMORY_RECLAIM_SECONDS
+        # возвращается системе (app/core/reclaim.py).
+        reclaimer = MemoryReclaimer(APP_CONFIG.memory_reclaim.seconds)
+        reclaimer.start(warm_up)
         try:
             yield
         finally:
             evictor.cancel()
             await asyncio.gather(evictor, return_exceptions=True)
+            await reclaimer.stop()
             if langfuse is not None:
                 langfuse.close()
             if warm_up is not None:

@@ -36,6 +36,7 @@ from app.core.metrics import (
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
 from app.services import usage as model_usage
+from app.core.reclaim import forget_cancellation
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.replies import (
     CRISIS_REPLY,
@@ -114,6 +115,8 @@ class Synthesis:
         self.pieces: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
         self._memory = memory
         self.task = asyncio.create_task(self._run(tts, text, voice, first))
+        # Синтез перебитой озвучки отменяется: без этого он держал бы себя (и недозвученный звук) циклом через свою задачу.
+        self.task.add_done_callback(forget_cancellation)
 
     async def _run(self, tts: TextToSpeech, text: str, voice: Voice, first: bool) -> None:
         began = time.monotonic()

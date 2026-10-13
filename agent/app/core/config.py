@@ -303,6 +303,18 @@ class MemorySettings(BaseAppSettings):
         return frozenset(item.strip().lower() for item in self.allowlist.split(",") if item.strip())
 
 
+class MemoryReclaimSettings(BaseAppSettings):
+    """Возврат памяти процесса системе (app/core/reclaim.py).
+
+    После нагрузки память процесса не опускалась: освобождённое Python и glibc держат у себя, а остатки закрытых соединений
+    ждут редкой полной сборки мусора. Раз в `MEMORY_RECLAIM_SECONDS` агент собирает мусор и отдаёт свободные страницы кучи
+    системе (`malloc_trim`, только Linux с glibc; в других ОС этот шаг пропускается).
+    """
+
+    # Как часто возвращать память, секунды. 0 — не возвращать (заморозка стартовых объектов для сборщика остаётся).
+    seconds: int = Field(validation_alias="MEMORY_RECLAIM_SECONDS", default=60, ge=0)
+
+
 class Config:
     """Агрегатор доменных настроек. Неизменяемый синглтон — не мутировать."""
 
@@ -315,6 +327,7 @@ class Config:
     gemini: GeminiSettings = GeminiSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
     memory: MemorySettings = MemorySettings()
+    memory_reclaim: MemoryReclaimSettings = MemoryReclaimSettings()
 
 
 APP_CONFIG = Config()

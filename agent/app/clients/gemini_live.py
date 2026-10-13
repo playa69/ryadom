@@ -26,6 +26,7 @@ from app.services.gemini_budget import estimate_turn
 
 if TYPE_CHECKING:
     from app.services.gemini_budget import TokenBudget
+from app.core.reclaim import forget_cancellation
 
 logger = logging.getLogger("agent.gemini")
 
@@ -142,6 +143,14 @@ class GeminiLiveLink:
         self._session = session
         self.voice: Voice = voice
         self.closed = False
+        # Цикл в websockets (16.x): закрывая соединение, библиотека отменяет свою задачу keepalive и не забирает её
+        # CancelledError. Задача держит исключение, его traceback — кадр keepalive() с self (соединением), а соединение —
+        # задачу. Так каждое закрытое соединение с Gemini (TLS-буферы, заголовки, очереди) жило до полной сборки мусора, а
+        # соединение здесь открывается на каждый ход. Забираем исключение сами; нет таких полей (SDK или websockets
+        # устроены иначе) — ничего не делаем, остатки соберёт периодическая сборка (app/core/reclaim.py).
+        keepalive = getattr(getattr(session, "_ws", None), "keepalive_task", None)
+        if isinstance(keepalive, asyncio.Task):
+            keepalive.add_done_callback(forget_cancellation)
 
     async def activity_start(self) -> None:
         await self._session.send_realtime_input(activity_start=self._types.ActivityStart())
