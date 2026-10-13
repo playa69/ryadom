@@ -32,7 +32,11 @@ const nextConfig: NextConfig = {
   // Read by `lib/base-path.ts` (the prefix) and `lib/analytics-provider.tsx` (the version) in client code.
   env: { NEXT_PUBLIC_BASE_PATH: basePath, NEXT_PUBLIC_APP_VERSION: version },
   outputFileTracingRoot: repoRoot,
-  turbopack: { root: repoRoot },
+  turbopack: {
+    root: repoRoot,
+    // See lib/web-worker-shim.ts: a dependency of the WASM Opus decoder that the server build cannot bundle.
+    resolveAlias: { '@eshaz/web-worker': './lib/web-worker-shim.ts' },
+  },
   transpilePackages: [
     '@ryadom/analytics',
     '@ryadom/client-core',

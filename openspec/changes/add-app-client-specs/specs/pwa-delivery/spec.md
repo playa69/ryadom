@@ -202,7 +202,7 @@ PWA (браузерная сборка мобильного клиента, `vit
 
 ### Requirement: Заголовки безопасности ответов PWA
 
-Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`. Диалог идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`, а встраивание приложения во фрейм MUST быть запрещено всем.
+Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`. Диалог идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`, а встраивание приложения во фрейм MUST быть запрещено всем. `'wasm-unsafe-eval'` разрешает странице только компиляцию WebAssembly (не `eval`): без него браузер без собственного декодера Opus (iOS до 26, Firefox на Android) не загрузит WASM-декодер озвучки, и агент будет звучать в μ-law.
 
 #### Scenario: Политика на оболочке
 

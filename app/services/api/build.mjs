@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Bundle of the API: src/index.ts becomes dist/index.js.
+ * Bundle of the API: src/index.ts becomes dist/index.js, and the Opus worker of the dialog gateway
+ * (src/dialogs/opus-worker.ts) becomes dist/opus-worker.js next to it, where the gateway looks for it.
  *
  * Everything goes into the bundle, including @ryadom/core and @ryadom/db, because the internal
- * packages are not built themselves and their `exports` point at src. Only native modules stay
- * outside: their platform binary is installed in the runtime image from the versions in
+ * packages are not built themselves and their `exports` point at src. Only modules that load files of
+ * their own stay outside: they are installed in the runtime image from the versions in
  * dist/package.json, which this script writes.
  */
 import { build } from 'esbuild'
@@ -17,8 +18,11 @@ import { fileURLToPath } from 'node:url'
 const root = dirname(fileURLToPath(import.meta.url))
 const outDir = join(root, 'dist')
 
-/** Native dependencies: not bundled, installed in the runtime image (see the Dockerfile). */
-const EXTERNAL = ['@node-rs/argon2']
+/**
+ * Not bundled, installed in the runtime image (see the Dockerfile): argon2 is native, and @evan/opus
+ * reads its .wasm from its own directory, which a bundle would move away from it.
+ */
+const EXTERNAL = ['@node-rs/argon2', '@evan/opus']
 
 /** The installed version of a package: resolved from the core, whose dependency it is, then from here. */
 async function installedVersion(name) {
@@ -44,8 +48,11 @@ async function installedVersion(name) {
 await rm(outDir, { recursive: true, force: true })
 
 await build({
-  entryPoints: [join(root, 'src', 'index.ts')],
-  outfile: join(outDir, 'index.js'),
+  entryPoints: {
+    index: join(root, 'src', 'index.ts'),
+    'opus-worker': join(root, 'src', 'dialogs', 'opus-worker.ts'),
+  },
+  outdir: outDir,
   bundle: true,
   platform: 'node',
   format: 'esm',
@@ -78,4 +85,4 @@ await writeFile(
   `${JSON.stringify({ name: 'ryadom-api', private: true, type: 'module', dependencies }, null, 2)}\n`,
 )
 
-console.log(`api: dist/index.js, external: ${JSON.stringify(dependencies)}`)
+console.log(`api: dist/index.js, dist/opus-worker.js, external: ${JSON.stringify(dependencies)}`)

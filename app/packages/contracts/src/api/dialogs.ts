@@ -173,6 +173,13 @@ export interface HelloFrame {
   dialogId: string
   /** The last message the client already saw: after a drop the rest is sent again. */
   lastMessageId?: string
+  /**
+   * The codecs of the agent's speech this client can decode, most wanted first (`['opus', 'mulaw',
+   * 'pcm16']`). The gateway picks one for the whole connection and names it in every `tts_start`.
+   * Without the field the speech comes as `pcm16`, as it did before the field existed; every client
+   * decodes `pcm16`, so it need not be listed. Names the gateway does not know are skipped.
+   */
+  codecs?: TtsCodec[]
 }
 
 export interface MessageFrame {
@@ -216,7 +223,8 @@ export type DialogServerMessage =
   | { type: DialogServerFrame.AssistantStart; messageId: string }
   | { type: DialogServerFrame.AssistantDelta; messageId: string; text: string }
   | { type: DialogServerFrame.AssistantEnd; messageId: string; text: string; emotions?: string[] }
-  | { type: DialogServerFrame.TtsStart; messageId: string; codec: 'pcm16'; sampleRate: number }
+  /** `codec` is the one picked from `hello.codecs` (`pcm16` without them); `sampleRate` is 24000. */
+  | { type: DialogServerFrame.TtsStart; messageId: string; codec: TtsCodec; sampleRate: number }
   | { type: DialogServerFrame.TtsEnd; messageId: string }
   | { type: DialogServerFrame.Safety; level: SafetyLevel; text: string | null; hotlines: HotlineApiResponse[] }
   | { type: DialogServerFrame.Ended; summary: DialogSummaryApiResponse | null }
@@ -228,15 +236,36 @@ export const DIALOG_PROTOCOL_VERSION = 1
 
 /**
  * Binary voice frames: byte 0 is the kind, bytes 1 to 4 are a big-endian uint32
- * sequence number, and the rest is raw little-endian PCM16 samples.
+ * sequence number, and the rest is the sound: little-endian PCM16 for the person, and for the agent
+ * whatever codec its `tts_start` names (`TtsCodec`).
  */
 export enum AudioFrameKind {
   /** The person's audio: PCM16 at 16 kHz, 100 ms per frame. */
   User = 0x01,
-  /** The agent's speech: PCM16 at 24 kHz, 200 ms per frame. */
+  /** The agent's speech: 24 kHz, 200 ms per frame, in the codec of the connection. */
   Tts = 0x02,
 }
+
+/**
+ * How the agent's speech is encoded in the `0x02` frames. The agent itself always sends PCM16; the
+ * gateway re-encodes it into the codec it picked from `hello.codecs`, keeping the 200 ms step and the
+ * frame numbers.
+ *
+ * - `pcm16`: little-endian PCM16 samples, 9600 bytes per frame (384 kbit/s);
+ * - `mulaw`: G.711 μ-law, one byte per sample, 4800 bytes per frame (192 kbit/s);
+ * - `opus`: Opus packets of 20 ms (VOIP, about 24 kbit/s), each written as its length (uint16
+ *   big-endian) followed by its bytes. The packets of one speech, from `tts_start` to `tts_end`, form one
+ *   stream and depend on the ones before them, so the client keeps one decoder per speech. A frame holds
+ *   up to ten packets: a tail shorter than 20 ms waits for the next frame, the last tail comes as one more
+ *   frame just before `tts_end`, and a frame left without a whole packet is not sent.
+ */
+export const TTS_CODECS = ['opus', 'mulaw', 'pcm16'] as const
+export type TtsCodec = (typeof TTS_CODECS)[number]
 
 export const AUDIO_FRAME_HEADER_BYTES = 5
 export const AUDIO_USER_SAMPLE_RATE = 16_000
 export const AUDIO_TTS_SAMPLE_RATE = 24_000
+/** One Opus packet of the agent's speech: 20 ms. */
+export const TTS_OPUS_PACKET_MS = 20
+/** The length in front of every Opus packet in a frame: uint16 big-endian. */
+export const TTS_OPUS_LENGTH_BYTES = 2

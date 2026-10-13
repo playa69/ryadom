@@ -143,6 +143,8 @@ const apiEnv = {
   DIALOG_MAX_DURATION_SEC: '7200',
   // An open dialog whose session was ended closes within this long: the scenario waits for it.
   DIALOG_SESSION_CHECK_SEC: '2',
+  // As in production: Chromium decodes Opus with WebCodecs, so the voice scenarios play Opus speech.
+  DIALOG_AUDIO_CODECS: 'opus,mulaw',
 }
 
 log('запускаю api')

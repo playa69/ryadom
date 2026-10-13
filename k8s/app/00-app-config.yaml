@@ -101,6 +101,16 @@ data:
   AGENT_API_URL: "http://agent.agent.svc.cluster.local:8001"
   AGENT_TIMEOUT_MS: "10000"
   ANONYMOUS_PURGE_DISABLED: "true"
+  # --- Озвучка агента к клиентам (WS-шлюз api) ---
+  # Клиент называет в hello кодеки, которые умеет декодировать, шлюз отдаёт первый из них, что есть здесь.
+  # Opus ≈24 кбит/с (кодируется в worker-потоке api, ≈9 мс CPU на 1 с речи), mulaw 192 кбит/с, pcm16
+  # 384 кбит/с — его получают клиенты без списка (сборки до 2026-10). Пусто = только pcm16, как раньше.
+  # Лимит CPU api под Opus поднят до 1000m (api/03-deployment.yaml). Откат: убрать opus из списка и
+  # перезапустить app-api — клиенты сами перейдут на mulaw.
+  DIALOG_AUDIO_CODECS: "opus,mulaw,pcm16"
+  # Сложность кодера 0..10 и битрейт, бит/с (по замерам: 5 и 24000 — PESQ 4,16 при 7 мс CPU на 1 с речи)
+  DIALOG_OPUS_COMPLEXITY: "5"
+  DIALOG_OPUS_BITRATE: "24000"
   # --- Redis Sentinel (см. шапку): лимиты запросов общие для реплик ---
   REDIS_ENABLED: "true"
   REDIS_SENTINEL_HOST: "redis.ryadom-db.svc.cluster.local"

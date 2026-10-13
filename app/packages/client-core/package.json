@@ -12,7 +12,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@ryadom/contracts": "workspace:*"
+    "@ryadom/contracts": "workspace:*",
+    "opus-decoder": "0.7.12"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

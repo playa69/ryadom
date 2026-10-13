@@ -8,6 +8,11 @@ import { readApiBase, toWsBase } from './lib/api-url'
  * style-src keeps the nonce and no 'unsafe-inline'; screens therefore must not render `style=""`
  * attributes on the server (use classes, or CSS variables set from a class). Only `next dev` gets
  * 'unsafe-inline' for styles (without the nonce), because HMR and its error overlay inject inline styles.
+ *
+ * 'wasm-unsafe-eval' lets the page compile WebAssembly, and nothing else: no `eval`, no strings run as
+ * code. The agent's voice needs it where the browser has no Opus decoder of its own (Firefox on Android,
+ * Safari before 26): the client then decodes with the WASM build of libopus. Without it such a browser
+ * gets μ-law instead, eight times the traffic of Opus.
  */
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
@@ -17,7 +22,7 @@ export function proxy(request: NextRequest) {
 
   const csp = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ''}`,
     // A nonce makes browsers ignore 'unsafe-inline', so dev drops it: HMR and the error overlay inject <style>.
     isDev ? "style-src 'self' 'unsafe-inline'" : `style-src 'self' 'nonce-${nonce}'`,
     `connect-src ${connect}`,
