@@ -230,7 +230,8 @@ def _check_one(raw: Any, inp: ExtractionInput) -> tuple[Op | None, str | None]:
             cited.append(message)
     if not cited:
         return None, "not_grounded"
-    explicit = any(message.id in inp.explicit_ids for message in cited)
+    # Явная просьба «запомни…» относится к фактам, а не к пересказу разговора, который на неё опирается.
+    explicit = category != "recap" and any(message.id in inp.explicit_ids for message in cited)
     message_ids = list(dict.fromkeys(message.id for message in cited))
     if kind == "confirm":
         assert ref_fact is not None

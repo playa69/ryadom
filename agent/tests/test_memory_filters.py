@@ -233,6 +233,24 @@ def test_norm_hash_ignores_order_case_and_punctuation() -> None:
     assert filters.norm_hash("Любит джаз") != filters.norm_hash("Любит рок")
 
 
+def test_near_duplicates() -> None:
+    """Перефразировка одного факта — дубль (так модель писала про прогулки с Бимом); другой объект или отрицание — нет."""
+    assert filters.near_duplicate(
+        "Вечерние прогулки с собакой Бимом помогают расслабиться",
+        "Человеку помогает прогулка с собакой Бимом в парке после тяжёлого дня на работе",
+    )
+    assert not filters.near_duplicate("Помогают вечерние прогулки с собакой", "Не помогают вечерние прогулки с собакой")
+    assert not filters.near_duplicate("Готовится к экзамену по английскому", "Готовится к экзамену по вождению")
+    assert not filters.near_duplicate("Помогают вечерние прогулки с собакой Бимом", "Помогают вечерние разговоры с сестрой Аней")
+
+
+def test_roles_with_a_qualifier() -> None:
+    assert filters.canonical_role("младший брат") == "брат"
+    assert filters.canonical_role("лучшая подруга") == "подруга"
+    assert filters.canonical_role("бывший муж") == "бывший муж"
+    assert filters.canonical_role("любимый психотерапевт") is None
+
+
 def test_similarity() -> None:
     assert filters.similarity("Помогают вечерние прогулки", "Помогают вечерние прогулки.") >= R.DEDUP_SIMILARITY
     assert filters.similarity("Помогают вечерние прогулки", "Любит джаз") < 0.3

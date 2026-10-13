@@ -893,7 +893,11 @@ class MemoryService:
                         fact
                         for fact in live
                         if fact.category == op.category
-                        and (fact.norm_hash == digest or filters.similarity(fact.text, op.text) >= R.DEDUP_SIMILARITY)
+                        and (
+                            fact.norm_hash == digest
+                            or filters.similarity(fact.text, op.text) >= R.DEDUP_SIMILARITY
+                            or filters.near_duplicate(fact.text, op.text)
+                        )
                     ),
                     None,
                 )
@@ -929,6 +933,10 @@ class MemoryService:
         # add нового факта
         if len(live) >= R.MAX_FACTS and not self._evict(conn, user_id, live, now):
             return "blocked:full"
+        if op.category == "recap" and any(
+            fact.category != "recap" and filters.near_duplicate(fact.text, op.text) for fact in live
+        ):
+            return "blocked:duplicate"  # «пересказ», повторяющий записанный факт, — дубль, а не пересказ
         if op.category == "recap":  # пересказ у человека один: новый заменяет прежний
             for old in [fact for fact in live if fact.category == "recap"]:
                 old.status, old.purge_after, old.updated_at = "expired", stamp, stamp

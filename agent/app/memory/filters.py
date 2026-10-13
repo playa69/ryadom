@@ -177,7 +177,11 @@ _NAME = re.compile(r"^[А-ЯЁA-Z][а-яёa-z]+(?:-[А-ЯЁA-Z]?[а-яёa-z]+)?$
 def canonical_role(role: str) -> str | None:
     """Роль из словаря в том виде, как она пишется в карточке (английский синоним — тоже); None, если такой роли нет."""
     key = _base(" ".join(role.split()))
-    return _ROLES.get(key) or R.ROLE_ALIASES.get(key)
+    found = _ROLES.get(key) or R.ROLE_ALIASES.get(key)
+    if found is None and " " in key:  # «младший брат», «лучшая подруга»: роль — последнее слово, уточнение уйдёт в заметку
+        head = key.rsplit(" ", 1)[1]
+        found = _ROLES.get(head) or R.ROLE_ALIASES.get(head)
+    return found
 
 
 def validate_slots(category: str, slots: object, lenient: bool = False) -> tuple[dict[str, str] | None, str | None]:
@@ -355,6 +359,23 @@ def similarity(a: str, b: str) -> float:
     if not left or not right:
         return 0.0
     return len(left & right) / len(left | right)
+
+
+_NEGATION = re.compile(r"(?<![а-я])(не|нет|без|ни)(?![а-я])")
+
+
+def near_duplicate(a: str, b: str) -> bool:
+    """Тот же факт другими словами: значимые слова более короткого почти все (≥ 60 %, не меньше трёх) есть в другом —
+    «Вечерние прогулки с собакой Бимом помогают» и «Помогает прогулка с собакой Бимом после работы». Если отрицание есть
+    только в одном («помогает» и «не помогает»), это разные факты."""
+    if bool(_NEGATION.search(_base(a))) != bool(_NEGATION.search(_base(b))):
+        return False
+    left, right = _stems(a, R.MIN_TOKEN), _stems(b, R.MIN_TOKEN)
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    if len(shorter) < 3:
+        return False
+    shared = sum(1 for stem in shorter if any(_same(stem, other) for other in longer))
+    return shared >= 3 and shared / len(shorter) >= R.DEDUP_SHARE
 
 
 # ─── Явные просьбы и даты ─────────────────────────────────────────────────────

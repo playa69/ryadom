@@ -174,11 +174,9 @@ async def test_model_slots_are_repaired_not_dropped(tmp_path: Path) -> None:
 
 
 async def test_no_more_than_eight_ops(tmp_path: Path) -> None:
-    texts = [f"Мне нравится занятие номер {word}" for word in ("один", "два", "три", "четыре")]
-    ops = [
-        op(category="interest", text=f"Нравится занятие номер {w}", evidence=[i * 2])
-        for i, w in enumerate(("один", "два", "три", "четыре"))
-    ]
+    interests = ("Рисует акварелью по вечерам", "Собирает старые пластинки", "Читает детективы перед сном", "Бегает в парке")
+    texts = [f"Я {text.lower()}" for text in interests]
+    ops = [op(category="interest", text=text, evidence=[i * 2]) for i, text in enumerate(interests)]
     ops = (ops * 3)[:12]
     store, service, _, u = await setup(tmp_path, answer(*ops))
     dialog = await conversation(store, u, *texts)
@@ -371,6 +369,48 @@ async def test_recap_needs_two_replies_of_the_person(tmp_path: Path) -> None:
     store, service, _, u = await setup(tmp_path, answer(op(category="recap", text="Говорили о работе и усталости", evidence=[0])))
     await run_job(service, await conversation(store, u))
     assert await facts_of(service, u) == []
+    await close_env(store, service)
+
+
+WALKS = ("Вечером мне помогают расслабиться прогулки с собакой Бимом", "Гуляем в парке после тяжёлого дня на работе", "ну вот", "и всё")
+
+
+async def test_paraphrase_of_a_known_fact_is_a_confirmation(tmp_path: Path) -> None:
+    store, service, _, u = await setup(
+        tmp_path,
+        answer(op(category="works", text="Вечерние прогулки с собакой Бимом помогают расслабиться", evidence=[0])),
+        answer(op(category="works", text="Помогает прогулка с собакой Бимом в парке после тяжёлого дня на работе", evidence=[0, 2])),
+    )
+    for _ in range(2):
+        await run_job(service, await conversation(store, u, *WALKS))
+    [fact] = await facts_of(service, u)
+    assert fact.confirm_count == 1
+    await close_env(store, service)
+
+
+async def test_recap_repeating_a_fact_is_not_saved(tmp_path: Path) -> None:
+    """Так было на живой модели: «пересказ» разговора — ещё одна формулировка «что помогает»."""
+    store, service, _, u = await setup(
+        tmp_path,
+        answer(
+            op(category="works", text="Вечерние прогулки с собакой Бимом помогают расслабиться", evidence=[0]),
+            op(category="recap", text="Человеку помогает прогулка с собакой Бимом в парке после тяжёлого дня на работе", evidence=[0, 2]),
+        ),
+    )
+    await run_job(service, await conversation(store, u, *WALKS))
+    assert [f.category for f in await facts_of(service, u)] == ["works"]
+    await close_env(store, service)
+
+
+async def test_remember_request_does_not_make_the_recap_the_persons_word(tmp_path: Path) -> None:
+    store, service, _, u = await setup(
+        tmp_path,
+        answer(op(category="recap", text="Говорили о завале на работе и о прогулках с собакой", evidence=[0, 2])),
+    )
+    dialog = await conversation(store, u, "Запомни, что меня успокаивают прогулки с собакой", "На работе завал до пятницы", "ну вот", "и всё")
+    await run_job(service, dialog)
+    [recap] = await facts_of(service, u)
+    assert recap.origin != "user_said" and recap.importance < 5
     await close_env(store, service)
 
 
