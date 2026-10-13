@@ -83,6 +83,19 @@ spec:
                   name: agent-secrets
                   key: SALUTE_SPEECH_AUTH_KEY
                   optional: true
+            # Ключи проекта Langfuse. Пока их нет в Secret, расход в Langfuse не уходит (адрес задан в ConfigMap).
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
             # Режим gemini_live (VOICE_PIPELINE в ConfigMap): Secret agent-gemini создаётся отдельно и нужен только в этом
             # режиме. optional: пока Secret'а нет, каскад стартует как раньше, а в режиме gemini_live без ключа сервис не
             # стартует (fail-fast). Адрес релея и его токен лежат в Secret'е, в git их нет.

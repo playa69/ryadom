@@ -208,6 +208,17 @@ helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring
 `agent_model_usage_total` отдаёт ряды после первого диалога. Хватает ли диска на 14 дней: `prometheus_tsdb_storage_blocks_bytes`
 через пару дней, умноженный на 14/дни, должен быть меньше `retentionSize` (3GB), иначе старые блоки уйдут раньше срока.
 
+Тот же расход может уходить в Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, трейс `model-usage`, без текстов).
+Приёмник молчит, пока в Secret `agent-secrets` нет `LANGFUSE_PUBLIC_KEY` и `LANGFUSE_SECRET_KEY`. Сеть — отдельным решением:
+
+```bash
+kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml   # egress agent → infra:3000
+kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingress infra:3000 от ns agent
+```
+
+Ключи в Secret кладёт администратор (в git их нет), затем `kubectl -n agent rollout restart deploy/agent`. В журнале агента
+строка `langfuse usage sink on` или `off`.
+
 ## Ограничения (честно)
 
 - **Диалоги на диске, но без бэкапа.** Диалоги дублируются в SQLite на PVC `agent-data` и переживают перезапуск и выкат пода

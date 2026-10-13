@@ -5,14 +5,15 @@
 валидация, неизменяемый синглтон APP_CONFIG.
 
 Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима.
-Настройки БД, Redis и Langfuse вернутся вместе с полноценным агентом.
+Настройки БД и Redis вернутся вместе с полноценным агентом. Langfuse здесь — только
+приёмник расхода моделей (числа, без текстов); без ключей он выключен.
 """
 
 import logging
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
@@ -199,6 +200,33 @@ class GeminiSettings(BaseAppSettings):
     session_resumption: bool = Field(validation_alias="GEMINI_SESSION_RESUMPTION", default=True)
 
 
+class LangfuseSettings(BaseAppSettings):
+    """Приёмник расхода моделей в Langfuse (ns `infra`). Не трейсинг реплик: только числа.
+
+    Без адреса или любого из ключей приёмник не включается, и агент стартует как раньше.
+    `LANGFUSE_ENABLED=false` выключает его, даже если ключи заданы.
+    """
+
+    enabled: bool = Field(validation_alias="LANGFUSE_ENABLED", default=True)
+    host: str = Field(validation_alias="LANGFUSE_HOST", default="")
+    public_key: str = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default="")
+    secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
+    flush_seconds: float = Field(validation_alias="LANGFUSE_FLUSH_SECONDS", default=5, ge=0.2, le=60)
+    timeout_seconds: int = Field(validation_alias="LANGFUSE_TIMEOUT_SECONDS", default=5, ge=1, le=30)
+
+    @model_validator(mode="after")
+    def host_has_scheme(self) -> "LangfuseSettings":
+        host = self.host.strip()
+        if host and not host.startswith(("http://", "https://")):
+            raise ValueError("LANGFUSE_HOST должен начинаться с http:// или https://")
+        return self
+
+    @property
+    def active(self) -> bool:
+        secret = self.secret_key.get_secret_value() if self.secret_key is not None else ""
+        return bool(self.enabled and self.host.strip() and self.public_key.strip() and secret)
+
+
 class Config:
     """Агрегатор доменных настроек. Неизменяемый синглтон — не мутировать."""
 
@@ -209,6 +237,7 @@ class Config:
     llm: LlmSettings = LlmSettings()
     voice: VoiceSettings = VoiceSettings()
     gemini: GeminiSettings = GeminiSettings()
+    langfuse: LangfuseSettings = LangfuseSettings()
 
 
 APP_CONFIG = Config()

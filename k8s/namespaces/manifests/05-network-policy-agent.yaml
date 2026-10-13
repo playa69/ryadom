@@ -137,6 +137,15 @@ spec:
         # Redis Sentinel
         - protocol: TCP
           port: 26379
+    # Langfuse (ns infra, :3000): приёмник расхода моделей. Обратная сторона —
+    # infra-allow-ingress-agent-langfuse в 02-network-policy-infra.yaml.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra
+      ports:
+        - protocol: TCP
+          port: 3000
     # Внешние HTTPS: LLM API, S3 (Yandex Object Storage) и т.д.
     # TODO: заменить 0.0.0.0/0 на конкретные CIDR/FQDN LLM-провайдеров,
     # если CNI позволяет. При переходе mesh на REGISTRY_ONLY эти же хосты
