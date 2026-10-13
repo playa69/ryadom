@@ -31,7 +31,7 @@ FIRST, SECOND = "Первая реплика", "Вторая реплика"
 @pytest.fixture(autouse=True)
 def pinned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Настройки live не зависят от .env разработчика: по умолчанию контекст переносится текстом."""
-    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40)):
+    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40), ("rotate_every", 1)):
         monkeypatch.setattr(APP_CONFIG.gemini, name, value)
 
 
@@ -170,6 +170,42 @@ def test_second_turn_history_has_both_pairs_in_order(user_id: str) -> None:
         ("model", reply),
     ]
     assert [link.closed for link in connector.links[:3]] == [True, True, True]  # каждая прежняя сессия закрыта
+
+
+def test_session_lives_for_several_turns_with_rotate_every(user_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """GEMINI_ROTATE_EVERY=3: открытие стоит квоты целиком, поэтому первые две реплики идут на одной сессии, смена после третьей."""
+    monkeypatch.setattr(APP_CONFIG.gemini, "rotate_every", 3)
+    connector = FakeConnector(turn_complete=True)
+    ok = refreshed("ok")
+    with talk(connector, user_id) as (_, ws, _):
+        say(ws, "c-1", FIRST)
+        say(ws, "c-2", SECOND)
+        time.sleep(0.3)
+        assert len(connector.links) == 1 and not connector.links[0].closed
+        assert refreshed("ok") == ok
+        say(ws, "c-3", "Третья реплика")
+        wait_until(lambda: len(connector.links) == 2, "смена сессии после третьего ответа")
+    first, new = connector.links
+    assert [c for c in first.commands if c[0] == "text"] == [("text", FIRST), ("text", SECOND), ("text", "Третья реплика")]
+    assert first.closed
+    assert [role for role, _ in new.history] == ["user", "model"] * 3  # новая сессия получила все три пары текстом
+
+
+@pytest.mark.parametrize(("audio_tokens", "replaced"), [(500, False), (2000, True)], ids=["little-audio", "audio-piled-up"])
+def test_session_is_replaced_early_when_audio_piles_up(
+    user_id: str, monkeypatch: pytest.MonkeyPatch, audio_tokens: int, replaced: bool
+) -> None:
+    """Аудио в контексте сессии (input_audio из usage) дошло до GEMINI_ROTATE_AUDIO_TOKENS: меняем, не дожидаясь числа ходов."""
+    monkeypatch.setattr(APP_CONFIG.gemini, "rotate_every", 10)
+    monkeypatch.setattr(APP_CONFIG.gemini, "rotate_audio_tokens", 1500)
+    connector = FakeConnector(turn_complete=True, usage={"input_text": 1100, "input_audio": audio_tokens})
+    with talk(connector, user_id) as (_, ws, _):
+        say(ws, "c-1", FIRST)
+        if replaced:
+            wait_until(lambda: len(connector.links) == 2, "смена сессии: аудио накопилось")
+        else:
+            time.sleep(0.3)
+            assert len(connector.links) == 1 and not connector.links[0].closed
 
 
 def test_session_is_not_replaced_while_the_person_is_speaking(user_id: str) -> None:

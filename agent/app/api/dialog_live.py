@@ -268,6 +268,7 @@ class LiveDialogSession(DialogSession):
         self._last_response = 0  # токенов в ответе прошлого хода: на той же сессии они лягут в контекст следующего
         self._last_prompt = 0  # input прошлого хода: резерв хода, когда открытие сессии не считается (OPEN_FACTOR=0)
         self._link_turns = 0  # ходов, уже отправленных на текущей сессии
+        self._session_audio = 0  # аудио-токены контекста текущей сессии по последнему usage (input_audio): «долг» до смены
         self._link: LiveLink | None = None
         self._link_lock = asyncio.Lock()
         self._reader: asyncio.Task[None] | None = None
@@ -499,6 +500,7 @@ class LiveDialogSession(DialogSession):
             self._link = new
             self._link_used = False
             self._link_turns = 0
+            self._session_audio = 0
             self._reader = asyncio.create_task(self._read(new))
             return new
 
@@ -559,6 +561,13 @@ class LiveDialogSession(DialogSession):
             logger.info("gemini live session resumed dialog=%s", self._dialog.id)
         return link
 
+    def _rotation_due(self) -> bool:
+        """Пора менять сессию на свежую: прошло GEMINI_ROTATE_EVERY ходов или аудио в её контексте дошло до
+        GEMINI_ROTATE_AUDIO_TOKENS. Открытие стоит квоты (Google считает его целиком), ход в открытой сессии — почти ничего,
+        поэтому сессия живёт несколько ходов; накопленное аудио оплачивается заново на каждый ход, поэтому не дольше порога."""
+        cfg = self._cfg
+        return self._link_turns >= cfg.rotate_every or (cfg.rotate_audio_tokens > 0 and self._session_audio >= cfg.rotate_audio_tokens)
+
     def _schedule_rotation(self) -> None:
         if self._rotation is None or self._rotation.done():
             self._rotation = asyncio.create_task(self._rotate())
@@ -602,6 +611,8 @@ class LiveDialogSession(DialogSession):
         app/services/gemini_budget.py.
         """
         turn = self._usage_turn
+        if link is None or link is self._link:
+            self._session_audio = usage.get("input_audio", 0)  # звук контекста растёт с каждым ходом: порог смены сессии
         with model_usage.collect() as spent:
             record_usage(self._connector.model, "live", usage)
         if turn is not None and turn.generating:
@@ -1073,6 +1084,8 @@ class LiveDialogSession(DialogSession):
                 self._stale_until = 0.0
             return  # хвост прерванного ответа
         if kind == "turn_complete" and turn is None and self._cfg.text_context:
+            if not self._rotation_due():
+                return  # сессия поживёт ещё: следующий ход пойдёт на ней
             if self._cfg.lazy_open:
                 self._defer_rotation()  # ленивое открытие: новую сессию открываем, когда она понадобится
             else:
