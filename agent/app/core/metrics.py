@@ -59,6 +59,48 @@ DIALOG_DB_WRITE_SECONDS = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
 )
 
+# Диалоги в памяти пода и выгрузка неактивных (DIALOG_IDLE_EVICT_SECONDS, DIALOG_MAX_USERS_IN_MEMORY). Размеры обновляются раз в
+# DIALOG_EVICT_INTERVAL_SECONDS, вместе с проходом выгрузки.
+DIALOG_USERS_IN_MEMORY = Gauge(
+    "agent_dialog_users_in_memory",
+    "Люди, чьи диалоги сейчас в памяти пода.",
+)
+
+DIALOG_DIALOGS_IN_MEMORY = Gauge(
+    "agent_dialog_dialogs_in_memory",
+    "Диалоги в памяти пода.",
+)
+
+DIALOG_MESSAGES_IN_MEMORY = Gauge(
+    "agent_dialog_messages_in_memory",
+    "Сообщения диалогов в памяти пода.",
+)
+
+DIALOG_EVICTIONS_TOTAL = Counter(
+    "agent_dialog_evictions_total",
+    "Люди, выгруженные из памяти пода: диалоги остались на диске и загрузятся при следующем обращении.",
+)
+
+# reason: socket — у диалога живой сокет; dirty — есть незаписанное на диск (ждёт записи, запись идёт или не удалась).
+DIALOG_EVICTIONS_SKIPPED_TOTAL = Counter(
+    "agent_dialog_evictions_skipped_total",
+    "Проверки выгрузки, после которых человек остался в памяти: срок или потолок вышел, но выгружать нельзя.",
+    ["reason"],
+)
+
+# kind: first — первая загрузка человека после старта пода; reload — загрузка после выгрузки.
+DIALOG_LOADS_TOTAL = Counter(
+    "agent_dialog_loads_total",
+    "Загрузки диалогов человека с диска.",
+    ["kind"],
+)
+
+DIALOG_LOAD_SECONDS = Histogram(
+    "agent_dialog_load_seconds",
+    "Сколько занимает загрузка диалогов человека с диска (чтение в фоновом потоке и сборка в памяти).",
+    buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
+
 # Расход моделей (app/services/usage.py): каждый вызов модели, в том числе вне диалогов (прогрев фраз при старте). По
 # диалогам то же лежит в таблице model_usage базы диалогов; здесь без id, поэтому стирание человека сумм не трогает.
 # Метки, всегда из коротких списков:

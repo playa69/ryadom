@@ -196,9 +196,13 @@ def create_app(
         if fallback is not None and isinstance(fallback.tts, CachedTts):
             sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
             fallback_warm_up = asyncio.create_task(fallback.tts.warm_up(sentences))
+        # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
+        evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
         try:
             yield
         finally:
+            evictor.cancel()
+            await asyncio.gather(evictor, return_exceptions=True)
             if langfuse is not None:
                 langfuse.close()
             if warm_up is not None:
@@ -216,7 +220,11 @@ def create_app(
                     await part.aclose()
 
     app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
-    app.state.store = DialogStore(default_voice=APP_CONFIG.speech.default_voice)
+    app.state.store = DialogStore(
+        default_voice=APP_CONFIG.speech.default_voice,
+        idle_evict_seconds=APP_CONFIG.dialog.idle_evict_seconds,
+        max_users_in_memory=APP_CONFIG.dialog.max_users_in_memory,
+    )
     app.state.tts = None
     app.state.chat = None
     app.state.recognizer = None
