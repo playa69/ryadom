@@ -1,10 +1,14 @@
 """Юнит-тесты логирования (задача 1.3): контекст из ContextVars, маскирование."""
 
+import logging
+import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from loguru import logger as loguru_logger
+
 from app.logger.context_vars import CONTEXT_VARS_CONTAINER
-from app.logger.logger import LoguruPatcher
+from app.logger.logger import InterceptHandler, LoguruPatcher
 from app.logger.masking import mask_email, mask_pii_in_text
 from app.logger.models import dataclass_as_json_str
 
@@ -87,3 +91,30 @@ def test_dataclass_as_json_str_escapes():
     assert dataclass_as_json_str(Metric(rqUId="x", metric_name="m", metric_value=1)) == (
         '{"rqUId": "x", "metric_name": "m", "metric_value": 1}'
     )
+
+
+def test_patcher_serializes_stack_trace():
+    CONTEXT_VARS_CONTAINER.set_context_vars()
+    patcher = LoguruPatcher(CONTEXT_VARS_CONTAINER, ZoneInfo("Europe/Moscow"))
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        record = _make_record("failed", {"target": "log"})
+        record["exception"] = sys.exc_info()
+        patcher.patching(record)
+    assert "ValueError: boom" in record["extra"]["serialized"]
+    assert '"stackTrace": null' not in record["extra"]["serialized"]
+
+
+def test_intercept_handler_forwards_std_logging_to_loguru():
+    std_logger = logging.getLogger("test.intercept")
+    std_logger.handlers = [InterceptHandler()]
+    std_logger.propagate = False
+    messages = []
+    sink_id = loguru_logger.add(lambda msg: messages.append(str(msg)), format="{message}")
+    try:
+        std_logger.warning("hello from std logging")
+    finally:
+        loguru_logger.remove(sink_id)
+        std_logger.handlers = []
+    assert any("hello from std logging" in message for message in messages)
