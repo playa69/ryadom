@@ -82,6 +82,7 @@ import { ApiError, NETWORK_ERROR_STATUS, type ApiOutcome } from './errors'
 import { isTokenValid, tokenSubject } from './jwt'
 import type { SessionStorage, User } from './storage'
 import { createTracing } from './tracing'
+import { supportedTtsCodecs } from './voice/tts-decoder'
 
 /**
  * The API client, one instance per app. Everything the two apps do differently is passed in
@@ -655,6 +656,8 @@ export function createClient(config: ClientConfig) {
           getAccessToken: () => accessToken,
           refreshSession,
           wsBase: () => config.wsBase(),
+          // The agent's speech in the smallest codec this device decodes (Opus, else μ-law).
+          ttsCodecs: () => supportedTtsCodecs(),
           // The fallback after a drop, for an agent that cannot replay what the person missed.
           loadHistory: async (): Promise<DialogMessageView[] | null> => {
             const result = await getDialog(dialogId).catch(() => null)

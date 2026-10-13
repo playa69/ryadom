@@ -3,6 +3,7 @@
  */
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http'
 import { AddressInfo } from 'node:net'
+import opus from '@evan/opus/wasm/index.js'
 import { serve } from '@hono/node-server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -354,12 +355,14 @@ async function startFakeAgent(): Promise<FakeAgent> {
 
 /** An open dialog asks about its session every second here, not every 30: the tests would wait that long. */
 const sessionCheckEnv = { DIALOG_SESSION_CHECK_SEC: '1' }
+/** The gateway offers every codec; a client that names none still gets PCM16, which the tests below rely on. */
+const codecEnv = { DIALOG_AUDIO_CODECS: 'opus,mulaw' }
 
 /** The app with WebSocket: as in production, the upgrade is intercepted before Hono. */
 async function startGatewayServer(agentUrl: string) {
   // The agent address reaches the gateway through the app env rather than the core's getEnv():
   // otherwise clearing the stubs in setup.ts between tests would point the socket at the real address.
-  const gatewayEnv = { AGENT_API_URL: agentUrl, ...sessionCheckEnv }
+  const gatewayEnv = { AGENT_API_URL: agentUrl, ...sessionCheckEnv, ...codecEnv }
   const env = parseEnv({ ...process.env, ...gatewayEnv })
   const { app: hono, resetLimits: resetGatewayLimits } = makeApp({ env: gatewayEnv })
   const jwt = createJwt(env.MOBILE_JWT_SECRET)
@@ -486,6 +489,19 @@ describe('WebSocket-шлюз', () => {
       'x-session-id': 'session-ws-1',
       'x-user-id': userId,
     })
+    client.close()
+  })
+
+  it('к агенту шлюз не просит сжатия сообщений (permessage-deflate): внутри кластера оно только съедает CPU', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(
+      JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-no-deflate' }),
+    )
+
+    const agentSide = await agent.waitFor('d-no-deflate')
+    expect(agentSide.headers['sec-websocket-extensions']).toBeUndefined()
     client.close()
   })
 
@@ -681,6 +697,168 @@ describe('WebSocket-шлюз', () => {
     expect(agentSide.binaryFrames.at(-1)!.readUInt8(0)).toBe(0x01)
 
     client.close()
+  })
+
+  describe('озвучка агента в кодеке, который выбрал клиент', () => {
+    /** A frame of the agent's speech: kind 0x02, number, PCM16 at 24 kHz (a 220 Hz tone). */
+    function speechFrame(sequence: number, samples = 4800): Buffer {
+      const frame = Buffer.alloc(5 + samples * 2)
+      frame.writeUInt8(0x02, 0)
+      frame.writeUInt32BE(sequence, 1)
+      for (let i = 0; i < samples; i++) {
+        frame.writeInt16LE(
+          Math.round(8000 * Math.sin((2 * Math.PI * 220 * (sequence * 4800 + i)) / 24_000)),
+          5 + i * 2,
+        )
+      }
+      return frame
+    }
+
+    type Received = Record<string, unknown> | Buffer
+
+    /**
+     * The client says `hello` with `codecs`, the agent voices one message (a full frame, the short end of
+     * a sentence, another full frame) and then starts the next reply. Returns what the client got, in order.
+     */
+    async function voiceOneMessage(dialogId: string, codecs?: string[]) {
+      const { accessToken } = await gateway.signIn()
+      const client = new WebSocket(gateway.wsUrl)
+      await waitOpen(client)
+      const received: Received[] = []
+      const done = new Promise<void>((resolve) => {
+        client.on('message', (data: Buffer, isBinary: boolean) => {
+          if (isBinary) return void received.push(data)
+          const frame = JSON.parse(data.toString('utf8')) as Record<string, unknown>
+          received.push(frame)
+          if (frame.type === DialogServerFrame.AssistantStart) resolve()
+        })
+      })
+      client.send(
+        JSON.stringify({
+          type: DialogClientFrame.Hello,
+          token: accessToken,
+          dialogId,
+          ...(codecs ? { codecs } : {}),
+        }),
+      )
+      const agentSide = await agent.waitFor(dialogId)
+      const sent = [speechFrame(0), speechFrame(1, 1000), speechFrame(2)]
+      agentSide.socket.send(JSON.stringify({ type: 'tts_start', messageId: 'm-1' }))
+      for (const frame of sent) agentSide.socket.send(frame)
+      agentSide.socket.send(JSON.stringify({ type: 'tts_end', messageId: 'm-1' }))
+      agentSide.socket.send(JSON.stringify({ type: 'assistant_start', messageId: 'm-2' }))
+      await done
+      client.close()
+      return { sent, received }
+    }
+
+    const kinds = (received: Received[]) =>
+      received.map((entry) => (Buffer.isBuffer(entry) ? `audio ${entry.readUInt32BE(1)}` : entry.type))
+
+    it('клиент без codecs в hello (старая сборка) получает PCM16 байт в байт, как раньше', async () => {
+      const { sent, received } = await voiceOneMessage('d-codec-1')
+
+      expect(kinds(received)).toEqual([
+        'tts_start',
+        'audio 0',
+        'audio 1',
+        'audio 2',
+        'tts_end',
+        'assistant_start',
+      ])
+      expect(received[0]).toMatchObject({ codec: 'pcm16', sampleRate: 24_000 })
+      expect(received.filter(Buffer.isBuffer)).toEqual(sent)
+    })
+
+    it('mulaw: тот же кадр и номер, по байту на сэмпл, вдвое меньше', async () => {
+      const { sent, received } = await voiceOneMessage('d-codec-2', ['mulaw', 'pcm16'])
+
+      expect(received[0]).toMatchObject({
+        type: DialogServerFrame.TtsStart,
+        codec: 'mulaw',
+        sampleRate: 24_000,
+      })
+      expect(kinds(received)).toEqual([
+        'tts_start',
+        'audio 0',
+        'audio 1',
+        'audio 2',
+        'tts_end',
+        'assistant_start',
+      ])
+      const audio = received.filter(Buffer.isBuffer)
+      expect(audio.map((frame) => frame.length)).toEqual(sent.map((frame) => 5 + (frame.length - 5) / 2))
+    })
+
+    it('opus: пакеты по 20 мс с длиной впереди, хвост — отдельным кадром до tts_end, и всё это снова звук', async () => {
+      const { received } = await voiceOneMessage('d-codec-3', ['opus', 'mulaw', 'pcm16'])
+
+      expect(received[0]).toMatchObject({
+        type: DialogServerFrame.TtsStart,
+        codec: 'opus',
+        sampleRate: 24_000,
+      })
+      // The tail of the short frame waits for the next one; what is left at the end comes as frame 3.
+      expect(kinds(received)).toEqual([
+        'tts_start',
+        'audio 0',
+        'audio 1',
+        'audio 2',
+        'audio 3',
+        'tts_end',
+        'assistant_start',
+      ])
+
+      const decoder = new opus.Decoder({ channels: 1, sample_rate: 24_000 })
+      const packetCounts: number[] = []
+      let samples = 0
+      let bytes = 0
+      for (const frame of received.filter(Buffer.isBuffer)) {
+        bytes += frame.length
+        let packets = 0
+        for (let at = 5; at < frame.length; packets++) {
+          const length = frame.readUInt16BE(at)
+          samples += decoder.decode(frame.subarray(at + 2, at + 2 + length)).length / 2
+          at += 2 + length
+        }
+        packetCounts.push(packets)
+      }
+      decoder.drop()
+      expect(packetCounts).toEqual([10, 2, 10, 1])
+      // 10600 samples went in; the decoder gives them back in whole packets.
+      expect(samples).toBe(23 * 480)
+      // 0.44 s of speech: PCM16 would be 21 KB.
+      expect(bytes).toBeLessThan(3000)
+    })
+
+    it('агент договорил, прислал ended и сразу закрыл сокет: весь звук и ended доходят до закрытия', async () => {
+      const { accessToken } = await gateway.signIn()
+      const client = new WebSocket(gateway.wsUrl)
+      await waitOpen(client)
+      const received: string[] = []
+      client.on('message', (data: Buffer, isBinary: boolean) => {
+        received.push(isBinary ? 'audio' : (JSON.parse(data.toString('utf8')) as { type: string }).type)
+      })
+      const closed = new Promise<number>((resolve) => client.once('close', resolve))
+      client.send(
+        JSON.stringify({
+          type: DialogClientFrame.Hello,
+          token: accessToken,
+          dialogId: 'd-codec-4',
+          codecs: ['opus'],
+        }),
+      )
+      const agentSide = await agent.waitFor('d-codec-4')
+
+      agentSide.socket.send(JSON.stringify({ type: 'tts_start', messageId: 'bye' }))
+      for (let sequence = 0; sequence < 10; sequence++) agentSide.socket.send(speechFrame(sequence))
+      agentSide.socket.send(JSON.stringify({ type: 'tts_end', messageId: 'bye' }))
+      agentSide.socket.send(JSON.stringify({ type: 'ended', summary: null }))
+      agentSide.socket.close(1000, 'dialog ended')
+
+      expect(await closed).toBe(DialogCloseCode.Done)
+      expect(received).toEqual(['tts_start', ...Array<string>(10).fill('audio'), 'tts_end', 'ended'])
+    })
   })
 
   it('пока под останавливают, новый сокет отвергается сразу кодом 1012', async () => {

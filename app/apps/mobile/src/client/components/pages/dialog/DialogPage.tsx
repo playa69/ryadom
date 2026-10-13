@@ -248,7 +248,7 @@ export default function DialogPage({
           // Nothing was heard (a cough, the agent's own echo): no answer is coming, so nothing is awaited.
           if (final && !text) setAwaitingReply(false)
         },
-        onAudio: (frame) => voicePlayer.enqueue(frame),
+        onAudio: (speech) => voicePlayer.enqueue(speech),
         onSafety: (_level, text, hotlines) => openSos({ text, hotlines, source: 'safety_frame' }),
         onEnded: (result) => setSummary(result),
         onError: (code, message) => {

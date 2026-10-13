@@ -45,6 +45,9 @@ export function openAgentSocket(options: AgentSocketOptions, handlers: AgentSock
     // Server to server: headers are available, so the token does not have to go into the URL.
     headers: { ...tracingHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     handshakeTimeout: 10_000,
+    // ws offers permessage-deflate by default and the agent accepts it. Inside the cluster it buys nothing
+    // worth its CPU: PCM16 speech shrinks by about 13%, and both sides pay to squeeze it.
+    perMessageDeflate: false,
   })
 
   // ws calls listeners from the socket's own async context; bound ones keep the dialog's tracing

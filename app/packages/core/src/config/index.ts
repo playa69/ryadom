@@ -10,6 +10,7 @@ export {
   EnvValidationError,
   LOG_LEVELS,
   EMAIL_TRANSPORTS,
+  DIALOG_AUDIO_CODECS,
   type BaseServerEnv,
   type AdminEnv,
   type AppEnv,

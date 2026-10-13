@@ -8,9 +8,11 @@ import {
   type DialogWsErrorCode,
   type HotlineApiResponse,
   type SafetyLevel,
+  type TtsCodec,
 } from '@ryadom/contracts/api/dialogs'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { isTokenValid } from './jwt'
+import { TtsReceiver, type DecoderFactory, type PcmChunk } from './voice/tts-decoder'
 
 /**
  * The client side of the dialog connection. States and reconnects live here; the
@@ -45,6 +47,13 @@ export interface DialogSocketDeps {
   loadHistory?(): Promise<DialogMessageView[] | null>
   /** 0..1, for the spread of reconnects; tests fix it. */
   random?(): number
+  /**
+   * The codecs of the agent's speech this device can decode, most wanted first, for `hello`
+   * (`supportedTtsCodecs`). Without it the gateway sends PCM16.
+   */
+  ttsCodecs?(): Promise<TtsCodec[]>
+  /** Tests swap the decoders of the agent's speech for their own. */
+  ttsDecoders?: DecoderFactory
 }
 
 export interface DialogSocketHandlers {
@@ -55,8 +64,8 @@ export interface DialogSocketHandlers {
   onError(code: DialogWsErrorCode, message: string): void
   /** What the recognition heard: partial text while talking, the final one at the end (it also joins the feed). */
   onTranscript?(text: string, final: boolean): void
-  /** A binary frame of the agent's voice, for the player. */
-  onAudio?(frame: ArrayBuffer): void
+  /** The agent's voice, decoded from the connection's codec, for the player; in the order it was spoken. */
+  onAudio?(chunk: PcmChunk): void
   /**
    * The agent's own speech for a message begins (`tts_start`) or ends (`tts_end`). While it speaks, the
    * screen's own voice stays out of it, and the microphone waits for the end.
@@ -88,6 +97,10 @@ export class DialogSocket {
   private sentOnConnection = new Set<string>()
   /** The agent's reply being spoken: it can be cancelled while the frames still flow. */
   private speakingId: string | null = null
+  /** The agent's speech frames to samples, one decoder per speech. */
+  private readonly tts: TtsReceiver
+  /** What `hello` will name as decodable; found out while the socket opens. */
+  private codecs: Promise<TtsCodec[] | null> | null = null
 
   constructor(
     private readonly deps: DialogSocketDeps,
@@ -101,6 +114,7 @@ export class DialogSocket {
     greeting?: string | null,
   ) {
     if (greeting) this.messages = [{ id: GREETING_ID, role: 'assistant', text: greeting }]
+    this.tts = new TtsReceiver((chunk) => this.handlers.onAudio?.(chunk), deps.ttsDecoders)
   }
 
   getState(): DialogSocketState {
@@ -129,6 +143,8 @@ export class DialogSocket {
     // not be empty. Without this nothing would show it, since the list reaches the screen only
     // with server frames.
     if (this.messages.length > 0) this.emitMessages()
+    // Whether the device decodes Opus may take a moment to find out: it runs while the socket opens.
+    this.codecs = this.deps.ttsCodecs?.().catch(() => null) ?? null
     const socket = new WebSocket(`${this.deps.wsBase()}${ApiPath.DialogsWs}`)
     this.socket = socket
 
@@ -166,11 +182,14 @@ export class DialogSocket {
       socket.close()
       return
     }
+    const codecs = this.codecs ? await this.codecs : null
+    if (this.socket !== socket) return
     this.send({
       type: DialogClientFrame.Hello,
       token,
       dialogId: this.dialogId,
       ...(this.lastMessageId ? { lastMessageId: this.lastMessageId } : {}),
+      ...(codecs ? { codecs } : {}),
     })
   }
 
@@ -201,6 +220,8 @@ export class DialogSocket {
 
   /** The person started talking over the agent: stop its speech on the server side too. */
   interruptSpeech(): void {
+    // What is still being decoded, and the frames still on their way, are speech nobody wants.
+    this.tts.cancel()
     if (!this.speakingId) return
     this.cancelTts(this.speakingId)
     this.speakingId = null
@@ -227,6 +248,7 @@ export class DialogSocket {
 
   close(): void {
     this.closedByUs = true
+    this.tts.cancel()
     clearTimeout(this.reconnectTimer)
     this.socket?.close(1000, 'left the screen')
     this.socket = null
@@ -310,7 +332,7 @@ export class DialogSocket {
 
   private onFrame(event: MessageEvent, socket: WebSocket): void {
     if (typeof event.data !== 'string') {
-      if (event.data instanceof ArrayBuffer) this.handlers.onAudio?.(event.data)
+      if (event.data instanceof ArrayBuffer) this.tts.push(event.data)
       return
     }
     let frame: DialogServerMessage
@@ -384,10 +406,13 @@ export class DialogSocket {
       }
       case DialogServerFrame.TtsStart:
         this.speakingId = frame.messageId
+        // A gateway from before the codecs sends no `codec`: its speech is PCM16.
+        this.tts.begin(frame.codec ?? 'pcm16')
         this.handlers.onSpeech?.(frame.messageId, 'start')
         return
       case DialogServerFrame.TtsEnd:
         if (this.speakingId === frame.messageId) this.speakingId = null
+        this.tts.end()
         this.handlers.onSpeech?.(frame.messageId, 'end')
         return
       case DialogServerFrame.Safety:
@@ -409,6 +434,7 @@ export class DialogSocket {
   private onClose(event: CloseEvent): void {
     this.socket = null
     this.speakingId = null
+    this.tts.cancel()
     if (this.closedByUs || this.state === 'ended') return
     this.stopStreaming()
 

@@ -40,6 +40,28 @@ const optionalInt = (min = 0) => z.preprocess(emptyToUndefined, z.coerce.number(
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'] as const
 /** memory is for tests only (APP_ENV=local): emails are collected in process memory. */
 export const EMAIL_TRANSPORTS = ['smtp', 'console', 'memory'] as const
+/**
+ * Codecs of the agent's speech the dialog gateway can send, by their names in the client contract
+ * (`TTS_CODECS` in @ryadom/contracts; the core does not depend on it, so the names are repeated here).
+ */
+export const DIALOG_AUDIO_CODECS = ['opus', 'mulaw', 'pcm16'] as const
+
+/**
+ * DIALOG_AUDIO_CODECS: comma-separated codec names, in any order (the client's order decides). pcm16 is
+ * always added: it is what a client gets when it named nothing the server offers, old builds included.
+ */
+const dialogAudioCodecs = z
+  .preprocess(
+    (value) =>
+      typeof value === 'string'
+        ? value
+            .split(',')
+            .map((name) => name.trim().toLowerCase())
+            .filter(Boolean)
+        : value,
+    z.array(z.enum(DIALOG_AUDIO_CODECS)).optional(),
+  )
+  .transform((codecs) => [...new Set([...(codecs ?? []), 'pcm16' as const])])
 
 /**
  * ADMIN_EMAILS: comma-separated admin emails, lowercased into a list (empty means no admins).
@@ -121,6 +143,21 @@ const appShape = {
    * how long such a dialog can go on at most.
    */
   DIALOG_SESSION_CHECK_SEC: optionalInt(1).transform((value) => value ?? 30),
+  /**
+   * What the gateway may re-encode the agent's speech into for the client (`opus,mulaw,pcm16`). The
+   * client names what it can decode in `hello`, and its first choice among these wins. Empty means pcm16
+   * only, the way it was before: 384 kbit/s per speaking dialog. mulaw halves that for almost no CPU;
+   * Opus takes it to about 24 kbit/s at roughly 9 ms of CPU per second of speech, off the main thread.
+   */
+  DIALOG_AUDIO_CODECS: dialogAudioCodecs,
+  /** Opus encoder of the agent's speech: complexity 0..10 (5 measured as the knee: PESQ 4.16 at 7 ms/s). */
+  DIALOG_OPUS_COMPLEXITY: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(10).optional())
+    .transform((value) => value ?? 5),
+  /** Opus bitrate, bit/s. 24000 keeps speech at 24 kHz clean (PESQ above 4); lower starts to blur it. */
+  DIALOG_OPUS_BITRATE: z
+    .preprocess(emptyToUndefined, z.coerce.number().int().min(6_000).max(128_000).optional())
+    .transform((value) => value ?? 24_000),
   /**
    * State shared by the replicas; for now only the rate limits. Off by default: each replica then
    * counts on its own, and the real limit is the stated one times the number of replicas. With it

@@ -330,7 +330,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           track(AnalyticsEvent.DialogMessageSent, { input: 'voice', size: sizeClass(text.length) })
         }
       },
-      onAudio: (frame) => voicePlayer.enqueue(frame),
+      onAudio: (speech) => voicePlayer.enqueue(speech),
       // Not reported from here on purpose: the server already counts this signal (safety_signal), with no
       // person attached; a second count from a signed-in screen would only risk pointing at who was in crisis.
       onSafety: (_level, text, hotlines) => latest.current.openSos({ text, hotlines }),
