@@ -184,7 +184,7 @@ export type DialogInterruptReason =
  */
 export type TrafficType = 'real' | 'test' | 'internal'
 
-/** The parts of the agent that answer a person. `memory` is reserved: it appears once the agent has long-term memory. */
+/** The parts of the agent that answer a person. `memory` is the look-up of the person's long-term memory for a reply (only when memory is on). */
 export const COMPONENT_NAMES = ['stt', 'safety', 'llm', 'live', 'tts', 'memory'] as const
 export type ComponentName = (typeof COMPONENT_NAMES)[number]
 
