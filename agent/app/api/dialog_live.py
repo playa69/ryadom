@@ -532,6 +532,7 @@ class LiveDialogSession(DialogSession):
             tags=[self._pipeline],
         )
         rid = budget.opening(cost)  # Google считает открытие сразу, по размеру контекста
+        began = time.monotonic()
         try:
             link = await self._connector.open(voice, instructions, handle, history or None)
         except BaseException as error:
@@ -546,7 +547,14 @@ class LiveDialogSession(DialogSession):
             self._open_failures += 1
             trace.update(level="ERROR", status=text[:200])
             trace.end()
-            logger.warning("gemini live not available dialog=%s resume=%s: %s", self._dialog.id, handle is not None, error)
+            logger.warning(
+                "gemini live not available dialog=%s purpose=%s voice=%s resume=%s: %s",
+                self._dialog.id,
+                purpose,
+                voice,
+                handle is not None,
+                error,
+            )
             if quota:
                 budget.on_quota_error("open", self._dialog.id, calibrate=is_explicit_quota_error(text))
             return None
@@ -555,6 +563,19 @@ class LiveDialogSession(DialogSession):
         GEMINI_OPENS_TOTAL.labels(purpose, "ok").inc()
         session_opened(link)
         self._opened += 1
+        # Какой голос запрошен у Google в каждой сессии: если человеку показалось, что голос сменился, это видно здесь
+        # (purpose: start, rotate, reconnect, voice). Тексты реплик в строку не попадают.
+        logger.info(
+            "gemini live opened dialog=%s purpose=%s voice=%s voice_name=%s model=%s resumed=%s history_messages=%d ms=%.0f",
+            self._dialog.id,
+            purpose,
+            voice,
+            getattr(link, "voice_name", ""),
+            self._cfg.live_model,
+            handle is not None,
+            len(history or ()),
+            (time.monotonic() - began) * 1000,
+        )
         if handle is not None:
             logger.info("gemini live session resumed dialog=%s", self._dialog.id)
         return link
