@@ -59,11 +59,12 @@ data:
   VOICE_PIPELINE: "gemini_live"
   # Трейсинг LLM-ходов в self-hosted Langfuse (ns infra): трасса на ход диалога (расшифровка → ответ,
   # токены Gemini, задержки этапов), сессия = диалог. Ключи — в Secret `agent-secrets` (см. шапку).
-  # Тексты реплик уходят только при LANGFUSE_TRACE_TEXT=true (иначе — длины); Langfuse в том же
-  # RU-кластере, что и БД диалогов. Откат: LANGFUSE_ENABLED=false + rollout restart.
+  # Тексты реплик в Langfuse НЕ уходят (решение владельца 2026-10-13): вместо них число символов и слов, длительность речи,
+  # токены и задержки. LANGFUSE_TRACE_TEXT=true только для локальной отладки, в проде не включать.
+  # Откат: LANGFUSE_ENABLED=false + rollout restart.
   LANGFUSE_ENABLED: "true"
   LANGFUSE_HOST: "http://langfuse-web.infra.svc.cluster.local:3000"
-  LANGFUSE_TRACE_TEXT: "true"
+  LANGFUSE_TRACE_TEXT: "false"
   # Отдельный приёмник расхода моделей (числа без текстов, трасса model-usage). Расход ходов уже идёт в трассах выше, поэтому
   # включать приёмник вместе с трейсингом не нужно: в Langfuse он задвоится. Нужен, если трейсинг выключен.
   LANGFUSE_USAGE_SINK: "false"

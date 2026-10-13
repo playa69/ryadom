@@ -294,8 +294,9 @@ class LangfuseSettings(BaseAppSettings):
     оба ключа обязательны — без них сервис не стартует (fail-fast). Ключи проекта (pk-lf/sk-lf) лежат в Secret
     `agent-secrets`, в ConfigMap их быть не должно.
 
-    Трейсинг (`app/core/tracing.py`): трасса на каждый ход. `LANGFUSE_TRACE_TEXT=false` — уходят только длины реплик, токены и
-    задержки, сами тексты маскируются; `true` (по умолчанию) — тексты реплик людей и агента уходят в Langfuse.
+    Трейсинг (`app/core/tracing.py`): трасса на каждый ход. `LANGFUSE_TRACE_TEXT=false` (по умолчанию) — уходят число символов
+    и слов, длительность речи, токены и задержки, сами тексты маскируются; `true` — тексты реплик людей и агента уходят в
+    Langfuse, только для локальной отладки (в проде нельзя).
 
     Приёмник расхода (`app/services/langfuse_usage.py`, README «Расход моделей»): только числа, без текстов, отдельная трасса
     `model-usage`. Расход ходов уже есть в трассах трейсинга, поэтому приёмник включается отдельно (`LANGFUSE_USAGE_SINK=true`):
@@ -306,7 +307,7 @@ class LangfuseSettings(BaseAppSettings):
     host: str = Field(validation_alias="LANGFUSE_HOST", default="http://langfuse-web.infra.svc.cluster.local:3000")
     public_key: SecretStr | None = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default=None)
     secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
-    trace_text: bool = Field(validation_alias="LANGFUSE_TRACE_TEXT", default=True)
+    trace_text: bool = Field(validation_alias="LANGFUSE_TRACE_TEXT", default=False)
     usage_sink: bool = Field(validation_alias="LANGFUSE_USAGE_SINK", default=False)
     flush_seconds: float = Field(validation_alias="LANGFUSE_FLUSH_SECONDS", default=5, ge=0.2, le=60)
     timeout_seconds: int = Field(validation_alias="LANGFUSE_TIMEOUT_SECONDS", default=5, ge=1, le=30)

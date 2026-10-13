@@ -12,7 +12,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
@@ -77,6 +77,15 @@ def _quiet_service_endpoints() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, SkipServiceEndpoints) for f in access.filters):
         access.addFilter(SkipServiceEndpoints())
+
+
+NATIVE_TELEMETRY_OFF: Any = {
+    "tracing": False,
+    "metrics": False,
+    "logs": False,
+    "operation_spans": False,
+    "auto_configure": False,
+}
 
 
 def create_app(
@@ -230,7 +239,10 @@ def create_app(
                     await part.aclose()
             await tracer.aclose()  # отправить в Langfuse накопленные трассы
 
-    app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
+    # Встроенная телеметрия FastAPI (OpenTelemetry) включается сама, когда в образе есть opentelemetry-sdk (его тянет langfuse), и
+    # без отключения отправляла бы в Langfuse трассы каждого запроса, в том числе GET /health каждые 10 секунд, а пути запросов
+    # несут id человека. В Langfuse уходят только наши трассы ходов (app/core/tracing.py).
+    app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan, telemetry=NATIVE_TELEMETRY_OFF)
     app.state.store = DialogStore(
         default_voice=APP_CONFIG.speech.default_voice,
         idle_evict_seconds=APP_CONFIG.dialog.idle_evict_seconds,

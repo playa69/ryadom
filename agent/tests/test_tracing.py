@@ -9,7 +9,17 @@ import os
 
 import pytest
 
-from app.core.tracing import NULL_OBSERVATION, LangfuseObservation, LangfuseTracer, NullTracer, _mask, _usage_details
+from app.core.config import LangfuseSettings
+from app.core.tracing import (
+    NULL_OBSERVATION,
+    LangfuseObservation,
+    LangfuseTracer,
+    NullTracer,
+    _mask,
+    _mask_metadata,
+    _mask_status,
+    _usage_details,
+)
 
 MESSAGES = [{"role": "user", "content": "мне тяжело"}, {"role": "assistant", "content": "я рядом"}]
 
@@ -22,12 +32,34 @@ def test_mask_keeps_text_when_trace_text_on() -> None:
     assert _mask(MESSAGES, True) == MESSAGES
 
 
-def test_mask_replaces_text_with_length_when_off() -> None:
-    assert _mask("привет", False) == "[скрыто, 6 симв.]"
+def test_mask_replaces_text_with_length_and_words_when_off() -> None:
+    assert _mask("привет", False) == "[скрыто: 6 симв., 1 сл.]"
     masked = _mask(MESSAGES, False)
     assert masked[0]["role"] == "user"
-    assert masked[0]["content"] == "[скрыто, 10 симв.]"
+    assert masked[0]["content"] == "[скрыто: 10 симв., 2 сл.]"
     assert "тяжело" not in str(masked)
+
+
+def test_mask_hides_values_of_unexpected_types() -> None:
+    assert _mask({"text": "мне плохо"}, False) == "[скрыто]"
+    assert "плохо" not in str(_mask([{"role": "user", "content": "мне плохо"}, "мне плохо"], False))
+
+
+def test_status_loses_the_provider_body_when_off() -> None:
+    assert _mask_status("Чат-модель ответила 500: {мне плохо, я не знаю что делать}", False) == "Чат-модель ответила 500"
+    assert _mask_status("Чат-модель ответила 500: тело", True) == "Чат-модель ответила 500: тело"
+    assert _mask_status(None, False) is None
+
+
+def test_metadata_keeps_numbers_and_short_names_but_not_long_strings() -> None:
+    metadata = {"model": "gemini-3.8-live", "chars": 12, "audio_seconds": 1.5, "flag": True, "note": "мне плохо", "long": "а" * 80}
+    masked = _mask_metadata(metadata, False)
+    assert masked == {**metadata, "note": "[скрыто]", "long": "[скрыто]"}
+    assert _mask_metadata(metadata, True) == metadata
+
+
+def test_text_is_not_traced_by_default() -> None:
+    assert LangfuseSettings().trace_text is False
 
 
 def test_usage_details_keeps_only_ints() -> None:
@@ -139,9 +171,26 @@ async def test_trace_text_off_masks_input_and_output() -> None:
     turn.update(output="я рядом")
     turn.end()
     root = client.traces[0]
-    assert root.kwargs["input"] == "[скрыто, 9 симв.]"
-    assert root.updates[0]["output"] == "[скрыто, 7 симв.]"
+    assert root.kwargs["input"] == "[скрыто: 9 симв., 2 сл.]"
+    assert root.updates[0]["output"] == "[скрыто: 7 симв., 2 сл.]"
     assert "плохо" not in str(root.kwargs) and "рядом" not in str(root.updates)
+
+
+async def test_trace_text_off_keeps_sizes_and_no_text_anywhere() -> None:
+    """Ни в одном поле трассы (вход, выход, метаданные, статус, вложенные наблюдения) нет текста реплики."""
+    tracer, client = make_tracer(trace_text=False)
+    secret = "мне очень тяжело сегодня"
+    turn = tracer.start_turn(name="t", session_id="d", user_id="u", input=secret, metadata={"user_chars": len(secret)})
+    chat = tracer.start_generation(turn, name="chat", input=[{"role": "user", "content": secret}])
+    chat.update(output=secret, level="ERROR", status=f"Чат-модель ответила 500: {secret}", metadata={"user_words": 4})
+    stt = tracer.start_span(turn, name="stt", input=secret, metadata={"text": secret})
+    stt.update(output=secret)
+    for observation in (stt, chat, turn):
+        observation.end()
+    root = client.traces[0]
+    dump = str(root.kwargs) + str(root.updates) + str([(c.kwargs, c.updates) for c in root.children])
+    assert "тяжело" not in dump
+    assert "user_chars" in dump and "user_words" in dump
 
 
 async def test_child_span_and_generation_hang_under_the_turn() -> None:
@@ -234,3 +283,11 @@ def test_disabled_by_default() -> None:
     from app.core.tracing import build_tracer
 
     assert build_tracer(LangfuseSettings()).name == "null"
+
+
+def test_native_fastapi_telemetry_is_off() -> None:
+    """Встроенная телеметрия FastAPI не должна слать в Langfuse трассы запросов (GET /health, пути с id человека)."""
+    from app.main import create_app
+
+    config = create_app()._telemetry  # type: ignore[attr-defined]
+    assert config["tracing"] is False and config["operation_spans"] is False and config["auto_configure"] is False

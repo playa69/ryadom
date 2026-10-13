@@ -438,7 +438,7 @@ class DialogSession:
             name="voice_turn",
             session_id=self._dialog.id,
             user_id=self._dialog.user_id,
-            metadata={"frames": frames, "interrupts": interrupts},
+            metadata={"frames": frames, "audio_seconds": round(frames * AUDIO_FRAME_SECONDS, 2), "interrupts": interrupts},
             tags=[self._pipeline],
         )
         with model_usage.collect() as heard:  # расход распознавания — на реплику человека, а если её не будет, на диалог

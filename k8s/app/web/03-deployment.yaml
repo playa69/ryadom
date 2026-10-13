@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/web:0.6.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/web:0.6.1
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
