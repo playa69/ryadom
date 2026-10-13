@@ -47,6 +47,8 @@ describe('начать разговор', () => {
         sinceLastDialogHours: 72,
         messageCount: 6,
         lastActivityAt: '2026-10-01T20:12:00.000Z',
+        memoryMode: 'on',
+        memoryEnabled: false,
       },
     })
 
@@ -58,7 +60,7 @@ describe('начать разговор', () => {
     expect(JSON.parse(call.body)).toEqual({ voice: 'male' })
   })
 
-  it('агент не прислал messageCount и lastActivityAt (старый агент) — 0 и null: спрашивать не о чем', async () => {
+  it('агент не прислал messageCount, lastActivityAt и поля памяти (старый агент) — 0, null, on и false: спрашивать не о чем', async () => {
     const user = await registerConfirmedUser()
     mockAgent({
       'POST http://agent.test/v1/users/*/dialogs': () =>
@@ -74,8 +76,28 @@ describe('начать разговор', () => {
         sinceLastDialogHours: null,
         messageCount: 0,
         lastActivityAt: null,
+        memoryMode: 'on',
+        memoryEnabled: false,
       },
     })
+  })
+
+  it('«без памяти»: агенту уходит memory: off, в ответе режим диалога и включена ли память у человека', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-9', resumed: false, memoryMode: 'off', memoryEnabled: true }),
+    })
+
+    const result = await dialogsProcess.execute(
+      new StartDialogOperation({ userId: user.id, startNew: true, memory: 'off' }),
+    )
+
+    expect(result).toMatchObject({
+      success: true,
+      dialog: { dialogId: 'd-9', memoryMode: 'off', memoryEnabled: true },
+    })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
   })
 
   it('голос из профиля уходит агенту при каждом старте: сменили — следующий диалог говорит иначе', async () => {
@@ -169,7 +191,7 @@ describe('начать разговор', () => {
   it('запрос к агенту без флага и голоса уходит без тела; с одним флагом — { new: true }', async () => {
     const userId = '00000000-0000-4000-8000-000000000001'
     const { calls } = mockAgent()
-    const startAt = (data: { voice?: 'male' | 'female'; startNew?: boolean }) =>
+    const startAt = (data: { voice?: 'male' | 'female'; startNew?: boolean; memory?: 'on' | 'off' }) =>
       agentApiIntegration.execute(new StartAgentDialogRequest({ userId, ...data }))
 
     await startAt({})
@@ -181,6 +203,9 @@ describe('начать разговор', () => {
 
     await startAt({ startNew: true })
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ new: true })
+
+    await startAt({ memory: 'on' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ memory: 'on' })
   })
 
   it('заблокированному и удалённому разговор недоступен', async () => {
@@ -245,7 +270,40 @@ describe('журнал и один разговор', () => {
       startedAt: new Date('2026-10-01T20:00:00.000Z'),
       endedAt: new Date('2026-10-01T20:12:00.000Z'),
       summary: { title: 'Про работу', tensionBefore: 7, tensionAfter: 4 },
+      // The agent did not say: a dialog of an agent without memory is an ordinary one.
+      memoryMode: 'on',
     })
+  })
+
+  it('диалог «без памяти» в журнале помечен memoryMode: off', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs': () =>
+        json({
+          items: [
+            {
+              dialogId: 'd-1',
+              startedAt: '2026-10-01T20:00:00.000Z',
+              endedAt: null,
+              summary: null,
+              memoryMode: 'off',
+            },
+            {
+              dialogId: 'd-2',
+              startedAt: '2026-10-01T19:00:00.000Z',
+              endedAt: null,
+              summary: null,
+              memoryMode: 'on',
+            },
+          ],
+          next: null,
+        }),
+    })
+
+    const result = await dialogsProcess.execute(
+      new ListDialogsOperation({ userId: user.id, limit: 20, before: null }),
+    )
+    expect(result.success && result.items.map((item) => item.memoryMode)).toEqual(['off', 'on'])
   })
 
   it('чужой или несуществующий диалог — DIALOG_NOT_FOUND', async () => {

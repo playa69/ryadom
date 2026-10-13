@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DialogMode } from '@ryadom/contracts/api/dialogs'
+import { DialogMemoryMode, MEMORY_CONSENT_VERSION, MemoryFactStatus } from '@ryadom/contracts/api/memory'
 import { createClient, type ClientConfig } from '../src/client'
 import { ApiError } from '../src/errors'
 import { envelope, makeToken, memoryStorage, userOf, type MemoryStorage } from './helpers'
@@ -286,6 +287,86 @@ describe('начать разговор', () => {
     expect(sentBody(1)).toEqual({ mode: DialogMode.Vent })
     expect(sentBody(2)).toEqual({ mode: DialogMode.Vent })
     expect(sentBody(3)).toEqual({ mode: DialogMode.Vent, startNew: true })
+  })
+
+  it('«Без памяти» уходит полем memory: off; on — значение по умолчанию и не отправляется', async () => {
+    stubFetch()
+    const { client } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockImplementation(async () => envelope({ dialogId: 'd-1', resumed: false }))
+
+    await client.startDialog(DialogMode.Vent, { memory: DialogMemoryMode.Off })
+    await client.startDialog(DialogMode.Vent, { memory: DialogMemoryMode.On })
+    await client.startDialog(DialogMode.Vent, { startNew: true, memory: DialogMemoryMode.Off })
+
+    expect(sentBody(0)).toEqual({ mode: DialogMode.Vent, memory: 'off' })
+    expect(sentBody(1)).toEqual({ mode: DialogMode.Vent })
+    expect(sentBody(2)).toEqual({ mode: DialogMode.Vent, startNew: true, memory: 'off' })
+  })
+})
+
+describe('память', () => {
+  const call = (index: number) => {
+    const [url, init] = fetchMock.mock.calls[index]!
+    return {
+      url: String(url),
+      method: init?.method,
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    }
+  }
+
+  it('включение — с согласием на текст этой сборки; выключение — без согласия', async () => {
+    stubFetch()
+    const { client } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockImplementation(async () =>
+      envelope({ enabled: true, consentVersion: null, consentAt: null }),
+    )
+
+    await client.setMemoryEnabled(true)
+    await client.setMemoryEnabled(false)
+
+    expect(call(0)).toEqual({
+      url: 'http://api.test/api/memory/settings',
+      method: 'PUT',
+      body: { enabled: true, consentAccepted: true, consentVersion: MEMORY_CONSENT_VERSION },
+    })
+    expect(call(1).body).toEqual({ enabled: false })
+  })
+
+  it('отказ с кодом — исход, а не исключение', async () => {
+    stubFetch()
+    const { client } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: false, errorCode: 'MEMORY_UNAVAILABLE', errorMessage: '' }), {
+        status: 200,
+      }),
+    )
+    expect(await client.setMemoryEnabled(true)).toEqual({ ok: false, code: 'MEMORY_UNAVAILABLE' })
+  })
+
+  it('пути и методы: факт, забыть, забыть всё, изменения разговора, экспорт', async () => {
+    stubFetch()
+    const { client } = setup()
+    await client.startSession(userOf('a'), tokens(makeToken('a')))
+    fetchMock.mockImplementation(async () => envelope(null))
+
+    await client.updateMemoryFact('f/1', { status: MemoryFactStatus.Pinned })
+    await client.forgetMemoryFact('f/1')
+    await client.forgetAllMemory()
+    await client.getMemoryChanges('d 1')
+    await client.exportMemory()
+
+    expect(call(0)).toMatchObject({
+      url: 'http://api.test/api/memory/facts/f%2F1',
+      method: 'PATCH',
+      body: { status: 'pinned' },
+    })
+    expect(call(1)).toMatchObject({ url: 'http://api.test/api/memory/facts/f%2F1', method: 'DELETE' })
+    expect(call(2)).toMatchObject({ url: 'http://api.test/api/memory', method: 'DELETE' })
+    expect(call(3)).toMatchObject({ url: 'http://api.test/api/memory/changes?dialogId=d%201', method: 'GET' })
+    expect(call(4)).toMatchObject({ url: 'http://api.test/api/memory/export', method: 'GET' })
   })
 })
 

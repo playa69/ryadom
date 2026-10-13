@@ -6,9 +6,14 @@ import type { DeviceCredentials } from './device'
  * The user in the store: sign-in returns a basic profile, the profile screen loads the rest.
  * `consentVersion` is what the app knows about the terms the person accepted: undefined until it has
  * asked the server or recorded the acceptance itself, null when the server has none on record.
+ * `memoryEnabled` is the last thing the app heard about the person's switch "Запоминать" (from a
+ * dialog start or the memory screen): it decides whether home offers a conversation "without memory".
+ * Only the switch, never what is remembered.
  */
 export type User = AuthUserApiResponse &
-  Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt' | 'consentVersion' | 'voice'>>
+  Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt' | 'consentVersion' | 'voice'>> & {
+    memoryEnabled?: boolean
+  }
 
 /**
  * Where the refresh token and the user live. The app supplies it: the platform's secure storage on

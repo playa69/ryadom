@@ -5,7 +5,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createLocalSessionStorage } from '@ryadom/client-core/storage'
-import { WEB_PENDING_AUTH_KEY, WEB_STORAGE_PREFIX, WEB_USER_KEY, webDialogViewKey } from '../lib/storage-keys'
+import {
+  WEB_MEMORY_HIDDEN_KEY,
+  WEB_PENDING_AUTH_KEY,
+  WEB_STORAGE_PREFIX,
+  WEB_USER_KEY,
+  webDialogViewKey,
+} from '../lib/storage-keys'
 
 /**
  * Every key the PWA (apps/mobile) and the store builds write: the platform adapter's secure-storage
@@ -25,11 +31,12 @@ const PWA_KEYS = [
   'ryadom.update.lastVersionCode',
   'ryadom.update.nextJsVersion',
   'ryadom.update.dismissedVersionCode',
+  'ryadom.memoryHidden',
 ]
 const PWA_PREFIXES = ['ryadom_', 'CapacitorStorage.', 'ryadom.update.', 'ryadom.install.']
 
 describe('ключи хранилища web-клиента', () => {
-  const webKeys = [WEB_USER_KEY, WEB_PENDING_AUTH_KEY, webDialogViewKey('d-1')]
+  const webKeys = [WEB_USER_KEY, WEB_PENDING_AUTH_KEY, webDialogViewKey('d-1'), WEB_MEMORY_HIDDEN_KEY]
 
   it('все в пространстве ryadom.web.', () => {
     for (const key of webKeys) expect(key.startsWith(WEB_STORAGE_PREFIX)).toBe(true)

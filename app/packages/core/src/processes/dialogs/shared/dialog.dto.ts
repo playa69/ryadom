@@ -1,5 +1,6 @@
 import type {
   AgentDialogListItemResponse,
+  AgentDialogMemoryMode,
   AgentDialogResponse,
   AgentDialogSummaryResponse,
   AgentMessageResponse,
@@ -23,6 +24,8 @@ export interface DialogListItemDTO {
   startedAt: Date
   endedAt: Date | null
   summary: DialogSummaryDTO | null
+  /** `off`: a conversation "without memory", deleted by the agent 24 hours after its last message. */
+  memoryMode: AgentDialogMemoryMode
 }
 
 export interface DialogMessageDTO {
@@ -59,6 +62,8 @@ export function toDialogListItemDTO(item: AgentDialogListItemResponse): DialogLi
     startedAt: toDate(item.startedAt) ?? new Date(0),
     endedAt: toDate(item.endedAt),
     summary: toDialogSummaryDTO(item.summary),
+    // An agent that does not report it (an older one) held every dialog with memory as usual.
+    memoryMode: item.memoryMode === 'off' ? 'off' : 'on',
   }
 }
 

@@ -34,3 +34,9 @@ export const deviceKeyInputSchema = z
 export const consentVersionInputSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date such as 2026-10-04')
+
+/**
+ * The text of a fact the person writes into the agent's memory or corrects there: 1 to 200
+ * characters after trimming. What may be remembered at all is the agent's rule, not this one.
+ */
+export const memoryFactTextInputSchema = z.string().trim().min(1).max(200)

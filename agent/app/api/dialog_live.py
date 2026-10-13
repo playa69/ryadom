@@ -40,7 +40,7 @@ from app.core.metrics import (
 )
 from app.services import usage as model_usage
 from app.services.dialog_store import Dialog, DialogStore, Message
-from app.services.replies import CRISIS_SAFETY_TEXT, SYSTEM_PROMPT, is_crisis
+from app.services.replies import CRISIS_SAFETY_TEXT, SYSTEM_PROMPT, is_crisis, memory_block
 
 logger = logging.getLogger("agent.live")
 
@@ -156,6 +156,9 @@ class LiveDialogSession(DialogSession):
         self._speech_turns: dict[str, LiveTurn] = {}
         # Последний ход, отправленный модели целиком (конец реплики или текст): на его ответ пишется пришедший usage.
         self._usage_turn: LiveTurn | None = None
+        # Сводка памяти, с которой открыта текущая сессия: изменилась (человек что-то забыл, выключил память, извлечение
+        # добавило факт) — к следующему ходу сессия открывается заново с новой (MEM-8.4, MEM-13.3).
+        self._brief_used = ""
 
     def _first_sound(self, message_id: str, turn: Turn | None) -> None:
         """Первый звук ответа ушёл клиенту: кроме общей задержки пишем, из каких этапов она сложилась."""
@@ -218,7 +221,9 @@ class LiveDialogSession(DialogSession):
         При GEMINI_TEXT_CONTEXT история загружается в сессию настоящими репликами (`_history`), в промпт её не кладём.
         """
         history = [] if resumed or self._cfg.text_context else self._history()
-        text = SYSTEM_PROMPT + LIVE_ADDENDUM
+        # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока.
+        self._brief_used = self._store.memory_brief(self._dialog)
+        text = SYSTEM_PROMPT + LIVE_ADDENDUM + memory_block(self._brief_used)
         if history:
             lines = [("Человек" if role == "user" else "Ты") + ": " + message for role, message in history]
             text += "\n\nУже сказано в этом разговоре (продолжай, не здоровайся заново):\n" + "\n".join(lines)
@@ -237,6 +242,8 @@ class LiveDialogSession(DialogSession):
                 if not self._link_used:
                     return link  # на этой сессии ход ещё не вёлся: менять нечего (и цепочка смен невозможна)
                 self._refresh = True
+            if self._store.memory_brief(self._dialog, count=False) != self._brief_used:
+                self._refresh = True  # память изменилась: новая сессия с новой сводкой (или без неё)
             # Сюда приходят в начале нового хода (прошлый ответ к этому моменту уже закрыт `_begin`).
             if link is not None and not link.closed and link.voice == voice and not self._refresh:
                 return link
@@ -608,6 +615,7 @@ class LiveDialogSession(DialogSession):
         if turn.discarded:
             return
         self._refresh_after_crisis()
+        self._store.mark_crisis(self._dialog)  # извлечение памяти из такого разговора пропускается (I13)
         turn.discarded = True
         turn.opened = True
         turn.held.clear()

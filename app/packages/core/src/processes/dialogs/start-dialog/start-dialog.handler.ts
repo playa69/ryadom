@@ -42,13 +42,19 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
     const found = await usersManager.execute(new GetUserByIdQuery({ userId: operation.userId }))
     const voice = found.success ? found.user.agentVoice : undefined
     const started = await agentApiIntegration.execute(
-      new StartAgentDialogRequest({ userId: operation.userId, voice, startNew: operation.startNew }),
+      new StartAgentDialogRequest({
+        userId: operation.userId,
+        voice,
+        startNew: operation.startNew,
+        memory: operation.memory,
+      }),
     )
     createLogger('dialogs').info('Dialog started', {
       userId: operation.userId,
       dialogId: started.dialogId,
       resumed: started.resumed,
       startNew: operation.startNew,
+      memoryMode: started.memoryMode,
     })
     return { success: true, dialog: started }
   }

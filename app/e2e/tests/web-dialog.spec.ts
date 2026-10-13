@@ -301,6 +301,9 @@ test('с главной: набранный текст — первое сооб
   await expect(page).toHaveURL(/\/home$/)
   await expect(talkButton(page)).toBeVisible()
   await talkButton(page).click()
+  // Something was said in it, so the person is asked first; "Продолжить" goes back to it.
+  await expect(modal(page).getByRole('heading', { name: 'Есть незавершённый разговор' })).toBeVisible()
+  await modalButton(page, 'Продолжить').click()
   await expect(page).toHaveURL(dialogUrl, { timeout: 30_000 })
   // It opens on the voice, with the conversation's latest reply under the sphere: the same
   // conversation, not a second one.

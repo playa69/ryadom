@@ -110,8 +110,9 @@ class Synthesis:
     В очереди куски PCM, затем `None` (конец) или исключение (отказ провайдера). Читает тот, кто озвучивает.
     """
 
-    def __init__(self, tts: TextToSpeech, text: str, voice: Voice, first: bool) -> None:
+    def __init__(self, tts: TextToSpeech, text: str, voice: Voice, first: bool, memory: str = "off") -> None:
         self.pieces: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+        self._memory = memory
         self.task = asyncio.create_task(self._run(tts, text, voice, first))
 
     async def _run(self, tts: TextToSpeech, text: str, voice: Voice, first: bool) -> None:
@@ -120,7 +121,7 @@ class Synthesis:
         try:
             async for piece in pcm_stream(tts, text, voice):
                 if first and not seen:
-                    VOICE_LATENCY_SECONDS.labels("tts_first").observe(time.monotonic() - began)
+                    VOICE_LATENCY_SECONDS.labels("tts_first", self._memory).observe(time.monotonic() - began)
                 seen = True
                 self.pieces.put_nowait(piece)
             self.pieces.put_nowait(None)
@@ -177,6 +178,10 @@ class DialogSession:
         self._held: Turn | None = None
         self._hold_timer: asyncio.Task[None] | None = None
 
+    def _memory_label(self) -> str:
+        """Метка `memory` задержек: подмешана ли в этот разговор сводка памяти (чтение кэша, без диска и сети)."""
+        return "on" if self._store.memory_brief(self._dialog, count=False) else "off"
+
     # ─── отправка ─────────────────────────────────────────────────────────────
 
     async def _send(self, frame: dict[str, Any]) -> None:
@@ -199,12 +204,12 @@ class DialogSession:
 
     # ─── жизненный цикл ───────────────────────────────────────────────────────
 
-    def _replaced(self, summary: dict[str, Any]) -> None:
+    def _replaced(self, summary: dict[str, Any] | None) -> None:
         """Диалог завершён снаружи (человек начал новый разговор с другого экрана): сообщить и закрыть сокет."""
         if not self._closed:
             self._replace_task = asyncio.get_running_loop().create_task(self._close_replaced(summary))
 
-    async def _close_replaced(self, summary: dict[str, Any]) -> None:
+    async def _close_replaced(self, summary: dict[str, Any] | None) -> None:
         await self._send({"type": "ended", "summary": summary})
         self._closed = True
         try:
@@ -313,6 +318,7 @@ class DialogSession:
         await self._send({"type": "ack", "id": client_id or message.id, "messageId": message.id})
         crisis = is_crisis(text)
         if crisis:
+            self._store.mark_crisis(dialog)  # извлечение памяти из такого разговора пропускается (I13)
             await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
         turn = Turn(started=time.monotonic())
         self._dispatch_text_turn(text, crisis, turn)
@@ -375,7 +381,7 @@ class DialogSession:
             self._release_held()
             return  # распознавание не сработало, error уже ушёл
         if self._recognizer is not None and text and turn.started is not None:
-            VOICE_LATENCY_SECONDS.labels("stt").observe(time.monotonic() - turn.started)
+            VOICE_LATENCY_SECONDS.labels("stt", self._memory_label()).observe(time.monotonic() - turn.started)
         if not text or (interrupts and self._is_echo(text)):
             self._store.add_usage(self._dialog, None, heard)
             self._count_false_interruption(interrupts)
@@ -392,6 +398,7 @@ class DialogSession:
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
         crisis = is_crisis(message.text)
         if crisis:
+            self._store.mark_crisis(self._dialog)  # извлечение памяти из такого разговора пропускается (I13)
             await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
         elif APP_CONFIG.dialog.incomplete_hold_ms and looks_unfinished(message.text):
             self._hold(turn)
@@ -501,7 +508,9 @@ class DialogSession:
     async def _pump_chat(self, out: asyncio.Queue[str | Exception | None]) -> None:
         """Читает поток модели и складывает готовые предложения в очередь. Таймаут — на модель, а не на тех, кто читает."""
         assert self._chat is not None
-        messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages)
+        # Сводка памяти — из кэша процесса (I3); у разговора «Без памяти» и при любой ошибке памяти она пустая.
+        memory = self._store.memory_brief(self._dialog)
+        messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages, memory)
         buffer, total, full = "", 0, False
 
         def offer(sentence: str) -> bool:
@@ -551,7 +560,9 @@ class DialogSession:
                         return
                     prefix = " " if sentences else ""
                     if not sentences:
-                        VOICE_LATENCY_SECONDS.labels("first_sentence").observe(time.monotonic() - began)
+                        VOICE_LATENCY_SECONDS.labels("first_sentence", self._memory_label()).observe(
+                            time.monotonic() - began
+                        )
                         await self._send({"type": "assistant_start", "messageId": message_id})
                         speech = self._start_speech(message_id, turn)
                     sentences.append(sentence)
@@ -670,7 +681,7 @@ class DialogSession:
                 first = True
                 while (text := await chunks.get()) is not None:
                     await slots.acquire()
-                    synthesis = Synthesis(tts, text, voice, first)
+                    synthesis = Synthesis(tts, text, voice, first, self._memory_label())
                     first = False
                     planned.append(synthesis)
                     syntheses.put_nowait(synthesis)
@@ -735,7 +746,7 @@ class DialogSession:
         if turn is None or turn.started is None:
             return
         seconds = time.monotonic() - turn.started
-        VOICE_LATENCY_SECONDS.labels("first_sound").observe(seconds)
+        VOICE_LATENCY_SECONDS.labels("first_sound", self._memory_label()).observe(seconds)
         logger.info("first sound dialog=%s message=%s ms=%d", self._dialog.id, message_id, seconds * 1000)
 
 

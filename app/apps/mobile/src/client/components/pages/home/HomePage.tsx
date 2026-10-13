@@ -1,22 +1,30 @@
 import { Button, Icon, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { shouldAskToResume } from '@ryadom/client-core/dialog-start'
+import { chosenMemoryMode, nextStartStep } from '@ryadom/client-core/dialog-start'
 import { DialogMode, StartDialogApiErrorCode, type StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
-import { apiErrorText, codeText, startDialog } from '../../../lib/api'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+import { memoryInUse } from '@ryadom/client-core/memory'
+import { apiErrorText, codeText, getMemory, startDialog } from '../../../lib/api'
 import { unlockSpeech } from '../../../lib/voice/speech'
 import { useAuth } from '../../../lib/store'
 import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import Breathing from '../../Breathing'
+import Switch from '../../Switch'
 import { SosButton, openSos } from '../../SosSheet'
+import { memoryCard } from '../../../lib/memory'
+import MemoryCard from './MemoryCard'
 import ResumeDialogSheet from './ResumeDialogSheet'
 
 /**
  * Home screen: the breathing circle, one large talk button and the modes. If the person left a
  * conversation unfinished (with something said in it), the talk button waits for their answer:
  * continue it, end it and begin a new one, or close the question and stay here.
+ *
+ * With memory on, a switch "Без памяти" under the button holds the next conversation without it, and
+ * after a conversation the card "Я запомнил" shows up here.
  *
  * In v0 only the venting mode works. The other modes exist in the contract, but enabling them
  * before the agent supports them would be a promise the product cannot keep.
@@ -90,21 +98,50 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   /** The question was answered (or its request is out): closing the sheet is then no "dismissed". */
   const answered = useRef(false)
 
+  const userId = auth.user?.id ?? null
+  const memoryEnabled = auth.user?.memoryEnabled
+  /** "Без памяти" for the next conversation; it goes back to off once a conversation starts. */
+  const [withoutMemory, setWithoutMemory] = useState(false)
+  const wanted = chosenMemoryMode(memoryEnabled, withoutMemory)
+
+  // Whether to offer "Без памяти" is asked whenever home comes into view: the person's switch and
+  // whether the server uses memory at all can both change elsewhere. A failure leaves what was known.
+  const loadMemory = useCallback(() => {
+    if (!userId) return
+    getMemory()
+      .then((memory) => updateUser({ memoryEnabled: memoryInUse(memory) }))
+      .catch(() => {})
+  }, [userId, updateUser])
+
+  useEffect(() => {
+    loadMemory()
+  }, [loadMemory])
+
   function release(navigated: boolean) {
     if (navigated) setTimeout(() => (starting.current = false), NAVIGATION_LOCK_MS)
     else starting.current = false
   }
 
+  /** A start that says memory is off for the person is believed at once; "on" is left to `loadMemory`. */
+  function learnMemory(data: StartDialogApiResponse) {
+    if (data.memoryEnabled === false && memoryEnabled !== false) updateUser({ memoryEnabled: false })
+  }
+
   function openDialog(data: StartDialogApiResponse) {
+    // A new conversation makes the card of the previous one old news.
+    memoryCard.close()
     f7router.navigate(`/dialog/${data.dialogId}/`, {
       props: {
         greeting: data.greeting,
         resumed: data.resumed,
         sinceLastDialogHours: data.sinceLastDialogHours,
+        memoryMode: data.memoryMode ?? DialogMemoryMode.On,
+        memoryEnabled: data.memoryEnabled,
         // The button says "talk": the conversation opens on the voice screen and already listens.
         listen: true,
       },
     })
+    setWithoutMemory(false)
   }
 
   async function handleTalk() {
@@ -116,7 +153,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     setLoading(true)
     let navigated = false
     try {
-      const result = await startDialog(mode)
+      let result = await startDialog(mode, { memory: wanted })
       if (!result.ok) {
         // The server has no agreement on record for this account: forget what was cached, and the
         // app's gate takes the person through the first screen.
@@ -124,11 +161,21 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
         return
       }
-      if (shouldAskToResume(result.data)) {
+      learnMemory(result.data)
+      const step = nextStartStep(result.data, wanted)
+      if (step === 'ask') {
         // Something was said in the conversation left open. Nothing changes until the person answers.
         answered.current = false
         setPrompt(result.data)
         return
+      }
+      if (step === 'restart') {
+        // An empty open conversation in the other memory mode: nothing in it to lose, a new one in the chosen mode.
+        result = await startDialog(mode, { startNew: true, memory: wanted })
+        if (!result.ok) {
+          setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
+          return
+        }
       }
       openDialog(result.data)
       navigated = true
@@ -161,7 +208,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     setRenewing(true)
     let navigated = false
     try {
-      const result = await startDialog(mode, { startNew: true })
+      const result = await startDialog(mode, { startNew: true, memory: wanted })
       if (!result.ok) {
         if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать новый разговор'))
@@ -190,7 +237,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   }
 
   return (
-    <Page name="home">
+    <Page name="home" onPageTabShow={loadMemory}>
       {/* slot="fixed" keeps the button outside .page-content: without it the button is
           absolutely positioned relative to the scroll container and would scroll away with
           the page the moment its content grows taller than the screen (design review). */}
@@ -215,7 +262,29 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             >
               Поговорить
             </Button>
+            {/* Only while memory is on: without it every conversation is "without memory" anyway. */}
+            {memoryEnabled === true && (
+              <div className="rd-incognito" data-testid="incognito">
+                <span className="rd-incognito-text">
+                  <span className="rd-incognito-title">Без памяти</span>
+                  <span className="rd-caption">
+                    {withoutMemory
+                      ? 'Этот разговор я не запомню, а сам он удалится через сутки'
+                      : 'Следующий разговор не попадёт в память'}
+                  </span>
+                </span>
+                <Switch
+                  checked={withoutMemory}
+                  onChange={(on) => {
+                    setWithoutMemory(on)
+                    track(AnalyticsEvent.MemoryIncognitoToggled, { on })
+                  }}
+                />
+              </div>
+            )}
           </div>
+
+          <MemoryCard owner={userId} />
 
           <div className="rd-modes">
             {MODES.map((item) => (
@@ -272,6 +341,12 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
       <ResumeDialogSheet
         opened={prompt !== null}
         busy={renewing}
+        // A returned conversation keeps the mode it began in: "Без памяти" applies only to a new one.
+        note={
+          wanted === DialogMemoryMode.Off && prompt?.memoryMode !== DialogMemoryMode.Off
+            ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
+            : undefined
+        }
         onContinue={continueDialog}
         onStartNew={() => void startNew()}
         onClose={closeQuestion}

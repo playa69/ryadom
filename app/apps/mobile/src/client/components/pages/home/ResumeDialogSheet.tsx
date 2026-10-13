@@ -8,6 +8,7 @@ import { Button, Sheet } from 'framework7-react'
 export default function ResumeDialogSheet({
   opened,
   busy,
+  note,
   onContinue,
   onStartNew,
   onClose,
@@ -15,6 +16,8 @@ export default function ResumeDialogSheet({
   opened: boolean
   /** "End it and begin a new one" is in flight: one press is enough. */
   busy: boolean
+  /** A line under the question, e.g. that "Без памяти" applies only to a new conversation. */
+  note?: string
   onContinue: () => void
   onStartNew: () => void
   /** Called by the button and by the sheet itself when it closes, whoever closed it. */
@@ -32,6 +35,11 @@ export default function ResumeDialogSheet({
       <div className="rd-sheet-body" data-testid="resume-sheet">
         <h2 className="rd-sheet-title">Есть незавершённый разговор</h2>
         <p className="rd-muted">Продолжить его или завершить и начать новый?</p>
+        {note && (
+          <p className="rd-caption" data-testid="resume-note">
+            {note}
+          </p>
+        )}
 
         <Button fill large disabled={busy} onClick={onContinue} data-testid="resume-continue">
           Продолжить

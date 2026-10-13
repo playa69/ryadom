@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import {
   ChevronRight,
+  CircleHelp,
+  Download,
   ExternalLink,
   FileText,
   Info,
@@ -8,6 +10,7 @@ import {
   LogIn,
   Mail,
   MonitorSmartphone,
+  Sparkles,
   Trash2,
   Users,
   type LucideIcon,
@@ -25,6 +28,9 @@ const ICONS = {
   info: Info,
   doc: FileText,
   trash: Trash2,
+  memory: Sparkles,
+  download: Download,
+  help: CircleHelp,
 } satisfies Record<string, LucideIcon>
 
 type ProfileRowIcon = keyof typeof ICONS

@@ -16,12 +16,15 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 
-from app.api import dev, dialog_ws, dialogs, health
+from app.api import dev, dialog_ws, dialogs, health, memory
 from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
-from app.core.config import APP_CONFIG
+from app.core.config import APP_CONFIG, MemorySettings
 from app.core.errors import install_error_handlers
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
+from app.memory.llm import ExtractionModel, build_memory_llm
+from app.memory.service import MemoryService
+from app.memory.worker import MemoryWorker
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.langfuse_usage import start_langfuse_sink
@@ -59,6 +62,8 @@ def create_app(
     models_factory: Callable[[], tuple[ChatModel | None, Recognizer | None]] | None = None,
     live_factory: Callable[[], "LiveConnector | None"] | None = None,
     database_factory: Callable[[], DialogDatabase | None] | None = None,
+    memory_settings: MemorySettings | None = None,
+    memory_model_factory: Callable[[], ExtractionModel | None] | None = None,
 ) -> FastAPI:
     """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию озвучка и модели берутся из конфига.
 
@@ -67,6 +72,9 @@ def create_app(
 
     `VOICE_PIPELINE=gemini_live` (или `live_factory` в тестах) включает речь в речь через Gemini Live: чат и
     распознавание не создаются, фиксированные фразы озвучивает тот же голос Gemini.
+
+    Память агента (`MEMORY_*`, или `memory_settings`/`memory_model_factory` в тестах) живёт в том же файле, что диалоги: без диска
+    она выключена. Воркер памяти запускается после подключения диска и останавливается до его закрытия.
     """
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
@@ -81,6 +89,10 @@ def create_app(
     models = models_factory or (lambda: build_models(APP_CONFIG.llm))
     make_database = database_factory or (
         lambda: DialogDatabase(APP_CONFIG.dialog.db_path) if APP_CONFIG.dialog.db_path else None
+    )
+    memory_cfg = memory_settings or APP_CONFIG.memory
+    make_memory_model = memory_model_factory or (
+        lambda: build_memory_llm(memory_cfg, APP_CONFIG.llm) if memory_cfg.mode != "off" else None
     )
 
     @asynccontextmanager
@@ -97,6 +109,16 @@ def create_app(
                     "dialog db is NOT available (%s): dialogs are kept in memory only and will be lost on restart",
                     getattr(database, "path", "?"),
                 )
+        memory_model = make_memory_model()
+        memory_service = MemoryService(store, memory_cfg, memory_model)
+        store.memory = memory_service
+        app.state.memory = memory_service
+        memory_worker = MemoryWorker(memory_service, store, memory_cfg)
+        await memory_worker.start()
+        if memory_service.status() == "unavailable":
+            logger.error(
+                "memory mode=%s is NOT available: %s", memory_cfg.mode, "no extraction model" if store.persistent else "no disk"
+            )
         live = live_factory() if live_factory is not None else None
         app.state.live = live
         if tts_factory is not None or live is None:
@@ -112,12 +134,13 @@ def create_app(
         else:
             app.state.chat, app.state.recognizer = models()
         logger.info(
-            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s",
+            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s memory=%s",
             live.name if live else "cascade",
             app.state.tts.name if app.state.tts else "none",
             app.state.chat.name if app.state.chat else "none",
             app.state.recognizer.name if app.state.recognizer else "none",
             "sqlite" if store.persistent else "memory",
+            memory_service.status(),
         )
         # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а облачный синтез медленнее.
         # Фиксированные фразы (приветствия, шаблоны, кризисный ответ) готовим заранее; ответы модели так не подготовить.
@@ -134,8 +157,10 @@ def create_app(
                 langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
+            await memory_worker.stop()  # идущее извлечение дожидается до 10 с, остальное останется в очереди на диске
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
-            for client in (app.state.tts, app.state.chat, app.state.recognizer, live):
+            store.memory = None
+            for client in (app.state.tts, app.state.chat, app.state.recognizer, live, memory_model):
                 if client is not None:
                     await client.aclose()
 
@@ -145,10 +170,12 @@ def create_app(
     app.state.chat = None
     app.state.recognizer = None
     app.state.live = None
+    app.state.memory = None
     app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(dialogs.router)
+    app.include_router(memory.router)
     app.include_router(dialog_ws.router)
     app.include_router(dev.router)
     return app

@@ -8,6 +8,9 @@
 Запись устроена так, чтобы не трогать места, где код меняет сообщения на месте (ответ дописывается по словам):
 фоновая запись раз в `flush_interval` сравнивает диалоги, изменённые через хранилище или имеющие живой сокет, с тем, что уже
 записано, и пишет разницу одной транзакцией.
+
+Память агента (app/memory) подключается к хранилищу через `memory` (`MemoryLink`): хранилище сообщает ей о загрузке человека,
+завершении диалога и стирании, а сессии разговора берут у неё сводку (`memory_brief`) без обращений к диску и сети.
 """
 
 import asyncio
@@ -19,7 +22,7 @@ import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal, Protocol
 
 from app.clients.speech import Voice
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL, DIALOG_DB_WRITE_SECONDS, DIALOGS_TOTAL, SPEECH_SECONDS_TOTAL
@@ -31,6 +34,9 @@ logger = logging.getLogger("agent.dialogs")
 GREETING_NEW = "Я рядом. С чего начнём?"
 GREETING_RESUMED = "Продолжим, где остановились."
 GREETINGS = (GREETING_NEW, GREETING_RESUMED)
+
+
+MemoryMode = Literal["on", "off"]
 
 
 def now_iso() -> str:
@@ -70,12 +76,27 @@ class Dialog:
     has_live_socket: bool = False
     # Зовёт хранилище, когда диалог завершён снаружи сокета (человек начал новый разговор с другого экрана): сокет сообщает
     # `ended` и закрывается, а не продолжает писать в завершённый диалог. Ставит и снимает сессия; на диск не попадает.
-    on_replaced: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False, compare=False)
+    on_replaced: Callable[[dict[str, Any] | None], None] | None = field(default=None, repr=False, compare=False)
+    # Память в этом разговоре: `off` — «Без памяти» (без сводки и извлечения, текст удаляется через 24 часа). Задаётся при
+    # создании и больше не меняется (MEM-5.3, MEM-9).
+    memory_mode: MemoryMode = "on"
+    # В разговоре был кризис (кадр safety): автоматическое извлечение из него пропускается (I13). Только растёт.
+    crisis_seen: bool = False
+    # До какой реплики (её created_at) память уже извлечена. Пишет только воркер памяти, писатель диалогов её не трогает.
+    memory_extracted_at: str | None = None
+    # Когда закрылся последний сокет (на диск не попадает): срок удаления разговора «Без памяти» идёт от него.
+    socket_closed_at: str | None = None
     # Расход моделей, ещё не записанный на диск (строки model_usage). Только при подключённой базе; в памяти не хранится дальше записи.
     usage: list[tuple[Any, ...]] = field(default_factory=list, repr=False, compare=False)
 
     def to_item(self) -> dict[str, Any]:
-        return {"dialogId": self.id, "startedAt": self.started_at, "endedAt": self.ended_at, "summary": self.summary}
+        return {
+            "dialogId": self.id,
+            "startedAt": self.started_at,
+            "endedAt": self.ended_at,
+            "summary": self.summary,
+            "memoryMode": self.memory_mode,
+        }
 
     @property
     def last_activity_at(self) -> str | None:
@@ -87,6 +108,30 @@ class Dialog:
 
 class InvalidCursor(ValueError):
     pass
+
+
+class MemoryLink(Protocol):
+    """Что хранилищу диалогов нужно от памяти агента (app/memory/service.py). Ни один метод не должен ронять разговор."""
+
+    def brief(self, dialog: Dialog, count: bool = True) -> str:
+        """Сводка о человеке для этого разговора из кэша процесса: синхронно, без диска и сети (I3). Пустая — блока нет."""
+        ...
+
+    def enabled(self, user_id: str) -> bool:
+        """Включена ли память у человека (по кэшу; человек уже загружен `user_loaded`)."""
+        ...
+
+    async def user_loaded(self, user_id: str) -> None:
+        """Человек впервые после старта процесса загружен с диска: подтянуть его настройки и сводку в кэш."""
+        ...
+
+    def dialog_ended(self, dialog: Dialog) -> None:
+        """Диалог завершён: поставить извлечение в очередь (в фоне)."""
+        ...
+
+    def user_erased(self, user_id: str) -> None:
+        """Человек стёрт: забыть его сводку и настройки в кэше."""
+        ...
 
 
 def _encode_cursor(dialog: Dialog) -> str:
@@ -133,6 +178,9 @@ class DialogStore:
         self._persisted_prefs: dict[str, str] = {}
         self._wake = asyncio.Event()
         self._writer: asyncio.Task[None] | None = None
+        self._background: set[asyncio.Task[Any]] = set()
+        # Память агента; None — память не подключена (нет диска или тесты без неё).
+        self.memory: MemoryLink | None = None
 
     # ─── время ────────────────────────────────────────────────────────────────
 
@@ -158,7 +206,9 @@ class DialogStore:
     def open_dialog(self, user_id: str) -> Dialog | None:
         return next((d for d in self._dialogs(user_id).values() if d.ended_at is None), None)
 
-    def start(self, user_id: str, voice: Voice | None = None, new: bool = False) -> tuple[Dialog, bool, int | None]:
+    def start(
+        self, user_id: str, voice: Voice | None = None, new: bool = False, memory_mode: MemoryMode = "on"
+    ) -> tuple[Dialog, bool, int | None]:
         """Начать или возобновить диалог. Возвращает (диалог, resumed, часов с прошлого разговора).
 
         `voice` — выбранный голос: запоминается как предпочтение человека; без него берётся прошлый выбор или голос по умолчанию.
@@ -166,9 +216,14 @@ class DialogStore:
         обычное завершение без слов человека (название по его первой реплике), остаётся в журнале, а его сокет получает `ended`.
         Открытый диалог без сообщений и так «новый»: он переиспользуется, `resumed` ложь. Без `new` старт идемпотентен:
         открытый диалог возвращается с `resumed`, ничего не меняется.
+        `memory_mode` — память нового разговора (`off` — «Без памяти»). У возвращённого открытого диалога остаётся своя. Пустой
+        открытый диалог с другой памятью не переиспользуется, а удаляется: память разговора после создания не меняется.
         """
         hours = self._hours_since_last(user_id)  # до завершения открытого: от последней активности человека, в том числе в нём
         existing = self.open_dialog(user_id)
+        if existing is not None and not existing.messages and existing.memory_mode != memory_mode:
+            self._discard_empty(existing)  # в нём ничего не сказано: разговор с нужной памятью начнётся заново
+            existing = None
         resumed = existing is not None
         if new and existing is not None:
             resumed = False
@@ -178,7 +233,9 @@ class DialogStore:
                     existing.on_replaced(summary)
                 existing = None
             # пустой открытый диалог: нечего ни завершать, ни продолжать, он остаётся и приветствует как новый
-        dialog = existing or Dialog(id=str(uuid.uuid4()), user_id=user_id, started_at=self._next_started_at())
+        dialog = existing or Dialog(
+            id=str(uuid.uuid4()), user_id=user_id, started_at=self._next_started_at(), memory_mode=memory_mode
+        )
         self._dialogs(user_id)[dialog.id] = dialog
         if voice is not None:
             self._voice_prefs[user_id] = voice
@@ -277,7 +334,82 @@ class DialogStore:
             "tensionAfter": tension_after,
         }
         self._touch(dialog)
+        memory = self.memory
+        if memory is not None and self._owns(dialog):
+            try:
+                memory.dialog_ended(dialog)
+            except Exception:  # noqa: BLE001 - память не должна мешать завершению разговора (I3)
+                logger.exception("memory dialog_ended failed dialog=%s", dialog.id)
         return dialog.summary
+
+    def mark_crisis(self, dialog: Dialog) -> None:
+        """В разговоре был кризис (ушёл кадр safety): автоматическое извлечение памяти из него пропускается (I13)."""
+        if not dialog.crisis_seen:
+            dialog.crisis_seen = True
+            self._touch(dialog)
+
+    def memory_brief(self, dialog: Dialog, count: bool = True) -> str:
+        """Сводка памяти для разговора: пустая, если память не подключена, разговор «Без памяти» или что-то сломалось (I2, I3)."""
+        memory = self.memory
+        if memory is None or dialog.memory_mode != "on":
+            return ""
+        try:
+            return memory.brief(dialog, count) or ""
+        except Exception:  # noqa: BLE001 - любая ошибка памяти даёт разговор без сводки, а не ошибку разговора
+            logger.exception("memory brief failed dialog=%s", dialog.id)
+            return ""
+
+    def memory_enabled(self, user_id: str) -> bool:
+        memory = self.memory
+        if memory is None:
+            return False
+        try:
+            return memory.enabled(user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("memory enabled check failed")
+            return False
+
+    def _discard_empty(self, dialog: Dialog) -> None:
+        """Убрать открытый диалог без сообщений: из памяти сразу, с диска в фоне. Его сокет (если есть) получает `ended`."""
+        self._forget(dialog.user_id, dialog.id)
+        if dialog.on_replaced is not None:
+            dialog.on_replaced(None)
+        if self._db is not None:
+            self._spawn(self._delete_on_disk(dialog.user_id, dialog.id, False))
+
+    def _spawn(self, coro: Any) -> None:
+        task = asyncio.get_running_loop().create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    def _forget(self, user_id: str, dialog_id: str) -> Dialog | None:
+        dialog = self._users.get(user_id, {}).pop(dialog_id, None)
+        self._dirty.pop(dialog_id, None)
+        self._watch.pop(dialog_id, None)
+        self._persisted.pop(dialog_id, None)
+        return dialog
+
+    async def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
+        """Удалить один диалог целиком: из памяти процесса и с диска (сообщения, идентификаторы клиента, `secure_delete`,
+        усечение WAL). Маршрута в API нет: так воркер памяти удаляет разговоры «Без памяти» (MEM-9, MEM-13.4).
+
+        `forget_derived` — убрать и факты памяти, у которых этот диалог единственный источник (см. `DialogDatabase.delete_dialog`).
+        Исключение — диск не ответил; из памяти процесса диалог к этому моменту уже убран.
+        """
+        self._forget(user_id, dialog_id)
+        await self._delete_on_disk(user_id, dialog_id, forget_derived)
+
+    async def _delete_on_disk(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
+        db = self._db
+        if db is None:
+            return
+        async with self._flush_lock:  # ждём идущую запись, чтобы она не вернула удалённое
+            try:
+                await asyncio.to_thread(db.delete_dialog, user_id, dialog_id, forget_derived)
+            except Exception:
+                DIALOG_DB_ERRORS_TOTAL.labels("delete").inc()
+                logger.exception("dialog db delete failed dialog=%s", dialog_id)
+                raise
 
     def erase_user(self, user_id: str) -> None:
         """Стереть всё о человеке в памяти. Идемпотентно. На диске стирает `erase_user_durable`."""
@@ -287,12 +419,25 @@ class DialogStore:
             self._persisted.pop(dialog_id, None)
         self._voice_prefs.pop(user_id, None)
         self._persisted_prefs.pop(user_id, None)
+        memory = self.memory
+        if memory is not None:
+            memory.user_erased(user_id)
 
     # ─── диск ─────────────────────────────────────────────────────────────────
 
     @property
     def persistent(self) -> bool:
         return self._db is not None
+
+    @property
+    def database(self) -> DialogDatabase | None:
+        """Открытая база (для памяти агента: она живёт в том же файле и пишет через тот же замок)."""
+        return self._db
+
+    @property
+    def disk_configured(self) -> bool:
+        """Диск задан в настройках (открыт он или нет)."""
+        return self._disk_required or self._db is not None
 
     def require_disk(self) -> None:
         """Диск задан в настройках (`DIALOG_DB_PATH`). Если подключиться к нему не удалось, стирание человека отвечает ошибкой: файл
@@ -352,6 +497,12 @@ class DialogStore:
             self._loaded.add(user_id)
             if stored:
                 logger.info("dialog db loaded user=%s dialogs=%d", user_id, len(stored))
+            memory = self.memory
+            if memory is not None:
+                try:
+                    await memory.user_loaded(user_id)
+                except Exception:  # noqa: BLE001 - без памяти разговор идёт, без диалогов — нет (I3)
+                    logger.exception("memory load failed user=%s", user_id)
 
     @staticmethod
     def _from_stored(item: StoredDialog) -> Dialog:
@@ -368,6 +519,9 @@ class DialogStore:
             client_ids=dict(item.client_ids),
             reply_index=item.reply_index,
             voice=item.voice if item.voice in ("male", "female") else "male",  # type: ignore[arg-type]
+            memory_mode="off" if item.memory_mode == "off" else "on",
+            crisis_seen=item.crisis_seen,
+            memory_extracted_at=item.memory_extracted_at,
         )
 
     @staticmethod
@@ -381,6 +535,8 @@ class DialogStore:
             dialog.greeting,
             dialog.voice,
             dialog.reply_index,
+            dialog.memory_mode,
+            int(dialog.crisis_seen),
         )
 
     def _snapshot_of(self, dialog: Dialog) -> _Persisted:
@@ -409,6 +565,7 @@ class DialogStore:
 
     def socket_closed(self, dialog: Dialog) -> None:
         dialog.has_live_socket = False
+        dialog.socket_closed_at = now_iso()
         self._watch.pop(dialog.id, None)
         self._touch(dialog)
 
@@ -467,6 +624,12 @@ class DialogStore:
             try:
                 await asyncio.to_thread(db.apply, [write for _, write, _ in writes])
                 done, failed = writes, []
+            except asyncio.CancelledError:
+                # Остановка писателя (detach) посреди записи: если поток ещё не начал её, она не случится вовсе, а пачка уже
+                # снята с очереди. Возвращаем её: последняя запись в detach повторит (запись идемпотентна).
+                for dialog, _, _ in writes:
+                    self._dirty.setdefault(dialog.id, dialog)
+                raise
             except Exception:
                 DIALOG_DB_ERRORS_TOTAL.labels("write").inc()
                 logger.exception("dialog db write failed dialogs=%d: retrying one by one", len(writes))

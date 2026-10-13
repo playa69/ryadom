@@ -6,11 +6,15 @@
 `load_user`, `apply`, `erase_user`.
 
 Схема версионируется через `PRAGMA user_version`. Все обращения идут из рабочего потока (`asyncio.to_thread`), по одному.
+В том же файле и через то же соединение живёт память агента (таблицы `memory_*`, app/memory/store.py): стирание человека обязано
+быть одной транзакцией с его диалогами, поэтому второго файла и второго соединения нет.
+
+Версии схемы: 1 — диалоги; 2 — колонки памяти у диалогов и таблицы памяти (спецификация памяти, раздел 5). Переход 1 → 2 идёт
+одной транзакцией при старте независимо от `MEMORY_MODE`. Откат образа на агента со схемой 1 не поддерживается: старый агент
+видит версию 2, отказывается открывать файл и на стирание отвечает 503 (иначе он стирал бы людей, не трогая их память).
 
 Добавочные изменения (новая таблица, новый столбец, который может быть NULL) версию не меняют: их доделывает `_upgrade` при
-каждом открытии, а агент прошлой версии работает с таким файлом как раньше (пишет сообщения с явным списком столбцов, при стирании
-человека новые строки уходят каскадом). Так откат образа не оставляет агента без диска. Версия растёт только при несовместимых
-изменениях.
+каждом открытии (так устроен расход моделей). Версия растёт при несовместимых изменениях (память агента, версия 2).
 
 Расход моделей (`model_usage`) — строки «модель, задача, input/output, модальность, единица, количество» по сообщению, которое
 этот вызов модели произвёл, или по диалогу (`message_id` NULL), если сообщения нет: ответ выброшен, озвучена фиксированная фраза.
@@ -21,16 +25,20 @@ import json
 import logging
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 logger = logging.getLogger("agent.db")
 
-SCHEMA_VERSION = 1
+T = TypeVar("T")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS dialogs (
+SCHEMA_VERSION = 2
+
+# Версия 1: диалоги, сообщения, идентификаторы клиента, выбор голоса.
+SCHEMA_V1 = (
+    """CREATE TABLE IF NOT EXISTS dialogs (
     id          TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL,
     started_at  TEXT NOT NULL,
@@ -39,9 +47,9 @@ CREATE TABLE IF NOT EXISTS dialogs (
     greeting    TEXT,
     voice       TEXT NOT NULL,
     reply_index INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS dialogs_user_started ON dialogs (user_id, started_at);
-CREATE TABLE IF NOT EXISTS messages (
+)""",
+    "CREATE INDEX IF NOT EXISTS dialogs_user_started ON dialogs (user_id, started_at)",
+    """CREATE TABLE IF NOT EXISTS messages (
     id         TEXT NOT NULL,
     dialog_id  TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
     position   INTEGER NOT NULL,
@@ -50,19 +58,119 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL,
     audio_seconds REAL,
     PRIMARY KEY (dialog_id, id)
-);
-CREATE INDEX IF NOT EXISTS messages_dialog_position ON messages (dialog_id, position);
-CREATE TABLE IF NOT EXISTS client_ids (
+)""",
+    "CREATE INDEX IF NOT EXISTS messages_dialog_position ON messages (dialog_id, position)",
+    """CREATE TABLE IF NOT EXISTS client_ids (
     dialog_id  TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
     client_id  TEXT NOT NULL,
     message_id TEXT NOT NULL,
     PRIMARY KEY (dialog_id, client_id)
-);
-CREATE TABLE IF NOT EXISTS voice_prefs (
+)""",
+    """CREATE TABLE IF NOT EXISTS voice_prefs (
     user_id TEXT PRIMARY KEY,
     voice   TEXT NOT NULL
-);
-"""
+)""",
+)
+
+# Переход 1 → 2: память агента (MEM-5.1, MEM-5.3). Тексты есть только у фактов; события и задания хранят коды и id (I4).
+MIGRATION_V2 = (
+    "ALTER TABLE dialogs ADD COLUMN memory_mode TEXT NOT NULL DEFAULT 'on' CHECK (memory_mode IN ('on', 'off'))",
+    "ALTER TABLE dialogs ADD COLUMN crisis_seen INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE dialogs ADD COLUMN memory_extracted_at TEXT",
+    """CREATE TABLE memory_settings (
+    user_id          TEXT PRIMARY KEY,
+    enabled          INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    consent_version  TEXT,
+    consent_at       TEXT,
+    epoch_at         TEXT,
+    tone_hint_until  TEXT,
+    updated_at       TEXT NOT NULL
+)""",
+    """CREATE TABLE memory_facts (
+    id                TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL,
+    category          TEXT NOT NULL CHECK (category IN
+                        ('style', 'boundary', 'person', 'situation', 'goal', 'works', 'interest', 'recap')),
+    text              TEXT NOT NULL,
+    slots             TEXT,
+    importance        INTEGER NOT NULL CHECK (importance BETWEEN 1 AND 5),
+    confidence        REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+    status            TEXT NOT NULL CHECK (status IN ('candidate', 'proposed', 'active', 'pinned', 'expired')),
+    origin            TEXT NOT NULL CHECK (origin IN ('auto', 'user_said', 'user_edit')),
+    sensitivity       TEXT NOT NULL DEFAULT 'normal' CHECK (sensitivity IN ('normal', 'sensitive')),
+    supersedes_id     TEXT,
+    norm_hash         TEXT NOT NULL,
+    confirm_count     INTEGER NOT NULL DEFAULT 0,
+    seen_by_user      INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    last_confirmed_at TEXT,
+    expires_at        TEXT,
+    purge_after       TEXT
+)""",
+    "CREATE INDEX memory_facts_user_status ON memory_facts (user_id, status)",
+    "CREATE INDEX memory_facts_purge ON memory_facts (purge_after) WHERE purge_after IS NOT NULL",
+    """CREATE TABLE memory_fact_sources (
+    fact_id     TEXT NOT NULL REFERENCES memory_facts (id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    dialog_id   TEXT NOT NULL,
+    message_ids TEXT NOT NULL,
+    PRIMARY KEY (fact_id, dialog_id)
+)""",
+    "CREATE INDEX memory_fact_sources_dialog ON memory_fact_sources (dialog_id)",
+    """CREATE TABLE memory_tombstones (
+    user_id    TEXT NOT NULL,
+    norm_hash  TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, norm_hash)
+)""",
+    """CREATE TABLE memory_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id   TEXT NOT NULL,
+    fact_id   TEXT,
+    op        TEXT NOT NULL CHECK (op IN
+                ('add', 'update', 'confirm', 'supersede', 'expire', 'user_add', 'user_edit', 'user_confirm', 'user_delete',
+                 'forget_all')),
+    actor     TEXT NOT NULL CHECK (actor IN ('extractor', 'user', 'system')),
+    dialog_id TEXT,
+    at        TEXT NOT NULL
+)""",
+    "CREATE INDEX memory_events_user_at ON memory_events (user_id, at)",
+    "CREATE INDEX memory_events_dialog ON memory_events (dialog_id)",
+    """CREATE TABLE memory_jobs (
+    dialog_id       TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('queued', 'running', 'done', 'skipped', 'failed')),
+    skip_reason     TEXT,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    run_after       TEXT NOT NULL,
+    last_error_code TEXT,
+    created_at      TEXT NOT NULL,
+    done_at         TEXT
+)""",
+    "CREATE INDEX memory_jobs_due ON memory_jobs (status, run_after)",
+)
+
+# Что выполнить, чтобы файл версии N - 1 стал версии N. Пустая база сразу создаётся в последней версии.
+MIGRATIONS: dict[int, tuple[str, ...]] = {2: MIGRATION_V2}
+
+# Таблицы памяти: стирание человека чистит каждую явным DELETE по user_id в одной транзакции с диалогами (MEM-13.2, I8).
+MEMORY_TABLES = (
+    "memory_fact_sources",
+    "memory_facts",
+    "memory_tombstones",
+    "memory_events",
+    "memory_jobs",
+    "memory_settings",
+)
+
+
+def migration_statements(version: int) -> list[str]:
+    """Что выполнить над файлом версии `version` (0 — пустой), чтобы он стал версии SCHEMA_VERSION."""
+    statements = list(SCHEMA_V1) if version < 1 else []
+    for target in range(max(version, 1) + 1, SCHEMA_VERSION + 1):
+        statements.extend(MIGRATIONS[target])
+    return statements
 
 # Добавлено поверх версии 1 (см. шапку): создаётся и в новом файле, и в старом.
 USAGE_SCHEMA = """
@@ -106,6 +214,9 @@ class StoredDialog:
     greeting: str | None
     voice: str
     reply_index: int
+    memory_mode: str = "on"
+    crisis_seen: bool = False
+    memory_extracted_at: str | None = None
     # (id, role, text, created_at, audio_seconds) по порядку
     messages: list[tuple[str, str, str, str, float | None]] = field(default_factory=list)
     client_ids: dict[str, str] = field(default_factory=dict)
@@ -116,7 +227,8 @@ class DialogWrite:
     """Что записать за один раз по одному диалогу: строка диалога, новые или изменённые сообщения, идентификаторы клиента."""
 
     dialog_id: str
-    row: tuple[Any, ...]  # (id, user_id, started_at, ended_at, summary_json, greeting, voice, reply_index)
+    # (id, user_id, started_at, ended_at, summary_json, greeting, voice, reply_index, memory_mode, crisis_seen)
+    row: tuple[Any, ...]
     # (id, dialog_id, position, role, text, created_at, audio_seconds)
     messages: list[tuple[Any, ...]] = field(default_factory=list)
     client_ids: list[tuple[str, str, str]] = field(default_factory=list)  # (dialog_id, client_id, message_id)
@@ -161,9 +273,7 @@ class DialogDatabase:
             if version > SCHEMA_VERSION:
                 raise DialogDbError(f"база версии {version} новее агента (версия схемы {SCHEMA_VERSION})")
             if version < SCHEMA_VERSION:
-                with conn:
-                    conn.executescript(SCHEMA)
-                    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                self._migrate(conn, version)
             _upgrade(conn)
             self._conn = conn
         except DialogDbError:
@@ -172,6 +282,22 @@ class DialogDatabase:
             raise DialogDbError(f"{type(error).__name__}: {error}") from error
         dialogs, messages = self.counts()
         logger.info("dialog db opened path=%s schema=v%d dialogs=%d messages=%d", self.path, SCHEMA_VERSION, dialogs, messages)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection, version: int) -> None:
+        """Довести схему до текущей одной транзакцией: при сбое файл остаётся в прежней версии и рабочим (DDL в SQLite
+        транзакционен). Файл текущей версии сюда не попадает, поэтому повторный запуск ничего не делает."""
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in migration_statements(version):
+                conn.execute(statement)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        if version:
+            logger.info("dialog db migrated schema v%d -> v%d", version, SCHEMA_VERSION)
 
     def close(self) -> None:
         with self._lock:
@@ -211,10 +337,13 @@ class DialogDatabase:
                     greeting=row[5],
                     voice=row[6],
                     reply_index=row[7],
+                    memory_mode=row[8],
+                    crisis_seen=bool(row[9]),
+                    memory_extracted_at=row[10],
                 )
                 for row in conn.execute(
-                    "SELECT id, user_id, started_at, ended_at, summary, greeting, voice, reply_index "
-                    "FROM dialogs WHERE user_id = ? ORDER BY started_at, id",
+                    "SELECT id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, memory_mode, crisis_seen, "
+                    "memory_extracted_at FROM dialogs WHERE user_id = ? ORDER BY started_at, id",
                     (user_id,),
                 )
             }
@@ -239,11 +368,14 @@ class DialogDatabase:
             conn = self._connection()
             with conn:
                 for write in writes:
+                    # memory_mode неизменяем после создания, crisis_seen только растёт, а memory_extracted_at пишет лишь воркер
+                    # памяти отдельным запросом: писатель диалогов его не трогает, иначе затёр бы отметку воркера (MEM-5.3).
                     conn.execute(
-                        "INSERT INTO dialogs (id, user_id, started_at, ended_at, summary, greeting, voice, reply_index) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET "
+                        "INSERT INTO dialogs (id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, "
+                        "memory_mode, crisis_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET "
                         "ended_at = excluded.ended_at, summary = excluded.summary, greeting = excluded.greeting, "
-                        "voice = excluded.voice, reply_index = excluded.reply_index",
+                        "voice = excluded.voice, reply_index = excluded.reply_index, "
+                        "crisis_seen = MAX(dialogs.crisis_seen, excluded.crisis_seen)",
                         clean_row(write.row),
                     )
                     conn.executemany(
@@ -268,12 +400,49 @@ class DialogDatabase:
                             clean_row(write.pref),
                         )
 
+    def run(self, operation: Callable[[sqlite3.Connection], T]) -> T:
+        """Выполнить операцию над базой одной транзакцией, под тем же замком, что запись диалогов (память агента,
+        app/memory/store.py). Исключение откатывает всё, что операция успела сделать."""
+        with self._lock:
+            conn = self._connection()
+            with conn:
+                return operation(conn)
+
+    def checkpoint(self) -> None:
+        """Перенести журнал WAL в файл и усечь его: после удаления прежние образы страниц с текстом не остаются в журнале."""
+        with self._lock:
+            self._connection().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def erase_user(self, user_id: str) -> None:
-        """Стереть всё о человеке (диалоги, сообщения, расход моделей, выбор голоса). Идемпотентно."""
+        """Стереть всё о человеке (диалоги, сообщения, расход моделей, выбор голоса и всю память) одной транзакцией. Идемпотентно."""
         with self._lock:
             conn = self._connection()
             with conn:
                 conn.execute("DELETE FROM dialogs WHERE user_id = ?", (user_id,))  # сообщения и расход уходят каскадом
                 conn.execute("DELETE FROM voice_prefs WHERE user_id = ?", (user_id,))
+                for table in MEMORY_TABLES:  # явно по каждой таблице: на каскад внешних ключей память не полагается
+                    conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
             # Прежние образы страниц с текстом лежат в журнале WAL до его усечения: без этого «стёрто» неправда для файла на диске.
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
+        """Удалить один диалог человека целиком: сообщения, идентификаторы клиента, задание и события памяти по нему.
+
+        `forget_derived`: факты, у которых этот диалог был единственным источником и которые извлечены автоматически, удаляются
+        (без надгробия: человек их не отвергал); у остальных фактов ссылка на диалог просто убирается (MEM-13.4).
+        """
+        with self._lock:
+            conn = self._connection()
+            with conn:
+                if forget_derived:
+                    conn.execute(
+                        "DELETE FROM memory_facts WHERE user_id = ? AND origin = 'auto' AND id IN "
+                        "(SELECT fact_id FROM memory_fact_sources WHERE dialog_id = ? AND user_id = ?) AND NOT EXISTS "
+                        "(SELECT 1 FROM memory_fact_sources s WHERE s.fact_id = memory_facts.id AND s.dialog_id != ?)",
+                        (user_id, dialog_id, user_id, dialog_id),
+                    )
+                conn.execute("DELETE FROM memory_fact_sources WHERE dialog_id = ? AND user_id = ?", (dialog_id, user_id))
+                conn.execute("DELETE FROM memory_events WHERE dialog_id = ? AND user_id = ?", (dialog_id, user_id))
+                conn.execute("DELETE FROM memory_jobs WHERE dialog_id = ? AND user_id = ?", (dialog_id, user_id))
+                conn.execute("DELETE FROM dialogs WHERE id = ? AND user_id = ?", (dialog_id, user_id))
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

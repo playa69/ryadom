@@ -41,6 +41,9 @@ class StartBody(BaseModel):
 
     voice: Literal["male", "female"] | None = None
     new: bool = False
+    # `off` — разговор «Без памяти»: без сводки и извлечения, текст удаляется через 24 часа (спецификация памяти, MEM-9).
+    # Только для нового диалога: возвращённый открытый остаётся со своей памятью.
+    memory: Literal["on", "off"] = "on"
 
 
 @router.post("/dialogs")
@@ -48,8 +51,15 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
     start = body or StartBody()
     user = _user(user_id)
     await store.ensure_user(user)
-    dialog, resumed, hours = store.start(user, start.voice, start.new)
-    logger.info("dialog started dialog=%s resumed=%s new=%s voice=%s", dialog.id, resumed, start.new, dialog.voice)
+    dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory)
+    logger.info(
+        "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s",
+        dialog.id,
+        resumed,
+        start.new,
+        dialog.voice,
+        dialog.memory_mode,
+    )
     return {
         "dialogId": dialog.id,
         "resumed": resumed,
@@ -58,6 +68,8 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
         "voice": dialog.voice,
         "messageCount": len(dialog.messages),
         "lastActivityAt": dialog.last_activity_at,
+        "memoryMode": dialog.memory_mode,
+        "memoryEnabled": store.memory_enabled(user),
     }
 
 

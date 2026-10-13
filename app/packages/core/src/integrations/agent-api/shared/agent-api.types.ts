@@ -16,6 +16,8 @@ export interface AgentDialogListItemResponse {
   startedAt: string
   endedAt: string | null
   summary: AgentDialogSummaryResponse | null
+  /** `off`: a conversation "without memory". Absent from an agent without memory, which means `on`. */
+  memoryMode?: string
 }
 
 export interface AgentMessageResponse {

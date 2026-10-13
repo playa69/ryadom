@@ -30,4 +30,5 @@ export {
   deviceIdInputSchema,
   deviceKeyInputSchema,
   consentVersionInputSchema,
+  memoryFactTextInputSchema,
 } from './input-schemas'

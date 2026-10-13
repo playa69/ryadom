@@ -15,8 +15,9 @@ import {
   f7,
 } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
-import { apiErrorText, getCurrentUser, updateProfile } from '../../../lib/api'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { memoryInUse, memorySectionStatus, shouldShowMemorySection } from '@ryadom/client-core/memory'
+import { apiErrorText, getCurrentUser, getMemory, updateProfile } from '../../../lib/api'
 import { getVersionInfo } from '../../../lib/device'
 import { DEFAULT_AGENT_VOICE, type AgentVoice } from '@ryadom/contracts/api/auth/me'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
@@ -41,6 +42,25 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   const versionTaps = useRef(0)
   const user = auth.user
   const userId = user?.id ?? null
+  /**
+   * The section "Память": shown only when the feature works or the person has something there, and
+   * not at all when that cannot be learnt. Only the decision and a word are kept, never the facts.
+   * Read again whenever the profile comes into view: the memory screen above it changes the answer.
+   */
+  const [memorySection, setMemorySection] = useState<{ status: string } | null>(null)
+  const loadMemorySection = useCallback(() => {
+    if (!userId) return
+    getMemory()
+      .then((memory) => {
+        setMemorySection(shouldShowMemorySection(memory) ? { status: memorySectionStatus(memory) } : null)
+        updateUser({ memoryEnabled: memoryInUse(memory) })
+      })
+      .catch(() => setMemorySection(null))
+  }, [userId, updateUser])
+
+  useEffect(() => {
+    loadMemorySection()
+  }, [loadMemorySection])
   // The voice the agent speaks with; it is saved on the account and applies from the next conversation.
   const voice: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
   // Hands-free belongs to this device, not the account: it applies from the next conversation.
@@ -166,7 +186,12 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   }
 
   return (
-    <Page name="profile" className="ph-no-capture">
+    <Page
+      name="profile"
+      className="ph-no-capture"
+      onPageTabShow={loadMemorySection}
+      onPageAfterIn={loadMemorySection}
+    >
       <Navbar title="Профиль" />
 
       <div className="rd-profile-head">
@@ -240,6 +265,28 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
         </Block>
       )}
       </section>
+
+      {memorySection && (
+        <section className="rd-profile-group" data-testid="memory-section">
+          <BlockTitle>Память</BlockTitle>
+          <List inset strong className="rd-menu">
+            <ListItem
+              link
+              title="Что я помню"
+              after={memorySection.status}
+              data-testid="row-memory"
+              onClick={() => f7router.navigate('/profile/memory/')}
+            >
+              <Icon slot="media" f7="sparkles" />
+            </ListItem>
+          </List>
+          <Block>
+            <p className="rd-caption">
+              Важное из наших разговоров, чтобы не начинать с нуля. Включается только по твоему желанию.
+            </p>
+          </Block>
+        </section>
+      )}
 
       <section className="rd-profile-group" data-testid="voice-section">
         <BlockTitle>Голос агента</BlockTitle>

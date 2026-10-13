@@ -23,6 +23,8 @@ export interface ResumeDialogSheetProps {
   /** The request for a new conversation is in flight: one press is enough, and the sheet must not vanish under it. */
   busy: boolean
   error: string
+  /** A line under the question, e.g. that "Без памяти" applies only to a new conversation. */
+  note?: string
 }
 
 export default function ResumeDialogSheet({
@@ -32,6 +34,7 @@ export default function ResumeDialogSheet({
   onClose,
   busy,
   error,
+  note,
 }: ResumeDialogSheetProps) {
   return (
     <Modal
@@ -44,6 +47,11 @@ export default function ResumeDialogSheet({
       <p className="text-base leading-[1.55] text-dim" data-testid="resume-text">
         Продолжить его или завершить и начать новый?
       </p>
+      {note && (
+        <p className="text-sm leading-normal text-faint" data-testid="resume-note">
+          {note}
+        </p>
+      )}
 
       {error && (
         <FieldError className="text-center leading-[1.4]" data-testid="form-error">

@@ -5,8 +5,8 @@ export type { Logger }
 
 /**
  * What the logger redacts from entries: passwords, codes from emails, tokens, secrets, the header
- * carrying the access token and, separately, dialog message text. Conversation content never
- * reaches the logs.
+ * carrying the access token and, separately, dialog message text and the agent's memory (the text
+ * and slots of facts). Conversation content and what is remembered never reach the logs.
  */
 export const LOG_REDACT = [
   'password',
@@ -21,6 +21,8 @@ export const LOG_REDACT = [
   'authorization',
   'cookie',
   'text',
+  'slots',
+  'facts',
   'takeaway',
   'greeting',
   'req.headers.authorization',

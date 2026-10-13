@@ -67,7 +67,7 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
             [
                 DialogWrite(
                     dialog_id=dialog_id,
-                    row=(dialog_id, owner, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2),
+                    row=(dialog_id, owner, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2, "on", 0),
                     messages=[
                         ("m1", dialog_id, 0, "user", "Мне тревожно", "2026-10-12T10:00:01.000Z", 3.2),
                         ("m2", dialog_id, 1, "assistant", "Я рядом.", "2026-10-12T10:00:02.000Z", None),
@@ -114,7 +114,7 @@ PRAGMA user_version = 1;
 """
 
 
-def test_file_of_the_previous_agent_gets_the_usage_table_and_keeps_its_version(tmp_path: Path) -> None:
+def test_file_of_the_previous_agent_gets_the_usage_table_and_the_memory_schema(tmp_path: Path) -> None:
     path = tmp_path / "old.sqlite3"
     with sqlite3.connect(path) as raw:
         raw.executescript(SCHEMA_0_4_0)
@@ -125,7 +125,7 @@ def test_file_of_the_previous_agent_gets_the_usage_table_and_keeps_its_version(t
         [
             DialogWrite(
                 dialog_id="d1",
-                row=("d1", "u1", "2026-10-12T10:00:00.000Z", None, None, None, "male", 0),
+                row=("d1", "u1", "2026-10-12T10:00:00.000Z", None, None, None, "male", 0, "on", 0),
                 usage=[("d1", "m1", "2026-10-12T10:00:02.000Z", "whisper", "stt", "input", "audio", "seconds", 2.5)],
             )
         ]
@@ -135,8 +135,9 @@ def test_file_of_the_previous_agent_gets_the_usage_table_and_keeps_its_version(t
     again.open()  # повторное обновление ничего не ломает
     again.close()
     with sqlite3.connect(path) as raw:
-        # Версия та же: агент 0.4.0 (откат образа) по-прежнему открывает этот файл.
-        assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 1
+        # Таблица расхода добавочная (_upgrade), версию поднимает память агента: 1 → 2. Откат образа на 0.4.0 с версии 2
+        # не поддерживается (старый агент отказывается открывать файл), это решение схемы памяти.
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
         assert raw.execute("SELECT message_id, amount FROM model_usage").fetchall() == [("m1", 2.5)]
 
 

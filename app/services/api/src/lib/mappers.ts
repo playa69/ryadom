@@ -2,6 +2,14 @@ import type { SessionDTO } from '@ryadom/core/managers/refresh-tokens-manager'
 import type { UserDTO } from '@ryadom/core/processes/authentication'
 import type { ConsentStatusDTO } from '@ryadom/core/processes/consents'
 import type { DialogDTO, DialogListItemDTO, DialogSummaryDTO } from '@ryadom/core/processes/dialogs'
+import type {
+  MemoryChangesDTO,
+  MemoryDTO,
+  MemoryExportDTO,
+  MemoryFactDTO,
+  MemoryFactSlotsDTO,
+  MemorySettingsDTO,
+} from '@ryadom/core/processes/memory'
 import { describeUserAgent } from '@ryadom/core/shared'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import { SessionClient, type SessionApiResponse } from '@ryadom/contracts/api/auth/sessions'
@@ -12,6 +20,22 @@ import {
   type DialogListItemApiResponse,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
+import {
+  DialogMemoryMode,
+  MemoryChangeOp,
+  MemoryChangesStatus,
+  MemoryFactCategory,
+  MemoryFactOrigin,
+  MemoryFactSensitivity,
+  MemoryFactStatus,
+  MemoryServiceMode,
+  type MemoryApiResponse,
+  type MemoryChangesApiResponse,
+  type MemoryExportApiResponse,
+  type MemoryFactApiResponse,
+  type MemoryFactSlots,
+  type UpdateMemorySettingsApiResponse,
+} from '@ryadom/contracts/api/memory'
 
 /**
  * Mappers from core DTOs to route responses. Core DTOs never leave the server and
@@ -79,6 +103,7 @@ export function toDialogListItem(item: DialogListItemDTO): DialogListItemApiResp
     startedAt: item.startedAt.toISOString(),
     endedAt: item.endedAt?.toISOString() ?? null,
     summary: toDialogSummary(item.summary),
+    memoryMode: toDialogMemoryMode(item.memoryMode),
   }
 }
 
@@ -92,6 +117,184 @@ export function toDialog(dialog: DialogDTO): DialogApiResponse {
       createdAt: message.createdAt.toISOString(),
       // Nothing marks a message as a crisis any more: the screen only ever got the SOS frame for it.
       safetyLevel: null,
+    })),
+  }
+}
+
+// ─── Memory ───────────────────────────────────────────────────────────────────
+//
+// The core and the contract spell the same values, one as strings and the other as enums. Each
+// table names every value of the core's side, so a value the core gains breaks the build here
+// instead of reaching the apps unannounced. Facts go to their owner only: no mapper here is used
+// for a log, analytics or the admin panel.
+
+const DIALOG_MEMORY_MODES: Record<DialogListItemDTO['memoryMode'], DialogMemoryMode> = {
+  on: DialogMemoryMode.On,
+  off: DialogMemoryMode.Off,
+}
+
+const MEMORY_SERVICE_MODES: Record<MemoryDTO['mode'], MemoryServiceMode> = {
+  off: MemoryServiceMode.Off,
+  shadow: MemoryServiceMode.Shadow,
+  on: MemoryServiceMode.On,
+}
+
+const MEMORY_FACT_CATEGORIES: Record<MemoryFactDTO['category'], MemoryFactCategory> = {
+  style: MemoryFactCategory.Style,
+  boundary: MemoryFactCategory.Boundary,
+  person: MemoryFactCategory.Person,
+  situation: MemoryFactCategory.Situation,
+  goal: MemoryFactCategory.Goal,
+  works: MemoryFactCategory.Works,
+  interest: MemoryFactCategory.Interest,
+  recap: MemoryFactCategory.Recap,
+}
+
+const MEMORY_FACT_STATUSES: Record<MemoryFactDTO['status'], MemoryFactStatus> = {
+  candidate: MemoryFactStatus.Candidate,
+  proposed: MemoryFactStatus.Proposed,
+  active: MemoryFactStatus.Active,
+  pinned: MemoryFactStatus.Pinned,
+  expired: MemoryFactStatus.Expired,
+}
+
+const MEMORY_FACT_ORIGINS: Record<MemoryFactDTO['origin'], MemoryFactOrigin> = {
+  auto: MemoryFactOrigin.Auto,
+  user_said: MemoryFactOrigin.UserSaid,
+  user_edit: MemoryFactOrigin.UserEdit,
+}
+
+const MEMORY_FACT_SENSITIVITIES: Record<MemoryFactDTO['sensitivity'], MemoryFactSensitivity> = {
+  normal: MemoryFactSensitivity.Normal,
+  sensitive: MemoryFactSensitivity.Sensitive,
+}
+
+const MEMORY_CHANGES_STATUSES: Record<MemoryChangesDTO['status'], MemoryChangesStatus> = {
+  pending: MemoryChangesStatus.Pending,
+  ready: MemoryChangesStatus.Ready,
+  skipped: MemoryChangesStatus.Skipped,
+}
+
+const MEMORY_CHANGE_OPS: Record<MemoryChangesDTO['items'][number]['op'], MemoryChangeOp> = {
+  add: MemoryChangeOp.Add,
+  update: MemoryChangeOp.Update,
+  confirm: MemoryChangeOp.Confirm,
+  supersede: MemoryChangeOp.Supersede,
+}
+
+/** The other way: what the app sent, as the core spells it. */
+function inverse<K extends string, V extends string>(table: Record<K, V>): Record<V, K> {
+  return Object.fromEntries(Object.entries(table).map(([key, value]) => [value, key])) as Record<V, K>
+}
+
+const CORE_DIALOG_MEMORY_MODES = inverse(DIALOG_MEMORY_MODES)
+const CORE_MEMORY_FACT_CATEGORIES = inverse(MEMORY_FACT_CATEGORIES)
+
+export function toDialogMemoryMode(mode: DialogListItemDTO['memoryMode']): DialogMemoryMode {
+  return DIALOG_MEMORY_MODES[mode]
+}
+
+export function fromDialogMemoryMode(mode: DialogMemoryMode): DialogListItemDTO['memoryMode'] {
+  return CORE_DIALOG_MEMORY_MODES[mode]
+}
+
+export function fromMemoryFactCategory(category: MemoryFactCategory): MemoryFactDTO['category'] {
+  return CORE_MEMORY_FACT_CATEGORIES[category]
+}
+
+/** `style` keeps its five slots, `person` its three (and only with a role); other categories have none. */
+function toMemoryFactSlots(
+  category: MemoryFactDTO['category'],
+  slots: MemoryFactSlotsDTO | null,
+): MemoryFactSlots | null {
+  if (!slots) return null
+  if (category === 'style') {
+    const style: MemoryFactSlots = {}
+    if (slots.address !== undefined) style.address = slots.address
+    if (slots.form !== undefined) style.form = slots.form
+    if (slots.length !== undefined) style.length = slots.length
+    if (slots.advice !== undefined) style.advice = slots.advice
+    if (slots.tone !== undefined) style.tone = slots.tone
+    return style
+  }
+  if (category === 'person' && slots.role !== undefined) {
+    return {
+      role: slots.role,
+      ...(slots.name !== undefined ? { name: slots.name } : {}),
+      ...(slots.note !== undefined ? { note: slots.note } : {}),
+    }
+  }
+  return null
+}
+
+export function toMemoryFact(fact: MemoryFactDTO): MemoryFactApiResponse {
+  return {
+    id: fact.id,
+    category: MEMORY_FACT_CATEGORIES[fact.category],
+    text: fact.text,
+    slots: toMemoryFactSlots(fact.category, fact.slots),
+    importance: fact.importance,
+    confidence: fact.confidence,
+    status: MEMORY_FACT_STATUSES[fact.status],
+    origin: MEMORY_FACT_ORIGINS[fact.origin],
+    sensitivity: MEMORY_FACT_SENSITIVITIES[fact.sensitivity],
+    sources: fact.sources.map((source) => ({ dialogId: source.dialogId, date: source.date })),
+    createdAt: fact.createdAt.toISOString(),
+    updatedAt: fact.updatedAt.toISOString(),
+    lastConfirmedAt: fact.lastConfirmedAt?.toISOString() ?? null,
+    expiresAt: fact.expiresAt?.toISOString() ?? null,
+    confirmCount: fact.confirmCount,
+    seenByUser: fact.seenByUser,
+  }
+}
+
+export function toMemory(memory: MemoryDTO): MemoryApiResponse {
+  return {
+    available: memory.available,
+    mode: MEMORY_SERVICE_MODES[memory.mode],
+    enabled: memory.enabled,
+    consentVersion: memory.consentVersion,
+    consentAt: memory.consentAt?.toISOString() ?? null,
+    rulesVersion: memory.rulesVersion,
+    limits: { maxFacts: memory.maxFacts },
+    facts: memory.facts.map(toMemoryFact),
+  }
+}
+
+export function toMemorySettings(settings: MemorySettingsDTO): UpdateMemorySettingsApiResponse {
+  return {
+    enabled: settings.enabled,
+    consentVersion: settings.consentVersion,
+    consentAt: settings.consentAt?.toISOString() ?? null,
+  }
+}
+
+export function toMemoryChanges(changes: MemoryChangesDTO): MemoryChangesApiResponse {
+  return {
+    status: MEMORY_CHANGES_STATUSES[changes.status],
+    reason: changes.reason,
+    items: changes.items.map((item) => ({ op: MEMORY_CHANGE_OPS[item.op], fact: toMemoryFact(item.fact) })),
+  }
+}
+
+export function toMemoryExport(exported: MemoryExportDTO): MemoryExportApiResponse {
+  return {
+    exportedAt: exported.exportedAt.toISOString(),
+    rulesVersion: exported.rulesVersion,
+    settings: {
+      enabled: exported.settings.enabled,
+      consentVersion: exported.settings.consentVersion,
+      consentAt: exported.settings.consentAt?.toISOString() ?? null,
+      epochAt: exported.settings.epochAt?.toISOString() ?? null,
+      updatedAt: exported.settings.updatedAt?.toISOString() ?? null,
+    },
+    facts: exported.facts.map(toMemoryFact),
+    events: exported.events.map((event) => ({
+      factId: event.factId,
+      op: event.op,
+      actor: event.actor,
+      dialogId: event.dialogId,
+      at: event.at.toISOString(),
     })),
   }
 }

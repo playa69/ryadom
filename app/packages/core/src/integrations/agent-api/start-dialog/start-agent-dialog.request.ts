@@ -1,5 +1,6 @@
 import { RequestData } from 'mediatr-ts'
 import type { AgentVoice } from '@ryadom/db/schema'
+import type { AgentDialogMemoryMode } from '../shared/agent-memory.types'
 import type { StartAgentDialogResponse } from './start-agent-dialog.types'
 
 export interface StartAgentDialogRequestData {
@@ -12,6 +13,11 @@ export interface StartAgentDialogRequestData {
    * returns the open dialog.
    */
   startNew?: boolean
+  /**
+   * `off` holds a new dialog "without memory"; only a new dialog takes it, a returned open one keeps
+   * its own. Without it the agent's default (`on`) applies.
+   */
+  memory?: AgentDialogMemoryMode
 }
 
 export class StartAgentDialogRequest extends RequestData<StartAgentDialogResponse> {
@@ -21,11 +27,13 @@ export class StartAgentDialogRequest extends RequestData<StartAgentDialogRespons
   public readonly userId: string
   public readonly voice: AgentVoice | undefined
   public readonly startNew: boolean
+  public readonly memory: AgentDialogMemoryMode | undefined
 
   constructor(data: StartAgentDialogRequestData) {
     super()
     this.userId = data.userId
     this.voice = data.voice
     this.startNew = data.startNew === true
+    this.memory = data.memory
   }
 }
