@@ -1,0 +1,53 @@
+# =============================================================================
+# Под для выноса копии файла диалогов с кластера (после backup-job.yaml) — см. RUNBOOK-0.5.0.md
+# =============================================================================
+# Агент остановлен (том RWO). `kubectl -n agent cp agent-db-reader:/data/backups/<файл> ./<файл>` (нужен exec, то есть admin).
+# Удалить сразу после копирования: `kubectl -n agent delete pod agent-db-reader`. Не применяется автоматически.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-db-reader
+  namespace: agent
+  labels:
+    app: agent-db-reader
+    app.kubernetes.io/part-of: ryadom
+  annotations:
+    sidecar.istio.io/inject: "false"
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  imagePullSecrets:
+    - name: registry-pull
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: reader
+      image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.4.0
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      command: ["sleep", "1800"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: agent-data
