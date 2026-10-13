@@ -223,6 +223,7 @@ k8s/kubeconfig*.yaml
 
 # Пакет онбординга разработчиков в корне (передаётся лично, содержит секреты)
 /developer-kubeconfig.yaml
+/admin-kubeconfig.yaml
 /registry-pusher-key.json
 /ONBOARDING.md
 
@@ -235,3 +236,7 @@ backend/.env
 agent/.venv/
 agent/logs/
 agent/.env
+loadtest/out/
+loadtest/.venv/
+loadtest/pool.json
+loadtest/pool.tmp

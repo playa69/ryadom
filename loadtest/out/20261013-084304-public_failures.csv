@@ -1,0 +1,12 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+WS,WS connect+hello,WebSocketConnectionClosedException('Connection to remote host was lost.'),10,2026-10-13T06:02:16Z,2026-10-13T06:09:05Z
+REST,REST start_dialog,"RuntimeError(""start_dialog: HTTP 503 {'errorMessage': 'Dialog agent is unavailable'}"")",109,2026-10-13T05:50:23Z,2026-10-13T05:55:31Z
+REST,REST start_dialog,"ReadTimeout(ReadTimeoutError(""HTTPSConnectionPool(host='xn----htbtgjker8b3a2c.xn--p1ai', port=443): Read timed out. (read timeout=30)""))",1,2026-10-13T06:08:19Z,2026-10-13T06:08:19Z
+WS,WS connect+hello,"RuntimeError(""ожидали ready, получили {'v': 1, 'type': 'error', 'code': 'UNAUTHORIZED', 'message': 'hello frame expected'}"")",13,2026-10-13T05:53:24Z,2026-10-13T06:08:34Z
+WS,WS turn total,WebSocketTimeoutException('Connection timed out'),3,2026-10-13T06:05:50Z,2026-10-13T06:09:03Z
+WS,WS connect+hello,WebSocketTimeoutException('Connection timed out'),52,2026-10-13T05:50:23Z,2026-10-13T06:02:16Z
+REST,REST start_dialog,"ConnectionError(ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))",25,2026-10-13T05:48:30Z,2026-10-13T06:09:05Z
+WS,WS turn total,WebSocketConnectionClosedException('Connection to remote host was lost.'),318,2026-10-13T05:45:18Z,2026-10-13T06:09:08Z
+WS,WS connect+hello,"RuntimeError(""ожидали ready, получили {'v': 1, 'type': 'error', 'code': 'AGENT_UNAVAILABLE', 'message': 'agent is unavailable'}"")",40,2026-10-13T05:50:40Z,2026-10-13T05:57:16Z
+WS,WS turn total,"BrokenPipeError(32, 'Broken pipe')",1,2026-10-13T05:46:09Z,2026-10-13T05:46:09Z
+WS,WS turn total,RuntimeError('gateway error: VOICE_UNAVAILABLE'),6534,2026-10-13T05:44:54Z,2026-10-13T06:09:06Z
