@@ -124,6 +124,16 @@ export interface EndDialogApiResponse {
   summary: DialogSummaryApiResponse | null
 }
 
+/**
+ * `POST /api/dialogs/:id/recap`: what the conversation was about and where it got to, in a sentence
+ * or two, for the closing sheet to put into "what you take with you". It ends nothing and is stored
+ * nowhere: only what the person sends with `end` is kept. `null` means there is none to give (a
+ * short talk, a talk "without memory", a crisis, or the model did not answer in time).
+ */
+export interface DialogRecapApiResponse {
+  recap: string | null
+}
+
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
 /** Frames from the client. The first must be `hello`: a browser cannot set headers on a socket. */

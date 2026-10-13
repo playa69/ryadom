@@ -10,6 +10,8 @@ import {
   GetDialogOperation,
   GetDialogOperationErrorCode,
   ListDialogsOperation,
+  RecapDialogOperation,
+  RecapDialogOperationErrorCode,
   StartDialogOperation,
   StartDialogOperationErrorCode,
 } from '../src/processes/dialogs'
@@ -394,5 +396,65 @@ describe('завершение разговора', () => {
         new EndDialogOperation({ userId: user.id, dialogId: 'd-x', takeaway: null, tensionAfter: null }),
       ),
     ).toEqual({ success: false, error: EndDialogOperationErrorCode.DIALOG_NOT_FOUND })
+  })
+})
+
+describe('итог разговора для листа завершения', () => {
+  const recap = (userId: string, dialogId = 'd-1') =>
+    dialogsProcess.execute(new RecapDialogOperation({ userId, dialogId }))
+
+  it('просит итог у агента без тела и отдаёт его как есть', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/recap': () =>
+        json({ recap: 'Говорили о работе. Решили взять выходной.' }),
+    })
+
+    expect(await recap(user.id)).toEqual({
+      success: true,
+      recap: 'Говорили о работе. Решили взять выходной.',
+    })
+    const call = calls.at(-1)!
+    expect(call.method).toBe('POST')
+    expect(call.url.pathname).toBe(`/v1/users/${user.id}/dialogs/d-1/recap`)
+    expect(call.body).toBe('')
+  })
+
+  it('итога нет — null: и когда агент так и ответил, и когда прислал пустую строку или ничего', async () => {
+    const user = await registerConfirmedUser()
+    for (const body of [{ recap: null }, { recap: '  ' }, {}]) {
+      mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json(body) })
+      expect(await recap(user.id)).toEqual({ success: true, recap: null })
+    }
+  })
+
+  it('чужой диалог — DIALOG_NOT_FOUND; заблокированному и удалённому недоступно, агента не спрашиваем', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: 'not_found' }, 404),
+    })
+    expect(await recap(user.id, 'd-x')).toEqual({
+      success: false,
+      error: RecapDialogOperationErrorCode.DIALOG_NOT_FOUND,
+    })
+
+    const { calls } = mockAgent()
+    const blocked = await registerConfirmedUser()
+    await blockDirectly(blocked.id)
+    expect(await recap(blocked.id)).toEqual({
+      success: false,
+      error: RecapDialogOperationErrorCode.USER_INACTIVE,
+    })
+    expect(await recap('00000000-0000-4000-8000-000000000000')).toEqual({
+      success: false,
+      error: RecapDialogOperationErrorCode.USER_NOT_FOUND,
+    })
+    expect(calls.filter((call) => call.url.pathname.endsWith('/recap'))).toEqual([])
+  })
+
+  it('агент лёг — AgentUnavailableError: клиент просто оставит поле пустым', async () => {
+    const user = await registerConfirmedUser()
+    mockFetch({ 'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: 'boom' }, 502) })
+    await expect(recap(user.id)).rejects.toBeInstanceOf(AgentUnavailableError)
   })
 })

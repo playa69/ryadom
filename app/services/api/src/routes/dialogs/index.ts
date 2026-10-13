@@ -6,6 +6,8 @@ import {
   GetDialogOperationErrorCode,
   ListDialogsOperation,
   ListDialogsOperationErrorCode,
+  RecapDialogOperation,
+  RecapDialogOperationErrorCode,
   StartDialogOperation,
   StartDialogOperationErrorCode,
 } from '@ryadom/core/processes/dialogs'
@@ -16,6 +18,7 @@ import {
   DialogApiErrorCode,
   DialogMode,
   StartDialogApiErrorCode,
+  type DialogRecapApiResponse,
   type EndDialogApiResponse,
   type ListDialogsApiResponse,
   type StartDialogApiResponse,
@@ -40,8 +43,8 @@ import { jsonBody, queryParams } from '../../lib/request'
 
 /**
  * Dialog REST. The conversation itself runs over WebSocket (`server/dialogs/gateway.ts`); this
- * file covers starting one, the history, reading a single conversation, and ending it when the
- * socket has already dropped.
+ * file covers starting one, the history, reading a single conversation, the recap for the closing
+ * sheet, and ending it when the socket has already dropped.
  */
 
 // The mode is still accepted: builds in the wild send it. The agent has one way of talking so far, so it
@@ -157,6 +160,37 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
     }
     return apiOk(c, toDialog(result.dialog))
   })
+
+  // The recap retells the conversation and costs a model call, so an ended session cannot ask for it,
+  // and it has a ceiling of its own.
+  app.post(
+    `${ApiPath.Dialogs}/:dialogId/recap`,
+    requireAuth(jwt),
+    requireActiveSession(sessions),
+    async (c) => {
+      const { userId } = authUser(c)
+      if (!(await rateLimiter.hit(`user:dialog-recap:${userId}`, RATE_LIMITS.dialogRecap.perUser))) {
+        return apiError(c, 429, 'Too many dialog recaps')
+      }
+      const result = await dialogsProcess.execute(
+        new RecapDialogOperation({ userId, dialogId: c.req.param('dialogId') }),
+      )
+      if (!result.success) {
+        switch (result.error) {
+          case RecapDialogOperationErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, DialogApiErrorCode.USER_NOT_FOUND, 'User not found')
+          case RecapDialogOperationErrorCode.USER_INACTIVE:
+            return apiRefused(c, DialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
+          case RecapDialogOperationErrorCode.DIALOG_NOT_FOUND:
+            return apiRefused(c, DialogApiErrorCode.DIALOG_NOT_FOUND, 'Dialog not found')
+          default:
+            return assertNever(result.error)
+        }
+      }
+      const response: DialogRecapApiResponse = { recap: result.recap }
+      return apiOk(c, response)
+    },
+  )
 
   app.post(`${ApiPath.Dialogs}/:dialogId/end`, requireAuth(jwt), jsonBody(endBody), async (c) => {
     const body = c.req.valid('json')

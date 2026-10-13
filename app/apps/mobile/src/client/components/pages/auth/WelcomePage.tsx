@@ -68,7 +68,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
         <p className="rd-muted">
           {signedIn
             ? 'Один раз подтверди, что согласен(на), — и можно говорить.'
-            : 'Когда нужно, чтобы кто‑то был рядом. Поговорить можно сразу, без регистрации.'}
+            : 'Голосовой собеседник, который поможет разобраться в мыслях. Поговорить можно сразу, без регистрации.'}
         </p>
       </div>
 
@@ -103,6 +103,11 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
             У меня уже есть аккаунт
           </Button>
         )}
+        {/* What happens to the words, said where the terms are accepted: the landing page's promises. */}
+        <p className="rd-fineprint">
+          Голос не записывается, разговоры хранятся в России и не используются для рекламы. Стереть всё можно в
+          профиле одной кнопкой.
+        </p>
         {!signedIn && (
           <p className="rd-fineprint">
             Без почты разговоры хранятся {ANONYMOUS_RETENTION_DAYS} дней после последнего визита. Привязать

@@ -1,6 +1,7 @@
 'use client'
 
 import { useId, useState } from 'react'
+import { recapOutcome, takesRecap, type RecapOutcome } from '@ryadom/client-core/dialog-recap'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { Button } from '@ryadom/ui/components/button'
 import { FieldError } from '@ryadom/ui/components/field'
@@ -15,11 +16,18 @@ import { BUTTON } from './controls'
  *
  * Tension is not a survey for the sake of statistics: the product's headline metric is the
  * difference between before and after. So the scale is there, but it can be skipped.
+ *
+ * The takeaway starts as the agent's recap (what the talk was about and where it got to) once it
+ * arrives, for the person to keep, edit or erase; their own words are never overwritten.
  */
 export interface DialogEndSheetProps {
   open: boolean
   onClose(): void
-  onSubmit(takeaway: string | null, tensionAfter: number | null): void
+  onSubmit(takeaway: string | null, tensionAfter: number | null, recap: RecapOutcome): void
+  /** The agent's recap for the field; null while there is none (not asked yet, none to give, failed). */
+  recap: string | null
+  /** The recap is being written: the hint says so, the field stays editable. */
+  recapPending: boolean
   /** The end request is in flight: one press is enough, and the sheet must not vanish under it. */
   busy: boolean
   error: string
@@ -32,12 +40,37 @@ const SCALE = Array.from({ length: 10 }, (_, index) => index + 1)
 // conversation without scrolling.
 const SHORT_BUTTON = '[@media(max-height:520px)]:h-11 [@media(max-height:520px)]:flex-1'
 
-export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }: DialogEndSheetProps) {
+export default function DialogEndSheet({
+  open,
+  onClose,
+  onSubmit,
+  recap,
+  recapPending,
+  busy,
+  error,
+}: DialogEndSheetProps) {
   // Held here, not in the modal body (which unmounts on close): going back to the conversation
   // must not throw away what the person had already written.
   const [takeaway, setTakeaway] = useState('')
   const [tension, setTension] = useState<number | null>(null)
+  // The last recap received and the one put into the field. Adjusted while rendering rather than in
+  // an effect, so the field never shows a frame without the recap that has already arrived.
+  const [received, setReceived] = useState<string | null>(null)
+  const [offered, setOffered] = useState<string | null>(null)
+  if (recap !== null && recap !== received && !busy) {
+    setReceived(recap)
+    if (takesRecap(takeaway, offered)) {
+      setTakeaway(recap)
+      setOffered(recap)
+    }
+  }
   const scaleLabelId = useId()
+  const hint =
+    offered !== null && takeaway === offered
+      ? 'Это итог разговора: о чём говорили и к чему пришли. Поправь или сотри, если не так. Его увидишь только ты.'
+      : recapPending && takeaway.trim() === ''
+        ? 'Подвожу итог разговора…'
+        : 'Одна фраза, если захочется. Её увидишь только ты.'
 
   return (
     <Modal
@@ -48,7 +81,9 @@ export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }:
       className="tab:w-[min(92vw,600px)]"
     >
       <div className="flex flex-col gap-3 [@media(max-height:520px)]:gap-2">
-        <p className="text-base leading-[1.55] text-dim">Одна фраза, если захочется. Её увидишь только ты.</p>
+        <p className="text-base leading-[1.55] text-dim" aria-live="polite" data-testid="takeaway-hint">
+          {hint}
+        </p>
         <Textarea
           // A box of its own height, as before: it stays resizable and does not grow with the text.
           className="field-sizing-fixed resize-y [@media(max-height:520px)]:min-h-14"
@@ -108,7 +143,9 @@ export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }:
           className={cn(BUTTON, BUSY, 'w-full bg-clip-border focus-visible:border-transparent tab:w-auto tab:flex-1', SHORT_BUTTON)}
           aria-busy={busy}
           onClick={() => {
-            if (!busy) onSubmit(takeaway.trim() || null, tension)
+            if (busy) return
+            const sent = takeaway.trim() || null
+            onSubmit(sent, tension, recapOutcome(offered, sent))
           }}
           data-testid="dialog-end-submit"
         >

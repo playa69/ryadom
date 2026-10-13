@@ -86,7 +86,7 @@ export default function WelcomeScreen() {
       <AuthHead title="Добро пожаловать" hideTitle>
         {signedIn
           ? 'Один раз подтверди, что согласен(на), — и можно говорить.'
-          : 'Когда нужно, чтобы кто-то был рядом. Поговорить можно сразу, без регистрации.'}
+          : 'Голосовой собеседник, который поможет разобраться в мыслях. Поговорить можно сразу, без регистрации.'}
       </AuthHead>
 
       <AuthForm formRef={formRef} onSubmit={() => void submit()}>
@@ -118,6 +118,11 @@ export default function WelcomeScreen() {
         </AuthActions>
       </AuthForm>
 
+      {/* What happens to the words, said where the terms are accepted: the landing page's promises. */}
+      <FinePrint>
+        Голос не записывается, разговоры хранятся в России и не используются для рекламы. Стереть всё можно в
+        профиле одной кнопкой.
+      </FinePrint>
       {!signedIn && (
         <FinePrint>
           Без почты разговоры хранятся {ANONYMOUS_RETENTION_DAYS} дней после последнего визита. Привязать

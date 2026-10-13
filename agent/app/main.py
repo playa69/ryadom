@@ -29,6 +29,7 @@ from app.memory.worker import MemoryWorker
 from app.core.tracing import build_tracer
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
+from app.services.recap import build_recap_llm
 from app.services.langfuse_usage import start_langfuse_sink
 from app.services.gemini_budget import CascadeFallback, TokenBudget
 from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
@@ -96,6 +97,7 @@ def create_app(
     memory_settings: MemorySettings | None = None,
     memory_model_factory: Callable[[], ExtractionModel | None] | None = None,
     fallback_factory: Callable[[], FallbackParts] | None = None,
+    recap_model_factory: Callable[[], ExtractionModel | None] | None = None,
 ) -> FastAPI:
     """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию озвучка и модели берутся из конфига.
 
@@ -111,6 +113,9 @@ def create_app(
     Бюджет токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся в режиме gemini_live всегда (при лимите
     0 он выключен). При `GEMINI_TPM_ENFORCE` собирается и каскад как запасной путь (`fallback_factory` в тестах): на него
     уходят новые разговоры, когда бюджет исчерпан, а его распознавание и озвучка разбирают ход, отданный шаблону.
+
+    Итог разговора для экрана завершения (`POST …/recap`, app/services/recap.py) пишет модель памяти с коротким таймаутом
+    (`recap_model_factory` в тестах); от режима памяти он не зависит. Нет модели — итога нет, остальное работает.
     """
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
@@ -130,6 +135,7 @@ def create_app(
     make_memory_model = memory_model_factory or (
         lambda: build_memory_llm(memory_cfg, APP_CONFIG.llm) if memory_cfg.mode != "off" else None
     )
+    make_recap_model = recap_model_factory or (lambda: build_recap_llm(memory_cfg, APP_CONFIG.llm))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -149,6 +155,8 @@ def create_app(
         memory_service = MemoryService(store, memory_cfg, memory_model)
         store.memory = memory_service
         app.state.memory = memory_service
+        recap_model = make_recap_model()
+        app.state.recap = recap_model
         memory_worker = MemoryWorker(memory_service, store, memory_cfg)
         await memory_worker.start()
         if memory_service.status() == "unavailable":
@@ -229,7 +237,7 @@ def create_app(
             await memory_worker.stop()  # идущее извлечение дожидается до 10 с, остальное останется в очереди на диске
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
             store.memory = None
-            for client in (app.state.tts, app.state.chat, app.state.recognizer, live, memory_model):
+            for client in (app.state.tts, app.state.chat, app.state.recognizer, live, memory_model, recap_model):
                 if client is not None:
                     await client.aclose()
             if fallback_warm_up is not None:
@@ -253,6 +261,7 @@ def create_app(
     app.state.recognizer = None
     app.state.live = None
     app.state.memory = None
+    app.state.recap = None  # модель итога разговора (app/services/recap.py); None — итога нет
     app.state.budget = None  # бюджет токенов Gemini (только в режиме gemini_live)
     app.state.fallback = None  # каскад как запасной путь gemini_live (GEMINI_TPM_ENFORCE)
     app.state.tracer = None  # подменяется в lifespan (build_tracer); None до старта приложения

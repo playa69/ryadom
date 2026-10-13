@@ -3,6 +3,7 @@ import './start-dialog/start-agent-dialog.handler'
 import './list-dialogs/list-agent-dialogs.handler'
 import './get-dialog/get-agent-dialog.handler'
 import './end-dialog/end-agent-dialog.handler'
+import './recap-dialog/recap-agent-dialog.handler'
 import './erase-user/erase-agent-user.handler'
 import './get-memory/get-agent-memory.handler'
 import './update-memory-settings/update-agent-memory-settings.handler'
@@ -25,6 +26,8 @@ export { GetAgentDialogRequest } from './get-dialog/get-agent-dialog.request'
 export type { GetAgentDialogRequestData } from './get-dialog/get-agent-dialog.request'
 export { EndAgentDialogRequest } from './end-dialog/end-agent-dialog.request'
 export type { EndAgentDialogRequestData } from './end-dialog/end-agent-dialog.request'
+export { RecapAgentDialogRequest } from './recap-dialog/recap-agent-dialog.request'
+export type { RecapAgentDialogRequestData } from './recap-dialog/recap-agent-dialog.request'
 export { EraseAgentUserRequest } from './erase-user/erase-agent-user.request'
 export type { EraseAgentUserRequestData } from './erase-user/erase-agent-user.request'
 export { GetAgentMemoryRequest } from './get-memory/get-agent-memory.request'
@@ -51,6 +54,8 @@ export type { GetAgentDialogResult } from './get-dialog/get-agent-dialog.types'
 export { GetAgentDialogRequestErrorCode } from './get-dialog/get-agent-dialog.types'
 export type { EndAgentDialogResult } from './end-dialog/end-agent-dialog.types'
 export { EndAgentDialogRequestErrorCode } from './end-dialog/end-agent-dialog.types'
+export type { RecapAgentDialogResult } from './recap-dialog/recap-agent-dialog.types'
+export { RecapAgentDialogRequestErrorCode } from './recap-dialog/recap-agent-dialog.types'
 export type { EraseAgentUserResponse } from './erase-user/erase-agent-user.types'
 export type { GetAgentMemoryResponse } from './get-memory/get-agent-memory.types'
 export type { UpdateAgentMemorySettingsResult } from './update-memory-settings/update-agent-memory-settings.types'
@@ -96,6 +101,7 @@ import type { StartAgentDialogRequest } from './start-dialog/start-agent-dialog.
 import type { ListAgentDialogsRequest } from './list-dialogs/list-agent-dialogs.request'
 import type { GetAgentDialogRequest } from './get-dialog/get-agent-dialog.request'
 import type { EndAgentDialogRequest } from './end-dialog/end-agent-dialog.request'
+import type { RecapAgentDialogRequest } from './recap-dialog/recap-agent-dialog.request'
 import type { EraseAgentUserRequest } from './erase-user/erase-agent-user.request'
 import type { GetAgentMemoryRequest } from './get-memory/get-agent-memory.request'
 import type { UpdateAgentMemorySettingsRequest } from './update-memory-settings/update-agent-memory-settings.request'
@@ -111,6 +117,7 @@ export type AgentApiIntegrationRequests =
   | ListAgentDialogsRequest
   | GetAgentDialogRequest
   | EndAgentDialogRequest
+  | RecapAgentDialogRequest
   | EraseAgentUserRequest
   | GetAgentMemoryRequest
   | UpdateAgentMemorySettingsRequest

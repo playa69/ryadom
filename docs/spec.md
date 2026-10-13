@@ -93,7 +93,8 @@
 | Ответ | Сообщение агента (`role=assistant`) |
 | Приветствие | Первая фраза агента в диалоге; озвучивается под `messageId = "greeting"` |
 | Сводка | Итог диалога: `title`, `themes`, `tensionBefore`, `tensionAfter` |
-| Takeaway | «Что забираешь с собой» — фраза человека при завершении |
+| Takeaway | «Что забираешь с собой» — фраза человека при завершении; поле заранее заполнено итогом разговора, человек может его поправить или стереть |
+| Итог (recap) | Одна-две фразы агента: о чём говорили и к чему пришли (`POST …/recap`). Нигде не хранится: сохраняется только отправленный `takeaway` |
 | Напряжение (tension) | Самооценка человека по шкале 1–10 |
 | Кадр `safety` | Сигнал «человеку нужна помощь сейчас»: клиент открывает лист с линиями помощи |
 | Режим | Промпт-пакет диалога: `vent`, `chat`, `gestalt_diary`, `recovery`, `rituals` (+ зарезервированный `warmth`) |
@@ -625,6 +626,7 @@ sequenceDiagram
 | `POST` | `/v1/users/{userId}/dialogs` | `200 {dialogId, resumed, greeting, sinceLastDialogHours, voice, messageCount, lastActivityAt}`; тело `{voice?, new?}` |
 | `GET` | `/v1/users/{userId}/dialogs?limit&before` | `200 {items[], next}` |
 | `GET` | `/v1/users/{userId}/dialogs/{dialogId}` | `200 {…, messages[]}` / `404` |
+| `POST` | `/v1/users/{userId}/dialogs/{dialogId}/recap` | `200 {recap}` (`null` — итога нет) / `404`; ничего не меняет |
 | `POST` | `/v1/users/{userId}/dialogs/{dialogId}/end` | `200 {summary}` / `404` |
 | `DELETE` | `/v1/users/{userId}` | `204` |
 | `WS` | `/v1/users/{userId}/dialogs/{dialogId}/ws` | `ready` первым; `401`/`404`/`409` на рукопожатии |
@@ -637,7 +639,7 @@ sequenceDiagram
 
 ### 7.3. Публичный API приложения
 
-Источник — `app/packages/contracts/src/api/*`. Диалоги: `POST/GET /api/dialogs`, `GET /api/dialogs/{id}`, `POST /api/dialogs/{id}/end`, `WS /api/dialogs/ws`. Коды закрытия сокета: `1000` готово, `1012` перезапуск сервера, `4001` нет авторизации, `4008` слишком часто, `4009` вытеснено новым соединением, `4010` агент недоступен.
+Источник — `app/packages/contracts/src/api/*`. Диалоги: `POST/GET /api/dialogs`, `GET /api/dialogs/{id}`, `POST /api/dialogs/{id}/recap`, `POST /api/dialogs/{id}/end`, `WS /api/dialogs/ws`. Коды закрытия сокета: `1000` готово, `1012` перезапуск сервера, `4001` нет авторизации, `4008` слишком часто, `4009` вытеснено новым соединением, `4010` агент недоступен.
 
 Озвучка в сокете клиента (`TtsCodec`, `HelloFrame.codecs` в `contracts/src/api/dialogs.ts`):
 

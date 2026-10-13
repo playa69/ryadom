@@ -15,6 +15,7 @@ import {
   DialogServerFrame,
   DialogWsErrorCode,
   SafetyLevel,
+  type DialogRecapApiResponse,
   type ListDialogsApiResponse,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
@@ -286,6 +287,64 @@ describe('REST диалогов', () => {
       'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-kept', resumed: false }),
     })
     ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
+  })
+
+  it('итог для листа завершения: агенту уходит POST без тела, человеку — текст или null', async () => {
+    resetLimits()
+    const { user, tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json({ recap: 'Говорили о работе.' }),
+    })
+
+    const answered = ok<DialogRecapApiResponse>(
+      await call(app, 'POST', '/api/dialogs/d-1/recap', undefined, tokens.accessToken),
+    )
+    expect(answered).toEqual({ recap: 'Говорили о работе.' })
+    expect(calls.at(-1)!.url.pathname).toBe(`/v1/users/${user.id}/dialogs/d-1/recap`)
+
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json({ recap: null }) })
+    expect(ok(await call(app, 'POST', '/api/dialogs/d-1/recap', undefined, tokens.accessToken))).toEqual({
+      recap: null,
+    })
+  })
+
+  it('итог чужого диалога — DIALOG_NOT_FOUND; агент лёг — 503', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: 'not_found' }, 404),
+    })
+    refusedWith(
+      await call(app, 'POST', '/api/dialogs/d-x/recap', undefined, tokens.accessToken),
+      DialogApiErrorCode.DIALOG_NOT_FOUND,
+    )
+
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: 'boom' }, 502) })
+    const down = await call(app, 'POST', '/api/dialogs/d-x/recap', undefined, tokens.accessToken)
+    expect(down.status).toBe(503)
+  })
+
+  it('итог по токену завершённой сессии — 401, а чаще десяти раз в минуту — 429: каждый вызов стоит модели', async () => {
+    resetLimits()
+    const { user, tokens } = await signUpAndIn(app)
+    const phone = ok<{ tokens: { accessToken: string } }>(
+      await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD }),
+    ).tokens
+    ok(await call(app, 'POST', '/api/auth/logout-all', { keepCurrent: true }, tokens.accessToken))
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/recap': () => json({ recap: 'Говорили о работе.' }),
+    })
+
+    const ended = await call(app, 'POST', '/api/dialogs/d-1/recap', undefined, phone.accessToken)
+    expect(ended.status).toBe(401)
+    expect(calls).toEqual([])
+
+    for (let i = 0; i < 10; i++) {
+      ok(await call(app, 'POST', '/api/dialogs/d-1/recap', undefined, tokens.accessToken))
+    }
+    const limited = await call(app, 'POST', '/api/dialogs/d-1/recap', undefined, tokens.accessToken)
+    expect(limited.status).toBe(429)
+    expect(calls).toHaveLength(10)
   })
 })
 
