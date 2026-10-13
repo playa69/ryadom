@@ -603,7 +603,7 @@ class DialogSession:
         assert self._chat is not None
         # Сводка памяти — из кэша процесса (I3); у разговора «Без памяти» и при любой ошибке памяти она пустая.
         memory = self._store.memory_brief(self._dialog)
-        messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages, memory)
+        messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages, memory, self._dialog.voice)
         generation = self._tracer.start_generation(trace, name="chat", model=self._chat.name, input=messages)
         # Расход токенов умеет отдавать только настоящий прокси (финальный SSE-кусок), у фейков и шаблонов его нет.
         usage_sink: list[dict[str, Any]] | None = [] if isinstance(self._chat, ProxyChat) else None
@@ -654,8 +654,10 @@ class DialogSession:
         finally:
             generation.end()
 
-    async def _reply(self, crisis: bool, turn: Turn | None = None) -> None:
-        """Ответ потоком: первое предложение уходит в текст и в озвучку, как только модель его дописала."""
+    async def _reply(self, crisis: bool, turn: Turn | None = None, text: str | None = None) -> None:
+        """Ответ потоком: первое предложение уходит в текст и в озвучку, как только модель его дописала.
+
+        `text` — готовая фраза вместо ответа модели (например, просьба повторить): идёт тем же путём, что кризисный ответ."""
         dialog = self._dialog
         turn = turn or Turn(started=time.monotonic())
         message_id = str(uuid.uuid4())
@@ -699,6 +701,8 @@ class DialogSession:
         try:
             if crisis:
                 await deliver(self._fixed(CRISIS_REPLY))
+            elif text is not None:
+                await deliver(self._fixed(text))
             else:
                 if self._chat is not None:
                     # Расход чат-модели — на её ответ; если ответа нет (отказ, пусто), на диалог.

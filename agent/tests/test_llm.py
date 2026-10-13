@@ -5,7 +5,7 @@ import json
 import pytest
 
 from app.api.dialog_ws import is_silence
-from app.services.replies import CRISIS_REPLY, REPLIES, SYSTEM_PROMPT, chat_messages
+from app.services.replies import CRISIS_REPLY, REPLIES, SYSTEM_PROMPT, chat_messages, system_prompt
 from tests.conftest import (
     AUTH,
     FakeChat,
@@ -56,7 +56,8 @@ def test_reply_comes_from_the_chat_model_and_sees_the_dialog(user_id):
         assert deltas == final_text(frames)  # стрим и итог совпадают и для ответа модели
         assert [m["role"] for m in history(client, user_id, dialog["dialogId"])] == ["user", "assistant"]
 
-    assert chat.calls == [[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "Мне плохо"}]]
+    # Промпт с правилом рода по голосу диалога (по умолчанию мужской).
+    assert chat.calls == [[{"role": "system", "content": system_prompt("male")}, {"role": "user", "content": "Мне плохо"}]]
 
 
 def test_second_turn_carries_the_whole_conversation(user_id):
@@ -151,7 +152,7 @@ def test_chat_messages_carry_the_offtopic_and_good_mood_rules():
     assert "погоду" in prompt and "не видишь" in prompt  # не выдумывает то, чего не знает
     assert "как прошёл день или что на душе" in prompt  # возврат к эмоциям
     assert "раз в две-три реплики, не в каждой" in prompt
-    assert "порадуйся" in prompt and "есть ли ещё что-то" in prompt  # хорошее настроение
+    assert "порадуйся" in prompt and "есть ли ещё что-то" not in prompt  # хорошее настроение, без «о чём ещё поговорить»
     assert "не ищи проблем" in prompt
     assert "и радость тоже" in prompt  # «сначала признай чувство» — и для радости
     # Голосовой формат и прежние правила на месте.
@@ -161,12 +162,59 @@ def test_chat_messages_carry_the_offtopic_and_good_mood_rules():
     assert "на его языке" not in prompt  # прежнее правило «отвечай на языке человека» снято
 
 
+def test_prompt_does_not_push_the_person_off_their_topic_or_into_a_language_lecture():
+    """Жалобы по живому разговору: на «устала» (расшифровано как чужое слово) агент трижды читал лекцию про русский язык,
+    на «не знаю» предлагал сменить тему, на «подскажи» отвечал вялой фразой, на рассказ об увлечении — одним «здорово»."""
+    prompt = SYSTEM_PROMPT.lower()
+    assert "прости, я пока говорю только по-русски" not in prompt  # готовой фразы-образца на любой непонятный ввод нет
+    assert "короткое, тихое или неразборчивое слово" in prompt and "попроси повторить" in prompt
+    assert "не говори человеку про язык, пока он сам об этом не заговорил" in prompt
+    assert "не заканчивай ответ одним одобрением" in prompt and "конкретную деталь" in prompt  # вопрос по теме человека
+    assert "если человек отвечает «не знаю»" in prompt and "не меняй тему" in prompt
+    assert "«подскажи»" in prompt and "две-три простые конкретные идеи" in prompt  # прямая просьба о совете
+    assert "это и есть тема разговора" in prompt and "не уводи на «как прошёл день»" in prompt
+
+
 @pytest.mark.parametrize("reply", REPLIES)
 def test_template_replies_do_not_assume_a_problem(reply):
     lower = reply.lower()
     for word in ("тяжело", "задело", "обид", "устал", "случилось", "помогло"):
         assert word not in lower
     assert reply.count("?") <= 1  # не больше одного вопроса за реплику
+
+
+@pytest.mark.parametrize("reply", REPLIES)
+def test_template_replies_never_change_the_topic(reply):
+    """Шаблон звучит, когда модель промолчала: он не должен звать говорить о чём-то ещё или спрашивать про состояние."""
+    lower = reply.lower()
+    for phrase in ("о чём", "поговорить", "как ты себя", "как ты сейчас", "как прошёл"):
+        assert phrase not in lower
+    assert "?" not in reply  # ответа не требует: человек, возможно, ещё договаривает мысль
+
+
+@pytest.mark.parametrize(
+    "heard, noise",
+    [
+        ("usted", True),  # расшифровка настоящего слова «устала» из живого разговора
+        ("gustaba", True),
+        ("gustala gustala ya gustala", True),  # «устала устала я устала»: четыре слова
+        ("el primer", True),  # «например»
+        ("ok", True),
+        ("你好", True),
+        ("устала", False),
+        ("я устала после work", False),  # русские буквы есть
+        ("I want to talk about my day today", False),  # целая фраза: до модели, ответ по правилу про язык
+        ("I'm so tired today.", False),  # короткая, но настоящая английская речь (живая проверка): не шум
+        ("english please", False),
+        ("gustar", True),
+        ("...", False),  # нет букв: не чужой язык
+        ("123", False),
+    ],
+)
+def test_foreign_noise_is_a_few_words_without_russian_letters(heard, noise):
+    from app.services.replies import is_foreign_noise
+
+    assert is_foreign_noise(heard) is noise
 
 
 def test_good_mood_in_template_mode_gets_a_neutral_reply(user_id):

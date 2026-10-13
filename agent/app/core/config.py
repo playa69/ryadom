@@ -180,6 +180,10 @@ class GeminiSettings(BaseAppSettings):
     connect_timeout_seconds: int = Field(validation_alias="GEMINI_CONNECT_TIMEOUT_SECONDS", default=15, ge=1)
     # Сколько ждать расшифровку реплики, прежде чем отдать человеку ответ: до этого момента агент проверяет реплику на кризис.
     transcript_wait_ms: int = Field(validation_alias="GEMINI_TRANSCRIPT_WAIT_MS", default=1000, ge=0, le=5000)
+    # Подсказка языка расшифровки речи человека (коды BCP-47 через запятую). Без неё Gemini определяет язык сам, и короткое
+    # слово («устала») расшифровывается как испанское или английское, а ошибочная расшифровка попадает в историю и
+    # закрепляет чужой язык. Пусто — подсказка не отправляется.
+    input_languages: str = Field(validation_alias="GEMINI_INPUT_LANGUAGES", default="ru-RU")
     # Ответ, от которого нет событий дольше этого, считается оборванным.
     idle_timeout_seconds: int = Field(validation_alias="GEMINI_IDLE_TIMEOUT_SECONDS", default=15, ge=1)
     # Сколько последних сообщений диалога модель получает текстом при новой сессии (после каждого ответа при
@@ -240,6 +244,12 @@ class GeminiSettings(BaseAppSettings):
     # впустую (последняя смена после последнего ответа, сокет, где так и не заговорили). Набранное сообщение ждёт открытия
     # (около 1 с). false — как раньше: сессия готова заранее.
     lazy_open: bool = Field(validation_alias="GEMINI_LAZY_OPEN", default=False)
+
+    @property
+    def input_language_codes(self) -> list[str]:
+        """Коды языков расшифровки из `GEMINI_INPUT_LANGUAGES`: без пустых и повторов."""
+        codes = [code.strip() for code in self.input_languages.split(",")]
+        return list(dict.fromkeys(code for code in codes if code))
 
     @model_validator(mode="after")
     def _thresholds_in_order(self) -> "GeminiSettings":

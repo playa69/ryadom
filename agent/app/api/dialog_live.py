@@ -16,6 +16,7 @@
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections import deque
@@ -55,6 +56,9 @@ from app.core.metrics import (
     GEMINI_CONTEXT_REFRESH_TOTAL,
     GEMINI_OPENS_TOTAL,
     GEMINI_TURNS_DEGRADED_TOTAL,
+    LIVE_FOREIGN_SCRIPT_TOTAL,
+    LIVE_REPEAT_REQUESTS_TOTAL,
+    LIVE_VOICELESS_ANSWERS_TOTAL,
     VOICE_TURN_END_DELAY_SECONDS,
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
@@ -69,7 +73,18 @@ from app.services.gemini_budget import (
     TokenBudget,
     estimate_turn,
 )
-from app.services.replies import CRISIS_SAFETY_TEXT, SYSTEM_PROMPT, is_crisis, memory_block
+from app.services.replies import (
+    CRISIS_SAFETY_TEXT,
+    NOISE_CHECK_CHARS,
+    REPEAT_REQUEST,
+    is_crisis,
+    is_foreign_noise,
+    is_language_lecture,
+    memory_block,
+    split_sentences,
+    strip_foreign_script,
+    system_prompt,
+)
 
 logger = logging.getLogger("agent.live")
 
@@ -79,7 +94,7 @@ PRE_ROLL_FRAMES = 5
 STALE_SECONDS = 1.0
 
 LIVE_ADDENDUM = (
-    "\n- Ты говоришь вслух живым голосом, как в разговоре: коротко, без пересказа сказанного человеком."
+    "\n- Ты говоришь вслух живым голосом, как в разговоре: коротко; главное из сказанного можно отразить парой слов, но не пересказывай."
     "\n- Если тебя просят произнести фразу дословно, произноси ровно её."
 )
 
@@ -98,6 +113,7 @@ class LiveTurn:
     got_output: bool = False
     failed: bool = False
     safety_counted: bool = False  # проверка безопасности этого хода уже засчитана как обращение
+    noise_hold: bool = False  # расшифровка — обрывок чужого языка: ответ держится, пока не ясно, что он не лекция про язык
     user_saved: bool = False
     ended: bool = False  # реплика человека закончена (audio_end): с этого момента ждём ответ модели и считаем её молчание
     audio_seconds: float | None = None  # длительность голосовой реплики (от audio_start до audio_end)
@@ -432,7 +448,7 @@ class LiveDialogSession(DialogSession):
         history = [] if resumed or self._cfg.text_context else self._history()
         # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока.
         self._brief_used = self._store.memory_brief(self._dialog)
-        text = SYSTEM_PROMPT + LIVE_ADDENDUM + memory_block(self._brief_used)
+        text = system_prompt(self._dialog.voice) + LIVE_ADDENDUM + memory_block(self._brief_used)
         if history:
             lines = [("Человек" if role == "user" else "Ты") + ": " + message for role, message in history]
             text += "\n\nУже сказано в этом разговоре (продолжай, не здоровайся заново):\n" + "\n".join(lines)
@@ -677,7 +693,8 @@ class LiveDialogSession(DialogSession):
         if not self._budget.enabled:
             return 0
         brief = memory_block(self._store.memory_brief(self._dialog, count=False))  # сводка памяти тоже уходит в сессию
-        return self._budget.open_estimate([SYSTEM_PROMPT + LIVE_ADDENDUM + brief, *(text for _, text in self._history())])
+        prompt = system_prompt(self._dialog.voice) + LIVE_ADDENDUM + brief
+        return self._budget.open_estimate([prompt, *(text for _, text in self._history())])
 
     def _may_open(self, cost: int | None = None) -> bool:
         """Новую сессию можно открывать: нет паузы после 1011 и, при ENFORCE, открытие помещается в окно."""
@@ -999,6 +1016,7 @@ class LiveDialogSession(DialogSession):
             self._refresh_after_crisis()
             super()._dispatch_text_turn(text, crisis, turn)
             return
+        self._repeat_pending = False  # человек написал сам: просьба повторить больше не в силе
         live_turn = LiveTurn(kind="text", opened=True, started=turn.started)
         live_turn.user_saved = True
         live_turn.input_text = text
@@ -1012,7 +1030,7 @@ class LiveDialogSession(DialogSession):
         if prev is not None and prev is not turn and prev.generating:
             # Новая реплика перебивает идущий ответ; его хвост, ещё летящий от модели, не наш.
             self._stale_until = time.monotonic() + STALE_SECONDS
-            await self._finish(prev)
+            await self._finish(prev, superseded=True)
         awaiting = self._awaiting_usage
         if awaiting is not None and awaiting is not turn:
             self._end_turn_trace(awaiting)  # расход токенов так и не пришёл: закрываем без него
@@ -1098,7 +1116,7 @@ class LiveDialogSession(DialogSession):
         if kind == "interrupted":
             self._stale_until = 0.0
             if turn is not None and turn.got_output:
-                await self._finish(turn)
+                await self._finish(turn, superseded=True)
             return
         if kind != "input_text" and time.monotonic() < self._stale_until:
             if kind in ("generation_complete", "turn_complete"):
@@ -1141,15 +1159,39 @@ class LiveDialogSession(DialogSession):
                 self._arm(turn, "gate", self._cfg.transcript_wait_ms / 1000)
             return
         if kind == "generation_complete":
+            if turn.noise_hold and not turn.opened and not turn.discarded:
+                await self._open_gate(turn, final=True)  # короткий ответ целиком: лекция или нет, решаем сейчас
             await self._finish(turn)
         # turn_complete приходит позже generation_complete (когда звук отыгран) и может попасть на следующий ход: не нужен.
 
-    async def _open_gate(self, turn: LiveTurn) -> None:
+    # Агент только что сам попросил повторить (не модель своими словами): если и следующий ответ про язык, человек, видимо,
+    # правда просит другой язык, и второй раз ответ не подменяется. Сбрасывается, как только ход прошёл обычным путём.
+    _repeat_pending = False
+
+    async def _language_hold(self, turn: LiveTurn, heard: str, final: bool) -> bool:
+        """Расшифровка — обрывок чужого языка («usted»): модель услышала звук, но могла принять слово за чужую речь и ответить
+        лекцией «я говорю только по-русски». Хороший ответ пропускается как есть, лекция заменяется просьбой повторить.
+        Чтобы отличить одно от другого, ответ держится, пока не наберётся его начало или не закончится генерация.
+        True — ход обработан или решение отложено."""
+        if not is_foreign_noise(heard) or self._repeat_pending:
+            return False
+        text = "".join(event.text for event in turn.held if event.kind == "output_text")
+        if is_language_lecture(text):
+            await self._ask_to_repeat(turn)
+            return True
+        if final or len(text) >= NOISE_CHECK_CHARS:
+            return False
+        turn.noise_hold = True
+        return True
+
+    async def _open_gate(self, turn: LiveTurn, final: bool = False) -> None:
         """Расшифровка реплики есть: проверить её и только тогда показать и озвучить ответ модели."""
+        heard = turn.heard.strip()
+        if turn.kind == "voice" and heard and not turn.discarded and await self._language_hold(turn, heard, final):
+            return
         self._disarm(turn, "gate")
         turn.opened = True
         turn.mark("gate")
-        heard = turn.heard.strip()
         if turn.kind == "voice":
             if not heard or (turn.interrupts and self._is_echo(heard)):
                 turn.discarded = True
@@ -1164,9 +1206,26 @@ class LiveDialogSession(DialogSession):
             self._drop_hold()
             self._supersede_speech()
             await self._save_voice(turn, heard)
+        self._repeat_pending = False
         held, turn.held = turn.held, []
         for event in held:
             await self._emit(turn, event)
+
+    async def _ask_to_repeat(self, turn: LiveTurn) -> None:
+        """Расшифровка — обрывок чужого языка («usted» вместо «устала»), а ответ модели — лекция «я говорю только по-русски»:
+        человека она только расстроит. Ответ выбрасывается, в историю расшифровка не идёт (иначе «испанский» закрепился бы в
+        контексте следующих ходов), человека просят повторить."""
+        LIVE_REPEAT_REQUESTS_TOTAL.inc()
+        logger.info("live turn heard as foreign noise and answered with a language lecture, asking to repeat dialog=%s", self._dialog.id)
+        self._repeat_pending = True
+        turn.discarded = True
+        turn.opened = True
+        turn.held.clear()
+        self._disarm(turn, "gate")
+        self._refresh_after_crisis()  # следующая сессия строится из истории без этой реплики
+        await self._send({"type": "transcript", "text": "", "final": True})
+        reply_turn = self._reply_turn(turn.started)
+        self._jobs.put_nowait(lambda: self._reply(False, reply_turn, REPEAT_REQUEST))
 
     async def _save_voice(self, turn: LiveTurn, heard: str) -> None:
         message = self._store.add_message(self._dialog, "user", heard[:MAX_USER_TEXT], audio_seconds=turn.audio_seconds)
@@ -1213,8 +1272,16 @@ class LiveDialogSession(DialogSession):
             assert turn.audio is not None
             turn.audio.put_nowait(event.data)
             return
+        # Чужая письменность посреди русского ответа («бывает很 тяжелой») в ленту и в историю не идёт. Звук уже сгенерирован
+        # моделью, его не исправить; доля таких ответов видна в метрике.
+        piece, foreign = strip_foreign_script(event.text)
+        if foreign:
+            LIVE_FOREIGN_SCRIPT_TOTAL.inc()
+            logger.info("live answer had foreign-script letters dialog=%s count=%d", self._dialog.id, foreign)
         # Дельты в сумме дают ровно текст ответа: пробелы на стыке ждут следующего куска, в начале и конце их нет.
-        text = turn.pending_ws + event.text
+        text = turn.pending_ws + piece
+        if foreign:
+            text = re.sub(r" {2,}", " ", text)  # на месте убранного слова не остаётся двойного пробела
         if not turn.sent_text:
             text = text.lstrip()
         core = text.rstrip()
@@ -1250,7 +1317,30 @@ class LiveDialogSession(DialogSession):
             turn.safety_counted = True
             model_usage.call("safety")
 
-    async def _finish(self, turn: LiveTurn) -> None:
+    def _voice_text_answer(self, turn: LiveTurn, superseded: bool) -> None:
+        """Модель ответила только текстом (расшифровка есть, звука нет): человек читал бы то, что должен слышать. Агент
+        озвучивает этот же текст сам, тем же голосом диалога. Не озвучивается ответ, который человек уже перебил, и ответ,
+        когда человек в этот момент говорит: поверх него агент молчит."""
+        say = not (superseded or turn.failed or self._closed or self._act_started or turn.message_id in self._cancelled)
+        LIVE_VOICELESS_ANSWERS_TOTAL.labels("voiced" if say else "skipped").inc()
+        logger.warning(
+            "live answer without voice dialog=%s kind=%s chars=%d voiced=%s ms: %s",
+            self._dialog.id,
+            turn.kind,
+            len(turn.sent_text),
+            say,
+            turn.timeline(),
+        )
+        if not say:
+            return
+        feed = self._start_speech(turn.message_id, self._reply_turn(None))
+        if feed is None:
+            return
+        for sentence in split_sentences(turn.sent_text):
+            feed.add(sentence)
+        feed.close()
+
+    async def _finish(self, turn: LiveTurn, superseded: bool = False) -> None:
         if not turn.generating:
             return
         turn.generating = False
@@ -1272,6 +1362,8 @@ class LiveDialogSession(DialogSession):
             turn.audio.put_nowait(None)
         if turn.assistant_started and turn.sent_text and not self._closed:
             await self._send({"type": "assistant_end", "messageId": turn.message_id, "text": turn.sent_text})
+            if turn.audio is None:
+                self._voice_text_answer(turn, superseded)
         if not turn.assistant_started and not turn.discarded and (turn.kind == "text" or turn.user_saved or turn.failed):
             # Модель промолчала или отказала: шаблонный ответ, как у каскада, чтобы человек не остался без ответа.
             if not turn.failed or turn.kind == "text" or turn.user_saved:

@@ -31,15 +31,15 @@ from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.langfuse_usage import start_langfuse_sink
 from app.services.gemini_budget import CascadeFallback, TokenBudget
-from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
+from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, REPLIES, split_sentences
 
 if TYPE_CHECKING:
     from app.clients.gemini_live import LiveConnector
 
 logger = logging.getLogger("agent")
 
-# Всё, что агент произносит: приветствия, кризисный ответ (он важнее) и шаблонные ответы.
-SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, *REPLIES)
+# Всё, что агент произносит: приветствия, кризисный ответ (он важнее), просьба повторить и шаблонные ответы.
+SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, REPEAT_REQUEST, *REPLIES)
 
 FallbackParts = tuple[ChatModel | None, Recognizer | None, TextToSpeech | None]
 

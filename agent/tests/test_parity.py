@@ -38,7 +38,8 @@ tests/conftest.py) и против gemini_live (FakeConnector/FakeLink из test
   P6   второй отказ Gemini подряд не сообщается клиенту ни error, ни транскриптом
   P7, P8 закрыты сменой сессии после кризиса (GEMINI_TEXT_CONTEXT): новая сессия получает историю с кризисным ответом агента
   P9   ограничение длины ответа (MAX_REPLY_CHARS) не действует
-  P10  ответ без звука от Gemini не сопровождается error VOICE_UNAVAILABLE (каскад сообщает)
+  P10  закрыт: ответ без звука от Gemini агент озвучивает сам (тем же голосом), а если озвучки нет, клиент получает error
+       VOICE_UNAVAILABLE, как у каскада
   P11  dev-переключатель озвучки (/dev/tts none) не выключает звук ответов
   P12  расшифровка позже GEMINI_TRANSCRIPT_WAIT_MS: слова человека и ответ теряются молча
   P13  хвост расшифровки ответа после generation_complete теряется (текст короче звука)
@@ -1451,11 +1452,9 @@ def test_failing_tts_leaves_the_text_and_reports_one_error() -> None:
     assert any(t.startswith("tts_start(#") for t in live.voice)
 
 
-@known_gap(
-    "P10 Gemini прислал текст ответа без звука: клиент не получает error VOICE_UNAVAILABLE (у каскада он приходит), "
-    "человек видит текст без голоса и без пояснения"
-)
 def test_a_reply_without_sound_is_reported_like_a_failed_voice() -> None:
+    """P10 (закрыт): Gemini прислал текст ответа без звука. Агент пробует озвучить его сам; озвучки нет, и клиент получает
+    error VOICE_UNAVAILABLE, как у каскада, а не молча остаётся с текстом."""
     cascade, live = both(sc_voice, audio=False, tts=SelectiveTts, voiced=False)
     sound(cascade), sound(live)
     assert cascade.errors == ["VOICE_UNAVAILABLE"] and "tts_start(#1)" not in cascade.voice
