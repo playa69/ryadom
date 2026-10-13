@@ -19,11 +19,9 @@ export const metadata: Metadata = {
   description: 'Какие данные собирает «Рядом», зачем, где они хранятся и как их удалить.',
 }
 
-/**
- * Draft for a lawyer, not a finished document: the operator is named in the abstract (the owner of
- * the service) until its details are added, in a separate task. The store listings link here, so
- * the page must exist and describe the real behaviour of the app.
- */
+const OPERATOR_NAME = 'Валясин Александр Микаэлович'
+const OPERATOR_EMAIL = 'playasn@yandex.ru'
+
 export default async function PrivacyPage() {
   await connection()
   const env = getWebEnv()
@@ -42,8 +40,8 @@ export default async function PrivacyPage() {
 
         <h2>1. Кто обрабатывает данные</h2>
         <p>
-          Оператор персональных данных — владелец сервиса «Рядом» (далее — оператор). Вопросы об
-          обработке данных: <a href={`mailto:${env.supportEmail}`}>{env.supportEmail}</a>.
+          Оператор персональных данных — физическое лицо {OPERATOR_NAME} (далее — оператор).
+          Вопросы об обработке данных: <a href={`mailto:${OPERATOR_EMAIL}`}>{OPERATOR_EMAIL}</a>.
         </p>
 
         <h2>2. Какие данные мы собираем</h2>
@@ -175,7 +173,7 @@ export default async function PrivacyPage() {
         <p>
           После отказа оператор прекращает сбор сведений об использовании, связанных с вашим
           аккаунтом или устройством. Чтобы удалить ранее собранные сведения, направьте запрос на{' '}
-          <a href={`mailto:${env.supportEmail}`}>{env.supportEmail}</a>.
+          <a href={`mailto:${OPERATOR_EMAIL}`}>{OPERATOR_EMAIL}</a>.
         </p>
 
         <h2>9. Сколько мы храним</h2>
@@ -205,7 +203,7 @@ export default async function PrivacyPage() {
         <p>
           Удалить аккаунт и все разговоры можно самостоятельно из приложения — см.{' '}
           <Link href="/delete-account">страницу удаления</Link>. Прочие обращения направляйте на{' '}
-          <a href={`mailto:${env.supportEmail}`}>{env.supportEmail}</a>; ответ — в течение 10 рабочих дней.
+          <a href={`mailto:${OPERATOR_EMAIL}`}>{OPERATOR_EMAIL}</a>; ответ — в течение 10 рабочих дней.
         </p>
 
         <h2>11. Безопасность</h2>

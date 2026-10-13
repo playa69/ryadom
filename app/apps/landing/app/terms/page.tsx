@@ -11,6 +11,9 @@ export const metadata: Metadata = {
 }
 
 /** Draft for a lawyer, like the privacy policy. The safety section is the substantive part. */
+const OPERATOR_NAME = 'Валясин Александр Микаэлович'
+const OPERATOR_EMAIL = 'playasn@yandex.ru'
+
 export default async function TermsPage() {
   await connection()
   const env = getWebEnv()
@@ -32,7 +35,8 @@ export default async function TermsPage() {
 
         <h2>1. Стороны</h2>
         <p>
-          Соглашение заключается между вами и владельцем сервиса «Рядом» (далее — «мы»).
+          Соглашение заключается между вами и физическим лицом {OPERATOR_NAME}, владельцем
+          сервиса «Рядом» (далее — «мы»). Контакт: <a href={`mailto:${OPERATOR_EMAIL}`}>{OPERATOR_EMAIL}</a>.
           Создавая аккаунт, вы принимаете эти условия
           и <Link href="/privacy">политику конфиденциальности</Link>.
         </p>
