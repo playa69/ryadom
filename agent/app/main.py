@@ -24,6 +24,7 @@ from app.core.errors import install_error_handlers
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
+from app.services.gemini_budget import CascadeFallback, TokenBudget
 from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
 
 if TYPE_CHECKING:
@@ -33,6 +34,25 @@ logger = logging.getLogger("agent")
 
 # Всё, что агент произносит: приветствия, кризисный ответ (он важнее) и шаблонные ответы.
 SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, *REPLIES)
+
+FallbackParts = tuple[ChatModel | None, Recognizer | None, TextToSpeech | None]
+
+
+def _build_fallback() -> FallbackParts:
+    """Каскад как запасной путь режима gemini_live: чат, распознавание и озвучка из `LLM_MODE`, `LLM_BASE_URL`, `TTS_MODE`,
+    `QWEN_TTS_*`, `AGENT_API_TOKEN`. Не настроено что-то — без этой части (а не отказ старта: режиму Gemini они не нужны)."""
+    chat: ChatModel | None = None
+    recognizer: Recognizer | None = None
+    tts: TextToSpeech | None = None
+    try:
+        chat, recognizer = build_models(APP_CONFIG.llm)
+    except RuntimeError as error:
+        logger.warning("cascade fallback without chat and stt: %s", error)
+    try:
+        tts = build_tts(APP_CONFIG.speech)
+    except RuntimeError as error:
+        logger.warning("cascade fallback without tts: %s", error)
+    return chat, recognizer, tts
 
 
 class SkipServiceEndpoints(logging.Filter):
@@ -58,6 +78,7 @@ def create_app(
     models_factory: Callable[[], tuple[ChatModel | None, Recognizer | None]] | None = None,
     live_factory: Callable[[], "LiveConnector | None"] | None = None,
     database_factory: Callable[[], DialogDatabase | None] | None = None,
+    fallback_factory: Callable[[], FallbackParts] | None = None,
 ) -> FastAPI:
     """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию озвучка и модели берутся из конфига.
 
@@ -66,6 +87,10 @@ def create_app(
 
     `VOICE_PIPELINE=gemini_live` (или `live_factory` в тестах) включает речь в речь через Gemini Live: чат и
     распознавание не создаются, фиксированные фразы озвучивает тот же голос Gemini.
+
+    Бюджет токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся в режиме gemini_live всегда (при лимите
+    0 он выключен). При `GEMINI_TPM_ENFORCE` собирается и каскад как запасной путь (`fallback_factory` в тестах): на него
+    уходят новые разговоры, когда бюджет исчерпан, а его распознавание и озвучка разбирают ход, отданный шаблону.
     """
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
@@ -98,14 +123,30 @@ def create_app(
                 )
         live = live_factory() if live_factory is not None else None
         app.state.live = live
+        budget = TokenBudget(APP_CONFIG.gemini) if live is not None else None
+        app.state.budget = budget
         if tts_factory is not None or live is None:
             app.state.tts = factory()
         else:
             from app.clients.gemini_live import GeminiLiveTts
 
-            voice_tts = GeminiLiveTts(live)
+            voice_tts = GeminiLiveTts(live, budget=budget)
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
+        fallback = None
+        if budget is not None and budget.enforcing:
+            parts = (fallback_factory or _build_fallback)()
+            fallback = CascadeFallback(*parts) if any(part is not None for part in parts) else None
+        app.state.fallback = fallback
+        if budget is not None and budget.enabled:
+            logger.info(
+                "gemini budget: limit=%d enforce=%s fallback: llm=%s stt=%s tts=%s",
+                APP_CONFIG.gemini.tpm_limit,
+                budget.enforcing,
+                fallback.chat.name if fallback and fallback.chat else "none",
+                fallback.recognizer.name if fallback and fallback.recognizer else "none",
+                fallback.tts.name if fallback and fallback.tts else "none",
+            )
         if live is not None and models_factory is None:
             app.state.chat, app.state.recognizer = None, None  # речь в речь: чат и распознавание не нужны
         else:
@@ -120,11 +161,16 @@ def create_app(
         )
         # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а облачный синтез медленнее.
         # Фиксированные фразы (приветствия, шаблоны, кризисный ответ) готовим заранее; ответы модели так не подготовить.
+        # В режиме gemini_live прогреваются и шаблонные ответы: ими отвечает ход, отданный шаблону (бюджет Gemini исчерпан,
+        # Gemini промолчал или отказал), и звучать они должны из памяти тем же голосом, без новой сессии Gemini на фразу.
         warm_up = None
         if isinstance(app.state.tts, CachedTts):
-            phrases = (*GREETINGS, CRISIS_REPLY) if live is not None else SPOKEN_PHRASES
-            sentences = [part for phrase in phrases for part in split_sentences(phrase)]
+            sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
             warm_up = asyncio.create_task(app.state.tts.warm_up(sentences))
+        fallback_warm_up = None
+        if fallback is not None and isinstance(fallback.tts, CachedTts):
+            sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
+            fallback_warm_up = asyncio.create_task(fallback.tts.warm_up(sentences))
         try:
             yield
         finally:
@@ -134,6 +180,11 @@ def create_app(
             for client in (app.state.tts, app.state.chat, app.state.recognizer, live):
                 if client is not None:
                     await client.aclose()
+            if fallback_warm_up is not None:
+                fallback_warm_up.cancel()
+            for part in (fallback.chat, fallback.recognizer, fallback.tts) if fallback is not None else ():
+                if part is not None:
+                    await part.aclose()
 
     app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
     app.state.store = DialogStore(default_voice=APP_CONFIG.speech.default_voice)
@@ -141,6 +192,8 @@ def create_app(
     app.state.chat = None
     app.state.recognizer = None
     app.state.live = None
+    app.state.budget = None  # бюджет токенов Gemini (только в режиме gemini_live)
+    app.state.fallback = None  # каскад как запасной путь gemini_live (GEMINI_TPM_ENFORCE)
     app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)
     app.include_router(health.router)

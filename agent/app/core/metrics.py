@@ -1,6 +1,6 @@
 """Prometheus-метрики голосового диалога. Только счётчики и время: ни звука, ни текста, ни id в labels."""
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 VOICE_INTERRUPTIONS_TOTAL = Counter(
     "agent_voice_interruptions_total",
@@ -67,7 +67,64 @@ GEMINI_TOKENS_TOTAL = Counter(
     ["direction", "modality"],
 )
 
-# result: ok | failed. Смена сессии после ответа (GEMINI_TEXT_CONTEXT): новая сессия с текстовой историей вместо накопленного аудио.
+# ─── Бюджет входных токенов в минуту (GEMINI_TPM_*, app/services/gemini_budget.py) ───
+
+GEMINI_TPM_WINDOW_TOKENS = Gauge(
+    "agent_gemini_tpm_window_tokens",
+    "Фактические входные токены Gemini Live за последние 60 секунд (по usage_metadata ходов): то, что считает лимит Google.",
+)
+
+GEMINI_TPM_LIMIT_TOKENS = Gauge(
+    "agent_gemini_tpm_limit_tokens",
+    "Действующий лимит входных токенов в минуту: GEMINI_TPM_LIMIT или ниже, если Google отказал раньше (автокалибровка).",
+)
+
+# 0 ok, 1 trim, 2 admit_off, 3 hard, 4 cooldown
+GEMINI_BUDGET_LEVEL = Gauge(
+    "agent_gemini_budget_level",
+    "Уровень нагрузки на Gemini: 0 ok, 1 trim, 2 admit_off, 3 hard, 4 cooldown (пауза после 1011).",
+)
+
+# purpose: start | rotate | reconnect | voice | tts; result: ok | failed | quota
+GEMINI_OPENS_TOTAL = Counter(
+    "agent_gemini_opens_total",
+    "Открытия сессий Gemini Live: первая в разговоре, смена после ответа, переоткрытие, смена голоса, озвучка фразы.",
+    ["purpose", "result"],
+)
+
+# where: open | session | tts
+GEMINI_QUOTA_ERRORS_TOTAL = Counter(
+    "agent_gemini_quota_errors_total",
+    "Отказы Google по квоте (1011 «exceeded your current quota»): при открытии, посреди сессии, при озвучке фразы.",
+    ["where"],
+)
+
+# pipeline: live | cascade
+GEMINI_ADMISSION_TOTAL = Counter(
+    "agent_gemini_admission_total",
+    "Новые сокеты в режиме gemini_live: начаты в Gemini или, когда бюджет исчерпан (GEMINI_TPM_ENFORCE), в каскаде.",
+    ["pipeline"],
+)
+
+# reason: hard | cooldown
+GEMINI_TURNS_DEGRADED_TOTAL = Counter(
+    "agent_gemini_turns_degraded_total",
+    "Ходы идущего разговора, отданные шаблону без Gemini: окно у лимита (hard) или пауза после 1011 (cooldown).",
+    ["reason"],
+)
+
+GEMINI_BUDGET_WAIT_SECONDS = Histogram(
+    "agent_gemini_budget_wait_seconds",
+    "Сколько ход ждал места в окне токенов (GEMINI_TPM_ENFORCE), прежде чем уйти модели или в шаблон.",
+    buckets=(0.0, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0),
+)
+
+GEMINI_SESSIONS_OPEN = Gauge(
+    "agent_gemini_sessions_open",
+    "Открытые сейчас сессии Gemini Live (разговоры и озвучка фраз).",
+)
+
+# result: ok | failed | deferred. Смена сессии после ответа (GEMINI_TEXT_CONTEXT): новая сессия с текстовой историей вместо накопленного аудио.
 GEMINI_CONTEXT_REFRESH_TOTAL = Counter(
     "agent_gemini_context_refresh_total",
     "Смены сессии Gemini Live с переносом контекста текстом.",

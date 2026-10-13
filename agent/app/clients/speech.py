@@ -359,6 +359,10 @@ class CachedTts:
         self._remember(key, pcm)
         return pcm
 
+    def remembered(self, text: str, voice: Voice) -> bytes | None:
+        """Озвученная раньше фраза, без обращения к провайдеру (None, если её нет в памяти)."""
+        return self._items.get((voice, text))
+
     def _remember(self, key: tuple[Voice, str], pcm: bytes) -> None:
         self._items[key] = pcm
         while len(self._items) > self._max_items:

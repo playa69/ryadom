@@ -11,13 +11,20 @@
 
 import asyncio
 import logging
+import re
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from app.clients.speech import TtsError, Voice
 from app.core.config import GeminiSettings
+from app.core.metrics import GEMINI_OPENS_TOTAL, GEMINI_SESSIONS_OPEN
+from app.services.gemini_budget import estimate_turn
+
+if TYPE_CHECKING:
+    from app.services.gemini_budget import TokenBudget
 
 logger = logging.getLogger("agent.gemini")
 
@@ -42,6 +49,38 @@ LiveHistory = Sequence[tuple[Literal["user", "model"], str]]
 
 class LiveError(Exception):
     """Gemini Live не отвечает, отказал в доступе или закрыл соединение."""
+
+
+_CLOSE_1011 = re.compile(r"\b1011\b")
+
+
+def is_quota_error(text: str) -> bool:
+    """Отказ Google по квоте: соединение закрыто кодом 1011 с «You exceeded your current quota» (при открытии и посреди хода)."""
+    lower = text.lower()
+    return "quota" in lower or "resource_exhausted" in lower or _CLOSE_1011.search(lower) is not None
+
+
+def is_explicit_quota_error(text: str) -> bool:
+    """В тексте прямо сказано про квоту: по такой ошибке можно калибровать лимит (голый 1011 бывает и внутренней ошибкой)."""
+    lower = text.lower()
+    return "quota" in lower or "resource_exhausted" in lower
+
+
+_OPEN_SESSIONS: "weakref.WeakSet[object]" = weakref.WeakSet()
+
+
+def session_opened(link: object) -> None:
+    """Сессия Gemini открыта: в метрике открытых сессий (agent_gemini_sessions_open)."""
+    if link not in _OPEN_SESSIONS:
+        _OPEN_SESSIONS.add(link)
+        GEMINI_SESSIONS_OPEN.inc()
+
+
+def session_closed(link: object) -> None:
+    """Сессия закрыта нами или Google; повторный вызов для той же сессии ничего не меняет."""
+    if link in _OPEN_SESSIONS:
+        _OPEN_SESSIONS.discard(link)
+        GEMINI_SESSIONS_OPEN.dec()
 
 
 @dataclass(slots=True)
@@ -284,35 +323,69 @@ VERBATIM_INSTRUCTIONS = (
 
 
 class GeminiLiveTts:
-    """Фиксированные фразы агента (приветствие, кризисный ответ) тем же голосом, каким модель отвечает в диалоге."""
+    """Фиксированные фразы агента (приветствие, кризисный ответ) тем же голосом, каким модель отвечает в диалоге.
 
-    def __init__(self, connector: LiveConnector, timeout_seconds: int = 30) -> None:
+    С бюджетом (`GEMINI_TPM_LIMIT`): во время паузы после отказа Google по квоте фраза не озвучивается сразу, без
+    подключения (`TtsError`), отказ по квоте при открытии или посреди фразы начинает паузу, а открытие сессии и токены
+    фразы идут в окно, как у разговора.
+    """
+
+    def __init__(self, connector: LiveConnector, timeout_seconds: int = 30, budget: "TokenBudget | None" = None) -> None:
         self._connector = connector
         self._timeout = timeout_seconds
+        self._budget = budget
         self.name = connector.name
 
+    def _quota(self, text: str) -> None:
+        if self._budget is not None and is_quota_error(text):
+            self._budget.on_quota_error("tts", calibrate=is_explicit_quota_error(text))
+
     async def synthesize(self, text: str, voice: Voice) -> bytes:
+        budget = self._budget
+        if budget is not None and budget.cooling():
+            raise TtsError("Gemini Live: пауза после превышения квоты, фраза не озвучена")
+        opening = budget.opening(budget.open_estimate([VERBATIM_INSTRUCTIONS])) if budget is not None else None
         try:
             link = await self._connector.open(voice, VERBATIM_INSTRUCTIONS)
-        except LiveError as error:
+        except BaseException as error:
+            if budget is not None:
+                budget.cancel(opening)
+            if not isinstance(error, LiveError):
+                raise
+            GEMINI_OPENS_TOTAL.labels("tts", "quota" if is_quota_error(str(error)) else "failed").inc()
+            self._quota(str(error))
             raise TtsError(str(error)) from error
+        GEMINI_OPENS_TOTAL.labels("tts", "ok").inc()
+        session_opened(link)
+        request = f"Произнеси дословно, без добавлений: «{text}»"
+        reserved = None
+        if budget is not None:
+            budget.opened(link, opening)
+            reserved = budget.reserve(estimate_turn(request))
         pcm = bytearray()
         try:
-            await link.send_text(f"Произнеси дословно, без добавлений: «{text}»")
+            await link.send_text(request)
             async with asyncio.timeout(self._timeout):
                 async for event in link.events():
                     if event.kind == "audio":
                         pcm += event.data
+                    elif event.kind == "usage" and budget is not None:
+                        budget.settle_turn(link, reserved, (event.usage or {}).get("prompt_all", 0))
+                        reserved = None
                     elif event.kind in ("generation_complete", "turn_complete"):
                         break
                     elif event.kind == "closed":
+                        self._quota(event.text)
                         break
         except TimeoutError as error:
             raise TtsError("Gemini Live не договорил фразу вовремя") from error
         except Exception as error:  # noqa: BLE001
             raise TtsError(f"Gemini Live: {type(error).__name__}: {str(error)[:160]}") from error
         finally:
+            session_closed(link)
             await link.aclose()
+            if budget is not None and reserved is not None:
+                budget.settle(reserved, estimate_turn(request))  # usage не пришёл: токены фразы всё равно ушли
         if not pcm:
             raise TtsError("Gemini Live вернул пустое аудио")
         return bytes(pcm[: len(pcm) // 2 * 2])

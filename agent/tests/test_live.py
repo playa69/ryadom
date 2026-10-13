@@ -26,6 +26,10 @@ from tests.conftest import (
 )
 
 
+# Как Google отказывает по квоте (TPM): соединение закрыто кодом 1011, при открытии и посреди хода.
+QUOTA_TEXT = "received 1011 (internal error) You exceeded your current quota, please check your plan and billing details."
+
+
 class FakeLink:
     """Соединение с моделью: на конец реплики отвечает заранее заданным текстом и звуком."""
 
@@ -47,12 +51,16 @@ class FakeLink:
         self.usage: dict[str, int] | None = None  # токены хода, которые модель присылает вместе с turn_complete
         self.handle_to_issue = "handle-1"  # handle сессии, который «выдаёт Google» после каждого ответа
         self.signal: str | None = None  # "go_away" | "drop": что Google делает после ответа
+        self.quota_close = False  # на первом же ходу Google закрывает соединение 1011 «exceeded your current quota» вместо ответа
         self.commands: list[tuple[Any, ...]] = []
         self._reply = reply
         self._heard = heard
         self._queue: asyncio.Queue[LiveEvent] = asyncio.Queue()
 
     def _respond(self, heard: str | None) -> None:
+        if self.quota_close:
+            self._queue.put_nowait(LiveEvent("closed", text=f"ConnectionClosedError: {QUOTA_TEXT}"))
+            return
         if heard:
             self._queue.put_nowait(LiveEvent("input_text", text=heard))
         for piece in re_split(self._reply):
@@ -126,6 +134,12 @@ class FakeConnector:
         self.turn_complete = turn_complete  # модель шлёт turn_complete после каждого ответа
         self.usage = usage  # и usage (токены хода) перед ним
         self.fail_from: int | None = None  # с какого по счёту открытия (с 1) соединение не открывается
+        # Квота Google (TPM): открытия с номера quota_from (с 1) отвечают «1011 … exceeded your current quota», столько
+        # открытий подряд (None — все); соединения с номерами из quota_close_links закрываются так же посреди первого хода.
+        self.quota_from: int | None = None
+        self.quota_count: int | None = None
+        self.quota_close_links: set[int] = set()
+        self.open_delay = 0.0  # сколько открытие длится (в бою около секунды)
         self.links: list[FakeLink] = []
         self.open_calls: list[tuple[str, str | None]] = []
         self.history_calls: list[LiveHistory | None] = []  # history каждого вызова open, в том числе неудачного
@@ -135,6 +149,12 @@ class FakeConnector:
     ) -> FakeLink:
         self.open_calls.append((voice, resume_handle))
         self.history_calls.append(history)
+        if self.open_delay:
+            await asyncio.sleep(self.open_delay)
+        number = len(self.open_calls)
+        if self.quota_from is not None and number >= self.quota_from:
+            if self.quota_count is None or number < self.quota_from + self.quota_count:
+                raise LiveError(f"Gemini Live не открылся: ConnectionClosedError: {QUOTA_TEXT}")
         if self.fail or (resume_handle and self.reject_handles):
             raise LiveError("Gemini Live не открылся в тесте")
         if self.fail_from is not None and len(self.open_calls) >= self.fail_from:
@@ -142,6 +162,7 @@ class FakeConnector:
         link = FakeLink(voice, self.reply, self.heard, instructions, resume_handle, history)
         link.turn_complete = self.turn_complete
         link.usage = self.usage
+        link.quota_close = number in self.quota_close_links
         if not self.links:
             link.signal = self.after_first_reply
         self.links.append(link)
