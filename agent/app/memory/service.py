@@ -206,6 +206,9 @@ class MemoryService:
     def user_erased(self, user_id: str) -> None:
         self.cache.drop(user_id)
 
+    def user_unloaded(self, user_id: str) -> None:
+        self.cache.drop(user_id)  # при загрузке (`user_loaded`) настройки и сводка соберутся заново
+
     # ─── кэш сводки ───────────────────────────────────────────────────────────
 
     async def rebuild(self, user_id: str) -> None:

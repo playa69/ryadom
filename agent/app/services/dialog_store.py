@@ -143,7 +143,11 @@ class MemoryLink(Protocol):
         ...
 
     async def user_loaded(self, user_id: str) -> None:
-        """Человек впервые после старта процесса загружен с диска: подтянуть его настройки и сводку в кэш."""
+        """Человек загружен с диска (после старта процесса или после выгрузки): подтянуть его настройки и сводку в кэш."""
+        ...
+
+    def user_unloaded(self, user_id: str) -> None:
+        """Человек выгружен из памяти процесса (`evict_idle`): убрать его настройки и сводку из кэша, они пересоберутся при загрузке."""
         ...
 
     def dialog_ended(self, dialog: Dialog) -> None:
@@ -424,8 +428,9 @@ class DialogStore:
         `forget_derived` — убрать и факты памяти, у которых этот диалог единственный источник (см. `DialogDatabase.delete_dialog`).
         Исключение — диск не ответил; из памяти процесса диалог к этому моменту уже убран.
         """
-        self._forget(user_id, dialog_id)
-        await self._delete_on_disk(user_id, dialog_id, forget_derived)
+        async with self._load_lock:  # догрузка выгруженного человека иначе могла прочитать диалог до удаления и вернуть его в память
+            self._forget(user_id, dialog_id)
+            await self._delete_on_disk(user_id, dialog_id, forget_derived)
 
     async def _delete_on_disk(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         db = self._db
@@ -801,7 +806,13 @@ class DialogStore:
         pref = self._voice_prefs.get(user_id)
         if pref is not None and self._persisted_prefs.get(user_id) != pref:
             dirty = True
-        return "dirty" if dirty else None
+        if dirty:
+            return "dirty"
+        if any(d.memory_mode == "off" for d in dialogs):
+            # Срок удаления разговора «Без памяти» идёт от `socket_closed_at`, а оно на диск не попадает: пока такой разговор жив
+            # (удаляется через 24 часа), человека держим в памяти, иначе срок потерялся бы вместе с выгрузкой.
+            return "memory_off"
+        return None
 
     def _unload(self, user_id: str) -> None:
         """Убрать человека из памяти процесса. Всё, что убирается, есть на диске (проверил `_keeps`)."""
@@ -813,6 +824,12 @@ class DialogStore:
         self._persisted_prefs.pop(user_id, None)
         self._loaded.discard(user_id)
         self._last_access.pop(user_id, None)
+        memory = self.memory
+        if memory is not None:
+            try:
+                memory.user_unloaded(user_id)
+            except Exception:  # noqa: BLE001 - память не должна мешать выгрузке (I3)
+                logger.exception("memory unload failed user=%s", user_id)
         if len(self._evicted) >= EVICTED_MEMO_LIMIT:
             self._evicted.clear()
         self._evicted.add(user_id)

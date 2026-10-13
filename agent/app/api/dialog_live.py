@@ -547,7 +547,8 @@ class LiveDialogSession(DialogSession):
         """Сколько квоты съест новая сессия этого диалога сейчас: промпт и история, байты / 4 × GEMINI_TPM_OPEN_FACTOR."""
         if not self._budget.enabled:
             return 0
-        return self._budget.open_estimate([SYSTEM_PROMPT + LIVE_ADDENDUM, *(text for _, text in self._history())])
+        brief = memory_block(self._store.memory_brief(self._dialog, count=False))  # сводка памяти тоже уходит в сессию
+        return self._budget.open_estimate([SYSTEM_PROMPT + LIVE_ADDENDUM + brief, *(text for _, text in self._history())])
 
     def _may_open(self, cost: int | None = None) -> bool:
         """Новую сессию можно открывать: нет паузы после 1011 и, при ENFORCE, открытие помещается в окно."""

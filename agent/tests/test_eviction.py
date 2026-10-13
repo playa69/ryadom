@@ -683,3 +683,77 @@ def test_memory_metrics_are_counted_and_carry_no_texts(tmp_path: Path) -> None:
         labels = set(re.findall(r"^agent_dialog_(?:evictions|loads)\w*\{(.*)\}", metrics, re.M))
         assert labels and labels <= {'reason="socket"', 'reason="dirty"', 'kind="first"', 'kind="reload"'}
         assert not re.search(r"^agent_dialog_(?:\w+_in_memory|evictions_total|load_seconds_(?:count|sum))\{", metrics, re.M)
+
+
+# ─── Стык с памятью (разговор «Без памяти», кэш сводки, удаление и загрузка) ───────────────────────────────────────────
+
+
+class SpyMemory:
+    """Что хранилище говорит памяти о загрузке и выгрузке человека."""
+
+    def __init__(self) -> None:
+        self.loaded: list[str] = []
+        self.unloaded: list[str] = []
+
+    def brief(self, dialog: Any, count: bool = True) -> str:
+        return ""
+
+    def enabled(self, user_id: str) -> bool:
+        return False
+
+    async def user_loaded(self, user_id: str) -> None:
+        self.loaded.append(user_id)
+
+    def user_unloaded(self, user_id: str) -> None:
+        self.unloaded.append(user_id)
+
+    def dialog_ended(self, dialog: Any) -> None:
+        return None
+
+
+async def test_memory_is_told_when_a_person_is_unloaded_and_loaded_again(tmp_path: Path) -> None:
+    store, _ = await make_store(tmp_path / "d.sqlite3")
+    spy = SpyMemory()
+    store.memory = spy  # type: ignore[assignment]
+    user = str(uuid.uuid4())
+    await store.ensure_user(user)
+    dialog, _, _ = store.start(user, "female")
+    store.add_message(dialog, "user", "Привет")
+    await store.flush()
+    assert store.evict_idle(later()) == 1
+    assert spy.unloaded == [user]  # кэш сводки человека сброшен вместе с выгрузкой
+    await store.ensure_user(user)
+    assert spy.loaded == [user, user]  # а при возвращении собирается заново
+    await store.detach()
+
+
+async def test_a_person_with_a_memory_off_dialog_stays_in_memory(tmp_path: Path) -> None:
+    store, _ = await make_store(tmp_path / "d.sqlite3")
+    user = str(uuid.uuid4())
+    await store.ensure_user(user)
+    dialog, _, _ = store.start(user, "female", memory_mode="off")
+    store.add_message(dialog, "user", "Без памяти")
+    await store.flush()
+    before = sample("agent_dialog_evictions_skipped_total", reason="memory_off")
+    assert store.evict_idle(later()) == 0  # срок удаления такого разговора живёт только в памяти (socket_closed_at)
+    assert sample("agent_dialog_evictions_skipped_total", reason="memory_off") == before + 1
+    assert in_memory(store, user)
+    await store.detach()
+
+
+async def test_deleting_a_dialog_waits_for_a_load_of_the_same_person_in_flight(tmp_path: Path) -> None:
+    store, _ = await make_store(tmp_path / "d.sqlite3")
+    user = str(uuid.uuid4())
+    await store.ensure_user(user)
+    dialog, _, _ = store.start(user, "female")
+    store.add_message(dialog, "user", "Привет")
+    await store.flush()
+    assert store.evict_idle(later()) == 1
+    async with store._load_lock:  # идёт загрузка этого человека: удаление не должно проскочить мимо неё
+        deleting = asyncio.create_task(store.delete_dialog(user, dialog.id, False))
+        await asyncio.sleep(0.05)
+        assert not deleting.done()
+    await deleting
+    await store.ensure_user(user)
+    assert store.get(user, dialog.id) is None  # удалённый диалог не вернулся в память
+    await store.detach()
