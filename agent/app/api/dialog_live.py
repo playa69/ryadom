@@ -173,15 +173,20 @@ class LiveDialogSession(DialogSession):
         try:
             await super().run()
         finally:
-            if self._rotation is not None:
-                self._tasks.append(self._rotation)
-            for task in self._tasks:
+            # Отменённая задача держит CancelledError, его traceback — кадр с self: ссылка сеанса на свои задачи замкнула бы
+            # цикл, и сеанс со всем, что в нём (сокет, очереди звука, ходы), ждал бы полной сборки мусора. Поэтому сеанс
+            # отпускает задачи до ожидания, а соединение с моделью — даже если его самого отменят, пока он ждёт.
+            tasks = [*self._tasks, *([self._rotation] if self._rotation is not None else [])]
+            self._tasks, self._rotation = [], None
+            for task in tasks:
                 task.cancel()
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-            for turn in (self._turn, self._voice_turn):
-                if turn is not None:
-                    self._disarm_all(turn)
-            self._release_link()
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                for turn in (self._turn, self._voice_turn):
+                    if turn is not None:
+                        self._disarm_all(turn)
+                self._release_link()
 
     def _history(self) -> list[tuple[Literal["user", "model"], str]]:
         """Последние сообщения диалога для новой сессии: (кто, текст). История начинается с реплики человека, подряд
@@ -457,7 +462,15 @@ class LiveDialogSession(DialogSession):
 
     def _arm(self, turn: LiveTurn, name: str, delay: float) -> None:
         self._disarm(turn, name)
-        turn.timers[name] = self._loop.call_later(delay, lambda: self._events.put_nowait(("timer", turn, name)))
+
+        def fire() -> None:
+            # Сработавший таймер уже не взведён: убираем его из хода сразу. Иначе ручка таймера (через это замыкание она
+            # ссылается на ход) осталась бы в turn.timers, и ход со звуком в нём держал бы сам себя циклом до полной сборки
+            # мусора. Перевзвод всегда снимает прежний таймер, так что здесь в turn.timers лежит именно эта ручка.
+            turn.timers.pop(name, None)
+            self._events.put_nowait(("timer", turn, name))
+
+        turn.timers[name] = self._loop.call_later(delay, fire)
 
     @staticmethod
     def _disarm(turn: LiveTurn, name: str) -> None:
@@ -475,8 +488,11 @@ class LiveDialogSession(DialogSession):
         Пока человек говорит, модель молчит, и таймер не идёт: иначе реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS (15 с, а в рассказе
         «выговориться» это обычное дело) закрывалась бы посреди речи, и ответа на неё не было бы вовсе. Предел длины самой реплики
         держит VOICE_TURN_MAX_SECONDS, а оборванное соединение закрывает сокет.
+
+        Законченному ходу (модель отказала раньше, чем человек договорил) таймер не нужен: `_on_timer` его всё равно не
+        слушает, а взведённый таймер держал бы ход и сеанс после конца разговора.
         """
-        if turn.kind == "voice" and not turn.ended:
+        if not turn.generating or (turn.kind == "voice" and not turn.ended):
             return
         self._arm(turn, "idle", self._cfg.idle_timeout_seconds)
 

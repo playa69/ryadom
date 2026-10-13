@@ -21,6 +21,7 @@ from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
 from app.core.config import APP_CONFIG
 from app.core.errors import install_error_handlers
+from app.core.reclaim import MemoryReclaimer
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
@@ -125,9 +126,14 @@ def create_app(
             phrases = (*GREETINGS, CRISIS_REPLY) if live is not None else SPOKEN_PHRASES
             sentences = [part for phrase in phrases for part in split_sentences(phrase)]
             warm_up = asyncio.create_task(app.state.tts.warm_up(sentences))
+        # После прогрева стартовые объекты замораживаются для сборщика мусора, дальше память раз в MEMORY_RECLAIM_SECONDS
+        # возвращается системе (app/core/reclaim.py).
+        reclaimer = MemoryReclaimer(APP_CONFIG.memory_reclaim.seconds)
+        reclaimer.start(warm_up)
         try:
             yield
         finally:
+            await reclaimer.stop()
             if warm_up is not None:
                 warm_up.cancel()
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются

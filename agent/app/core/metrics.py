@@ -79,3 +79,30 @@ GEMINI_CONTEXT_REFRESH_SECONDS = Histogram(
     "Сколько занимает смена сессии: соединение и загрузка текстовой истории (в фоне, между репликами).",
     buckets=(0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 15.0),
 )
+
+# Возврат памяти процесса (app/core/reclaim.py, настройка MEMORY_RECLAIM_SECONDS). Сама память процесса и работа сборщика мусора видны в
+# стандартных метриках prometheus_client: process_resident_memory_bytes, python_gc_collections_total,
+# python_gc_objects_collected_total. step: gc (полная сборка мусора, останавливает цикл событий целиком) | trim (malloc_trim
+# в отдельном потоке, цикл событий не держит).
+PROCESS_MEMORY_RECLAIM_RUNS_TOTAL = Counter(
+    "agent_process_memory_reclaim_runs_total",
+    "Проходы возврата памяти.",
+)
+
+PROCESS_MEMORY_RECLAIM_SECONDS = Histogram(
+    "agent_process_memory_reclaim_seconds",
+    "Сколько занимает шаг возврата памяти: сборка мусора (пауза цикла событий) и malloc_trim (от запуска потока до конца, "
+    "вместе с ожиданием процессора: под нагрузкой на 0,5 CPU это дольше самого вызова).",
+    ["step"],
+    buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
+
+PROCESS_MEMORY_RECLAIM_COLLECTED_OBJECTS_TOTAL = Counter(
+    "agent_process_memory_reclaim_collected_objects_total",
+    "Недостижимые объекты (ссылочные циклы), которые нашла сборка мусора при возврате памяти.",
+)
+
+PROCESS_MEMORY_RECLAIMED_BYTES_TOTAL = Counter(
+    "agent_process_memory_reclaimed_bytes_total",
+    "На сколько опустилась резидентная память процесса (RSS) за проходы возврата памяти, сумма. Только Linux.",
+)
