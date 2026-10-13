@@ -18,6 +18,8 @@ os.environ["TTS_MODE"] = "none"
 os.environ["LLM_MODE"] = "template"
 os.environ["LLM_TIMEOUT_SECONDS"] = "1"  # тест зависшей модели ждёт ровно столько
 os.environ["INCOMPLETE_HOLD_MS"] = "400"  # пауза для оборванной на полуслове реплики: в бою 1500, тесты не ждут столько
+os.environ["GEMINI_TPM_LIMIT"] = "0"  # бюджет токенов Gemini выключен; его тесты (test_gemini_budget.py) включают его сами
+os.environ["GEMINI_LAZY_OPEN"] = "false"  # сессия Gemini открывается заранее, как раньше; ленивое открытие — там же
 os.environ.pop("SALUTE_SPEECH_AUTH_KEY", None)
 os.environ.pop("AGENT_API_TOKEN", None)
 

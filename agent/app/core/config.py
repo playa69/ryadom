@@ -198,6 +198,37 @@ class GeminiSettings(BaseAppSettings):
     # Соединение живёт ограниченно (Google шлёт предупреждение GoAway): при возобновлении сессии по handle контекст
     # разговора переживает переподключение. Без handle (или если он не принят) модель получает последние сообщения текстом.
     session_resumption: bool = Field(validation_alias="GEMINI_SESSION_RESUMPTION", default=True)
+    # Лимит входных токенов в минуту (TPM) проекта Google: агент сам ведёт окно в 60 с по usage_metadata ходов
+    # (app/services/gemini_budget.py). 0 — учёт выключен целиком, поведение как без него. Прод (Tier 2): 400000.
+    tpm_limit: int = Field(validation_alias="GEMINI_TPM_LIMIT", default=0, ge=0)
+    # false — только мерить (окно, метрики, журнал) и не открывать сессии в паузе после 1011; true — ещё и допуск новых
+    # разговоров и деградация ходов по порогам ниже.
+    tpm_enforce: bool = Field(validation_alias="GEMINI_TPM_ENFORCE", default=False)
+    # Пороги доли окна от лимита: история новой сессии короче / новые разговоры в каскад / ход ждёт, потом шаблон без Gemini.
+    tpm_trim_at: float = Field(validation_alias="GEMINI_TPM_TRIM_AT", default=0.6, gt=0, le=1)
+    tpm_admit_at: float = Field(validation_alias="GEMINI_TPM_ADMIT_AT", default=0.7, gt=0, le=1)
+    tpm_hard_at: float = Field(validation_alias="GEMINI_TPM_HARD_AT", default=0.9, gt=0, le=1)
+    # Сколько сообщений истории получает новая сессия, когда окно выше GEMINI_TPM_TRIM_AT (при ENFORCE). 0 — не сокращать.
+    history_messages_tight: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES_TIGHT", default=16, ge=0)
+    # Сколько ход ждёт места в окне (или конца паузы после 1011), прежде чем уйти в шаблон, мс.
+    tpm_wait_ms: int = Field(validation_alias="GEMINI_TPM_WAIT_MS", default=1500, ge=0, le=10_000)
+    # Начальная пауза после отказа Google по квоте (1011), с: растёт вдвое с каждой новой ошибкой до 60 с, сбрасывается после
+    # удачных ходов. Действует и при GEMINI_TPM_ENFORCE=false (это защита, а не деградация); 0 — паузы нет.
+    quota_cooldown_seconds: float = Field(validation_alias="GEMINI_QUOTA_COOLDOWN_SECONDS", default=5, ge=0, le=60)
+    # Открытие сессии Google считает в TPM сразу, по размеру контекста и щедрее настоящих токенов (эксперимент: ≈ байты UTF-8
+    # системной инструкции и истории / 4). Оценка открытия = байты / 4 × этот коэффициент; 0 — открытия не считать.
+    tpm_open_factor: float = Field(validation_alias="GEMINI_TPM_OPEN_FACTOR", default=1.0, ge=0, le=10)
+    # Ленивое открытие: сессия открывается не заранее (при подключении сокета и сразу после ответа), а когда она нужна —
+    # по audio_start (открытие идёт, пока человек говорит) или по набранному сообщению. Неиспользованная сессия тратит квоту
+    # впустую (последняя смена после последнего ответа, сокет, где так и не заговорили). Набранное сообщение ждёт открытия
+    # (около 1 с). false — как раньше: сессия готова заранее.
+    lazy_open: bool = Field(validation_alias="GEMINI_LAZY_OPEN", default=False)
+
+    @model_validator(mode="after")
+    def _thresholds_in_order(self) -> "GeminiSettings":
+        if not self.tpm_trim_at <= self.tpm_admit_at <= self.tpm_hard_at:
+            raise ValueError("нужно GEMINI_TPM_TRIM_AT <= GEMINI_TPM_ADMIT_AT <= GEMINI_TPM_HARD_AT")
+        return self
 
 
 class LangfuseSettings(BaseAppSettings):

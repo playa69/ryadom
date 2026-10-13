@@ -631,6 +631,10 @@ class DialogSession:
         tts = self._tts_source()
         if tts is None:
             return None
+        return self._speech_with(tts, message_id, turn)
+
+    def _speech_with(self, tts: TextToSpeech, message_id: str, turn: Turn | None) -> SpeechFeed:
+        """Озвучка сообщения заданным провайдером (режим gemini_live озвучивает шаблоны хода без Gemini другим)."""
         feed = SpeechFeed()
         task = asyncio.create_task(self._speak(tts, message_id, feed.chunks, self._dialog.voice, turn))
         self._speech_tasks.add(task)
@@ -787,12 +791,10 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             await websocket.close(code=1000)
             return
         live = websocket.app.state.live
-        if live is not None:  # VOICE_PIPELINE=gemini_live: речь в речь, чат и распознавание не нужны
-            from app.api.dialog_live import LiveDialogSession
+        if live is not None:  # VOICE_PIPELINE=gemini_live: речь в речь; бюджет Gemini исчерпан — разговор в каскаде
+            from app.api.dialog_live import admit_session
 
-            session: DialogSession = LiveDialogSession(
-                websocket, store, dialog, lambda: active_tts(websocket.app), live
-            )
+            session: DialogSession = admit_session(websocket, store, dialog)
         else:
             session = DialogSession(
                 websocket,
