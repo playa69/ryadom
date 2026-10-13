@@ -72,7 +72,7 @@ langfuse:
     resources:
       requests:
         memory: "256Mi"
-        cpu: "150m"
+        cpu: "75m"
       limits:
         memory: "1Gi"
         cpu: "600m"
@@ -84,7 +84,7 @@ langfuse:
     resources:
       requests:
         memory: "256Mi"
-        cpu: "150m"
+        cpu: "75m"
       limits:
         memory: "768Mi"
         cpu: "600m"
@@ -139,7 +139,7 @@ clickhouse:
   # история на маленьких нодах, не поднимать без надобности)
   resources:
     requests:
-      cpu: 200m
+      cpu: 100m
       memory: 512Mi
     limits:
       cpu: 800m

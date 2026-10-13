@@ -1,0 +1,42 @@
+# =============================================================================
+# CSI-драйвер Timeweb (network-drives-csi) — overrides ресурсов
+# =============================================================================
+# Namespace: csi-driver-timeweb-cloud. Чарт ставится из OCI-реестра Timeweb
+# (см. k8s/README.md «CSI-драйвер»), основные values (TW_API_SECRET и пр.)
+# уже заданы при установке через панель — поэтому upgrade ТОЛЬКО с
+# --reuse-values, этот файл несёт лишь overrides requests:
+#
+#   helm upgrade csi-driver \
+#     oci://cr-internal.twcstorage.ru/network-drives-csi/csi-driver-timeweb-cloud \
+#     --version 2.1.0 -n csi-driver-timeweb-cloud \
+#     --reuse-values -f k8s/csi-driver/values-csi-driver.yaml
+#
+# Зачем: дефолтные requests (controller 420m суммарно, node 140m) завышены
+# для нод 2 vCPU — фактическое потребление единицы милликор. Снижено, чтобы
+# освободить планировочный запас (нода .5 была распределена на ~99%).
+# Memory не трогаем: дефолты адекватные.
+# =============================================================================
+
+controller:
+  resources:
+    csiPlugin:
+      requests:
+        cpu: 50m
+    attacher:
+      requests:
+        cpu: 20m
+    provisioner:
+      requests:
+        cpu: 20m
+    resizer:
+      requests:
+        cpu: 20m
+    healthMonitor:
+      requests:
+        cpu: 20m
+
+node:
+  resources:
+    csiPlugin:
+      requests:
+        cpu: 50m

@@ -65,7 +65,7 @@ master:
   resourcesPreset: "none"
   resources:
     requests:
-      cpu: 100m
+      cpu: 75m
       memory: 128Mi
     limits:
       memory: 384Mi
@@ -93,7 +93,7 @@ replica:
   resourcesPreset: "none"
   resources:
     requests:
-      cpu: 100m
+      cpu: 75m
       memory: 128Mi
     limits:
       memory: 384Mi
@@ -121,7 +121,7 @@ sentinel:
   resourcesPreset: "none"
   resources:
     requests:
-      cpu: 50m
+      cpu: 30m
       memory: 32Mi
     limits:
       memory: 128Mi
