@@ -5,6 +5,7 @@
 - Сервис: PostHog Cloud, регион EU (проект `Ryadom`, id `300786`).
 - Код: пакет [`app/packages/analytics`](../app/packages/analytics) (каталог событий, очистка, SDK-обёртки, прокси), подключение в `services/api`, `apps/web`, `apps/mobile`, `apps/landing`. В админке (`apps/admin`) аналитики нет.
 - Решение зафиксировано здесь, строка «Аналитика» в [§4.2 спецификации](spec.md#42-стек-план-v11--факт) ссылается на этот файл.
+- Что считается целевым действием, как из событий строятся DAU и воронка и чем это сверяется с базами: [analytics-proof.md](analytics-proof.md).
 
 ## Как это устроено
 
@@ -47,6 +48,8 @@
 | `password_reset_requested` | Ответ не должен выдавать, зарегистрирован ли адрес |
 | `account_deleted` | Тот, кто просит стереть всё, не получает новой записи о себе |
 
+**Тип трафика.** Каждое событие человека несёт `traffic_type`: `real`, `test` (нагрузочные тесты, скриптовые проверки) или `internal` (команда). Он берётся из аккаунта (`users.properties.traffic_type`), клиент его не присылает и подменить не может; он же ставится на профиль человека при каждом входе. Так тестовый трафик отделён от людей в самом журнале, а не списком в настройках PostHog. Аккаунт, созданный устройством с id на `loadtest-` (`ANALYTICS_TEST_DEVICE_PREFIX`), помечается `test` до первого события; остальные помечаются вручную (см. [analytics-proof.md](analytics-proof.md#что-чем-отмечено)).
+
 **Напряжение до и после** («стало ли легче» — north star продукта) уходит не значениями, а изменением: `tension_delta` (после минус до) и `tension_improved`.
 
 **Отказ от аналитики.** В профиле клиентов есть переключатель «Помогать улучшать «Рядом»». Выбор относится ко всему **аккаунту**: он сохраняется на сервере (`PATCH /api/auth/me` с `analyticsOptOut`, в `users.properties.analytics`, миграция не нужна) и соблюдается везде.
@@ -82,6 +85,8 @@
 | `POSTHOG_HEATMAP_CAPTURE` | выкл, и **пока оставить выключенным** | Куда нажимают: координаты и маршрут, без текста (клиентское поле `heatmapCapture`); адреса-ключи очищаются. Метка `ph-no-capture` на тепловую карту не действует (см. «Тепловые карты» ниже) |
 | `POSTHOG_PERSONAL_API_KEY` + `POSTHOG_PROJECT_ID` | — | Стирание профилей при удалении аккаунта (см. выше) |
 | `POSTHOG_ERASE_EVENTS` | в коде `true`, в `app-config` `false` | Стирать ли при удалении аккаунта и события (см. выше про псевдонимность) |
+| `RELEASE` | из образа (`--build-arg RELEASE=<тег>`) | Тег сборки, уходит в события как `app_version` (веб, PWA, лендинг, api). Без него версия берётся из `package.json` и всегда `0.1.0` |
+| `ANALYTICS_TEST_DEVICE_PREFIX` | `loadtest-` | Аккаунты, созданные устройством с таким началом id, помечаются `test`. Пусто: правило выключено |
 
 Старые имена в ответе конфига (`autocapture`, `heatmaps`) читают уже выкаченные клиенты, которые не умеют вырезать текст и адреса. Сервер всегда отдаёт для них `false`, поэтому переключатели выше включают новые поля, а старые клиенты остаются на прежнем поведении. Новый клиент, получив ответ старого API без новых полей, считает каждый переключатель выключенным (`=== true`), а не отдаёт решение настройкам проекта PostHog.
 
@@ -106,12 +111,14 @@
 | `consents_accepted` | первый экран: возраст, «это не терапия», условия | `policy_version` |
 | `profile_updated` | изменено имя и/или голос | `fields` (только названия полей) |
 | `account_deleted` | аккаунт удалён (**без человека**) | — |
-| `dialog_started` | `POST /api/dialogs` | `resumed`, `hours_since_last` |
-| `dialog_ended` | агент подтвердил конец (сокет) или `POST …/end` (REST) | `via`, `duration_s`, `user_messages`, `assistant_messages`, `has_takeaway`, `tension_delta`, `tension_improved` |
-| `dialog_interrupted` | связь пропала до конца диалога, если человек успел что-то сказать или агент недоступен | `reason`, `duration_s`, `user_messages` |
+| `dialog_started` | `POST /api/dialogs` | `dialog_id`, `resumed`, `hours_since_last` |
+| **`dialog_turn`** | сервер принял реплику человека (набранную или произнесённую) и передал агенту; **целевое действие** | `dialog_id`, `input`: `text`/`voice` |
+| `dialog_ended` | агент подтвердил конец (сокет) или `POST …/end` (REST) | `dialog_id`, `via`, `counts`, `duration_s`, `user_messages`, `assistant_messages`, `has_takeaway`, `tension_delta`, `tension_improved` |
+| `dialog_interrupted` | связь пропала до конца диалога, если человек успел что-то сказать или агент недоступен | `dialog_id`, `reason`, `duration_s`, `user_messages` |
+| `component_called` | агент реально позвал свой компонент внутри диалога: один вызов — одно событие | `dialog_id`, `component`: `stt`/`safety`/`llm`/`live`/`tts`/`memory`, `outcome`: `ok`/`error`, `cached` |
 | `safety_signal` | агент показал линии помощи (**без человека**) | `level`: `concern`/`crisis` |
 
-Плановые закрытия сокета (перезапуск пода, второе подключение того же человека) обрывом не считаются. Счётчики `duration_s`, `user_messages` и `assistant_messages` в `dialog_ended` и `dialog_interrupted` относятся к **последнему соединению**, а не ко всему диалогу: после планового закрытия клиент переподключается, и они начинаются заново. Голосовой ход считается репликой, только если в нём есть текст (тишина и эхо агент присылает как финальный транскрипт без текста, сообщения для него нет).
+Плановые закрытия сокета (перезапуск пода, второе подключение того же человека) обрывом не считаются. `user_messages` и `assistant_messages` в `dialog_ended` — **за весь диалог**, если их посчитал агент (`counts: "dialog"`: он видит все соединения и выкаты между ними); если агент старее этого поля или их нет, это счётчики соединения, которое завершило диалог, и событие так и помечено (`counts: "connection"`). `duration_s` и счётчики в `dialog_interrupted` всегда относятся к одному соединению: диалог может иметь несколько. `dialog_turn` и `component_called` — по одному событию на реплику и на вызов; текста реплики, промпта и ошибки провайдера в них нет. Голосовой ход считается репликой, только если в нём есть текст (тишина и эхо агент присылает как финальный транскрипт без текста, сообщения для него нет).
 
 Исходы форм (`auth_form_submitted`) одинаковы на всех платформах (`formOutcomeFromStatus` в пакете): `429` — `rate_limited`, `422` — `invalid`, остальные 4xx — `rejected`, а `400` (клиент прислал то, чего сервер не понял, то есть наш баг) и все 5xx — `error`.
 
@@ -151,7 +158,8 @@
 3. Открыть приложение и сайт, в PostHog → Activity → Live events увидеть `app_opened` и `$pageview` с `app_env=prod`.
 4. Пройти регистрацию анонимно: `account_created`, `user_logged_in`, `consents_accepted`, `dialog_started` и после разговора `dialog_ended`.
 5. Убедиться, что в событиях нет почты, имён и текстов (Live events → открыть событие). У `$autocapture`, `$dead_click`, `$rageclick` в `$elements_chain` нет `text=` и `href=`; у `$$heatmap` ключ `$heatmap_data` — адрес без query и id; у `$web_vitals_*_event` нет `attribution`; у анонимных событий `timestamp` ровно на начало часа; на кнопках SOS и телефонах линий помощи нет `$autocapture` (метка `ph-no-capture`).
-6. Удалить тестовый аккаунт и убедиться, что профиль исчез из People (если задан `POSTHOG_PERSONAL_API_KEY`).
+6. После разговора из трёх реплик: три `dialog_turn` с одним `dialog_id`, `component_called` по числу вызовов, `dialog_ended`/`dialog_interrupted` с тем же `dialog_id`; у событий `app_version` равен тегу образа (не `0.1.0`), `traffic_type` равен `real`. Создать аккаунт устройством с id на `loadtest-` и увидеть у его событий `traffic_type = test`.
+7. Удалить тестовый аккаунт и убедиться, что профиль исчез из People (если задан `POSTHOG_PERSONAL_API_KEY`).
 
 Что смотреть, если событий нет: `GET /api/analytics/config` вернул `enabled: false` (пуст `POSTHOG_KEY`); блокировщик режет `/api/ingest` (маловероятно, путь свой); CSP (`connect-src` и `script-src` должны содержать origin API — в проде он тот же); в консоли браузера ошибка загрузки `/api/ingest/static/…`.
 
