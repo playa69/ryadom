@@ -12,7 +12,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
@@ -22,6 +22,7 @@ from app.clients.speech import CachedTts, TextToSpeech, build_tts
 from app.core.config import APP_CONFIG
 from app.core.errors import install_error_handlers
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
+from app.core.tracing import build_tracer
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
@@ -51,6 +52,13 @@ def _quiet_service_endpoints() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, SkipServiceEndpoints) for f in access.filters):
         access.addFilter(SkipServiceEndpoints())
+
+
+def _telemetry_exclude(scope: dict[str, Any]) -> bool:
+    """Пробы kubelet и прочие служебные эндпоинты не трассируем: встроенная телеметрия FastAPI
+    (активируется сама, когда в образе появляется opentelemetry-sdk из langfuse) иначе забивает
+    Langfuse трассами GET /health каждые 10 секунд."""
+    return str(scope.get("path", "")).startswith(SkipServiceEndpoints.PREFIXES)
 
 
 def create_app(
@@ -98,6 +106,8 @@ def create_app(
                 )
         live = live_factory() if live_factory is not None else None
         app.state.live = live
+        tracer = build_tracer(APP_CONFIG.langfuse)
+        app.state.tracer = tracer
         if tts_factory is not None or live is None:
             app.state.tts = factory()
         else:
@@ -111,12 +121,13 @@ def create_app(
         else:
             app.state.chat, app.state.recognizer = models()
         logger.info(
-            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s",
+            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s tracing=%s",
             live.name if live else "cascade",
             app.state.tts.name if app.state.tts else "none",
             app.state.chat.name if app.state.chat else "none",
             app.state.recognizer.name if app.state.recognizer else "none",
             "sqlite" if store.persistent else "memory",
+            tracer.name,
         )
         # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а облачный синтез медленнее.
         # Фиксированные фразы (приветствия, шаблоны, кризисный ответ) готовим заранее; ответы модели так не подготовить.
@@ -134,13 +145,20 @@ def create_app(
             for client in (app.state.tts, app.state.chat, app.state.recognizer, live):
                 if client is not None:
                     await client.aclose()
+            await tracer.aclose()  # отправить в Langfuse накопленные трассы
 
-    app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
+    app = FastAPI(
+        title="ryadom-agent",
+        version=APP_CONFIG.app.version,
+        lifespan=lifespan,
+        telemetry={"exclude": _telemetry_exclude},
+    )
     app.state.store = DialogStore(default_voice=APP_CONFIG.speech.default_voice)
     app.state.tts = None
     app.state.chat = None
     app.state.recognizer = None
     app.state.live = None
+    app.state.tracer = None  # подменяется в lifespan (build_tracer); None до старта приложения
     app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)
     app.include_router(health.router)

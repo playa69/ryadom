@@ -4,15 +4,15 @@
 доменные Settings с validation_alias, SecretStr для секретов, fail-fast
 валидация, неизменяемый синглтон APP_CONFIG.
 
-Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима.
-Настройки БД, Redis и Langfuse вернутся вместе с полноценным агентом.
+Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима,
+трейсинг LLM в self-hosted Langfuse. Настройки БД и Redis вернутся вместе с полноценным агентом.
 """
 
 import logging
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
@@ -199,6 +199,30 @@ class GeminiSettings(BaseAppSettings):
     session_resumption: bool = Field(validation_alias="GEMINI_SESSION_RESUMPTION", default=True)
 
 
+class LangfuseSettings(BaseAppSettings):
+    """Трейсинг LLM-ходов в self-hosted Langfuse (ns `infra`, тот же RU-кластер, что и БД диалогов).
+
+    По умолчанию выключен: агент работает как раньше (NullTracer). При `LANGFUSE_ENABLED=true`
+    оба ключа обязательны — без них сервис не стартует (fail-fast). Ключи проекта (pk-lf/sk-lf)
+    лежат в Secret `agent-secrets`, в ConfigMap их быть не должно.
+
+    `LANGFUSE_TRACE_TEXT=false` — в Langfuse уходят только длины реплик, токены и задержки,
+    сами тексты маскируются.
+    """
+
+    enabled: bool = Field(validation_alias="LANGFUSE_ENABLED", default=False)
+    host: str = Field(validation_alias="LANGFUSE_HOST", default="http://langfuse-web.infra.svc.cluster.local:3000")
+    public_key: SecretStr | None = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default=None)
+    secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
+    trace_text: bool = Field(validation_alias="LANGFUSE_TRACE_TEXT", default=True)
+
+    @model_validator(mode="after")
+    def _keys_required_when_enabled(self) -> "LangfuseSettings":
+        if self.enabled and (self.public_key is None or self.secret_key is None):
+            raise ValueError("LANGFUSE_ENABLED=true, но не заданы LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY")
+        return self
+
+
 class Config:
     """Агрегатор доменных настроек. Неизменяемый синглтон — не мутировать."""
 
@@ -209,6 +233,7 @@ class Config:
     llm: LlmSettings = LlmSettings()
     voice: VoiceSettings = VoiceSettings()
     gemini: GeminiSettings = GeminiSettings()
+    langfuse: LangfuseSettings = LangfuseSettings()
 
 
 APP_CONFIG = Config()

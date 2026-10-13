@@ -38,6 +38,7 @@ from app.core.metrics import (
     VOICE_TURN_END_DELAY_SECONDS,
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
+from app.core.tracing import Observation, Tracer
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.replies import CRISIS_SAFETY_TEXT, SYSTEM_PROMPT, is_crisis
 
@@ -79,6 +80,12 @@ class LiveTurn:
     timers: dict[str, asyncio.TimerHandle] = field(default_factory=dict)
     # Метки времени хода (monotonic) для журнала задержек: только имена этапов и миллисекунды, без текстов.
     marks: dict[str, float] = field(default_factory=dict)
+    # Текст реплики человека для текстового хода (для голосового текст появляется в `heard`).
+    input_text: str = ""
+    # Трасса хода в Langfuse (app/core/tracing.py) и расход токенов (приходит с turn_complete, позже конца генерации).
+    trace: Observation | None = None
+    usage: dict[str, int] | None = None
+    trace_ended: bool = False
 
     def mark(self, name: str, overwrite: bool = False) -> None:
         if overwrite or name not in self.marks:
@@ -127,8 +134,10 @@ class LiveDialogSession(DialogSession):
         dialog: Dialog,
         tts_source,  # noqa: ANN001
         connector: LiveConnector,
+        tracer: Tracer | None = None,
     ) -> None:
-        super().__init__(websocket, store, dialog, tts_source, None, None)
+        super().__init__(websocket, store, dialog, tts_source, None, None, tracer)
+        self._pipeline = "gemini_live"
         self._connector = connector
         self._cfg = APP_CONFIG.gemini
         self._link: LiveLink | None = None
@@ -151,6 +160,56 @@ class LiveDialogSession(DialogSession):
         self._rotation: asyncio.Task[None] | None = None  # смена сессии после ответа (GEMINI_TEXT_CONTEXT)
         self._link_used = False  # на текущем соединении уже начат ход (иначе в нём нет аудио, которое стоило бы убрать)
         self._speech_turns: dict[str, LiveTurn] = {}
+        # Ход, чья трасса ждёт расход токенов (usage_metadata приходит с turn_complete, после конца генерации).
+        self._awaiting_usage: LiveTurn | None = None
+
+    # ─── трейсинг (Langfuse) ──────────────────────────────────────────────────
+
+    def _end_turn_trace(self, turn: LiveTurn, *, wait_usage: bool = False) -> None:
+        """Финализировать трассу хода: тексты, метаданные этапов, уровень. С `wait_usage` трасса остаётся
+        открытой до прихода расхода токенов (или закроется следующим ходом / концом сессии)."""
+        trace = turn.trace
+        if trace is None or turn.trace_ended:
+            return
+        metadata: dict[str, Any] = {
+            "kind": turn.kind,
+            "interrupts": turn.interrupts,
+            "discarded": turn.discarded,
+            "failed": turn.failed,
+            "audio_streamed": turn.audio is not None,
+        }
+        for name, at in turn.marks.items():
+            metadata[f"ms_{name}"] = round((at - turn.started) * 1000)
+        level = "ERROR" if turn.failed else ("WARNING" if turn.discarded else None)
+        status = None
+        if turn.failed:
+            status = "соединение с моделью оборвалось"
+        elif turn.discarded:
+            status = "ответ модели отброшен (тишина, эхо или кризис)"
+        trace.update(
+            input=turn.heard.strip() or turn.input_text or None,
+            output=turn.sent_text or None,
+            usage=turn.usage,
+            metadata=metadata,
+            level=level,
+            status=status,
+        )
+        if wait_usage and turn.usage is None and not turn.failed and not turn.discarded:
+            self._awaiting_usage = turn
+            return
+        trace.end()
+        turn.trace_ended = True
+        if self._awaiting_usage is turn:
+            self._awaiting_usage = None
+
+    def _attribute_usage(self, usage: dict[str, int]) -> None:
+        """Расход токенов к ходу: действующему, а если генерация уже кончилась — ждущему закрытия."""
+        target = self._turn if (self._turn is not None and self._turn.generating) else self._awaiting_usage
+        if target is None:
+            return
+        target.usage = {**(target.usage or {}), **usage}
+        if self._awaiting_usage is target:
+            self._end_turn_trace(target)
 
     def _first_sound(self, message_id: str, turn: Turn | None) -> None:
         """Первый звук ответа ушёл клиенту: кроме общей задержки пишем, из каких этапов она сложилась."""
@@ -178,9 +237,11 @@ class LiveDialogSession(DialogSession):
             for task in self._tasks:
                 task.cancel()
             await asyncio.gather(*self._tasks, return_exceptions=True)
-            for turn in (self._turn, self._voice_turn):
+            for turn in (self._turn, self._voice_turn, self._awaiting_usage):
                 if turn is not None:
                     self._disarm_all(turn)
+                    self._end_turn_trace(turn)  # сокет закрыт: трассы не остаются висеть открытыми
+            self._awaiting_usage = None
             self._release_link()
 
     def _history(self) -> list[tuple[Literal["user", "model"], str]]:
@@ -253,11 +314,22 @@ class LiveDialogSession(DialogSession):
 
     async def _open(self, voice: Voice, handle: str | None) -> LiveLink | None:
         history: LiveHistory | None = self._history() if self._cfg.text_context and handle is None else None
+        trace = self._tracer.start_turn(
+            name="gemini_session_open",
+            session_id=self._dialog.id,
+            user_id=self._dialog.user_id,
+            model=self._cfg.live_model,
+            metadata={"resumed": handle is not None, "history_messages": len(history or []), "voice": voice},
+            tags=[self._pipeline],
+        )
         try:
             link = await self._connector.open(voice, self._instructions(resumed=handle is not None), handle, history or None)
         except Exception as error:  # noqa: BLE001
+            trace.update(level="ERROR", status=str(error)[:200])
+            trace.end()
             logger.warning("gemini live not available dialog=%s resume=%s: %s", self._dialog.id, handle is not None, error)
             return None
+        trace.end()
         if handle is not None:
             logger.info("gemini live session resumed dialog=%s", self._dialog.id)
         return link
@@ -315,9 +387,9 @@ class LiveDialogSession(DialogSession):
 
     async def _read(self, link: LiveLink) -> None:
         async for event in link.events():
-            if event.kind == "usage":  # учёт токенов не зависит от состояния хода
-                self._count_usage(event.usage or {})
-                continue
+            if event.kind == "usage":
+                self._count_usage(event.usage or {})  # метрики Prometheus: учёт не зависит от состояния хода
+            # В очередь уходит и usage: атрибуция к ходу в Langfuse идёт в `_handle` по порядку событий.
             self._events.put_nowait((link, event))
 
     async def _send_loop(self) -> None:
@@ -436,6 +508,7 @@ class LiveDialogSession(DialogSession):
             return
         live_turn = LiveTurn(kind="text", opened=True, started=turn.started)
         live_turn.user_saved = True
+        live_turn.input_text = text
         self._events.put_nowait(("begin", live_turn))
         self._out.put_nowait(("text", text, live_turn))
 
@@ -447,6 +520,18 @@ class LiveDialogSession(DialogSession):
             # Новая реплика перебивает идущий ответ; его хвост, ещё летящий от модели, не наш.
             self._stale_until = time.monotonic() + STALE_SECONDS
             await self._finish(prev)
+        awaiting = self._awaiting_usage
+        if awaiting is not None and awaiting is not turn:
+            self._end_turn_trace(awaiting)  # расход токенов так и не пришёл: закрываем без него
+        turn.trace = self._tracer.start_turn(
+            name=f"live_turn_{turn.kind}",
+            session_id=self._dialog.id,
+            user_id=self._dialog.user_id,
+            model=self._cfg.live_model,
+            input=turn.input_text or None,
+            metadata={"kind": turn.kind, "interrupts": turn.interrupts},
+            tags=[self._pipeline, f"v{APP_CONFIG.app.version}"],
+        )
         self._turn = turn
         self._touch(turn)
 
@@ -495,6 +580,9 @@ class LiveDialogSession(DialogSession):
         kind = event.kind
         if kind == "closed":
             await self._on_closed(event.text)
+            return
+        if kind == "usage":
+            self._attribute_usage(event.usage or {})
             return
         if kind == "resumption":
             self._resume_handle = event.text
@@ -667,6 +755,7 @@ class LiveDialogSession(DialogSession):
             if not turn.failed or turn.kind == "text" or turn.user_saved:
                 reply_turn = Turn(started=turn.started)
                 self._jobs.put_nowait(lambda: self._reply(False, reply_turn))
+        self._end_turn_trace(turn, wait_usage=True)
 
     async def _on_closed(self, reason: str) -> None:
         logger.warning("gemini live closed dialog=%s: %s", self._dialog.id, reason)

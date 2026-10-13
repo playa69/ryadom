@@ -91,6 +91,30 @@ spec:
         - podSelector: {}
 
 ---
+# Приём трейсов от агента (ns agent) в Langfuse web (:3000). Обратная сторона —
+# agent-allow-egress-langfuse в 05-network-policy-agent.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra-allow-ingress-agent-langfuse
+  namespace: infra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: langfuse
+      app.kubernetes.io/component: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent
+      ports:
+        - protocol: TCP
+          port: 3000
+
+---
 # Исходящий трафик: DNS, внутренний трафик namespace, внешний HTTPS
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
