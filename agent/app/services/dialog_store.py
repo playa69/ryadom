@@ -5,6 +5,9 @@
 (`ensure_user`), поэтому они переживают перезапуск и выкат пода. Без файла хранилище, как раньше, только в памяти.
 Настоящая БД агента (design D6) подставляется на место `DialogDatabase`, интерфейс хранилища остаётся тем же.
 
+С диском память пода не растёт с числом людей бесконечно: давно неактивные выгружаются (`evict_idle`), а при следующем обращении
+`ensure_user` загружает их диалоги снова. Источник данных при этом по-прежнему память: выгружается только то, что уже лежит на диске.
+
 Запись устроена так, чтобы не трогать места, где код меняет сообщения на месте (ответ дописывается по словам):
 фоновая запись раз в `flush_interval` сравнивает диалоги, изменённые через хранилище или имеющие живой сокет, с тем, что уже
 записано, и пишет разницу одной транзакцией.
@@ -22,10 +25,26 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.clients.speech import Voice
-from app.core.metrics import DIALOG_DB_ERRORS_TOTAL, DIALOG_DB_WRITE_SECONDS
+from app.core.metrics import (
+    DIALOG_DB_ERRORS_TOTAL,
+    DIALOG_DB_WRITE_SECONDS,
+    DIALOG_DIALOGS_IN_MEMORY,
+    DIALOG_EVICTIONS_SKIPPED_TOTAL,
+    DIALOG_EVICTIONS_TOTAL,
+    DIALOG_LOAD_SECONDS,
+    DIALOG_LOADS_TOTAL,
+    DIALOG_MESSAGES_IN_MEMORY,
+    DIALOG_USERS_IN_MEMORY,
+)
 from app.services.dialog_db import DialogDatabase, DialogDbError, DialogWrite, StoredDialog, encode_summary
 
 logger = logging.getLogger("agent.dialogs")
+
+# Потолок числа людей в памяти не выгружает тех, кто обращался за последнюю минуту: между стартом разговора и его сокетом
+# проходят секунды, и приветствие (оно только в памяти) не должно теряться из-за наплыва других людей.
+CAP_MIN_IDLE_SECONDS = 60.0
+# Кого уже выгружали (только для метрики first/reload). Сверх этого множество очищается: дешевле ошибиться в метрике, чем копить.
+EVICTED_MEMO_LIMIT = 100_000
 
 GREETING_NEW = "Я рядом. С чего начнём?"
 GREETING_RESUMED = "Продолжим, где остановились."
@@ -108,7 +127,9 @@ class _Persisted:
 
 
 class DialogStore:
-    def __init__(self, default_voice: Voice = "male") -> None:
+    def __init__(self, default_voice: Voice = "male", idle_evict_seconds: float = 0, max_users_in_memory: int = 0) -> None:
+        """`idle_evict_seconds` и `max_users_in_memory` — выгрузка неактивных (`evict_idle`): срок простоя и мягкий потолок числа
+        людей в памяти; 0 — выключено. Работает только с подключённым диском."""
         self._users: dict[str, dict[str, Dialog]] = {}
         self._default_voice = default_voice
         # Последний выбор голоса человека: следующий диалог без явного голоса получит его.
@@ -120,6 +141,11 @@ class DialogStore:
         self._disk_required = False
         self._flush_interval = 0.5
         self._loaded: set[str] = set()
+        # Выгрузка неактивных: когда к человеку обращались в последний раз (time.monotonic) и кого уже выгружали.
+        self._idle_evict_seconds = idle_evict_seconds
+        self._max_users_in_memory = max_users_in_memory
+        self._last_access: dict[str, float] = {}
+        self._evicted: set[str] = set()
         self._load_lock = asyncio.Lock()
         self._flush_lock = asyncio.Lock()
         self._dirty: dict[str, Dialog] = {}
@@ -233,6 +259,8 @@ class DialogStore:
 
     def erase_user(self, user_id: str) -> None:
         """Стереть всё о человеке в памяти. Идемпотентно. На диске стирает `erase_user_durable`."""
+        self._last_access.pop(user_id, None)  # без отметки выгрузка его не трогает: отметку загрузки снимает стирание на диске
+        self._evicted.discard(user_id)
         for dialog_id in self._users.pop(user_id, {}):
             self._dirty.pop(dialog_id, None)
             self._watch.pop(dialog_id, None)
@@ -278,13 +306,20 @@ class DialogStore:
         """Загрузить диалоги человека с диска, если это ещё не сделано. Вызывать в начале каждого обращения по человеку.
 
         Сбой чтения — исключение: лучше ответить ошибкой, чем показать человеку пустую историю и начать второй открытый диалог.
+        Выгруженный (`evict_idle`) человек загружается так же, как после перезапуска. Загруженный возвращается без await: диалог,
+        взятый сразу после вызова, принадлежит хранилищу, выгрузка между ними не вклинится.
         """
         db = self._db
-        if db is None or user_id in self._loaded:
+        if db is None:
+            return
+        if user_id in self._loaded:
+            self._last_access[user_id] = time.monotonic()  # обращение: простой для выгрузки считается от него
             return
         async with self._load_lock:
             if user_id in self._loaded:
+                self._last_access[user_id] = time.monotonic()  # его загрузил другой запрос, пока этот ждал замка
                 return
+            started = time.monotonic()
             try:
                 stored, pref = await asyncio.to_thread(db.load_user, user_id)
             except Exception:
@@ -301,6 +336,11 @@ class DialogStore:
                 self._voice_prefs[user_id] = pref  # type: ignore[assignment]
             if pref:
                 self._persisted_prefs[user_id] = pref
+            DIALOG_LOAD_SECONDS.observe(time.monotonic() - started)
+            DIALOG_LOADS_TOTAL.labels("reload" if user_id in self._evicted else "first").inc()
+            self._evicted.discard(user_id)
+            # Отметка обращения ставится только у загруженного: сбой чтения не оставляет следа, а идущая загрузка выгрузке не видна.
+            self._last_access[user_id] = time.monotonic()
             self._loaded.add(user_id)
             if stored:
                 logger.info("dialog db loaded user=%s dialogs=%d", user_id, len(stored))
@@ -344,10 +384,13 @@ class DialogStore:
         return self._users.get(dialog.user_id, {}).get(dialog.id) is dialog
 
     def _touch(self, dialog: Dialog) -> None:
-        """Диалог изменён через хранилище: записать в ближайший тик. Стёртый человек на диск не возвращается."""
+        """Диалог изменён через хранилище: записать в ближайший тик. Стёртый человек на диск не возвращается, а устаревший объект
+        (человека выгрузили и загрузили заново) не перезаписывает свежий: держать диалог через await может только живой сокет,
+        а человека с живым сокетом не выгружают."""
         if self._db is None or not self._owns(dialog):
             return
         self._dirty[dialog.id] = dialog
+        self._last_access[dialog.user_id] = time.monotonic()
         self._wake.set()
 
     def socket_opened(self, dialog: Dialog) -> None:
@@ -474,3 +517,98 @@ class DialogStore:
                     logger.exception("dialog db erase failed user=%s", user_id)
                     raise
             self._loaded.discard(user_id)
+            # Обращение посреди стирания могло снова поставить отметку, а выгрузка — запомнить человека: стёртого не помним.
+            self._last_access.pop(user_id, None)
+            self._evicted.discard(user_id)
+
+    # ─── выгрузка неактивных ──────────────────────────────────────────────────
+
+    def evict_idle(self, now: float) -> int:
+        """Выгрузить из памяти людей, к которым давно не обращались. Возвращает, сколько выгружено. `now` — `time.monotonic()`.
+
+        Их диалоги уже лежат на диске, и при следующем обращении `ensure_user` загрузит их, как после перезапуска. Проход
+        синхронный, без await: пока он идёт, обработчики стоят, и ни один не окажется между `ensure_user` и работой с диалогом.
+
+        Выгружается тот, кто молчит дольше `idle_evict_seconds`, а сверх потолка `max_users_in_memory` — самые давние (кроме
+        обращавшихся за последнюю минуту). Человек остаётся в памяти, если:
+        - диска нет (`attach` не было или не удалось): выгружать некуда;
+        - он не загружен с диска (`ensure_user` его не загружал): загрузка ещё идёт, или его стирают;
+        - у его диалога живой сокет: сессия держит объект диалога и меняет его на месте (`socket`);
+        - есть незаписанное: диалог ждёт записи, запись идёт или не удалась, его изменили на месте после записи, выбор голоса не
+          записан (`dirty`). Изменённое на месте без очереди ставится в очередь: человек выгрузится на следующем проходе.
+        Неозвученное приветствие (`greeting_pending`) живёт только в памяти и при выгрузке теряется: если сокет откроется позже
+        срока, приветствие не прозвучит, клиент прочтёт его сам (как при обрыве озвучки).
+
+        Заодно обновляет метрики памяти (`agent_dialog_*_in_memory`), и без диска тоже.
+        """
+        evicted = 0
+        ttl, cap = self._idle_evict_seconds, self._max_users_in_memory
+        if self._db is not None and (ttl or cap):
+            # От давних к свежим. Без отметки обращения — стирание идёт или не удалось: такого не трогаем.
+            order = sorted((at, user_id) for user_id, at in self._last_access.items() if user_id in self._loaded)
+            in_memory = len(self._loaded)
+            for at, user_id in order:
+                expired = bool(ttl) and now - at >= ttl
+                over_cap = bool(cap) and in_memory > cap and now - at >= CAP_MIN_IDLE_SECONDS
+                if not (expired or over_cap):
+                    break  # дальше только те, кто обращался позже
+                reason = self._keeps(user_id)
+                if reason is not None:
+                    DIALOG_EVICTIONS_SKIPPED_TOTAL.labels(reason).inc()
+                    continue
+                self._unload(user_id)
+                in_memory -= 1
+                evicted += 1
+            if evicted:
+                DIALOG_EVICTIONS_TOTAL.inc(evicted)
+                logger.info("dialog users evicted count=%d in_memory=%d", evicted, in_memory)
+        self._report_memory()
+        return evicted
+
+    def _keeps(self, user_id: str) -> str | None:
+        """Почему человека сейчас нельзя выгрузить: `socket` или `dirty` (см. `evict_idle`); None — можно."""
+        dialogs = list(self._users.get(user_id, {}).values())
+        if any(d.has_live_socket or d.on_replaced is not None or d.id in self._watch for d in dialogs):
+            return "socket"
+        dirty = False
+        for dialog in dialogs:
+            if dialog.id in self._dirty:
+                dirty = True
+            elif self._collect(dialog) is not None:
+                # Изменён на месте без `_touch` или его запись идёт прямо сейчас: снимок записанного отстаёт от памяти.
+                # Повторная запись того же безвредна, а изменённое на месте иначе дождалось бы только остановки пода.
+                self._dirty[dialog.id] = dialog
+                self._wake.set()
+                dirty = True
+        pref = self._voice_prefs.get(user_id)
+        if pref is not None and self._persisted_prefs.get(user_id) != pref:
+            dirty = True
+        return "dirty" if dirty else None
+
+    def _unload(self, user_id: str) -> None:
+        """Убрать человека из памяти процесса. Всё, что убирается, есть на диске (проверил `_keeps`)."""
+        for dialog_id in self._users.pop(user_id, {}):
+            self._dirty.pop(dialog_id, None)
+            self._watch.pop(dialog_id, None)
+            self._persisted.pop(dialog_id, None)
+        self._voice_prefs.pop(user_id, None)
+        self._persisted_prefs.pop(user_id, None)
+        self._loaded.discard(user_id)
+        self._last_access.pop(user_id, None)
+        if len(self._evicted) >= EVICTED_MEMO_LIMIT:
+            self._evicted.clear()
+        self._evicted.add(user_id)
+
+    def _report_memory(self) -> None:
+        DIALOG_USERS_IN_MEMORY.set(len(self._users.keys() | self._loaded))
+        DIALOG_DIALOGS_IN_MEMORY.set(sum(len(dialogs) for dialogs in self._users.values()))
+        DIALOG_MESSAGES_IN_MEMORY.set(sum(len(d.messages) for dialogs in self._users.values() for d in dialogs.values()))
+
+    async def evict_loop(self, interval: float) -> None:
+        """Фоновая выгрузка неактивных: `evict_idle` раз в `interval` секунд. Запускает и останавливает приложение (lifespan)."""
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                self.evict_idle(time.monotonic())
+            except Exception:  # noqa: BLE001 - проход не должен останавливать выгрузку: без неё память пода только растёт
+                logger.exception("dialog eviction pass failed")

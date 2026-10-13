@@ -65,6 +65,15 @@ class DialogSettings(BaseAppSettings):
     db_path: str | None = Field(validation_alias="DIALOG_DB_PATH", default=None)
     # Как часто записывать изменения диалогов на диск, мс (идущие ответы дописываются, поэтому не при каждом слове).
     db_flush_ms: int = Field(validation_alias="DIALOG_DB_FLUSH_MS", default=500, ge=50, le=10_000)
+    # Выгрузка неактивных (только при диске): человек, к которому не обращались столько секунд, уходит из памяти пода, его
+    # диалоги остаются на диске и загружаются снова при следующем обращении (около миллисекунды). Живой сокет и незаписанные
+    # изменения держат человека в памяти. 0 — не выгружать по сроку.
+    idle_evict_seconds: int = Field(validation_alias="DIALOG_IDLE_EVICT_SECONDS", default=1800, ge=0)
+    # Мягкий потолок числа людей в памяти: сверх него выгружаются самые давние, не дожидаясь срока (кроме тех, кого держит
+    # сокет или незаписанное, и тех, кто обращался за последнюю минуту). 0 — без потолка.
+    max_users_in_memory: int = Field(validation_alias="DIALOG_MAX_USERS_IN_MEMORY", default=0, ge=0)
+    # Как часто проверять, кого выгрузить, и обновлять метрики памяти (agent_dialog_*_in_memory), секунды.
+    evict_interval_seconds: int = Field(validation_alias="DIALOG_EVICT_INTERVAL_SECONDS", default=60, ge=1, le=3600)
 
 
 class SpeechSettings(BaseAppSettings):
