@@ -59,6 +59,7 @@ from app.core.metrics import (
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
 from app.services import usage as model_usage
+from app.core.tracing import Observation, Tracer
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.gemini_budget import (
     ADMIT_OFF_LEVELS,
@@ -116,6 +117,13 @@ class LiveTurn:
     recording: bytearray | None = None  # звук реплики на случай, если её придётся разобрать каскадом (GEMINI_TPM_ENFORCE)
     offline: bool = False  # в начале реплики сессию открыть не дали (пауза после 1011): её разберёт каскад
     degraded: bool = False  # ход отдан шаблону без Gemini
+    # Текст реплики человека для текстового хода (для голосового текст появляется в `heard`).
+    input_text: str = ""
+    # Трасса хода в Langfuse (app/core/tracing.py) и расход токенов для неё (приходит с turn_complete, позже конца генерации).
+    # Не путать с `usage` выше: то расход для базы диалогов и метрик, это числа для трассы.
+    trace: Observation | None = None
+    trace_usage: dict[str, int] | None = None
+    trace_ended: bool = False
 
     def mark(self, name: str, overwrite: bool = False) -> None:
         if overwrite or name not in self.marks:
@@ -209,7 +217,7 @@ def admit_session(websocket: WebSocket, store: DialogStore, dialog: Dialog) -> D
         if not budget.admits_live() and fallback is not None and fallback.can_converse:
             GEMINI_ADMISSION_TOTAL.labels("cascade").inc()
             logger.info("dialog admitted to cascade: gemini budget level=%s window=%d dialog=%s", level, budget.window_tokens(), dialog.id)
-            return DialogSession(websocket, store, dialog, spare_tts, fallback.chat, fallback.recognizer)
+            return DialogSession(websocket, store, dialog, spare_tts, fallback.chat, fallback.recognizer, app.state.tracer)
         GEMINI_ADMISSION_TOTAL.labels("live").inc()
         if level in ADMIT_OFF_LEVELS:
             why = "no cascade fallback" if budget.enforcing else "measure only"
@@ -223,6 +231,7 @@ def admit_session(websocket: WebSocket, store: DialogStore, dialog: Dialog) -> D
         budget=budget,
         fallback=fallback,
         spare_tts_source=spare_tts,
+        tracer=app.state.tracer,
     )
 
 
@@ -237,8 +246,10 @@ class LiveDialogSession(DialogSession):
         budget: TokenBudget | None = None,
         fallback: CascadeFallback | None = None,
         spare_tts_source: Callable[[], TextToSpeech | None] | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
-        super().__init__(websocket, store, dialog, tts_source, None, None)
+        super().__init__(websocket, store, dialog, tts_source, None, None, tracer)
+        self._pipeline = "gemini_live"
         self._connector = connector
         self._cfg = APP_CONFIG.gemini
         # Бюджет токенов Gemini (выключен, если сессию создали без приложения или GEMINI_TPM_LIMIT=0).
@@ -281,6 +292,56 @@ class LiveDialogSession(DialogSession):
         # Сводка памяти, с которой открыта текущая сессия: изменилась (человек что-то забыл, выключил память, извлечение
         # добавило факт) — к следующему ходу сессия открывается заново с новой (MEM-8.4, MEM-13.3).
         self._brief_used = ""
+        # Ход, чья трасса ждёт расход токенов (usage_metadata приходит с turn_complete, после конца генерации).
+        self._awaiting_usage: LiveTurn | None = None
+
+    # ─── трейсинг (Langfuse) ──────────────────────────────────────────────────
+
+    def _end_turn_trace(self, turn: LiveTurn, *, wait_usage: bool = False) -> None:
+        """Финализировать трассу хода: тексты, метаданные этапов, уровень. С `wait_usage` трасса остаётся
+        открытой до прихода расхода токенов (или закроется следующим ходом / концом сессии)."""
+        trace = turn.trace
+        if trace is None or turn.trace_ended:
+            return
+        metadata: dict[str, Any] = {
+            "kind": turn.kind,
+            "interrupts": turn.interrupts,
+            "discarded": turn.discarded,
+            "failed": turn.failed,
+            "audio_streamed": turn.audio is not None,
+        }
+        for name, at in turn.marks.items():
+            metadata[f"ms_{name}"] = round((at - turn.started) * 1000)
+        level = "ERROR" if turn.failed else ("WARNING" if turn.discarded else None)
+        status = None
+        if turn.failed:
+            status = "соединение с моделью оборвалось"
+        elif turn.discarded:
+            status = "ответ модели отброшен (тишина, эхо или кризис)"
+        trace.update(
+            input=turn.heard.strip() or turn.input_text or None,
+            output=turn.sent_text or None,
+            usage=turn.trace_usage,
+            metadata=metadata,
+            level=level,
+            status=status,
+        )
+        if wait_usage and turn.trace_usage is None and not turn.failed and not turn.discarded:
+            self._awaiting_usage = turn
+            return
+        trace.end()
+        turn.trace_ended = True
+        if self._awaiting_usage is turn:
+            self._awaiting_usage = None
+
+    def _attribute_usage(self, usage: dict[str, int]) -> None:
+        """Расход токенов к ходу: действующему, а если генерация уже кончилась — ждущему закрытия."""
+        target = self._turn if (self._turn is not None and self._turn.generating) else self._awaiting_usage
+        if target is None:
+            return
+        target.trace_usage = {**(target.trace_usage or {}), **usage}
+        if self._awaiting_usage is target:
+            self._end_turn_trace(target)
 
     def _first_sound(self, message_id: str, turn: Turn | None) -> None:
         """Первый звук ответа ушёл клиенту: кроме общей задержки пишем, из каких этапов она сложилась."""
@@ -323,6 +384,10 @@ class LiveDialogSession(DialogSession):
                 for turn in (self._turn, self._voice_turn, self._usage_turn):
                     if turn is not None:
                         self._settle_usage(turn)  # ход не закончен, а расход уже есть: не терять
+                for turn in (self._turn, self._voice_turn, self._awaiting_usage):
+                    if turn is not None:
+                        self._end_turn_trace(turn)  # сокет закрыт: трассы не остаются висеть открытыми
+                self._awaiting_usage = None
                 self._release_link()
 
     def _history(self) -> list[tuple[Literal["user", "model"], str]]:
@@ -445,21 +510,39 @@ class LiveDialogSession(DialogSession):
                 budget.cooldown_left() * 1000,
             )
             return None
+        trace = self._tracer.start_turn(
+            name="gemini_session_open",
+            session_id=self._dialog.id,
+            user_id=self._dialog.user_id,
+            model=self._cfg.live_model,
+            metadata={
+                "resumed": handle is not None,
+                "history_messages": len(history or []),
+                "voice": voice,
+                "purpose": purpose,
+            },
+            tags=[self._pipeline],
+        )
         rid = budget.opening(cost)  # Google считает открытие сразу, по размеру контекста
         try:
             link = await self._connector.open(voice, instructions, handle, history or None)
         except BaseException as error:
             budget.cancel(rid)
             if not isinstance(error, Exception):
+                trace.update(level="WARNING", status="открытие отменено")
+                trace.end()
                 raise  # отмена (сокет закрылся посреди смены сессии)
             text = str(error)
             quota = is_quota_error(text)
             GEMINI_OPENS_TOTAL.labels(purpose, "quota" if quota else "failed").inc()
             self._open_failures += 1
+            trace.update(level="ERROR", status=text[:200])
+            trace.end()
             logger.warning("gemini live not available dialog=%s resume=%s: %s", self._dialog.id, handle is not None, error)
             if quota:
                 budget.on_quota_error("open", self._dialog.id, calibrate=is_explicit_quota_error(text))
             return None
+        trace.end()
         budget.opened(link, rid)
         GEMINI_OPENS_TOTAL.labels(purpose, "ok").inc()
         session_opened(link)
@@ -679,7 +762,7 @@ class LiveDialogSession(DialogSession):
         async for event in link.events():
             if event.kind == "usage":  # учёт токенов не зависит от состояния хода
                 self._count_usage(event.usage or {}, link)
-                continue
+            # В очередь уходит и usage: атрибуция к ходу в Langfuse идёт в `_handle` по порядку событий.
             self._events.put_nowait((link, event))
 
     async def _send_loop(self) -> None:
@@ -878,6 +961,7 @@ class LiveDialogSession(DialogSession):
             return
         live_turn = LiveTurn(kind="text", opened=True, started=turn.started)
         live_turn.user_saved = True
+        live_turn.input_text = text
         self._events.put_nowait(("begin", live_turn))
         self._out.put_nowait(("text", text, live_turn))
 
@@ -889,6 +973,18 @@ class LiveDialogSession(DialogSession):
             # Новая реплика перебивает идущий ответ; его хвост, ещё летящий от модели, не наш.
             self._stale_until = time.monotonic() + STALE_SECONDS
             await self._finish(prev)
+        awaiting = self._awaiting_usage
+        if awaiting is not None and awaiting is not turn:
+            self._end_turn_trace(awaiting)  # расход токенов так и не пришёл: закрываем без него
+        turn.trace = self._tracer.start_turn(
+            name=f"live_turn_{turn.kind}",
+            session_id=self._dialog.id,
+            user_id=self._dialog.user_id,
+            model=self._cfg.live_model,
+            input=turn.input_text or None,
+            metadata={"kind": turn.kind, "interrupts": turn.interrupts},
+            tags=[self._pipeline, f"v{APP_CONFIG.app.version}"],
+        )
         self._turn = turn
         self._touch(turn)
 
@@ -948,6 +1044,9 @@ class LiveDialogSession(DialogSession):
         kind = event.kind
         if kind == "closed":
             await self._on_closed(event.text)
+            return
+        if kind == "usage":
+            self._attribute_usage(event.usage or {})
             return
         if kind == "resumption":
             self._resume_handle = event.text
@@ -1126,6 +1225,7 @@ class LiveDialogSession(DialogSession):
                 reply_turn = self._reply_turn(turn.started, degraded=turn.degraded)
                 self._jobs.put_nowait(lambda: self._reply(False, reply_turn))
         self._settle_usage(turn)
+        self._end_turn_trace(turn, wait_usage=True)
 
     def _settle_usage(self, turn: LiveTurn) -> None:
         """Расход, пришедший раньше конца хода, — на ответ модели (если он стал сообщением), иначе на диалог."""

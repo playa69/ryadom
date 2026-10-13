@@ -4,9 +4,8 @@
 доменные Settings с validation_alias, SecretStr для секретов, fail-fast
 валидация, неизменяемый синглтон APP_CONFIG.
 
-Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима.
-Настройки БД и Redis вернутся вместе с полноценным агентом. Langfuse здесь — только
-приёмник расхода моделей (числа, без текстов); без ключей он выключен.
+Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима, трейсинг ходов и расход моделей
+в self-hosted Langfuse. Настройки БД и Redis вернутся вместе с полноценным агентом.
 """
 
 import logging
@@ -240,33 +239,6 @@ class GeminiSettings(BaseAppSettings):
         return self
 
 
-class LangfuseSettings(BaseAppSettings):
-    """Приёмник расхода моделей в Langfuse (ns `infra`). Не трейсинг реплик: только числа.
-
-    Без адреса или любого из ключей приёмник не включается, и агент стартует как раньше.
-    `LANGFUSE_ENABLED=false` выключает его, даже если ключи заданы.
-    """
-
-    enabled: bool = Field(validation_alias="LANGFUSE_ENABLED", default=True)
-    host: str = Field(validation_alias="LANGFUSE_HOST", default="")
-    public_key: str = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default="")
-    secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
-    flush_seconds: float = Field(validation_alias="LANGFUSE_FLUSH_SECONDS", default=5, ge=0.2, le=60)
-    timeout_seconds: int = Field(validation_alias="LANGFUSE_TIMEOUT_SECONDS", default=5, ge=1, le=30)
-
-    @model_validator(mode="after")
-    def host_has_scheme(self) -> "LangfuseSettings":
-        host = self.host.strip()
-        if host and not host.startswith(("http://", "https://")):
-            raise ValueError("LANGFUSE_HOST должен начинаться с http:// или https://")
-        return self
-
-    @property
-    def active(self) -> bool:
-        secret = self.secret_key.get_secret_value() if self.secret_key is not None else ""
-        return bool(self.enabled and self.host.strip() and self.public_key.strip() and secret)
-
-
 class MemorySettings(BaseAppSettings):
     """Долговременная память агента (спецификация памяти, раздел 14): факты о человеке между разговорами.
 
@@ -313,6 +285,49 @@ class MemoryReclaimSettings(BaseAppSettings):
 
     # Как часто возвращать память, секунды. 0 — не возвращать (заморозка стартовых объектов для сборщика остаётся).
     seconds: int = Field(validation_alias="MEMORY_RECLAIM_SECONDS", default=60, ge=0)
+
+
+class LangfuseSettings(BaseAppSettings):
+    """Langfuse (self-hosted, ns `infra`, тот же RU-кластер, что и БД диалогов): трейсинг LLM-ходов и приёмник расхода моделей.
+
+    По умолчанию всё выключено: агент работает как раньше (NullTracer, приёмника нет). При `LANGFUSE_ENABLED=true`
+    оба ключа обязательны — без них сервис не стартует (fail-fast). Ключи проекта (pk-lf/sk-lf) лежат в Secret
+    `agent-secrets`, в ConfigMap их быть не должно.
+
+    Трейсинг (`app/core/tracing.py`): трасса на каждый ход. `LANGFUSE_TRACE_TEXT=false` — уходят только длины реплик, токены и
+    задержки, сами тексты маскируются; `true` (по умолчанию) — тексты реплик людей и агента уходят в Langfuse.
+
+    Приёмник расхода (`app/services/langfuse_usage.py`, README «Расход моделей»): только числа, без текстов, отдельная трасса
+    `model-usage`. Расход ходов уже есть в трассах трейсинга, поэтому приёмник включается отдельно (`LANGFUSE_USAGE_SINK=true`):
+    при включённых обоих расход в Langfuse задвоится.
+    """
+
+    enabled: bool = Field(validation_alias="LANGFUSE_ENABLED", default=False)
+    host: str = Field(validation_alias="LANGFUSE_HOST", default="http://langfuse-web.infra.svc.cluster.local:3000")
+    public_key: SecretStr | None = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default=None)
+    secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
+    trace_text: bool = Field(validation_alias="LANGFUSE_TRACE_TEXT", default=True)
+    usage_sink: bool = Field(validation_alias="LANGFUSE_USAGE_SINK", default=False)
+    flush_seconds: float = Field(validation_alias="LANGFUSE_FLUSH_SECONDS", default=5, ge=0.2, le=60)
+    timeout_seconds: int = Field(validation_alias="LANGFUSE_TIMEOUT_SECONDS", default=5, ge=1, le=30)
+
+    @model_validator(mode="after")
+    def _keys_required_when_enabled(self) -> "LangfuseSettings":
+        if self.enabled and not (self._key(self.public_key) and self._key(self.secret_key)):
+            raise ValueError("LANGFUSE_ENABLED=true, но не заданы LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY")
+        host = self.host.strip()
+        if host and not host.startswith(("http://", "https://")):
+            raise ValueError("LANGFUSE_HOST должен начинаться с http:// или https://")
+        return self
+
+    @staticmethod
+    def _key(value: SecretStr | None) -> str:
+        return value.get_secret_value().strip() if value is not None else ""
+
+    @property
+    def usage_sink_active(self) -> bool:
+        """Приёмник расхода работает, только если включён Langfuse и отдельно приёмник."""
+        return bool(self.enabled and self.usage_sink and self.host.strip())
 
 
 class Config:

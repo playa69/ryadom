@@ -395,7 +395,8 @@ def test_usage_event_is_counted_and_does_not_disturb_the_dialog(user_id: str) ->
     assert {key: tokens(*key.split("_")) - before[key] for key in USAGE} == USAGE
 
 
-async def test_usage_event_does_not_reach_the_turn_queue() -> None:
+async def test_usage_event_reaches_the_turn_queue_but_is_counted_once() -> None:
+    """Usage проходит очередь хода (для атрибуции к трассе Langfuse в `_handle`), а в Prometheus считается один раз — в `_read`."""
     session = make_session(FakeConnector())
     link = FakeLink("male", "", "", "промпт")
     before = tokens("input", "audio")
@@ -410,7 +411,12 @@ async def test_usage_event_does_not_reach_the_turn_queue() -> None:
     queued = []
     while not session._events.empty():
         queued.append(session._events.get_nowait())
-    assert [(source is link, event.kind) for source, event in queued] == [(True, "output_text"), (True, "closed")]
+    assert [(source is link, event.kind) for source, event in queued] == [
+        (True, "output_text"),
+        (True, "usage"),
+        (True, "usage"),
+        (True, "closed"),
+    ]
     assert tokens("input", "audio") == before + 7
 
 

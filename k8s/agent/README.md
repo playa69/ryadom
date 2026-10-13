@@ -21,7 +21,7 @@
 
 | Secret | Namespace | Ключи |
 |---|---|---|
-| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY` |
+| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY`, `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (ключи проекта в Langfuse, нужны при `LANGFUSE_ENABLED=true`) |
 | `agent-gemini` | `agent` | только для режима `gemini_live`: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`; Deployment читает их как необязательные |
 | `app-secrets` | `prod` | уже есть; ключ `AGENT_INTERNAL_TOKEN` с тем же значением, что у агента |
 
@@ -247,7 +247,9 @@ helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring
 через пару дней, умноженный на 14/дни, должен быть меньше `retentionSize` (3GB), иначе старые блоки уйдут раньше срока.
 
 Тот же расход может уходить в Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, трейс `model-usage`, без текстов).
-Приёмник молчит, пока в Secret `agent-secrets` нет `LANGFUSE_PUBLIC_KEY` и `LANGFUSE_SECRET_KEY`. Сеть — отдельным решением:
+Это отдельный приёмник: `LANGFUSE_USAGE_SINK: "true"` в `agent-config` (по умолчанию `"false"`) и `LANGFUSE_ENABLED=true` с ключами в
+Secret `agent-secrets`. Расход ходов уже идёт в трассах трейсинга, поэтому оба сразу не включать: в Langfuse он задвоится. Сеть —
+отдельным решением:
 
 ```bash
 kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml   # egress agent → infra:3000

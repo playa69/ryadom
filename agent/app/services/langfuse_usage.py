@@ -2,7 +2,7 @@
 
 Отдельного SDK нет: пачка событий уходит на `POST {host}/api/public/ingestion` (Basic-ключ проекта).
 В теле нет текстов реплик, фактов и id человека — только модель, задача и количество. Приёмник
-включается, когда заданы адрес и оба ключа (`LangfuseSettings.active`); иначе `record` его не зовёт.
+включается, когда включён Langfuse и отдельно приёмник (`LangfuseSettings.usage_sink_active`); иначе `record` его не зовёт.
 Сбой отправки расход в базе и в Prometheus не трогает: пачка теряется, в журнал пишется только код ответа.
 """
 
@@ -151,15 +151,16 @@ class LangfuseUsageSink:
 
 def start_langfuse_sink(settings: LangfuseSettings) -> LangfuseUsageSink | None:
     """Включить приёмник на время жизни процесса. Без ключей — None, `record` его не зовёт."""
-    if not settings.active:
+    if not settings.usage_sink_active:
         logger.info("langfuse usage sink off")
         install_langfuse(None)
         return None
-    secret = settings.secret_key.get_secret_value() if settings.secret_key is not None else ""
+    # Ключи обязательны при LANGFUSE_ENABLED=true: LangfuseSettings проверил это на старте.
+    assert settings.public_key is not None and settings.secret_key is not None
     sink = LangfuseUsageSink(
         settings.host.strip(),
-        settings.public_key.strip(),
-        secret,
+        settings.public_key.get_secret_value().strip(),
+        settings.secret_key.get_secret_value().strip(),
         flush_seconds=settings.flush_seconds,
         timeout_seconds=settings.timeout_seconds,
     )

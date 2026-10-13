@@ -10,8 +10,8 @@
 #                          и распознавание речи; принадлежит только агенту, в app-secrets его нет
 #   SALUTE_SPEECH_AUTH_KEY (необязательно) ключ SaluteSpeech; появится — сменить TTS_MODE на
 #                          salutespeech и перезапустить агента
-#   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY (необязательно) ключи проекта Langfuse: расход моделей.
-#                          Пока ключей нет, приёмник выключен. Адрес — LANGFUSE_HOST ниже, не секрет.
+#   LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY   ключи проекта ryadom в self-hosted Langfuse (pk-lf…/sk-lf…; создаются в UI
+#                          Langfuse, нужны при LANGFUSE_ENABLED=true). Адрес — LANGFUSE_HOST ниже, не секрет.
 # Отдельный Secret `agent-gemini` (необязательный, нужен только в режиме gemini_live; создаётся
 # отдельно, существующий agent-secrets не трогаем): GEMINI_API_KEY (ключ Gemini API),
 # GEMINI_BASE_URL (адрес релея к Gemini API: из России Google недоступен напрямую),
@@ -57,11 +57,19 @@ data:
   # Secret `agent-gemini` и образ с google-genai (agent ≥ 0.2.0). Переключение: сменить значение, применить ConfigMap и
   # перезапустить агента (kubectl -n agent rollout restart deploy/agent). Откат: вернуть cascade. Подробно: README.md.
   VOICE_PIPELINE: "gemini_live"
+  # Трейсинг LLM-ходов в self-hosted Langfuse (ns infra): трасса на ход диалога (расшифровка → ответ,
+  # токены Gemini, задержки этапов), сессия = диалог. Ключи — в Secret `agent-secrets` (см. шапку).
+  # Тексты реплик уходят только при LANGFUSE_TRACE_TEXT=true (иначе — длины); Langfuse в том же
+  # RU-кластере, что и БД диалогов. Откат: LANGFUSE_ENABLED=false + rollout restart.
+  LANGFUSE_ENABLED: "true"
+  LANGFUSE_HOST: "http://langfuse-web.infra.svc.cluster.local:3000"
+  LANGFUSE_TRACE_TEXT: "true"
+  # Отдельный приёмник расхода моделей (числа без текстов, трасса model-usage). Расход ходов уже идёт в трассах выше, поэтому
+  # включать приёмник вместе с трейсингом не нужно: в Langfuse он задвоится. Нужен, если трейсинг выключен.
+  LANGFUSE_USAGE_SINK: "false"
   # Диалоги: файл SQLite на томе agent-data (03-pvc.yaml). Они переживают перезапуск и выкат пода. Не открылся файл — агент
   # работает в памяти и громко пишет в журнал (ошибка), в /health/ready видно "dialogs": "memory".
   DIALOG_DB_PATH: "/data/dialogs.sqlite3"
-  # Расход моделей в Langfuse (ns infra). Включается, только когда в agent-secrets есть оба ключа.
-  LANGFUSE_HOST: "http://langfuse-web.infra.svc.cluster.local:3000"
   # Память агента (docs/agent-memory-spec.md, agent/README.md «Память»). ВЫКАТ В ДВА ШАГА (решение владельца, 2026-10-13):
   #   шаг 1 — этот манифест: MEMORY_MODE "off". Схема файла диалогов всё равно мигрирует 1 → 2 при старте агента (откат образа на
   #           предыдущей версии после этого невозможен без копии файла, см. k8s/agent/RUNBOOK-0.6.0.md), но факты не извлекаются и не

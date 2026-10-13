@@ -26,6 +26,7 @@ from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
 from app.memory.llm import ExtractionModel, build_memory_llm
 from app.memory.service import MemoryService
 from app.memory.worker import MemoryWorker
+from app.core.tracing import build_tracer
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.langfuse_usage import start_langfuse_sink
@@ -149,6 +150,8 @@ def create_app(
         app.state.live = live
         budget = TokenBudget(APP_CONFIG.gemini) if live is not None else None
         app.state.budget = budget
+        tracer = build_tracer(APP_CONFIG.langfuse)
+        app.state.tracer = tracer
         if tts_factory is not None or live is None:
             app.state.tts = factory()
         else:
@@ -176,13 +179,14 @@ def create_app(
         else:
             app.state.chat, app.state.recognizer = models()
         logger.info(
-            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s memory=%s",
+            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s memory=%s tracing=%s",
             live.name if live else "cascade",
             app.state.tts.name if app.state.tts else "none",
             app.state.chat.name if app.state.chat else "none",
             app.state.recognizer.name if app.state.recognizer else "none",
             "sqlite" if store.persistent else "memory",
             memory_service.status(),
+            tracer.name,
         )
         # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а облачный синтез медленнее.
         # Фиксированные фразы (приветствия, шаблоны, кризисный ответ) готовим заранее; ответы модели так не подготовить.
@@ -224,6 +228,7 @@ def create_app(
             for part in (fallback.chat, fallback.recognizer, fallback.tts) if fallback is not None else ():
                 if part is not None:
                     await part.aclose()
+            await tracer.aclose()  # отправить в Langfuse накопленные трассы
 
     app = FastAPI(title="ryadom-agent", version=APP_CONFIG.app.version, lifespan=lifespan)
     app.state.store = DialogStore(
@@ -238,6 +243,7 @@ def create_app(
     app.state.memory = None
     app.state.budget = None  # бюджет токенов Gemini (только в режиме gemini_live)
     app.state.fallback = None  # каскад как запасной путь gemini_live (GEMINI_TPM_ENFORCE)
+    app.state.tracer = None  # подменяется в lifespan (build_tracer); None до старта приложения
     app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)
     app.include_router(health.router)

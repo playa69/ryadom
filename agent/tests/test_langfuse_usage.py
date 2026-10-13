@@ -66,10 +66,34 @@ def test_record_forwards_to_the_installed_sink() -> None:
     assert seen == [Usage("chat-model", "chat", "input", "text", "tokens", 4)]
 
 
-def test_sink_stays_off_without_keys() -> None:
-    settings = LangfuseSettings(LANGFUSE_HOST="http://langfuse.test", LANGFUSE_PUBLIC_KEY="")
-    assert settings.active is False
-    assert start_langfuse_sink(settings) is None
+def test_sink_stays_off_by_default_and_when_only_tracing_is_on() -> None:
+    off = LangfuseSettings(LANGFUSE_HOST="http://langfuse.test")
+    assert off.usage_sink_active is False
+    assert start_langfuse_sink(off) is None
+    tracing_only = LangfuseSettings(
+        LANGFUSE_ENABLED="true", LANGFUSE_HOST="http://langfuse.test", LANGFUSE_PUBLIC_KEY="pk", LANGFUSE_SECRET_KEY="sk"
+    )
+    # Расход ходов уже идёт в трассах: приёмник отдельно, иначе в Langfuse он задвоится.
+    assert tracing_only.usage_sink_active is False
+    assert start_langfuse_sink(tracing_only) is None
+
+
+def test_sink_starts_only_with_its_own_switch() -> None:
+    settings = LangfuseSettings(
+        LANGFUSE_ENABLED="true",
+        LANGFUSE_USAGE_SINK="true",
+        LANGFUSE_HOST="http://langfuse.test",
+        LANGFUSE_PUBLIC_KEY="pk",
+        LANGFUSE_SECRET_KEY="sk",
+    )
+    assert settings.usage_sink_active is True
+    sink = start_langfuse_sink(settings)
+    try:
+        assert sink is not None
+    finally:
+        install_langfuse(None)
+        if sink is not None:
+            sink.close()
 
 
 def test_host_without_scheme_is_rejected() -> None:

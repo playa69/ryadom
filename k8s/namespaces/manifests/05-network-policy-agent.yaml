@@ -158,6 +158,31 @@ spec:
           port: 443
 
 ---
+# Langfuse web (ns infra, :3000): трейсинг LLM-ходов агента (LANGFUSE_* в k8s/agent/00-config.yaml).
+# Обратная сторона — infra-allow-ingress-agent-langfuse в 02-network-policy-infra.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-egress-langfuse
+  namespace: agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: langfuse
+              app.kubernetes.io/component: web
+      ports:
+        - protocol: TCP
+          port: 3000
+
+---
 # Доступ к istiod (istio-system): 15012/TCP (TLS XDS) и 15010/TCP
 # (plaintext XDS). Без этого сайдкары потеряют связь с control plane.
 apiVersion: networking.k8s.io/v1
