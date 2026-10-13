@@ -13,6 +13,7 @@ from app.core.config import APP_CONFIG
 from app.main import create_app
 from app.services.replies import CRISIS_REPLY
 from tests.conftest import (
+    components,
     AUTH,
     FAKE_PCM,
     FakeTts,
@@ -242,6 +243,32 @@ def test_text_message_is_answered_by_the_model(live_client: TestClient, connecto
     history = live_client.get(f"/v1/users/{user_id}/dialogs/{dialog['dialogId']}", headers=AUTH).json()["messages"]
     assert [m["role"] for m in history] == ["user", "assistant"]
     assert history[1]["text"] == connector.reply
+
+
+def answered_and_counted(frames: list[Any]) -> bool:
+    """Ответ дозвучал и обращение к модели засчитано: два кадра приходят в любом порядке, оба нужны."""
+    return reply_done(frames) and ("live", "ok", False) in components(frames)
+
+
+def test_one_turn_is_one_live_call_and_one_safety_check(live_client: TestClient, connector: FakeConnector, user_id: str) -> None:
+    """Речь в речь: распознавания и озвучки отдельно нет, ход — одно обращение к модели и одна проверка безопасности."""
+    dialog = start_dialog(live_client, user_id)
+    with live_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        send_user_message(ws, "c-1", "Мне сегодня тревожно")
+        frames = read_frames(ws, answered_and_counted)
+    assert sorted(components(frames)) == [("live", "ok", False), ("safety", "ok", False)]
+
+
+def test_a_spoken_turn_is_checked_for_safety_once_however_many_pieces_it_was_heard_in(
+    live_client: TestClient, connector: FakeConnector, user_id: str
+) -> None:
+    dialog = start_dialog(live_client, user_id)
+    with live_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        speak_turn(ws)
+        frames = read_frames(ws, answered_and_counted)
+    found = components(frames)
+    assert found.count(("safety", "ok", False)) == 1
+    assert found.count(("live", "ok", False)) == 1
 
 
 def test_voice_turn_goes_to_the_model_and_back(live_client: TestClient, connector: FakeConnector, user_id: str) -> None:

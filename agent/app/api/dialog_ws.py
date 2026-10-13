@@ -177,6 +177,7 @@ class DialogSession:
         # Озвучку перебили, и следующая голосовая реплика — ответ на это перебивание.
         self._interrupted = False
         self._turn_interrupts = False
+        self._component_tasks: set[asyncio.Task[None]] = set()  # кадры `component` в полёте
         # Реплика, оборванная на полуслове: ответ на неё ждёт, не договорит ли человек (см. `_hold`).
         self._held: Turn | None = None
         self._hold_timer: asyncio.Task[None] | None = None
@@ -186,6 +187,23 @@ class DialogSession:
         return "on" if self._store.memory_brief(self._dialog, count=False) else "off"
 
     # ─── отправка ─────────────────────────────────────────────────────────────
+
+    def bind_component_calls(self) -> None:
+        """Обращения к компонентам внутри этого сокета (и задач, которые он породит) уходят шлюзу кадром `component`.
+        Звать в задаче сокета до `run`: контекст наследуют только задачи, созданные после."""
+        model_usage.bind_calls(self._component_called)
+
+    def _component_called(self, component: str, outcome: str, cached: bool) -> None:
+        if self._closed:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self._send({"type": "component", "component": component, "outcome": outcome, "cached": cached})
+            )
+        except RuntimeError:  # вне цикла событий (синхронный тест): отправлять некому
+            return
+        self._component_tasks.add(task)
+        task.add_done_callback(self._component_tasks.discard)
 
     async def _send(self, frame: dict[str, Any]) -> None:
         if self._closed:
@@ -320,6 +338,7 @@ class DialogSession:
             dialog.client_ids[client_id] = message.id
         await self._send({"type": "ack", "id": client_id or message.id, "messageId": message.id})
         crisis = is_crisis(text)
+        model_usage.call("safety")
         if crisis:
             self._store.mark_crisis(dialog)  # извлечение памяти из такого разговора пропускается (I13)
             await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
@@ -400,6 +419,7 @@ class DialogSession:
         # На голосовую реплику ack не нужен: final-транскрипт несёт id сохранённого сообщения.
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
         crisis = is_crisis(message.text)
+        model_usage.call("safety")
         if crisis:
             self._store.mark_crisis(self._dialog)  # извлечение памяти из такого разговора пропускается (I13)
             await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
@@ -807,6 +827,7 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
                 websocket.app.state.chat,
                 websocket.app.state.recognizer,
             )
+        session.bind_component_calls()
         await session.run()
     finally:
         store.socket_closed(dialog)

@@ -96,6 +96,7 @@ class LiveTurn:
     generating: bool = True
     got_output: bool = False
     failed: bool = False
+    safety_counted: bool = False  # проверка безопасности этого хода уже засчитана как обращение
     user_saved: bool = False
     ended: bool = False  # реплика человека закончена (audio_end): с этого момента ждём ответ модели и считаем её молчание
     audio_seconds: float | None = None  # длительность голосовой реплики (от audio_start до audio_end)
@@ -978,6 +979,8 @@ class LiveDialogSession(DialogSession):
             turn.mark("in_first")
             turn.mark("in_last", True)
             turn.heard += event.text
+            if not turn.discarded:
+                self._count_safety(turn)
             if not turn.discarded and is_crisis(turn.heard):
                 await self._crisis(turn)
             elif turn.held and not turn.opened and turn.heard.strip():
@@ -1014,6 +1017,7 @@ class LiveDialogSession(DialogSession):
                 self._count_false_interruption(turn.interrupts)
                 await self._send({"type": "transcript", "text": "", "final": True})
                 return
+            self._count_safety(turn)
             if is_crisis(heard):
                 await self._crisis(turn)
                 return
@@ -1100,10 +1104,18 @@ class LiveDialogSession(DialogSession):
         task.add_done_callback(self._speech_tasks.discard)
         task.add_done_callback(lambda done: self._forget_speech(message_id, done))
 
+    def _count_safety(self, turn: LiveTurn) -> None:
+        """Реплику проверяют по мере расшифровки, много раз; обращением засчитывается проверка хода, один раз."""
+        if not turn.safety_counted:
+            turn.safety_counted = True
+            model_usage.call("safety")
+
     async def _finish(self, turn: LiveTurn) -> None:
         if not turn.generating:
             return
         turn.generating = False
+        # Ход ушёл модели и закончился: одно обращение (речь в речь, отдельных распознавания и озвучки здесь нет).
+        model_usage.call("live", "error" if turn.failed else "ok")
         self._disarm_all(turn)
         if self._turn is turn:
             self._turn = None

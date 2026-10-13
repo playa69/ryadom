@@ -116,6 +116,17 @@ MODEL_USAGE_TOTAL = Counter(
     ["model", "task", "direction", "modality", "unit"],
 )
 
+# Обращения к компонентам агента: сколько раз он реально позвал распознавание, проверку безопасности, модель, озвучку.
+# Без id: по человеку и диалогу те же вызовы уходят кадром `component` в шлюз и дальше в продуктовую аналитику.
+#   component  stt | safety | llm | live | tts | memory
+#   outcome    ok | error
+#   cached     true: ответ взят из памяти фраз, провайдера не звали
+COMPONENT_CALLS_TOTAL = Counter(
+    "agent_component_calls_total",
+    "Обращения к компонентам агента по названию, исходу и признаку «из памяти».",
+    ["component", "outcome", "cached"],
+)
+
 DIALOGS_TOTAL = Counter(
     "agent_dialogs_total",
     "Диалоги, в которых человек сказал или написал хоть что-то (считаются по его первой реплике).",

@@ -233,6 +233,7 @@ class SaluteTts:
             self._expires_at = expires_ms / 1000 if isinstance(expires_ms, int | float) else time.time() + 1800
             return self._token
 
+    @model_usage.counted("tts")
     async def synthesize(self, text: str, voice: Voice) -> bytes:
         for attempt in (1, 2):
             token = await self._access_token(force=attempt == 2)
@@ -325,9 +326,13 @@ class QwenTts:
         finally:
             if accepted:  # запрос принят: текст оплачен, даже если озвучку оборвали на середине
                 self._record(text, total)
+                model_usage.call("tts")
+            else:
+                model_usage.call("tts", "error")
         if not total:
             raise TtsError("Qwen TTS вернул пустое аудио")
 
+    @model_usage.counted("tts")
     async def synthesize(self, text: str, voice: Voice) -> bytes:
         try:
             response = await self._client.post(self._url, **self._request(text, voice))
@@ -365,6 +370,7 @@ class CachedTts:
         cached = self._items.get(key)
         if cached is not None:
             self._items.move_to_end(key)
+            model_usage.call("tts", cached=True)  # провайдера не звали, но фраза человеку озвучена
             return cached
         pcm = await self._inner.synthesize(text, voice)  # отказ не запоминается
         self._remember(key, pcm)
@@ -385,6 +391,7 @@ class CachedTts:
         cached = self._items.get(key)
         if cached is not None:
             self._items.move_to_end(key)
+            model_usage.call("tts", cached=True)
             yield cached
             return
         parts: list[bytes] = []
