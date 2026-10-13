@@ -89,8 +89,8 @@ data:
   # Домен подтверждён, DKIM `gokey` и домен ссылок `email.` настроены, Secret
   # app-smtp (SMTP_PASSWORD) заменён ключом Unisender. Откат на Postbox:
   # SMTP_HOST: "postbox.cloud.yandex.net", SMTP_USER: "ajes403uog5d0ah3qfq7" и
-  # прежние значения SMTP_USER/SMTP_PASSWORD из предыдущей версии Lockbox-секрета
-  # ryadom-app-secrets. Откат на лог вместо отправки — EMAIL_TRANSPORT: "console"
+  # прежние значения SMTP_USER/SMTP_PASSWORD (хранятся локально у администратора).
+  # Откат на лог вместо отправки — EMAIL_TRANSPORT: "console"
   # и перезапуск app-api и app-admin (коды входа тогда пишутся в лог).
   EMAIL_TRANSPORT: "smtp"
   EMAIL_FROM: "Рядом <noreply@xn----htbtgjker8b3a2c.xn--p1ai>"
