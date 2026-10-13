@@ -145,6 +145,7 @@ async def test_stream_gives_pieces_and_skips_service_lines():
 
     assert await collect(proxy_chat(handler)) == ["Я ", "рядом."]
     assert seen[0]["stream"] is True and seen[0]["model"] == "model"
+    assert seen[0]["stream_options"] == {"include_usage": True}  # без него прокси не присылает расход в потоке
 
 
 async def test_stream_cut_by_the_token_limit_raises_after_the_pieces():

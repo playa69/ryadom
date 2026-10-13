@@ -58,13 +58,30 @@ DIALOG_DB_WRITE_SECONDS = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
 )
 
-# Режим gemini_live. Токены берутся из usage_metadata ответа Gemini: на каждый ход приходит размер контекста этого хода
-# (prompt, то, что оплачивается заново на каждый ход) и сгенерированное (response). direction: prompt | response | total;
-# modality: text | audio | all.
-GEMINI_TOKENS_TOTAL = Counter(
-    "agent_gemini_tokens_total",
-    "Токены Gemini Live по usage_metadata: вход (контекст хода) и выход, по модальностям.",
-    ["direction", "modality"],
+# Расход моделей (app/services/usage.py): каждый вызов модели, в том числе вне диалогов (прогрев фраз при старте). По
+# диалогам то же лежит в таблице model_usage базы диалогов; здесь без id, поэтому стирание человека сумм не трогает.
+# Метки, всегда из коротких списков:
+#   model      имя модели, как его знает провайдер (gemini-3.8-live, gigachat3.5-432b-a28b, whisper-large-v3, ...)
+#   task       live (ход речь в речь) | phrase (озвучка фиксированной фразы) | stt | chat | tts
+#   direction  input | output
+#   modality   text | audio | thinking | other (часть итога провайдера без разбивки по модальностям)
+#   unit       tokens | seconds (аудио) | chars (текст на озвучку)
+MODEL_USAGE_TOTAL = Counter(
+    "agent_model_usage_total",
+    "Расход моделей: токены, секунды аудио или символы, по модели, задаче, направлению и модальности.",
+    ["model", "task", "direction", "modality", "unit"],
+)
+
+DIALOGS_TOTAL = Counter(
+    "agent_dialogs_total",
+    "Диалоги, в которых человек сказал или написал хоть что-то (считаются по его первой реплике).",
+)
+
+# speaker: human (голосовые реплики человека, от audio_start до audio_end) | agent (озвученные ответы агента, что дошло до клиента).
+SPEECH_SECONDS_TOTAL = Counter(
+    "agent_speech_seconds_total",
+    "Секунды речи в сообщениях диалогов: голос человека и озвучка ответов агента.",
+    ["speaker"],
 )
 
 # result: ok | failed. Смена сессии после ответа (GEMINI_TEXT_CONTEXT): новая сессия с текстовой историей вместо накопленного аудио.

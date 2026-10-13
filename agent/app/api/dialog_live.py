@@ -20,6 +20,7 @@ from typing import Any, Literal
 from fastapi import WebSocket
 
 from app.api.dialog_ws import (
+    AUDIO_FRAME_SECONDS,
     FRAME_KIND_AUDIO_IN,
     MAX_AUDIO_BYTES,
     MAX_USER_TEXT,
@@ -28,16 +29,16 @@ from app.api.dialog_ws import (
     Turn,
     is_silence,
 )
-from app.clients.gemini_live import LiveConnector, LiveEvent, LiveHistory, LiveLink
+from app.clients.gemini_live import LiveConnector, LiveEvent, LiveHistory, LiveLink, record_usage
 from app.clients.speech import Voice
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
     GEMINI_CONTEXT_REFRESH_SECONDS,
     GEMINI_CONTEXT_REFRESH_TOTAL,
-    GEMINI_TOKENS_TOTAL,
     VOICE_TURN_END_DELAY_SECONDS,
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
+from app.services import usage as model_usage
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.replies import CRISIS_SAFETY_TEXT, SYSTEM_PROMPT, is_crisis
 
@@ -69,6 +70,8 @@ class LiveTurn:
     failed: bool = False
     user_saved: bool = False
     ended: bool = False  # реплика человека закончена (audio_end): с этого момента ждём ответ модели и считаем её молчание
+    audio_seconds: float | None = None  # длительность голосовой реплики (от audio_start до audio_end)
+    usage: list[model_usage.Usage] = field(default_factory=list)  # расход, пришедший раньше конца ответа (см. `_count_usage`)
     held: list[LiveEvent] = field(default_factory=list)  # ответ, который ждёт расшифровки
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     message: Message | None = None
@@ -151,6 +154,8 @@ class LiveDialogSession(DialogSession):
         self._rotation: asyncio.Task[None] | None = None  # смена сессии после ответа (GEMINI_TEXT_CONTEXT)
         self._link_used = False  # на текущем соединении уже начат ход (иначе в нём нет аудио, которое стоило бы убрать)
         self._speech_turns: dict[str, LiveTurn] = {}
+        # Последний ход, отправленный модели целиком (конец реплики или текст): на его ответ пишется пришедший usage.
+        self._usage_turn: LiveTurn | None = None
 
     def _first_sound(self, message_id: str, turn: Turn | None) -> None:
         """Первый звук ответа ушёл клиенту: кроме общей задержки пишем, из каких этапов она сложилась."""
@@ -181,6 +186,9 @@ class LiveDialogSession(DialogSession):
             for turn in (self._turn, self._voice_turn):
                 if turn is not None:
                     self._disarm_all(turn)
+            for turn in (self._turn, self._voice_turn, self._usage_turn):
+                if turn is not None:
+                    self._settle_usage(turn)  # ход не закончен, а расход уже есть: не терять
             self._release_link()
 
     def _history(self) -> list[tuple[Literal["user", "model"], str]]:
@@ -285,18 +293,30 @@ class LiveDialogSession(DialogSession):
         )
 
     def _count_usage(self, usage: dict[str, int]) -> None:
-        """Токены хода из usage_metadata: prompt — весь контекст хода (оплачивается заново каждый ход), response — ответ."""
-        for key, value in usage.items():
-            direction, _, modality = key.partition("_")
-            GEMINI_TOKENS_TOTAL.labels(direction, modality).inc(value)
+        """Токены хода из usage_metadata: input — весь контекст хода (оплачивается заново каждый ход), output — ответ.
+
+        Пишутся на ответ модели последнего отправленного ей хода. Если ответа-сообщения нет (модель промолчала, расшифровки
+        ответа нет) или usage пришёл не по ходу, — на диалог. Usage разбирается сразу при чтении, а события ответа ждут своей
+        очереди (`_pump`), поэтому, пока ход не закончен, расход ждёт на самом ходе и пишется в `_finish`, когда ответ уже есть.
+        """
+        turn = self._usage_turn
+        with model_usage.collect() as spent:
+            record_usage(self._connector.model, "live", usage)
+        if turn is not None and turn.generating:
+            turn.usage.extend(spent)
+        else:
+            self._store.add_usage(self._dialog, turn.message_id if turn is not None else None, spent)
+        total = {direction: sum(v for k, v in usage.items() if k.startswith(direction + "_")) for direction in ("input", "output")}
         logger.info(
-            "live usage dialog=%s prompt=%d(text=%d audio=%d) response=%d(audio=%d)",
+            "live usage dialog=%s input=%d(text=%d audio=%d) output=%d(audio=%d text=%d thinking=%d)",
             self._dialog.id,
-            usage.get("prompt_all", 0),
-            usage.get("prompt_text", 0),
-            usage.get("prompt_audio", 0),
-            usage.get("response_all", 0),
-            usage.get("response_audio", 0),
+            total["input"],
+            usage.get("input_text", 0),
+            usage.get("input_audio", 0),
+            total["output"],
+            usage.get("output_audio", 0),
+            usage.get("output_text", 0),
+            usage.get("output_thinking", 0),
         )
 
     async def _drop_link(self) -> None:
@@ -335,6 +355,7 @@ class LiveDialogSession(DialogSession):
                     if kind == "start":
                         await link.activity_start()
                     else:
+                        self._usage_turn = command[2]
                         await link.send_text(command[1])
                         command[2].mark("sent")
                 else:
@@ -344,6 +365,7 @@ class LiveDialogSession(DialogSession):
                     if kind == "audio":
                         await link.send_audio(command[1])
                     elif kind == "end":
+                        self._usage_turn = command[1]
                         await link.activity_end()
                         command[1].mark("sent")
             except asyncio.CancelledError:
@@ -418,6 +440,8 @@ class LiveDialogSession(DialogSession):
         if self._last_voiced is not None:
             VOICE_TURN_END_DELAY_SECONDS.observe(time.monotonic() - self._last_voiced)
         turn = self._voice_turn
+        if turn is not None:
+            turn.audio_seconds = round(self._audio_frames * AUDIO_FRAME_SECONDS, 3)
         self._audio_open, self._audio_frames, self._audio = False, 0, bytearray()
         self._last_voiced, self._turn_interrupts = None, False
         self._voice_turn, self._pre, self._act_started = None, [], False
@@ -569,7 +593,7 @@ class LiveDialogSession(DialogSession):
             await self._emit(turn, event)
 
     async def _save_voice(self, turn: LiveTurn, heard: str) -> None:
-        message = self._store.add_message(self._dialog, "user", heard[:MAX_USER_TEXT])
+        message = self._store.add_message(self._dialog, "user", heard[:MAX_USER_TEXT], audio_seconds=turn.audio_seconds)
         turn.user_saved = True
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
 
@@ -667,6 +691,13 @@ class LiveDialogSession(DialogSession):
             if not turn.failed or turn.kind == "text" or turn.user_saved:
                 reply_turn = Turn(started=turn.started)
                 self._jobs.put_nowait(lambda: self._reply(False, reply_turn))
+        self._settle_usage(turn)
+
+    def _settle_usage(self, turn: LiveTurn) -> None:
+        """Расход, пришедший раньше конца хода, — на ответ модели (если он стал сообщением), иначе на диалог."""
+        if turn.usage:
+            spent, turn.usage = turn.usage, []
+            self._store.add_usage(self._dialog, turn.message_id, spent)
 
     async def _on_closed(self, reason: str) -> None:
         logger.warning("gemini live closed dialog=%s: %s", self._dialog.id, reason)

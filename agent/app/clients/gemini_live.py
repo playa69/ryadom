@@ -18,10 +18,13 @@ from typing import Literal, Protocol
 
 from app.clients.speech import TtsError, Voice
 from app.core.config import GeminiSettings
+from app.services import usage as model_usage
 
 logger = logging.getLogger("agent.gemini")
 
 LIVE_IN_MIME = "audio/pcm;rate=16000"
+# Сколько озвучка фразы ждёт в фоне usage_metadata (он приходит с turn_complete, когда фраза «доиграна» у Google), потом закрывает соединение.
+PHRASE_USAGE_WAIT_SECONDS = 15.0
 
 EventKind = Literal[
     "input_text",
@@ -32,7 +35,7 @@ EventKind = Literal[
     "interrupted",
     "resumption",  # text — handle, по которому сессию можно возобновить после обрыва
     "go_away",  # Google скоро закроет соединение: пора переоткрыть его между репликами
-    "usage",  # usage — токены хода (usage_metadata); приходит вместе с turn_complete
+    "usage",  # usage — токены хода (usage_metadata, ключи `_usage`); приходит вместе с turn_complete
     "closed",
 ]
 
@@ -79,6 +82,7 @@ class LiveLink(Protocol):
 
 class LiveConnector(Protocol):
     name: str
+    model: str  # имя модели для учёта расхода
 
     async def open(
         self, voice: Voice, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
@@ -182,19 +186,36 @@ def live_config(
 
 
 def _usage(meta) -> dict[str, int]:  # noqa: ANN001
-    """Токены одного хода из usage_metadata: prompt — весь контекст хода (оплачивается заново каждый ход), response — ответ."""
+    """Токены одного хода из usage_metadata: `{направление}_{модальность}` → токены.
+
+    input — весь контекст хода (prompt, оплачивается заново каждый ход), output — ответ (response) и размышление (thoughts,
+    оплачивается как выход). Модальности как у Google в нижнем регистре (text, audio); часть итога без разбивки — `other`,
+    так что сумма по модальностям всегда равна итогу. Кэшированная часть входа (cached_content) входит в prompt и отдельно не
+    считается.
+    """
     usage: dict[str, int] = {}
     for direction, total, details in (
-        ("prompt", meta.prompt_token_count, meta.prompt_tokens_details),
-        ("response", meta.response_token_count, meta.response_tokens_details),
+        ("input", meta.prompt_token_count, meta.prompt_tokens_details),
+        ("output", meta.response_token_count, meta.response_tokens_details),
     ):
-        if total:
-            usage[f"{direction}_all"] = int(total)
+        counted = 0
         for item in details or []:
             modality = str(getattr(item.modality, "name", item.modality)).lower()
             if item.token_count:
-                usage[f"{direction}_{modality}"] = int(item.token_count)
+                usage[f"{direction}_{modality}"] = usage.get(f"{direction}_{modality}", 0) + int(item.token_count)
+                counted += int(item.token_count)
+        if total and int(total) > counted:
+            usage[f"{direction}_other"] = int(total) - counted
+    if meta.thoughts_token_count:
+        usage["output_thinking"] = int(meta.thoughts_token_count)
     return usage
+
+
+def record_usage(model: str, task: str, usage: dict[str, int]) -> None:
+    """Токены хода (ключи `_usage`) в учёт расхода (app/services/usage.py)."""
+    for key, tokens in usage.items():
+        direction, _, modality = key.partition("_")
+        model_usage.record(model, task, direction, modality, "tokens", tokens)
 
 
 def _translate(message) -> list[LiveEvent]:  # noqa: ANN001
@@ -238,6 +259,7 @@ class GeminiLiveConnector:
         self._types = types
         self._settings = settings
         self._model = settings.live_model
+        self.model = settings.live_model
         self._voices: dict[Voice, str] = {"male": settings.voice_male, "female": settings.voice_female}
         self._timeout = settings.connect_timeout_seconds
         options = None
@@ -284,12 +306,18 @@ VERBATIM_INSTRUCTIONS = (
 
 
 class GeminiLiveTts:
-    """Фиксированные фразы агента (приветствие, кризисный ответ) тем же голосом, каким модель отвечает в диалоге."""
+    """Фиксированные фразы агента (приветствие, кризисный ответ) тем же голосом, каким модель отвечает в диалоге.
+
+    Расход фразы (задача `phrase`) приходит с turn_complete, то есть через секунды после generation_complete: звук отдаётся
+    сразу, а usage дочитывается в фоне (`_drain`), после чего соединение закрывается.
+    """
 
     def __init__(self, connector: LiveConnector, timeout_seconds: int = 30) -> None:
         self._connector = connector
         self._timeout = timeout_seconds
         self.name = connector.name
+        self._model = connector.model
+        self._drains: set[asyncio.Task[None]] = set()
 
     async def synthesize(self, text: str, voice: Voice) -> bytes:
         try:
@@ -297,27 +325,54 @@ class GeminiLiveTts:
         except LiveError as error:
             raise TtsError(str(error)) from error
         pcm = bytearray()
+        events = link.events()
+        drain = False
         try:
             await link.send_text(f"Произнеси дословно, без добавлений: «{text}»")
             async with asyncio.timeout(self._timeout):
-                async for event in link.events():
+                async for event in events:
                     if event.kind == "audio":
                         pcm += event.data
-                    elif event.kind in ("generation_complete", "turn_complete"):
+                    elif event.kind == "usage":
+                        record_usage(self._model, "phrase", event.usage or {})
+                    elif event.kind == "generation_complete":
+                        drain = True  # usage ещё впереди
                         break
-                    elif event.kind == "closed":
+                    elif event.kind in ("turn_complete", "closed"):
                         break
         except TimeoutError as error:
             raise TtsError("Gemini Live не договорил фразу вовремя") from error
         except Exception as error:  # noqa: BLE001
             raise TtsError(f"Gemini Live: {type(error).__name__}: {str(error)[:160]}") from error
         finally:
-            await link.aclose()
+            if drain:
+                task = asyncio.create_task(self._drain(link, events))
+                self._drains.add(task)
+                task.add_done_callback(self._drains.discard)
+            else:
+                await link.aclose()
         if not pcm:
             raise TtsError("Gemini Live вернул пустое аудио")
         return bytes(pcm[: len(pcm) // 2 * 2])
 
+    async def _drain(self, link: LiveLink, events: AsyncIterator[LiveEvent]) -> None:
+        """Дочитать usage фразы и закрыть соединение. Задача наследует приёмник расхода того, кто озвучивал (диалог или никто)."""
+        try:
+            async with asyncio.timeout(PHRASE_USAGE_WAIT_SECONDS):
+                async for event in events:
+                    if event.kind == "usage":
+                        record_usage(self._model, "phrase", event.usage or {})
+                    if event.kind in ("usage", "turn_complete", "closed"):
+                        break
+        except Exception as error:  # noqa: BLE001 - расход не дочитан, фраза уже отдана
+            logger.info("расход фразы не получен: %s", type(error).__name__)
+        finally:
+            await link.aclose()
+
     async def aclose(self) -> None:
+        for task in list(self._drains):
+            task.cancel()
+        await asyncio.gather(*self._drains, return_exceptions=True)
         await self._connector.aclose()
 
 

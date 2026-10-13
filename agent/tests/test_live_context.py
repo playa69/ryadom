@@ -62,7 +62,9 @@ def refreshed(result: str) -> float:
 
 
 def tokens(direction: str, modality: str) -> float:
-    return sample("agent_gemini_tokens_total", direction=direction, modality=modality)
+    return sample(
+        "agent_model_usage_total", model="fake-live-model", task="live", direction=direction, modality=modality, unit="tokens"
+    )
 
 
 @contextmanager
@@ -380,7 +382,7 @@ def test_replacement_is_not_triggered_by_a_session_that_has_not_answered_yet(use
 
 # ─── usage ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-USAGE = {"prompt_all": 1300, "prompt_text": 300, "prompt_audio": 1000, "response_all": 60, "response_audio": 60}
+USAGE = {"input_text": 300, "input_audio": 1000, "output_audio": 60}
 
 
 def test_usage_event_is_counted_and_does_not_disturb_the_dialog(user_id: str) -> None:
@@ -388,7 +390,7 @@ def test_usage_event_is_counted_and_does_not_disturb_the_dialog(user_id: str) ->
     before = {key: tokens(*key.split("_")) for key in USAGE}
     with talk(connector, user_id) as (_, ws, _):
         frames = say(ws, "c-1", FIRST)
-        wait_until(lambda: tokens("prompt", "all") == before["prompt_all"] + 1300, "токены посчитаны")
+        wait_until(lambda: tokens("input", "audio") == before["input_audio"] + 1000, "токены посчитаны")
     assert not has(frames, "error")
     assert {key: tokens(*key.split("_")) - before[key] for key in USAGE} == USAGE
 
@@ -396,10 +398,10 @@ def test_usage_event_is_counted_and_does_not_disturb_the_dialog(user_id: str) ->
 async def test_usage_event_does_not_reach_the_turn_queue() -> None:
     session = make_session(FakeConnector())
     link = FakeLink("male", "", "", "промпт")
-    before = tokens("prompt", "audio")
+    before = tokens("input", "audio")
     for event in (
         LiveEvent("output_text", text="Привет"),
-        LiveEvent("usage", usage={"prompt_audio": 7}),
+        LiveEvent("usage", usage={"input_audio": 7}),
         LiveEvent("usage"),  # без токенов: ничего не считаем и не падаем
         LiveEvent("closed"),
     ):
@@ -409,7 +411,7 @@ async def test_usage_event_does_not_reach_the_turn_queue() -> None:
     while not session._events.empty():
         queued.append(session._events.get_nowait())
     assert [(source is link, event.kind) for source, event in queued] == [(True, "output_text"), (True, "closed")]
-    assert tokens("prompt", "audio") == before + 7
+    assert tokens("input", "audio") == before + 7
 
 
 def test_usage_metadata_becomes_a_usage_event_before_turn_complete() -> None:
@@ -432,6 +434,19 @@ def test_usage_metadata_becomes_a_usage_event_before_turn_complete() -> None:
     assert events[0].usage == USAGE
     assert [e.kind for e in _translate(t.LiveServerMessage(server_content=t.LiveServerContent(turn_complete=True)))] == ["turn_complete"]
     assert _translate(t.LiveServerMessage(usage_metadata=t.UsageMetadata())) == []  # пустой usage события не даёт
+
+    # Итог без полной разбивки: остаток — other (сумма по модальностям равна итогу); размышление — отдельный выход.
+    partial = _translate(
+        t.LiveServerMessage(
+            usage_metadata=t.UsageMetadata(
+                prompt_token_count=1350,
+                prompt_tokens_details=details(text=300, audio=1000),
+                response_token_count=60,
+                thoughts_token_count=12,
+            )
+        )
+    )
+    assert partial[0].usage == {"input_text": 300, "input_audio": 1000, "input_other": 50, "output_other": 60, "output_thinking": 12}
 
 
 # ─── Настройки сессии и загрузка истории ──────────────────────────────────────────────────────────────────────────

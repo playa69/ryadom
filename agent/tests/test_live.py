@@ -107,6 +107,7 @@ def re_split(text: str) -> list[str]:
 
 class FakeConnector:
     name = "fake-live"
+    model = "fake-live-model"
 
     def __init__(
         self,
