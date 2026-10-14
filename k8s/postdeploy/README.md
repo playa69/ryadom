@@ -63,6 +63,8 @@ POSTDEPLOY_BASELINE=<снимок> uv run --no-project --with requests --with we
 
 ## 3. Новые возможности выката (по просьбе)
 
+`test_telegram.py` (с `--expect post`) проверяет Telegram Mini App снаружи, без аккаунтов: CSP PWA пускает во фрейм только Telegram Web, а вход через Telegram включён и отклоняет данные запуска, подписанные не нашим ботом (`NOT_CONFIGURED` значит, что Secret `app-telegram` не дошёл до api).
+
 `test_features.py` проверяет память агента в бою от согласия до стирания. Запускается только по `POSTDEPLOY_FEATURES=1`: ходит в модель извлечения и в Gemini
 и оставляет в проде тестовые данные (в конце стирает память и выключает её).
 
