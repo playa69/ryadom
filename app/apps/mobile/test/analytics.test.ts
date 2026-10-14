@@ -33,6 +33,15 @@ describe('платформа аналитики', () => {
     expect(analyticsPlatform({ android: false, ios: false, standalone: true })).toBe('pwa')
     expect(analyticsPlatform({ android: false, ios: false, standalone: false })).toBe('web')
   })
+
+  it('веб-сборка, открытая как Mini App в Telegram, это telegram', () => {
+    expect(analyticsPlatform({ android: false, ios: false, standalone: false, telegram: true })).toBe(
+      'telegram',
+    )
+    expect(analyticsPlatform({ android: false, ios: false, standalone: true, telegram: true })).toBe(
+      'telegram',
+    )
+  })
 })
 
 describe('исход формы по ошибке (общее отображение статусов, как в вебе)', () => {

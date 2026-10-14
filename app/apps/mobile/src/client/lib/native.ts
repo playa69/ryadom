@@ -1,8 +1,9 @@
 import { App } from '@capacitor/app'
 import { SystemBars, SystemBarsStyle } from '@capacitor/core'
-import { f7 } from 'framework7-react'
+import { f7, f7ready } from 'framework7-react'
 import { TAB_IDS } from './nav'
 import { isNative, isWebBuild } from './platform'
+import { isTelegramMiniApp, telegramWebApp } from './telegram'
 
 /** Behaviour a native app is expected to have that a WebView does not provide by itself. */
 
@@ -28,6 +29,18 @@ function closeTopModal(): boolean {
     return true
   }
   return false
+}
+
+const MODAL_SELECTOR =
+  '.dialog.modal-in, .actions-modal.modal-in, .sheet-modal.modal-in, .popup.modal-in, .popover.modal-in'
+
+/** Whether "back" has somewhere to go inside the app: an open modal, a step in the tab, or another tab. */
+function canGoBack(): boolean {
+  if (document.querySelector(MODAL_SELECTOR)) return true
+  const view = f7.views.current
+  if (view && view.router.history.length > 1) return true
+  const activeTab = document.querySelector('.views.tabs > .view.tab-active')
+  return Boolean(activeTab && `#${activeTab.id}` !== MAIN_TAB && document.querySelector(MAIN_TAB))
 }
 
 /**
@@ -83,7 +96,8 @@ export function initBackButton(): () => void {
  * screen with no modals we stop swallowing the event, so the next back really leaves the PWA.
  */
 export function initBackTrap(): () => void {
-  if (!isWebBuild()) return () => {}
+  // Telegram has a back button of its own (below), and a history entry in its frame would trap the outer page's.
+  if (!isWebBuild() || isTelegramMiniApp()) return () => {}
 
   function pushGuard(): void {
     history.pushState({ ryadomBackGuard: true }, '', location.href)
@@ -96,6 +110,45 @@ export function initBackTrap(): () => void {
   pushGuard()
   window.addEventListener('popstate', handlePopState)
   return () => window.removeEventListener('popstate', handlePopState)
+}
+
+/**
+ * The Mini App: Telegram's own back button in its header, shown whenever "back" has somewhere to go
+ * inside the app and hidden on the home screen, where Telegram's "close" is the way out.
+ */
+export function initTelegramBackButton(): () => void {
+  const app = telegramWebApp()
+  if (!app?.isVersionAtLeast('6.1')) return () => {}
+  const sync = () => {
+    if (canGoBack()) app.BackButton.show()
+    else app.BackButton.hide()
+  }
+  const handleClick = () => {
+    handleBackStep()
+    // The step animates; the state it leaves is known once the page or modal has finished moving.
+    setTimeout(sync, 400)
+  }
+  // Router and modal events reach the app instance at run time, but its typings list only its own.
+  const events = 'routeChanged modalOpened modalClosed tabShow pageAfterIn'
+  type AppEventBus = {
+    on(names: string, handler: () => void): void
+    off(names: string, handler: () => void): void
+  }
+  let bus: AppEventBus | null = null
+  let removed = false
+  app.BackButton.onClick(handleClick)
+  f7ready((instance) => {
+    if (removed) return
+    bus = instance as unknown as AppEventBus
+    bus.on(events, sync)
+    sync()
+  })
+  return () => {
+    removed = true
+    app.BackButton.offClick(handleClick)
+    app.BackButton.hide()
+    bus?.off(events, sync)
+  }
 }
 
 /**

@@ -71,9 +71,11 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   // entered the code yet is waiting for the second step.
   const noEmail = user?.email === null
   const pendingEmail = user?.email && user.isEmailConfirmed === false ? user.email : null
+  // An account with Telegram opens from the Mini App on any device: it has a way back in, so it is not a guest.
+  const telegram = user?.telegramLinked === true
   // Both are opened by this phone alone, so signing out is not a thing they have: leaving one is
   // going to another account, and it says what that costs.
-  const anonymous = noEmail || pendingEmail !== null
+  const anonymous = (noEmail || pendingEmail !== null) && !telegram
 
   // The rest of the profile is fetched from the server: sign-in returns only the basic fields.
   useEffect(() => {
@@ -84,6 +86,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
           email: me.email,
           name: me.name,
           isEmailConfirmed: me.isEmailConfirmed,
+          telegramLinked: me.telegramLinked,
           createdAt: me.createdAt,
           voice: me.voice,
         }),
@@ -196,7 +199,9 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
 
       <div className="rd-profile-head">
         <p className="rd-profile-name">{user?.name ?? (noEmail ? 'Гость' : '—')}</p>
-        <p className="rd-profile-email">{noEmail ? 'Без регистрации' : (user?.email ?? '')}</p>
+        <p className="rd-profile-email">
+          {noEmail ? (telegram ? 'Вход через Telegram' : 'Без регистрации') : (user?.email ?? '')}
+        </p>
         <Button small round outline className="rd-profile-edit" onClick={handleEditName}>
           Изменить имя
         </Button>
@@ -215,7 +220,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
           <ListItem
             link
             title="Привязать почту"
-            footer="чтобы войти с другого устройства"
+            footer={telegram ? 'чтобы входить и вне Telegram' : 'чтобы войти с другого устройства'}
             onClick={() => f7router.navigate('/profile/link-email/')}
           >
             <Icon slot="media" f7="envelope_fill" />

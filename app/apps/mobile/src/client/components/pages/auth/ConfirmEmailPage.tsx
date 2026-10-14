@@ -7,6 +7,7 @@ import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-ema
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, codeText, confirmEmail, login, resendConfirmation } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
+import { offerTelegramLink } from '../../../lib/telegram-account'
 import CodeInput from '../../CodeInput'
 
 /**
@@ -35,7 +36,7 @@ export default function ConfirmEmailPage({
   /** The person agreed to the terms on the registration screen: it is recorded once the session starts. */
   consented?: boolean
 }) {
-  const { login: storeLogin } = useAuth()
+  const { login: storeLogin, updateUser } = useAuth()
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -67,6 +68,7 @@ export default function ConfirmEmailPage({
       if (password) {
         const { user, tokens } = await login(email, password)
         await storeLogin(user, tokens, { consent: consented })
+        offerTelegramLink(user, () => updateUser({ telegramLinked: true }))
         return
       }
       f7.toast.create({ text: 'Почта подтверждена — можно входить', closeTimeout: 2500 }).open()
