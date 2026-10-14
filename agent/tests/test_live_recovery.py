@@ -10,7 +10,8 @@ from prometheus_client import REGISTRY
 from app.clients.gemini_live import LiveError, LiveEvent, LiveHistory
 from app.core.config import APP_CONFIG
 from app.services.replies import REPLIES
-from tests.conftest import AUTH, FakeTts, has, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import FakeTts, has, read_frames, send_user_message, start_dialog
+from tests.test_gemini_budget import connect
 from tests.test_live import FakeConnector, FakeLink, speak_turn
 from tests.test_live_feedback import history_of, make_client
 
@@ -107,7 +108,9 @@ def run(connector: FakeConnector, user_id: str, act: Any, stop: Any = ended) -> 
     tts = FakeTts()
     with make_client(connector, tts) as client:
         dialog = start_dialog(client, user_id)
-        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+        # `connect` сам закрывает сокет и ждёт конца сессии: иначе TestClient отменяет приложение посреди уборки (таймеры
+        # повторной просьбы, фоновое открытие сессии), и тело теста изредка падает с CancelledError.
+        with connect(client, user_id, dialog["dialogId"]) as ws:
             act(ws)
             frames = read_frames(ws, stop)
         messages = history_of(client, user_id, dialog["dialogId"])
@@ -220,3 +223,62 @@ def test_a_typed_message_without_an_answer_is_asked_again_at_once(user_id: str, 
     assert connector.history_calls[-1] == [("user", "Мне тревожно")] and ("nudge",) in connector.links[-1].commands
     assert [(m["role"], m["text"]) for m in messages] == [("user", "Мне тревожно"), ("assistant", REPLY)]
 
+
+
+class InterruptedLink(QuietLink):
+    """Первая реплика расшифрована, но ответить модель не успевает: её перебивает новая «реплика». `noise` — та оказалась
+    шумом (расшифровки нет, ответ на неё агент выбрасывает), иначе — продолжением со своим ответом."""
+
+    noise = True
+
+    async def activity_end(self) -> None:
+        self.commands.append(("end",))
+        self.voice_turns += 1
+        if self.voice_turns == 1:
+            self._queue.put_nowait(LiveEvent("input_text", text=self._heard))  # ответа на неё не будет: её перебьют
+        elif self.noise:
+            self._queue.put_nowait(LiveEvent("output_text", text="Ответ на шум."))
+            self._queue.put_nowait(LiveEvent("generation_complete"))
+        else:
+            self._respond("и ещё кое-что")
+
+
+def test_an_answer_lost_to_a_noise_turn_is_asked_for_again(user_id: str) -> None:
+    """Живой разговор на стенде: после длинной реплики микрофон поймал шум, новый ход перебил ответ модели, а сам оказался
+    пустым — ответ на шум выброшен, и человек 15 с ждал в тишине. Как каскад отвечает на оборванную реплику, когда новая
+    оказалась шумом, так и здесь: агент просит модель ответить на первую."""
+    connector = QuietConnector(InterruptedLink)
+    interrupted = counter("agent_live_unanswered_turns_total", reason="interrupted")
+
+    def two_turns(ws: Any) -> None:
+        speak_turn(ws)
+        read_frames(ws, lambda fs: has(fs, "audio_end") or True)  # кадр-другой: первая реплика ушла
+        speak_turn(ws)
+
+    frames, messages = run(connector, user_id, two_turns)
+    assert [(m["role"], m["text"]) for m in messages] == [("user", HEARD), ("assistant", REPLY)]
+    assert "Ответ на шум." not in [m["text"] for m in messages]
+    assert ("nudge",) in connector.links[-1].commands and connector.history_calls[-1] == [("user", HEARD)]
+    assert counter("agent_live_unanswered_turns_total", reason="interrupted") == interrupted + 1
+
+
+class ContinuedLink(InterruptedLink):
+    noise = False
+
+
+def test_a_real_continuation_answers_both_without_a_second_request(user_id: str) -> None:
+    connector = QuietConnector(ContinuedLink)
+    continued = counter("agent_live_recoveries_total", outcome="continued")
+
+    def two_turns(ws: Any) -> None:
+        speak_turn(ws)
+        read_frames(ws, lambda fs: True)
+        speak_turn(ws)
+
+    frames, messages = run(connector, user_id, two_turns)
+    assert [(m["role"], m["text"]) for m in messages] == [("user", HEARD), ("user", "и ещё кое-что"), ("assistant", REPLY)]
+    assert ("nudge",) not in all_commands(connector) and len(connector.links) == 1
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and counter("agent_live_recoveries_total", outcome="continued") == continued:
+        time.sleep(0.02)
+    assert counter("agent_live_recoveries_total", outcome="continued") == continued + 1

@@ -34,7 +34,8 @@ LIVE_VOICELESS_ANSWERS_TOTAL = Counter(
 # просит модель ответить в свежей сессии.
 LIVE_UNANSWERED_TURNS_TOTAL = Counter(
     "agent_live_unanswered_turns_total",
-    "Ходы Gemini Live без ответа модели; label `reason`: silent (модель промолчала) | failed (соединение оборвалось посреди хода).",
+    "Ходы Gemini Live без ответа модели; label `reason`: silent (модель промолчала) | failed (соединение оборвалось посреди хода) | "
+    "interrupted (ответ перебила новая «реплика», а та оказалась шумом).",
     ["reason"],
 )
 LIVE_RECOVERIES_TOTAL = Counter(

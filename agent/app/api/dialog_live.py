@@ -101,7 +101,7 @@ PRE_ROLL_FRAMES = 5
 STALE_SECONDS = 1.0
 
 LIVE_ADDENDUM = (
-    "\n- Ты говоришь вслух живым голосом, как в разговоре: сказанное человеком не пересказывай, длину ответа задаёт он."
+    "\n- Ты говоришь вслух живым голосом, как в разговоре: сказанное человеком не пересказывай."
     "\n- Если тебя просят произнести фразу дословно, произноси ровно её."
 )
 
@@ -328,6 +328,7 @@ class LiveDialogSession(DialogSession):
         self._awaiting_usage: LiveTurn | None = None
         # Реплика человека, на которую модель не ответила, и таймер повторной просьбы (`_schedule_recovery`).
         self._unanswered: LiveTurn | None = None
+        self._recovery_interrupted = False  # её ход перебила новая реплика (переспрос — только если та окажется шумом)
         self._recovery_timer: asyncio.TimerHandle | None = None
         self._recovering = False  # следующее открытие сессии — ради повторной просьбы (purpose=recover в журнале и метрике)
         # Набранное сообщение уже в истории диалога, но ещё не ушло модели: в историю новой сессии его не кладём, оно придёт
@@ -1425,15 +1426,22 @@ class LiveDialogSession(DialogSession):
             await self._send({"type": "assistant_end", "messageId": turn.message_id, "text": turn.sent_text})
             if turn.audio is None:
                 self._voice_text_answer(turn, superseded)
+        if turn.assistant_started and not turn.recovery and self._unanswered is not None and self._unanswered is not turn:
+            # Реплика, перебившая ход без ответа, получила ответ — он и на прежнюю: переспрашивать не нужно.
+            LIVE_RECOVERIES_TOTAL.labels("continued").inc()
+            self._cancel_recovery()
         if turn.recovery and not turn.degraded:
             outcome = "answered" if turn.assistant_started else "continued" if superseded else "unavailable" if turn.failed else "unanswered"
             LIVE_RECOVERIES_TOTAL.labels(outcome).inc()
             if outcome == "unanswered":
                 # Шаблона нет: клиент покажет «думаю…» и вернётся в покой, человек может сказать ещё раз.
                 logger.warning("live recovery got no answer either dialog=%s", self._dialog.id)
-        elif self._recoverable(turn) and not turn.assistant_started and not superseded:
-            LIVE_UNANSWERED_TURNS_TOTAL.labels("failed" if turn.failed else "silent").inc()
-            self._schedule_recovery(turn)
+        elif self._recoverable(turn) and not turn.assistant_started:
+            if not superseded:
+                LIVE_UNANSWERED_TURNS_TOTAL.labels("failed" if turn.failed else "silent").inc()
+            # Перебитая новой репликой (`superseded`) тоже ждёт: окажется новая шумом (пустая расшифровка, эхо — её ответ
+            # выбрасывается), ответа не будет ни на одну, и агент переспросит про эту; окажется настоящей — модель ответит на обе.
+            self._schedule_recovery(turn, interrupted=superseded)
         self._settle_usage(turn)
         self._end_turn_trace(turn, wait_usage=True)
 
@@ -1446,24 +1454,29 @@ class LiveDialogSession(DialogSession):
             return False
         return turn.kind == "text" or turn.user_saved or bool(turn.heard.strip())
 
-    def _schedule_recovery(self, turn: LiveTurn) -> None:
+    def _schedule_recovery(self, turn: LiveTurn, interrupted: bool = False) -> None:
         """Реплика осталась без ответа. Голосовая — ждём GEMINI_SILENCE_NUDGE_MS: модель часто молчит, когда человек сделал
         паузу посреди мысли, и он продолжает сам (тогда `_begin` всё отменит). Набранная или оборванная обрывом соединения —
-        сразу: ждать там нечего."""
+        сразу: ждать там нечего.
+
+        `interrupted`: ход перебила новая реплика, она ещё идёт. Свежую сессию тогда заранее не открываем (новая реплика уже
+        уходит в текущую), а `_recover` ждёт, чем эта реплика кончится: ответом (переспрашивать не нужно) или ничем (шум)."""
         self._cancel_recovery()
         self._unanswered = turn
+        self._recovery_interrupted = interrupted
         delay = 0.0 if (turn.failed or turn.kind == "text") else self._cfg.silence_nudge_ms / 1000
-        # Отвечать будет свежая сессия, где последней лежит эта реплика. Пока ждём продолжения, её уже открываем (около 0,8 с
-        # к ответу экономится); заговорит человек — его реплика пойдёт в неё же, и в её истории будет и эта.
-        self._refresh = True
-        self._recovering = True
-        if delay and self._may_open():
-            self._prepare_link()
+        if not interrupted:
+            # Отвечать будет свежая сессия, где последней лежит эта реплика. Пока ждём продолжения, её уже открываем (около
+            # 0,8 с к ответу экономится); заговорит человек — его реплика пойдёт в неё же, и в её истории будет и эта.
+            self._refresh = True
+            self._recovering = True
+            if delay and self._may_open():
+                self._prepare_link()
         logger.info(
             "live turn unanswered dialog=%s kind=%s reason=%s recover_in_ms=%d",
             self._dialog.id,
             turn.kind,
-            "failed" if turn.failed else "silent",
+            "interrupted" if interrupted else "failed" if turn.failed else "silent",
             delay * 1000,
         )
         self._recovery_timer = asyncio.get_running_loop().call_later(delay, self._events.put_nowait, ("recover", turn))
@@ -1482,17 +1495,26 @@ class LiveDialogSession(DialogSession):
         if self._unanswered is not turn or self._closed:
             return
         self._recovery_timer = None
-        if self._act_started or self._audio_open:
-            # Человек говорит (или микрофон уже открыт): скорее всего, это и есть продолжение. Проверим ещё раз позже.
+        if self._act_started or self._audio_open or self._turn is not None:
+            # Человек говорит (или микрофон уже открыт), или идёт ход, перебивший этот: ждём, чем он кончится. Ответом — тогда
+            # переспрашивать не придётся; ничем (шум, эхо) — переспросим.
             delay = max(self._cfg.silence_nudge_ms / 1000, 0.5)
             self._recovery_timer = asyncio.get_running_loop().call_later(delay, self._events.put_nowait, ("recover", turn))
             return
         self._unanswered = None
         last = self._dialog.messages[-1] if self._dialog.messages else None
-        if self._turn is not None or last is None or last.role != "user":
+        if last is None or last.role != "user":
             # Уже ответили (новый ход, кризисный ответ): после готового ответа модель дописала бы к нему обрывок.
             LIVE_RECOVERIES_TOTAL.labels("continued").inc()
             return
+        if self._recovery_interrupted:
+            LIVE_UNANSWERED_TURNS_TOTAL.labels("interrupted").inc()  # перебившая реплика оказалась шумом
+        link = self._link
+        preparing = self._preparing is not None and not self._preparing.done()
+        if not preparing and (link is None or link.closed or self._link_used):
+            # Свежая сессия ещё не открыта (её открывают заранее, но не когда ход перебит): откроет её сама просьба.
+            self._refresh = True
+            self._recovering = True
         nudge = LiveTurn(kind="text", opened=True, recovery=True)
         nudge.user_saved = True
         await self._begin(nudge)
