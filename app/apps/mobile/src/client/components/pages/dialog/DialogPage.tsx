@@ -20,6 +20,7 @@ import { journal } from '../../../lib/journal'
 import { watchMemoryCard } from '../../../lib/memory'
 import { openRoute } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
+import { setTelegramClosingConfirmation } from '../../../lib/telegram'
 import {
   isCaptureSupported,
   MicrophoneDeniedError,
@@ -160,6 +161,12 @@ export default function DialogPage({
   useEffect(() => {
     modeRef.current = mode
   }, [mode])
+
+  // In Telegram, closing the Mini App mid-conversation asks first, as long as this screen is open.
+  useEffect(() => {
+    setTelegramClosingConfirmation(true)
+    return () => setTelegramClosingConfirmation(false)
+  }, [])
 
   // Once per conversation opened, not per render; `resumed` is what the server said when it started it.
   useEffect(() => {

@@ -23,9 +23,15 @@ import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
  */
 
 /** The platform events are tagged with: a store build by its shell, the web build by how it was opened. */
-export function analyticsPlatform(env: { android: boolean; ios: boolean; standalone: boolean }): AnalyticsPlatform {
+export function analyticsPlatform(env: {
+  android: boolean
+  ios: boolean
+  standalone: boolean
+  telegram?: boolean
+}): AnalyticsPlatform {
   if (env.android) return 'android'
   if (env.ios) return 'ios'
+  if (env.telegram) return 'telegram'
   return env.standalone ? 'pwa' : 'web'
 }
 

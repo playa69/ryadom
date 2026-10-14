@@ -18,7 +18,7 @@ export interface SessionTracker {
 }
 
 /** Routes that hand out a token pair. A refresh answers with the pair alone, the others add the user. */
-const TOKEN_ROUTES = /\/api\/auth\/(device|login|refresh)$/
+const TOKEN_ROUTES = /\/api\/auth\/(device|login|refresh|telegram)$/
 
 interface TokenResult {
   user?: { id?: string }

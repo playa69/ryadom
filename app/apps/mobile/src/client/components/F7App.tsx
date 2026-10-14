@@ -2,13 +2,14 @@ import { App, Icon, Link, Toolbar, View, Views, f7ready } from 'framework7-react
 import { useEffect, useState } from 'react'
 import { RefreshApiErrorCode } from '@ryadom/contracts/api/auth/refresh'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
-import { ACCOUNT_UNAVAILABLE_EVENT, deviceLogin, getCurrentUser, hasDevice } from '../lib/api'
+import { ACCOUNT_UNAVAILABLE_EVENT, deviceLogin, getCurrentUser, hasDevice, linkTelegram, telegramLogin } from '../lib/api'
 import { initAppUpdates } from '../lib/app-update'
-import { initBackButton, initBackTrap } from '../lib/native'
+import { initBackButton, initBackTrap, initTelegramBackButton } from '../lib/native'
 import { TAB_IDS } from '../lib/nav'
 import { isWebBuild } from '../lib/platform'
 import { initScreenTracking } from '../lib/screen-tracking'
 import { AuthProvider, useAuth } from '../lib/store'
+import { isTelegramMiniApp, telegramInitData, wasTelegramSignedOut } from '../lib/telegram'
 import AppUpdateGate from './AppUpdateGate'
 import { BrandMark } from './Brand'
 import InstallBanner from './InstallBanner'
@@ -106,6 +107,7 @@ function Shell() {
   useEffect(() => initScreenTracking(), [])
   useEffect(() => initBackButton(), [])
   useEffect(() => initBackTrap(), [])
+  useEffect(() => initTelegramBackButton(), [])
 
   // The server ended the session: the account was deleted or blocked. Send the person back to
   // sign-in with a clear explanation, otherwise the screen is left holding empty data.
@@ -147,6 +149,11 @@ function BootSplash() {
  * Where a person without a session lands. A phone that already has an anonymous identity is signed
  * back in without a screen: that is an account with no password to ask for. Anyone else sees the
  * first screen if they are new, or the sign-in if they have had an account and left it.
+ *
+ * In the Telegram Mini App the person is their Telegram user: the account of that user is opened
+ * without a screen too, unless they signed out in this launch. A Telegram user with no account lands on
+ * the first screen, which makes one after the agreements; an anonymous account this device made before
+ * is kept and given the Telegram user, so nothing said in it is lost.
  */
 function AnonymousEntry() {
   const { auth, login } = useAuth()
@@ -155,6 +162,19 @@ function AnonymousEntry() {
   useEffect(() => {
     let cancelled = false
     void (async () => {
+      const initData = isTelegramMiniApp() && !wasTelegramSignedOut() ? telegramInitData() : null
+      if (initData) {
+        try {
+          const outcome = await telegramLogin(initData)
+          if (cancelled) return
+          if (outcome.ok) {
+            await login(outcome.data.user, outcome.data.tokens)
+            return
+          }
+        } catch {
+          // The server does not answer: the screens below are fine to land on.
+        }
+      }
       if (await hasDevice()) {
         try {
           // The agreements were given when the account was made; the gate asks again if a newer
@@ -162,6 +182,10 @@ function AnonymousEntry() {
           const { user, tokens } = await deviceLogin()
           if (cancelled) return
           await login(user, tokens)
+          if (initData) {
+            // Best effort: when it fails the account is still this device's, as it was before.
+            void linkTelegram(initData).catch(() => undefined)
+          }
           return
         } catch {
           // The server does not answer or does not accept the key: the screens below are fine to land on.
@@ -175,7 +199,9 @@ function AnonymousEntry() {
   }, [login])
 
   if (checking) return <BootSplash />
-  return <View main url={auth.entry === 'login' ? '/login/' : '/welcome/'} className="safe-areas" />
+  // A reload after signing out inside Telegram starts with fresh state: the sign-in is still where they belong.
+  const signIn = auth.entry === 'login' || (isTelegramMiniApp() && wasTelegramSignedOut())
+  return <View main url={signIn ? '/login/' : '/welcome/'} className="safe-areas" />
 }
 
 /**
@@ -222,7 +248,8 @@ export default function F7App() {
         <AppUpdateGate />
         <OfflineBar />
         <SosSheet />
-        {isWebBuild() && <InstallBanner />}
+        {/* Inside Telegram the app is already where the person keeps it: nothing to install. */}
+        {isWebBuild() && !isTelegramMiniApp() && <InstallBanner />}
       </AuthProvider>
     </App>
   )

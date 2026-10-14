@@ -43,7 +43,7 @@ import {
  */
 
 export function toAuthUser(user: UserDTO): AuthUserApiResponse {
-  return { id: user.id, email: user.email, name: user.name }
+  return { id: user.id, email: user.email, name: user.name, telegramLinked: user.telegramId !== null }
 }
 
 export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
@@ -52,6 +52,7 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     email: user.email,
     name: user.name,
     isEmailConfirmed: user.isEmailConfirmed,
+    telegramLinked: user.telegramId !== null,
     createdAt: user.createdAt.toISOString(),
     consentsCompleted: consent.completed,
     consentVersion: consent.offerVersion,
@@ -60,10 +61,11 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
   }
 }
 
-/** What the clients put in `x-client-id` (`ryadom-web`, `ryadom-pwa`, `ryadom-android`, `ryadom-ios`). */
+/** What the clients put in `x-client-id` (`ryadom-web`, `ryadom-pwa`, `ryadom-telegram`, `ryadom-android`, `ryadom-ios`). */
 const SESSION_CLIENTS: Record<string, SessionClient> = {
   'ryadom-web': SessionClient.Web,
   'ryadom-pwa': SessionClient.Pwa,
+  'ryadom-telegram': SessionClient.Telegram,
   'ryadom-android': SessionClient.Android,
   'ryadom-ios': SessionClient.Ios,
 }

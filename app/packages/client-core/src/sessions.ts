@@ -13,6 +13,8 @@ export function sessionTitle({ client, browser, os }: Named): string {
   // Our own apps are named for what they are: the engine inside a shell is not what the person sees.
   if (client === SessionClient.Android) return 'Приложение для Android'
   if (client === SessionClient.Ios) return 'Приложение для iPhone'
+  if (client === SessionClient.Telegram)
+    return os ? `Мини-приложение в Telegram · ${os}` : 'Мини-приложение в Telegram'
   const where = [browser, os].filter(Boolean).join(' · ')
   if (client === SessionClient.Pwa) return where ? `Приложение · ${where}` : 'Установленное приложение'
   return where || 'Неизвестное устройство'

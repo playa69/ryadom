@@ -3,10 +3,13 @@ import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, Button, Link, List, ListInput, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
-import { outcomeFromError, reportForm } from '../../../lib/analytics'
-import { apiErrorText, login } from '../../../lib/api'
+import { TelegramLoginApiErrorCode } from '@ryadom/contracts/api/auth/telegram'
+import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
+import { apiErrorText, login, telegramLogin } from '../../../lib/api'
 import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
 import { useAuth } from '../../../lib/store'
+import { isTelegramMiniApp, telegramInitData } from '../../../lib/telegram'
+import { offerTelegramLink, telegramLoginErrorText } from '../../../lib/telegram-account'
 import { useEnvSwitcherTaps } from '../../../lib/use-env-switcher'
 import { BrandMark } from '../../Brand'
 import PasswordInput from '../../PasswordInput'
@@ -16,9 +19,13 @@ import PasswordInput from '../../PasswordInput'
  *
  * The server does not say why it refused, so the sign-in help lists every case at
  * once: the same text for everyone, revealing nothing.
+ *
+ * In the Telegram Mini App this is where a person lands after signing out: Telegram is offered first, and
+ * signing in by email there offers to open that account from Telegram from now on.
  */
 export default function LoginPage({ f7router }: { f7router: Router.Router }) {
-  const { login: storeLogin } = useAuth()
+  const { login: storeLogin, updateUser } = useAuth()
+  const telegram = isTelegramMiniApp()
   // Entry to the env picker (dev build): taps on the mark, reachable even when the server is down.
   const onLogoTap = useEnvSwitcherTaps()
   const [email, setEmail] = useState('')
@@ -38,9 +45,33 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
       const { user, tokens } = await login(email.trim().toLowerCase(), password)
       await storeLogin(user, tokens)
       reportForm('login', 'success')
+      offerTelegramLink(user, () => updateUser({ telegramLinked: true }))
     } catch (err) {
       reportForm('login', outcomeFromError(err))
       setError(apiErrorText(err, { byStatus: { 401: 'Неверная почта или пароль' } }, 'Не получилось войти'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleTelegramLogin() {
+    track(AnalyticsEvent.CtaClicked, { cta: 'login_telegram', placement: 'login' })
+    setError('')
+    setLoading(true)
+    try {
+      const outcome = await telegramLogin(telegramInitData() ?? '')
+      if (outcome.ok) {
+        await storeLogin(outcome.data.user, outcome.data.tokens)
+        reportForm('telegram_login', 'success')
+        return
+      }
+      reportForm('telegram_login', outcomeFromCode(outcome.code))
+      // No account yet: the first screen makes one, after the agreements.
+      if (outcome.code === TelegramLoginApiErrorCode.ACCOUNT_NOT_FOUND) f7router.navigate('/welcome/')
+      else setError(telegramLoginErrorText(outcome.code))
+    } catch (err) {
+      reportForm('telegram_login', outcomeFromError(err))
+      setError(apiErrorText(err, {}, 'Не получилось войти через Telegram'))
     } finally {
       setLoading(false)
     }
@@ -112,8 +143,21 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
 
       <Block className="rd-form-actions">
         {error && <p className="rd-form-error" data-testid="form-error">{error}</p>}
-        <Button fill large preloader loading={loading} disabled={loading} onClick={() => void handleLogin()}>
-          Войти
+        {telegram && (
+          <Button fill large disabled={loading} onClick={() => void handleTelegramLogin()} data-testid="login-telegram">
+            Войти через Telegram
+          </Button>
+        )}
+        <Button
+          fill={!telegram}
+          outline={telegram}
+          large
+          preloader
+          loading={loading}
+          disabled={loading}
+          onClick={() => void handleLogin()}
+        >
+          {telegram ? 'Войти по почте' : 'Войти'}
         </Button>
         <Button
           large

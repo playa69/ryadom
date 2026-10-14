@@ -15,6 +15,7 @@ import { analyticsPlatform } from './lib/analytics'
 import { getApiBase, loadEnv } from './lib/env'
 import { initSystemBarsStyle } from './lib/native'
 import { isAndroid, isIosNative, isNative, isStandalone } from './lib/platform'
+import { initTelegram } from './lib/telegram'
 
 /**
  * Client entry point. Inter comes from the @fontsource package, so the app never fetches it from
@@ -26,12 +27,19 @@ Framework7.use(Framework7React)
 async function start(): Promise<void> {
   // The environment picked in a dev build has to be loaded before the first API request.
   await loadEnv()
+  // Inside Telegram its script has to be up before the first screen: that screen signs in with Telegram.
+  const telegram = await initTelegram()
   // Not awaited: the app does not wait for analytics, and calls made while it loads are queued. The API
   // address is the environment's, so this is after loadEnv: empty for the web build (the same origin),
   // absolute in a store build, where the WebView's own origin is `https://localhost`.
   void startAnalytics({
     apiBase: getApiBase(),
-    platform: analyticsPlatform({ android: isAndroid(), ios: isIosNative(), standalone: isStandalone() }),
+    platform: analyticsPlatform({
+      android: isAndroid(),
+      ios: isIosNative(),
+      standalone: isStandalone(),
+      telegram: telegram !== null,
+    }),
     appVersion: __RELEASE__,
   })
   track(AnalyticsEvent.AppOpened, { standalone: isNative() || isStandalone() })

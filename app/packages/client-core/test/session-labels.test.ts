@@ -16,6 +16,12 @@ describe('название сессии', () => {
     // The shell of our own app is named as the app, whatever engine it runs on.
     [{ client: SessionClient.Android, browser: 'Chrome', os: 'Android' }, 'Приложение для Android'],
     [{ client: SessionClient.Ios, browser: 'Safari', os: 'iOS' }, 'Приложение для iPhone'],
+    // Inside Telegram the engine is Telegram's webview: the system is all that tells devices apart.
+    [
+      { client: SessionClient.Telegram, browser: 'Chrome', os: 'Android' },
+      'Мини-приложение в Telegram · Android',
+    ],
+    [{ client: SessionClient.Telegram, browser: null, os: null }, 'Мини-приложение в Telegram'],
     [{ client: null, browser: null, os: null }, 'Неизвестное устройство'],
   ])('%j → «%s»', (session, title) => {
     expect(sessionTitle(session)).toBe(title)

@@ -219,6 +219,17 @@ describe('срок жизни анонимного аккаунта', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it('с привязанным Telegram аккаунт остаётся: Mini App откроет его с любого устройства', async () => {
+    const { calls } = mockAgent()
+    const { user } = await anonymousSeen(RETENTION_DAYS + 1)
+    await getDb().update(users).set({ telegramId: 7_000_000_001 }).where(eq(users.id, user.id))
+
+    expect(await purge()).toMatchObject({ purged: 0 })
+
+    expect((await getUserRow(user.id))?.isDeleted).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+
   it('заблокированный остаётся: это решение админа, а не истечение срока', async () => {
     mockAgent()
     const { user } = await anonymousSeen(RETENTION_DAYS + 1)
