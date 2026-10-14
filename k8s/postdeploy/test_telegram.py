@@ -46,7 +46,7 @@ def test_telegram_sign_in_is_on_and_rejects_foreign_launch_data(api: Api) -> Non
         "POST", "/api/auth/telegram", body={"initData": forged_init_data(42), "createAccount": False}
     )
     assert code == 200
-    # NOT_CONFIGURED здесь означал бы, что Secret app-telegram не дошёл до api.
+    # NOT_CONFIGURED здесь означал бы, что ключ TELEGRAM_BOT_TOKEN в app-secrets не дошёл до api.
     assert payload == {"status": False, "errorCode": "INIT_DATA_INVALID", "errorMessage": "Launch data is not valid"}
 
 

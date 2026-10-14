@@ -9,7 +9,7 @@ PWA становится Telegram Mini App бота [@slyshu_ryadom_bot](https:/
 | Что | Эффект |
 |---|---|
 | Миграция `0007_users_telegram_id`: `users.telegram_id bigint NULL` + `users_telegram_id_unique` | только добавление; api 0.6.1 колонку не замечает, поэтому миграция идёт первой |
-| api 0.7.0: `POST /api/auth/telegram`, `POST /api/auth/telegram/link`, `telegramLinked` в пользователе и `/me` | без токена бота вход через Telegram выключен (`NOT_CONFIGURED`), остальное как в 0.6.1 |
+| api 0.7.0: `POST /api/auth/telegram`, `POST /api/auth/telegram/link`, `telegramLinked` в пользователе и `/me` | токен бота — ключ `TELEGRAM_BOT_TOKEN` общего Secret'а `app-secrets`; без него вход через Telegram выключен (`NOT_CONFIGURED`), остальное как в 0.6.1 |
 | pwa 0.6.0: режим Mini App (вход по `initData`, кнопка «Назад» Telegram, без баннера установки) | вне Telegram ведёт себя как 0.5.1; скрипт Telegram в обычной вкладке не грузится |
 | CSP PWA: `frame-ancestors https://web.telegram.org` вместо `'none'` | Telegram Web может показать Mini App во фрейме; другие сайты — нет |
 
@@ -18,9 +18,10 @@ PWA становится Telegram Mini App бота [@slyshu_ryadom_bot](https:/
 
 ## Что нужно знать до выката
 
-- **Токен бота — секрет.** Им можно подписать вход за любого пользователя Telegram. Он хранится у администратора и попадает
-  в кластер только как Secret `app-telegram` (ключ `TELEGRAM_BOT_TOKEN`) в ns `prod`; в git, ConfigMap и журналы не попадает.
-  Утечка — перевыпустить токен в BotFather (`/revoke`) и заменить Secret.
+- **Токен бота — секрет.** Им можно подписать вход за любого пользователя Telegram. Он хранится у администратора вместе с
+  остальными секретами приложения и попадает в кластер только как ключ `TELEGRAM_BOT_TOKEN` общего Secret'а `app-secrets`
+  в ns `prod`; в git, ConfigMap и журналы не попадает. Утечка — перевыпустить токен в BotFather (`/revoke`), заменить ключ
+  и перезапустить api.
 - **Порядок важен:** миграция до api (новый api читает `telegram_id`), api до pwa (новая pwa зовёт новые маршруты; старая
   pwa с новым api работает как раньше).
 - **Простоя нет:** api и pwa раскатываются по одной реплике (`RollingUpdate`), миграция только добавляет колонку.
@@ -33,11 +34,13 @@ PWA становится Telegram Mini App бота [@slyshu_ryadom_bot](https:/
 1. **Сверка с кластером** (read-only): `kubectl diff -f k8s/app/api/03-deployment.yaml -f k8s/app/pwa/03-deployment.yaml`.
    Ожидаем только образы `api:0.6.1 → 0.7.0`, `pwa:0.5.1 → 0.6.0` и новую переменную `TELEGRAM_BOT_TOKEN`. Что-то ещё —
    остановиться и разобраться.
-2. **Secret с токеном** (создаёт администратор из своего хранилища секретов; только создание, без перезаписи):
+2. **Токен в общий Secret** (добавляет администратор из своего хранилища секретов; меняется только этот ключ, остальные
+   ключи `app-secrets` не трогаются):
    ```bash
-   kubectl -n prod create secret generic app-telegram --from-literal=TELEGRAM_BOT_TOKEN=<токен из BotFather>
+   kubectl -n prod patch secret app-secrets --type merge --patch-file <файл: data: {TELEGRAM_BOT_TOKEN: <base64 токена>}>
    ```
-   Проверка без значения: `kubectl -n prod get secret app-telegram -o jsonpath='{.data}' | grep -c TELEGRAM_BOT_TOKEN` → `1`.
+   Проверка без значения: `kubectl -n prod get secret app-secrets -o jsonpath='{.data.TELEGRAM_BOT_TOKEN}' | wc -c` — не `0`.
+   Работающие поды ключ не видят до перезапуска: шаг 4 раскатывает api заново.
 3. **Миграция:**
    ```bash
    kubectl apply -f k8s/app/db/04-job-migrate-0004.yaml

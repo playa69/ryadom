@@ -151,12 +151,12 @@ spec:
                   key: SMTP_PASSWORD
                   optional: true
             # Токен бота Telegram Mini App (@slyshu_ryadom_bot): им api проверяет подпись данных запуска при входе
-            # через Telegram. Необязателен: без Secret'а app-telegram вход через Telegram выключен (NOT_CONFIGURED),
+            # через Telegram. Необязателен: без ключа в app-secrets вход через Telegram выключен (NOT_CONFIGURED),
             # остальное работает как раньше
             - name: TELEGRAM_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: app-telegram
+                  name: app-secrets
                   key: TELEGRAM_BOT_TOKEN
                   optional: true
           startupProbe:
