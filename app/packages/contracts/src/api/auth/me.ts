@@ -16,6 +16,8 @@ export interface MeApiResponse {
   email: string | null
   name: string | null
   isEmailConfirmed: boolean
+  /** A Telegram user is linked (`POST /api/auth/telegram`, `POST /api/auth/telegram/link`). */
+  telegramLinked: boolean
   /** ISO 8601 registration date. */
   createdAt: string
   /** The person has agreed to everything a conversation needs (`POST /api/auth/me/consents`). */

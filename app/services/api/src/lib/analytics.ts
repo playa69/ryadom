@@ -104,8 +104,11 @@ export function toAnalyticsConfig(env: AppServerEnv): AnalyticsConfigApiResponse
 }
 
 /** Tells PostHog what kind of account a person has. Called on every sign-in; it costs one queued message. */
-export function identifyUser(analytics: ServerAnalytics, user: { id: string; email: string | null }): void {
-  analytics.identify(user.id, { account_kind: accountKindOf(user) })
+export function identifyUser(
+  analytics: ServerAnalytics,
+  user: { id: string; email: string | null; telegramId: number | null },
+): void {
+  analytics.identify(user.id, { account_kind: accountKindOf({ email: user.email, telegramLinked: user.telegramId !== null }) })
 }
 
 /**

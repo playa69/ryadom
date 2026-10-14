@@ -8,6 +8,8 @@ export interface CreateUserCommandData {
   email: string | null
   name: string | null
   isEmailConfirmed: boolean
+  /** The Telegram user the account is made for (sign-in from the Mini App); absent for every other account. */
+  telegramId?: number | null
 }
 
 export class CreateUserCommand extends RequestData<CreateUserCommandResult> {
@@ -21,6 +23,7 @@ export class CreateUserCommand extends RequestData<CreateUserCommandResult> {
 
   public readonly name: string | null
   public readonly isEmailConfirmed: boolean
+  public readonly telegramId: number | null
 
   constructor(data: CreateUserCommandData) {
     super()
@@ -28,5 +31,6 @@ export class CreateUserCommand extends RequestData<CreateUserCommandResult> {
     this.email = data.email
     this.name = data.name
     this.isEmailConfirmed = data.isEmailConfirmed
+    this.telegramId = data.telegramId ?? null
   }
 }

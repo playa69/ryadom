@@ -14,6 +14,10 @@ export enum ApiPath {
   Login = '/api/auth/login',
   DeviceLogin = '/api/auth/device',
   LinkEmail = '/api/auth/email/link',
+  /** Sign-in from the Telegram Mini App by its launch data. */
+  TelegramLogin = '/api/auth/telegram',
+  /** The signed-in account takes the Telegram user of the Mini App it is open in. */
+  LinkTelegram = '/api/auth/telegram/link',
   Refresh = '/api/auth/refresh',
   Logout = '/api/auth/logout',
   LogoutAll = '/api/auth/logout-all',

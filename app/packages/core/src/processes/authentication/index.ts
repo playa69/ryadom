@@ -3,6 +3,8 @@ import './register/register.handler'
 import './login/login.handler'
 import './device-login/device-login.handler'
 import './link-email/link-email.handler'
+import './telegram-login/telegram-login.handler'
+import './link-telegram/link-telegram.handler'
 import './record-activity/record-activity.handler'
 
 import type { RequestData } from 'mediatr-ts'
@@ -17,6 +19,10 @@ export { DeviceLoginOperation } from './device-login/device-login.operation'
 export type { DeviceLoginOperationData } from './device-login/device-login.operation'
 export { LinkEmailOperation } from './link-email/link-email.operation'
 export type { LinkEmailOperationData } from './link-email/link-email.operation'
+export { TelegramLoginOperation } from './telegram-login/telegram-login.operation'
+export type { TelegramLoginOperationData } from './telegram-login/telegram-login.operation'
+export { LinkTelegramOperation } from './link-telegram/link-telegram.operation'
+export type { LinkTelegramOperationData } from './link-telegram/link-telegram.operation'
 export { RecordActivityOperation } from './record-activity/record-activity.operation'
 export type { RecordActivityOperationData } from './record-activity/record-activity.operation'
 
@@ -29,6 +35,10 @@ export type { DeviceLoginResult } from './device-login/device-login.types'
 export { DeviceLoginOperationErrorCode } from './device-login/device-login.types'
 export type { LinkEmailResult } from './link-email/link-email.types'
 export { LinkEmailOperationErrorCode } from './link-email/link-email.types'
+export type { TelegramLoginResult } from './telegram-login/telegram-login.types'
+export { TelegramLoginOperationErrorCode } from './telegram-login/telegram-login.types'
+export type { LinkTelegramResult } from './link-telegram/link-telegram.types'
+export { LinkTelegramOperationErrorCode } from './link-telegram/link-telegram.types'
 export type { RecordActivityResult } from './record-activity/record-activity.types'
 export type { UserDTO } from '../../managers/users-manager'
 
@@ -37,10 +47,18 @@ import type { RegisterOperation } from './register/register.operation'
 import type { LoginOperation } from './login/login.operation'
 import type { DeviceLoginOperation } from './device-login/device-login.operation'
 import type { LinkEmailOperation } from './link-email/link-email.operation'
+import type { TelegramLoginOperation } from './telegram-login/telegram-login.operation'
+import type { LinkTelegramOperation } from './link-telegram/link-telegram.operation'
 import type { RecordActivityOperation } from './record-activity/record-activity.operation'
 
 export type AuthenticationOperations =
-  RegisterOperation | LoginOperation | DeviceLoginOperation | LinkEmailOperation | RecordActivityOperation
+  | RegisterOperation
+  | LoginOperation
+  | DeviceLoginOperation
+  | LinkEmailOperation
+  | TelegramLoginOperation
+  | LinkTelegramOperation
+  | RecordActivityOperation
 
 // 5. Facade
 export class AuthenticationProcess implements IAuthenticationProcess {

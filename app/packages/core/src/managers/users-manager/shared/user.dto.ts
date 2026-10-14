@@ -4,6 +4,8 @@ export interface UserDTO {
   id: string
   /** null for an anonymous account that has not linked an address yet. */
   email: string | null
+  /** The Telegram user that signs in to this account from the Mini App; null when none is linked. */
+  telegramId: number | null
   /** null only for a deleted account (anonymization). */
   name: string | null
   /** The voice the agent speaks with, by gender. */
@@ -52,6 +54,7 @@ export function toUserDTO(row: UserRow): UserDTO {
   return {
     id: row.id,
     email: row.email,
+    telegramId: row.telegramId,
     name: row.name,
     agentVoice: row.agentVoice,
     isActive: row.isActive,

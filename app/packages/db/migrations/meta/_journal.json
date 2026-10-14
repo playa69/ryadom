@@ -50,6 +50,13 @@
       "when": 1791827259259,
       "tag": "0006_memory_consent_events",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792001401979,
+      "tag": "0007_users_telegram_id",
+      "breakpoints": true
     }
   ]
 }

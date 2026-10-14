@@ -1,12 +1,12 @@
-import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { bigint, boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { citext } from './types'
 
 /** The agent's voice by gender. The same values are in the API contract (`@ryadom/contracts/api/auth/me`). */
 export type AgentVoice = 'male' | 'female'
 
 /**
- * Account. The password lives in `user_credentials`, and there are no external sign-in providers
- *. Blocking is `is_active = false`. Deletion is soft: the row is anonymized,
+ * Account. The password lives in `user_credentials`; the one external way in is Telegram, through
+ * `telegram_id`. Blocking is `is_active = false`. Deletion is soft: the row is anonymized,
  * `is_deleted = true`, and the personal-data archive goes to `properties.deletion`.
  */
 export const users = pgTable(
@@ -15,6 +15,11 @@ export const users = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     /** Null for an anonymous account that has not linked an address (Postgres lets many rows hold null in a unique column). */
     email: citext('email').unique('users_email_unique'),
+    /**
+     * The Telegram user this account signs in as from the Mini App; null when Telegram was never linked.
+     * Telegram ids need more than 32 bits but stay below 2^53, so a JS number holds them exactly.
+     */
+    telegramId: bigint('telegram_id', { mode: 'number' }).unique('users_telegram_id_unique'),
     name: text('name'),
     /** The voice the agent speaks with, by gender (`male` by default); the agent maps it to its speech provider's voice. */
     agentVoice: text('agent_voice').$type<AgentVoice>().notNull().default('male'),

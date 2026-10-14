@@ -8,7 +8,7 @@ import { SoftDeleteUserCommandErrorCode, type SoftDeleteUserCommandResult } from
 /**
  * Soft delete: the profile is anonymized and the account is marked deleted and inactive. The
  * email is replaced with a deterministic unique one, which frees the original address for a new
- * registration.
+ * registration, and the Telegram id is dropped, so the next sign-in from the Mini App starts afresh.
  */
 @requestHandler(SoftDeleteUserCommand)
 export class SoftDeleteUserCommandHandler implements RequestHandler<SoftDeleteUserCommand, SoftDeleteUserCommandResult> {
@@ -23,6 +23,7 @@ export class SoftDeleteUserCommandHandler implements RequestHandler<SoftDeleteUs
       .update(users)
       .set({
         email: `deleted+${command.userId}@anonymized.local`,
+        telegramId: null,
         name: null,
         isActive: false,
         isEmailConfirmed: false,
