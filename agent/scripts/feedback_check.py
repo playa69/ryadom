@@ -235,9 +235,10 @@ async def scenarios(args: argparse.Namespace) -> Report:
                 note = "  СМЕНА ТЕМЫ" if TOPIC_SWITCH.search(result["answer"]) else ""
                 report.add("ne_znayu", run, result, "ok" if outcome == "ok" and not note else (outcome if outcome != "ok" else "switch"), note)
 
-        # L7: прямая просьба о совете — конкретные идеи.
+        # L7: прямая просьба о совете — не отказ и не рецепт, а помочь разобраться (REQ-GEN-03 п. 5: советов нет даже мягких,
+        # вместо них — что задевает, гипотеза, выбор за человеком). Тон и пользу оценивает человек по выписанным ответам.
         if wanted("podskazhi"):
-            print("\npodskazhi: «Подскажи, что можно придумать» — две-три конкретные идеи")
+            print("\npodskazhi: «Подскажи, что можно придумать» — не отказ и не рецепт, а помочь разобраться")
             for run in range(1, args.runs + 1):
                 conn = await new_session(http, auth, ws_base)
                 try:
@@ -245,10 +246,12 @@ async def scenarios(args: argparse.Namespace) -> Report:
                     result = await text_turn(conn, "Подскажи, что можно придумать")
                 finally:
                     await conn.close()
-                ideas = len(re.findall(r"\bили\b|например|можно|попробуй", result["answer"], re.IGNORECASE))
-                note = "" if ideas >= 2 else "  МАЛО ИДЕЙ"
+                answer = result["answer"]
+                refusal = re.search(r"не могу (давать|дать|советовать)", answer, re.IGNORECASE)
+                recipe = re.search(r"\bпопробуй|\bтебе (стоит|надо|нужно)|\bсоветую|можно попробовать", answer, re.IGNORECASE)
+                note = "  ОТКАЗ" if refusal else "  РЕЦЕПТ" if recipe else ""
                 outcome = classify(result)
-                report.add("podskazhi", run, result, outcome if outcome != "ok" or not note else "thin", note)
+                report.add("podskazhi", run, result, outcome if outcome != "ok" or not note else "advice", note)
 
         # L8–L9: целая фраза на другом языке и просьба сменить язык: по-русски.
         for name in ("en_sentence", "switch_lang"):

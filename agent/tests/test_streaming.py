@@ -14,7 +14,6 @@ from app.clients.llm import ModelError, ProxyChat, ReplyTruncated
 from app.clients.speech import FRAME_BYTES, CachedTts, QwenTts, TtsError, pcm_stream
 from app.services.dialog_store import Message
 from app.services.replies import (
-    REPLIES,
     chat_messages,
     is_echo,
     looks_unfinished,
@@ -252,13 +251,13 @@ def test_a_model_failure_after_the_first_sentence_keeps_what_was_said(user_id):
     assert assistant_ends(frames) == ["Первое."]  # без шаблона поверх: человек уже слышит начало
 
 
-def test_an_empty_stream_falls_back_to_a_template(user_id):
+def test_an_empty_stream_is_an_error_not_a_template(user_id):
     with make_client(chat=FakeChat(pieces=[])) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "привет")
-            frames = read_frames(ws, reply_done)
-    assert assistant_ends(frames) == [REPLIES[0]]
+            frames = read_frames(ws, lambda fs: has(fs, "error"))
+    assert has(frames, "error", code="AGENT_LLM_UNAVAILABLE") and assistant_ends(frames) == []
 
 
 def test_sentences_are_voiced_one_by_one(user_id):

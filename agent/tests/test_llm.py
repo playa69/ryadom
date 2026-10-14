@@ -74,37 +74,44 @@ def test_second_turn_carries_the_whole_conversation(user_id):
     assert roles == [("user", "раз"), ("assistant", "Понимаю."), ("user", "два")]
 
 
-def test_chat_failure_falls_back_to_a_template_reply(user_id):
+def model_unavailable(frames):
+    return has(frames, "error", code="AGENT_LLM_UNAVAILABLE")
+
+
+def test_chat_failure_is_reported_honestly_not_with_a_template(user_id):
+    """Шаблон вместо ответа звучал невпопад: он не знает сказанного. Отказ модели — честная ошибка (шлюз покажет «сейчас не
+    могу ответить»), в истории только реплика человека."""
     chat = FakeChat(fail=True)
     with make_client(chat=chat) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "Мне плохо")
-            frames = read_frames(ws, reply_done)
+            frames = read_frames(ws, model_unavailable)
+        messages = history(client, user_id, dialog["dialogId"])
 
-    assert final_text(frames) == REPLIES[0]
-    assert "error" not in types(frames)  # человек не должен видеть отказ модели: ответ просто шаблонный
+    assert "assistant_start" not in types(frames)
+    assert [m["role"] for m in messages] == ["user"]
 
 
-def test_hanging_chat_times_out_into_a_template_reply(user_id):
+def test_hanging_chat_times_out_into_an_error_not_a_template(user_id):
     chat = FakeChat(delay=30)  # LLM_TIMEOUT_SECONDS=1 в conftest
     with make_client(chat=chat) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "Привет")
-            frames = read_frames(ws, reply_done)
+            frames = read_frames(ws, model_unavailable)
 
-    assert final_text(frames) == REPLIES[0]
+    assert "assistant_start" not in types(frames)
 
 
-def test_empty_model_answer_falls_back_to_a_template_reply(user_id):
+def test_empty_model_answer_is_an_error_not_a_template(user_id):
     with make_client(chat=FakeChat("")) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "Привет")
-            frames = read_frames(ws, reply_done)
+            frames = read_frames(ws, model_unavailable)
 
-    assert final_text(frames) == REPLIES[0]
+    assert "assistant_start" not in types(frames)
 
 
 def test_crisis_never_reaches_the_chat_model(user_id):
@@ -147,16 +154,12 @@ def test_chat_messages_carry_the_offtopic_and_good_mood_rules():
     assert [m["role"] for m in messages[1:]] == ["user", "assistant", "user"]
 
     prompt = SYSTEM_PROMPT.lower()
-    assert "одно-два предложения" in prompt and "рецептов" in prompt  # оффтоп: кратко, без пошаговых инструкций
-    assert "без отказа" in prompt
-    assert "погоду" in prompt and "не видишь" in prompt  # не выдумывает то, чего не знает
-    assert "как прошёл день или что на душе" in prompt  # возврат к эмоциям
-    assert "раз в две-три реплики, не в каждой" in prompt
-    assert "порадуйся" in prompt and "есть ли ещё что-то" not in prompt  # хорошее настроение, без «о чём ещё поговорить»
+    assert "рецептов" in prompt and "анекдот" in prompt  # оффтоп: по сути и коротко, без пошаговых инструкций
+    assert "не переводи разговор насильно на чувства" in prompt  # и без обязательного возврата к «как прошёл день»
+    assert "кстати, я здесь в первую очередь" not in prompt and "как прошёл твой день?" not in prompt  # образец копировался
+    assert "погоду" in prompt and "скажи прямо" in prompt  # не выдумывает то, чего не знает
     assert "не ищи проблем" in prompt
-    assert "и радость тоже" in prompt  # «сначала признай чувство» — и для радости
-    # Голосовой формат и прежние правила на месте.
-    assert "одно-три предложения" in prompt and "эмодзи" in prompt and "не задавай два вопроса" in prompt
+    assert "эмодзи" in prompt
     # Язык: только русский; на просьбу переключиться агент отвечает, что поддерживает только русский.
     assert "говори только по-русски" in prompt and "поддерживаешь только русский" in prompt
     assert "на его языке" not in prompt  # прежнее правило «отвечай на языке человека» снято
@@ -164,15 +167,33 @@ def test_chat_messages_carry_the_offtopic_and_good_mood_rules():
 
 def test_prompt_does_not_push_the_person_off_their_topic_or_into_a_language_lecture():
     """Жалобы по живому разговору: на «устала» (расшифровано как чужое слово) агент трижды читал лекцию про русский язык,
-    на «не знаю» предлагал сменить тему, на «подскажи» отвечал вялой фразой, на рассказ об увлечении — одним «здорово»."""
+    на «не знаю» предлагал сменить тему, после ответа не по теме тянул к «как прошёл день»."""
     prompt = SYSTEM_PROMPT.lower()
     assert "прости, я пока говорю только по-русски" not in prompt  # готовой фразы-образца на любой непонятный ввод нет
     assert "короткое, тихое или неразборчивое слово" in prompt and "попроси повторить" in prompt
     assert "не говори человеку про язык, пока он сам об этом не заговорил" in prompt
-    assert "не заканчивай ответ одним одобрением" in prompt and "конкретную деталь" in prompt  # вопрос по теме человека
-    assert "если человек отвечает «не знаю»" in prompt and "не меняй тему" in prompt
-    assert "«подскажи»" in prompt and "две-три простые конкретные идеи" in prompt  # прямая просьба о совете
-    assert "это и есть тема разговора" in prompt and "не уводи на «как прошёл день»" in prompt
+    assert "на «не знаю» не меняй тему" in prompt
+    assert "его тема и есть разговор" in prompt
+    assert "не начинай сначала" in prompt  # человек снова поздоровался посреди разговора
+
+
+def test_prompt_lets_the_model_adapt_to_the_person_instead_of_one_formula():
+    """В проде 79% ответов кончались вопросом, ответ был в несколько раз длиннее реплики человека, каждый восьмой — с
+    «я здесь, чтобы…»; люди жаловались на допрос и повторы. Формула «признай чувство + вопрос» и «одно-три предложения»
+    убраны: длина, вопрос и форма — по собеседнику; советов нет, вместо них — помочь разобраться."""
+    prompt = SYSTEM_PROMPT.lower()
+    assert "подстраивайся под человека" in prompt and "одной короткой фразой" in prompt
+    assert "вопрос — не в каждом ответе" in prompt and "не допрашивай" in prompt
+    assert "избегай дежурных оборотов" in prompt and "не рассказывай о своей роли" in prompt
+    assert "сначала признай чувство" not in prompt and "одно-три предложения" not in prompt
+    # Что делать: не советы (даже мягкие), а разбор — что задевает, что спорит, гипотеза, выбор за человеком.
+    assert "не говори человеку, что ему делать" in prompt and "можно попробовать" in prompt
+    assert "помоги разобраться" in prompt and "гипотезу" in prompt
+    assert "две-три простые конкретные идеи" not in prompt
+    # Род человека — по его словам, а не мужской по умолчанию; о себе — по голосу (`system_prompt`).
+    assert "род человека бери из его собственных слов" in prompt and "не угадывай род собеседника" not in prompt
+    # Чего агент не может — прямо; голос выбирают в профиле; на «кто ты» — честно про ИИ.
+    assert "в профиле приложения" in prompt and "на основе ии" in prompt
 
 
 @pytest.mark.parametrize("reply", REPLIES)

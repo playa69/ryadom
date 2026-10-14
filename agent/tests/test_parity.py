@@ -18,20 +18,23 @@ tests/conftest.py) и против gemini_live (FakeConnector/FakeLink из test
   4. Тишину перед речью live не пересылает модели (кроме запаса в 500 мс), whisper получает запись целиком.
   5. Эхо и кризис голосом live всё равно отдаёт модели (речь уходит до расшифровки), а её ответ выбрасывает: клиент этого
      не видит (расход, не поведение). Каскад в этих случаях чат не вызывает. Тишину не отдаёт ни тот, ни другой.
-  6. Ответы live озвучивает сам Gemini, а не TTS_MODE: при отказе TTS ответы в live всё равно звучат, а приветствие,
-     кризисный ответ и шаблон идут через TTS (GeminiLiveTts) так же, как в каскаде.
-  7. Gemini один вместо трёх бэкендов: отказ Gemini при открытии — это и отказ чата, и отказ голоса, поэтому там, где
-     каскад тихо ответил бы шаблоном, live добавляет один `error VOICE_UNAVAILABLE` (клиент гасит микрофон и пишет
-     «Голос сейчас недоступен»); то же при обрыве соединения посреди ответа. Шаблонный ответ при этом приходит.
+  6. Ответы live озвучивает сам Gemini, а не TTS_MODE: при отказе TTS ответы в live всё равно звучат, а приветствие и
+     кризисный ответ идут через TTS (GeminiLiveTts) так же, как в каскаде.
+  7. Gemini один вместо трёх бэкендов: отказ Gemini — это и отказ чата, и отказ голоса, поэтому там, где каскад шлёт
+     `error AGENT_LLM_UNAVAILABLE`, live шлёт один `error VOICE_UNAVAILABLE` (клиент гасит микрофон и пишет «Голос сейчас
+     недоступен»). Шаблона нет ни там, ни там.
   8. Расход: после обрыва Gemini посреди хода live открывает соединение заново на следующей реплике.
+  9. Модель промолчала (пустой ответ) или соединение оборвалось, а слова человека известны: live просит модель ответить ещё
+     раз в свежей сессии (голосовой реплике — после паузы GEMINI_SILENCE_NUDGE_MS) и отвечает со второй попытки; каскад
+     сообщает `error AGENT_LLM_UNAVAILABLE`. Шаблона нет ни там, ни там.
 
 ИЗВЕСТНЫЕ РАСХОЖДЕНИЯ (xfail(strict=True), причина начинается с «PARITY:»): каждое — настоящая деградация live
 относительно каскада; когда расхождение исправят, strict-xfail упадёт (XPASS) и напомнит снять отметку.
 
   P1   оборванная на полуслове реплика не удерживается (INCOMPLETE_HOLD_MS игнорируется)
   P2   продолжение оборванной реплики получает отдельный ответ, а не один на обе части
-  P3a  вторая набранная реплика, пока модель ещё не начала отвечать: шаблон вместо ответа на первую, ответ на вторую
-       отброшен как «хвост» (окно STALE_SECONDS длиннее задержки модели)
+  P3a  вторая набранная реплика, пока модель ещё не начала отвечать: ответ на вторую отброшен как «хвост» (окно
+       STALE_SECONDS длиннее задержки модели)
   P3b  набранная реплика посреди ответа обрывает его (у каскада реплика ждёт в очереди)
   P4   расшифровка речи кусками, второй после начала ответа: транскрипт и история обрезаны, safety позже ответа модели
   P5   закрыт: реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS при молчащей модели (таймер молчания идёт после audio_end)
@@ -44,7 +47,7 @@ tests/conftest.py) и против gemini_live (FakeConnector/FakeLink из test
   P12  расшифровка позже GEMINI_TRANSCRIPT_WAIT_MS: слова человека и ответ теряются молча
   P13  хвост расшифровки ответа после generation_complete теряется (текст короче звука)
   P14  при лежащем Gemini и настоящей обвязке (GeminiLiveTts) приходят два error VOICE_UNAVAILABLE вместо одного
-  P15  модель промолчала после голосовой реплики: пустой transcript через таймаут и ни ответа, ни error
+  P15  закрыт: зависшая модель — отказ: на голосовую реплику без расшифровки приходит error VOICE_UNAVAILABLE
   P16  звук ответа без расшифровки: assistant_start есть, assistant_end не придёт никогда
 """
 
@@ -267,6 +270,10 @@ class ScriptedLink(FakeLink):
     async def send_text(self, text: str) -> None:
         self.commands.append(("text", text))
         self.typed.append(text)
+        self._respond(None)
+
+    async def nudge(self) -> None:
+        self.commands.append(("nudge",))
         self._respond(None)
 
     async def aclose(self) -> None:
@@ -760,12 +767,14 @@ class Run:
         return [m["role"] for m in self.history]
 
 
-def sound(run: Run, closed_ends: bool = True) -> None:
-    """Базовая проверка прогона: ничего не зависло, контракт соблюдён, диалог жив после сценария."""
+def sound(run: Run, closed_ends: bool = True, alive: bool = True) -> None:
+    """Базовая проверка прогона: ничего не зависло, контракт соблюдён, диалог жив после сценария (`alive=False` — бэкенд лежит
+    и на барьер ответить нечем: проверяется только, что ничего не зависло)."""
     assert not run.conn.stalled, f"{run.kind}: не дождались {run.conn.stalled}; пришло: {run.conn.dump()}"
     assert not run.rig.hung, f"{run.kind}: сессия не закончилась после закрытия сокета (зависшая уборка задач)"
     assert contract(run.conn.frames, closed_ends) == [], f"{run.kind}: {contract(run.conn.frames, closed_ends)}\n{run.conn.dump()}"
-    assert run.conn.barrier_ok or run.conn.cut < 0, f"{run.kind}: диалог не ответил после сценария: {run.conn.dump()}"
+    if alive:
+        assert run.conn.barrier_ok or run.conn.cut < 0, f"{run.kind}: диалог не ответил после сценария: {run.conn.dump()}"
 
 
 def one(kind: str, scenario: Callable[[Rig], Run], **cfg: Any) -> Run:
@@ -1179,9 +1188,9 @@ def sc_two_typed(r: Rig, streaming: bool) -> Run:
 
 
 @known_gap(
-    "P3a вторая набранная реплика, пока модель ещё не начала отвечать на первую: первая получает шаблон, ответ модели на "
-    "вторую отбрасывается как «хвост прерванного ответа» (STALE_SECONDS=1 с больше задержки модели), второй шаблон приходит "
-    "через GEMINI_IDLE_TIMEOUT_SECONDS; спека требует очередь («Реплика во время ответа»)"
+    "P3a вторая набранная реплика, пока модель ещё не начала отвечать на первую: ответ модели на вторую отбрасывается как "
+    "«хвост прерванного ответа» (STALE_SECONDS=1 с больше задержки модели), и один ответ на обе приходит только через "
+    "GEMINI_IDLE_TIMEOUT_SECONDS повторной просьбой к модели; спека требует очередь («Реплика во время ответа»)"
 )
 def test_second_typed_message_waits_in_the_queue_before_the_first_answer_starts() -> None:
     cascade, live = both(lambda r: sc_two_typed(r, False), replies=["Ответ на первое.", "Ответ на второе."], latency=0.3)
@@ -1345,34 +1354,61 @@ def test_a_runaway_reply_is_cut_to_the_limit() -> None:
     gap(len(live.replies[0]) <= MAX_REPLY_CHARS, f"ответ live {len(live.replies[0])} символов при пределе {MAX_REPLY_CHARS}")
 
 
-# ─── Модель молчит: шаблон ───────────────────────────────────────────────────────────────────────────────────────
+# ─── Модель молчит: без шаблона ──────────────────────────────────────────────────────────────────────────────────
+
+
+def sc_answer_or_error(r: Rig, typed: bool) -> Run:
+    """Реплика, на которую модель промолчит: ждём либо ответ (live со второй попытки), либо error (каскад)."""
+    dialog = r.start()
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        m = c.mark()
+        if typed:
+            c.say("Мне сегодня тревожно", "c-1")
+        else:
+            c.speak(4)
+        c.wait("ответ или error", lambda fs: has(fs, "error") or reply_done(fs, r.voiced), m)
+        return r.done(c, dialog)
 
 
 @pytest.mark.parametrize("typed", [True, False], ids=["typed", "voice"])
-def test_an_empty_model_answer_falls_back_to_a_template(typed: bool) -> None:
-    cascade, live = both(sc_text if typed else sc_voice, replies=[""])
+def test_an_empty_model_answer_is_not_covered_with_a_template(typed: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Различие №9: модель промолчала. Каскад сообщает об этом (error), live просит модель ответить ещё раз в свежей сессии
+    и отвечает. Шаблона, не знающего сказанного, нет ни там, ни там."""
+    monkeypatch.setattr(APP_CONFIG.gemini, "silence_nudge_ms", 50)
+    cascade, live = both(lambda r: sc_answer_or_error(r, typed), replies=["", REPLY])
     sound(cascade), sound(live)
-    same(cascade.text, live.text, "кадры при пустом ответе модели")
-    same(cascade.voice, live.voice, "озвучка шаблона")
+    assert cascade.errors == ["AGENT_LLM_UNAVAILABLE"] and cascade.replies == [] and cascade.roles()[:1] == ["user"]
+    assert live.errors == [] and live.replies == [REPLY]
+    assert live.roles()[:2] == ["user", "assistant"] and live.history[1]["text"] == REPLY
     for run in (cascade, live):
-        assert run.replies == [REPLIES[0]], run.kind
-        assert run.roles()[:2] == ["user", "assistant"] and run.history[1]["text"] == REPLIES[0], run.kind
+        assert not set(run.replies) & set(REPLIES), run.kind
 
 
 # ─── Отказ бэкенда ───────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_model_down_typed_message_still_gets_a_template() -> None:
-    cascade, live = both(sc_text, chat_fail=True, connector_fail=True)
+def sc_text_down(r: Rig) -> Run:
+    """Набранная реплика при лежащем бэкенде: ждём error; барьер не нужен — отвечать нечем."""
+    dialog = r.start()
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        m = c.mark()
+        c.say("Мне сегодня тревожно", "c-1")
+        c.wait("error", lambda fs: has(fs, "error"), m)
+        time.sleep(0.3)  # после error ничего больше прийти не должно
+        c.pump(lambda fs: False, m, 0.2)
+        return r.done(c, dialog, barrier=False)
+
+
+def test_model_down_typed_message_gets_one_error_and_no_template() -> None:
+    cascade, live = both(sc_text_down, chat_fail=True, connector_fail=True)
     sound(cascade), sound(live)
-    assert cascade.text == ["ready", "ack", "assistant_start", "assistant_delta", "assistant_end"]
-    assert cascade.replies == [REPLIES[0]] and cascade.errors == []  # каскад: тихий шаблон
-    # допустимое различие №7: единственный бэкенд лёг, и live вправе сообщить об этом ОДНИМ error, остальное то же
-    assert set(live.errors) <= {"VOICE_UNAVAILABLE"} and len(live.errors) <= 1, live.errors
-    same([t for t in live.text if not t.startswith("error")], cascade.text, "кадры, кроме error")
-    same(cascade.replies, live.replies, "шаблонный ответ")
-    same(cascade.voice, live.voice, "озвучка шаблона")
-    same(cascade.roles(), live.roles(), "история")
+    assert cascade.text == ["ready", "ack", "error:AGENT_LLM_UNAVAILABLE"]
+    # допустимое различие №7: единственный бэкенд лёг, live сообщает об этом одним error своего кода, остальное то же
+    assert live.text == ["ready", "ack", "error:VOICE_UNAVAILABLE"], live.text
+    for run in (cascade, live):
+        assert run.replies == [] and run.roles() == ["user"], run.kind
 
 
 def sc_voice_down(r: Rig, turns: int) -> Run:
@@ -1387,7 +1423,8 @@ def sc_voice_down(r: Rig, turns: int) -> Run:
 
 def test_voice_turn_with_the_recognition_down_reports_one_error_and_nothing_else() -> None:
     cascade, live = both(lambda r: sc_voice_down(r, 1), stt_fail=True, connector_fail=True)
-    sound(cascade), sound(live)
+    # Барьер — набранная реплика: каскаду отвечает чат, а у live Gemini лежит целиком, и ответить на неё нечем (шаблона нет).
+    sound(cascade), sound(live, alive=False)
     assert cascade.text[:2] == ["ready", "error:VOICE_UNAVAILABLE"] and "assistant_start" not in cascade.text
     same(cascade.text, live.text[: len(cascade.text)], "кадры при отказе распознавания")
     for run in (cascade, live):
@@ -1406,16 +1443,18 @@ def test_every_failed_voice_turn_is_reported() -> None:
 
 @known_gap(
     "P14 при полностью недоступном Gemini приходят два error VOICE_UNAVAILABLE подряд (флаги _unavailable_sent в live и "
-    "_voice_error_sent в базовой сессии независимы): клиент дважды гасит микрофон и показывает уведомление"
+    "_voice_error_sent в базовой сессии независимы: отказ озвучки приветствия и отказ сессии): клиент дважды гасит микрофон "
+    "и показывает уведомление"
 )
 def test_model_down_with_the_real_live_voice_reports_one_error() -> None:
-    """Gemini лёг целиком, голос тоже Gemini (GeminiLiveTts): человек получает текст шаблона и один error, как у каскада."""
-    cascade = one("cascade", sc_text, chat_fail=True, tts="fail")
-    real = one("live", sc_text, connector_fail=True, real_tts=True, voiced=False)
+    """Gemini лёг целиком, голос тоже Gemini (GeminiLiveTts): отказывают и озвучка, и разговор. Каскад сообщает об отказе
+    озвучки одним VOICE_UNAVAILABLE (и об отказе чата своим кодом), ответов нет ни там, ни там (шаблона нет)."""
+    cascade = one("cascade", sc_text_down, chat_fail=True, tts="fail")
+    real = one("live", sc_text_down, connector_fail=True, real_tts=True, voiced=False)
     sound(cascade), sound(real)
-    assert cascade.errors == ["VOICE_UNAVAILABLE"]
-    assert real.replies == cascade.replies == [REPLIES[0]]
-    gap(real.errors == cascade.errors, f"live с настоящей озвучкой прислал {real.errors}, каскад {cascade.errors}")
+    assert cascade.errors.count("VOICE_UNAVAILABLE") == 1 and "AGENT_LLM_UNAVAILABLE" in cascade.errors, cascade.errors
+    assert real.replies == cascade.replies == []
+    gap(real.errors.count("VOICE_UNAVAILABLE") == 1, f"live с настоящей озвучкой прислал {real.errors}, каскад {cascade.errors}")
 
 
 def plan_dies_mid_reply(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
@@ -1740,28 +1779,41 @@ def hang_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEve
     return []  # модель молчит: ни расшифровки, ни ответа, ни generation_complete
 
 
-def test_a_hung_model_gets_a_template_for_a_typed_message(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_hung_model_gets_one_error_for_a_typed_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Модель зависла (ни одного события): каскад по таймауту чата шлёт error; live по GEMINI_IDLE_TIMEOUT_SECONDS просит
+    модель ответить ещё раз в свежей сессии, та тоже висит — error. Шаблона нет."""
     monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)  # в бою 15 с, как LLM_TIMEOUT_SECONDS каскада
-    cascade = one("cascade", sc_text, latency=5.0)  # дольше LLM_TIMEOUT_SECONDS=1 в тестах
-    live = one("live", sc_text, plan=hang_plan)
+    cascade = one("cascade", sc_text_down, latency=5.0)  # дольше LLM_TIMEOUT_SECONDS=1 в тестах
+    live = one("live", sc_text_down, plan=hang_plan)
     sound(cascade), sound(live)
-    assert cascade.replies == [REPLIES[0]]
-    same(cascade.replies, live.replies, "шаблон при зависшей модели")
-    same(cascade.text, live.text, "кадры при зависшей модели")
+    assert cascade.text == ["ready", "ack", "error:AGENT_LLM_UNAVAILABLE"]
+    assert live.text == ["ready", "ack", "error:VOICE_UNAVAILABLE"], live.text  # различие №7
+    assert len(live.rig.connector.links) == 2  # повторная просьба ушла в свежую сессию
+    for run in (cascade, live):
+        assert run.replies == [], run.kind
 
 
-@known_gap(
-    "P15 модель промолчала после голосовой реплики (ни расшифровки, ни ответа): через GEMINI_IDLE_TIMEOUT_SECONDS приходит "
-    "пустой transcript и больше ничего, человек остаётся без ответа и без error; у каскада приходит либо текст реплики и "
-    "шаблон, либо error VOICE_UNAVAILABLE"
-)
-def test_a_hung_model_does_not_leave_a_voice_turn_unanswered(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_hung_model_does_not_leave_a_voice_turn_unreported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P15 закрыт: модель промолчала после голосовой реплики (ни расшифровки, ни ответа). Раньше через
+    GEMINI_IDLE_TIMEOUT_SECONDS приходил пустой transcript и больше ничего; теперь зависание — отказ: error VOICE_UNAVAILABLE.
+    Каскад сообщает о зависшем чате своим error. Шаблона нет."""
     monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)
-    cascade = one("cascade", lambda r: sc_voice(r, wait=2.0), latency=5.0)
-    live = one("live", lambda r: sc_voice(r, wait=2.0), plan=hang_plan)
-    assert cascade.replies == [REPLIES[0]] and "transcript:final" in cascade.text
-    told = "transcript:final" in live.text or bool(live.errors)
-    gap(told and bool(live.replies), f"live не ответил на голосовую реплику и ничего не сообщил: {live.text}")
+
+    def voice_down(r: Rig) -> Run:
+        dialog = r.start()
+        with r.socket(dialog) as c:
+            c.wait_greeting()
+            m = c.mark()
+            c.speak(4)
+            c.wait("error", lambda fs: has(fs, "error"), m)
+            return r.done(c, dialog, barrier=False)
+
+    cascade = one("cascade", voice_down, latency=5.0)
+    live = one("live", voice_down, plan=hang_plan)
+    assert "transcript:final" in cascade.text and cascade.errors == ["AGENT_LLM_UNAVAILABLE"]
+    assert live.errors == ["VOICE_UNAVAILABLE"], live.text
+    for run in (cascade, live):
+        assert run.replies == [], run.kind
 
 
 def audio_only_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:

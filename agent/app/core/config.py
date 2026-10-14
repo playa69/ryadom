@@ -186,6 +186,9 @@ class GeminiSettings(BaseAppSettings):
     input_languages: str = Field(validation_alias="GEMINI_INPUT_LANGUAGES", default="ru-RU")
     # Ответ, от которого нет событий дольше этого, считается оборванным.
     idle_timeout_seconds: int = Field(validation_alias="GEMINI_IDLE_TIMEOUT_SECONDS", default=15, ge=1)
+    # Модель промолчала на голосовую реплику (ход без звука и текста): столько ждём, не продолжит ли человек, прежде чем
+    # попросить модель ответить в свежей сессии. В проде так молчали ~8% ходов, и человек часто продолжал через 2–6 с.
+    silence_nudge_ms: int = Field(validation_alias="GEMINI_SILENCE_NUDGE_MS", default=2000, ge=0, le=10000)
     # Сколько последних сообщений диалога модель получает текстом при новой сессии (после каждого ответа при
     # GEMINI_TEXT_CONTEXT, а также после переподключения и смены голоса). 0 — весь диалог.
     history_messages: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES", default=40, ge=0)

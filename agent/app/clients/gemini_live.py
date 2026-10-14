@@ -115,6 +115,11 @@ class LiveLink(Protocol):
         """Реплика человека текстом: модель отвечает на неё как на сказанную."""
         ...
 
+    async def nudge(self) -> None:
+        """Ответить сейчас на то, что уже есть в сессии, без новой реплики. Последней в сессии должна быть реплика человека
+        без ответа: после готового ответа модель дописала бы к нему обрывок."""
+        ...
+
     def events(self) -> AsyncIterator[LiveEvent]:
         """События модели до закрытия соединения; последнее — `closed`."""
         ...
@@ -167,6 +172,12 @@ class GeminiLiveLink:
     async def send_text(self, text: str) -> None:
         turn = self._types.Content(role="user", parts=[self._types.Part(text=text)])
         await self._session.send_client_content(turns=turn, turn_complete=True)
+
+    async def nudge(self) -> None:
+        # client_content без реплик, но с turn_complete: «отвечай по накопленному». Проверено на gemini-3.8-live: сессия открыта
+        # с историей, где последней идёт реплика человека, — модель отвечает на неё по сути (3 из 3). Сразу после голосовой
+        # реплики так делать нельзя: модель теряет смысл сказанного.
+        await self._session.send_client_content(turn_complete=True)
 
     async def events(self) -> AsyncIterator[LiveEvent]:
         try:

@@ -30,6 +30,20 @@ LIVE_VOICELESS_ANSWERS_TOTAL = Counter(
     ["outcome"],
 )
 
+# Реплика человека осталась без ответа модели (ни звука, ни текста). Шаблонов нет: агент ждёт, не продолжит ли человек, и
+# просит модель ответить в свежей сессии.
+LIVE_UNANSWERED_TURNS_TOTAL = Counter(
+    "agent_live_unanswered_turns_total",
+    "Ходы Gemini Live без ответа модели; label `reason`: silent (модель промолчала) | failed (соединение оборвалось посреди хода).",
+    ["reason"],
+)
+LIVE_RECOVERIES_TOTAL = Counter(
+    "agent_live_recoveries_total",
+    "Чем кончился ход без ответа; label `outcome`: continued (человек заговорил или написал раньше, чем агент переспросил "
+    "модель) | answered (модель ответила со второй попытки) | unanswered (снова молчание) | unavailable (сессию не открыть).",
+    ["outcome"],
+)
+
 # Ответ модели с буквами чужой письменности посреди русского текста («бывает很 тяжелой»): из текста они убраны, звук уже был.
 LIVE_FOREIGN_SCRIPT_TOTAL = Counter(
     "agent_live_foreign_script_total",
