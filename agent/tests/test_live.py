@@ -99,6 +99,10 @@ class FakeLink:
         self.commands.append(("text", text))
         self._respond(None)
 
+    async def nudge(self) -> None:
+        self.commands.append(("nudge",))
+        self._respond(None)
+
     async def events(self) -> AsyncIterator[LiveEvent]:
         while True:
             event = await self._queue.get()
@@ -327,15 +331,20 @@ def test_crisis_in_text_does_not_go_to_the_model(user_id: str) -> None:
     assert all(c[0] != "text" for link in connector.links for c in link.commands)
 
 
-def test_model_down_text_still_gets_an_answer(user_id: str) -> None:
+def test_model_down_text_gets_one_error_and_no_template(user_id: str) -> None:
+    """Gemini не открывается: агент пробует ещё раз (повторная просьба) и, не открыв сессию, сообщает об этом одним error.
+    Шаблона вместо ответа нет: он звучал невпопад."""
     connector = FakeConnector(fail=True)
     with make_live_client(connector, None) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "Привет")
-            frames = read_frames(ws, lambda f: has(f, "assistant_end"))
+            frames = read_frames(ws, lambda f: has(f, "error"))
+        messages = client.get(f"/v1/users/{user_id}/dialogs/{dialog['dialogId']}", headers=AUTH).json()["messages"]
     assert has(frames, "error", code="VOICE_UNAVAILABLE")
-    assert has(frames, "assistant_end")  # шаблонный ответ, человек не остаётся без ответа
+    assert not has(frames, "assistant_start")
+    assert [m["role"] for m in messages] == ["user"]
+    assert len(connector.open_calls) >= 2  # повторная попытка была
 
 
 def two_messages(client: TestClient, user_id: str) -> list[Any]:

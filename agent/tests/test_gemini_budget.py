@@ -141,9 +141,12 @@ def assistant_text(frames: list[Any]) -> str:
     return next(f[1]["text"] for f in reversed(frames) if f[0] == "json" and f[1]["type"] == "assistant_end")
 
 
+CASCADE_REPLY = "Я рядом, расскажи ещё."
+
+
 def cascade(**kwargs: Any) -> CascadeFallback:
     return CascadeFallback(
-        kwargs.get("chat", FakeChat(reply="Я рядом, расскажи ещё.")),
+        kwargs.get("chat", FakeChat(reply=CASCADE_REPLY)),
         kwargs.get("recognizer", FakeRecognizer()),
         kwargs.get("tts", FakeTts()),
     )
@@ -477,15 +480,16 @@ async def test_fallback_tts_prefers_the_remembered_phrase_then_the_spare_provide
         _ = [piece async for piece in _FallbackTts(cached, None).stream("Третья.", "male")]
 
 
-def test_live_warm_up_includes_the_template_replies() -> None:
-    """В режиме gemini_live прогреваются и шаблонные ответы: ход, отданный шаблону, звучит из памяти без новой сессии Gemini."""
+def test_live_warm_up_has_the_fixed_phrases_but_not_the_stub_replies() -> None:
+    """В режиме gemini_live прогреваются готовые фразы (приветствия, кризисный ответ, просьба повторить). Заглушки режима без
+    моделей — нет: в бою они больше не звучат, а прогрев тратил бы квоту Gemini."""
     connector = FakeConnector()
     with TestClient(create_app(None, lambda: (None, None), live_factory=lambda: connector)) as client:
         tts = client.app.state.tts
         assert isinstance(tts, CachedTts)
         wanted = [(voice, part) for phrase in SPOKEN_PHRASES for part in split_sentences(phrase) for voice in ("male", "female")]
         wait_until(lambda: all(tts.remembered(part, voice) for voice, part in wanted), "все фразы озвучены", timeout=10)
-    assert {part for phrase in REPLIES for part in split_sentences(phrase)} <= {part for _, part in wanted}
+    assert not {part for phrase in REPLIES for part in split_sentences(phrase)} & {part for _, part in wanted}
 
 
 # ─── Режим «только мерить» ────────────────────────────────────────────────────────────────────────────────────────
@@ -540,8 +544,9 @@ def test_quota_refusal_on_open_pauses_the_opens(user_id: str, tune: Callable[...
         assert sample("agent_gemini_budget_level") == 4  # cooldown
         frames = read_frames(ws, lambda f: has(f, "ready"))
         send_user_message(ws, "c-1", FIRST)
-        frames += read_frames(ws, lambda f: has(f, "assistant_end"))
-        assert has(frames, "error", code="VOICE_UNAVAILABLE")  # как при любом недоступном Gemini: ошибка и шаблон
+        frames += read_frames(ws, lambda f: has(f, "error"))
+        # Повторная попытка тоже упирается в паузу: ошибка, как при любом недоступном Gemini, и без шаблона.
+        assert has(frames, "error", code="VOICE_UNAVAILABLE") and not has(frames, "assistant_start")
         assert len(connector.open_calls) == 1  # во время паузы к Google не ходили
         time.sleep(0.7)  # пауза кончилась
         frames = say(ws, "c-2", SECOND)
@@ -556,13 +561,17 @@ def test_quota_close_in_the_middle_of_a_turn_pauses_the_opens(user_id: str, tune
     connector = FakeConnector()
     connector.quota_close_links = {1}  # Google закрывает первую сессию посреди первого хода
     errors = sample("agent_gemini_quota_errors_total", where="session")
+    unavailable = sample("agent_live_recoveries_total", outcome="unavailable")
     with talk(connector, user_id) as (_, ws, budget):
         send_user_message(ws, "c-1", FIRST)
-        frames = read_frames(ws, lambda f: has(f, "assistant_end"))
-        assert has(frames, "error", code="VOICE_UNAVAILABLE")
+        frames = read_frames(ws, lambda f: has(f, "error"))  # повторная попытка упёрлась в паузу: ошибка, шаблона нет
+        assert has(frames, "error", code="VOICE_UNAVAILABLE") and not has(frames, "assistant_start")
         assert budget.cooling()
         send_user_message(ws, "c-2", SECOND)  # пауза идёт: новое открытие не делается
-        read_frames(ws, lambda f: has(f, "assistant_end"))
+        read_frames(ws, lambda f: has(f, "ack"))
+        wait_until(
+            lambda: sample("agent_live_recoveries_total", outcome="unavailable") >= unavailable + 2, "и вторая реплика упёрлась в паузу"
+        )
         assert len(connector.open_calls) == 1
         time.sleep(0.7)
         frames = say(ws, "c-3", THIRD)
@@ -669,7 +678,7 @@ def test_a_new_socket_goes_to_gemini_while_the_budget_has_room(user_id: str, tun
 
 
 def test_without_a_cascade_the_socket_stays_in_gemini(user_id: str, tune: Callable[..., None]) -> None:
-    """Каскада нет (модели не настроены): разговор остаётся в Gemini, ходы без бюджета получат шаблон."""
+    """Каскада нет (модели не настроены): разговор остаётся в Gemini. Ходу без бюджета ответить нечем — честная ошибка, не шаблон."""
     tune(tpm_limit=100_000, tpm_enforce=True, tpm_wait_ms=100)
     connector = FakeConnector()
     with make_client(connector, FakeTts(), None) as client:
@@ -678,15 +687,16 @@ def test_without_a_cascade_the_socket_stays_in_gemini(user_id: str, tune: Callab
         dialog_id = start_dialog(client, user_id)["dialogId"]
         with connect(client, user_id, dialog_id) as ws:
             send_user_message(ws, "c-1", FIRST)
-            frames = read_frames(ws, lambda f: has(f, "assistant_end"))  # озвучить шаблон без Gemini нечем: текст без голоса
-    assert assistant_text(frames) in REPLIES and not any(c[0] == "text" for link in connector.links for c in link.commands)
+            frames = read_frames(ws, lambda f: has(f, "error"))
+    assert has(frames, "error", code="AGENT_LLM_UNAVAILABLE") and not has(frames, "assistant_start")
+    assert not any(c[0] == "text" for link in connector.links for c in link.commands)
     assert connector.open_calls == []
 
 
 # ─── Деградация хода ──────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_typed_message_waits_then_gets_a_template_without_gemini(user_id: str, tune: Callable[..., None]) -> None:
+def test_typed_message_waits_then_gets_the_cascade_answer_without_gemini(user_id: str, tune: Callable[..., None]) -> None:
     tune(tpm_limit=100_000, tpm_enforce=True, tpm_wait_ms=150)
     fallback = cascade()
     voice = FakeTts()
@@ -700,11 +710,9 @@ def test_typed_message_waits_then_gets_a_template_without_gemini(user_id: str, t
         began = time.monotonic()
         frames = say(ws, "c-1", FIRST)
         assert time.monotonic() - began >= 0.15  # ждал места в окне весь срок
-        text = assistant_text(frames)
-        assert text in REPLIES
+        assert assistant_text(frames) == CASCADE_REPLY  # ответила чат-модель каскада, а не шаблон
         assert not any(c[0] == "text" for c in connector.links[0].commands)  # реплика до Gemini не дошла
-        template = split_sentences(text)[0]
-        assert template in fallback.tts.calls and template not in voice.calls  # озвучен не Gemini
+        assert CASCADE_REPLY in fallback.tts.calls and CASCADE_REPLY not in voice.calls  # озвучен не Gemini
     assert sample("agent_gemini_turns_degraded_total", reason="hard") == degraded + 1
     assert sample("agent_gemini_budget_wait_seconds_count") == waited + 1
 
@@ -722,7 +730,7 @@ def test_typed_message_waits_for_the_window_and_still_goes_to_gemini(user_id: st
     assert assistant_text(frames) == connector.reply and ("text", FIRST) in connector.links[0].commands
 
 
-def test_a_turn_in_the_cooldown_gets_a_template(user_id: str, tune: Callable[..., None]) -> None:
+def test_a_turn_in_the_cooldown_gets_the_cascade_answer(user_id: str, tune: Callable[..., None]) -> None:
     tune(tpm_limit=100_000, tpm_enforce=True, tpm_wait_ms=100, quota_cooldown_seconds=2)
     fallback = cascade()
     connector = FakeConnector()
@@ -731,7 +739,7 @@ def test_a_turn_in_the_cooldown_gets_a_template(user_id: str, tune: Callable[...
         wait_until(lambda: len(connector.links) == 1, "сессия открыта")
         budget.on_quota_error("session")
         frames = say(ws, "c-1", FIRST)
-        assert assistant_text(frames) in REPLIES
+        assert assistant_text(frames) == CASCADE_REPLY
     assert sample("agent_gemini_turns_degraded_total", reason="cooldown") == degraded + 1
     assert len(connector.open_calls) == 1 and not any(c[0] == "text" for c in connector.links[0].commands)
 
@@ -749,7 +757,7 @@ def test_voice_turn_without_budget_is_recognised_by_the_cascade(user_id: str, tu
         ws.send_text(json.dumps({"type": "audio_end"}))
         frames = read_frames(ws, reply_done)
         assert has(frames, "transcript", text="мне сегодня тяжело", final=True)  # реплику разобрал каскад
-        assert assistant_text(frames) in REPLIES
+        assert assistant_text(frames) == CASCADE_REPLY
         assert ("end",) not in link.commands  # конец реплики Gemini не получил
         assert len(fallback.recognizer.calls) == 1 and len(fallback.recognizer.calls[0]) >= 4 * 3200
         wait_until(lambda: link.closed, "сессия с недосказанной репликой закрыта")
@@ -779,7 +787,7 @@ def test_a_voice_turn_that_cannot_open_a_session_goes_to_the_cascade(user_id: st
         budget.on_quota_error("open")  # пауза: новую сессию не открыть
         speak_turn(ws)
         frames = read_frames(ws, reply_done)
-    assert has(frames, "transcript", text="мне сегодня тяжело", final=True) and assistant_text(frames) in REPLIES
+    assert has(frames, "transcript", text="мне сегодня тяжело", final=True) and assistant_text(frames) == CASCADE_REPLY
     assert connector.open_calls == []
 
 
