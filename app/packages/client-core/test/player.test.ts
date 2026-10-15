@@ -48,6 +48,23 @@ function stubAudio() {
   return played
 }
 
+/** A context that can choose its speaker, as in Chromium; `missing` are speakers that are not there. */
+function stubSinks(missing: string[] = []) {
+  stubAudio()
+  const Base = globalThis.AudioContext as unknown as new () => object
+  const asked: string[] = []
+  class RoutableContext extends Base {
+    sinkId = ''
+    async setSinkId(id: string) {
+      asked.push(id)
+      if (missing.includes(id)) throw new DOMException('not found', 'NotFoundError')
+      this.sinkId = id
+    }
+  }
+  vi.stubGlobal('AudioContext', RoutableContext)
+  return { asked }
+}
+
 afterEach(() => vi.unstubAllGlobals())
 
 describe('VoicePlayer', () => {
@@ -151,6 +168,39 @@ describe('VoicePlayer', () => {
     player.begin()
     player.enqueue(speech([7, 8, 9]))
     expect(played).toHaveLength(2)
+  })
+
+  it('выбранный динамик ставится, когда контекст появляется, и меняется на ходу', async () => {
+    const sinks = stubSinks()
+    const player = new VoicePlayer()
+    // Chosen before the first tap: there is no context yet to route.
+    expect(await player.setOutput('id-hdmi')).toBe(true)
+    await player.unlock()
+    expect(player.output()).toBe('id-hdmi')
+
+    expect(await player.setOutput(null)).toBe(true)
+    expect(player.output()).toBe('')
+    expect(sinks.asked).toEqual(['id-hdmi', ''])
+  })
+
+  it('выбранного динамика нет — голос идёт в системный, а не в тишину', async () => {
+    const sinks = stubSinks(['gone'])
+    const player = new VoicePlayer()
+    await player.unlock()
+    expect(await player.setOutput('gone')).toBe(false)
+    expect(player.output()).toBe('')
+  })
+
+  it('где браузер не выбирает динамик, выбор не ломает воспроизведение', async () => {
+    const played = stubAudio()
+    const player = new VoicePlayer()
+    expect(await player.setOutput('id-hdmi')).toBe(false)
+    expect(await player.setOutput(null)).toBe(true)
+    await player.setOutput('id-hdmi')
+    await player.unlock()
+    player.enqueue(speech([1, 2, 3]))
+    expect(played).toHaveLength(1)
+    expect(player.output()).toBe('')
   })
 
   it('пустой кусок не играет', async () => {

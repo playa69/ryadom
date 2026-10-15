@@ -32,7 +32,9 @@ import {
   readHandsFree,
   type MicPause,
 } from '@ryadom/client-core/voice/hands-free'
+import type { AudioDeviceKind, AudioDeviceOption } from '@ryadom/client-core/voice/devices'
 import { VoicePlayer } from '@ryadom/client-core/voice/player'
+import { AUDIO_DEVICE_TEXT, AudioRouting, type AudioRoutingView } from '@ryadom/client-core/voice/routing'
 import { ReplyVoice, unlockSpeech } from '@ryadom/client-core/voice/speech'
 import {
   isTurnDetectionSupported,
@@ -48,11 +50,12 @@ import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics
 import { useAuth, useClient } from '@/lib/auth'
 import { appPath } from '@/lib/base-path'
 import { watchMemoryCard } from '@/lib/memory'
-import { WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
+import { WEB_AUDIO_DEVICES_KEY, WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import DialogAlert from './DialogAlert'
+import DialogDevices from './DialogDevices'
 import DialogEndSheet from './DialogEndSheet'
 import DialogFeed from './DialogFeed'
 import DialogVoice from './DialogVoice'
@@ -96,6 +99,12 @@ const END_FAILED_TEXT = 'Не получилось завершить разго
  * recognition a while, so after one the wait grows by the length of the turn.
  */
 const REPLY_WAIT_MS = 20_000
+
+/**
+ * Hands-free, the microphone has been open this long without hearing a single turn: with more than one
+ * microphone around, the likeliest reason is that it is the wrong one, and the screen says where to look.
+ */
+const NOT_HEARD_MS = 15_000
 
 interface AlertState {
   title: string
@@ -142,6 +151,12 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [endError, setEndError] = useState('')
   const [alert, setAlert] = useState<AlertState | null>(null)
   const [missing, setMissing] = useState(false)
+  /** The microphones and speakers to choose from, and which are in use; null until the screen has asked. */
+  const [devices, setDevices] = useState<AudioRoutingView | null>(null)
+  /** The person seems not to be heard (see NOT_HEARD_MS): the hint and the device chip point at the microphone. */
+  const [notHeard, setNotHeard] = useState(false)
+  /** Bumped when the person picks another microphone: the wait for their first word starts over. */
+  const [micEpoch, setMicEpoch] = useState(0)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
   const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(start?.memoryMode)
   /** What the end needs to decide whether to wait for the card "Я запомнил". */
@@ -161,6 +176,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const socket = useRef<DialogSocket | null>(null)
   const capture = useRef<VoiceCapture | null>(null)
   const player = useRef<VoicePlayer | null>(null)
+  const routing = useRef<AudioRouting | null>(null)
+  /** A turn has started since the microphone opened: the person is heard. */
+  const heard = useRef(false)
   /** The sphere's own voice for what the agent does not speak itself: the greeting, a reply without speech. */
   const voice = useRef<ReplyVoice | null>(null)
   const micStarting = useRef(false)
@@ -258,9 +276,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
 
   // The socket handlers outlive renders; they read the latest helpers through here.
   const greeting = start?.greeting ?? null
-  const latest = useRef({ notify, openSos, startListening, openMic, onTurn, greeting })
+  const latest = useRef({ notify, openSos, startListening, openMic, onTurn, greeting, micGone, handsFree })
   useEffect(() => {
-    latest.current = { notify, openSos, startListening, openMic, onTurn, greeting }
+    latest.current = { notify, openSos, startListening, openMic, onTurn, greeting, micGone, handsFree }
   })
 
   useEffect(() => {
@@ -271,6 +289,21 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     player.current = voicePlayer
     const replyVoice = new ReplyVoice()
     voice.current = replyVoice
+    const audioRouting = new AudioRouting(WEB_AUDIO_DEVICES_KEY, {
+      capture: () => capture.current,
+      player: () => player.current,
+      changed: () => setDevices(audioRouting.view()),
+      notice: (text) => latest.current.notify(text, 'info'),
+      inputGone: () => latest.current.micGone(),
+      lost: (kind, recovered) => track(AnalyticsEvent.AudioDeviceLost, { kind, recovered }),
+    })
+    routing.current = audioRouting
+    const stopRouting = audioRouting.watch()
+    // A microphone allowed on an earlier visit lets the browser name the devices now: the chip shows
+    // before the first tap. Never allowed, the list is empty and the chip waits for the microphone.
+    void audioRouting.refresh()
+    // The speaker chosen in an earlier conversation; the player takes it as soon as it wakes.
+    void audioRouting.applyOutput()
     /** The agent begins speaking a message: on the voice its frames play, and our own voice gives way to it. */
     const startAgentSpeech = (messageId: string) => {
       replyVoice.agentSpoke(messageId)
@@ -325,6 +358,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         setHearing(final ? '' : text)
         // Nothing was heard (a cough, the agent's own echo): no answer is coming, so nothing is awaited.
         if (final && !text) setAwaitingReply(false)
+        // A turn said on purpose (a tap to speak, a tap to finish) and nothing recognized: maybe the wrong
+        // microphone. Hands-free a cough gives the same, so there only the long silence counts.
+        if (final && !text && !latest.current.handsFree && audioRouting.view().choosable) setNotHeard(true)
+        if (final && text) setNotHeard(false)
         // The words are never reported: only that a spoken message went out, and how long it was.
         if (final && text) {
           track(AnalyticsEvent.DialogMessageSent, { input: 'voice', size: sizeClass(text.length) })
@@ -387,6 +424,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     return () => {
       cancelled = true
       clearTimeout(endTimer.current)
+      stopRouting()
+      routing.current = null
       opened?.close()
       socket.current = null
       stopWatching.current?.()
@@ -431,6 +470,16 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     busy.current = awaitingReply || state === 'streaming'
   }, [awaitingReply, state])
 
+  // Hands-free, a microphone that hears no turn at all for a while is likely the wrong one.
+  const choosable = devices?.choosable ?? false
+  useEffect(() => {
+    if (!handsFree || !micOpen || !choosable || heard.current) return
+    const timer = setTimeout(() => {
+      if (!heard.current) setNotHeard(true)
+    }, NOT_HEARD_MS)
+    return () => clearTimeout(timer)
+  }, [handsFree, micOpen, choosable, micEpoch])
+
   // Hands-free never listens in the background: a hidden tab closes the microphone (what was being said
   // is still answered), and only a tap brings it back, which iOS requires anyway.
   useEffect(() => {
@@ -459,6 +508,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       Math.max(player.current?.level() ?? 0, voice.current?.level() ?? 0),
     [],
   )
+  /** The device menu's meter: the open microphone, whether or not a turn is being sent. */
+  const micLevel = useCallback(() => capture.current?.level() ?? 0, [])
 
   function send(text: string) {
     track(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(text.length) })
@@ -497,9 +548,12 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       voice.current?.cancel()
       socket.current?.interruptSpeech()
       await player.current?.unlock().catch(() => trackVoiceProblem('playback_failed'))
+      const chosen = await routing.current?.captureOptions()
       // The worklet is a file of this app (public/), so under a URL prefix it is served from there.
       const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
         workletUrl: appPath('/voice-worklet.js'),
+        ...chosen,
+        onDeviceLost: () => routing.current?.deviceLost(),
       })
       // The person may have left, the conversation ended, the connection dropped or the text been
       // chosen while the permission prompt was open.
@@ -509,6 +563,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         return
       }
       capture.current = started
+      // Allowed now, the browser names its devices: the chip can show which one listens.
+      void routing.current?.refresh()
       live.startAudio(started.sampleRate)
       markRecording(true)
       setAwaitingReply(false)
@@ -552,9 +608,12 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     try {
       if (!automatic) hush()
       await player.current?.unlock().catch(() => trackVoiceProblem('playback_failed'))
+      const chosen = await routing.current?.captureOptions()
       const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
         workletUrl: appPath('/voice-worklet.js'),
         gated: true,
+        ...chosen,
+        onDeviceLost: () => routing.current?.deviceLost(),
       })
       const live = socket.current
       if (!live || finished.current || !live.isConnected() || viewRef.current !== 'voice') {
@@ -562,6 +621,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         return
       }
       capture.current = started
+      void routing.current?.refresh()
+      heard.current = false
       detector.current.reset(performance.now())
       const agentSpeaking = () => Boolean(player.current?.speaking || voice.current?.speaking)
       stopWatching.current = watchTurns(detector.current, {
@@ -596,6 +657,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         return
       }
       if (event.bargeIn) hush()
+      heard.current = true
+      setNotHeard(false)
       live.startAudio(active.sampleRate)
       active.open()
       turnStartedAt.current = performance.now()
@@ -609,6 +672,32 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     socket.current?.endAudio()
     replyWait.current = REPLY_WAIT_MS + (performance.now() - turnStartedAt.current)
     setAwaitingReply(true)
+  }
+
+  /** The microphone went away and no other opened: listening stops, and what was said still goes. */
+  function micGone() {
+    if (handsFree) void pauseMic('manual')
+    else void finishUtterance()
+  }
+
+  function openDevices() {
+    const view = routing.current?.view()
+    track(AnalyticsEvent.AudioDeviceMenuOpened, {
+      inputs: view?.inputs.length ?? 0,
+      outputs: view?.outputs.length ?? 0,
+    })
+    void routing.current?.refresh()
+  }
+
+  function chooseDevice(kind: AudioDeviceKind, option: AudioDeviceOption) {
+    track(AnalyticsEvent.AudioDeviceChosen, { kind, system: option.system })
+    if (kind === 'input') {
+      // Another microphone: the wait for the person's first word starts over.
+      heard.current = false
+      setNotHeard(false)
+      setMicEpoch((epoch) => epoch + 1)
+    }
+    void routing.current?.choose(kind, option)
   }
 
   /** A tap on the sphere or the microphone: hands-free it pauses and resumes, otherwise it starts and ends a turn. */
@@ -747,6 +836,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     if (micOpen) hint = HANDS_FREE_HINT[orb]
     else if (paused) hint = pausedHint(paused)
   }
+  // Not heard: the hint points at the device chip under the buttons, which lights up.
+  const pointAtMic = notHeard && !statusText && !recording && (handsFree ? micOpen : orb === 'idle')
+  if (pointAtMic) hint = AUDIO_DEVICE_TEXT.notHeard
 
   const sinceDays =
     start?.sinceLastDialogHours != null && start.sinceLastDialogHours >= 24
@@ -816,6 +908,17 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           onToggle={toggleListening}
           onText={() => void showText()}
           onEnd={openEnd}
+          devices={
+            devices?.choosable ? (
+              <DialogDevices
+                view={devices}
+                level={micLevel}
+                attention={pointAtMic}
+                onOpen={openDevices}
+                onChoose={chooseDevice}
+              />
+            ) : undefined
+          }
         />
       ) : (
         <>

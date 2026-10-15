@@ -11,7 +11,7 @@ import { BUTTON, COLUMN, FOCUS_RING } from './controls'
  * The voice face of the conversation: the sphere is the interface. Hands-free a tap pauses the microphone
  * and takes it back; otherwise the person taps it to speak and taps again to finish. Under it are their own
  * words as they are recognized, then the companion's latest reply. The whole feed is on the text face, one
- * tap away.
+ * tap away. Under the buttons, when there is a choice, which microphone and speaker it uses (`devices`).
  */
 export default function DialogVoice({
   orb,
@@ -25,6 +25,7 @@ export default function DialogVoice({
   onToggle,
   onText,
   onEnd,
+  devices,
 }: {
   orb: OrbState
   level: () => number
@@ -38,6 +39,8 @@ export default function DialogVoice({
   onToggle(): void
   onText(): void
   onEnd(): void
+  /** The microphone and speaker menu (DialogDevices); nothing when there is no choice. */
+  devices?: ReactNode
 }) {
   const captionBox = useRef<HTMLDivElement>(null)
   const handsFree = micOpen !== null
@@ -124,6 +127,7 @@ export default function DialogVoice({
           <CircleCheck className="size-5" aria-hidden="true" />
         </SideButton>
       </div>
+      {devices && <div className="flex max-w-full justify-center pt-1 short:pt-0">{devices}</div>}
     </div>
   )
 }

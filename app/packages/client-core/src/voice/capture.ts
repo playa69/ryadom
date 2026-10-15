@@ -3,6 +3,7 @@ import {
   AUDIO_USER_SAMPLE_RATE,
   AudioFrameKind,
 } from '@ryadom/contracts/api/dialogs'
+import { inputConstraint, type AudioDevice } from './devices'
 import { levelOf } from './level'
 import { PRE_ROLL_MS } from './turn-detector'
 
@@ -26,7 +27,25 @@ export interface VoiceCapture {
   open(): void
   /** Hands-free: frames stop reaching `onFrame` (silence is not streamed); the microphone stays on. */
   close(): void
+  /** The microphone in use: its id (`default` when it is "as in the system") and its name. */
+  device(): AudioDevice
+  /**
+   * Moves to another microphone (null: the one the browser picks) without stopping: the gate, the held
+   * frames and the numbering go on as they were. If the new one cannot be opened, the old one stays.
+   */
+  switchDevice(deviceId: string | null): Promise<void>
+  /** Reopens the same microphone with another echo reference (see `EchoCancellation`), if it differs. */
+  setEchoCancellation(mode: EchoCancellation): Promise<void>
 }
+
+/**
+ * What the echo canceller subtracts. `true`: what the browser plays to the system's default speaker,
+ * which is all Chrome takes as the reference for sound that does not come over WebRTC. `all`: everything
+ * the computer plays (Chrome 141+ on Windows 11 and macOS 14.2+), for when the agent's voice goes to
+ * another speaker and would otherwise come back into the microphone as the person's words. Where it is
+ * not known it counts as `true`.
+ */
+export type EchoCancellation = true | 'all'
 
 export class MicrophoneDeniedError extends Error {
   constructor() {
@@ -59,10 +78,48 @@ export interface StartCaptureOptions {
    * and `close()`. Until then the last `PRE_ROLL_MS` of them are kept in a ring.
    */
   gated?: boolean
+  /** The microphone the person chose (see devices.ts); without it the browser picks one. */
+  deviceId?: string | null
+  /** `all` while the agent's voice goes to a speaker other than the system's. */
+  echoCancellation?: EchoCancellation
+  /**
+   * The microphone stopped by itself: unplugged, switched off, taken by the system. The capture is
+   * silent from then on; the screen moves it elsewhere (`switchDevice`) or lets it go.
+   */
+  onDeviceLost?: () => void
 }
 
 /** One worklet frame is 100 ms (see voice-worklet.js). */
 const FRAME_MS = 100
+
+/**
+ * Opens a microphone: the chosen one, and if it is gone (unplugged since it was chosen, or its id
+ * changed) the one the browser picks, rather than no voice at all.
+ */
+async function openMicrophone(
+  deviceId: string | null | undefined,
+  echoCancellation: EchoCancellation,
+): Promise<MediaStream> {
+  // The DOM types know the flag only as a boolean; a browser without the scope reads `all` as `true`.
+  const processing = {
+    echoCancellation: echoCancellation as boolean,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+  }
+  if (deviceId) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: { ...processing, deviceId: inputConstraint(deviceId) },
+      })
+    } catch (error) {
+      // A refusal is a refusal whatever device was asked for; only a missing device falls back.
+      const name = error instanceof Error ? error.name : ''
+      if (name !== 'OverconstrainedError' && name !== 'NotFoundError') throw error
+    }
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: processing })
+}
 
 /**
  * Starts capture and pushes frames to `onFrame`. The browser or the OS asks for permission; a
@@ -72,11 +129,10 @@ export async function startCapture(
   onFrame: (frame: ArrayBuffer) => void,
   options: StartCaptureOptions = {},
 ): Promise<VoiceCapture> {
+  let echo = options.echoCancellation ?? true
   let stream: MediaStream
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    })
+    stream = await openMicrophone(options.deviceId, echo)
   } catch {
     throw new MicrophoneDeniedError()
   }
@@ -88,7 +144,7 @@ export async function startCapture(
     const audio = new AudioContext()
     created = audio
     await audio.audioWorklet.addModule(options.workletUrl ?? '/voice-worklet.js')
-    const source = audio.createMediaStreamSource(stream)
+    let source = audio.createMediaStreamSource(stream)
     const worklet = new AudioWorkletNode(audio, 'ryadom-capture', { numberOfOutputs: 0 })
 
     let sequence = 0
@@ -111,6 +167,49 @@ export async function startCapture(
     source.connect(meter)
     const bins = new Uint8Array(meter.fftSize)
 
+    let stopped = false
+    /** A switch is under way: the old microphone ending now (iOS ends it when another opens) is not a loss. */
+    let switching = false
+    const watchLoss = (watched: MediaStream) => {
+      for (const track of watched.getAudioTracks()) {
+        // `stop()` from here does not fire `ended`: only the device or the system going away does.
+        track.onended = () => {
+          if (!stopped && !switching && stream === watched) options.onDeviceLost?.()
+        }
+      }
+    }
+    watchLoss(stream)
+
+    /** The microphone `deviceId` (null: the browser's pick) in place of the one in use, with `mode` echo. */
+    const reopen = async (deviceId: string | null, mode: EchoCancellation) => {
+      if (stopped) return
+      switching = true
+      let next: MediaStream
+      try {
+        next = await openMicrophone(deviceId, mode)
+      } catch (error) {
+        switching = false
+        // The old one may have ended while the new one was being opened.
+        if (stream.getAudioTracks().every((track) => track.readyState === 'ended')) options.onDeviceLost?.()
+        throw error
+      }
+      switching = false
+      if (stopped) {
+        for (const track of next.getTracks()) track.stop()
+        return
+      }
+      const previous = stream
+      const nextSource = audio.createMediaStreamSource(next)
+      source.disconnect()
+      nextSource.connect(worklet)
+      nextSource.connect(meter)
+      source = nextSource
+      stream = next
+      echo = mode
+      watchLoss(next)
+      for (const track of previous.getTracks()) track.stop()
+    }
+
     return {
       sampleRate: AUDIO_USER_SAMPLE_RATE,
       level() {
@@ -127,7 +226,19 @@ export async function startCapture(
         flowing = false
         held.length = 0
       },
+      device() {
+        const track = stream.getAudioTracks()[0]
+        return { id: track?.getSettings().deviceId ?? '', label: track?.label ?? '' }
+      },
+      switchDevice(deviceId) {
+        return reopen(deviceId, echo)
+      },
+      async setEchoCancellation(mode) {
+        if (mode === echo) return
+        await reopen(stream.getAudioTracks()[0]?.getSettings().deviceId || null, mode)
+      },
       async stop() {
+        stopped = true
         worklet.port.onmessage = null
         source.disconnect()
         worklet.disconnect()
