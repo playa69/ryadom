@@ -11,6 +11,8 @@
 #   2. egress из ns prod: app-api и app-admin → поды agent в ns agent, только :8001;
 #   3. egress из ns agent: прокси программы (Qwen TTS) на :4000. Остальной исходящий
 #      HTTPS (:443, в том числе SaluteSpeech) уже разрешён в 05-й политике.
+#   4. egress пода cognee → тот же прокси на :4000 (LLM/эмбеддинги Cognee;
+#      правило 3 выбирает только поды app=agent и cognee не покрывает).
 #
 # Применять поимённо (нужен админский kubeconfig: NetworkPolicy вне роли developer):
 #   kubectl apply -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml
@@ -89,6 +91,29 @@ spec:
   podSelector:
     matchLabels:
       app: agent
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 158.160.0.0/16
+      ports:
+        - protocol: TCP
+          port: 4000
+
+---
+# 4. Исходящий трафик cognee к тому же прокси программы :4000 (LLM и эмбеддинги
+# Cognee, k8s/agent/10-cognee-config.yaml). Правило 3 выбирает только поды
+# app=agent и cognee не покрывает — без этого правила cognify падает по сети.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-cognee-allow-egress-llm-proxy
+  namespace: agent
+spec:
+  podSelector:
+    matchLabels:
+      app: cognee
   policyTypes:
     - Egress
   egress:

@@ -1,0 +1,27 @@
+# =============================================================================
+# Service cognee — ClusterIP перед Deployment cognee (ns agent)
+# =============================================================================
+# Адрес для агента: http://cognee.agent.svc.cluster.local:8000 (REST /api/v1).
+# Наружу НЕ публикуется (ingress/HTTPRoute нет): потребитель один — под agent.
+# Для ручной отладки с машины разработчика:
+#   kubectl -n agent port-forward svc/cognee 8000:8000
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cognee
+  namespace: agent
+  labels:
+    app: cognee
+    app.kubernetes.io/part-of: ryadom
+spec:
+  type: ClusterIP
+  selector:
+    app: cognee
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8000
+      targetPort: 8000

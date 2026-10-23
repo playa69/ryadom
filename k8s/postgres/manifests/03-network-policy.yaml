@@ -9,6 +9,7 @@
 # Входящий трафик в CNPG PostgreSQL ryadom-db (cnpg.io/cluster=ryadom-db):
 #   - приложения из ns prod (5432)
 #   - приложения из ns backend (5432) — backend-api (k8s/backend/)
+#   - приложения из ns agent (5432) — cognee (k8s/agent/12-cognee-deployment.yaml, БД cognee_db)
 #   - сервисы из ns infra, в т.ч. Langfuse web/worker (5432)
 #   - репликация между инстансами внутри namespace (5432)
 #   - cnpg-system operator: управление (5432), status (8000), metrics (9187)
@@ -31,6 +32,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: backend
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: infra

@@ -1,0 +1,32 @@
+# =============================================================================
+# PVC cognee-storage — диск Cognee: граф Kuzu + сырые документы (ns agent)
+# =============================================================================
+# Cognee держит на диске встроенную графовую БД Kuzu и загруженные документы
+# (реляционные таблицы и векторы — в PostgreSQL cognee_db). Без диска каждый выкат
+# стирал бы граф. Применять ДО Deployment'а:
+#   kubectl apply -f k8s/agent/11-cognee-pvc.yaml
+#
+# Класс — сетевые диски Timeweb (НЕ local-path: нодный диск привязан к ноде и теряется
+# вместе с ней — в кластере fantomasai так уже потеряли все данные Cognee).
+#
+# ВАЖНО: reclaimPolicy класса — Delete. `kubectl delete pvc cognee-storage` удаляет
+# сетевой диск вместе с графом без возможности вернуть. PostgreSQL-часть (cognee_db)
+# покрывается бэкапами CNPG, диск — нет.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cognee-storage
+  namespace: agent
+  labels:
+    app: cognee
+    app.kubernetes.io/part-of: ryadom
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nvme.network-drives.csi.timeweb.cloud
+  resources:
+    requests:
+      storage: 10Gi

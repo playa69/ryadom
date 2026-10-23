@@ -1,0 +1,60 @@
+# =============================================================================
+# ConfigMap cognee-config — несекретные env Cognee API (ns agent)
+# =============================================================================
+# Cognee — память агента (граф знаний + векторный поиск). Живёт только внутри
+# кластера: Service ClusterIP (13-cognee-service.yaml), ingress/HTTPRoute нет,
+# потребитель один — под agent по адресу http://cognee.agent.svc.cluster.local:8000.
+# Поэтому auth в Cognee ВЫКЛЮЧЕН (ENABLE_BACKEND_ACCESS_CONTROL=false,
+# REQUIRE_AUTHENTICATION не задаём): JWT-сантехника не нужна.
+#
+# Секреты НЕ здесь (в git их нет, создаются напрямую в кластере):
+#   Secret cognee-db-credentials (ключ DB_PASSWORD) — пароль роли cognee в CNPG
+#     ryadom-db; создаётся вместе с ролью и БД cognee_db (см. k8s/agent/README.md).
+#   Secret agent-secrets (ключ AGENT_API_TOKEN) — ПЕРЕИСПОЛЬЗУЕТСЯ как
+#     LLM_API_KEY/EMBEDDING_API_KEY: Cognee ходит в тот же LiteLLM-прокси программы,
+#     что и агент (LLM_ENDPOINT ниже). Отдельного LLM-ключа у Cognee нет.
+#
+# Модели прокси: чат — deepseek-v4-flash, эмбеддинги — gemini-embedding-001 (3072
+# измерения; список моделей прокси: GET $LLM_ENDPOINT/models). LITELLM_DROP_PARAMS=true
+# обязателен: litellm иначе шлёт параметр dimensions, который прокси/провайдер отвергает.
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cognee-config
+  namespace: agent
+  labels:
+    app: cognee
+    app.kubernetes.io/part-of: ryadom
+data:
+  ENV: "local"
+  PYTHONPATH: "."
+  # Реляционное хранилище + векторы — общий CNPG-кластер ryadom-db (ns ryadom-db),
+  # отдельная БД cognee_db с расширением vector. Пароль — Secret cognee-db-credentials.
+  DB_PROVIDER: "postgres"
+  DB_HOST: "ryadom-db-rw.ryadom-db.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "cognee_db"
+  DB_USERNAME: "cognee"
+  VECTOR_DB_PROVIDER: "pgvector"
+  # LLM и эмбеддинги — через LiteLLM-прокси программы (тот же, что у агента).
+  LLM_PROVIDER: "custom"
+  LLM_MODEL: "openai/deepseek-v4-flash"
+  LLM_ENDPOINT: "https://shared1.multitool.works:4000/v1"
+  EMBEDDING_PROVIDER: "openai"
+  EMBEDDING_MODEL: "openai/gemini-embedding-001"
+  EMBEDDING_ENDPOINT: "https://shared1.multitool.works:4000/v1"
+  EMBEDDING_DIMENSIONS: "3072"
+  LITELLM_DROP_PARAMS: "true"
+  TOKENIZERS_PARALLELISM: "false"
+  # Multi-user access control ВКЛЮЧЁН: без него поиск (/api/v1/search) не фильтрует
+  # по датасетам (проверено 2026-10-21: recall юзера A возвращал факты юзера B) —
+  # per-user ячейки памяти работают только в multi-tenant режиме. Цена — JWT:
+  # сервисный пользователь регистрируется один раз через port-forward, агент
+  # логинится и ходит с Bearer-токеном (см. k8s/agent/README.md «Cognee»).
+  ENABLE_BACKEND_ACCESS_CONTROL: "true"
+  REQUIRE_AUTHENTICATION: "true"
+  # Время жизни JWT (логин сервисного пользователя)
+  JWT_LIFETIME_SECONDS: "43200"
