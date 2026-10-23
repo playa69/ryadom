@@ -208,6 +208,17 @@ class MemoryService:
     def user_erased(self, user_id: str) -> None:
         self.cache.drop(user_id)
 
+    def user_message(self, dialog: Dialog, text: str) -> None:
+        """SQLite-бэкенд по репликам не ищет: сводка пересобирается по завершении диалога."""
+
+    def recall_supported(self, dialog: Dialog) -> bool:
+        """Инструмент recall_memory — только у бэкенда Cognee (поиск по графу); у SQLite его нет."""
+        return False
+
+    async def recall_now(self, dialog: Dialog, query: str) -> str:
+        """SQLite-бэкенд прямой поиск по запросу модели не поддерживает."""
+        return ""
+
     def user_unloaded(self, user_id: str) -> None:
         self.cache.drop(user_id)  # при загрузке (`user_loaded`) настройки и сводка соберутся заново
 

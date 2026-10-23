@@ -34,6 +34,44 @@ class ReplyTruncated(ModelError):
     """Ответ оборвался по лимиту токенов: поток прислал всё, что успел, последнее предложение может быть незаконченным."""
 
 
+class ToolCall:
+    """Вызов инструмента, собранный из потоковых кусков (`delta.tool_calls`)."""
+
+    def __init__(self, call_id: str, name: str, arguments: str) -> None:
+        self.id = call_id
+        self.name = name
+        self.arguments = arguments
+
+    def query(self) -> str | None:
+        """Аргумент `query` вызова recall_memory; мусор в JSON — None (тогда инструмент не исполняем)."""
+        try:
+            value = json.loads(self.arguments).get("query")
+        except (ValueError, AttributeError):
+            return None
+        return value if isinstance(value, str) and value.strip() else None
+
+    def assistant_message(self) -> dict[str, Any]:
+        """Реплика агента с вызовом инструмента — для повторного запроса с результатом (формат OpenAI)."""
+        return {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": self.id, "type": "function", "function": {"name": self.name, "arguments": self.arguments}}
+            ],
+        }
+
+
+class ToolCallRequested(Exception):
+    """Модель закончила ход вызовом инструмента (`finish_reason=tool_calls`): текст не писался, надо исполнить вызов.
+
+    Не наследуется от ModelError: это не отказ модели, а нормальный ход tool-flow.
+    """
+
+    def __init__(self, calls: list[ToolCall]) -> None:
+        super().__init__(", ".join(call.name for call in calls))
+        self.calls = calls
+
+
 class ChatModel(Protocol):
     name: str
 
@@ -139,31 +177,41 @@ class ProxyChat:
 
     @model_usage.counted_stream("llm")
     async def stream(
-        self, messages: list[ChatMessage], usage_sink: list[dict[str, Any]] | None = None
+        self,
+        messages: list[ChatMessage],
+        usage_sink: list[dict[str, Any]] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str]:
         """Тот же запрос со `stream: true`: куски текста по мере написания (SSE `data: {...}` и `data: [DONE]`).
 
         `usage_sink` — необязательный список, куда кладётся расход токенов из финального служебного
         куска (`{"choices": [], "usage": {...}}`), если прокси его присылает: для трейсинга (Langfuse).
+
+        `tools` — объявления инструментов (формат OpenAI). Ход, закончившийся вызовом инструмента
+        (`finish_reason=tool_calls`), поднимает `ToolCallRequested` с собранными вызовами.
         """
         started = time.perf_counter()
         first_ms: int | None = None
         chars = 0
         finish: str | None = None
         usage: object = None
+        pending_calls: dict[int, dict[str, str]] = {}  # index → собираемый вызов инструмента
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "max_tokens": self._max_tokens,
+            "temperature": self._temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},  # расход токенов последним куском
+        }
+        if tools:
+            payload["tools"] = tools
         try:
             async with self._client.stream(
                 "POST",
                 self._url,
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                json={
-                    "model": self._model,
-                    "messages": messages,
-                    "max_tokens": self._max_tokens,
-                    "temperature": self._temperature,
-                    "stream": True,
-                    "stream_options": {"include_usage": True},  # расход токенов последним куском
-                },
+                json=payload,
             ) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
@@ -171,17 +219,24 @@ class ProxyChat:
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue  # комментарии-«пульс» и пустые строки SSE
-                    payload = line[5:].strip()
-                    if payload == "[DONE]":
+                    payload_line = line[5:].strip()
+                    if payload_line == "[DONE]":
                         break
                     try:
-                        chunk = json.loads(payload)
+                        chunk = json.loads(payload_line)
                         usage = chunk.get("usage") or usage  # расход приходит последним куском (часто без выбора)
                         choice = chunk["choices"][0]
                     except (ValueError, KeyError, IndexError, TypeError, AttributeError):
                         continue  # служебный кусок без выбора (например, с расходом токенов)
                     finish = choice.get("finish_reason") or finish
-                    piece = (choice.get("delta") or {}).get("content") or ""
+                    delta = choice.get("delta") or {}
+                    for call in delta.get("tool_calls") or []:
+                        slot = pending_calls.setdefault(call.get("index", 0), {"id": "", "name": "", "arguments": ""})
+                        slot["id"] += call.get("id") or ""
+                        function = call.get("function") or {}
+                        slot["name"] += function.get("name") or ""
+                        slot["arguments"] += function.get("arguments") or ""
+                    piece = delta.get("content") or ""
                     if piece:
                         if first_ms is None:
                             first_ms = int((time.perf_counter() - started) * 1000)
@@ -202,6 +257,10 @@ class ProxyChat:
             finish,
             tokens,
         )
+        if finish == "tool_calls" and pending_calls:
+            raise ToolCallRequested(
+                [ToolCall(slot["id"], slot["name"], slot["arguments"]) for slot in pending_calls.values()]
+            )
         if finish == "length":
             raise ReplyTruncated("ответ оборван по лимиту токенов")
 

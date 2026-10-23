@@ -74,6 +74,9 @@ class DialogSettings(BaseAppSettings):
     max_users_in_memory: int = Field(validation_alias="DIALOG_MAX_USERS_IN_MEMORY", default=0, ge=0)
     # Как часто проверять, кого выгрузить, и обновлять метрики памяти (agent_dialog_*_in_memory), секунды.
     evict_interval_seconds: int = Field(validation_alias="DIALOG_EVICT_INTERVAL_SECONDS", default=60, ge=1, le=3600)
+    # Автозавершение брошенных диалогов: открытый диалог без живого сокета и без активности столько секунд считается
+    # конченным — ставится сводка и диалог уходит в память (извлечение/cognify). 0 — не завершать автоматически.
+    idle_end_seconds: int = Field(validation_alias="DIALOG_IDLE_END_SECONDS", default=300, ge=0)
 
 
 class SpeechSettings(BaseAppSettings):
@@ -258,9 +261,27 @@ class MemorySettings(BaseAppSettings):
     Память живёт в том же файле SQLite, что и диалоги: без `DIALOG_DB_PATH` режим принудительно `off`.
 
     Извлечение идёт только через модель в РФ (прокси программы): Gemini и любые зарубежные адреса сюда не подставлять.
+
+    `MEMORY_BACKEND=cognee` — второй бэкенд (`app/memory/cognee_backend.py`): согласие и данные человека — его датасет
+    в Cognee, диалоги только в памяти процесса (диск не подключается), воркер и модель извлечения не нужны.
     """
 
     mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
+    # Бэкенд памяти: sqlite (по умолчанию; тот же файл, что диалоги) или cognee (внешний Cognee по REST).
+    backend: Literal["sqlite", "cognee"] = Field(validation_alias="MEMORY_BACKEND", default="sqlite")
+    # Адрес Cognee API и сервисный пользователь (только backend=cognee; multi-user access control — вызовы с Bearer).
+    cognee_base_url: str | None = Field(validation_alias="COGNEE_BASE_URL", default=None)
+    cognee_email: str | None = Field(validation_alias="COGNEE_SERVICE_EMAIL", default=None)
+    cognee_password: SecretStr | None = Field(validation_alias="COGNEE_SERVICE_PASSWORD", default=None)
+    # Только backend=cognee и только для стендов: память включена всем по умолчанию (opt-out вместо opt-in).
+    # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
+    default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
+    # Только backend=cognee: пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
+    # (POST /cognify = поставить в очередь), граф готов через десятки секунд — без паузы закэшируем «нет информации».
+    cognify_settle_seconds: int = Field(validation_alias="MEMORY_COGNIFY_SETTLE_SECONDS", default=90, ge=0)
+    # Инструмент recall_memory в голосовом контуре: синхронный поиск в Cognee — 10–30 с паузы посреди хода.
+    # По умолчанию выключен: память подтягивается фоном (реплика → поиск к следующему ходу), без пауз в разговоре.
+    recall_tool: bool = Field(validation_alias="MEMORY_RECALL_TOOL", default=False)
     # Сколько памяти уходит в голосовую модель: minimal — только как говорить и о чём не говорить (и мягкий тон после тяжёлого
     # разговора); standard — плюс близкие (без имён), что помогает, планы, обстоятельства, прошлый разговор; full — с именами.
     brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")

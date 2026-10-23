@@ -17,12 +17,15 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI
 
 from app.api import dev, dialog_ws, dialogs, health, memory
+from app.clients.cognee import CogneeClient, build_cognee_client
 from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
 from app.core.config import APP_CONFIG, MemorySettings
 from app.core.errors import install_error_handlers
 from app.core.reclaim import MemoryReclaimer
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
+from app.memory.backend import MemoryBackend
+from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.llm import ExtractionModel, build_memory_llm
 from app.memory.service import MemoryService
 from app.memory.worker import MemoryWorker
@@ -106,7 +109,9 @@ def create_app(
     распознавание не создаются, фиксированные фразы озвучивает тот же голос Gemini.
 
     Память агента (`MEMORY_*`, или `memory_settings`/`memory_model_factory` в тестах) живёт в том же файле, что диалоги: без диска
-    она выключена. Воркер памяти запускается после подключения диска и останавливается до его закрытия.
+    она выключена. Воркер памяти запускается после подключения диска и останавливается до его закрытия. При
+    `MEMORY_BACKEND=cognee` память — датасеты Cognee (`app/memory/cognee_backend.py`): диск и воркер не подключаются,
+    диалоги живут только в памяти процесса.
 
     Бюджет токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся в режиме gemini_live всегда (при лимите
     0 он выключен). При `GEMINI_TPM_ENFORCE` собирается и каскад как запасной путь (`fallback_factory` в тестах): на него
@@ -134,6 +139,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store: DialogStore = app.state.store
+        cognee_mode = memory_cfg.backend == "cognee"
+        # Диалоги на диске (DIALOG_DB_PATH) и бэкенд памяти независимы: cognee — это про память человека, а не про
+        # хранение диалогов. Без диска диалоги живут в памяти процесса и пропадают при перезапуске (локальный стенд).
         database = make_database()
         if database is not None:
             store.require_disk()  # задан в настройках: пока не подключён, стирание людей отвечает ошибкой, а не «204»
@@ -145,16 +153,34 @@ def create_app(
                     "dialog db is NOT available (%s): dialogs are kept in memory only and will be lost on restart",
                     getattr(database, "path", "?"),
                 )
-        memory_model = make_memory_model()
-        memory_service = MemoryService(store, memory_cfg, memory_model)
+        cognee_client: CogneeClient | None = None
+        memory_worker: MemoryWorker | None = None
+        if cognee_mode:
+            memory_model = None  # извлекает сам Cognee, модель и воркер не нужны
+            cognee_client = build_cognee_client(memory_cfg)
+            if cognee_client is not None:
+                try:
+                    await cognee_client.connect()
+                except Exception:  # noqa: BLE001 - память недоступна до первого удачного перелогина, агент работает
+                    logger.exception("cognee login failed at startup")
+            memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg)
+        else:
+            memory_model = make_memory_model()
+            sqlite_memory = MemoryService(store, memory_cfg, memory_model)
+            memory_worker = MemoryWorker(sqlite_memory, store, memory_cfg)
+            await memory_worker.start()
+            memory_service = sqlite_memory
         store.memory = memory_service
         app.state.memory = memory_service
-        memory_worker = MemoryWorker(memory_service, store, memory_cfg)
-        await memory_worker.start()
         if memory_service.status() == "unavailable":
-            logger.error(
-                "memory mode=%s is NOT available: %s", memory_cfg.mode, "no extraction model" if store.persistent else "no disk"
-            )
+            if cognee_mode:
+                logger.error("memory backend=cognee is NOT available: no COGNEE_BASE_URL/COGNEE_SERVICE_EMAIL/COGNEE_SERVICE_PASSWORD")
+            else:
+                logger.error(
+                    "memory mode=%s is NOT available: %s",
+                    memory_cfg.mode,
+                    "no extraction model" if store.persistent else "no disk",
+                )
         live = live_factory() if live_factory is not None else None
         app.state.live = live
         budget = TokenBudget(APP_CONFIG.gemini) if live is not None else None
@@ -226,7 +252,11 @@ def create_app(
                 langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
-            await memory_worker.stop()  # идущее извлечение дожидается до 10 с, остальное останется в очереди на диске
+            if memory_worker is not None:
+                await memory_worker.stop()  # идущее извлечение дожидается до 10 с, остальное останется в очереди на диске
+            if cognee_client is not None:
+                await memory_service.drain()  # дождаться идущих записей и prefetch'ей Cognee
+                await cognee_client.aclose()
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
             store.memory = None
             for client in (app.state.tts, app.state.chat, app.state.recognizer, live, memory_model):
@@ -247,6 +277,7 @@ def create_app(
         default_voice=APP_CONFIG.speech.default_voice,
         idle_evict_seconds=APP_CONFIG.dialog.idle_evict_seconds,
         max_users_in_memory=APP_CONFIG.dialog.max_users_in_memory,
+        idle_end_seconds=APP_CONFIG.dialog.idle_end_seconds,
     )
     app.state.tts = None
     app.state.chat = None

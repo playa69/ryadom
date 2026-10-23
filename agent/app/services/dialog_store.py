@@ -158,6 +158,18 @@ class MemoryLink(Protocol):
         """Человек стёрт: забыть его сводку и настройки в кэше."""
         ...
 
+    def user_message(self, dialog: Dialog, text: str) -> None:
+        """Реплика человека сохранена: бэкенд может в фоне поискать по ней в памяти (к следующему ходу сводка точнее)."""
+        ...
+
+    def recall_supported(self, dialog: Dialog) -> bool:
+        """Доступен ли инструмент recall_memory для этого разговора (включённая память + бэкенд с поиском)."""
+        ...
+
+    async def recall_now(self, dialog: Dialog, query: str) -> str:
+        """Поиск в памяти по запросу модели (инструмент recall_memory): прямой вызов, может идти десятки секунд."""
+        ...
+
 
 def _encode_cursor(dialog: Dialog) -> str:
     raw = f"{dialog.started_at}|{dialog.id}".encode()
@@ -183,9 +195,11 @@ class _Persisted:
 
 
 class DialogStore:
-    def __init__(self, default_voice: Voice = "male", idle_evict_seconds: float = 0, max_users_in_memory: int = 0) -> None:
+    def __init__(self, default_voice: Voice = "male", idle_evict_seconds: float = 0, max_users_in_memory: int = 0, idle_end_seconds: float = 0) -> None:
         """`idle_evict_seconds` и `max_users_in_memory` — выгрузка неактивных (`evict_idle`): срок простоя и мягкий потолок числа
-        людей в памяти; 0 — выключено. Работает только с подключённым диском."""
+        людей в памяти; 0 — выключено. Работает только с подключённым диском.
+        `idle_end_seconds` — автозавершение (`end_stale`): открытый диалог без живого сокета и без активности дольше срока
+        считается конченным и уходит в память (извлечение); 0 — выключено. Работает и без диска."""
         self._users: dict[str, dict[str, Dialog]] = {}
         self._default_voice = default_voice
         # Последний выбор голоса человека: следующий диалог без явного голоса получит его.
@@ -200,6 +214,7 @@ class DialogStore:
         # Выгрузка неактивных: когда к человеку обращались в последний раз (time.monotonic) и кого уже выгружали.
         self._idle_evict_seconds = idle_evict_seconds
         self._max_users_in_memory = max_users_in_memory
+        self._idle_end_seconds = idle_end_seconds
         self._last_access: dict[str, float] = {}
         self._evicted: set[str] = set()
         self._load_lock = asyncio.Lock()
@@ -316,6 +331,11 @@ class DialogStore:
         )
         dialog.messages.append(message)
         self._touch(dialog)
+        if role == "user" and self.memory is not None:
+            try:
+                self.memory.user_message(dialog, text)  # фоновый поиск по реплике — к следующему ходу
+            except Exception:  # noqa: BLE001 - память не должна мешать разговору (I3)
+                logger.exception("memory user_message hook failed dialog=%s", dialog.id)
         return message
 
     def set_audio_seconds(self, dialog: Dialog, message_id: str, seconds: float) -> None:
@@ -404,6 +424,28 @@ class DialogStore:
         except Exception:  # noqa: BLE001
             logger.exception("memory enabled check failed")
             return False
+
+    def memory_recall_supported(self, dialog: Dialog) -> bool:
+        """Доступен ли разговору инструмент recall_memory; любая ошибка памяти — «нет», разговор идёт без инструмента (I3)."""
+        memory = self.memory
+        if memory is None or dialog.memory_mode != "on":
+            return False
+        try:
+            return memory.recall_supported(dialog)
+        except Exception:  # noqa: BLE001
+            logger.exception("memory recall_supported failed dialog=%s", dialog.id)
+            return False
+
+    async def memory_recall_now(self, dialog: Dialog, query: str) -> str:
+        """Поиск в памяти по запросу модели; любая ошибка — пустой результат, модель отвечает без него (I3)."""
+        memory = self.memory
+        if memory is None or dialog.memory_mode != "on":
+            return ""
+        try:
+            return await memory.recall_now(dialog, query) or ""
+        except Exception:  # noqa: BLE001
+            logger.exception("memory recall_now failed dialog=%s", dialog.id)
+            return ""
 
     def _discard_empty(self, dialog: Dialog) -> None:
         """Убрать открытый диалог без сообщений: из памяти сразу, с диска в фоне. Его сокет (если есть) получает `ended`."""
@@ -843,11 +885,41 @@ class DialogStore:
         DIALOG_DIALOGS_IN_MEMORY.set(sum(len(dialogs) for dialogs in self._users.values()))
         DIALOG_MESSAGES_IN_MEMORY.set(sum(len(d.messages) for dialogs in self._users.values() for d in dialogs.values()))
 
+    def end_stale(self, now: datetime) -> int:
+        """Завершить открытые диалоги, брошенные без сокета дольше `idle_end_seconds`. Возвращает, сколько завершено.
+
+        Такой диалог считается конченным: `end` ставит сводку и зовёт память (`dialog_ended` → извлечение в Cognee).
+        Живой сокет (человек на связи) и пустой диалог (негласившие) не трогаем. Срок идёт от закрытия сокета,
+        а без него — от последнего сообщения.
+        """
+        if not self._idle_end_seconds:
+            return 0
+        ended = 0
+        for dialogs in list(self._users.values()):
+            for dialog in list(dialogs.values()):
+                if dialog.ended_at is not None or not dialog.messages:
+                    continue
+                if dialog.has_live_socket or dialog.on_replaced is not None:
+                    continue  # человек на связи — разговор живой
+                stamp = dialog.socket_closed_at or dialog.last_activity_at or dialog.started_at
+                try:
+                    last = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if (now - last).total_seconds() >= self._idle_end_seconds:
+                    self.end(dialog, None, None)
+                    ended += 1
+        if ended:
+            logger.info("stale dialogs ended count=%d", ended)
+        return ended
+
     async def evict_loop(self, interval: float) -> None:
-        """Фоновая выгрузка неактивных: `evict_idle` раз в `interval` секунд. Запускает и останавливает приложение (lifespan)."""
+        """Фон: раз в `interval` секунд автозавершение брошенных диалогов (`end_stale`) и выгрузка неактивных
+        (`evict_idle`). Запускает и останавливает приложение (lifespan)."""
         while True:
             await asyncio.sleep(interval)
             try:
+                self.end_stale(datetime.now(UTC))
                 self.evict_idle(time.monotonic())
             except Exception:  # noqa: BLE001 - проход не должен останавливать выгрузку: без неё память пода только растёт
                 logger.exception("dialog eviction pass failed")

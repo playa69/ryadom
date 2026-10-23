@@ -22,7 +22,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.api.deps import active_tts, canonical_user_id, token_ok
-from app.clients.llm import STT_RATE, ChatModel, ModelError, ProxyChat, Recognizer, ReplyTruncated
+from app.clients.llm import STT_RATE, ChatModel, ModelError, ProxyChat, Recognizer, ReplyTruncated, ToolCallRequested
 from app.clients.speech import FRAME_BYTES, TTS_RATE, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.errors import error_body
@@ -59,6 +59,26 @@ FRAME_KIND_AUDIO_IN = 0x01
 # Набранный текст шлюз приложения ограничивает 4000 символов сам; запас здесь — для голоса:
 # пять минут речи (VOICE_TURN_MAX_SECONDS) — это 4-5 тысяч символов распознанного текста.
 MAX_USER_TEXT = 8000
+
+# Инструмент поиска в долговременной памяти: модель зовёт его, когда человек спрашивает «а помнишь…».
+RECALL_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_memory",
+            "description": (
+                "Вспомнить факты о человеке из долговременной памяти (прошлые разговоры: имя, семья, работа, "
+                "предпочтения, события). Вызывай, когда человек спрашивает, помнишь ли ты что-то, или когда для "
+                "ответа нужны факты из прошлых разговоров."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "О чём вспомнить, своими словами"}},
+                "required": ["query"],
+            },
+        },
+    }
+]
 # Один кадр голоса человека — 100 мс (specs/agent-api «Голос — формат и ввод»).
 AUDIO_FRAME_SECONDS = 0.1
 # Одна голосовая реплика — не длиннее VOICE_TURN_MAX_SECONDS: остальное отбрасывается, память не растёт без предела.
@@ -607,6 +627,15 @@ class DialogSession:
         generation = self._tracer.start_generation(trace, name="chat", model=self._chat.name, input=messages)
         # Расход токенов умеет отдавать только настоящий прокси (финальный SSE-кусок), у фейков и шаблонов его нет.
         usage_sink: list[dict[str, Any]] | None = [] if isinstance(self._chat, ProxyChat) else None
+        # Инструмент поиска в памяти — только прокси, только при MEMORY_RECALL_TOOL и бэкенде с прямым поиском (Cognee).
+        # По умолчанию выключен: синхронный recall — это 10–30 с паузы посреди голосового хода.
+        tools = (
+            RECALL_TOOLS
+            if usage_sink is not None
+            and APP_CONFIG.memory.recall_tool
+            and self._store.memory_recall_supported(self._dialog)
+            else None
+        )
         buffer, total, full = "", 0, False
         truncated = False
         emitted: list[str] = []
@@ -621,27 +650,62 @@ class DialogSession:
             out.put_nowait(sentence[:MAX_REPLY_CHARS])
             return True
 
+        async def run_pass(pass_messages: list[dict[str, Any]], pass_tools: list[dict[str, Any]] | None) -> None:
+            """Один проход потока модели. Вызов инструмента поднимает ToolCallRequested — разбирает тот, кто вызвал."""
+            nonlocal buffer, full, truncated
+            try:
+                if usage_sink is not None:
+                    stream_ctx = self._chat.stream(pass_messages, usage_sink=usage_sink, tools=pass_tools)  # type: ignore[call-arg]
+                else:
+                    stream_ctx = self._chat.stream(pass_messages)
+                async with aclosing(stream_ctx) as stream:
+                    async for piece in stream:
+                        buffer += piece
+                        sentences, buffer = take_sentences(buffer)
+                        full = not all(offer(sentence) for sentence in sentences)
+                        if full:
+                            break  # дальше читать незачем: остальное не влезет
+            except ReplyTruncated:
+                truncated = True
+                buffer = ""  # оборван по лимиту токенов: недописанный хвост не берём
+
         try:
-            async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
+            # Таймаут — на каждый проход модели отдельно и на recall отдельно: tool-flow длиннее одного хода
+            # (проход → recall 15–30 с → второй проход), общий таймаут сгорал бы посреди поиска.
+            try:
+                async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
+                    await run_pass(messages, tools)
+            except ToolCallRequested as requested:
+                # Модель попросила память: исполняем recall и просим ответ ещё раз, уже с находкой (без инструментов).
+                call = requested.calls[0]
+                query = call.query()
+                if query is None:
+                    raise ModelError("Чат-модель вызвала инструмент с мусорными аргументами")
+                # Поиск идёт 10–30 с: без этой фразы человек всё это время слышал бы тишину в «Думаю»
+                offer("Секунду, вспомню…")
+                # Бюджет recall — двойной таймаут модели: GRAPH_COMPLETION идёт 15–30 с, в одиночный не влезает.
+                # Не успел — отвечаем без находки (модель скажет «не нашлось»), а не обрываем весь ход.
                 try:
-                    if usage_sink is not None:
-                        stream_ctx = self._chat.stream(messages, usage_sink=usage_sink)  # type: ignore[call-arg]
-                    else:
-                        stream_ctx = self._chat.stream(messages)
-                    async with aclosing(stream_ctx) as stream:
-                        async for piece in stream:
-                            buffer += piece
-                            sentences, buffer = take_sentences(buffer)
-                            full = not all(offer(sentence) for sentence in sentences)
-                            if full:
-                                break  # дальше читать незачем: остальное не влезет
-                except ReplyTruncated:
-                    truncated = True
-                    buffer = ""  # оборван по лимиту токенов: недописанный хвост не берём
-                if not full:
-                    for sentence in take_sentences(buffer, final=True)[0]:
-                        if not offer(sentence):
-                            break
+                    async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds * 2):
+                        found = await self._store.memory_recall_now(self._dialog, query)
+                except TimeoutError:
+                    logger.warning("memory recall timed out dialog=%s", self._dialog.id)
+                    found = ""
+                followup: list[dict[str, Any]] = [
+                    *messages,
+                    call.assistant_message(),
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": found or "В памяти по этому вопросу ничего не нашлось.",
+                    },
+                ]
+                async with asyncio.timeout(APP_CONFIG.llm.timeout_seconds):
+                    await run_pass(followup, None)
+            if not full:
+                for sentence in take_sentences(buffer, final=True)[0]:
+                    if not offer(sentence):
+                        break
             generation.update(
                 output=" ".join(emitted) or None,
                 usage=usage_sink[0] if usage_sink else None,
@@ -707,7 +771,8 @@ class DialogSession:
                             await deliver(self._model_sentences(turn.trace))
                         except (ModelError, TimeoutError) as error:
                             # После первых предложений отказ не страшен: человек уже слышит начало, договариваем им.
-                            logger.warning("chat failed dialog=%s: %s", dialog.id, error)
+                            # У TimeoutError пустой str — в журнал пишем и тип, иначе строка выходит пустой.
+                            logger.warning("chat failed dialog=%s: %s", dialog.id, str(error) or type(error).__name__)
                         else:
                             if not sentences:
                                 logger.warning("chat returned nothing dialog=%s, using a template", dialog.id)

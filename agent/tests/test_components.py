@@ -13,7 +13,7 @@ import httpx
 import pytest
 from prometheus_client import REGISTRY
 
-from app.clients.llm import ModelError, ProxyChat, ProxyWhisper
+from app.clients.llm import ModelError, ProxyChat, ProxyWhisper, ToolCallRequested
 from app.clients.speech import CachedTts, QwenTts, TtsError
 from app.services import usage as model_usage
 from tests.conftest import (
@@ -34,6 +34,17 @@ from tests import memory_support
 from tests.test_memory_dialog import prepare
 
 BASE = "https://proxy.test/v1"
+
+RECALL_TOOLS_STUB = [
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_memory",
+            "description": "Вспомнить факты о человеке",
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+        },
+    }
+]
 
 
 def counted(component: str, outcome: str = "ok", cached: str = "false") -> float:
@@ -139,6 +150,32 @@ async def test_a_stream_the_listener_walked_away_from_is_still_one_call(calls: C
     assert await stream.__anext__() == "раз "
     await stream.aclose()  # перебили на середине ответа
     assert calls.items == [("llm", "ok", False)]
+
+
+async def test_stream_with_tools_collects_the_tool_call(calls: Calls) -> None:
+    """Ход, закончившийся вызовом инструмента: куски delta.tool_calls собираются в ToolCallRequested, текста нет."""
+    sse = (
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"recall_memory",'
+        '"arguments":"{\\"query\\":"}}]}}]}\n\n'
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \\"имя сына\\"}"}}]}}]}\n\n'
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    model = chat(handler)
+    with pytest.raises(ToolCallRequested) as caught:
+        _ = [p async for p in model.stream([{"role": "user", "content": "как зовут сына?"}], tools=RECALL_TOOLS_STUB)]
+    assert sent[0]["tools"] == RECALL_TOOLS_STUB  # объявления инструментов ушли в запросе
+    call = caught.value.calls[0]
+    assert call.id == "call-1" and call.name == "recall_memory"
+    assert call.query() == "имя сына"
+    assistant = call.assistant_message()
+    assert assistant["role"] == "assistant" and assistant["tool_calls"][0]["function"]["name"] == "recall_memory"
 
 
 async def test_recognition_is_one_call_and_a_failure_is_an_error(calls: Calls) -> None:

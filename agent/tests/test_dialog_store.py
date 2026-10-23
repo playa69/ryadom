@@ -63,3 +63,70 @@ def test_hours_count_from_the_last_activity_of_any_dialog() -> None:
     assert resumed and hours == 0
     _, resumed, hours = store.start(user, new=True)
     assert not resumed and hours == 0  # завершая открытый, «давно не виделись» от старого разговора не считаем
+
+
+class _MemorySpy:
+    """MemoryLink-заглушка: записывает, у каких диалогов спросили извлечение."""
+
+    def __init__(self) -> None:
+        self.ended: list[str] = []
+
+    def dialog_ended(self, dialog) -> None:
+        self.ended.append(dialog.id)
+
+
+def _old(stamp: str, seconds: int) -> str:
+    point = datetime.fromisoformat(stamp.replace("Z", "+00:00")) - timedelta(seconds=seconds)
+    return point.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def test_stale_socketless_dialog_is_ended_and_goes_to_memory() -> None:
+    """Открытый диалог без сокета и без активности дольше срока завершается сам и уходит в память (извлечение)."""
+    store = DialogStore(idle_end_seconds=300)
+    memory = _MemorySpy()
+    store.memory = memory
+    user = str(uuid.uuid4())
+    dialog, _, _ = store.start(user)
+    store.add_message(dialog, "user", "поговорили и человек пропал")
+    store.socket_closed(dialog)  # вкладку закрыли, «завершить» никто не нажал
+    dialog.socket_closed_at = _old(dialog.socket_closed_at, 301)
+
+    assert store.end_stale(datetime.now(UTC)) == 1
+    assert dialog.ended_at is not None and dialog.summary is not None
+    assert memory.ended == [dialog.id]  # извлечение поставлено
+
+
+def test_stale_end_keeps_live_fresh_and_empty_dialogs() -> None:
+    store = DialogStore(idle_end_seconds=300)
+    memory = _MemorySpy()
+    store.memory = memory
+    user = str(uuid.uuid4())
+
+    live, _, _ = store.start(user)
+    store.add_message(live, "user", "я тут, просто думаю")
+    store.socket_opened(live)  # сокет жив — не трогаем, сколько бы ни молчал
+
+    ended = store.end_stale(datetime.now(UTC) + timedelta(hours=1))
+    assert ended == 0 and live.ended_at is None and memory.ended == []
+
+    # А вот свежий (говорили минуту назад) — тоже не трогаем при обычном проходе
+    store2 = DialogStore(idle_end_seconds=300)
+    memory2 = _MemorySpy()
+    store2.memory = memory2
+    fresh, _, _ = store2.start(user)
+    store2.add_message(fresh, "user", "только что")
+    store2.socket_closed(fresh)
+    assert store2.end_stale(datetime.now(UTC)) == 0
+    assert fresh.ended_at is None and memory2.ended == []
+
+
+def test_stale_end_disabled_at_zero() -> None:
+    store = DialogStore(idle_end_seconds=0)
+    memory = _MemorySpy()
+    store.memory = memory
+    user = str(uuid.uuid4())
+    dialog, _, _ = store.start(user)
+    store.add_message(dialog, "user", "давно")
+    dialog.messages[0].created_at = _old(dialog.messages[0].created_at, 10_000)
+    assert store.end_stale(datetime.now(UTC)) == 0
+    assert dialog.ended_at is None

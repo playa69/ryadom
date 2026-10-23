@@ -1,0 +1,67 @@
+"""Контракт бэкенда памяти агента: то, что умеют и SQLite-сервис (`app/memory/service.py`), и Cognee (`cognee_backend.py`).
+
+Бэкенд выбирается конфигом (`MEMORY_BACKEND`, `MemorySettings.backend`); `app.state.memory` и `DialogStore.memory` имеют
+этот тип. Часть `MemoryLink` (сводка, загрузка, конец диалога, стирание) вызывает хранилище диалогов, остальное —
+REST памяти (`app/api/memory.py`) и `/health/ready` (`status`). Коды ошибок — каталог из `app/memory/service.py`.
+"""
+
+from typing import Any, Protocol
+
+from app.services.dialog_store import Dialog, MemoryLink
+
+
+class MemoryBackend(MemoryLink, Protocol):
+    """Память людей: `MemoryLink` хранилища диалогов плюс REST-операции и готовность."""
+
+    def status(self) -> str:
+        """Для /health/ready: off | shadow | on | unavailable."""
+        ...
+
+    @property
+    def available(self) -> bool:
+        """Функция работает: бэкенд настроен и готов."""
+        ...
+
+    async def drain(self) -> None:
+        """Дождаться фоновых задач бэкенда (тесты, остановка)."""
+        ...
+
+    async def get_memory(self, user_id: str) -> dict[str, Any]:
+        """Состояние памяти человека для REST: настройки, факты, сводка."""
+        ...
+
+    async def update_settings(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
+        """Включить (только с версией согласия) или выключить память человека."""
+        ...
+
+    async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:
+        """Факт, который человек написал сам."""
+        ...
+
+    async def patch_fact(
+        self,
+        user_id: str,
+        fact_id: str,
+        text: Any = None,
+        slots: Any = None,
+        status: str | None = None,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Исправить, закрепить, «Запомнить», «Верно»."""
+        ...
+
+    async def delete_fact(self, user_id: str, fact_id: str) -> None:
+        """«Забыть» факт."""
+        ...
+
+    async def forget_all(self, user_id: str, actor: str = "user") -> None:
+        """«Забыть всё»."""
+        ...
+
+    async def changes(self, user_id: str, dialog_id: str) -> dict[str, Any]:
+        """Что разговор добавил в память: карточка «Я запомнил»."""
+        ...
+
+    async def export(self, user_id: str) -> dict[str, Any]:
+        """Всё о памяти человека для выгрузки."""
+        ...

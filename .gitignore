@@ -240,3 +240,6 @@ loadtest/out/
 loadtest/.venv/
 loadtest/pool.json
 loadtest/pool.tmp
+.idea/
+agent/local_data/
+.mcp.json
