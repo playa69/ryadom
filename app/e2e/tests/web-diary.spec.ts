@@ -57,7 +57,7 @@ test('дневник: отметка в два касания, график, м�
   await expect(page.getByTestId('diary-factor-work')).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByTestId('diary-chart-point')).toHaveCount(1)
   await expect(page.getByTestId('diary-chart-point')).toHaveAttribute('data-mood', '3')
-  await expect(page.getByTestId('diary-chart').locator('svg')).toHaveAttribute('aria-label', /отмечен/)
+  await expect(page.getByTestId('diary-chart').getByRole('img', { name: /отмечен/ })).toBeVisible()
   await expect(page.getByTestId('diary-week-hint')).toContainText('(сейчас: 1)')
   await shot(page, 'web-diary-marked')
 

@@ -10,7 +10,8 @@ import {
   GetNotificationSettingsOperation,
   MarkReminderOpenedOperation,
   notificationsProcess,
-  NotificationsOperationErrorCode,
+  CreateSubscriptionOperationErrorCode,
+  UpdateNotificationSettingsOperationErrorCode,
   RunReminderTickOperation,
   UpdateNotificationSettingsOperation,
 } from '../src/processes/notifications'
@@ -70,7 +71,7 @@ describe('настройка напоминания', () => {
     const set = (time: string) => notificationsProcess.execute(new UpdateNotificationSettingsOperation({ userId: user.id, time }))
     expect(await set('21:30')).toMatchObject({ success: true, settings: { moodReminderTime: '21:30' } })
     for (const bad of ['07:30', '23:00', '20:15', '8:00', 'вечером']) {
-      expect(await set(bad)).toEqual({ success: false, error: NotificationsOperationErrorCode.INVALID_TIME })
+      expect(await set(bad)).toEqual({ success: false, error: UpdateNotificationSettingsOperationErrorCode.INVALID_TIME })
     }
   })
 
@@ -88,12 +89,12 @@ describe('настройка напоминания', () => {
       notificationsProcess.execute(new CreateSubscriptionOperation({ userId: user.id, channel: 'web_push', ...over }))
     expect(await create({ endpoint: 'http://push.example/x', p256dh: 'p', auth: 'a' })).toEqual({
       success: false,
-      error: NotificationsOperationErrorCode.INVALID_SUBSCRIPTION,
+      error: CreateSubscriptionOperationErrorCode.INVALID_SUBSCRIPTION,
     })
     expect(await create({ endpoint: 'https://push.example/x' })).toMatchObject({ success: false })
     expect(
       await notificationsProcess.execute(new CreateSubscriptionOperation({ userId: user.id, channel: 'telegram' })),
-    ).toEqual({ success: false, error: NotificationsOperationErrorCode.TELEGRAM_NOT_LINKED })
+    ).toEqual({ success: false, error: CreateSubscriptionOperationErrorCode.TELEGRAM_NOT_LINKED })
   })
 })
 

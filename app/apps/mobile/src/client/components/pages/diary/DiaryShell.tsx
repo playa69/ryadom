@@ -1,6 +1,6 @@
 import { Navbar, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useEffect, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { rememberSegment, SEGMENT_URLS, type DiarySegment } from '../../../lib/diary'
 import { SosButton } from '../../SosSheet'
 
@@ -31,11 +31,11 @@ export default function DiaryShell({
   onTabShow?: () => void
   children: ReactNode
 }) {
-  useEffect(() => rememberSegment(segment), [segment])
-
   function choose(next: DiarySegment) {
     if (next === segment) return
     segmentChosen.value = true
+    // Only a choice is remembered: the screen opening on the stored segment must not overwrite it with «Дневник».
+    rememberSegment(next)
     f7router.navigate(SEGMENT_URLS[next], { reloadCurrent: true, animate: false })
   }
 

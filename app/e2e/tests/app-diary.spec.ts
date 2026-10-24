@@ -35,6 +35,15 @@ async function serverDiary(request: APIRequestContext, accessToken: string) {
 test('дневник: пустой → отметка в два касания → передумал → график → мост → без сети', async ({ page, request, shot }) => {
   test.setTimeout(180_000)
   const session = trackSession(page)
+  await page.addInitScript(() => {
+    const w = window as unknown as { __permissionAsks: number }
+    w.__permissionAsks = 0
+    const original = Notification.requestPermission.bind(Notification)
+    Notification.requestPermission = (...args: Parameters<typeof original>) => {
+      w.__permissionAsks += 1
+      return original(...args)
+    }
+  })
   await openApp(page)
   await startAnonymously(page)
   await openTab(page, 'Дневник')
@@ -47,7 +56,8 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-events-card')).toBeVisible()
   // The question comes first; the system asks for nothing until «Да».
   await expect(diary.getByTestId('diary-reminder-offer')).toContainText('Напоминать вечером, в 20:00?')
-  expect(await page.evaluate(() => Notification.permission)).toBe('default')
+  // Nothing has asked the system for the permission yet (the headless browser reports `denied` either way).
+  expect(await page.evaluate(() => (window as unknown as { __permissionAsks: number }).__permissionAsks)).toBe(0)
   await shot(page, 'diary-empty')
 
   // ── two taps ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +97,9 @@ test('дневник: пустой → отметка в два касания �
   await diary.getByTestId('diary-bridge-talk').click()
   // «Поговорить» starts a conversation as the home button does: it opens on the voice screen.
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
-  await page.getByRole('button', { name: 'Назад' }).first().click().catch(() => undefined)
+  // The arrow in the bar leaves the conversation (the tab bar is hidden while it is open).
+  await page.locator('.page-current .navbar a.back').first().click()
+  await expect(page.locator('#rd-tabbar')).toBeVisible()
 
   // ── without a network: the choice shows at once and goes up when the connection is back ──
   await openTab(page, 'Дневник')

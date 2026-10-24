@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDaysToDate, isValidDate, localMoment, minutesToTime, timeToMinutes, weekStart } from '../src/diary/local-time'
+import { addDaysToDate, isValidDate, localMoment, minutesToTime, timeToMinutes, weekStart } from '../src/shared/local-time'
 
 describe('местное время человека (REQ-WELL-01)', () => {
   it('Владивосток в 00:30 — уже новый местный день, а в Москве ещё вчера', () => {

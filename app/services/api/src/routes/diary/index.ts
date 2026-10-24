@@ -1,19 +1,25 @@
 import {
   CreateWeekSummaryOperation,
+  CreateWeekSummaryOperationErrorCode,
   CreateYearStoryOperation,
-  DiaryOperationErrorCode,
+  CreateYearStoryOperationErrorCode,
   diaryProcess,
   GetDiaryEventsOperation,
+  GetDiaryEventsOperationErrorCode,
   GetDiaryOperation,
+  GetDiaryOperationErrorCode,
   GetYearOperation,
+  GetYearOperationErrorCode,
   ListWeekSummariesOperation,
+  ListWeekSummariesOperationErrorCode,
   PutMoodCheckinOperation,
+  PutMoodCheckinOperationErrorCode,
   type DiarySummaryDTO,
   type MoodCheckinDTO,
 } from '@ryadom/core/processes/diary'
 import {
   CreateWidgetTokenOperation,
-  NotificationsOperationErrorCode,
+  CreateWidgetTokenOperationErrorCode,
   notificationsProcess,
   ResolveWidgetTokenOperation,
   RevokeWidgetTokenOperation,
@@ -90,23 +96,40 @@ const toSummary = (s: DiarySummaryDTO): DiarySummaryApi => ({
   generatedAt: s.generatedAt.toISOString(),
 })
 
-type Refusal = DiaryOperationErrorCode
+/** Every way a diary operation can refuse; the meaning is the same in every route. */
+type Refusal =
+  | GetDiaryOperationErrorCode
+  | PutMoodCheckinOperationErrorCode
+  | GetYearOperationErrorCode
+  | ListWeekSummariesOperationErrorCode
+  | CreateWeekSummaryOperationErrorCode
+  | CreateYearStoryOperationErrorCode
+  | GetDiaryEventsOperationErrorCode
 
-/** The route code for a failed operation; the same user-facing meaning in every diary route. */
 function refuse(c: Context, error: Refusal): Response {
   switch (error) {
-    case DiaryOperationErrorCode.USER_NOT_FOUND:
+    case GetDiaryOperationErrorCode.USER_NOT_FOUND:
+    case PutMoodCheckinOperationErrorCode.USER_NOT_FOUND:
+    case GetYearOperationErrorCode.USER_NOT_FOUND:
+    case ListWeekSummariesOperationErrorCode.USER_NOT_FOUND:
+    case CreateWeekSummaryOperationErrorCode.USER_NOT_FOUND:
+    case CreateYearStoryOperationErrorCode.USER_NOT_FOUND:
+    case GetDiaryEventsOperationErrorCode.USER_NOT_FOUND:
       return apiError(c, 401, 'Unauthorised')
-    case DiaryOperationErrorCode.DATE_OUT_OF_RANGE:
+    case GetDiaryOperationErrorCode.INVALID_MONTH:
+    case PutMoodCheckinOperationErrorCode.DATE_OUT_OF_RANGE:
+    case CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE:
+    case GetYearOperationErrorCode.YEAR_OUT_OF_RANGE:
       // A date from the client that is not today or yesterday of the person: the spec's 422 (REQ-WELL-01).
       return apiError(c, 422, 'The date must be today or yesterday in your time zone')
-    case DiaryOperationErrorCode.NOT_ENOUGH_DAYS:
+    case CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS:
       return apiRefused(c, DiaryApiErrorCode.NOT_ENOUGH_DAYS, 'Not enough marked days')
-    case DiaryOperationErrorCode.NOT_ENOUGH_WEEKS:
+    case CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS:
       return apiRefused(c, DiaryApiErrorCode.NOT_ENOUGH_WEEKS, 'Not enough week summaries')
-    case DiaryOperationErrorCode.TOO_SOON:
+    case CreateWeekSummaryOperationErrorCode.TOO_SOON:
       return apiRefused(c, DiaryApiErrorCode.TOO_SOON, 'The summary was made less than a day ago')
-    case DiaryOperationErrorCode.SUMMARY_UNAVAILABLE:
+    case CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE:
+    case CreateYearStoryOperationErrorCode.SUMMARY_UNAVAILABLE:
       return apiRefused(c, DiaryApiErrorCode.SUMMARY_UNAVAILABLE, 'The agent could not write the summary')
     default:
       return assertNever(error)
@@ -228,10 +251,10 @@ export function diaryRoutes(app: Hono<AppEnv>, { env, jwt, rateLimiter, sessions
     const result = await notificationsProcess.execute(new CreateWidgetTokenOperation({ userId: authUser(c).userId }))
     if (!result.success) {
       switch (result.error) {
-        case NotificationsOperationErrorCode.USER_NOT_FOUND:
+        case CreateWidgetTokenOperationErrorCode.USER_NOT_FOUND:
           return apiError(c, 401, 'Unauthorised')
         default:
-          return apiError(c, 500, 'Could not create the widget token')
+          return assertNever(result.error)
       }
     }
     const body: WidgetTokenApiResponse = { token: result.token }

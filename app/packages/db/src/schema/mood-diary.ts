@@ -151,3 +151,4 @@ export const widgetTokens = pgTable(
 
 export type MoodCheckinRow = typeof moodCheckins.$inferSelect
 export type DiarySummaryRow = typeof diarySummaries.$inferSelect
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect

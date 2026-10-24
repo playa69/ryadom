@@ -86,7 +86,7 @@ describe('отметка в два касания', () => {
     ok(await call(app, 'PUT', '/api/diary/checkins/today', { mood: 5 }, token))
     const [row] = await getDb().select().from(moodCheckins).where(eq(moodCheckins.userId, userId))
     // UTC+14: the local date is one that Moscow has not reached for a few hours of the day, never earlier than UTC's.
-    expect(row?.localDate >= new Date().toISOString().slice(0, 10)).toBe(true)
+    expect((row?.localDate ?? '') >= new Date().toISOString().slice(0, 10)).toBe(true)
   })
 
   it('чужой аккаунт не видит чужих отметок', async () => {

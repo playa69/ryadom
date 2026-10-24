@@ -8,7 +8,9 @@ import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import {
   CreateWeekSummaryOperation,
   CreateYearStoryOperation,
-  DiaryOperationErrorCode,
+  CreateWeekSummaryOperationErrorCode,
+  CreateYearStoryOperationErrorCode,
+  PutMoodCheckinOperationErrorCode,
   diaryProcess,
   GetDiaryEventsOperation,
   GetDiaryOperation,
@@ -62,7 +64,7 @@ describe('отметка настроения', () => {
     const user = await registerConfirmedUser()
     expect(await put(user.id, { date: '2026-10-23' })).toMatchObject({ success: true, checkin: { date: '2026-10-23' } })
     for (const date of ['2026-10-22', '2026-10-25', '2026-02-30', 'вчера']) {
-      expect(await put(user.id, { date })).toEqual({ success: false, error: DiaryOperationErrorCode.DATE_OUT_OF_RANGE })
+      expect(await put(user.id, { date })).toEqual({ success: false, error: PutMoodCheckinOperationErrorCode.DATE_OUT_OF_RANGE })
     }
   })
 
@@ -108,7 +110,7 @@ describe('итоги недели', () => {
     await mark(user.id, '2026-10-19')
     await mark(user.id, '2026-10-20')
     const request = () => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now: NOW }))
-    expect(await request()).toEqual({ success: false, error: DiaryOperationErrorCode.NOT_ENOUGH_DAYS })
+    expect(await request()).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS })
 
     await mark(user.id, '2026-10-21', 1, 'work')
     const made = await request()
@@ -130,7 +132,7 @@ describe('итоги недели', () => {
     for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
     const make = (now: Date) => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now }))
     expect((await make(NOW)).success).toBe(true)
-    expect(await make(new Date(NOW.getTime() + 60 * 60_000))).toEqual({ success: false, error: DiaryOperationErrorCode.TOO_SOON })
+    expect(await make(new Date(NOW.getTime() + 60 * 60_000))).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.TOO_SOON })
     expect((await make(new Date(NOW.getTime() + 25 * 60 * 60_000))).success).toBe(true)
     expect(await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))).toHaveLength(1)
   })
@@ -140,7 +142,7 @@ describe('итоги недели', () => {
     for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
     const make = () => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now: NOW }))
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ error: { code: 'DIGEST_UNAVAILABLE' } }, 502) })
-    expect(await make()).toEqual({ success: false, error: DiaryOperationErrorCode.SUMMARY_UNAVAILABLE })
+    expect(await make()).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE })
     expect(await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))).toHaveLength(0)
 
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
@@ -152,7 +154,7 @@ describe('итоги недели', () => {
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
     expect(
       await diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-12', now: NOW })),
-    ).toEqual({ success: false, error: DiaryOperationErrorCode.DATE_OUT_OF_RANGE })
+    ).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE })
   })
 })
 
@@ -199,7 +201,7 @@ describe('итоги недели в понедельник и история г
     for (const monday of mondays) await seed(monday)
     expect(
       await diaryProcess.execute(new CreateYearStoryOperation({ userId: user.id, year: 2026, now: NOW })),
-    ).toEqual({ success: false, error: DiaryOperationErrorCode.NOT_ENOUGH_WEEKS })
+    ).toEqual({ success: false, error: CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS })
 
     await weekOfMarks(user.id, '2026-10-19')
     expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 1, yearly: 1 })
@@ -213,7 +215,7 @@ describe('итоги недели в понедельник и история г
     // Not enough new weeks for «Дописать» yet.
     expect(
       await diaryProcess.execute(new CreateYearStoryOperation({ userId: user.id, year: 2026, now: NOW })),
-    ).toEqual({ success: false, error: DiaryOperationErrorCode.NOT_ENOUGH_WEEKS })
+    ).toEqual({ success: false, error: CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS })
     for (const monday of ['2026-10-05', '2026-10-12', '2026-10-26', '2026-11-02']) await seed(monday)
     expect(
       (await diaryProcess.execute(new CreateYearStoryOperation({ userId: user.id, year: 2026, now: NOW }))).success,

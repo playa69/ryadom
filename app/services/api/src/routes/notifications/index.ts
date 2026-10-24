@@ -1,11 +1,14 @@
 import {
   CreateSubscriptionOperation,
+  CreateSubscriptionOperationErrorCode,
   DeleteSubscriptionOperation,
+  DeleteSubscriptionOperationErrorCode,
   GetNotificationSettingsOperation,
+  GetNotificationSettingsOperationErrorCode,
   MarkReminderOpenedOperation,
-  NotificationsOperationErrorCode,
   notificationsProcess,
   UpdateNotificationSettingsOperation,
+  UpdateNotificationSettingsOperationErrorCode,
   type NotificationSettingsDTO,
   type PushSubscriptionDTO,
 } from '@ryadom/core/processes/notifications'
@@ -65,17 +68,25 @@ function toSettings(settings: NotificationSettingsDTO, subs: PushSubscriptionDTO
   }
 }
 
-function refuse(c: Context, error: NotificationsOperationErrorCode): Response {
+type Refusal =
+  | GetNotificationSettingsOperationErrorCode
+  | UpdateNotificationSettingsOperationErrorCode
+  | CreateSubscriptionOperationErrorCode
+  | DeleteSubscriptionOperationErrorCode
+
+function refuse(c: Context, error: Refusal): Response {
   switch (error) {
-    case NotificationsOperationErrorCode.USER_NOT_FOUND:
+    case GetNotificationSettingsOperationErrorCode.USER_NOT_FOUND:
+    case UpdateNotificationSettingsOperationErrorCode.USER_NOT_FOUND:
+    case CreateSubscriptionOperationErrorCode.USER_NOT_FOUND:
       return apiError(c, 401, 'Unauthorised')
-    case NotificationsOperationErrorCode.INVALID_TIME:
+    case UpdateNotificationSettingsOperationErrorCode.INVALID_TIME:
       return apiError(c, 422, 'The time must be between 08:00 and 22:30, in steps of 30 minutes')
-    case NotificationsOperationErrorCode.INVALID_SUBSCRIPTION:
+    case CreateSubscriptionOperationErrorCode.INVALID_SUBSCRIPTION:
       return apiRefused(c, NotificationsApiErrorCode.INVALID_SUBSCRIPTION, 'The subscription is not valid')
-    case NotificationsOperationErrorCode.TELEGRAM_NOT_LINKED:
+    case CreateSubscriptionOperationErrorCode.TELEGRAM_NOT_LINKED:
       return apiRefused(c, NotificationsApiErrorCode.INVALID_SUBSCRIPTION, 'The account is not linked to Telegram')
-    case NotificationsOperationErrorCode.SUBSCRIPTION_NOT_FOUND:
+    case DeleteSubscriptionOperationErrorCode.SUBSCRIPTION_NOT_FOUND:
       return apiRefused(c, NotificationsApiErrorCode.SUBSCRIPTION_NOT_FOUND, 'No such subscription')
     default:
       return assertNever(error)
