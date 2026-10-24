@@ -32,7 +32,7 @@ export default function VoicePage({ f7router }: { f7router: { back: () => void }
   function toggle(id: string) {
     if (playingId === id) return stopVoiceSample()
     setPlayingId(id)
-    playVoiceSample(id, () => setPlayingId((now) => (now === id ? null : now)))
+    playVoiceSample(id, () => setPlayingId((now) => (now === id ? null : now)), import.meta.env.BASE_URL)
   }
 
   // A tap on a row chooses and saves at once (the system pattern for a list of options); ▶ only plays the sample.

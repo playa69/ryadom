@@ -7,6 +7,7 @@ import { Check, Play, Square } from 'lucide-react'
 import { playVoiceSample, stopVoiceSample } from '@ryadom/client-core/voice-sample'
 import { cn } from '@ryadom/ui/lib/utils'
 import { useAuth, useClient } from '@/lib/auth'
+import { BASE_PATH } from '@/lib/base-path'
 import Modal from './Modal'
 import { Busy, ModalActions, ProfileButton } from './ProfileParts'
 import ProfileRow from './ProfileRow'
@@ -53,7 +54,7 @@ export default function ProfileVoice() {
   function toggle(id: string) {
     if (playingId === id) return stopVoiceSample()
     setPlayingId(id)
-    playVoiceSample(id, () => setPlayingId((now) => (now === id ? null : now)))
+    playVoiceSample(id, () => setPlayingId((now) => (now === id ? null : now)), `${BASE_PATH}/`)
   }
 
   async function apply() {
