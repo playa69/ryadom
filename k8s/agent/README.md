@@ -7,8 +7,7 @@
 |---|---|
 | `00-config.yaml` | ConfigMap `agent-config`: озвучка, голос по умолчанию, адрес прокси Qwen TTS, голосовой конвейер `VOICE_PIPELINE` (`cascade` по умолчанию) |
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
-| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`; диалоги — в PostgreSQL (Secret `agent-db`), том `/data` со старым SQLite — только до конца миграции |
-| `03-pvc.yaml` | PVC `agent-data` (5 ГБ, сетевой диск Timeweb): файл SQLite с диалогами версий до 0.8.0. После миграции в PostgreSQL удаляется вместе с volume |
+| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`; диалоги — в PostgreSQL (Secret `agent-db`) |
 | `04-servicemonitor.yaml` | ServiceMonitor: Prometheus собирает `/metrics` агента (расход моделей, задержки голоса, база диалогов). Применяет admin |
 | `db/01-job-create-role.yaml` | Job: роль `agent` в CNPG ryadom-db + владелец базы `agent` (хранилище диалогов с 0.8.0). Один раз, до выката 0.8.0 |
 | `10-cognee-config.yaml` | ConfigMap `cognee-config`: Cognee API (память агента) — БД cognee_db в CNPG, модели LiteLLM-прокси, multi-user access control (Bearer) |
@@ -218,28 +217,11 @@ kubectl -n agent create secret generic agent-db \
   --from-literal=DIALOG_DATABASE_URL="postgresql://agent:<ПАРОЛЬ>@ryadom-db-rw.ryadom-db.svc.cluster.local:5432/agent"
 ```
 
-## Миграция диалогов из SQLite (PVC `agent-data`) в PostgreSQL
+## Удаление старого SQLite (PVC `agent-data`)
 
-Разовая, при выкате образа 0.8.0. Том `agent-data` остаётся смонтированным до конца миграции. В образе агента
-SQLite нет совсем, поэтому скрипт запускается с АДМИН-МАШИНЫ (`k8s/agent/migrate_dialogs_sqlite_to_pg.py`,
-самодостаточный: stdlib sqlite3 + psycopg):
-
-```bash
-kubectl apply -f k8s/agent/00-config.yaml -f k8s/agent/02-deployment.yaml
-kubectl -n agent rollout status deploy/agent --timeout=300s
-kubectl -n agent logs deploy/agent | grep -E "dialog db|agent started"          # «dialogs=postgres»
-# забрать файл из пода и прогнать миграцию через порт-форвард PostgreSQL:
-kubectl -n agent cp $(kubectl -n agent get pod -l app=agent -o name | cut -d/ -f2):/data/dialogs.sqlite3 /tmp/dialogs.sqlite3
-kubectl -n ryadom-db port-forward svc/ryadom-db-rw 55432:5432 &
-uv run --with 'psycopg[binary]' k8s/agent/migrate_dialogs_sqlite_to_pg.py \
-  /tmp/dialogs.sqlite3 "postgresql://agent:<ПАРОЛЬ>@localhost:55432/agent"      # сверка счётчиков в конце
-```
-
-Скрипт идемпотентен (upsert), ничего не удаляет из SQLite и в конце сверяет счётчики диалогов/сообщений — пока они
-не сошлись, PVC не трогать. Факты и согласия SQLite-памяти НЕ переносятся (решение владельца: память — Cognee,
-согласие заводится заново в профиле). После успешной сверки: убрать volume `data` из `02-deployment.yaml`,
-`kubectl apply`, и только потом `kubectl -n agent delete pvc agent-data` (reclaimPolicy `Delete` — диск удаляется
-вместе с данными, это и есть окончательное удаление SQLite-копии).
+Миграции старых диалогов НЕТ (решение владельца 2026-10-24): деплой с нуля. Перед выкатом 0.8.0 —
+`kubectl -n agent delete pvc agent-data` (reclaimPolicy `Delete`: диск удаляется вместе с файлом `dialogs.sqlite3`,
+это и есть удаление старых диалогов и SQLite-памяти). Манифест `03-pvc.yaml` из репозитория удалён.
 
 ## Хранилище диалогов до 0.8.0 (PVC `agent-data`, история)
 

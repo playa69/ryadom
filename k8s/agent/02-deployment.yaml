@@ -4,11 +4,10 @@
 # Образ cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:<тег> (agent/Dockerfile; сборка и push —
 # k8s/agent/README.md). Тег в манифесте должен совпадать с отправленным; latest не используем.
 #
-# РОВНО 1 РЕПЛИКА и strategy Recreate: рабочий набор диалогов живёт в памяти процесса (на диск/в БД он дублируется
+# РОВНО 1 РЕПЛИКА и strategy Recreate: рабочий набор диалогов живёт в памяти процесса (в БД он дублируется
 # в фоне), поэтому вторая реплика не увидит чужие диалоги (404), а Recreate оставляет одного писателя в хранилище.
-# Хранилище диалогов — PostgreSQL (база agent в CNPG ryadom-db, DIALOG_DATABASE_URL из Secret agent-db); том
-# agent-data со старым SQLite оставлен смонтированным до завершения миграции (k8s/agent/README.md «Миграция
-# диалогов в PostgreSQL»), после неё volume и PVC удаляются.
+# Хранилище диалогов — PostgreSQL (база agent в CNPG ryadom-db, DIALOG_DATABASE_URL из Secret agent-db);
+# SQLite и PVC agent-data больше нет (с 0.8.0, решение владельца — без миграции старых диалогов).
 #
 # Пробы — только httpGet (NetworkPolicy пускает kubelet на :15020, istio переписывает пробы
 # на pilot-agent; tcpSocket был бы заблокирован). /health отвечает всегда, пока жив процесс.
@@ -47,8 +46,6 @@ spec:
         # agent/Dockerfile: useradd --uid 10001; числовой uid нужен kubelet'у
         runAsUser: 10001
         runAsGroup: 10001
-        # Том диалогов (agent-data) монтируется с этой группой, иначе non-root пользователь не смог бы писать в /data
-        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -164,9 +161,6 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            # Том со старым SQLite диалогов: нужен только разовой миграции в PostgreSQL (после неё volume удаляется)
-            - name: data
-              mountPath: /data
           resources:
             # Нагрузочный тест 13.10: ~0,1 CPU-с на ход, при лимите 500m агент упирался в троттлинг (до 60%) и на 7 минут выпал из
             # проб готовности; память росла до 330 МиБ (лимит 384Mi), пик при одновременных разговорах ~3 МиБ на разговор.
@@ -180,6 +174,3 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: data
-          persistentVolumeClaim:
-            claimName: agent-data
