@@ -7,6 +7,9 @@ import './create-week-summary/create-week-summary.handler'
 import './create-year-story/create-year-story.handler'
 import './get-diary-events/get-diary-events.handler'
 import './run-weekly-digests/run-weekly-digests.handler'
+import './create-widget-token/create-widget-token.handler'
+import './revoke-widget-token/revoke-widget-token.handler'
+import './resolve-widget-token/resolve-widget-token.handler'
 
 import type { RequestData } from 'mediatr-ts'
 import { mediatr } from '../../shared'
@@ -28,6 +31,12 @@ export { GetDiaryEventsOperation } from './get-diary-events/get-diary-events.ope
 export type { GetDiaryEventsOperationData } from './get-diary-events/get-diary-events.operation'
 export { RunWeeklyDigestsOperation } from './run-weekly-digests/run-weekly-digests.operation'
 export type { RunWeeklyDigestsOperationData } from './run-weekly-digests/run-weekly-digests.operation'
+export { CreateWidgetTokenOperation } from './create-widget-token/create-widget-token.operation'
+export type { CreateWidgetTokenOperationData } from './create-widget-token/create-widget-token.operation'
+export { RevokeWidgetTokenOperation } from './revoke-widget-token/revoke-widget-token.operation'
+export type { RevokeWidgetTokenOperationData } from './revoke-widget-token/revoke-widget-token.operation'
+export { ResolveWidgetTokenOperation } from './resolve-widget-token/resolve-widget-token.operation'
+export type { ResolveWidgetTokenOperationData } from './resolve-widget-token/resolve-widget-token.operation'
 
 // 3. Type re-exports (enum — значением, остальное — export type)
 export type { GetDiaryResult } from './get-diary/get-diary.types'
@@ -45,8 +54,12 @@ export { CreateYearStoryOperationErrorCode } from './create-year-story/create-ye
 export type { GetDiaryEventsResult } from './get-diary-events/get-diary-events.types'
 export { GetDiaryEventsOperationErrorCode } from './get-diary-events/get-diary-events.types'
 export type { RunWeeklyDigestsResult } from './run-weekly-digests/run-weekly-digests.types'
-export type { DiaryView, ReminderState } from './get-diary/get-diary.types'
+export type { DiaryView } from './get-diary/get-diary.types'
 export type { YearView } from './get-year/get-year.types'
+export type { CreateWidgetTokenResult } from './create-widget-token/create-widget-token.types'
+export { CreateWidgetTokenOperationErrorCode } from './create-widget-token/create-widget-token.types'
+export type { RevokeWidgetTokenResult } from './revoke-widget-token/revoke-widget-token.types'
+export type { ResolveWidgetTokenResult } from './resolve-widget-token/resolve-widget-token.types'
 export type { DiaryEvent } from './get-diary-events/get-diary-events.types'
 export type { DiarySummaryDTO, MoodCheckinDTO } from '../../managers/diary-manager'
 
@@ -59,6 +72,9 @@ import type { CreateWeekSummaryOperation } from './create-week-summary/create-we
 import type { CreateYearStoryOperation } from './create-year-story/create-year-story.operation'
 import type { GetDiaryEventsOperation } from './get-diary-events/get-diary-events.operation'
 import type { RunWeeklyDigestsOperation } from './run-weekly-digests/run-weekly-digests.operation'
+import type { CreateWidgetTokenOperation } from './create-widget-token/create-widget-token.operation'
+import type { RevokeWidgetTokenOperation } from './revoke-widget-token/revoke-widget-token.operation'
+import type { ResolveWidgetTokenOperation } from './resolve-widget-token/resolve-widget-token.operation'
 
 export type DiaryOperations =
   | GetDiaryOperation
@@ -69,6 +85,9 @@ export type DiaryOperations =
   | CreateYearStoryOperation
   | GetDiaryEventsOperation
   | RunWeeklyDigestsOperation
+  | CreateWidgetTokenOperation
+  | RevokeWidgetTokenOperation
+  | ResolveWidgetTokenOperation
 
 // 5. Facade
 export class DiaryProcess implements IDiaryProcess {

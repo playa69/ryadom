@@ -3,7 +3,7 @@ import { deviceTimezone } from '@ryadom/client-core/diary'
 import { updateProfile } from './api'
 
 /**
- * The diary's day, the reminder and the weekly summary follow the person's time zone, and the server
+ * The diary's day and the weekly summary follow the person's time zone, and the server
  * does not know it unless the device says: sent when the app opens signed in, and again when the zone
  * changed (a trip). What was last sent is kept on the device, per account, so an unchanged zone costs nothing.
  */

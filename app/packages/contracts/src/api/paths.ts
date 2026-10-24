@@ -60,11 +60,6 @@ export enum ApiPath {
   DiaryWidgetToday = '/api/diary/widget/today',
   DiaryWidgetCheckin = '/api/diary/widget/checkin',
 
-  /** Reminders (`REQ-WELL-02`). */
-  NotificationSettings = '/api/notifications/settings',
-  NotificationSubscriptions = '/api/notifications/subscriptions',
-  NotificationOpened = '/api/notifications/opened',
-
   /** Open: which analytics features are on and the (public) PostHog project token. */
   AnalyticsConfig = '/api/analytics/config',
   /**
@@ -108,7 +103,3 @@ export function otaBundlePath(file: string): string {
   return `${ApiPath.OtaBundle}/${encodeURIComponent(file)}`
 }
 
-/** `/api/notifications/subscriptions/:id`: one device or chat the reminder reaches. */
-export function notificationSubscriptionPath(id: string): string {
-  return `${ApiPath.NotificationSubscriptions}/${encodeURIComponent(id)}`
-}

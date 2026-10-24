@@ -23,8 +23,8 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
     void diary.refresh()
     if (restore.done || segmentChosen.value) return
     restore.done = true
-    // An address with intent (a reminder, the shortcut) is the card; only a plain opening restores.
-    if (f7router.currentRoute.query?.from || f7router.currentRoute.query?.checkin) return
+    // An address with intent (the shortcut) is the card; only a plain opening restores.
+    if (f7router.currentRoute.query?.checkin) return
     void rememberedSegment().then((segment) => {
       if (segment !== 'diary') f7router.navigate(SEGMENT_URLS[segment], { reloadCurrent: true, animate: false })
     })

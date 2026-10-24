@@ -17,7 +17,6 @@ import { cn } from '@ryadom/ui/lib/utils'
 import { useClient } from '@/lib/auth'
 import { BUTTON } from '../controls'
 import { MoodFace } from './MoodFace'
-import ReminderRow from './ReminderRow'
 
 type Today = DiaryApiResponse['today']
 
@@ -28,14 +27,10 @@ type Today = DiaryApiResponse['today']
  */
 export default function MoodCard({
   today,
-  reminder,
   onChange,
-  onReminder,
 }: {
   today: Today
-  reminder: DiaryApiResponse['reminder']
   onChange(today: NonNullable<Today>): void
-  onReminder(reminder: DiaryApiResponse['reminder']): void
 }) {
   const client = useClient()
   const router = useRouter()
@@ -156,7 +151,7 @@ export default function MoodCard({
         </p>
       )}
 
-      <ReminderRow reminder={reminder} onChange={onReminder} />
+      {/* The line «Напоминать о настроении» goes here: PROTEUS-243 (add-notifications). */}
     </Card>
   )
 }

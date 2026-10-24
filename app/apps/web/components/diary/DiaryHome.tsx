@@ -1,13 +1,11 @@
 'use client'
 
-import { useSearchParams } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { parseDate, toMonthKey, toDate, weekStartOf } from '@ryadom/client-core/diary'
 import type { DiaryApiResponse, MoodCheckinApi } from '@ryadom/contracts/api/diary'
 import { Skeleton } from '@ryadom/ui/components/skeleton'
 import { useClient } from '@/lib/auth'
 import { deviceToday, useLoaded } from '@/lib/diary'
-import { reportReminderOpened } from '@/lib/notifications'
 import { RetryButton, StatePanel } from '../JournalParts'
 import EventsCard from './EventsCard'
 import MonthChart from './MonthChart'
@@ -17,18 +15,12 @@ import WeekCard from './WeekCard'
 /** Segment «Дневник»: the mood card, the month chart, the week summary and the week's events, top to bottom. */
 export default function DiaryHome() {
   const client = useClient()
-  const search = useSearchParams()
   const today = deviceToday()
   const t = parseDate(today)
   const [view, setView] = useState({ year: t.year, month: t.month })
   const key = toMonthKey(view.year, view.month)
   const isCurrent = view.year === t.year && view.month === t.month
   const { state, reload, set } = useLoaded(() => client.getDiary(key), key)
-
-  // The reminder that brought the person here is counted as opened, once.
-  useEffect(() => {
-    reportReminderOpened(client, search)
-  }, [client, search])
 
   const data = state.status === 'ready' ? state.data : null
   const heavyWeek = useMemo(() => {
@@ -65,12 +57,7 @@ export default function DiaryHome() {
 
   return (
     <>
-      <MoodCard
-        today={todayEntry}
-        reminder={data.reminder}
-        onChange={setToday}
-        onReminder={(reminder) => set((d) => ({ ...d, reminder }))}
-      />
+      <MoodCard today={todayEntry} onChange={setToday} />
       <MonthChart
         year={view.year}
         month={view.month}

@@ -102,19 +102,11 @@ import {
   type WidgetTokenApiResponse,
 } from '@ryadom/contracts/api/diary'
 import {
-  NotificationsApiErrorCode,
-  type CreateSubscriptionApiRequest,
-  type NotificationSettingsApiResponse,
-  type SubscriptionApiResponse,
-  type UpdateNotificationSettingsApiRequest,
-} from '@ryadom/contracts/api/notifications'
-import {
   ApiPath,
   dialogEndPath,
   dialogPath,
   dialogSharePath,
   memoryFactPath,
-  notificationSubscriptionPath,
   sessionPath,
   sharedDialogPath,
 } from '@ryadom/contracts/api/paths'
@@ -822,37 +814,6 @@ export function createClient(config: ClientConfig) {
     /** The token of the Android widget; shown once. */
     createWidgetToken: (): Promise<WidgetTokenApiResponse> =>
       apiFetch<WidgetTokenApiResponse>(ApiPath.DiaryWidgetToken, { method: 'POST' }),
-
-    // ─── reminders ────────────────────────────────────────────────────────────
-
-    getNotificationSettings: (): Promise<NotificationSettingsApiResponse> =>
-      apiFetch<NotificationSettingsApiResponse>(ApiPath.NotificationSettings),
-
-    updateNotificationSettings: (
-      data: UpdateNotificationSettingsApiRequest,
-    ): Promise<NotificationSettingsApiResponse> =>
-      apiFetch<NotificationSettingsApiResponse>(ApiPath.NotificationSettings, { method: 'PUT', body: data }),
-
-    createNotificationSubscription: (
-      data: CreateSubscriptionApiRequest,
-    ): Promise<ApiOutcome<SubscriptionApiResponse, NotificationsApiErrorCode>> =>
-      apiOutcome<SubscriptionApiResponse, NotificationsApiErrorCode>(ApiPath.NotificationSubscriptions, {
-        method: 'POST',
-        body: data,
-      }),
-
-    deleteNotificationSubscription: async (id: string): Promise<ApiOutcome<void, NotificationsApiErrorCode>> =>
-      voidOutcome(
-        await apiOutcome<null, NotificationsApiErrorCode>(notificationSubscriptionPath(id), { method: 'DELETE' }),
-      ),
-
-    /** The person opened the app from a reminder. */
-    notificationOpened: async (deliveryId: number): Promise<void> => {
-      await apiOutcome<null, NotificationsApiErrorCode>(ApiPath.NotificationOpened, {
-        method: 'POST',
-        body: { deliveryId },
-      })
-    },
 
     // ─── memory ───────────────────────────────────────────────────────────────
     // What comes back holds the person's own words: the screens show it and keep it in memory only,

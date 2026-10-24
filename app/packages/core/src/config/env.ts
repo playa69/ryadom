@@ -91,27 +91,12 @@ const baseShape = {
   /** Kill switch of links to a conversation (`REQ-DATA-05`): on by default, this turns creating and opening them off. */
   DIALOG_SHARE_DISABLED: booleanFlag,
   /**
-   * The mood diary and its reminders (`REQ-WELL-01`…`04`). Off by default: with it off `/api/diary/*`
-   * and `/api/notifications/*` answer 404, the clients hide the section, and the scheduler does not run.
+   * The mood diary (`REQ-WELL-01`…`03`, `05`). Off by default: with it off `/api/diary/*`
+   * answers 404, the clients hide the section, and the scheduler of the automatic week summaries does not run.
    * Mood values with the account id may count as health data (152-FZ art. 10): get the lawyer's answer
    * (add-mood-diary, task 0.2) before switching it on in production.
    */
   DIARY_ENABLED: booleanFlag,
-  /**
-   * Web Push (VAPID). The public key is handed to browsers; the private key is a SECRET that lets whoever
-   * holds it send notifications to every subscribed browser. `VAPID_SUBJECT` is a `mailto:` or https
-   * address the push services can reach us at. Without the pair Web Push is off (the channel is skipped).
-   */
-  VAPID_PUBLIC_KEY: optionalString,
-  VAPID_PRIVATE_KEY: optionalString,
-  VAPID_SUBJECT: optionalString,
-  /**
-   * The link the bot's «Отметить» button opens: the Mini App on the diary (`https://t.me/<bot>/<app>?startapp=diary`).
-   * Without it the button opens the PWA at `<PUBLIC_APP_URL>/pwa/diary/` as a web_app button.
-   */
-  TELEGRAM_MINI_APP_URL: z.preprocess(emptyToUndefined, z.url().optional()),
-  /** Telegram Bot API address; changed only in tests, to a stub. */
-  TELEGRAM_API_URL: z.preprocess(emptyToUndefined, publicUrl.default('https://api.telegram.org')),
   PUBLIC_WEB_URL: publicUrl,
   /** Where the web client lives (`https://host/app`); the link to a conversation opens there. Without it: `<PUBLIC_APP_URL>/app`. */
   PUBLIC_WEBAPP_URL: z.preprocess(emptyToUndefined, publicUrl.optional()),

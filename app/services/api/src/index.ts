@@ -101,7 +101,7 @@ if (!env.ANONYMOUS_PURGE_DISABLED) {
   setInterval(() => void purge(), 60 * 60_000).unref()
 }
 
-// The mood diary's reminders and weekly summaries (REQ-WELL-01, 02); off with the diary itself.
+// The diary's automatic week summaries (REQ-WELL-01); off with the diary itself.
 if (env.DIARY_ENABLED) startDiaryScheduler(logger)
 
 const server = serve({ fetch: app.fetch, port: env.PORT, createServer }, (info) => {

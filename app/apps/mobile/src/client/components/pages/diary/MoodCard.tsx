@@ -12,7 +12,6 @@ import { diary } from '../../../lib/diary'
 import { deviceDate, previousDate } from '../../../lib/diary-queue'
 import { startTalk } from '../../../lib/nav'
 import MoodFace from './MoodFace'
-import ReminderBlock from './ReminderBlock'
 
 /** Days of «Тяжело» in a row ending today, from the month read (a streak across months is not counted). */
 export function hardStreak(month: DiaryApiResponse['month'], today: string): number {
@@ -91,7 +90,7 @@ export default function MoodCard({ data, f7router }: { data: DiaryApiResponse; f
               ? 'Похоже, сейчас непросто. Можно поговорить со мной или с теми, кто рядом'
               : 'Хочешь рассказать, что случилось?'}
           </p>
-          <div className="rd-reminder-actions">
+          <div className="rd-bridge-actions">
             <Button small round fill data-testid="diary-bridge-talk" onClick={() => startTalk()}>
               Поговорить
             </Button>
@@ -104,7 +103,7 @@ export default function MoodCard({ data, f7router }: { data: DiaryApiResponse; f
         </div>
       )}
 
-      <ReminderBlock reminder={data.reminder} />
+      {/* The line «Напоминать о настроении» goes here: PROTEUS-243 (add-notifications). */}
     </section>
   )
 }

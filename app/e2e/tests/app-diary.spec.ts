@@ -1,6 +1,5 @@
 import type { APIRequestContext } from '@playwright/test'
 import type { DiaryApiResponse } from '@ryadom/contracts/api/diary'
-import type { NotificationSettingsApiResponse } from '@ryadom/contracts/api/notifications'
 import { APP_URL } from '../playwright.config'
 import { button, openApp, openTab, startAnonymously } from '../support/app'
 import { expect, test } from '../support/fixtures'
@@ -9,21 +8,12 @@ import { trackSession } from '../support/session'
 import { seedMarks } from '../support/diary'
 
 /**
- * The mood diary in the app (PWA), `REQ-WELL-01`…`04`: the card in two taps, a change of mind, the chart,
- * the bridge to a conversation, a note made without a network, the year, the reminder question that asks
- * nothing of the system until «Да», and the week summary after three marked days (agent mock: fixed text).
+ * The mood diary in the app (PWA), `REQ-WELL-01`…`03`: the card in two taps, a change of mind, the chart,
+ * the bridge to a conversation, a note made without a network, the year, and the week summary after three marked days (agent mock: fixed text).
  */
 
 /** The day in the browser's zone (the config sets Europe/Moscow), as the diary counts it. */
 const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' })
-
-async function notificationSettings(request: APIRequestContext, accessToken: string) {
-  const response = await request.get(`${APP_URL}/api/notifications/settings`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  expect(response.status(), 'настройки напоминаний').toBe(200)
-  return ((await response.json()) as { result: NotificationSettingsApiResponse }).result
-}
 
 async function serverDiary(request: APIRequestContext, accessToken: string) {
   const response = await request.get(`${APP_URL}/api/diary`, { headers: { Authorization: `Bearer ${accessToken}` } })
@@ -35,15 +25,6 @@ async function serverDiary(request: APIRequestContext, accessToken: string) {
 test('дневник: пустой → отметка в два касания → передумал → график → мост → без сети', async ({ page, request, shot }) => {
   test.setTimeout(180_000)
   const session = trackSession(page)
-  await page.addInitScript(() => {
-    const w = window as unknown as { __permissionAsks: number }
-    w.__permissionAsks = 0
-    const original = Notification.requestPermission.bind(Notification)
-    Notification.requestPermission = (...args: Parameters<typeof original>) => {
-      w.__permissionAsks += 1
-      return original(...args)
-    }
-  })
   await openApp(page)
   await startAnonymously(page)
   await openTab(page, 'Дневник')
@@ -54,10 +35,6 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 0)')
   await expect(diary.getByTestId('diary-selfcheck')).toBeVisible()
   await expect(diary.getByTestId('diary-events-card')).toBeVisible()
-  // The question comes first; the system asks for nothing until «Да».
-  await expect(diary.getByTestId('diary-reminder-offer')).toContainText('Напоминать вечером, в 20:00?')
-  // Nothing has asked the system for the permission yet (the headless browser reports `denied` either way).
-  expect(await page.evaluate(() => (window as unknown as { __permissionAsks: number }).__permissionAsks)).toBe(0)
   await shot(page, 'diary-empty')
 
   // ── two taps ─────────────────────────────────────────────────────────────────────────────
@@ -159,42 +136,20 @@ test('дневник: сегменты — итоги, год, тесты; го�
   await expect(page.locator('.page-current[data-name="diary"]').getByTestId('diary-year-card')).toBeVisible()
 })
 
-test('напоминание: «Да» без разрешения системы не меняет настройку на сервере', async ({ page, request }) => {
-  test.setTimeout(120_000)
-  const session = trackSession(page)
+test('четыре вкладки помещаются на ширине 320px без обрезки подписей', async ({ page, shot }) => {
+  await page.setViewportSize({ width: 320, height: 640 })
   await openApp(page)
   await startAnonymously(page)
-  await openTab(page, 'Дневник')
-  const diary = page.locator('.page-current[data-name="diary"]')
-
-  // The headless browser refuses the system prompt: the row says so, the setting stays as it was.
-  await diary.getByTestId('diary-reminder-yes').click()
-  await expect(diary.getByTestId('diary-reminder-blocked')).toContainText('Уведомления запрещены в настройках')
-  const kept = await notificationSettings(request, session.accessToken())
-  expect(kept.offerAnswered).toBe(true)
-  expect(kept.moodReminder).toMatchObject({ enabled: true, time: '20:00' })
-})
-
-test('напоминание: «Не нужно» выключает его и больше не спрашивает', async ({ page, request, shot }) => {
-  test.setTimeout(120_000)
-  const session = trackSession(page)
-  await openApp(page)
-  await startAnonymously(page)
-  await openTab(page, 'Дневник')
-  const diary = page.locator('.page-current[data-name="diary"]')
-  await diary.getByTestId('diary-reminder-no').click()
-  await expect(diary.getByTestId('diary-reminder-offer')).toHaveCount(0)
-  await expect(diary.getByTestId('diary-reminder-row')).toContainText('Напоминать о настроении')
-  await shot(page, 'diary-reminder-off')
-  const settings = await notificationSettings(request, session.accessToken())
-  expect(settings.offerAnswered).toBe(true)
-  expect(settings.moodReminder.enabled).toBe(false)
-
-  await page.reload()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await openTab(page, 'Дневник')
-  await expect(page.locator('.page-current[data-name="diary"]').getByTestId('diary-reminder-row')).toBeVisible()
-  await expect(page.getByTestId('diary-reminder-offer')).toHaveCount(0)
+  const labels = page.locator('#rd-tabbar .tab-link-text, #rd-tabbar .tabbar-label')
+  await expect(labels).toHaveCount(4)
+  for (const label of await labels.all()) {
+    const fits = await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)
+    expect(fits, `подпись «${await label.textContent()}» обрезана`).toBe(true)
+  }
+  const bar = await page.locator('#rd-tabbar').boundingBox()
+  expect(bar!.x).toBeGreaterThanOrEqual(0)
+  expect(bar!.x + bar!.width).toBeLessThanOrEqual(320)
+  await shot(page, 'diary-tabs-320')
 })
 
 test('итоги недели: после трёх отмеченных дней — кнопка и текст агента; «Люди рядом» после тяжёлой недели', async ({ page, request, shot }) => {

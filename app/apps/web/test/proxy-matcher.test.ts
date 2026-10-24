@@ -19,7 +19,7 @@ describe('matcher proxy.ts', () => {
   it('остальные страницы покрыты, а проба здоровья и статика исключены', () => {
     const catchAll = sources.find((source) => source !== '/')
     expect(catchAll).toBeDefined()
-    for (const excluded of ['api/health', '_next/static', '_next/image', 'favicon.svg', 'voice-worklet.js', 'sw.js']) {
+    for (const excluded of ['api/health', '_next/static', '_next/image', 'favicon.svg', 'voice-worklet.js']) {
       expect(catchAll).toContain(excluded)
     }
   })

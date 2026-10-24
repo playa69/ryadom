@@ -15,12 +15,13 @@ export class UpsertDiarySummaryCommandHandler implements RequestHandler<UpsertDi
         kind: c.kind,
         periodStart: c.periodStart,
         text: c.text,
+        status: 'ready',
         stats: c.stats,
         generatedAt: c.generatedAt,
       })
       .onConflictDoUpdate({
         target: [diarySummaries.userId, diarySummaries.kind, diarySummaries.periodStart],
-        set: { text: c.text, stats: c.stats, generatedAt: c.generatedAt },
+        set: { text: c.text, stats: c.stats, status: 'ready', generatedAt: c.generatedAt },
       })
     return { success: true }
   }

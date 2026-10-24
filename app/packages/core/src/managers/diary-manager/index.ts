@@ -6,6 +6,11 @@ import './queries/get-mood-checkin/get-mood-checkin.handler'
 import './queries/list-mood-checkins/list-mood-checkins.handler'
 import './queries/list-diary-summaries/list-diary-summaries.handler'
 import './queries/list-users-with-recent-checkins/list-users-with-recent-checkins.handler'
+import './commands/claim-diary-summary/claim-diary-summary.handler'
+import './commands/release-diary-summary/release-diary-summary.handler'
+import './commands/create-widget-token/create-widget-token.handler'
+import './commands/revoke-widget-tokens/revoke-widget-tokens.handler'
+import './queries/find-widget-token/find-widget-token.handler'
 
 import type { RequestData } from 'mediatr-ts'
 import { mediatr } from '../../shared'
@@ -25,6 +30,16 @@ export { ListDiarySummariesQuery } from './queries/list-diary-summaries/list-dia
 export type { ListDiarySummariesQueryData } from './queries/list-diary-summaries/list-diary-summaries.query'
 export { ListUsersWithRecentCheckinsQuery } from './queries/list-users-with-recent-checkins/list-users-with-recent-checkins.query'
 export type { ListUsersWithRecentCheckinsQueryData } from './queries/list-users-with-recent-checkins/list-users-with-recent-checkins.query'
+export { ClaimDiarySummaryCommand } from './commands/claim-diary-summary/claim-diary-summary.command'
+export type { ClaimDiarySummaryCommandData } from './commands/claim-diary-summary/claim-diary-summary.command'
+export { ReleaseDiarySummaryCommand } from './commands/release-diary-summary/release-diary-summary.command'
+export type { ReleaseDiarySummaryCommandData } from './commands/release-diary-summary/release-diary-summary.command'
+export { CreateWidgetTokenCommand } from './commands/create-widget-token/create-widget-token.command'
+export type { CreateWidgetTokenCommandData } from './commands/create-widget-token/create-widget-token.command'
+export { RevokeWidgetTokensCommand } from './commands/revoke-widget-tokens/revoke-widget-tokens.command'
+export type { RevokeWidgetTokensCommandData } from './commands/revoke-widget-tokens/revoke-widget-tokens.command'
+export { FindWidgetTokenQuery } from './queries/find-widget-token/find-widget-token.query'
+export type { FindWidgetTokenQueryData } from './queries/find-widget-token/find-widget-token.query'
 
 // 3. Type re-exports (enum — значением, остальное — export type)
 export type { UpsertMoodCheckinCommandResult } from './commands/upsert-mood-checkin/upsert-mood-checkin.types'
@@ -34,6 +49,12 @@ export type { GetMoodCheckinQueryResult } from './queries/get-mood-checkin/get-m
 export type { ListMoodCheckinsQueryResult } from './queries/list-mood-checkins/list-mood-checkins.types'
 export type { ListDiarySummariesQueryResult } from './queries/list-diary-summaries/list-diary-summaries.types'
 export type { ListUsersWithRecentCheckinsQueryResult } from './queries/list-users-with-recent-checkins/list-users-with-recent-checkins.types'
+export type { ClaimDiarySummaryCommandResult } from './commands/claim-diary-summary/claim-diary-summary.types'
+export { ClaimDiarySummaryCommandErrorCode } from './commands/claim-diary-summary/claim-diary-summary.types'
+export type { ReleaseDiarySummaryCommandResult } from './commands/release-diary-summary/release-diary-summary.types'
+export type { CreateWidgetTokenCommandResult } from './commands/create-widget-token/create-widget-token.types'
+export type { RevokeWidgetTokensCommandResult } from './commands/revoke-widget-tokens/revoke-widget-tokens.types'
+export type { FindWidgetTokenQueryResult } from './queries/find-widget-token/find-widget-token.types'
 export type { DiarySummaryDTO, MoodCheckinDTO } from './shared/diary.dto'
 
 // 4. Union type
@@ -44,6 +65,11 @@ import type { GetMoodCheckinQuery } from './queries/get-mood-checkin/get-mood-ch
 import type { ListMoodCheckinsQuery } from './queries/list-mood-checkins/list-mood-checkins.query'
 import type { ListDiarySummariesQuery } from './queries/list-diary-summaries/list-diary-summaries.query'
 import type { ListUsersWithRecentCheckinsQuery } from './queries/list-users-with-recent-checkins/list-users-with-recent-checkins.query'
+import type { ClaimDiarySummaryCommand } from './commands/claim-diary-summary/claim-diary-summary.command'
+import type { ReleaseDiarySummaryCommand } from './commands/release-diary-summary/release-diary-summary.command'
+import type { CreateWidgetTokenCommand } from './commands/create-widget-token/create-widget-token.command'
+import type { RevokeWidgetTokensCommand } from './commands/revoke-widget-tokens/revoke-widget-tokens.command'
+import type { FindWidgetTokenQuery } from './queries/find-widget-token/find-widget-token.query'
 
 export type DiaryManagerRequests =
   | UpsertMoodCheckinCommand
@@ -53,6 +79,11 @@ export type DiaryManagerRequests =
   | ListMoodCheckinsQuery
   | ListDiarySummariesQuery
   | ListUsersWithRecentCheckinsQuery
+  | ClaimDiarySummaryCommand
+  | ReleaseDiarySummaryCommand
+  | CreateWidgetTokenCommand
+  | RevokeWidgetTokensCommand
+  | FindWidgetTokenQuery
 
 // 5. Facade
 export class DiaryManager implements IDiaryManager {

@@ -9,8 +9,8 @@ import { type ListDiarySummariesQueryResult } from './list-diary-summaries.types
 @requestHandler(ListDiarySummariesQuery)
 export class ListDiarySummariesQueryHandler implements RequestHandler<ListDiarySummariesQuery, ListDiarySummariesQueryResult> {
   async handle(c: ListDiarySummariesQuery): Promise<ListDiarySummariesQueryResult> {
-    // `before` is exclusive; `from`/`to` bound the period start; newest first.
-    const conditions = [eq(diarySummaries.userId, c.userId), eq(diarySummaries.kind, c.kind)]
+    // Periods a replica is still writing (`pending`) are not summaries yet. `before` is exclusive; `from`/`to` bound the period start; newest first.
+    const conditions = [eq(diarySummaries.userId, c.userId), eq(diarySummaries.kind, c.kind), eq(diarySummaries.status, 'ready')]
     if (c.before) conditions.push(lt(diarySummaries.periodStart, c.before))
     if (c.from) conditions.push(gte(diarySummaries.periodStart, c.from))
     if (c.to) conditions.push(lte(diarySummaries.periodStart, c.to))

@@ -1,5 +1,7 @@
 import {
   CreateWeekSummaryOperation,
+  CreateWidgetTokenOperation,
+  CreateWidgetTokenOperationErrorCode,
   CreateWeekSummaryOperationErrorCode,
   CreateYearStoryOperation,
   CreateYearStoryOperationErrorCode,
@@ -14,16 +16,11 @@ import {
   ListWeekSummariesOperationErrorCode,
   PutMoodCheckinOperation,
   PutMoodCheckinOperationErrorCode,
+  ResolveWidgetTokenOperation,
+  RevokeWidgetTokenOperation,
   type DiarySummaryDTO,
   type MoodCheckinDTO,
 } from '@ryadom/core/processes/diary'
-import {
-  CreateWidgetTokenOperation,
-  CreateWidgetTokenOperationErrorCode,
-  notificationsProcess,
-  ResolveWidgetTokenOperation,
-  RevokeWidgetTokenOperation,
-} from '@ryadom/core/processes/notifications'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import assertNever from 'assert-never'
 import type { Context, Hono, MiddlewareHandler } from 'hono'
@@ -157,7 +154,6 @@ export function diaryRoutes(app: Hono<AppEnv>, { env, jwt, rateLimiter, sessions
         markedDays: diary.week.markedDays,
         summary: diary.week.summary ? toSummary(diary.week.summary) : null,
       },
-      reminder: diary.reminder,
     }
     return apiOk(c, body)
   })
@@ -248,7 +244,7 @@ export function diaryRoutes(app: Hono<AppEnv>, { env, jwt, rateLimiter, sessions
   // ─── the Android widget ────────────────────────────────────────────────────
 
   app.post(ApiPath.DiaryWidgetToken, requireAuth(jwt), requireActiveSession(sessions), write, async (c) => {
-    const result = await notificationsProcess.execute(new CreateWidgetTokenOperation({ userId: authUser(c).userId }))
+    const result = await diaryProcess.execute(new CreateWidgetTokenOperation({ userId: authUser(c).userId }))
     if (!result.success) {
       switch (result.error) {
         case CreateWidgetTokenOperationErrorCode.USER_NOT_FOUND:
@@ -262,7 +258,7 @@ export function diaryRoutes(app: Hono<AppEnv>, { env, jwt, rateLimiter, sessions
   })
 
   app.delete(ApiPath.DiaryWidgetToken, requireAuth(jwt), requireActiveSession(sessions), write, async (c) => {
-    await notificationsProcess.execute(new RevokeWidgetTokenOperation({ userId: authUser(c).userId }))
+    await diaryProcess.execute(new RevokeWidgetTokenOperation({ userId: authUser(c).userId }))
     return apiOk(c, null)
   })
 
@@ -274,7 +270,7 @@ export function diaryRoutes(app: Hono<AppEnv>, { env, jwt, rateLimiter, sessions
     const header = c.req.header(AppHeader.Authorization)
     const token = header?.startsWith('Widget ') ? header.slice('Widget '.length).trim() : ''
     if (!token) return apiError(c, 401, 'Unauthorised')
-    const resolved = await notificationsProcess.execute(new ResolveWidgetTokenOperation({ token }))
+    const resolved = await diaryProcess.execute(new ResolveWidgetTokenOperation({ token }))
     if (!resolved.userId) return apiError(c, 401, 'Unauthorised')
     c.set('auth', { userId: resolved.userId, sessionId: null })
     return next()

@@ -10,12 +10,11 @@ import {
 } from '../support/web'
 
 /**
- * Дневник настроения в вебе (`REQ-WELL-01`, `REQ-WELL-02`, `openspec/changes/add-mood-diary`): отметка
- * в два касания, «передумал», мост к разговору, график, «Год в пикселях» с подписью клетки, вопрос о
- * напоминании и картинка «Поделиться моим годом». Один сценарий на одну регистрацию, как в остальных
+ * Дневник настроения в вебе (`REQ-WELL-01`, `openspec/changes/add-mood-diary`): отметка
+ * в два касания, «передумал», мост к разговору, график, «Год в пикселях» с подписью клетки и картинка «Поделиться моим годом». Один сценарий на одну регистрацию, как в остальных
  * web-спеках. Итоги недели от трёх отмеченных дней проверяются отдельно (нужны данные за прошлые дни).
  */
-test('дневник: отметка в два касания, график, мост, год и напоминание', async ({ page, shot }) => {
+test('дневник: отметка в два касания, график, мост, год и «Поделиться»', async ({ page, shot }) => {
   test.setTimeout(180_000)
   await clearMailbox()
   // Headless Chromium on desktop has no file sharing: the picture must fall back to a download.
@@ -82,19 +81,7 @@ test('дневник: отметка в два касания, график, м�
   await page.getByTestId('diary-bridge-talk').click()
   await expect(page).toHaveURL(/\/home$/)
 
-  // ── вопрос о напоминании: до «Да» никакого системного запроса ─────────────
   await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-reminder-offer')).toContainText('Напоминать вечером, в 20:00?')
-  await page.getByTestId('diary-reminder-yes').click()
-  await expect(page.getByTestId('diary-reminder-offer')).toHaveCount(0)
-  await expect(page.getByTestId('diary-reminder-switch')).toHaveAttribute('aria-checked', 'true')
-  await expect(page.getByTestId('diary-reminder-time')).toHaveValue('20:00')
-  await page.getByTestId('diary-reminder-time').selectOption('21:30')
-  await page.reload()
-  await expect(page.getByTestId('diary-reminder-time')).toHaveValue('21:30')
-  await page.getByTestId('diary-reminder-switch').click()
-  await expect(page.getByTestId('diary-reminder-switch')).toHaveAttribute('aria-checked', 'false')
-  await shot(page, 'web-diary-reminder')
 
   // ── сегменты: «Итоги» и «Тесты» — пустые состояния, «Год» — сетка ────────
   await page.getByTestId('diary-segment-recaps').click()

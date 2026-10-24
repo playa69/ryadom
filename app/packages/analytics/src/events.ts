@@ -121,14 +121,9 @@ export enum AnalyticsEvent {
   WeekSummaryGenerated = 'week_summary_generated',
   /** Server. The year story was written. */
   YearStoryGenerated = 'year_story_generated',
-  /** Server. A reminder went out to a channel. */
-  MoodReminderSent = 'mood_reminder_sent',
   DiaryOpened = 'diary_opened',
   MoodBridgeClicked = 'mood_bridge_clicked',
   YearShared = 'year_shared',
-  MoodReminderSetting = 'mood_reminder_setting',
-  MoodReminderOpened = 'mood_reminder_opened',
-  MoodReminderPaused = 'mood_reminder_paused',
   WidgetPinRequested = 'widget_pin_requested',
 
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
@@ -238,7 +233,6 @@ export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
 
 export type DiaryTab = 'diary' | 'recaps' | 'year' | 'tests'
 export type MoodSourceName = 'app' | 'widget' | 'reminder' | 'telegram'
-export type ReminderChannelName = 'web_push' | 'telegram' | 'native_local'
 
 export type PasswordChangeKind = 'change' | 'reset'
 
@@ -335,13 +329,9 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MoodCheckedIn]: { source: MoodSourceName; with_factor: boolean; changed: boolean }
   [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'button' | 'auto' }
   [AnalyticsEvent.YearStoryGenerated]: NoProperties
-  [AnalyticsEvent.MoodReminderSent]: { channel: ReminderChannelName }
   [AnalyticsEvent.DiaryOpened]: { tab: DiaryTab }
   [AnalyticsEvent.MoodBridgeClicked]: { target: 'dialog' | 'people' }
   [AnalyticsEvent.YearShared]: NoProperties
-  [AnalyticsEvent.MoodReminderSetting]: { enabled: boolean; time_changed: boolean }
-  [AnalyticsEvent.MoodReminderOpened]: { channel: ReminderChannelName }
-  [AnalyticsEvent.MoodReminderPaused]: NoProperties
   [AnalyticsEvent.WidgetPinRequested]: { result: 'requested' | 'unsupported' | 'failed' }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }

@@ -57,20 +57,11 @@ export interface DiarySummaryApi {
   generatedAt: string
 }
 
-export interface DiaryReminderApi {
-  enabled: boolean
-  /** `HH:mm`, local time. */
-  time: string
-  paused: boolean
-  offerAnswered: boolean
-}
-
 /** `GET /api/diary?month=YYYY-MM` (the current month by default). */
 export interface DiaryApiResponse {
   today: { mood: MoodLevel; factor: MoodFactor | null } | null
   month: MoodCheckinApi[]
   week: { start: string; markedDays: number; summary: DiarySummaryApi | null }
-  reminder: DiaryReminderApi
 }
 
 /** `PUT /api/diary/checkins/today`: save or replace; `date` is for the offline queue only. */

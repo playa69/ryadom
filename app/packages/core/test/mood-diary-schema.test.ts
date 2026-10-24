@@ -4,7 +4,7 @@
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { moodCheckins, notificationDeliveries, users } from '@ryadom/db/schema'
+import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import { getDb } from '../src/shared'
 import { registerConfirmedUser } from './helpers'
 
@@ -39,12 +39,17 @@ describe('схема дневника настроения', () => {
     await db.insert(moodCheckins).values(note(user.id, { localDate: '2026-03-06', factor: 'sleep', source: 'widget' }))
   })
 
-  it('одна доставка напоминания на человека, вид и день: вторая запись отклоняется', async () => {
+  it('итог периода один на человека, вид и начало периода; статус — pending или ready', async () => {
     const user = await registerConfirmedUser()
     const db = getDb()
-    const delivery = { userId: user.id, kind: 'mood', localDate: '2026-03-01', channel: 'web_push' }
-    await db.insert(notificationDeliveries).values(delivery)
-    await expect(db.insert(notificationDeliveries).values({ ...delivery, channel: 'telegram' })).rejects.toThrow()
+    const summary = { userId: user.id, kind: 'week' as const, periodStart: '2026-10-19', text: 'текст' }
+    await db.insert(diarySummaries).values(summary)
+    await expect(db.insert(diarySummaries).values({ ...summary, text: 'другой' })).rejects.toThrow()
+    await expect(
+      db.insert(diarySummaries).values({ ...summary, periodStart: '2026-10-26', status: 'done' as never }),
+    ).rejects.toThrow()
+    const [row] = await db.select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    expect(row?.status).toBe('ready')
   })
 
   it('строки дневника уходят вместе с аккаунтом (ON DELETE CASCADE)', async () => {

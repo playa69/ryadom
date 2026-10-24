@@ -1,5 +1,5 @@
 /**
- * The mood diary over HTTP (`REQ-WELL-01`…`04`): flag off, two taps, summaries, reminders, the
+ * The mood diary over HTTP (`REQ-WELL-01`…`03`): flag off, two taps, summaries, the
  * widget token. The core is real, the agent is a stub.
  */
 import { eq } from 'drizzle-orm'
@@ -14,7 +14,6 @@ import {
   type PutMoodCheckinApiResponse,
   type WidgetTokenApiResponse,
 } from '@ryadom/contracts/api/diary'
-import type { NotificationSettingsApiResponse, SubscriptionApiResponse } from '@ryadom/contracts/api/notifications'
 import { call, json, makeApp, mockFetch, ok, refusedWith, signUpAndIn } from './helpers'
 
 const { app, resetLimits } = makeApp({ env: { DIARY_ENABLED: 'true' } })
@@ -37,7 +36,7 @@ describe('флаг DIARY_ENABLED', () => {
     const off = makeApp()
     const login = await signUpAndIn(off.app)
     const token = login.tokens.accessToken
-    for (const path of ['/api/diary', '/api/diary/year', '/api/notifications/settings']) {
+    for (const path of ['/api/diary', '/api/diary/year']) {
       expect((await call(off.app, 'GET', path, undefined, token)).status).toBe(404)
     }
     expect(ok<MeApiResponse>(await call(off.app, 'GET', '/api/auth/me', undefined, token)).diaryEnabled).toBe(false)
@@ -66,7 +65,7 @@ describe('отметка в два касания', () => {
     const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
     expect(diary.today).toEqual({ mood: 4, factor: 'work' })
     expect(diary.month).toHaveLength(1)
-    expect(diary.reminder).toEqual({ enabled: true, time: '20:00', paused: false, offerAnswered: false })
+    expect(diary).not.toHaveProperty('reminder')
 
     const year = ok<DiaryYearApiResponse>(await call(app, 'GET', '/api/diary/year', undefined, token))
     expect(year).toMatchObject({ markedDays: 1, mostFrequent: 4, weeklyCount: 0, story: null })
@@ -146,47 +145,6 @@ describe('итоги недели', () => {
         json({ available: true, mode: 'on', enabled: true, consentVersion: 'v', consentAt: null, rulesVersion: '1', limits: { maxFacts: 50 }, facts: [] }),
     })
     expect(ok(await call(app, 'GET', '/api/diary/events', undefined, token))).toEqual({ memoryEnabled: true, items: [] })
-  })
-})
-
-describe('напоминания', () => {
-  it('настройка: по умолчанию 20:00, меняется, плохое время — 422; «Вернуть» — тот же вызов с enabled', async () => {
-    const { token } = await signedIn()
-    const settings = ok<NotificationSettingsApiResponse>(await call(app, 'GET', '/api/notifications/settings', undefined, token))
-    expect(settings).toMatchObject({ moodReminder: { enabled: true, time: '20:00', paused: false }, offerAnswered: false, subscriptions: [] })
-
-    const changed = ok<NotificationSettingsApiResponse>(
-      await call(app, 'PUT', '/api/notifications/settings', { moodReminder: { time: '21:30' }, offerAnswered: true }, token),
-    )
-    expect(changed).toMatchObject({ moodReminder: { time: '21:30' }, offerAnswered: true })
-    expect((await call(app, 'PUT', '/api/notifications/settings', { moodReminder: { time: '07:00' } }, token)).status).toBe(422)
-  })
-
-  it('подписка: создать, увидеть в настройках, удалить; чужая не удаляется', async () => {
-    const mine = await signedIn()
-    const created = ok<SubscriptionApiResponse>(
-      await call(
-        app,
-        'POST',
-        '/api/notifications/subscriptions',
-        { channel: 'web_push', endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' }, deviceLabel: 'Chrome' },
-        mine.token,
-      ),
-    )
-    const settings = ok<NotificationSettingsApiResponse>(await call(app, 'GET', '/api/notifications/settings', undefined, mine.token))
-    expect(settings.subscriptions).toEqual([expect.objectContaining({ id: created.id, channel: 'web_push', deviceLabel: 'Chrome' })])
-
-    const other = await signedIn()
-    refusedWith(await call(app, 'DELETE', `/api/notifications/subscriptions/${created.id}`, undefined, other.token), 'SUBSCRIPTION_NOT_FOUND')
-    ok(await call(app, 'DELETE', `/api/notifications/subscriptions/${created.id}`, undefined, mine.token))
-  })
-
-  it('подписка с адресом не https — отказ', async () => {
-    const { token } = await signedIn()
-    refusedWith(
-      await call(app, 'POST', '/api/notifications/subscriptions', { channel: 'web_push', endpoint: 'http://x.test', keys: { p256dh: 'p', auth: 'a' } }, token),
-      'INVALID_SUBSCRIPTION',
-    )
   })
 })
 

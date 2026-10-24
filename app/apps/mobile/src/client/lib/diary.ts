@@ -20,7 +20,7 @@ import {
 } from './diary-queue'
 
 /**
- * The diary's data on screen: today's note, the month, the week and the reminder. Module state like
+ * The diary's data on screen: today's note, the month, and the week. Module state like
  * the journal, so the segments share one read and a note made on the card shows on the chart at once.
  * The moods are the person's own: they live here and on the server, never in logs or analytics.
  *

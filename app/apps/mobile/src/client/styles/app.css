@@ -2699,7 +2699,6 @@ input:-webkit-autofill:focus {
 }
 
 .rd-mood-factors-title,
-.rd-reminder-title,
 .rd-bridge-text {
   margin: var(--ryadom-s-4) 0 var(--ryadom-s-2);
   font-size: 15px;
@@ -2733,57 +2732,20 @@ input:-webkit-autofill:focus {
   font-weight: 600;
 }
 
-.rd-bridge,
-.rd-reminder,
-.rd-reminder-offer {
+.rd-bridge {
   margin-top: var(--ryadom-s-4);
   padding-top: var(--ryadom-s-3);
   border-top: 1px solid var(--ryadom-line);
 }
 
-.rd-bridge-text,
-.rd-reminder-title {
+.rd-bridge-text {
   margin-top: 0;
 }
 
-.rd-reminder-actions {
+.rd-bridge-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--ryadom-s-2);
-}
-
-.rd-reminder-line {
-  display: flex;
-  gap: var(--ryadom-s-3);
-  align-items: center;
-}
-
-.rd-reminder-line .rd-reminder-title {
-  flex: 1 1 auto;
-  margin: 0;
-}
-
-.rd-reminder-time {
-  min-height: 34px;
-  padding: 0 8px;
-  border: 1px solid var(--ryadom-line-strong);
-  border-radius: 10px;
-  background: var(--ryadom-surface-2);
-  font: inherit;
-  font-size: 14px;
-  color: var(--ryadom-text);
-}
-
-.rd-reminder-paused {
-  display: flex;
-  gap: var(--ryadom-s-3);
-  align-items: center;
-  justify-content: space-between;
-  margin-top: var(--ryadom-s-3);
-}
-
-.rd-reminder-hint {
-  margin-top: var(--ryadom-s-3);
 }
 
 .rd-chart-head {

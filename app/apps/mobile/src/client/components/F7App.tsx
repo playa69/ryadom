@@ -71,7 +71,7 @@ function SignedInViews() {
   const { auth } = useAuth()
   const userId = auth.user?.id ?? null
 
-  // The diary's day, the reminder and the summaries follow the person's zone: the device tells it on
+  // The diary's day and the summaries follow the person's zone: the device tells it on
   // opening and whenever the app comes back (a trip changes it).
   useEffect(() => {
     if (!DIARY_ENABLED || !userId) return
@@ -81,7 +81,7 @@ function SignedInViews() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [userId])
 
-  // A reminder or the PWA shortcut opens the diary.
+  // The PWA shortcut opens the diary.
   useEffect(() => (DIARY_ENABLED ? initLaunchRouting() : undefined), [])
 
   return (

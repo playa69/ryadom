@@ -25,7 +25,6 @@ import {
 import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
 import { DeleteUserDialogSharesCommand, dialogSharesManager } from '../../../managers/dialog-shares-manager'
 import { DeleteUserDiaryCommand, diaryManager } from '../../../managers/diary-manager'
-import { DeleteUserNotificationsCommand, notificationsManager } from '../../../managers/notifications-manager'
 import { buildDeletionArchive } from '../shared/deletion-archive'
 import { PROCESSES_CONFIG } from '../../config'
 import { DeleteAccountOperation } from './delete-account.operation'
@@ -92,9 +91,8 @@ export class DeleteAccountOperationHandler implements RequestHandler<DeleteAccou
       await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
       // Links to the person's conversations die with the account (`REQ-DATA-05`).
       await dialogSharesManager.execute(new DeleteUserDialogSharesCommand({ userId }))
-      // Marks, summaries, reminder settings and devices, delivery log and widget tokens: before the row is anonymized.
+      // Marks, summaries and widget tokens of the diary: before the row is anonymized.
       await diaryManager.execute(new DeleteUserDiaryCommand({ userId }))
-      await notificationsManager.execute(new DeleteUserNotificationsCommand({ userId }))
       // By email, not by userId: codes are not tied to an account. An anonymous account has none.
       if (user.email !== null)
         await emailCodesManager.execute(new DeleteEmailCodesCommand({ email: user.email }))

@@ -66,9 +66,4 @@ export const {
   createYearStory,
   getDiaryEvents,
   createWidgetToken,
-  getNotificationSettings,
-  updateNotificationSettings,
-  createNotificationSubscription,
-  deleteNotificationSubscription,
-  notificationOpened,
 } = client

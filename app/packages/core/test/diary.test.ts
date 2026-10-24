@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import {
   CreateWeekSummaryOperation,
+  CreateWidgetTokenOperation,
   CreateYearStoryOperation,
   CreateWeekSummaryOperationErrorCode,
   CreateYearStoryOperationErrorCode,
@@ -15,6 +16,7 @@ import {
   GetDiaryEventsOperation,
   GetDiaryOperation,
   GetYearOperation,
+  ListWeekSummariesOperation,
   PutMoodCheckinOperation,
   RunWeeklyDigestsOperation,
 } from '../src/processes/diary'
@@ -78,7 +80,7 @@ describe('отметка настроения', () => {
 })
 
 describe('экран дневника', () => {
-  it('отдаёт сегодняшнюю отметку, месяц, неделю и настройку напоминания по умолчанию', async () => {
+  it('отдаёт сегодняшнюю отметку, месяц и неделю', async () => {
     const user = await registerConfirmedUser()
     await mark(user.id, '2026-10-19', 2)
     await put(user.id, { mood: 4, factor: 'sleep' })
@@ -87,7 +89,7 @@ describe('экран дневника', () => {
     expect(view.diary.today).toMatchObject({ date: '2026-10-24', mood: 4, factor: 'sleep' })
     expect(view.diary.month.map((d) => d.date)).toEqual(['2026-10-19', '2026-10-24'])
     expect(view.diary.week).toMatchObject({ start: '2026-10-19', markedDays: 2, summary: null })
-    expect(view.diary.reminder).toEqual({ enabled: true, time: '20:00', paused: false, offerAnswered: false })
+    expect(view.diary).not.toHaveProperty('reminder')
   })
 
   it('«События этой недели»: память включена — пустой список; агент недоступен — не ошибка', async () => {
@@ -237,27 +239,87 @@ describe('год в пикселях', () => {
 })
 
 describe('удаление аккаунта', () => {
-  it('стирает отметки, итоги, настройки, подписки, доставки и токены виджета до анонимизации', async () => {
+  it('стирает отметки, итоги и токены виджета до анонимизации', async () => {
     const { accountDeletionProcess, DeleteAccountOperation } = await import('../src/processes/account-deletion')
-    const { CreateWidgetTokenOperation, notificationsProcess, UpdateNotificationSettingsOperation, CreateSubscriptionOperation } =
-      await import('../src/processes/notifications')
     const { mockAgent } = await import('./helpers')
-    const { moodCheckins: marks, diarySummaries: summaries, notificationSettings: settings, pushSubscriptions: subs, widgetTokens } =
-      await import('@ryadom/db/schema')
+    const { moodCheckins: marks, diarySummaries: summaries, widgetTokens } = await import('@ryadom/db/schema')
     const user = await registerConfirmedUser()
     mockAgent()
     await mark(user.id, '2026-10-19')
     await getDb().insert(summaries).values({ userId: user.id, kind: 'week', periodStart: '2026-10-19', text: 'итог', stats: null })
-    await notificationsProcess.execute(new UpdateNotificationSettingsOperation({ userId: user.id, time: '21:00' }))
-    await notificationsProcess.execute(
-      new CreateSubscriptionOperation({ userId: user.id, channel: 'web_push', endpoint: 'https://push.example/x', p256dh: 'p', auth: 'a' }),
-    )
-    await notificationsProcess.execute(new CreateWidgetTokenOperation({ userId: user.id }))
+    const widget = await diaryProcess.execute(new CreateWidgetTokenOperation({ userId: user.id }))
+    expect(widget.success).toBe(true)
 
     expect(await accountDeletionProcess.execute(new DeleteAccountOperation({ userId: user.id }))).toEqual({ success: true })
 
-    for (const table of [marks, summaries, settings, subs, widgetTokens]) {
+    for (const table of [marks, summaries, widgetTokens]) {
       expect(await getDb().select().from(table).where(eq(table.userId, user.id))).toEqual([])
     }
+  })
+})
+
+describe('тик итогов недели: период занимает одна реплика', () => {
+  const MONDAY_0630 = new Date('2026-10-26T03:30:00Z')
+
+  it('две реплики одновременно — агент вызван один раз, итог один; пока считается — его нет в списках', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const { calls } = mockFetch({
+      'POST http://agent.test/v1/users/*/digests': async () => {
+        await gate
+        return digestRoute()
+      },
+    })
+    const first = diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))
+    const second = diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))
+    // While the agent writes, the period is a `pending` row and the person has no summary yet.
+    await new Promise((r) => setTimeout(r, 300))
+    const pending = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    expect(pending).toMatchObject([{ status: 'pending', text: '' }])
+    const listed = await diaryProcess.execute(new ListWeekSummariesOperation({ userId: user.id }))
+    expect(listed).toMatchObject({ success: true, summaries: [] })
+    release()
+    const results = await Promise.all([first, second])
+    expect(results.map((r) => (r.success ? r.weekly : 0)).sort()).toEqual([0, 1])
+    expect(calls.filter((c) => c.url.pathname.endsWith('/digests'))).toHaveLength(1)
+    const rows = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    expect(rows).toMatchObject([{ status: 'ready', stats: { final: true } }])
+  })
+
+  it('агент не ответил — занятость снимается, следующий тик пробует снова', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({}, 502) })
+    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 0 })
+    expect(await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))).toEqual([])
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 1 })
+  })
+
+  it('занятость, которую не завершила реплика, через 15 минут считается брошенной', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
+    await getDb().insert(diarySummaries).values({
+      userId: user.id, kind: 'week', periodStart: '2026-10-19', text: '', status: 'pending', generatedAt: new Date(MONDAY_0630.getTime() - 5 * 60_000),
+    })
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 0 })
+    const later = new Date(MONDAY_0630.getTime() + 11 * 60_000)
+    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: later }))).toMatchObject({ weekly: 1 })
+  })
+
+  it('итог, собранный кнопкой на неделе, закрывается окончательным в понедельник', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
+    await getDb().insert(diarySummaries).values({
+      userId: user.id, kind: 'week', periodStart: '2026-10-19', text: 'черновик', stats: { final: false }, generatedAt: new Date('2026-10-21T10:00:00Z'),
+    })
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 1 })
+    const [row] = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    expect(row).toMatchObject({ status: 'ready', stats: { final: true } })
+    expect(row?.text).not.toBe('черновик')
   })
 })

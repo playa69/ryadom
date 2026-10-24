@@ -67,9 +67,3 @@ export function useLoaded<T>(load: () => Promise<T>, key: string) {
   }, [])
   return { state, reload, set }
 }
-
-/** Times a reminder may be set to: 08:00 to 22:30, every half hour. */
-export const REMINDER_TIMES: string[] = Array.from({ length: 30 }, (_, i) => {
-  const minutes = 8 * 60 + i * 30
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
-})
