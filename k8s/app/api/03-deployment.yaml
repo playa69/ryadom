@@ -65,7 +65,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/api:0.9.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/api:0.9.3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

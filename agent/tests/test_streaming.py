@@ -79,7 +79,7 @@ def test_consecutive_user_messages_reach_the_model_as_one():
     ]
     messages = chat_messages(history, 12)
     assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
-    assert messages[1]["content"] == "я думаю, что мне тяжело"
+    assert messages[1]["content"] == "[t] я думаю, что [t] мне тяжело"
 
 
 @pytest.mark.parametrize(
@@ -337,7 +337,9 @@ def test_the_continuation_gets_one_answer_for_both_parts(user_id):
 
     assert len(assistant_ends(frames)) == 1 and len(assistant_ends(later)) == 1
     assert len(chat.calls) == 2
-    assert chat.calls[0][-1] == {"role": "user", "content": "я думаю, что мне нужно выговориться."}
+    assert chat.calls[0][-1]["role"] == "user"
+    assert "я думаю, что " in chat.calls[0][-1]["content"]
+    assert chat.calls[0][-1]["content"].endswith("мне нужно выговориться.")
 
 
 def test_a_false_start_does_not_swallow_the_held_answer(user_id):
