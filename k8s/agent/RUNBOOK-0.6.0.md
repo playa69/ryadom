@@ -108,8 +108,9 @@ kubectl -n agent logs deploy/agent | grep -E "migrated schema|agent started|dial
 
 ```bash
 # api, затем клиенты (новые клиенты просят Opus; api без этого образа не выберет кодек, и всем уйдёт PCM)
-# app-config ТОЛЬКО патчем (не apply -f 00-app-config.yaml: живой конфиг ушёл от файла по почте SMTP_*, apply целиком её сломает)
-kubectl -n prod patch configmap app-config --type merge --patch-file k8s/app/00-app-config-audio.patch.yaml
+# app-config: при выкате 0.6.0 применялся точечным патчем (файл тогда расходился с кластером по почте SMTP_*); теперь файл
+# совпадает с кластером (почта через Unisender Go), обычный apply безопасен: kubectl diff -f k8s/app/00-app-config.yaml
+kubectl apply -f k8s/app/00-app-config.yaml
 kubectl apply -f k8s/app/api/03-deployment.yaml
 kubectl -n prod rollout status deploy/app-api --timeout=300s
 kubectl apply -f k8s/app/web/03-deployment.yaml -f k8s/app/pwa/03-deployment.yaml

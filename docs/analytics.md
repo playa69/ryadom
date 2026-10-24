@@ -94,20 +94,21 @@
 
 ## Каталог событий
 
-Полный список с типами свойств — [`events.ts`](../app/packages/analytics/src/events.ts). К каждому событию добавляются `app_env` (`local`/`staging`/`prod`: один проект на все окружения) и, у клиентов, `app_platform` (`web`, `pwa`, `android`, `ios`, `landing`) и `app_version`.
+Полный список с типами свойств — [`events.ts`](../app/packages/analytics/src/events.ts). К каждому событию добавляются `app_env` (`local`/`staging`/`prod`: один проект на все окружения) и, у клиентов, `app_platform` (`web`, `pwa`, `telegram` — PWA, открытая как Mini App в Telegram, `android`, `ios`, `landing`) и `app_version`.
 
 **Сервер** (`services/api`):
 
 | Событие | Когда | Свойства |
 |---|---|---|
-| `account_created` | регистрация по почте; первый запуск (анонимный аккаунт) | `kind`: `email`/`anonymous` |
+| `account_created` | регистрация по почте; первый запуск (анонимный аккаунт или аккаунт Telegram в Mini App) | `kind`: `email`/`anonymous`/`telegram` |
 | `email_confirmed` | принят шестизначный код | — |
-| `user_logged_in` | пароль / устройство | `method` |
+| `user_logged_in` | пароль / устройство / Telegram | `method` |
 | `user_logged_out` | выход; «выйти везде» | `all_devices` |
 | `session_revoked` | человек завершил одну сессию | — |
 | `password_changed`, `password_reset_completed` | смена и сброс пароля | — |
 | `password_reset_requested` | запрос кода сброса (**без человека**) | — |
 | `email_linked` | анонимный аккаунт получил почту | — |
+| `telegram_linked` | аккаунт взял Telegram, в котором открыт Mini App (после входа по почте там или анонимный аккаунт этого устройства) | — |
 | `consents_accepted` | первый экран: возраст, «это не терапия», условия | `policy_version` |
 | `profile_updated` | изменено имя и/или голос | `fields` (только названия полей) |
 | `account_deleted` | аккаунт удалён (**без человека**) | — |

@@ -9,6 +9,7 @@ import {
 import { getVersionHeaders, notifyUpgradeRequired } from './app-update'
 import { getApiBase, getWsBase } from './env'
 import { isAndroid, isIosNative } from './platform'
+import { isTelegramLaunch } from './telegram'
 
 /**
  * Everything Capacitor- and Vite-specific that the shared client (@ryadom/client-core) needs, and
@@ -116,8 +117,15 @@ export const client = createClient({
   apiBase: getApiBase,
   wsBase: getWsBase,
   storage,
-  // The same code runs in both store builds and as a PWA; the logs tell them apart by this.
-  clientId: isAndroid() ? 'ryadom-android' : isIosNative() ? 'ryadom-ios' : 'ryadom-pwa',
+  // The same code runs in both store builds, as a PWA and as the Telegram Mini App; the logs and the
+  // list of sessions tell them apart by this.
+  clientId: isAndroid()
+    ? 'ryadom-android'
+    : isIosNative()
+      ? 'ryadom-ios'
+      : isTelegramLaunch()
+        ? 'ryadom-telegram'
+        : 'ryadom-pwa',
   versionHeaders: getVersionHeaders,
   onUpgradeRequired: notifyUpgradeRequired,
   onAccountUnavailable: (code) => {

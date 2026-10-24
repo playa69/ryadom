@@ -42,6 +42,11 @@ def fake_db_files() -> Iterator[None]:
 for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL", "STT_MODEL"):
     os.environ.pop(leaked, None)
 
+# app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
+# чьё отсутствие ждут тесты (умолчания LlmSettings и отказы build_models).
+for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL", "STT_MODEL"):
+    os.environ.pop(leaked, None)
+
 TOKEN = "test-internal-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 

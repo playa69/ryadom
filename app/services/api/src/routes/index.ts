@@ -16,6 +16,7 @@ import { registerRoutes } from './auth/register'
 import { resendConfirmationRoutes } from './auth/resend-confirmation'
 import { resetPasswordRoutes } from './auth/reset-password'
 import { sessionsRoutes } from './auth/sessions'
+import { telegramRoutes } from './auth/telegram'
 import { dialogsRoutes } from './dialogs'
 import { healthRoutes } from './health'
 import { memoryRoutes } from './memory'
@@ -34,6 +35,7 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   loginRoutes(app, deps)
   deviceRoutes(app, deps)
   linkEmailRoutes(app, deps)
+  telegramRoutes(app, deps)
   refreshRoutes(app, deps)
   logoutRoutes(app, deps)
   sessionsRoutes(app, deps)

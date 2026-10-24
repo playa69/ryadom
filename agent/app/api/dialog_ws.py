@@ -2,7 +2,8 @@
 
 Один сокет на диалог. Реплики идут в очередь и обрабатываются по одной; `tts_cancel` действует сразу.
 Ответ пишет чат-модель (app.clients.llm), голос человека распознаёт whisper, ответ озвучивает app.clients.speech.
-Если модель недоступна, агент отвечает шаблоном (app.services.replies).
+Если модель не ответила, клиент получает `error AGENT_LLM_UNAVAILABLE`, а не шаблон. Заглушка из app.services.replies отвечает
+только в режиме без моделей (`LLM_MODE=template`: разработка и тесты).
 """
 
 import asyncio
@@ -195,8 +196,10 @@ class DialogSession:
         self._ws = websocket
         self._store = store
         self._dialog = dialog
-        # Без моделей (`LLM_MODE=template`) агент отвечает шаблоном, а голос превращает в заглушку.
+        # Без моделей (`LLM_MODE=template`) агент отвечает заглушкой, а голос превращает в заглушку.
         self._chat = chat
+        # Заглушка вместо ответа — только в режиме без моделей. С моделью её нет: молчание модели — ошибка, а не шаблон.
+        self._stub_replies = chat is None
         self._recognizer = recognizer
         # Озвучка берётся при каждой реплике: dev-режим может выключить её на лету.
         self._tts_source = tts_source
@@ -595,7 +598,7 @@ class DialogSession:
     # ─── ответ ────────────────────────────────────────────────────────────────
 
     def _template(self) -> str:
-        """Следующий шаблонный ответ: когда модель недоступна, молчит или это `LLM_MODE=template`."""
+        """Следующий ответ-заглушка режима без моделей (`LLM_MODE=template`)."""
         text = next_reply(self._dialog.reply_index)
         self._dialog.reply_index += 1
         return text
@@ -623,7 +626,7 @@ class DialogSession:
         assert self._chat is not None
         # Сводка памяти — из кэша процесса (I3); у разговора «Без памяти» и при любой ошибке памяти она пустая.
         memory = self._store.memory_brief(self._dialog)
-        messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages, memory)
+        messages = chat_messages(self._dialog.messages, APP_CONFIG.llm.history_messages, memory, self._dialog.voice)
         generation = self._tracer.start_generation(trace, name="chat", model=self._chat.name, input=messages)
         # Расход токенов умеет отдавать только настоящий прокси (финальный SSE-кусок), у фейков и шаблонов его нет.
         usage_sink: list[dict[str, Any]] | None = [] if isinstance(self._chat, ProxyChat) else None
@@ -718,8 +721,10 @@ class DialogSession:
         finally:
             generation.end()
 
-    async def _reply(self, crisis: bool, turn: Turn | None = None) -> None:
-        """Ответ потоком: первое предложение уходит в текст и в озвучку, как только модель его дописала."""
+    async def _reply(self, crisis: bool, turn: Turn | None = None, text: str | None = None) -> None:
+        """Ответ потоком: первое предложение уходит в текст и в озвучку, как только модель его дописала.
+
+        `text` — готовая фраза вместо ответа модели (например, просьба повторить): идёт тем же путём, что кризисный ответ."""
         dialog = self._dialog
         turn = turn or Turn(started=time.monotonic())
         message_id = str(uuid.uuid4())
@@ -763,6 +768,8 @@ class DialogSession:
         try:
             if crisis:
                 await deliver(self._fixed(CRISIS_REPLY))
+            elif text is not None:
+                await deliver(self._fixed(text))
             else:
                 if self._chat is not None:
                     # Расход чат-модели — на её ответ; если ответа нет (отказ, пусто), на диалог.
@@ -775,12 +782,16 @@ class DialogSession:
                             logger.warning("chat failed dialog=%s: %s", dialog.id, str(error) or type(error).__name__)
                         else:
                             if not sentences:
-                                logger.warning("chat returned nothing dialog=%s, using a template", dialog.id)
+                                logger.warning("chat returned nothing dialog=%s", dialog.id)
                         finally:
                             self._store.add_usage(dialog, message_id, spent)
-                if not sentences:
+                if not sentences and self._stub_replies:
                     used_template = True
                     await deliver(self._fixed(self._template()))
+                elif not sentences:
+                    # Шаблона вместо ответа нет: не зная сказанного, он звучал невпопад. Человек видит честное «сейчас не могу
+                    # ответить» и может повторить.
+                    await self._send({"type": "error", "code": "AGENT_LLM_UNAVAILABLE", "message": "Модель не ответила"})
         finally:
             if speech is not None:
                 speech.close()

@@ -32,6 +32,8 @@ export enum AnalyticsEvent {
   PasswordResetCompleted = 'password_reset_completed',
   /** An anonymous account got an email and became a regular one. */
   EmailLinked = 'email_linked',
+  /** An account took the Telegram user of the Mini App it was open in (after a sign-in by email there). */
+  TelegramLinked = 'telegram_linked',
   /** The first screen: age, "this is not therapy", terms and personal data. */
   ConsentsAccepted = 'consents_accepted',
   /** Which fields of the profile changed, never their values. */
@@ -118,11 +120,14 @@ export enum AnalyticsEvent {
   StoreLinkClicked = 'store_link_clicked',
 }
 
-/** Where the code runs. `pwa` is the web build installed to the home screen or opened from it. */
-export type AnalyticsPlatform = 'web' | 'pwa' | 'android' | 'ios' | 'landing'
+/**
+ * Where the code runs. `pwa` is the web build installed to the home screen or opened from it; `telegram` is
+ * the same build opened as the Telegram Mini App.
+ */
+export type AnalyticsPlatform = 'web' | 'pwa' | 'telegram' | 'android' | 'ios' | 'landing'
 
-/** How an account signs in or was made. */
-export type AccountKind = 'email' | 'anonymous'
+/** How an account signs in or was made: an address wins over Telegram, Telegram over the device alone. */
+export type AccountKind = 'email' | 'telegram' | 'anonymous'
 
 /** A coarse classification of a number of characters, so that no exact length of a message leaves the device. */
 export type SizeClass = 'short' | 'medium' | 'long'
@@ -136,6 +141,9 @@ export type AuthForm =
   | 'link_email'
   | 'change_password'
   | 'device_start'
+  | 'telegram_start'
+  | 'telegram_login'
+  | 'telegram_link'
 
 /** What happened to a form: `invalid` is a validation message the person saw, `rejected` is the server saying no. */
 export type FormOutcome = 'success' | 'invalid' | 'rejected' | 'rate_limited' | 'error'
@@ -144,6 +152,8 @@ export type FormOutcome = 'success' | 'invalid' | 'rejected' | 'rate_limited' | 
 export type CtaId =
   | 'open_web_app'
   | 'start_anonymous'
+  | 'start_telegram'
+  | 'login_telegram'
   | 'register'
   | 'login'
   | 'install_pwa'
@@ -218,13 +228,14 @@ export type NoProperties = Record<never, never>
 export interface AnalyticsEventProperties {
   [AnalyticsEvent.AccountCreated]: { kind: AccountKind }
   [AnalyticsEvent.EmailConfirmed]: NoProperties
-  [AnalyticsEvent.LoggedIn]: { method: 'password' | 'device' | 'email_code' }
+  [AnalyticsEvent.LoggedIn]: { method: 'password' | 'device' | 'email_code' | 'telegram' }
   [AnalyticsEvent.LoggedOut]: { all_devices: boolean }
   [AnalyticsEvent.SessionRevoked]: NoProperties
   [AnalyticsEvent.PasswordChanged]: NoProperties
   [AnalyticsEvent.PasswordResetRequested]: NoProperties
   [AnalyticsEvent.PasswordResetCompleted]: NoProperties
   [AnalyticsEvent.EmailLinked]: NoProperties
+  [AnalyticsEvent.TelegramLinked]: NoProperties
   [AnalyticsEvent.ConsentsAccepted]: { policy_version: string }
   [AnalyticsEvent.ProfileUpdated]: { fields: ProfileField[] }
   [AnalyticsEvent.AccountDeleted]: NoProperties
@@ -327,9 +338,10 @@ export interface AnalyticsTraits {
 /** Properties are a closed set of shapes, which is what `sanitizeProperties` enforces at run time. */
 export type PropertyValue = string | number | boolean | null | undefined | readonly (string | number | boolean)[]
 
-/** An anonymous account has no address; the address itself is never reported. */
-export function accountKindOf(user: { email: string | null }): AccountKind {
-  return user.email === null ? 'anonymous' : 'email'
+/** An anonymous account has no address and no Telegram; neither the address nor the Telegram id is reported. */
+export function accountKindOf(user: { email: string | null; telegramLinked?: boolean }): AccountKind {
+  if (user.email !== null) return 'email'
+  return user.telegramLinked === true ? 'telegram' : 'anonymous'
 }
 
 /**

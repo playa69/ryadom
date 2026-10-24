@@ -33,8 +33,10 @@
   единая точка входа istio-gateway). Поддоменов нет, routing path-based; сервисы
   из `app/` тоже на корне по путям (`/api`, `/app`, `/admin`; см.
   `README.md`, раздел «Сервисы из app/»), отдельных A-записей не нужно. Для почты
-  (Postbox) в этой же зоне — 2 CNAME DKIM, TXT SPF на корне и TXT `_dmarc`
-  (список и значения — `README.md`, «DNS и почта: что сделать руками»).
+  в этой же зоне: у Postbox (прежний отправитель) — 2 CNAME DKIM, TXT SPF на корне и
+  TXT `_dmarc`; у Unisender Go (с 2026-10-11) — дописанный в тот же SPF include, TXT
+  подтверждения домена, TXT DKIM `gokey._domainkey` и NS `email` (список и значения —
+  `README.md`, «DNS и почта: что сделать руками»).
 - Сервисный аккаунт `ryadom-dns` (dns.editor), authorized key —
   `~/.config/ryadom/dns-authorized-key.json`. Создавался под lego DNS-01;
   сейчас сертификаты выпускает cert-manager по HTTP-01, SA оставлен про запас

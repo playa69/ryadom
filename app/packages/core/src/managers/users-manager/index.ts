@@ -10,9 +10,11 @@ import './commands/set-user-traffic-type/set-user-traffic-type.handler'
 import './commands/set-user-deletion-archive/set-user-deletion-archive.handler'
 import './commands/soft-delete-user/soft-delete-user.handler'
 import './commands/touch-user-activity/touch-user-activity.handler'
+import './commands/link-user-telegram/link-user-telegram.handler'
 import './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.handler'
 import './queries/get-user-by-id/get-user-by-id.handler'
 import './queries/get-user-by-email/get-user-by-email.handler'
+import './queries/get-user-by-telegram-id/get-user-by-telegram-id.handler'
 import './queries/search-users/search-users.handler'
 import './queries/get-user-deletion-archive/get-user-deletion-archive.handler'
 
@@ -42,12 +44,16 @@ export { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-u
 export type { SoftDeleteUserCommandData } from './commands/soft-delete-user/soft-delete-user.command'
 export { TouchUserActivityCommand } from './commands/touch-user-activity/touch-user-activity.command'
 export type { TouchUserActivityCommandData } from './commands/touch-user-activity/touch-user-activity.command'
+export { LinkUserTelegramCommand } from './commands/link-user-telegram/link-user-telegram.command'
+export type { LinkUserTelegramCommandData } from './commands/link-user-telegram/link-user-telegram.command'
 export { ListInactiveAnonymousUsersQuery } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.query'
 export type { ListInactiveAnonymousUsersQueryData } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.query'
 export { GetUserByIdQuery } from './queries/get-user-by-id/get-user-by-id.query'
 export type { GetUserByIdQueryData } from './queries/get-user-by-id/get-user-by-id.query'
 export { GetUserByEmailQuery } from './queries/get-user-by-email/get-user-by-email.query'
 export type { GetUserByEmailQueryData } from './queries/get-user-by-email/get-user-by-email.query'
+export { GetUserByTelegramIdQuery } from './queries/get-user-by-telegram-id/get-user-by-telegram-id.query'
+export type { GetUserByTelegramIdQueryData } from './queries/get-user-by-telegram-id/get-user-by-telegram-id.query'
 export { SearchUsersQuery } from './queries/search-users/search-users.query'
 export type { SearchUsersQueryData } from './queries/search-users/search-users.query'
 export { GetUserDeletionArchiveQuery } from './queries/get-user-deletion-archive/get-user-deletion-archive.query'
@@ -75,11 +81,15 @@ export { SetUserDeletionArchiveCommandErrorCode } from './commands/set-user-dele
 export type { SoftDeleteUserCommandResult } from './commands/soft-delete-user/soft-delete-user.types'
 export { SoftDeleteUserCommandErrorCode } from './commands/soft-delete-user/soft-delete-user.types'
 export type { TouchUserActivityCommandResult } from './commands/touch-user-activity/touch-user-activity.types'
+export type { LinkUserTelegramCommandResult } from './commands/link-user-telegram/link-user-telegram.types'
+export { LinkUserTelegramCommandErrorCode } from './commands/link-user-telegram/link-user-telegram.types'
 export type { ListInactiveAnonymousUsersQueryResult } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.types'
 export type { GetUserByIdQueryResult } from './queries/get-user-by-id/get-user-by-id.types'
 export { GetUserByIdQueryErrorCode } from './queries/get-user-by-id/get-user-by-id.types'
 export type { GetUserByEmailQueryResult } from './queries/get-user-by-email/get-user-by-email.types'
 export { GetUserByEmailQueryErrorCode } from './queries/get-user-by-email/get-user-by-email.types'
+export type { GetUserByTelegramIdQueryResult } from './queries/get-user-by-telegram-id/get-user-by-telegram-id.types'
+export { GetUserByTelegramIdQueryErrorCode } from './queries/get-user-by-telegram-id/get-user-by-telegram-id.types'
 export type { SearchUsersQueryResult } from './queries/search-users/search-users.types'
 export type { GetUserDeletionArchiveQueryResult } from './queries/get-user-deletion-archive/get-user-deletion-archive.types'
 export { GetUserDeletionArchiveQueryErrorCode } from './queries/get-user-deletion-archive/get-user-deletion-archive.types'
@@ -98,9 +108,11 @@ import type { SetUserTrafficTypeCommand } from './commands/set-user-traffic-type
 import type { SetUserDeletionArchiveCommand } from './commands/set-user-deletion-archive/set-user-deletion-archive.command'
 import type { SoftDeleteUserCommand } from './commands/soft-delete-user/soft-delete-user.command'
 import type { TouchUserActivityCommand } from './commands/touch-user-activity/touch-user-activity.command'
+import type { LinkUserTelegramCommand } from './commands/link-user-telegram/link-user-telegram.command'
 import type { ListInactiveAnonymousUsersQuery } from './queries/list-inactive-anonymous-users/list-inactive-anonymous-users.query'
 import type { GetUserByIdQuery } from './queries/get-user-by-id/get-user-by-id.query'
 import type { GetUserByEmailQuery } from './queries/get-user-by-email/get-user-by-email.query'
+import type { GetUserByTelegramIdQuery } from './queries/get-user-by-telegram-id/get-user-by-telegram-id.query'
 import type { SearchUsersQuery } from './queries/search-users/search-users.query'
 import type { GetUserDeletionArchiveQuery } from './queries/get-user-deletion-archive/get-user-deletion-archive.query'
 
@@ -116,9 +128,11 @@ export type UsersManagerRequests =
   | SetUserDeletionArchiveCommand
   | SoftDeleteUserCommand
   | TouchUserActivityCommand
+  | LinkUserTelegramCommand
   | ListInactiveAnonymousUsersQuery
   | GetUserByIdQuery
   | GetUserByEmailQuery
+  | GetUserByTelegramIdQuery
   | SearchUsersQuery
   | GetUserDeletionArchiveQuery
 

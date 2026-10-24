@@ -14,6 +14,7 @@ import {
 } from './auth'
 import { journal } from './journal'
 import { resetMemoryState } from './memory'
+import { markTelegramSignedOut } from './telegram'
 
 /**
  * The app session. The refresh token is read from secure storage asynchronously, so until it has
@@ -81,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback(async (user: User, tokens: AuthTokensApiResponse, options: LoginOptions = {}) => {
+    markTelegramSignedOut(false)
     await startSession(user, tokens)
     journal.reset()
     resetMemoryState()
@@ -110,8 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuth({ ...ANONYMOUS, entry: 'login' })
   }, [])
 
-  /** The person signs out: the server ends the session first, then the same teardown. */
+  /**
+   * The person signs out: the server ends the session first, then the same teardown. Inside Telegram the
+   * next screen would sign them straight back in, so this launch of the Mini App remembers they left.
+   */
   const logout = useCallback(async (options: { entry?: Entry } = {}) => {
+    markTelegramSignedOut(true)
     await signOut()
     journal.reset()
     resetMemoryState()
@@ -119,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const leaveAnonymousAccount = useCallback(async () => {
+    markTelegramSignedOut(true)
     await signOut()
     await forgetDevice()
     journal.reset()

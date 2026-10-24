@@ -363,6 +363,9 @@ importers:
       '@ryadom/design':
         specifier: workspace:*
         version: link:../../packages/design
+      '@twa-dev/sdk':
+        specifier: 8.0.2
+        version: 8.0.2(react@19.3.0)
       assert-never:
         specifier: ^1.4.0
         version: 1.4.0
@@ -3689,6 +3692,14 @@ packages:
     resolution: {integrity: sha512-52ziXYP3snGOxjv19xA3WL1WDKv9Q6uDAa/7EKIR5j4hocMlYURkrOHbJ2ZZI+VfPU5MwKpcGeRfHxHJu7Y/Pw==}
     cpu: [arm64]
     os: [win32]
+
+  '@twa-dev/sdk@8.0.2':
+    resolution: {integrity: sha512-Pp5GxnxP2blboVZFiM9aWjs4cb8IpW3x2jP3kLOMvIqy0jzNUTuFHkwHtx+zEvh/UcF2F+wmS8G6ebIA0XPXcg==}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+
+  '@twa-dev/types@8.0.2':
+    resolution: {integrity: sha512-ICQ6n4NaUPPzV3/GzflVQS6Nnu5QX2vr9OlOG8ZkFf3rSJXzRKazrLAbZlVhCPPWkIW3MMuELPsE6tByrA49qA==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -9177,6 +9188,13 @@ snapshots:
 
   '@turbo/windows-arm64@2.11.5':
     optional: true
+
+  '@twa-dev/sdk@8.0.2(react@19.3.0)':
+    dependencies:
+      '@twa-dev/types': 8.0.2
+      react: 19.3.0
+
+  '@twa-dev/types@8.0.2': {}
 
   '@types/chai@5.2.3':
     dependencies:

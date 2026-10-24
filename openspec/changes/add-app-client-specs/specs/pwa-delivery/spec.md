@@ -202,12 +202,17 @@ PWA (браузерная сборка мобильного клиента, `vit
 
 ### Requirement: Заголовки безопасности ответов PWA
 
-Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`. Диалог идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`, а встраивание приложения во фрейм MUST быть запрещено всем. `'wasm-unsafe-eval'` разрешает странице только компиляцию WebAssembly (не `eval`): без него браузер без собственного декодера Opus (iOS до 26, Firefox на Android) не загрузит WASM-декодер озвучки, и агент будет звучать в μ-law.
+Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors https://web.telegram.org`. Диалог идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`. Встраивание приложения во фрейм MUST быть разрешено только Telegram Web (`https://web.telegram.org`), который показывает Telegram Mini App во фрейме, и запрещено всем остальным; приложения Telegram для телефона и компьютера открывают Mini App в собственном WebView без фрейма. `'wasm-unsafe-eval'` разрешает странице только компиляцию WebAssembly (не `eval`): без него браузер без собственного декодера Opus (iOS до 26, Firefox на Android) не загрузит WASM-декодер озвучки, и агент будет звучать в μ-law.
 
 #### Scenario: Политика на оболочке
 
 - **WHEN** браузер запрашивает `GET /pwa/`
-- **THEN** в ответе есть `Content-Security-Policy`, содержащая `connect-src` и `frame-ancestors 'none'`
+- **THEN** в ответе есть `Content-Security-Policy`, содержащая `connect-src` и `frame-ancestors https://web.telegram.org`
+
+#### Scenario: Чужой сайт во фрейме
+
+- **WHEN** сайт, отличный от `https://web.telegram.org`, встраивает `/pwa/` во фрейм
+- **THEN** браузер не показывает приложение во фрейме
 
 #### Scenario: Заголовки на ресурсе
 
@@ -379,7 +384,7 @@ Service worker SHALL при установке предкэшировать `ind
 
 ### Requirement: Условия показа баннера установки
 
-В веб-сборке клиент SHALL показывать баннер установки (`InstallBanner`) внизу экрана поверх интерфейса, если приложение открыто не как установленное (ни `display-mode: standalone`, ни признак `standalone` в iOS), этот браузер не знает об установленном приложении и баннер не закрывали в последние 14 дней. В нативных сборках и в установленном PWA баннер MUST NOT показываться.
+В веб-сборке клиент SHALL показывать баннер установки (`InstallBanner`) внизу экрана поверх интерфейса, если приложение открыто не как установленное (ни `display-mode: standalone`, ни признак `standalone` в iOS), этот браузер не знает об установленном приложении и баннер не закрывали в последние 14 дней. В нативных сборках, в установленном PWA и в Telegram Mini App баннер MUST NOT показываться.
 
 Вкладка браузера не может спросить, установлено ли приложение: после установки Chrome перестаёт присылать `beforeinstallprompt`, и это неотличимо от браузера, который его не присылает. Поэтому установка запоминается в `localStorage` под ключом `ryadom.install.installedAt` (общему для вкладки и окна приложения на компьютере и Android): метка SHALL записываться по событию `appinstalled` и при каждом запуске в режиме `standalone`, а при новом `beforeinstallprompt` SHALL сниматься — браузер предлагает установку, только пока приложения нет. Пока метка есть, баннер MUST NOT показываться, в том числе в открытой вкладке сразу после установки. Если хранилище недоступно, метка не записывается и баннер может показываться во вкладке.
 
@@ -412,6 +417,41 @@ Service worker SHALL при установке предкэшировать `ind
 
 - **WHEN** приложение запущено как нативное
 - **THEN** баннер установки не показывается
+
+#### Scenario: Telegram Mini App
+
+- **WHEN** PWA открыта как Mini App бота в Telegram
+- **THEN** баннер установки не показывается
+
+### Requirement: Запуск как Telegram Mini App
+
+Та же веб-сборка SHALL работать как Telegram Mini App бота `@slyshu_ryadom_bot`: кнопка меню «Открыть» и главный Mini App бота открывают `https://слышу-рядом.рф/pwa/`. Клиент SHALL распознавать запуск из Telegram по данным запуска в адресе (`#tgWebAppData=…`) или по их копии, которую скрипт Telegram оставляет в `sessionStorage` (`__telegram__initParams`) на случай перезагрузки, и только тогда загружать скрипт Telegram (`telegram-web-app.js` из пакета `@twa-dev/sdk`, собранный в бандл с нашего origin: CSP `script-src 'self'` не меняется). В обычной вкладке скрипт Telegram MUST NOT загружаться. Mini App без подписанных данных запуска (`initData` пуст) клиент считает обычной вкладкой.
+
+В Mini App клиент SHALL до первого экрана сообщать Telegram о готовности (`ready`), разворачиваться на всю высоту (`expand`), окрашивать шапку и фон Telegram в цвет фона приложения (`#00051a`, с версии Bot API 6.1) и отключать закрытие свайпом вниз (`disableVerticalSwipes`, с версии 7.7). Системная кнопка «Назад» Telegram SHALL показываться, когда шаг назад внутри приложения есть (открыто модальное окно, в вкладке есть шаг назад или открыта не главная вкладка), и скрываться на главном экране; её нажатие выполняет тот же шаг назад, что аппаратная кнопка Android. Ловушка истории браузера для кнопки «Назад» в Mini App MUST NOT ставиться. Пока открыт экран разговора, закрытие Mini App SHALL спрашивать подтверждение (`enableClosingConfirmation`, с версии 6.2).
+
+События аналитики Mini App SHALL нести платформу `telegram`, а запросы — заголовок `x-client-id: ryadom-telegram` (в списке сессий — «Мини-приложение в Telegram»).
+
+#### Scenario: Открытие из бота
+
+- **WHEN** человек нажимает «Открыть» в чате с ботом
+- **THEN** PWA открывается во весь экран Telegram, шапка Telegram окрашена в цвет приложения
+- **AND** свайп вниз не закрывает приложение
+
+#### Scenario: Кнопка «Назад» Telegram
+
+- **WHEN** человек открыл экран внутри вкладки (например, «Память» из профиля)
+- **THEN** в шапке Telegram видна кнопка «Назад», и её нажатие возвращает на предыдущий экран
+- **AND** на главном экране без модальных окон кнопки «Назад» нет
+
+#### Scenario: Закрытие во время разговора
+
+- **WHEN** открыт экран разговора и человек закрывает Mini App
+- **THEN** Telegram спрашивает подтверждение закрытия
+
+#### Scenario: Обычная вкладка
+
+- **WHEN** PWA открыта в браузере по адресу без данных запуска Telegram
+- **THEN** скрипт Telegram не загружается и приложение ведёт себя как PWA
 
 ### Requirement: Текст подсказки и кнопка «Установить»
 

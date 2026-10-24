@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 """Бэкенд памяти на Cognee: согласие и данные человека — его датасет в Cognee.
+=======
+"""Бэкенд памяти на Cognee (`MEMORY_BACKEND=cognee`): согласие и данные человека — его датасет в Cognee, без SQLite.
+>>>>>>> origin/main
 
 Включённая память ⟺ существует датасет `ryadom_user_<user_id>` (не-алфанум в UUID заменяется на `_`). Включение —
 документ-зерно `CONSENT memory v<версия> <ISO-дата>`; выключение, «забыть всё» и стирание — удаление датасета целиком.
@@ -8,7 +12,11 @@ recall занимает 15–30 секунд, поэтому сводка (`brie
 (prefetch): после включения, после каждого разговора и при первом обращении к человеку. Изменение памяти сбрасывает
 кэш: следующий ход идёт без сводки, пока фоновый recall не соберёт новую.
 
+<<<<<<< HEAD
 Чего здесь нет никогда: текстов фактов и реплик в журнале (I4). Правка и удаление отдельного
+=======
+Чего здесь нет никогда, как и в SQLite-бэкенде: текстов фактов и реплик в журнале (I4). Правка и удаление отдельного
+>>>>>>> origin/main
 факта не поддержаны (у Cognee нет такой операции) — REST отвечает 422 с reason `unsupported_in_cognee`.
 """
 
@@ -23,14 +31,22 @@ from typing import Any
 from app.clients.cognee import CogneeClient
 from app.core.config import MemorySettings
 from app.memory.models import iso
+<<<<<<< HEAD
 from app.memory.errors import MemoryDisabled, MemoryNotAllowed, MemoryUnavailable, MemoryValidation
+=======
+from app.memory.service import MemoryDisabled, MemoryNotAllowed, MemoryUnavailable, MemoryValidation
+>>>>>>> origin/main
 from app.services.dialog_store import Dialog
 
 logger = logging.getLogger("agent.memory")
 
 # Запрос сводки для разговора: всё, что Cognee знает о человеке, одним текстом.
 BRIEF_QUERY = "Все факты об этом человеке: имя, как обращаться, город, работа, семья, интересы, что помогает"
+<<<<<<< HEAD
 # Меньше реплик человека — разговор в память не идёт.
+=======
+# Меньше реплик человека — разговор в память не идёт (как RENEW_AFTER_NEW_USER_MESSAGES у SQLite-бэкенда).
+>>>>>>> origin/main
 MIN_USER_MESSAGES = 4
 # Фоновая находка по реплике (CHUNKS) режется: это контекст следующего хода, а не весь транскрипт.
 TURN_RECALL_MAX_CHARS = 800

@@ -306,6 +306,74 @@ unset SVC_PASS
 (данные графа стираются) и в CNPG `DROP DATABASE cognee_db; DROP ROLE cognee;` (per-tenant БД вида `"<uuid>"` —
 тоже вручную). Правила NetworkPolicy можно оставить.
 
+## Память агента: Cognee (Deployment `cognee`)
+
+Cognee — граф знаний и векторный поиск для памяти агента (REST `/api/v1`). Живёт в том же ns `agent`, наружу не
+публикуется (ни ingress, ни HTTPRoute). Единственный потребитель — под agent по адресу
+`http://cognee.agent.svc.cluster.local:8000`. Для ручной отладки:
+`kubectl -n agent port-forward svc/cognee 18000:8000`.
+
+**Auth ВКЛЮЧЁН (multi-user access control, `ENABLE_BACKEND_ACCESS_CONTROL=true`).** Это не украшение, а требование
+per-user памяти: в режиме `multi_tenant=disabled` `/api/v1/search` НЕ фильтрует по датасетам — recall одного
+человека возвращал факты другого (проверено 2026-10-21). Агент логинится сервисным пользователем
+`agent-service@cognee.dev` (email/пароль — Secret `cognee-service-account`) и ходит с Bearer JWT
+(`POST /api/v1/auth/login`, токен живёт `JWT_LIFETIME_SECONDS`=12 ч). Подпись JWT — Secret `cognee-auth`.
+В multi-tenant режиме Cognee заводит ОТДЕЛЬНУЮ БД на тенанта (`CREATE DATABASE "<uuid>"` + `CREATE EXTENSION
+vector`), поэтому роль `cognee` — SUPERUSER (компромисс: роль выделенная, только для Cognee; без суперпользователя
+per-tenant БД не создаются). Пользователь регистрируется один раз через port-forward (`/api/v1/auth/register`
+снаружи недоступен — ingress'а нет).
+
+Устройство (манифесты `10-…`-`13-…` в этом каталоге):
+
+- **Образ** — официальный `cognee/cognee` с Docker Hub (проверенная версия указана в `12-cognee-deployment.yaml`),
+  1 реплика, `Recreate` (том RWO). Прогрев 3–5 минут — проба `/health` с запасом.
+- **Хранение** — реляционные таблицы и векторы в БД `cognee_db` общего CNPG `ryadom-db` (расширение `vector`),
+  граф Kuzu и сырые документы на PVC `cognee-storage` (сетевой диск, НЕ local-path: нодный диск теряется вместе
+  с нодой). Удаление PVC стирает граф безвозвратно; PostgreSQL-часть покрыта бэкапами CNPG.
+- **LLM и эмбеддинги** — через LiteLLM-прокси программы (`LLM_ENDPOINT`/`EMBEDDING_ENDPOINT` в ConfigMap), ключ
+  переиспользуется из `agent-secrets` (`AGENT_API_TOKEN`), своего ключа у Cognee нет. Если модель недоступна,
+  Cognee стартует, но cognify падает — смотреть логи и список моделей прокси (`GET $LLM_ENDPOINT/models`).
+
+Создание с нуля (каждый шаг отдельным решением администратора, значения секретов не печатать):
+
+```bash
+# 1. Роль и БД в CNPG (идемпотентно в части extension; пароль сразу уходит в Secret).
+#    SUPERUSER обязателен: в multi-tenant режиме Cognee создаёт БД и extension vector на тенанта.
+DBPASS=$(openssl rand -hex 24)
+kubectl -n agent create secret generic cognee-db-credentials --from-literal=DB_PASSWORD="$DBPASS"
+kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -c "CREATE ROLE cognee LOGIN PASSWORD '$DBPASS' SUPERUSER;"
+kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -c "CREATE DATABASE cognee_db OWNER cognee;"
+kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -d cognee_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# 1.1. Секреты auth: подпись JWT и сервисный пользователь агента
+kubectl -n agent create secret generic cognee-auth --from-literal=FASTAPI_USERS_JWT_SECRET="$(openssl rand -hex 32)"
+kubectl -n agent create secret generic cognee-service-account \
+  --from-literal=COGNEE_SERVICE_EMAIL="agent-service@cognee.dev" \
+  --from-literal=COGNEE_SERVICE_PASSWORD="$(openssl rand -hex 16)"
+
+# 2. Сеть: ingress ns agent → CNPG (:5432) в postgres/manifests/03-network-policy.yaml,
+#    egress cognee → прокси :4000 в namespaces/manifests/08-network-policy-agent-service.yaml
+kubectl apply -f k8s/postgres/manifests/03-network-policy.yaml -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml
+
+# 3. Манифесты и проверка
+kubectl apply -f k8s/agent/10-cognee-config.yaml -f k8s/agent/11-cognee-pvc.yaml \
+              -f k8s/agent/12-cognee-deployment.yaml -f k8s/agent/13-cognee-service.yaml
+kubectl -n agent rollout status deploy/cognee --timeout=10m
+kubectl -n agent port-forward svc/cognee 8000:8000 &
+curl -s localhost:8000/health      # 200
+
+# 4. Регистрация сервисного пользователя (один раз; пароль из Secret не печатать)
+SVC_PASS=$(kubectl -n agent get secret cognee-service-account -o jsonpath='{.data.COGNEE_SERVICE_PASSWORD}' | base64 -d)
+curl -X POST localhost:8000/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d "{\"email\":\"agent-service@cognee.dev\",\"password\":\"$SVC_PASS\"}"
+unset SVC_PASS
+```
+
+Откат: `kubectl delete -f` этих четырёх манифестов, затем Secret'ы `cognee-db-credentials`, `cognee-auth`,
+`cognee-service-account`, PVC `cognee-storage`
+(данные графа стираются) и в CNPG `DROP DATABASE cognee_db; DROP ROLE cognee;` (per-tenant БД вида `"<uuid>"` —
+тоже вручную). Правила NetworkPolicy можно оставить.
+
 ## Расход моделей: база и Prometheus
 
 Что и как считается, запросы SQL и PromQL — `agent/README.md`, «Расход моделей». В базе расход лежит в таблице `model_usage` того же

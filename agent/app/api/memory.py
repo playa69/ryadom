@@ -13,7 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import AgentError, validation_error
 from app.memory.backend import MemoryBackend
+<<<<<<< HEAD
 from app.memory.errors import MemoryServiceError
+=======
+from app.memory.service import MemoryServiceError
+>>>>>>> origin/main
 
 logger = logging.getLogger("agent.memory")
 
@@ -28,7 +32,11 @@ def _user(user_id: str) -> str:
 
 
 def get_memory_service(request: Request) -> MemoryBackend:
+<<<<<<< HEAD
     """Бэкенд памяти приложения: Cognee (app/memory/cognee_backend.py)."""
+=======
+    """Бэкенд памяти приложения: SQLite-сервис или Cognee — по `MEMORY_BACKEND`."""
+>>>>>>> origin/main
     service: MemoryBackend | None = getattr(request.app.state, "memory", None)
     if service is None:
         raise AgentError(503, "MEMORY_UNAVAILABLE", "Память сейчас недоступна")

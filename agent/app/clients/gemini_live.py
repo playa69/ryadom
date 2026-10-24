@@ -115,6 +115,11 @@ class LiveLink(Protocol):
         """Реплика человека текстом: модель отвечает на неё как на сказанную."""
         ...
 
+    async def nudge(self) -> None:
+        """Ответить сейчас на то, что уже есть в сессии, без новой реплики. Последней в сессии должна быть реплика человека
+        без ответа: после готового ответа модель дописала бы к нему обрывок."""
+        ...
+
     def events(self) -> AsyncIterator[LiveEvent]:
         """События модели до закрытия соединения; последнее — `closed`."""
         ...
@@ -168,6 +173,12 @@ class GeminiLiveLink:
         turn = self._types.Content(role="user", parts=[self._types.Part(text=text)])
         await self._session.send_client_content(turns=turn, turn_complete=True)
 
+    async def nudge(self) -> None:
+        # client_content без реплик, но с turn_complete: «отвечай по накопленному». Проверено на gemini-3.8-live: сессия открыта
+        # с историей, где последней идёт реплика человека, — модель отвечает на неё по сути (3 из 3). Сразу после голосовой
+        # реплики так делать нельзя: модель теряет смысл сказанного.
+        await self._session.send_client_content(turn_complete=True)
+
     async def events(self) -> AsyncIterator[LiveEvent]:
         try:
             while not self.closed:
@@ -201,18 +212,23 @@ def live_config(
     instructions: str,
     resume_handle: str | None = None,
     history: bool = False,
+    language_hint: bool = True,
 ):  # noqa: ANN201
     """Настройки сессии Gemini Live: голос, промпт, расшифровки, ручные границы реплик, сжатие контекста, возобновление.
+
+    `language_hint`: подсказка языка расшифровки речи человека (`GEMINI_INPUT_LANGUAGES`); короткое слово без неё
+    расшифровывается чужим языком. Отключается только повтором открытия, если Google отверг само поле.
 
     `history`: сессия начинается с загрузки прошлых реплик текстом (client_content до первого ввода, без ответа модели).
     При `text_context` сессия живёт один ход и возобновлять её по handle незачем: контекст приходит текстом.
     """
     from google.genai import types as t
 
+    languages = settings.input_language_codes if language_hint else []
     config = t.LiveConnectConfig(
         response_modalities=["AUDIO"],
         system_instruction=instructions,
-        input_audio_transcription=t.AudioTranscriptionConfig(),
+        input_audio_transcription=t.AudioTranscriptionConfig(language_codes=languages or None),
         output_audio_transcription=t.AudioTranscriptionConfig(),
         speech_config=t.SpeechConfig(
             voice_config=t.VoiceConfig(prebuilt_voice_config=t.PrebuiltVoiceConfig(voice_name=voice_name))
@@ -324,12 +340,31 @@ class GeminiLiveConnector:
             options = types.HttpOptions(base_url=settings.base_url, headers=headers)
         self._client = genai.Client(api_key=settings.api_key.get_secret_value(), http_options=options)
         self.name = f"gemini-live:{self._model}"
+        # Google может не принять подсказку языка (поле новое): тогда сессия открывается без неё, и голос не пропадает.
+        self._language_hint = bool(settings.input_language_codes)
 
     async def open(
         self, voice: Voice, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
     ) -> GeminiLiveLink:
+        try:
+            return await self._open(voice, instructions, resume_handle, history, self._language_hint)
+        except LiveError as error:
+            if not self._language_hint or "language" not in str(error).lower():
+                raise
+            logger.warning("Gemini Live отверг подсказку языка расшифровки, сессии открываются без неё: %s", error)
+            self._language_hint = False
+            return await self._open(voice, instructions, resume_handle, history, False)
+
+    async def _open(
+        self,
+        voice: Voice,
+        instructions: str,
+        resume_handle: str | None,
+        history: LiveHistory | None,
+        language_hint: bool,
+    ) -> GeminiLiveLink:
         voice_name = self._voices[voice]  # голос задаётся в каждой сессии; не male и не female — ошибка, а не молчаливая подмена
-        config = live_config(self._settings, voice_name, instructions, resume_handle, bool(history))
+        config = live_config(self._settings, voice_name, instructions, resume_handle, bool(history), language_hint)
         stack = AsyncExitStack()
         try:
             session = await asyncio.wait_for(

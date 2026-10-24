@@ -19,6 +19,11 @@ export interface AuthUserApiResponse {
   /** null for an anonymous account that has not linked an address. */
   email: string | null
   name: string | null
+  /**
+   * A Telegram user is linked: the account opens from the Telegram Mini App without a password, and is
+   * not erased as anonymous. Absent from servers older than the Mini App, which means false.
+   */
+  telegramLinked?: boolean
 }
 
 export interface LoginApiResponse {

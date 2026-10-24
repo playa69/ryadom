@@ -1,0 +1,103 @@
+# =============================================================================
+# Job app-migrate-0004 — миграция БД app 0007_users_telegram_id (ns prod)
+# =============================================================================
+# Что делает: добавляет в users колонку telegram_id (bigint, NULL) с ограничением уникальности
+# users_telegram_id_unique — пользователь Telegram, под которым аккаунт входит из Telegram Mini App.
+# Только добавление: у существующих строк колонка пустая, старый код приложения (api 0.6.1) её не замечает,
+# поэтому миграцию можно применить ДО выката api 0.7.0 и она ничего не ломает.
+#
+# Порядок в выкате (k8s/app/RUNBOOK-telegram-miniapp.md): до раскатки api:
+#   kubectl apply -f k8s/app/db/04-job-migrate-0004.yaml
+#   kubectl -n prod wait --for=condition=complete job/app-migrate-0004 --timeout=180s
+#   kubectl -n prod logs job/app-migrate-0004
+# Проверка: журнал без ошибок; в users есть колонка telegram_id, в drizzle.__drizzle_migrations 8 записей
+# (0000…0007). Прежний Job после применения удалить: kubectl -n prod delete job app-migrate-0003.
+# Откат миграции (если понадобится): ALTER TABLE users DROP COLUMN telegram_id; запись в журнале drizzle убрать
+# вместе с ней. Привязки к Telegram при этом пропадут: такие аккаунты снова откроются только по почте.
+#
+# Образ app/migrate:0.7.0 — из packages/db/Dockerfile той же ревизии, что api 0.7.0 (в нём миграции 0000…0007).
+# Остальное (sidecar, права, переменные, PG 16.4 в кластере против PG 17 в разработке) — как в 02-job-migrate.yaml.
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: app-migrate-0004
+  namespace: prod
+  labels:
+    app: app-migrate
+    app.kubernetes.io/part-of: ryadom
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: app-migrate
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        # Образ node:alpine запускается как USER node (uid 1000) — числовой uid
+        # нужен kubelet'у, чтобы проверить runAsNonRoot (у backend та же история)
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/migrate:0.7.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # DATABASE_URL собирается из несекретных DB_* (ConfigMap app-config) и
+            # DB_PASSWORD (Secret). Порядок важен: $(VAR) раскрывается только для
+            # переменных, объявленных ВЫШЕ в этом списке env.
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}

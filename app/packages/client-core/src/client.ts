@@ -35,6 +35,14 @@ import type {
 } from '@ryadom/contracts/api/auth/register'
 import type { ResendConfirmationApiRequest } from '@ryadom/contracts/api/auth/resend-confirmation'
 import type {
+  LinkTelegramApiErrorCode,
+  LinkTelegramApiRequest,
+  LinkTelegramApiResponse,
+  TelegramLoginApiErrorCode,
+  TelegramLoginApiRequest,
+  TelegramLoginApiResponse,
+} from '@ryadom/contracts/api/auth/telegram'
+import type {
   ResetPasswordApiErrorCode,
   ResetPasswordApiRequest,
 } from '@ryadom/contracts/api/auth/reset-password'
@@ -512,6 +520,33 @@ export function createClient(config: ClientConfig) {
     ): Promise<ApiOutcome<LinkEmailApiResponse, LinkEmailApiErrorCode>> => {
       const body: LinkEmailApiRequest = { email, password }
       return apiOutcome<LinkEmailApiResponse, LinkEmailApiErrorCode>(ApiPath.LinkEmail, {
+        method: 'POST',
+        body,
+      })
+    },
+
+    /**
+     * Sign-in from the Telegram Mini App with its launch data (`Telegram.WebApp.initData`). Without
+     * `createAccount` it only finds the account of this Telegram user (`ACCOUNT_NOT_FOUND` when there is
+     * none); with it, one is made. Like `login` it starts no session: the caller does, with the result.
+     */
+    telegramLogin: (
+      initData: string,
+      createAccount = false,
+    ): Promise<ApiOutcome<TelegramLoginApiResponse, TelegramLoginApiErrorCode>> => {
+      const body: TelegramLoginApiRequest = { initData, createAccount }
+      return apiOutcome<TelegramLoginApiResponse, TelegramLoginApiErrorCode>(ApiPath.TelegramLogin, {
+        method: 'POST',
+        body,
+      })
+    },
+
+    /** The signed-in account takes the Telegram user of the Mini App it is open in. */
+    linkTelegram: (
+      initData: string,
+    ): Promise<ApiOutcome<LinkTelegramApiResponse, LinkTelegramApiErrorCode>> => {
+      const body: LinkTelegramApiRequest = { initData }
+      return apiOutcome<LinkTelegramApiResponse, LinkTelegramApiErrorCode>(ApiPath.LinkTelegram, {
         method: 'POST',
         body,
       })

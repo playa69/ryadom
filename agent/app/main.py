@@ -26,20 +26,27 @@ from app.core.reclaim import MemoryReclaimer
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
 from app.memory.backend import MemoryBackend
 from app.memory.cognee_backend import CogneeMemoryBackend
+<<<<<<< HEAD
+=======
+from app.memory.llm import ExtractionModel, build_memory_llm
+from app.memory.service import MemoryService
+from app.memory.worker import MemoryWorker
+>>>>>>> origin/main
 from app.core.tracing import build_tracer
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.langfuse_usage import start_langfuse_sink
 from app.services.gemini_budget import CascadeFallback, TokenBudget
-from app.services.replies import CRISIS_REPLY, REPLIES, split_sentences
+from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, split_sentences
 
 if TYPE_CHECKING:
     from app.clients.gemini_live import LiveConnector
 
 logger = logging.getLogger("agent")
 
-# Всё, что агент произносит: приветствия, кризисный ответ (он важнее) и шаблонные ответы.
-SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, *REPLIES)
+# Готовые фразы агента: приветствия, кризисный ответ (он важнее) и просьба повторить. Заглушки режима без моделей не
+# прогреваются: в бою они не звучат, а прогрев в gemini_live тратит квоту Gemini на старте.
+SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, REPEAT_REQUEST)
 
 FallbackParts = tuple[ChatModel | None, Recognizer | None, TextToSpeech | None]
 
@@ -105,8 +112,15 @@ def create_app(
     `VOICE_PIPELINE=gemini_live` (или `live_factory` в тестах) включает речь в речь через Gemini Live: чат и
     распознавание не создаются, фиксированные фразы озвучивает тот же голос Gemini.
 
+<<<<<<< HEAD
     Память агента (`MEMORY_*`, или `memory_settings` в тестах) — датасеты Cognee (`app/memory/cognee_backend.py`):
     транскрипт после разговора, сводка в разговор, согласие человека. Хранилище диалогов память не определяет.
+=======
+    Память агента (`MEMORY_*`, или `memory_settings`/`memory_model_factory` в тестах) живёт в том же файле, что диалоги: без диска
+    она выключена. Воркер памяти запускается после подключения диска и останавливается до его закрытия. При
+    `MEMORY_BACKEND=cognee` память — датасеты Cognee (`app/memory/cognee_backend.py`): диск и воркер не подключаются,
+    диалоги живут только в памяти процесса.
+>>>>>>> origin/main
 
     Бюджет токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся в режиме gemini_live всегда (при лимите
     0 он выключен). При `GEMINI_TPM_ENFORCE` собирается и каскад как запасной путь (`fallback_factory` в тестах): на него
@@ -136,8 +150,14 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store: DialogStore = app.state.store
+<<<<<<< HEAD
         # Хранилище диалогов (PostgreSQL) и память (Cognee) независимы. Без хранилища диалоги живут в памяти процесса
         # и пропадают при перезапуске (разработка).
+=======
+        cognee_mode = memory_cfg.backend == "cognee"
+        # Диалоги на диске (DIALOG_DB_PATH) и бэкенд памяти независимы: cognee — это про память человека, а не про
+        # хранение диалогов. Без диска диалоги живут в памяти процесса и пропадают при перезапуске (локальный стенд).
+>>>>>>> origin/main
         database = make_database()
         if database is not None:
             store.require_disk()  # задан в настройках: пока не подключён, стирание людей отвечает ошибкой, а не «204»
@@ -149,6 +169,7 @@ def create_app(
                     "dialog db is NOT available (%s): dialogs are kept in memory only and will be lost on restart",
                     getattr(database, "label", "?"),  # не path/dsn: в DSN пароль
                 )
+<<<<<<< HEAD
         cognee_client = build_cognee_client(memory_cfg)
         if cognee_client is not None:
             try:
@@ -160,6 +181,36 @@ def create_app(
         app.state.memory = memory_service
         if memory_service.status() == "unavailable":
             logger.error("memory is NOT available: no COGNEE_BASE_URL/COGNEE_SERVICE_EMAIL/COGNEE_SERVICE_PASSWORD")
+=======
+        cognee_client: CogneeClient | None = None
+        memory_worker: MemoryWorker | None = None
+        if cognee_mode:
+            memory_model = None  # извлекает сам Cognee, модель и воркер не нужны
+            cognee_client = build_cognee_client(memory_cfg)
+            if cognee_client is not None:
+                try:
+                    await cognee_client.connect()
+                except Exception:  # noqa: BLE001 - память недоступна до первого удачного перелогина, агент работает
+                    logger.exception("cognee login failed at startup")
+            memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg)
+        else:
+            memory_model = make_memory_model()
+            sqlite_memory = MemoryService(store, memory_cfg, memory_model)
+            memory_worker = MemoryWorker(sqlite_memory, store, memory_cfg)
+            await memory_worker.start()
+            memory_service = sqlite_memory
+        store.memory = memory_service
+        app.state.memory = memory_service
+        if memory_service.status() == "unavailable":
+            if cognee_mode:
+                logger.error("memory backend=cognee is NOT available: no COGNEE_BASE_URL/COGNEE_SERVICE_EMAIL/COGNEE_SERVICE_PASSWORD")
+            else:
+                logger.error(
+                    "memory mode=%s is NOT available: %s",
+                    memory_cfg.mode,
+                    "no extraction model" if store.persistent else "no disk",
+                )
+>>>>>>> origin/main
         live = live_factory() if live_factory is not None else None
         app.state.live = live
         budget = TokenBudget(APP_CONFIG.gemini) if live is not None else None
@@ -231,6 +282,11 @@ def create_app(
                 langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
+<<<<<<< HEAD
+=======
+            if memory_worker is not None:
+                await memory_worker.stop()  # идущее извлечение дожидается до 10 с, остальное останется в очереди на диске
+>>>>>>> origin/main
             if cognee_client is not None:
                 await memory_service.drain()  # дождаться идущих записей и prefetch'ей Cognee
                 await cognee_client.aclose()

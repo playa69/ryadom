@@ -120,6 +120,18 @@ const baseShape = {
   /** Empty means no authorization header is sent to the agent (local mock). */
   AGENT_API_TOKEN: optionalString,
   AGENT_TIMEOUT_MS: optionalInt(1000).transform((value) => value ?? 10_000),
+  /**
+   * The Telegram bot whose Mini App opens the PWA. Telegram signs the launch data (`initData`) it hands
+   * the app with a key derived from this token, and the token is what checks it on sign-in. A SECRET:
+   * whoever holds it can act as the bot and sign launch data for any Telegram user, so it lives in a
+   * Secret. Empty switches sign-in from Telegram off.
+   */
+  TELEGRAM_BOT_TOKEN: optionalString,
+  /**
+   * How old the launch data may be, in seconds. It is made when the Mini App opens and the app uses it
+   * when there is no session; the limit is what a copy that leaked is good for.
+   */
+  TELEGRAM_INIT_DATA_MAX_AGE_SEC: optionalInt(60).transform((value) => value ?? 86_400),
   // Logs over OTLP when the infrastructure collects them; the OTel exporter reads these from
   // process.env on its own.
   OTEL_ENABLED: booleanFlag,

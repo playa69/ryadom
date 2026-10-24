@@ -36,6 +36,12 @@ describe('исходы форм и вид аккаунта (общие для в
     expect(accountKindOf({ email: null })).toBe('anonymous')
     expect(accountKindOf({ email: 'a@b.co' })).toBe('email')
   })
+
+  it('аккаунт с Telegram без почты — telegram, почта важнее', () => {
+    expect(accountKindOf({ email: null, telegramLinked: true })).toBe('telegram')
+    expect(accountKindOf({ email: null, telegramLinked: false })).toBe('anonymous')
+    expect(accountKindOf({ email: 'a@b.co', telegramLinked: true })).toBe('email')
+  })
 })
 
 describe('sanitizeProperties', () => {

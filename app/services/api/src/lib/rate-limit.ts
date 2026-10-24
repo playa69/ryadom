@@ -64,6 +64,11 @@ export const RATE_LIMITS = {
    */
   deviceLogin: { perIp: { limit: 30, windowMs: 60 * 60_000 } },
   /**
+   * Sign-in from the Telegram Mini App: once at each launch without a session, and once more from the first
+   * screen. A forged request fails on the signature, so this only keeps the check itself from being hammered.
+   */
+  telegramLogin: { perIp: { limit: 60, windowMs: 60 * 60_000 } },
+  /**
    * The analytics proxy. The SDK batches, so a busy tab sends a request every few seconds and a
    * session recording a few more; this leaves room for a household or a carrier-NAT address and
    * still stops a script from using the proxy as a free relay to PostHog.

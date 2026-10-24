@@ -183,8 +183,15 @@ class GeminiSettings(BaseAppSettings):
     connect_timeout_seconds: int = Field(validation_alias="GEMINI_CONNECT_TIMEOUT_SECONDS", default=15, ge=1)
     # Сколько ждать расшифровку реплики, прежде чем отдать человеку ответ: до этого момента агент проверяет реплику на кризис.
     transcript_wait_ms: int = Field(validation_alias="GEMINI_TRANSCRIPT_WAIT_MS", default=1000, ge=0, le=5000)
+    # Подсказка языка расшифровки речи человека (коды BCP-47 через запятую). Без неё Gemini определяет язык сам, и короткое
+    # слово («устала») расшифровывается как испанское или английское, а ошибочная расшифровка попадает в историю и
+    # закрепляет чужой язык. Пусто — подсказка не отправляется.
+    input_languages: str = Field(validation_alias="GEMINI_INPUT_LANGUAGES", default="ru-RU")
     # Ответ, от которого нет событий дольше этого, считается оборванным.
     idle_timeout_seconds: int = Field(validation_alias="GEMINI_IDLE_TIMEOUT_SECONDS", default=15, ge=1)
+    # Модель промолчала на голосовую реплику (ход без звука и текста): столько ждём, не продолжит ли человек, прежде чем
+    # попросить модель ответить в свежей сессии. В проде так молчали ~8% ходов, и человек часто продолжал через 2–6 с.
+    silence_nudge_ms: int = Field(validation_alias="GEMINI_SILENCE_NUDGE_MS", default=2000, ge=0, le=10000)
     # Сколько последних сообщений диалога модель получает текстом при новой сессии (после каждого ответа при
     # GEMINI_TEXT_CONTEXT, а также после переподключения и смены голоса). 0 — весь диалог.
     history_messages: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES", default=40, ge=0)
@@ -244,6 +251,12 @@ class GeminiSettings(BaseAppSettings):
     # (около 1 с). false — как раньше: сессия готова заранее.
     lazy_open: bool = Field(validation_alias="GEMINI_LAZY_OPEN", default=False)
 
+    @property
+    def input_language_codes(self) -> list[str]:
+        """Коды языков расшифровки из `GEMINI_INPUT_LANGUAGES`: без пустых и повторов."""
+        codes = [code.strip() for code in self.input_languages.split(",")]
+        return list(dict.fromkeys(code for code in codes if code))
+
     @model_validator(mode="after")
     def _thresholds_in_order(self) -> "GeminiSettings":
         if not self.tpm_trim_at <= self.tpm_admit_at <= self.tpm_hard_at:
@@ -259,6 +272,7 @@ class MemorySettings(BaseAppSettings):
       shadow  транскрипты уходят в Cognee у людей, включивших память, но сводка в разговор не попадает (проверка)
       on      запись и сводка в разговоре
 
+<<<<<<< HEAD
     Согласие и данные человека — его датасет `ryadom_user_<user_id>` в Cognee; вызовы — REST с Bearer сервисного
     пользователя. Извлечение фактов делает сам Cognee (cognify), своей модели извлечения у агента нет.
     """
@@ -272,6 +286,25 @@ class MemorySettings(BaseAppSettings):
     # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
     default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
     # Пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
+=======
+    Извлечение идёт только через модель в РФ (прокси программы): Gemini и любые зарубежные адреса сюда не подставлять.
+
+    `MEMORY_BACKEND=cognee` — второй бэкенд (`app/memory/cognee_backend.py`): согласие и данные человека — его датасет
+    в Cognee, диалоги только в памяти процесса (диск не подключается), воркер и модель извлечения не нужны.
+    """
+
+    mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
+    # Бэкенд памяти: sqlite (по умолчанию; тот же файл, что диалоги) или cognee (внешний Cognee по REST).
+    backend: Literal["sqlite", "cognee"] = Field(validation_alias="MEMORY_BACKEND", default="sqlite")
+    # Адрес Cognee API и сервисный пользователь (только backend=cognee; multi-user access control — вызовы с Bearer).
+    cognee_base_url: str | None = Field(validation_alias="COGNEE_BASE_URL", default=None)
+    cognee_email: str | None = Field(validation_alias="COGNEE_SERVICE_EMAIL", default=None)
+    cognee_password: SecretStr | None = Field(validation_alias="COGNEE_SERVICE_PASSWORD", default=None)
+    # Только backend=cognee и только для стендов: память включена всем по умолчанию (opt-out вместо opt-in).
+    # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
+    default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
+    # Только backend=cognee: пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
+>>>>>>> origin/main
     # (POST /cognify = поставить в очередь), граф готов через десятки секунд — без паузы закэшируем «нет информации».
     cognify_settle_seconds: int = Field(validation_alias="MEMORY_COGNIFY_SETTLE_SECONDS", default=90, ge=0)
     # Инструмент recall_memory в голосовом контуре: синхронный поиск в Cognee — 10–30 с паузы посреди хода.

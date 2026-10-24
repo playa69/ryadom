@@ -260,45 +260,59 @@ U1, A1, U2, A2, U3, A3, U4 = [("u", "u1"), ("a", "a1"), ("u", "u2"), ("a", "a2")
 
 
 @pytest.mark.parametrize(
-    ("messages", "limit", "expected"),
+    ("messages", "limit", "pending", "expected"),
     [
-        pytest.param([], 40, [], id="empty"),
-        pytest.param([U1, A1], 40, [("user", "u1"), ("model", "a1")], id="pair"),
-        pytest.param([U1, A1, U2], 40, [("user", "u1"), ("model", "a1")], id="trailing-person-phrase-dropped"),
-        pytest.param([U1, A1, U2, ("u", "u2b")], 40, [("user", "u1"), ("model", "a1")], id="all-trailing-person-phrases-dropped"),
-        pytest.param([U1], 40, [], id="only-the-pending-phrase"),
-        pytest.param([("a", "привет"), ("a", "ещё"), U1, A1], 40, [("user", "u1"), ("model", "a1")], id="leading-model-replies-dropped"),
-        pytest.param([("a", "привет")], 40, [], id="only-model-replies"),
+        pytest.param([], 40, False, [], id="empty"),
+        pytest.param([U1, A1], 40, False, [("user", "u1"), ("model", "a1")], id="pair"),
+        # Реплика, на которую модель промолчала, остаётся: на неё и отвечает свежая сессия (раньше её срезало).
+        pytest.param([U1, A1, U2], 40, False, [("user", "u1"), ("model", "a1"), ("user", "u2")], id="unanswered-phrase-kept"),
+        # Набранное сообщение, которое сейчас уйдёт модели само, в историю не кладётся: иначе модель получила бы его дважды.
+        pytest.param([U1, A1, U2], 40, True, [("user", "u1"), ("model", "a1")], id="pending-typed-message-left-out"),
+        pytest.param(
+            [U1, A1, U2, ("u", "u2b")], 40, False, [("user", "u1"), ("model", "a1"), ("user", "u2\nu2b")], id="unanswered-phrases-merged"
+        ),
+        pytest.param(
+            [U1, A1, U2, ("u", "u2b")], 40, True, [("user", "u1"), ("model", "a1"), ("user", "u2")], id="only-the-pending-one-left-out"
+        ),
+        pytest.param([U1], 40, True, [], id="only-the-pending-phrase"),
+        pytest.param([U1], 40, False, [("user", "u1")], id="only-an-unanswered-phrase"),
+        pytest.param([("a", "привет"), ("a", "ещё"), U1, A1], 40, False, [("user", "u1"), ("model", "a1")], id="leading-model-replies-dropped"),
+        pytest.param([("a", "привет")], 40, False, [], id="only-model-replies"),
         pytest.param(
             [U1, U2, A1, A2, U3, A3],
             40,
+            False,
             [("user", "u1\nu2"), ("model", "a1\na2"), ("user", "u3"), ("model", "a3")],
             id="same-author-merged",
         ),
         pytest.param(
             [U1, A1, U2, A2, U3, A3, U4],
             4,
+            True,
             [("user", "u2"), ("model", "a2"), ("user", "u3"), ("model", "a3")],
             id="limit-keeps-the-last",
         ),
-        pytest.param([U1, A1, U2, A2, U3, A3], 3, [("user", "u3"), ("model", "a3")], id="limit-cut-at-model-reply"),
-        pytest.param([U1, U2, A1], 2, [("user", "u2"), ("model", "a1")], id="limit-counts-messages-before-merge"),
-        pytest.param([U1, A1, U2], 2, [("user", "u1"), ("model", "a1")], id="pending-phrase-is-not-counted"),
-        pytest.param([U1, A1, U2, A2, U3, A3], 0, [("user", "u1"), ("model", "a1"), ("user", "u2"), ("model", "a2"), ("user", "u3"), ("model", "a3")], id="zero-means-whole-dialog"),
+        pytest.param([U1, A1, U2, A2, U3, A3], 3, False, [("user", "u3"), ("model", "a3")], id="limit-cut-at-model-reply"),
+        pytest.param([U1, U2, A1], 2, False, [("user", "u2"), ("model", "a1")], id="limit-counts-messages-before-merge"),
+        pytest.param([U1, A1, U2], 2, True, [("user", "u1"), ("model", "a1")], id="pending-phrase-is-not-counted"),
+        pytest.param([U1, A1, U2, A2, U3, A3], 0, False, [("user", "u1"), ("model", "a1"), ("user", "u2"), ("model", "a2"), ("user", "u3"), ("model", "a3")], id="zero-means-whole-dialog"),
     ],
 )
 def test_history_for_a_new_session(
-    monkeypatch: pytest.MonkeyPatch, messages: list[tuple[str, str]], limit: int, expected: list[tuple[str, str]]
+    monkeypatch: pytest.MonkeyPatch, messages: list[tuple[str, str]], limit: int, pending: bool, expected: list[tuple[str, str]]
 ) -> None:
     monkeypatch.setattr(APP_CONFIG.gemini, "history_messages", limit)
-    assert make_session(FakeConnector(), *messages)._history() == expected
+    session = make_session(FakeConnector(), *messages)
+    if pending:
+        session._pending_text_ids.add(session._dialog.messages[-1].id)
+    assert session._history() == expected
 
 
 def test_history_starts_with_the_person_and_alternates_whatever_the_dialog() -> None:
     session = make_session(FakeConnector(), ("a", "x"), U1, U2, A1, A2, A3, U3, A1, U4)
     history = session._history()
-    assert history[0][0] == "user" and history[-1][0] == "model"
-    assert [role for role, _ in history] == ["user", "model"] * (len(history) // 2)  # модель принимает только чередование
+    assert history[0][0] == "user"
+    assert [role for role, _ in history] == (["user", "model"] * len(history))[: len(history)]  # модель принимает только чередование
 
 
 # ─── GEMINI_TEXT_CONTEXT=false: прежний путь ──────────────────────────────────────────────────────────────────────

@@ -16,6 +16,8 @@ export enum SessionClient {
   Web = 'web',
   /** The installed PWA. */
   Pwa = 'pwa',
+  /** The PWA opened as the Telegram Mini App. */
+  Telegram = 'telegram',
   Android = 'android',
   Ios = 'ios',
 }
