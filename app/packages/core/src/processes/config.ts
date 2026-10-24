@@ -11,6 +11,12 @@ export const PROCESSES_CONFIG = {
     /** An anonymous account nobody opened for as long as the retention period. */
     REASON_INACTIVITY: 'anonymous_inactivity',
   },
+  DIALOG_SHARE: {
+    /** Links to a conversation (`REQ-DATA-05`); the same numbers as `DIALOG_SHARE_*` in contracts, which the core does not depend on. */
+    MAX_ACTIVE_PER_USER: 5,
+    TTL_HOURS: [24, 72, 168],
+    DEFAULT_TTL_HOURS: 24,
+  },
   ACTIVITY: {
     /**
      * How often the "last seen" date of one person is written at most. A session refreshes every

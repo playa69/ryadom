@@ -1,4 +1,4 @@
-import { Block, Message, Messages, Navbar, Page, Preloader } from 'framework7-react'
+import { Block, Button, Message, Messages, Navbar, Page, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useState } from 'react'
 import { DialogApiErrorCode, type DialogApiResponse } from '@ryadom/contracts/api/dialogs'
@@ -6,6 +6,7 @@ import { apiErrorText, getDialog } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
 import { matchesQuery, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import { formatJournalDate, nbspDash } from './format'
+import ShareSheet from './ShareSheet'
 
 /**
  * One conversation from the journal: the summary and the messages, if the agent returns them.
@@ -17,6 +18,7 @@ import { formatJournalDate, nbspDash } from './format'
 export function JournalEntryBody({ dialogId, heading = false }: { dialogId: string; heading?: boolean }) {
   const [dialog, setDialog] = useState<DialogApiResponse | null>(null)
   const [error, setError] = useState('')
+  const [sharing, setSharing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -81,6 +83,15 @@ export function JournalEntryBody({ dialogId, heading = false }: { dialogId: stri
             />
           ))}
         </Messages>
+      )}
+
+      {dialog && dialog.messages.length > 0 && (
+        <>
+          <Button small outline onClick={() => setSharing(true)} data-testid="journal-share" className="rd-share-button">
+            Поделиться разговором
+          </Button>
+          <ShareSheet dialogId={dialogId} opened={sharing} onClose={() => setSharing(false)} />
+        </>
       )}
 
       {dialog && dialog.messages.length === 0 && (

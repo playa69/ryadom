@@ -32,6 +32,9 @@ export enum ApiPath {
   /** WebSocket: the stream of a single dialog. */
   DialogsWs = '/api/dialogs/ws',
 
+  /** Open, no sign-in: `/api/shared/:token` is the conversation behind a link (`REQ-DATA-05`). */
+  Shared = '/api/shared',
+
   /** What the agent remembers about the person (`GET`) and "forget everything" (`DELETE`). */
   Memory = '/api/memory',
   /** The person's switch "Remember" and the consent to it. */
@@ -55,6 +58,16 @@ export enum ApiPath {
 /** `/api/dialogs/:id` and `/api/dialogs/:id/end` are built from the dialog id. */
 export function dialogPath(dialogId: string): string {
   return `${ApiPath.Dialogs}/${encodeURIComponent(dialogId)}`
+}
+
+/** `/api/dialogs/:id/share`: the person's link to one dialog. */
+export function dialogSharePath(dialogId: string): string {
+  return `${dialogPath(dialogId)}/share`
+}
+
+/** `/api/shared/:token`: what a link opens. */
+export function sharedDialogPath(token: string): string {
+  return `${ApiPath.Shared}/${encodeURIComponent(token)}`
 }
 
 export function dialogEndPath(dialogId: string): string {

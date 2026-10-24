@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { Share2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
@@ -16,6 +17,7 @@ import { BUTTON } from './controls'
 import JournalEntry from './JournalEntry'
 import { RetryButton, StatePanel } from './JournalParts'
 import { Page } from './Page'
+import ShareDialogModal from './ShareDialogModal'
 
 const ENTRY_UNAVAILABLE = 'Разговор недоступен'
 
@@ -63,6 +65,7 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
   const { items } = useJournal()
   const [load, setLoad] = useState<Load>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
+  const [sharing, setSharing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -110,6 +113,15 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
       title={head?.summary?.title || 'Разговор'}
       back={{ href: '/journal', label: 'Все разговоры' }}
       measure="reading"
+      actions={
+        // Only a conversation with something in it can be shared.
+        dialog && dialog.messages.length > 0 ? (
+          <Button variant="outline" size="sm" className={cn(BUTTON, 'px-3')} onClick={() => setSharing(true)} data-testid="journal-share">
+            <Share2 aria-hidden="true" />
+            <span className="max-[26rem]:sr-only">Поделиться</span>
+          </Button>
+        ) : null
+      }
       className="gap-8"
       data-testid="journal-entry"
       aria-busy={load.status === 'loading'}
@@ -132,6 +144,7 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
       )}
 
       {dialog && <JournalEntry dialog={dialog} />}
+      {dialog && <ShareDialogModal dialogId={dialogId} open={sharing} onClose={() => setSharing(false)} />}
     </Page>
   )
 }

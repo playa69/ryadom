@@ -23,6 +23,7 @@ import {
   refreshTokensManager,
 } from '../../../managers/refresh-tokens-manager'
 import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
+import { DeleteUserDialogSharesCommand, dialogSharesManager } from '../../../managers/dialog-shares-manager'
 import { buildDeletionArchive } from '../shared/deletion-archive'
 import { PROCESSES_CONFIG } from '../../config'
 import { DeleteAccountOperation } from './delete-account.operation'
@@ -87,6 +88,8 @@ export class DeleteAccountOperationHandler implements RequestHandler<DeleteAccou
       // The account is only anonymized, so its devices must be forgotten here: otherwise they would
       // keep signing in to it.
       await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
+      // Links to the person's conversations die with the account (`REQ-DATA-05`).
+      await dialogSharesManager.execute(new DeleteUserDialogSharesCommand({ userId }))
       // By email, not by userId: codes are not tied to an account. An anonymous account has none.
       if (user.email !== null)
         await emailCodesManager.execute(new DeleteEmailCodesCommand({ email: user.email }))

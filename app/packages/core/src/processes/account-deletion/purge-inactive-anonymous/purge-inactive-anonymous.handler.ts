@@ -23,6 +23,7 @@ import {
   refreshTokensManager,
 } from '../../../managers/refresh-tokens-manager'
 import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
+import { DeleteUserDialogSharesCommand, dialogSharesManager } from '../../../managers/dialog-shares-manager'
 import { agentApiIntegration, EraseAgentUserRequest } from '../../../integrations/agent-api'
 import { buildDeletionArchive } from '../shared/deletion-archive'
 import { PROCESSES_CONFIG } from '../../config'
@@ -111,6 +112,8 @@ export class PurgeInactiveAnonymousOperationHandler implements RequestHandler<
       // A linked address that was never confirmed has a password and a code waiting: neither is kept.
       await userCredentialsManager.execute(new DeleteUserCredentialsCommand({ userId }))
       await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
+      // Links to the person's conversations die with the account (`REQ-DATA-05`).
+      await dialogSharesManager.execute(new DeleteUserDialogSharesCommand({ userId }))
       if (user.email !== null)
         await emailCodesManager.execute(new DeleteEmailCodesCommand({ email: user.email }))
 

@@ -34,6 +34,11 @@ import { registerAllRoutes } from './routes'
 
 const TRANSPORT_STATUSES = new Set<number>([400, 401, 404, 413, 422, 426, 429, 500, 501, 502, 503])
 
+/** A link's token is its secret: the access log keeps the route, not the token. */
+function redactedPath(path: string): string {
+  return path.startsWith(`${ApiPath.Shared}/`) ? `${ApiPath.Shared}/:token` : path
+}
+
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const { logger, policy } = deps
   const app = new Hono<AppEnv>()
@@ -55,7 +60,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     await next()
     const entry = {
       method: c.req.method,
-      path: c.req.path,
+      path: redactedPath(c.req.path),
       status: c.res.status,
       ms: Math.round(performance.now() - started),
       platform: c.req.header(AppHeader.Platform),
@@ -123,14 +128,14 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // The agent is down, which is not our failure: 503, and the screen shows the hotlines
     //.
     if (error instanceof AgentUnavailableError) {
-      logger.warn({ err: error, path: c.req.path }, 'Агент диалогов недоступен')
+      logger.warn({ err: error, path: redactedPath(c.req.path) }, 'Агент диалогов недоступен')
       return apiError(c, 503, 'Dialog agent is unavailable')
     }
     // Hono throws malformed JSON and similar failures as an HTTPException carrying a status.
     if (error instanceof HTTPException && TRANSPORT_STATUSES.has(error.status)) {
       return apiError(c, error.status as TransportErrorStatus, error.message || 'Request failed')
     }
-    logger.error({ err: error, method: c.req.method, path: c.req.path }, 'Необработанная ошибка в роуте')
+    logger.error({ err: error, method: c.req.method, path: redactedPath(c.req.path) }, 'Необработанная ошибка в роуте')
     return apiError(c, 500, 'Internal server error')
   })
 

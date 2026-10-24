@@ -133,6 +133,7 @@ const apiEnv = {
   MOBILE_JWT_SECRET: 'e2e-only-mobile-secret-0123456789abcdef',
   PUBLIC_WEB_URL: `http://127.0.0.1:${WEB_PORT}`,
   PUBLIC_APP_URL: `http://127.0.0.1:${APP_PORT}`,
+  PUBLIC_WEBAPP_URL: `http://127.0.0.1:${WEBAPP_PORT}`,
   EMAIL_TRANSPORT: 'smtp',
   EMAIL_FROM: 'Рядом <noreply@ryadom.local>',
   SMTP_HOST: '127.0.0.1',

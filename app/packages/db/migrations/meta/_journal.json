@@ -57,6 +57,13 @@
       "when": 1792001401979,
       "tag": "0007_users_telegram_id",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792865064328,
+      "tag": "0008_dialog_shares",
+      "breakpoints": true
     }
   ]
 }
