@@ -89,11 +89,32 @@ import {
   type SharedDialogApiResponse,
 } from '@ryadom/contracts/api/dialog-shares'
 import {
+  DiaryApiErrorCode,
+  type CreateWeekSummaryApiRequest,
+  type CreateYearStoryApiRequest,
+  type DiaryApiResponse,
+  type DiaryEventsApiResponse,
+  type DiarySummariesApiResponse,
+  type DiarySummaryApi,
+  type DiaryYearApiResponse,
+  type PutMoodCheckinApiRequest,
+  type PutMoodCheckinApiResponse,
+  type WidgetTokenApiResponse,
+} from '@ryadom/contracts/api/diary'
+import {
+  NotificationsApiErrorCode,
+  type CreateSubscriptionApiRequest,
+  type NotificationSettingsApiResponse,
+  type SubscriptionApiResponse,
+  type UpdateNotificationSettingsApiRequest,
+} from '@ryadom/contracts/api/notifications'
+import {
   ApiPath,
   dialogEndPath,
   dialogPath,
   dialogSharePath,
   memoryFactPath,
+  notificationSubscriptionPath,
   sessionPath,
   sharedDialogPath,
 } from '@ryadom/contracts/api/paths'
@@ -759,6 +780,79 @@ export function createClient(config: ClientConfig) {
 
     getAppStatus: (query: string): Promise<AppStatusApiResponse> =>
       apiFetch<AppStatusApiResponse>(`${ApiPath.AppStatus}?${query}`),
+
+    // ─── mood diary ───────────────────────────────────────────────────────────
+    // Moods and summaries are the person's own: the screens show them and keep them in memory only,
+    // never in logs or analytics.
+
+    /** Today's note, the month (`YYYY-MM`, the current one by default), the week and the reminder. */
+    getDiary: (month?: string): Promise<DiaryApiResponse> =>
+      apiFetch<DiaryApiResponse>(`${ApiPath.Diary}${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+
+    /** Saves or replaces the note of today (`date` is for the offline queue: today or yesterday). */
+    putMoodCheckin: (
+      data: PutMoodCheckinApiRequest,
+    ): Promise<ApiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>> =>
+      apiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>(ApiPath.DiaryCheckinToday, {
+        method: 'PUT',
+        body: data,
+      }),
+
+    getDiaryYear: (year?: number): Promise<DiaryYearApiResponse> =>
+      apiFetch<DiaryYearApiResponse>(`${ApiPath.DiaryYear}${year ? `?year=${year}` : ''}`),
+
+    listDiarySummaries: (before?: string): Promise<DiarySummariesApiResponse> =>
+      apiFetch<DiarySummariesApiResponse>(
+        `${ApiPath.DiarySummaries}?kind=week${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    createWeekSummary: (
+      data: CreateWeekSummaryApiRequest,
+    ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
+      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
+
+    createYearStory: (
+      data: CreateYearStoryApiRequest,
+    ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
+      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryYearSummary, { method: 'POST', body: data }),
+
+    getDiaryEvents: (week?: string): Promise<DiaryEventsApiResponse> =>
+      apiFetch<DiaryEventsApiResponse>(`${ApiPath.DiaryEvents}${week ? `?week=${encodeURIComponent(week)}` : ''}`),
+
+    /** The token of the Android widget; shown once. */
+    createWidgetToken: (): Promise<WidgetTokenApiResponse> =>
+      apiFetch<WidgetTokenApiResponse>(ApiPath.DiaryWidgetToken, { method: 'POST' }),
+
+    // ─── reminders ────────────────────────────────────────────────────────────
+
+    getNotificationSettings: (): Promise<NotificationSettingsApiResponse> =>
+      apiFetch<NotificationSettingsApiResponse>(ApiPath.NotificationSettings),
+
+    updateNotificationSettings: (
+      data: UpdateNotificationSettingsApiRequest,
+    ): Promise<NotificationSettingsApiResponse> =>
+      apiFetch<NotificationSettingsApiResponse>(ApiPath.NotificationSettings, { method: 'PUT', body: data }),
+
+    createNotificationSubscription: (
+      data: CreateSubscriptionApiRequest,
+    ): Promise<ApiOutcome<SubscriptionApiResponse, NotificationsApiErrorCode>> =>
+      apiOutcome<SubscriptionApiResponse, NotificationsApiErrorCode>(ApiPath.NotificationSubscriptions, {
+        method: 'POST',
+        body: data,
+      }),
+
+    deleteNotificationSubscription: async (id: string): Promise<ApiOutcome<void, NotificationsApiErrorCode>> =>
+      voidOutcome(
+        await apiOutcome<null, NotificationsApiErrorCode>(notificationSubscriptionPath(id), { method: 'DELETE' }),
+      ),
+
+    /** The person opened the app from a reminder. */
+    notificationOpened: async (deliveryId: number): Promise<void> => {
+      await apiOutcome<null, NotificationsApiErrorCode>(ApiPath.NotificationOpened, {
+        method: 'POST',
+        body: { deliveryId },
+      })
+    },
 
     // ─── memory ───────────────────────────────────────────────────────────────
     // What comes back holds the person's own words: the screens show it and keep it in memory only,
