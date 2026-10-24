@@ -33,11 +33,7 @@ metadata:
 data:
   APP_PORT: "8001"
   # Версия агента: отдаёт GET /version и ставится тегом в трассы Langfuse. Держать равной тегу образа (02-deployment.yaml).
-<<<<<<< HEAD
   APP_VERSION: "0.8.0"
-=======
-  APP_VERSION: "0.7.0"
->>>>>>> origin/main
   # Озвучка: auto = SaluteSpeech (если есть ключ) → Qwen TTS → espeak-ng → без озвучки
   TTS_MODE: "qwen"                    # qwen | salutespeech
   TTS_DEFAULT_VOICE: "male"
