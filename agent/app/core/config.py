@@ -272,7 +272,6 @@ class MemorySettings(BaseAppSettings):
       shadow  транскрипты уходят в Cognee у людей, включивших память, но сводка в разговор не попадает (проверка)
       on      запись и сводка в разговоре
 
-<<<<<<< HEAD
     Согласие и данные человека — его датасет `ryadom_user_<user_id>` в Cognee; вызовы — REST с Bearer сервисного
     пользователя. Извлечение фактов делает сам Cognee (cognify), своей модели извлечения у агента нет.
     """
@@ -286,25 +285,6 @@ class MemorySettings(BaseAppSettings):
     # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
     default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
     # Пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
-=======
-    Извлечение идёт только через модель в РФ (прокси программы): Gemini и любые зарубежные адреса сюда не подставлять.
-
-    `MEMORY_BACKEND=cognee` — второй бэкенд (`app/memory/cognee_backend.py`): согласие и данные человека — его датасет
-    в Cognee, диалоги только в памяти процесса (диск не подключается), воркер и модель извлечения не нужны.
-    """
-
-    mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
-    # Бэкенд памяти: sqlite (по умолчанию; тот же файл, что диалоги) или cognee (внешний Cognee по REST).
-    backend: Literal["sqlite", "cognee"] = Field(validation_alias="MEMORY_BACKEND", default="sqlite")
-    # Адрес Cognee API и сервисный пользователь (только backend=cognee; multi-user access control — вызовы с Bearer).
-    cognee_base_url: str | None = Field(validation_alias="COGNEE_BASE_URL", default=None)
-    cognee_email: str | None = Field(validation_alias="COGNEE_SERVICE_EMAIL", default=None)
-    cognee_password: SecretStr | None = Field(validation_alias="COGNEE_SERVICE_PASSWORD", default=None)
-    # Только backend=cognee и только для стендов: память включена всем по умолчанию (opt-out вместо opt-in).
-    # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
-    default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
-    # Только backend=cognee: пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
->>>>>>> origin/main
     # (POST /cognify = поставить в очередь), граф готов через десятки секунд — без паузы закэшируем «нет информации».
     cognify_settle_seconds: int = Field(validation_alias="MEMORY_COGNIFY_SETTLE_SECONDS", default=90, ge=0)
     # Инструмент recall_memory в голосовом контуре: синхронный поиск в Cognee — 10–30 с паузы посреди хода.

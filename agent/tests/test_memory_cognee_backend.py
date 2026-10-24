@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 """Бэкенд памяти на Cognee: согласие = датасет, запись транскрипта, сводка из prefetch-кэша.
-=======
-"""Бэкенд памяти на Cognee (`MEMORY_BACKEND=cognee`): согласие = датасет, запись транскрипта, сводка из prefetch-кэша.
->>>>>>> origin/main
 
 Cognee API мокается двумя способами: клиент (`CogneeClient`) — через `httpx.MockTransport` (логин, 401, 404 поиска),
 бэкенд (`CogneeMemoryBackend`) — подменой клиента фейком. Сеть не используется.
@@ -20,7 +16,6 @@ from fastapi.testclient import TestClient
 from app.clients.cognee import CogneeClient
 from app.main import create_app
 from app.memory.cognee_backend import BRIEF_QUERY, CogneeMemoryBackend, dataset_name
-<<<<<<< HEAD
 from app.memory.errors import MemoryDisabled, MemoryServiceError, MemoryValidation
 from app.services.dialog_store import Dialog, Message, now_iso
 from app.core.config import MemorySettings
@@ -36,11 +31,6 @@ def memory_settings(**values: object) -> MemorySettings:
     }
     defaults.update(values)
     return MemorySettings(**defaults)  # type: ignore[arg-type]
-=======
-from app.memory.service import MemoryDisabled, MemoryServiceError, MemoryValidation
-from app.services.dialog_store import Dialog, Message, now_iso
-from tests.memory_support import memory_settings
->>>>>>> origin/main
 
 CONSENT = "2026-10-21"
 
@@ -109,11 +99,7 @@ class FakeCognee:
 
 
 def backend(fake: FakeCognee | None) -> CogneeMemoryBackend:
-<<<<<<< HEAD
     return CogneeMemoryBackend(fake, memory_settings())  # type: ignore[arg-type]
-=======
-    return CogneeMemoryBackend(fake, memory_settings(MEMORY_BACKEND="cognee", MEMORY_COGNIFY_SETTLE_SECONDS="0"))  # type: ignore[arg-type]
->>>>>>> origin/main
 
 
 # ─── клиент (MockTransport) ───────────────────────────────────────────────────
@@ -417,20 +403,12 @@ def test_dataset_name_sanitized() -> None:
 
 
 def test_app_cognee_mode(monkeypatch: Any) -> None:
-<<<<<<< HEAD
     """Приложение с памятью Cognee: клиент подменён фейком, диалоги в памяти процесса."""
-=======
-    """Приложение с MEMORY_BACKEND=cognee: клиент подменён фейком, диалоги в памяти, воркер и SQLite не поднимаются."""
->>>>>>> origin/main
     from tests.conftest import AUTH
 
     fake = FakeCognee()
     monkeypatch.setattr("app.main.build_cognee_client", lambda cfg: fake)
     settings = memory_settings(
-<<<<<<< HEAD
-=======
-        MEMORY_BACKEND="cognee",
->>>>>>> origin/main
         COGNEE_BASE_URL="http://cognee.test",
         COGNEE_SERVICE_EMAIL="agent-service@cognee.dev",
         COGNEE_SERVICE_PASSWORD="test-password",
@@ -459,11 +437,7 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
 
 
 def backend_default_on(fake: FakeCognee | None) -> CogneeMemoryBackend:
-<<<<<<< HEAD
     return CogneeMemoryBackend(fake, memory_settings(MEMORY_DEFAULT_ENABLED="true"))  # type: ignore[arg-type]
-=======
-    return CogneeMemoryBackend(fake, memory_settings(MEMORY_BACKEND="cognee", MEMORY_DEFAULT_ENABLED="true", MEMORY_COGNIFY_SETTLE_SECONDS="0"))  # type: ignore[arg-type]
->>>>>>> origin/main
 
 
 async def test_default_enabled_new_user_writes_without_dataset() -> None:
