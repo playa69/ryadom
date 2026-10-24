@@ -54,6 +54,8 @@ data:
   LLM_CHAT_MODEL: "gigachat3.5-432b-a28b"
   STT_MODEL: "whisper-large-v3"
   LLM_TIMEOUT_SECONDS: "15"
+  # Пауза между словами потокового текста: не растягиваем ответ на секунды сверх времени модели.
+  STREAM_DELAY_MS: "10"
   # Голосовой конвейер. cascade = распознавание whisper → чат-модель → озвучка Qwen (боевой, всё, что выше);
   # gemini_live = речь в речь через Gemini Live (одна модель слушает, отвечает и говорит). Для gemini_live нужны
   # Secret `agent-gemini` и образ с google-genai (agent ≥ 0.2.0). Переключение: сменить значение, применить ConfigMap и
