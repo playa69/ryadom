@@ -218,6 +218,10 @@ class GeminiSettings(BaseAppSettings):
     # Прототип PROTEUS-168: модель молча вызывает функцию `report_mood` после реплики человека (тон, интенсивность, риск), агент
     # шлёт клиенту кадр `mood`, шарик окрашивается. Выключено по умолчанию: ход и токены не меняются, пока не измерены.
     mood_tool: bool = Field(validation_alias="GEMINI_MOOD_TOOL", default=False)
+    # Как отвечаем на report_mood: silent (модель молчит из-за вызова), when_idle, interrupt или unspecified (решает Google).
+    mood_scheduling: Literal["silent", "when_idle", "interrupt", "unspecified"] = Field(
+        validation_alias="GEMINI_MOOD_SCHEDULING", default="silent"
+    )
     # Длинный разговор: когда контекст сессии подходит к пределу, Google сам сжимает его скользящим окном (самое старое
     # уходит, начало разговора и промпт остаются), и сессия не обрывается. Без сжатия голосовая сессия живёт ~15 минут.
     compression: bool = Field(validation_alias="GEMINI_COMPRESSION", default=True)

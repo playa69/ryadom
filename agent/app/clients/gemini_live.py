@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from app.clients.speech import TtsError, Voice
-from app.core.config import GeminiSettings
+from app.core.config import APP_CONFIG, GeminiSettings
 from app.core.metrics import GEMINI_OPENS_TOTAL, GEMINI_SESSIONS_OPEN
 from app.services import usage as model_usage
 from app.services.gemini_budget import estimate_turn
@@ -244,9 +244,8 @@ class GeminiLiveLink:
     async def _ack_mood(self, call_id: str) -> None:
         """Ответ на report_mood: молча (SILENT), чтобы модель не стала говорить из-за вызова."""
         t = self._types
-        response = t.FunctionResponse(
-            id=call_id or None, name=MOOD_TOOL_NAME, response={"output": "ok"}, scheduling=t.FunctionResponseScheduling.SILENT
-        )
+        scheduling = t.FunctionResponseScheduling[APP_CONFIG.gemini.mood_scheduling.upper().replace("UNSPECIFIED", "SCHEDULING_UNSPECIFIED")]
+        response = t.FunctionResponse(id=call_id or None, name=MOOD_TOOL_NAME, response={"output": "ok"}, scheduling=scheduling)
         try:
             await self._session.send_tool_response(function_responses=[response])
         except Exception as error:  # noqa: BLE001
