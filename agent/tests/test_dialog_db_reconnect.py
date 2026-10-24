@@ -32,14 +32,16 @@ def _write() -> DialogWrite:
 
 def _kill_backend(store: DialogDatabase) -> None:
     """Сервер сам закрывает соединение агента: так выглядит разрыв."""
-    pid = store._conn.info.backend_pid
+    with store._connection() as conn:
+        pid = conn.info.backend_pid
     with psycopg.connect(URL, autocommit=True) as admin:
         admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
 
 
 def test_closed_connection_is_reopened(db: DialogDatabase) -> None:
     db.apply([_write()])
-    db._conn.close()
+    with db._connection() as conn:
+        conn.close()
     dialogs, _ = db.load_user("reconnect-user")
     assert [d.id for d in dialogs] == ["rc-1"]
 
@@ -56,12 +58,7 @@ def test_server_side_disconnect_is_survived_by_read_and_write(db: DialogDatabase
     assert db.load_user("reconnect-user")[0] == []
 
 
-def test_unreachable_database_raises_instead_of_hanging(db: DialogDatabase) -> None:
-    good = db.dsn
-    db.dsn = "postgresql://nobody@127.0.0.1:1/none"
-    db._conn.close()
-    try:
-        with pytest.raises(DialogDbError):
-            db.load_user("reconnect-user")
-    finally:
-        db.dsn = good
+def test_unreachable_database_raises_instead_of_hanging() -> None:
+    db = DialogDatabase("postgresql://nobody@127.0.0.1:1/none")
+    with pytest.raises(DialogDbError):
+        db.open()
