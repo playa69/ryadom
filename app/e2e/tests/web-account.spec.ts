@@ -86,11 +86,18 @@ test('путь аккаунта в вебе: регистрация, профи�
   await expect(page.getByTestId('profile-name')).toHaveText('Тест Рядом')
 
   // The agent's voice: a man's until the person picks another one; the choice is saved on the account.
-  await expect(page.getByTestId('voice-male')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('voice-female')).toHaveAttribute('aria-pressed', 'false')
-  await page.getByTestId('voice-female').click()
-  await expect(page.getByTestId('voice-female')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('voice-male')).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByTestId('voice-name')).toContainText('Дмитрий')
+  await page.getByTestId('voice-name').click()
+  await expect(page.getByTestId('voice-apply')).toBeDisabled()
+  // The modal opens on the tab of the current gender; another tab lists the other gender.
+  await expect(page.getByRole('tab', { name: 'Мужские' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: 'Женские' }).click()
+  // Playing a sample does not choose it.
+  await page.getByLabel('Прослушать: Алиса').click()
+  await expect(page.getByTestId('voice-apply')).toBeDisabled()
+  await page.getByRole('radio', { name: 'Алиса' }).click()
+  await page.getByTestId('voice-apply').click()
+  await expect(page.getByTestId('voice-name')).toContainText('Алиса')
 
   // The help lines are also a page of their own: one column at every width, nothing sideways.
   await page.getByTestId('row-people').click()
@@ -109,7 +116,7 @@ test('путь аккаунта в вебе: регистрация, профи�
   await openProfile(page)
   await expect(page.getByTestId('profile-name')).toBeVisible()
   // The profile is read from the server again, and the voice is still the one chosen.
-  await expect(page.getByTestId('voice-female')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('voice-name')).toContainText('Алиса')
 
   // ── password change ──────────────────────────────────────────────────────
   await page.getByTestId('row-change-password').click()
