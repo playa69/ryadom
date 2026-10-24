@@ -13,6 +13,7 @@ import ChangePasswordPage from './pages/profile/ChangePasswordPage'
 import DeleteAccountPage from './pages/profile/DeleteAccountPage'
 import LinkEmailPage from './pages/profile/LinkEmailPage'
 import MemoryPage from './pages/profile/MemoryPage'
+import VoicePage from './pages/profile/VoicePage'
 import ProfilePage from './pages/profile/ProfilePage'
 import SessionsPage from './pages/profile/SessionsPage'
 
@@ -35,6 +36,7 @@ export const routes = [
   { path: '/profile/link-email/', component: LinkEmailPage },
   { path: '/profile/sessions/', component: SessionsPage },
   { path: '/profile/memory/', component: MemoryPage },
+  { path: '/profile/voice/', component: VoicePage },
   { path: '/profile/delete/', component: DeleteAccountPage },
 
   // conversation and people, opened from any tab

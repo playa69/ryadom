@@ -23,6 +23,11 @@ export const users = pgTable(
     name: text('name'),
     /** The voice the agent speaks with, by gender (`male` by default); the agent maps it to its speech provider's voice. */
     agentVoice: text('agent_voice').$type<AgentVoice>().notNull().default('male'),
+    /**
+     * The concrete voice the person picked (a Gemini voice name such as `Kore`); null until they pick one, and then the
+     * agent uses its voice for `agentVoice`. The gender above always matches this voice.
+     */
+    agentVoiceName: text('agent_voice_name'),
     isActive: boolean('is_active').notNull().default(true),
     isEmailConfirmed: boolean('is_email_confirmed').notNull().default(false),
     properties: jsonb('properties').$type<Record<string, unknown>>(),

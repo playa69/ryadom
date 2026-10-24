@@ -828,12 +828,20 @@ class DialogSession:
         tts = self._tts_source()
         if tts is None:
             return None
-        return self._speech_with(tts, message_id, turn)
+        return self._speech_with(tts, message_id, turn, self._main_voice())
 
-    def _speech_with(self, tts: TextToSpeech, message_id: str, turn: Turn | None) -> SpeechFeed:
-        """Озвучка сообщения заданным провайдером (режим gemini_live озвучивает шаблоны хода без Gemini другим)."""
+    def _main_voice(self) -> str:
+        """Голос основного озвучивателя: у каскада это род; режим gemini_live подменяет (выбранный человеком голос Gemini)."""
+        return self._dialog.voice
+
+    def _speech_with(
+        self, tts: TextToSpeech, message_id: str, turn: Turn | None, voice: str | None = None
+    ) -> SpeechFeed:
+        """Озвучка сообщения заданным провайдером (режим gemini_live озвучивает шаблоны хода без Gemini другим).
+
+        `voice` — ключ голоса этого провайдера; без него род диалога (каскад и запасной путь озвучивают по роду)."""
         feed = SpeechFeed()
-        task = asyncio.create_task(self._speak(tts, message_id, feed.chunks, self._dialog.voice, turn))
+        task = asyncio.create_task(self._speak(tts, message_id, feed.chunks, voice or self._dialog.voice, turn))  # type: ignore[arg-type]
         self._speech_tasks.add(task)
         self._speeches[message_id] = task
         task.add_done_callback(self._speech_tasks.discard)

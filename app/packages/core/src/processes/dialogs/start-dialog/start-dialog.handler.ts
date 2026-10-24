@@ -41,10 +41,12 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
     // The voice is the person's profile setting; the agent applies it to the greeting and to every reply.
     const found = await usersManager.execute(new GetUserByIdQuery({ userId: operation.userId }))
     const voice = found.success ? found.user.agentVoice : undefined
+    const voiceName = found.success ? (found.user.agentVoiceName ?? undefined) : undefined
     const started = await agentApiIntegration.execute(
       new StartAgentDialogRequest({
         userId: operation.userId,
         voice,
+        voiceName,
         startNew: operation.startNew,
         memory: operation.memory,
       }),

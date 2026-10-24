@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from app.clients.speech import TtsError, Voice
 from app.core.config import GeminiSettings
+from app.core.voices import GEMINI_VOICE_NAMES
 from app.core.metrics import GEMINI_OPENS_TOTAL, GEMINI_SESSIONS_OPEN
 from app.services import usage as model_usage
 from app.services.gemini_budget import estimate_turn
@@ -363,7 +364,11 @@ class GeminiLiveConnector:
         history: LiveHistory | None,
         language_hint: bool,
     ) -> GeminiLiveLink:
-        voice_name = self._voices[voice]  # голос задаётся в каждой сессии; не male и не female — ошибка, а не молчаливая подмена
+        # Голос задаётся в каждой сессии. Род берёт настроенный голос, выбранное человеком имя из списка (app/core/voices.py) идёт как
+        # есть; всё остальное — ошибка, а не молчаливая подмена.
+        voice_name = self._voices[voice] if voice in self._voices else voice
+        if voice not in self._voices and voice not in GEMINI_VOICE_NAMES:
+            raise KeyError(voice)  # не род и не голос из списка: к Google не идём
         config = live_config(self._settings, voice_name, instructions, resume_handle, bool(history), language_hint)
         stack = AsyncExitStack()
         try:
