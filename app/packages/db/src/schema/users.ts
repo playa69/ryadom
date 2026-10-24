@@ -23,6 +23,8 @@ export const users = pgTable(
     name: text('name'),
     /** The voice the agent speaks with, by gender (`male` by default); the agent maps it to its speech provider's voice. */
     agentVoice: text('agent_voice').$type<AgentVoice>().notNull().default('male'),
+    /** IANA zone the person lives in: the diary day, the reminder and the weekly summary follow it (`REQ-WELL-01`). */
+    timezone: text('timezone').notNull().default('Europe/Moscow'),
     isActive: boolean('is_active').notNull().default(true),
     isEmailConfirmed: boolean('is_email_confirmed').notNull().default(false),
     properties: jsonb('properties').$type<Record<string, unknown>>(),
