@@ -215,6 +215,9 @@ class GeminiSettings(BaseAppSettings):
     # (замер на gemini-3.8-live: первый звук на ~0,2 с быстрее, ответы короткие и тёплые, рассуждать нечем); >0 — предел.
     # Кризисы модель не решает: их ловит агент.
     thinking_budget: int = Field(validation_alias="GEMINI_THINKING_BUDGET", default=-1, ge=-1)
+    # Прототип PROTEUS-168: модель молча вызывает функцию `report_mood` после реплики человека (тон, интенсивность, риск), агент
+    # шлёт клиенту кадр `mood`, шарик окрашивается. Выключено по умолчанию: ход и токены не меняются, пока не измерены.
+    mood_tool: bool = Field(validation_alias="GEMINI_MOOD_TOOL", default=False)
     # Длинный разговор: когда контекст сессии подходит к пределу, Google сам сжимает его скользящим окном (самое старое
     # уходит, начало разговора и промпт остаются), и сессия не обрывается. Без сжатия голосовая сессия живёт ~15 минут.
     compression: bool = Field(validation_alias="GEMINI_COMPRESSION", default=True)

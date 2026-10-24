@@ -3,7 +3,7 @@
 import { CircleCheck, Keyboard, Mic, Pause, Square } from 'lucide-react'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Button } from '@ryadom/ui/components/button'
-import { VoiceOrb, type OrbState } from '@ryadom/ui/components/voice-orb'
+import { VoiceOrb, type OrbMood, type OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
 import { BUTTON, COLUMN, FOCUS_RING } from './controls'
 
@@ -15,6 +15,7 @@ import { BUTTON, COLUMN, FOCUS_RING } from './controls'
  */
 export default function DialogVoice({
   orb,
+  mood,
   level,
   caption,
   hint,
@@ -27,6 +28,7 @@ export default function DialogVoice({
   onEnd,
 }: {
   orb: OrbState
+  mood?: OrbMood | null
   level: () => number
   caption: string
   hint: string
@@ -70,6 +72,7 @@ export default function DialogVoice({
       >
         <VoiceOrb
           state={orb}
+          mood={mood}
           level={level}
           className="w-[min(88vw,46dvh,380px)] short:w-[min(60vw,40dvh,380px)]"
         />

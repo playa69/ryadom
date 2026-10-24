@@ -17,6 +17,9 @@ export enum DialogMode {
   RitualEvening = 'ritual_evening',
 }
 
+/** Tone of the person's last turn, as the voice model reports it (prototype PROTEUS-168). */
+export type MoodTone = 'neutral' | 'sleepy' | 'angry' | 'afraid' | 'sad' | 'calm'
+
 export enum SafetyLevel {
   /** The classifier grew wary: a careful question, and the screen does not switch. */
   Concern = 'concern',
@@ -148,6 +151,7 @@ export enum DialogServerFrame {
   TtsStart = 'tts_start',
   TtsEnd = 'tts_end',
   Safety = 'safety',
+  Mood = 'mood',
   Ended = 'ended',
   Error = 'error',
   Pong = 'pong',
@@ -241,6 +245,15 @@ export type DialogServerMessage =
   | { type: DialogServerFrame.TtsStart; messageId: string; codec: TtsCodec; sampleRate: number }
   | { type: DialogServerFrame.TtsEnd; messageId: string }
   | { type: DialogServerFrame.Safety; level: SafetyLevel; text: string | null; hotlines: HotlineApiResponse[] }
+  /** After each turn of the person: how they sound. `replyTone` is the tone the agent is about to answer in. */
+  | {
+      type: DialogServerFrame.Mood
+      tone: MoodTone
+      intensity: number
+      risk: 'none' | 'self_harm' | 'harm_others'
+      replyTone: MoodTone | null
+      at: number
+    }
   | { type: DialogServerFrame.Ended; summary: DialogSummaryApiResponse | null }
   | { type: DialogServerFrame.Error; code: DialogWsErrorCode; message: string }
   | { type: DialogServerFrame.Pong }

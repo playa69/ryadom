@@ -10,6 +10,7 @@ import {
   DialogApiErrorCode,
   DialogWsErrorCode,
   type DialogSummaryApiResponse,
+  type MoodTone,
 } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
@@ -41,7 +42,7 @@ import {
   type TurnEvent,
 } from '@ryadom/client-core/voice/turn-detector'
 import { Button } from '@ryadom/ui/components/button'
-import type { OrbState } from '@ryadom/ui/components/voice-orb'
+import type { OrbMood, OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
@@ -84,6 +85,10 @@ const STATE_TEXT: Partial<Record<DialogSocketState, string>> = {
 
 /** Without an answer from the agent the person must not be stuck on the closing step. */
 const END_FALLBACK_MS = 2000
+// Prototype PROTEUS-168: below this strength a reported mood is not shown; the colour fades back after the hold.
+const MOOD_MIN_INTENSITY = 0.4
+const MOOD_HOLD_MS = 15_000
+const ORB_MOODS: Partial<Record<MoodTone, OrbMood>> = { sleepy: 'sleepy', angry: 'angry', afraid: 'afraid' }
 
 const MIC_UNSUPPORTED_TEXT = 'Здесь микрофон недоступен. Можно писать текстом.'
 const MIC_DENIED_TEXT = 'Микрофон не разрешён. Разреши его в настройках — или пиши текстом.'
@@ -125,6 +130,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [view, setView] = useState<DialogView>(() => initialDialogView(dialogId))
   const [recording, setRecording] = useState(false)
+  // Prototype PROTEUS-168: the tone the agent reports for the person's last turn; fades back after a while.
+  const [mood, setMood] = useState<OrbMood | null>(null)
+  const moodTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
   const [handsFree] = useState(() => readHandsFree(WEB_HANDS_FREE_KEY) && isTurnDetectionSupported())
   /** Hands-free: the microphone is open and the detector listens for turns. */
@@ -334,6 +342,11 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       // Not reported from here on purpose: the server already counts this signal (safety_signal), with no
       // person attached; a second count from a signed-in screen would only risk pointing at who was in crisis.
       onSafety: (_level, text, hotlines) => latest.current.openSos({ text, hotlines }),
+      onMood: (tone, intensity) => {
+        clearTimeout(moodTimer.current)
+        setMood(intensity >= MOOD_MIN_INTENSITY ? (ORB_MOODS[tone] ?? null) : null)
+        moodTimer.current = setTimeout(() => setMood(null), MOOD_HOLD_MS)
+      },
       onEnded: (result) => finish(result),
       onError: (code, message) => {
         if (code === DialogWsErrorCode.VOICE_UNAVAILABLE) {
@@ -806,6 +819,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       {view === 'voice' ? (
         <DialogVoice
           orb={orb}
+          mood={mood}
           level={level}
           caption={caption}
           hint={hint}
