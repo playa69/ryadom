@@ -1,0 +1,94 @@
+# =============================================================================
+# Job: роль agent в CNPG-кластере ryadom-db + владелец базы agent
+# =============================================================================
+# База agent уже существует (создана заранее ролью developer). Этот Job заводит
+# отдельную роль agent для рантайма агента (DIALOG_DATABASE_URL в Secret
+# agent-db, ns agent) и делает её владельцем базы, чтобы агент сам создавал
+# свои таблицы (идемпотентный DDL в app/services/dialog_db_pg.py при старте).
+#
+# Запускать ПОСЛЕ создания Secret agent-db-credentials (ключ password, в ns
+# ryadom-db; значение хранится локально у администратора):
+#   kubectl -n ryadom-db create secret generic agent-db-credentials \
+#     --from-literal=password="$(openssl rand -hex 16)"
+#   kubectl apply -f k8s/agent/db/01-job-create-role.yaml
+#   kubectl -n ryadom-db wait --for=condition=complete job/create-agent-role
+#
+# Подключается суперпользователем postgres (Secret ryadom-db-superuser) — по
+# образцу k8s/app/db/01-job-create-db.yaml; SA db-jobs уже создан манифестом
+# langfuse (здесь не пересоздаём).
+#
+# Что делает (идемпотентно, ТОЛЬКО роль agent и база agent):
+#   1. CREATE ROLE agent LOGIN, если нет; пароль всегда выравнивается с Secret;
+#   2. ALTER DATABASE agent OWNER TO agent (прежний владелец — developer).
+# Повторный прогон: удалить старый Job (kubectl -n ryadom-db delete job
+# create-agent-role) и применить заново.
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-agent-role
+  namespace: ryadom-db
+  labels:
+    app: agent
+    component: db-init
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: agent
+        component: db-init
+    spec:
+      serviceAccountName: db-jobs
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: registry-pull
+      containers:
+        - name: psql
+          # Образ из зеркала cr.yandex (см. k8s/README.md «Реестр образов»)
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/library/postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              export PGPASSWORD="${POSTGRES_PASSWORD}"
+              HOST=ryadom-db-rw.ryadom-db.svc.cluster.local
+              psql_admin() { psql -h "$HOST" -U "$POSTGRES_USER" -v ON_ERROR_STOP=1 "$@"; }
+
+              # 1. Роль agent (пароль из Secret; psql подставляет :'pw' из stdin)
+              if ! psql_admin -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'agent'" | grep -q 1; then
+                echo "CREATE ROLE agent LOGIN" | psql_admin -d postgres
+              fi
+              echo "ALTER ROLE agent WITH LOGIN PASSWORD :'pw'" | psql_admin -d postgres -v pw="$AGENT_PASSWORD"
+
+              # 2. Владелец базы agent
+              psql_admin -d postgres -c "ALTER DATABASE agent OWNER TO agent"
+              echo "OK: role agent, database agent owner=agent"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: password
+            - name: AGENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-db-credentials
+                  key: password
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"

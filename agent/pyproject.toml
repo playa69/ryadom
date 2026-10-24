@@ -18,6 +18,9 @@ dependencies = [
     "langfuse>=3,<4",
     # Режим VOICE_PIPELINE=gemini_live (речь в речь через Gemini Live). Импортируется только в нём.
     "google-genai>=2.0",
+    # Диалоги в PostgreSQL (DIALOG_DATABASE_URL, app/services/dialog_db_pg.py). Синхронный драйвер:
+    # интерфейс хранилища диалогов синхронный (threading.Lock + asyncio.to_thread в DialogStore).
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]

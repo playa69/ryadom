@@ -27,6 +27,20 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import create_app  # noqa: E402
+from tests.fake_db import FakeDialogDatabase  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def fake_db_files() -> Iterator[None]:
+    """Чистый реестр «файлов» заглушки базы диалогов на каждый тест."""
+    FakeDialogDatabase.reset()
+    yield
+    FakeDialogDatabase.reset()
+
+# app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
+# чьё отсутствие ждут тесты (умолчания LlmSettings и отказы build_models).
+for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL", "STT_MODEL"):
+    os.environ.pop(leaked, None)
 
 # app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
 # чьё отсутствие ждут тесты (умолчания LlmSettings и отказы build_models).

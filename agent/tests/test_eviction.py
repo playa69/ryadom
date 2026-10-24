@@ -6,7 +6,6 @@
 
 import asyncio
 import re
-import sqlite3
 import threading
 import time
 import uuid
@@ -19,7 +18,8 @@ from prometheus_client import REGISTRY
 
 from app.core.config import APP_CONFIG
 from app.main import create_app
-from app.services.dialog_db import DialogDatabase, DialogWrite
+from app.services.dialog_db import DialogDbError, DialogWrite
+from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from app.services.dialog_store import DialogStore
 from tests.conftest import AUTH, FakeTts, has, read_frames, send_user_message, start_dialog, ws_url
 from tests.test_persistence import app_client, say
@@ -137,7 +137,7 @@ async def test_unsaved_changes_keep_the_user_in_memory(tmp_path: Path) -> None:
         def apply(self, writes: list[DialogWrite]) -> None:
             if self.fail:
                 self.fail -= 1
-                raise sqlite3.OperationalError("disk I/O error")
+                raise DialogDbError("disk I/O error")
             super().apply(writes)
 
     path = tmp_path / "d.sqlite3"
@@ -299,7 +299,7 @@ async def test_a_failed_load_leaves_no_trace_and_can_be_repeated(tmp_path: Path)
         def load_user(self, user_id: str) -> Any:
             if self.fail:
                 self.fail -= 1
-                raise sqlite3.OperationalError("disk I/O error")
+                raise DialogDbError("disk I/O error")
             return super().load_user(user_id)
 
     path = tmp_path / "d.sqlite3"
@@ -307,7 +307,7 @@ async def test_a_failed_load_leaves_no_trace_and_can_be_repeated(tmp_path: Path)
     store, db = await make_store(path, db=Flaky(str(path)))
     db.fail = 1
     errors = sample("agent_dialog_db_errors_total", op="load")
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(DialogDbError):
         await store.ensure_user(user)
     assert sample("agent_dialog_db_errors_total", op="load") == errors + 1
     assert not in_memory(store, user)  # ни отметки обращения, ни «загружен»: пустой истории человеку не показали

@@ -1,12 +1,12 @@
-"""Диалоги на диске (DIALOG_DB_PATH): после перезапуска и выката агента они возвращаются.
+"""Диалоги в хранилище (DIALOG_DATABASE_URL): после перезапуска и выката агента они возвращаются.
 
-Три уровня: сама база (`DialogDatabase`), хранилище с базой (`DialogStore`) и приложение целиком: «редеплой» — это новое
-приложение на том же файле (в k8s файл лежит на PVC и переживает под).
+Три уровня: сама база (здесь — in-memory двойник `tests/fake_db.py`, настоящий PostgreSQL покрыт
+`tests/integration/test_dialog_db_pg.py`), хранилище с базой (`DialogStore`) и приложение целиком: «редеплой» — это
+новое приложение на том же «файле» (в k8s — база `agent` в CNPG, она переживает под).
 """
 
 import json
 import logging
-import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any
@@ -16,9 +16,10 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
 from app.main import create_app
-from app.services.dialog_db import SCHEMA_VERSION, DialogDatabase, DialogDbError, DialogWrite
+from app.services.dialog_db import DialogDbError, DialogWrite
 from app.services.dialog_store import DialogStore
 from tests.conftest import AUTH, read_frames, send_user_message, start_dialog, ws_url
+from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 
 def errors(op: str) -> float:
@@ -28,8 +29,8 @@ def errors(op: str) -> float:
 # ─── База ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_database_creates_the_schema_and_survives_reopening(tmp_path: Path) -> None:
-    path = str(tmp_path / "data" / "dialogs.sqlite3")  # каталога ещё нет: база создаёт его сама
+def test_database_survives_reopening(tmp_path: Path) -> None:
+    path = str(tmp_path / "data" / "dialogs.db")
     db = DialogDatabase(path)
     db.open()
     assert db.counts() == (0, 0)
@@ -39,27 +40,17 @@ def test_database_creates_the_schema_and_survives_reopening(tmp_path: Path) -> N
     again.open()  # повторное открытие не пересоздаёт схему и не падает
     assert again.counts() == (0, 0)
     again.close()
-    with sqlite3.connect(path) as raw:
-        assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-
-
-def test_database_refuses_a_file_written_by_a_newer_agent(tmp_path: Path) -> None:
-    path = tmp_path / "newer.sqlite3"
-    with sqlite3.connect(path) as raw:
-        raw.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
-    with pytest.raises(DialogDbError, match="новее"):
-        DialogDatabase(str(path)).open()
 
 
 def test_database_that_cannot_be_opened_raises_a_clear_error(tmp_path: Path) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("не каталог", encoding="utf-8")
     with pytest.raises(DialogDbError):
-        DialogDatabase(str(blocker / "dialogs.sqlite3")).open()  # родитель — обычный файл
+        DialogDatabase(str(blocker / "dialogs.db")).open()  # родитель — обычный файл
 
 
 def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
-    db = DialogDatabase(str(tmp_path / "d.sqlite3"))
+    db = DialogDatabase(str(tmp_path / "d.db"))
     db.open()
     user, other = str(uuid.uuid4()), str(uuid.uuid4())
     for owner, dialog_id in ((user, "d1"), (other, "d2")):
@@ -94,51 +85,8 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
     assert db.load_user(user) == ([], None)
     assert len(db.load_user(other)[0]) == 1  # чужой не тронут
     assert db.counts() == (1, 2)
+    assert {row[0] for row in db._state().usage} == {"d2"}  # расход стёртого ушёл вместе с диалогом
     db.close()
-    with sqlite3.connect(tmp_path / "d.sqlite3") as conn:  # расход стёртого ушёл каскадом вместе с диалогом
-        assert conn.execute("SELECT dialog_id, COUNT(*) FROM model_usage GROUP BY dialog_id").fetchall() == [("d2", 2)]
-
-
-# Схема файла, записанного агентом 0.4.0 (версия 1 до учёта расхода): так выглядит файл на PVC в проде.
-SCHEMA_0_4_0 = """
-CREATE TABLE dialogs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, summary TEXT,
-    greeting TEXT, voice TEXT NOT NULL, reply_index INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE messages (id TEXT NOT NULL, dialog_id TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
-    position INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (dialog_id, id));
-CREATE TABLE client_ids (dialog_id TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE, client_id TEXT NOT NULL,
-    message_id TEXT NOT NULL, PRIMARY KEY (dialog_id, client_id));
-CREATE TABLE voice_prefs (user_id TEXT PRIMARY KEY, voice TEXT NOT NULL);
-INSERT INTO dialogs VALUES ('d1', 'u1', '2026-10-12T10:00:00.000Z', NULL, NULL, NULL, 'male', 0);
-INSERT INTO messages VALUES ('m1', 'd1', 0, 'user', 'Старое сообщение', '2026-10-12T10:00:01.000Z');
-PRAGMA user_version = 1;
-"""
-
-
-def test_file_of_the_previous_agent_gets_the_usage_table_and_the_memory_schema(tmp_path: Path) -> None:
-    path = tmp_path / "old.sqlite3"
-    with sqlite3.connect(path) as raw:
-        raw.executescript(SCHEMA_0_4_0)
-    db = DialogDatabase(str(path))
-    db.open()
-    assert db.load_user("u1")[0][0].messages == [("m1", "user", "Старое сообщение", "2026-10-12T10:00:01.000Z", None)]
-    db.apply(
-        [
-            DialogWrite(
-                dialog_id="d1",
-                row=("d1", "u1", "2026-10-12T10:00:00.000Z", None, None, None, "male", 0, "on", 0),
-                usage=[("d1", "m1", "2026-10-12T10:00:02.000Z", "whisper", "stt", "input", "audio", "seconds", 2.5)],
-            )
-        ]
-    )
-    db.close()
-    again = DialogDatabase(str(path))
-    again.open()  # повторное обновление ничего не ломает
-    again.close()
-    with sqlite3.connect(path) as raw:
-        # Таблица расхода добавочная (_upgrade), версию поднимает память агента: 1 → 2. Откат образа на 0.4.0 с версии 2
-        # не поддерживается (старый агент отказывается открывать файл), это решение схемы памяти.
-        assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
-        assert raw.execute("SELECT message_id, amount FROM model_usage").fetchall() == [("m1", 2.5)]
 
 
 # ─── Хранилище с базой ────────────────────────────────────────────────────────────────────────────────────────────
@@ -151,7 +99,7 @@ async def make_store(path: Path) -> tuple[DialogStore, DialogDatabase]:
 
 
 async def test_dialogs_survive_a_restart(tmp_path: Path) -> None:
-    path = tmp_path / "d.sqlite3"
+    path = tmp_path / "d.db"
     user = str(uuid.uuid4())
     store, _ = await make_store(path)
     await store.ensure_user(user)
@@ -176,7 +124,7 @@ async def test_dialogs_survive_a_restart(tmp_path: Path) -> None:
         (m.id, m.role, m.text, m.created_at) for m in first.messages
     ]
     assert restored.client_ids == {"c-1": q.id} and restored.reply_index == 3 and restored.voice == "female"
-    assert not restored.has_live_socket and not restored.greeting_pending  # временное на диск не попадает
+    assert not restored.has_live_socket and not restored.greeting_pending  # временное в базу не попадает
     reopened, resumed, _ = after.start(user)
     assert resumed and reopened.id == second.id  # открытый диалог возвращается
     assert after._voice_prefs[user] == "female"  # выбор голоса тоже
@@ -184,7 +132,7 @@ async def test_dialogs_survive_a_restart(tmp_path: Path) -> None:
 
 
 async def test_answer_that_grows_in_place_is_saved_while_the_socket_lives(tmp_path: Path) -> None:
-    path = tmp_path / "d.sqlite3"
+    path = tmp_path / "d.db"
     user = str(uuid.uuid4())
     store, _ = await make_store(path)
     await store.ensure_user(user)
@@ -193,7 +141,7 @@ async def test_answer_that_grows_in_place_is_saved_while_the_socket_lives(tmp_pa
     message = store.add_message(dialog, "assistant", "Я")
     assert await store.flush()
     message.text = "Я рядом. Расскажи, что случилось."  # ответ дописывается на месте, store.add_message не зовут
-    assert await store.flush()  # диалог с живым сокетом сверяется с диском на каждой записи
+    assert await store.flush()  # диалог с живым сокетом сверяется с базой на каждой записи
 
     db = DialogDatabase(str(path))
     db.open()
@@ -211,11 +159,11 @@ async def test_failed_write_is_retried_and_nothing_is_lost(tmp_path: Path, caplo
         def apply(self, writes: list[DialogWrite]) -> None:
             if self.fail:
                 self.fail -= 1
-                raise sqlite3.OperationalError("disk I/O error")
+                raise DialogDbError("disk I/O error")
             super().apply(writes)
 
     user = str(uuid.uuid4())
-    store, db = DialogStore(), Flaky(str(tmp_path / "d.sqlite3"))
+    store, db = DialogStore(), Flaky(str(tmp_path / "d.db"))
     await store.attach(db, flush_interval=60)  # фоновой записи не ждём: вызываем вручную
     await store.ensure_user(user)
     dialog, _, _ = store.start(user)
@@ -230,7 +178,7 @@ async def test_failed_write_is_retried_and_nothing_is_lost(tmp_path: Path, caplo
 
 
 async def test_erase_removes_memory_and_disk_and_late_writes_do_not_bring_the_person_back(tmp_path: Path) -> None:
-    path = tmp_path / "d.sqlite3"
+    path = tmp_path / "d.db"
     user = str(uuid.uuid4())
     store, db = await make_store(path)
     await store.ensure_user(user)
@@ -250,14 +198,14 @@ async def test_erase_removes_memory_and_disk_and_late_writes_do_not_bring_the_pe
 
 
 async def test_user_that_was_never_stored_can_be_erased(tmp_path: Path) -> None:
-    store, db = await make_store(tmp_path / "d.sqlite3")
+    store, db = await make_store(tmp_path / "d.db")
     await store.erase_user_durable(str(uuid.uuid4()))
     assert db.counts() == (0, 0)
     await store.detach()
 
 
 async def test_ensure_user_does_not_overwrite_what_is_in_memory(tmp_path: Path) -> None:
-    path = tmp_path / "d.sqlite3"
+    path = tmp_path / "d.db"
     user = str(uuid.uuid4())
     store, _ = await make_store(path)
     await store.ensure_user(user)
@@ -278,12 +226,12 @@ async def test_ensure_user_does_not_overwrite_what_is_in_memory(tmp_path: Path) 
 async def test_load_failure_is_an_error_and_not_an_empty_history(tmp_path: Path) -> None:
     class Broken(DialogDatabase):
         def load_user(self, user_id: str) -> Any:
-            raise sqlite3.OperationalError("database is locked")
+            raise DialogDbError("database is locked")
 
-    store, db = DialogStore(), Broken(str(tmp_path / "d.sqlite3"))
+    store, db = DialogStore(), Broken(str(tmp_path / "d.db"))
     await store.attach(db, flush_interval=60)
     before = errors("load")
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(DialogDbError):
         await store.ensure_user(str(uuid.uuid4()))
     assert errors("load") == before + 1
     await store.detach()
@@ -317,17 +265,17 @@ def say(client: TestClient, user: str, dialog_id: str, text: str, msg_id: str, u
 
 
 def test_dialogs_and_history_come_back_after_a_redeploy(tmp_path: Path) -> None:
-    path = tmp_path / "pvc" / "dialogs.sqlite3"
+    path = tmp_path / "pvc" / "dialogs.db"
     user = str(uuid.uuid4())
     with app_client(path) as old:
-        assert old.get("/health/ready").json()["dialogs"] == "sqlite"
+        assert old.get("/health/ready").json()["dialogs"] == "fake"
         dialog = start_dialog(old, user)
         say(old, user, dialog["dialogId"], "Мне сегодня тревожно", "c-1")
         before = old.get(f"/v1/users/{user}/dialogs/{dialog['dialogId']}", headers=AUTH).json()
         assert [m["role"] for m in before["messages"]] == ["user", "assistant"]
         finished = start_dialog(old, user)  # тот же открытый
         assert finished["resumed"] is True
-    # приложение остановлено (под выкачен заново), память пропала, файл остался
+    # приложение остановлено (под выкачен заново), память пропала, база осталась
 
     with app_client(path) as new:
         listed = new.get(f"/v1/users/{user}/dialogs", headers=AUTH).json()["items"]
@@ -344,7 +292,7 @@ def test_dialogs_and_history_come_back_after_a_redeploy(tmp_path: Path) -> None:
 
 
 def test_new_dialog_after_a_redeploy_ends_the_restored_open_one(tmp_path: Path) -> None:
-    path = tmp_path / "dialogs.sqlite3"
+    path = tmp_path / "dialogs.db"
     user = str(uuid.uuid4())
     with app_client(path) as old:
         first = start_dialog(old, user)
@@ -358,7 +306,7 @@ def test_new_dialog_after_a_redeploy_ends_the_restored_open_one(tmp_path: Path) 
 
 
 def test_erasing_a_user_removes_the_history_from_disk(tmp_path: Path) -> None:
-    path = tmp_path / "dialogs.sqlite3"
+    path = tmp_path / "dialogs.db"
     user = str(uuid.uuid4())
     with app_client(path) as old:
         dialog = start_dialog(old, user)
@@ -366,10 +314,10 @@ def test_erasing_a_user_removes_the_history_from_disk(tmp_path: Path) -> None:
         assert old.delete(f"/v1/users/{user}", headers=AUTH).status_code == 204
     with app_client(path) as new:
         assert new.get(f"/v1/users/{user}/dialogs", headers=AUTH).json()["items"] == []
-    raw = sqlite3.connect(path)
-    assert raw.execute("SELECT COUNT(*) FROM dialogs").fetchone()[0] == 0
-    assert raw.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-    raw.close()
+    db = DialogDatabase(str(path))
+    db.open()
+    assert db.counts() == (0, 0)
+    db.close()
 
 
 def test_agent_keeps_serving_in_memory_when_the_disk_is_not_available(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -377,7 +325,7 @@ def test_agent_keeps_serving_in_memory_when_the_disk_is_not_available(tmp_path: 
     blocker.write_text("не каталог", encoding="utf-8")
     before = errors("open")
     with caplog.at_level(logging.ERROR):
-        with app_client(blocker / "dialogs.sqlite3") as client:
+        with app_client(blocker / "dialogs.db") as client:
             assert client.get("/health/ready").json()["dialogs"] == "memory"
             dialog = start_dialog(client, str(uuid.uuid4()))
             assert dialog["dialogId"]  # агент работает, как раньше
@@ -391,7 +339,7 @@ def test_without_a_path_dialogs_are_in_memory_as_before() -> None:
 
 
 def test_health_and_metrics_do_not_leak_dialog_text(tmp_path: Path) -> None:
-    path = tmp_path / "dialogs.sqlite3"
+    path = tmp_path / "dialogs.db"
     user = str(uuid.uuid4())
     with app_client(path) as client:
         dialog = start_dialog(client, user)
@@ -406,7 +354,7 @@ def test_health_and_metrics_do_not_leak_dialog_text(tmp_path: Path) -> None:
 async def test_unpaired_surrogate_in_a_message_does_not_stop_the_disk(tmp_path: Path) -> None:
     """Оборванная половина эмодзи (`\\ud83d` в JSON клиента) не кодируется в UTF-8: раньше она роняла запись всем людям."""
     first, second = str(uuid.uuid4()), str(uuid.uuid4())
-    store, db = await make_store(tmp_path / "d.sqlite3")
+    store, db = await make_store(tmp_path / "d.db")
     for user in (first, second):
         await store.ensure_user(user)
     bad, _, _ = store.start(first)
@@ -429,11 +377,11 @@ async def test_a_dialog_that_cannot_be_written_does_not_block_the_others(tmp_pat
 
         def apply(self, writes: list[DialogWrite]) -> None:
             if any(w.dialog_id == self.poisoned for w in writes):
-                raise sqlite3.OperationalError("disk I/O error")
+                raise DialogDbError("disk I/O error")
             super().apply(writes)
 
     first, second = str(uuid.uuid4()), str(uuid.uuid4())
-    store, db = DialogStore(), Picky(str(tmp_path / "d.sqlite3"))
+    store, db = DialogStore(), Picky(str(tmp_path / "d.db"))
     await store.attach(db, flush_interval=60)
     bad, _, _ = store.start(first)
     good, _, _ = store.start(second)
@@ -444,7 +392,7 @@ async def test_a_dialog_that_cannot_be_written_does_not_block_the_others(tmp_pat
     assert [m[2] for m in db.load_user(second)[0][0].messages] == ["запишется"]  # хороший записан, хотя пачка упала
     assert db.load_user(first)[0] == []
     db.poisoned = ""
-    assert await store.flush() is True  # и плохой запишется, когда диск оправится
+    assert await store.flush() is True  # и плохой запишется, когда база оправится
     assert [m[2] for m in db.load_user(first)[0][0].messages] == ["не запишется"]
     await store.detach()
 
@@ -453,7 +401,7 @@ async def test_the_writer_survives_an_unexpected_error(tmp_path: Path, monkeypat
     import asyncio
 
     user = str(uuid.uuid4())
-    store, db = await make_store(tmp_path / "d.sqlite3")
+    store, db = await make_store(tmp_path / "d.db")
     real, calls = store._collect, {"n": 0}
 
     def flaky(dialog: Any) -> Any:
@@ -475,21 +423,19 @@ async def test_the_writer_survives_an_unexpected_error(tmp_path: Path, monkeypat
 
 
 async def test_erase_does_not_say_done_when_the_disk_is_configured_but_not_attached() -> None:
-    from app.services.dialog_db import DialogDbError
-
     store = DialogStore()
-    store.require_disk()  # DIALOG_DB_PATH задан, но файл не открылся
+    store.require_disk()  # DIALOG_DATABASE_URL задан, но база не открылась
     user = str(uuid.uuid4())
     dialog, _, _ = store.start(user)
     with pytest.raises(DialogDbError):
         await store.erase_user_durable(user)
-    assert store.get(user, dialog.id) is None  # из памяти стёрто, а «стёрто на диске» не сказано
+    assert store.get(user, dialog.id) is None  # из памяти стёрто, а «стёрто в базе» не сказано
 
 
 def test_delete_answers_503_when_the_disk_could_not_be_opened(tmp_path: Path) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("не каталог", encoding="utf-8")
-    with app_client(blocker / "dialogs.sqlite3") as client:
+    with app_client(blocker / "dialogs.db") as client:
         response = client.delete(f"/v1/users/{uuid.uuid4()}", headers=AUTH)
     assert response.status_code == 503 and response.json()["error"]["code"] == "AGENT_INTERNAL"
 
@@ -497,7 +443,7 @@ def test_delete_answers_503_when_the_disk_could_not_be_opened(tmp_path: Path) ->
 async def test_erase_does_not_race_with_the_first_load(tmp_path: Path) -> None:
     import asyncio
 
-    path = tmp_path / "d.sqlite3"
+    path = tmp_path / "d.db"
     user = str(uuid.uuid4())
     seed, _ = await make_store(path)
     await seed.ensure_user(user)
@@ -507,27 +453,9 @@ async def test_erase_does_not_race_with_the_first_load(tmp_path: Path) -> None:
 
     store, db = await make_store(path)
     loading = asyncio.create_task(store.ensure_user(user))
-    await asyncio.sleep(0)  # загрузка уже читает диск
+    await asyncio.sleep(0)  # загрузка уже читает базу
     await store.erase_user_durable(user)
     await loading
-    assert store.get(user, dialog.id) is None  # прочитанное с диска не вернулось в память после стирания
+    assert store.get(user, dialog.id) is None  # прочитанное из базы не вернулось в память после стирания
     assert db.load_user(user) == ([], None)
-    await store.detach()
-
-
-async def test_erased_text_does_not_stay_in_the_wal_file(tmp_path: Path) -> None:
-    path = tmp_path / "d.sqlite3"
-    marker = "УНИКАЛЬНЫЙ-МАРКЕР-ЛИЧНОГО-ТЕКСТА".encode()
-    user = str(uuid.uuid4())
-    store, _ = await make_store(path)
-    await store.ensure_user(user)
-    dialog, _, _ = store.start(user)
-    store.add_message(dialog, "user", marker.decode())
-    assert await store.flush()
-    wal = Path(str(path) + "-wal")
-    assert marker in path.read_bytes() + (wal.read_bytes() if wal.exists() else b"")  # до стирания текст лежит на диске
-
-    await store.erase_user_durable(user)
-    assert marker not in path.read_bytes()
-    assert not wal.exists() or marker not in wal.read_bytes()  # и в журнале WAL его больше нет
     await store.detach()

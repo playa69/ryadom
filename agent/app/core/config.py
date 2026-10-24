@@ -59,10 +59,10 @@ class DialogSettings(BaseAppSettings):
     voice_turn_max_seconds: int = Field(validation_alias="VOICE_TURN_MAX_SECONDS", default=300, ge=1, le=600)
     # Реплика оборвана на полуслове («и…», «потому что»): ответ ждёт столько, не договорит ли человек. 0 — не ждать.
     incomplete_hold_ms: int = Field(validation_alias="INCOMPLETE_HOLD_MS", default=1500, ge=0, le=10_000)
-    # Файл SQLite, в который дублируются диалоги: после перезапуска и выката агента они возвращаются. Путь должен лежать на томе
-    # пода (в k8s это PVC `agent-data`, /data/dialogs.sqlite3). Пусто — диалоги только в памяти и пропадают при перезапуске
-    # (тесты и разработка). Не открылся файл — агент работает в памяти и громко пишет об этом, а не падает.
-    db_path: str | None = Field(validation_alias="DIALOG_DB_PATH", default=None)
+    # DSN PostgreSQL, в котором живут диалоги (app/services/dialog_db.py): в k8s это база `agent` в CNPG
+    # `ryadom-db`, значение — в Secret `agent-db`. Пусто — диалоги только в памяти процесса и пропадают при
+    # перезапуске (разработка); агент не падает и громко пишет об этом в журнал.
+    database_url: str | None = Field(validation_alias="DIALOG_DATABASE_URL", default=None)
     # Как часто записывать изменения диалогов на диск, мс (идущие ответы дописываются, поэтому не при каждом слове).
     db_flush_ms: int = Field(validation_alias="DIALOG_DB_FLUSH_MS", default=500, ge=50, le=10_000)
     # Выгрузка неактивных (только при диске): человек, к которому не обращались столько секунд, уходит из памяти пода, его
@@ -265,14 +265,28 @@ class GeminiSettings(BaseAppSettings):
 
 
 class MemorySettings(BaseAppSettings):
-    """Долговременная память агента (спецификация памяти, раздел 14): факты о человеке между разговорами.
+    """Долговременная память агента — Cognee (`app/memory/cognee_backend.py`): факты о человеке между разговорами.
 
     `MEMORY_MODE`:
-      off     память не извлекается и не подмешивается (по умолчанию). Чтение, экспорт и стирание памяти работают всегда
-      shadow  факты извлекаются только у людей, включивших память, но сводка в разговор не попадает (внутренняя проверка)
-      on      извлечение и сводка в разговоре
-    Память живёт в том же файле SQLite, что и диалоги: без `DIALOG_DB_PATH` режим принудительно `off`.
+      off     память не пишется и не подмешивается (по умолчанию). Чтение, экспорт и стирание памяти работают всегда
+      shadow  транскрипты уходят в Cognee у людей, включивших память, но сводка в разговор не попадает (проверка)
+      on      запись и сводка в разговоре
 
+<<<<<<< HEAD
+    Согласие и данные человека — его датасет `ryadom_user_<user_id>` в Cognee; вызовы — REST с Bearer сервисного
+    пользователя. Извлечение фактов делает сам Cognee (cognify), своей модели извлечения у агента нет.
+    """
+
+    mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
+    # Адрес Cognee API и сервисный пользователь (multi-user access control — вызовы с Bearer).
+    cognee_base_url: str | None = Field(validation_alias="COGNEE_BASE_URL", default=None)
+    cognee_email: str | None = Field(validation_alias="COGNEE_SERVICE_EMAIL", default=None)
+    cognee_password: SecretStr | None = Field(validation_alias="COGNEE_SERVICE_PASSWORD", default=None)
+    # Только для стендов: память включена всем по умолчанию (opt-out вместо opt-in).
+    # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
+    default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
+    # Пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
+=======
     Извлечение идёт только через модель в РФ (прокси программы): Gemini и любые зарубежные адреса сюда не подставлять.
 
     `MEMORY_BACKEND=cognee` — второй бэкенд (`app/memory/cognee_backend.py`): согласие и данные человека — его датасет
@@ -290,6 +304,7 @@ class MemorySettings(BaseAppSettings):
     # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
     default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
     # Только backend=cognee: пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
+>>>>>>> origin/main
     # (POST /cognify = поставить в очередь), граф готов через десятки секунд — без паузы закэшируем «нет информации».
     cognify_settle_seconds: int = Field(validation_alias="MEMORY_COGNIFY_SETTLE_SECONDS", default=90, ge=0)
     # Инструмент recall_memory в голосовом контуре: синхронный поиск в Cognee — 10–30 с паузы посреди хода.
@@ -298,18 +313,6 @@ class MemorySettings(BaseAppSettings):
     # Сколько памяти уходит в голосовую модель: minimal — только как говорить и о чём не говорить (и мягкий тон после тяжёлого
     # разговора); standard — плюс близкие (без имён), что помогает, планы, обстоятельства, прошлый разговор; full — с именами.
     brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")
-    # Прокси и модель извлечения; пусто — те же, что у чата (LLM_BASE_URL, LLM_CHAT_MODEL). Ключ — AGENT_API_TOKEN.
-    llm_base_url: str | None = Field(validation_alias="MEMORY_LLM_BASE_URL", default=None)
-    llm_model: str | None = Field(validation_alias="MEMORY_LLM_MODEL", default=None)
-    llm_timeout_seconds: int = Field(validation_alias="MEMORY_LLM_TIMEOUT_SECONDS", default=60, ge=1)
-    llm_max_tokens: int = Field(validation_alias="MEMORY_LLM_MAX_TOKENS", default=1200, ge=64)
-    # Открытый диалог без новых реплик столько минут: извлечение ставится в очередь, диалог не завершается.
-    idle_minutes: int = Field(validation_alias="MEMORY_IDLE_MINUTES", default=20, ge=1)
-    maintenance_seconds: int = Field(validation_alias="MEMORY_MAINTENANCE_SECONDS", default=60, ge=1)
-    workers: int = Field(validation_alias="MEMORY_WORKERS", default=1, ge=1, le=3)
-    extract_max_chars: int = Field(validation_alias="MEMORY_EXTRACT_MAX_CHARS", default=16_000, ge=1000)
-    # Второй короткий вызов модели для пограничных фактов (чувствительная тема, но не запрещённая). Включение решает оценка.
-    classifier: Literal["off", "on"] = Field(validation_alias="MEMORY_CLASSIFIER", default="off")
     # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
     allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
 

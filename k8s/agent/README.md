@@ -7,10 +7,10 @@
 |---|---|
 | `00-config.yaml` | ConfigMap `agent-config`: озвучка, голос по умолчанию, адрес прокси Qwen TTS, голосовой конвейер `VOICE_PIPELINE` (`cascade` по умолчанию) |
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
-| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`, том диалогов в `/data` |
-| `03-pvc.yaml` | PVC `agent-data` (5 ГБ, сетевой диск Timeweb): файл SQLite с диалогами, они переживают выкат пода. Применять до Deployment'а |
+| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`; диалоги — в PostgreSQL (Secret `agent-db`) |
 | `04-servicemonitor.yaml` | ServiceMonitor: Prometheus собирает `/metrics` агента (расход моделей, задержки голоса, база диалогов). Применяет admin |
-| `10-cognee-config.yaml` | ConfigMap `cognee-config`: Cognee API (память агента) — БД cognee_db в CNPG, модели LiteLLM-прокси, auth выключен |
+| `db/01-job-create-role.yaml` | Job: роль `agent` в CNPG ryadom-db + владелец базы `agent` (хранилище диалогов с 0.8.0). Один раз, до выката 0.8.0 |
+| `10-cognee-config.yaml` | ConfigMap `cognee-config`: Cognee API (память агента) — БД cognee_db в CNPG, модели LiteLLM-прокси, multi-user access control (Bearer) |
 | `11-cognee-pvc.yaml` | PVC `cognee-storage` (10 ГБ, сетевой диск Timeweb): граф Kuzu и сырые документы Cognee. Применять до Deployment'а |
 | `12-cognee-deployment.yaml` | Deployment `cognee`: 1 реплика, `Recreate`, официальный образ `cognee/cognee`, проба `/health` |
 | `13-cognee-service.yaml` | Service `cognee:8000` (`http://cognee.agent.svc.cluster.local:8000`), только внутри кластера |
@@ -27,6 +27,8 @@
 |---|---|---|
 | `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY`, `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (ключи проекта в Langfuse, нужны при `LANGFUSE_ENABLED=true`) |
 | `agent-gemini` | `agent` | только для режима `gemini_live`: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`; Deployment читает их как необязательные |
+| `agent-db` | `agent` | `DIALOG_DATABASE_URL` — DSN PostgreSQL диалогов (пароль роли `agent` из `agent-db-credentials`, ns ryadom-db); создание — «Хранилище диалогов (PostgreSQL…)» |
+| `agent-db-credentials` | `ryadom-db` | `password` роли `agent`; читает Job `db/01-job-create-role.yaml` |
 | `app-secrets` | `prod` | уже есть; ключ `AGENT_INTERNAL_TOKEN` с тем же значением, что у агента |
 
 Два разных секрета, не путать:
@@ -195,39 +197,114 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live 
 **Откат:** вернуть значения (`GEMINI_TPM_ENFORCE: "false"`, `GEMINI_LAZY_OPEN: "false"`, при необходимости `GEMINI_TPM_LIMIT: "0"`), применить ConfigMap и
 перезапустить агент.
 
-## Хранилище диалогов (PVC `agent-data`)
+## Хранилище диалогов (PostgreSQL, база `agent` в CNPG ryadom-db)
 
-Диалоги дублируются в файл `/data/dialogs.sqlite3` на сетевом диске Timeweb (`DIALOG_DB_PATH` в `agent-config`, `03-pvc.yaml`). Порядок
-выката, когда тома ещё нет (нужен admin-kubeconfig, **каждый шаг отдельным решением администратора**):
+Диалоги дублируются в PostgreSQL (`DIALOG_DATABASE_URL` из Secret `agent-db`, схему создаёт сам агент при старте —
+идемпотентный DDL в `agent/app/services/dialog_db_pg.py`). Проверка: `GET /health/ready` должен вернуть
+`"dialogs": "postgres"` (если `"memory"`, БД не открылась, причина в журнале как `dialog db is NOT available`).
+Бэкапы — общие CNPG (WAL + base backups в Object Storage, `k8s/postgres/`).
+
+Первичная подготовка (один раз, admin-kubeconfig):
 
 ```bash
-kubectl apply -f k8s/agent/03-pvc.yaml                                            # диск создастся при первом запуске пода
-kubectl apply -f k8s/agent/00-config.yaml -f k8s/agent/02-deployment.yaml         # новый образ, том и DIALOG_DB_PATH
-kubectl -n agent rollout status deploy/agent --timeout=300s
-kubectl -n agent get pvc agent-data                                               # Bound
-kubectl -n agent logs deploy/agent | grep -E "dialog db|agent started"            # «dialog db opened … dialogs=N», «dialogs=sqlite»
+# 1. Пароль роли agent (значение хранится локально у администратора, в git не коммитим)
+kubectl -n ryadom-db create secret generic agent-db-credentials --from-literal=password="$(openssl rand -hex 16)"
+# 2. Роль agent + владелец базы agent (Job, идемпотентно)
+kubectl apply -f k8s/agent/db/01-job-create-role.yaml
+kubectl -n ryadom-db wait --for=condition=complete job/create-agent-role --timeout=120s
+# 3. DSN для рантайма агента (пароль из шага 1)
+kubectl -n agent create secret generic agent-db \
+  --from-literal=DIALOG_DATABASE_URL="postgresql://agent:<ПАРОЛЬ>@ryadom-db-rw.ryadom-db.svc.cluster.local:5432/agent"
 ```
 
-Проверка из пода-соседа или порт-форвардом: `GET /health/ready` должен вернуть `"dialogs": "sqlite"` (если `"memory"`, диск не открылся,
-причина в журнале как `dialog db is NOT available`). Первый выкат с PVC стирает диалоги, которые были только в памяти старого пода
-(другого пути нет). Дальше выкаты их сохраняют.
+## Удаление старого SQLite (PVC `agent-data`)
 
-- **reclaimPolicy класса `Delete`**: `kubectl delete pvc agent-data` или удаление namespace удаляет диск вместе со всеми диалогами. PVC не
-  удалять. Бэкапов у диска нет (резервная копия, например периодический `sqlite3 … .backup` в объектное хранилище, или переезд на
-  PostgreSQL агента по design D6, отдельная задача).
-- **Откат образа** на версию без поддержки диска не трогает файл: он остаётся и подхватывается при следующем выкате. Но стирания людей
-  (`DELETE /v1/users/{userId}`), выполненные таким образом, файла не касаются: после отката на образ без диска и возврата на новый
-  повторите стирание тех, кого удалили в это окно. Откат манифеста без PVC оставляет диск в кластере.
+Миграции старых диалогов НЕТ (решение владельца 2026-10-24): деплой с нуля. Перед выкатом 0.8.0 —
+`kubectl -n agent delete pvc agent-data` (reclaimPolicy `Delete`: диск удаляется вместе с файлом `dialogs.sqlite3`,
+это и есть удаление старых диалогов и SQLite-памяти). Манифест `03-pvc.yaml` из репозитория удалён.
+
+## Хранилище диалогов до 0.8.0 (PVC `agent-data`, история)
+
+До 0.8.0 диалоги дублировались в файл `/data/dialogs.sqlite3` на сетевом диске Timeweb (`DIALOG_DB_PATH`,
+`03-pvc.yaml`). Заметки ниже относятся к тому режиму и нужны только для отката:
+
 - **Схема файла v2 (память агента).** Образ с памятью при первом старте переводит файл из v1 в v2 одной транзакцией (новые колонки
   диалогов и таблицы `memory_*`), при любом `MEMORY_MODE`. **Откат на образ со схемой v1 после этого не поддерживается**: старый
   агент видит версию 2, отказывается открывать файл (`dialogs: memory` в `/health/ready`) и на стирание людей отвечает `503`.
-  Откат функции памяти — `MEMORY_MODE: "off"` в ConfigMap и `rollout restart`, а не откат образа. Копию файла «про запас» не делать:
-  копия не покрывается стиранием людей.
+  Копию файла «про запас» не делать: копия не покрывается стиранием людей.
 - Файл небольшой (сообщения весят сотни байт). Посмотреть содержимое: только `kubectl exec` под admin-kubeconfig
   (`sqlite3` в образе нет: `python -c "import sqlite3; …"`); тексты разговоров людей без причины не читать.
-- Стирание человека (`DELETE /v1/users/{userId}`) удаляет и строки на диске (`secure_delete`) и усекает журнал WAL, так что в файлах
-  SQLite следов не остаётся. Если диск задан, но не подключился (`"dialogs": "memory"`), стирание отвечает `503`, а не `204`: приложение
-  повторит его, когда диск вернётся. Блоки сетевого диска и снимки провайдера под это обещание не подпадают.
+- Стирание человека (`DELETE /v1/users/{userId}`) удаляло и строки на диске (`secure_delete`) и усекало журнал WAL. В PostgreSQL
+  то же обещание выполняет `erase_user` в `app/services/dialog_db.py` (каскадные DELETE в одной транзакции). Если хранилище задано,
+  но не подключилось (`"dialogs": "memory"`), стирание отвечает `503`, а не `204`: приложение повторит его, когда БД вернётся.
+
+## Память агента: Cognee (Deployment `cognee`)
+
+Cognee — граф знаний и векторный поиск для памяти агента (REST `/api/v1`). Живёт в том же ns `agent`, наружу не
+публикуется (ни ingress, ни HTTPRoute). Единственный потребитель — под agent по адресу
+`http://cognee.agent.svc.cluster.local:8000`. Для ручной отладки:
+`kubectl -n agent port-forward svc/cognee 18000:8000`.
+
+**Auth ВКЛЮЧЁН (multi-user access control, `ENABLE_BACKEND_ACCESS_CONTROL=true`).** Это не украшение, а требование
+per-user памяти: в режиме `multi_tenant=disabled` `/api/v1/search` НЕ фильтрует по датасетам — recall одного
+человека возвращал факты другого (проверено 2026-10-21). Агент логинится сервисным пользователем
+`agent-service@cognee.dev` (email/пароль — Secret `cognee-service-account`) и ходит с Bearer JWT
+(`POST /api/v1/auth/login`, токен живёт `JWT_LIFETIME_SECONDS`=12 ч). Подпись JWT — Secret `cognee-auth`.
+В multi-tenant режиме Cognee заводит ОТДЕЛЬНУЮ БД на тенанта (`CREATE DATABASE "<uuid>"` + `CREATE EXTENSION
+vector`), поэтому роль `cognee` — SUPERUSER (компромисс: роль выделенная, только для Cognee; без суперпользователя
+per-tenant БД не создаются). Пользователь регистрируется один раз через port-forward (`/api/v1/auth/register`
+снаружи недоступен — ingress'а нет).
+
+Устройство (манифесты `10-…`-`13-…` в этом каталоге):
+
+- **Образ** — официальный `cognee/cognee` с Docker Hub (проверенная версия указана в `12-cognee-deployment.yaml`),
+  1 реплика, `Recreate` (том RWO). Прогрев 3–5 минут — проба `/health` с запасом.
+- **Хранение** — реляционные таблицы и векторы в БД `cognee_db` общего CNPG `ryadom-db` (расширение `vector`),
+  граф Kuzu и сырые документы на PVC `cognee-storage` (сетевой диск, НЕ local-path: нодный диск теряется вместе
+  с нодой). Удаление PVC стирает граф безвозвратно; PostgreSQL-часть покрыта бэкапами CNPG.
+- **LLM и эмбеддинги** — через LiteLLM-прокси программы (`LLM_ENDPOINT`/`EMBEDDING_ENDPOINT` в ConfigMap), ключ
+  переиспользуется из `agent-secrets` (`AGENT_API_TOKEN`), своего ключа у Cognee нет. Если модель недоступна,
+  Cognee стартует, но cognify падает — смотреть логи и список моделей прокси (`GET $LLM_ENDPOINT/models`).
+
+Создание с нуля (каждый шаг отдельным решением администратора, значения секретов не печатать):
+
+```bash
+# 1. Роль и БД в CNPG (идемпотентно в части extension; пароль сразу уходит в Secret).
+#    SUPERUSER обязателен: в multi-tenant режиме Cognee создаёт БД и extension vector на тенанта.
+DBPASS=$(openssl rand -hex 24)
+kubectl -n agent create secret generic cognee-db-credentials --from-literal=DB_PASSWORD="$DBPASS"
+kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -c "CREATE ROLE cognee LOGIN PASSWORD '$DBPASS' SUPERUSER;"
+kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -c "CREATE DATABASE cognee_db OWNER cognee;"
+kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -d cognee_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# 1.1. Секреты auth: подпись JWT и сервисный пользователь агента
+kubectl -n agent create secret generic cognee-auth --from-literal=FASTAPI_USERS_JWT_SECRET="$(openssl rand -hex 32)"
+kubectl -n agent create secret generic cognee-service-account \
+  --from-literal=COGNEE_SERVICE_EMAIL="agent-service@cognee.dev" \
+  --from-literal=COGNEE_SERVICE_PASSWORD="$(openssl rand -hex 16)"
+
+# 2. Сеть: ingress ns agent → CNPG (:5432) в postgres/manifests/03-network-policy.yaml,
+#    egress cognee → прокси :4000 в namespaces/manifests/08-network-policy-agent-service.yaml
+kubectl apply -f k8s/postgres/manifests/03-network-policy.yaml -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml
+
+# 3. Манифесты и проверка
+kubectl apply -f k8s/agent/10-cognee-config.yaml -f k8s/agent/11-cognee-pvc.yaml \
+              -f k8s/agent/12-cognee-deployment.yaml -f k8s/agent/13-cognee-service.yaml
+kubectl -n agent rollout status deploy/cognee --timeout=10m
+kubectl -n agent port-forward svc/cognee 8000:8000 &
+curl -s localhost:8000/health      # 200
+
+# 4. Регистрация сервисного пользователя (один раз; пароль из Secret не печатать)
+SVC_PASS=$(kubectl -n agent get secret cognee-service-account -o jsonpath='{.data.COGNEE_SERVICE_PASSWORD}' | base64 -d)
+curl -X POST localhost:8000/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d "{\"email\":\"agent-service@cognee.dev\",\"password\":\"$SVC_PASS\"}"
+unset SVC_PASS
+```
+
+Откат: `kubectl delete -f` этих четырёх манифестов, затем Secret'ы `cognee-db-credentials`, `cognee-auth`,
+`cognee-service-account`, PVC `cognee-storage`
+(данные графа стираются) и в CNPG `DROP DATABASE cognee_db; DROP ROLE cognee;` (per-tenant БД вида `"<uuid>"` —
+тоже вручную). Правила NetworkPolicy можно оставить.
 
 ## Память агента: Cognee (Deployment `cognee`)
 
@@ -333,44 +410,31 @@ kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingre
 
 ## Память агента (`MEMORY_*`)
 
-Агент помнит о человеке короткие факты между разговорами, только если человек сам включил память (спецификация —
-`docs/agent-memory-spec.md`, устройство — `agent/README.md`, раздел «Память»). **В манифесте память включена: `MEMORY_MODE: "on"`**
-(решение владельца, 2026-10-13; в коде по умолчанию `off`). Новых секретов нет: модель извлечения ходит через тот же прокси и
-`AGENT_API_TOKEN`; модель — `MEMORY_LLM_MODEL: "gigachat-3-pro"` по итогам сравнения на золотом наборе 2026-10-13 (без неё была бы
-чат-модель `LLM_CHAT_MODEL`). Список
-`MEMORY_ALLOWLIST` пуст: включить память в профиле может любой человек; без его согласия агент ничего не извлекает и не подмешивает.
+Память — Cognee (Deployment `cognee`, раздел выше): датасет `ryadom_user_<user_id>` на человека. Агент ходит в Cognee
+по REST (`COGNEE_BASE_URL: "http://cognee:8000"` в `agent-config`) с Bearer сервисного пользователя (Secret
+`cognee-service-account`, ключи подключены в `02-deployment.yaml`). Извлечение фактов делает сам Cognee, модели
+извлечения и воркера у агента нет. Устройство — `agent/README.md`, раздел «Память». **В манифесте память включена:
+`MEMORY_MODE: "on"`** (в коде по умолчанию `off`). Согласия и факты SQLite-памяти образов < 0.8.0 в Cognee не
+мигрируют (решение владельца): человек включает память заново в профиле.
 
 | Переменная | По умолчанию | Смысл |
 |---|---|---|
-| `MEMORY_MODE` | `off` | `off` / `shadow` (извлечение у включивших память, без сводки в разговоре) / `on` |
+| `MEMORY_MODE` | `off` | `off` / `shadow` (запись у включивших память, без сводки в разговоре) / `on` |
+| `COGNEE_BASE_URL` | — | адрес Cognee API; без него (и без email/пароля) память `unavailable` |
 | `MEMORY_BRIEF_LEVEL` | `minimal` | что уходит в голосовую модель: `minimal` (как говорить, о чём не говорить) / `standard` / `full` |
-| `MEMORY_LLM_BASE_URL`, `MEMORY_LLM_MODEL` | `LLM_BASE_URL`, `LLM_CHAT_MODEL` | прокси и модель извлечения (только в РФ; адреса Gemini код отвергает) |
-| `MEMORY_LLM_TIMEOUT_SECONDS`, `MEMORY_LLM_MAX_TOKENS` | 60, 1200 | |
-| `MEMORY_IDLE_MINUTES` | 20 | тишина в открытом диалоге, после которой ставится извлечение |
-| `MEMORY_MAINTENANCE_SECONDS` | 60 | период обслуживания: сроки, чистка, удаление разговоров «Без памяти» |
-| `MEMORY_WORKERS` | 1 | одновременных заданий извлечения (до 3) |
-| `MEMORY_EXTRACT_MAX_CHARS` | 16000 | вход модели извлечения |
-| `MEMORY_CLASSIFIER` | `off` | второй проход для пограничных фактов |
+| `MEMORY_COGNIFY_SETTLE_SECONDS` | 90 | пауза перед перечитыванием сводки после записи (cognify асинхронный) |
+| `MEMORY_RECALL_TOOL` | `false` | инструмент `recall_memory` в каскаде (пауза 10–30 с посреди хода; выключен) |
+| `MEMORY_DEFAULT_ENABLED` | `false` | только стенды: память всем без согласия (opt-out). В бою НЕ включать |
 | `MEMORY_ALLOWLIST` | пусто | UUID через запятую: включить память могут только они (бета) |
 
-Порядок выката (делает владелец, каждый шаг отдельным решением): 1) образ агента с памятью и ConfigMap с `MEMORY_MODE: "on"` — при
-старте схема файла переходит на v2, `/health/ready` → `"memory": "on"` (если `"unavailable"` — нет адреса прокси или ключа, причина в
-журнале); пока шлюз и клиенты старые, включить память некому, и агент ничего не извлекает; 2) образы `app`: шлюз с миграцией БД
-приложения `0006_memory_consent_events`, затем web и PWA — в профиле появляется раздел «Память». Спецификация (раздел 17) предлагала
-путь осторожнее: `shadow` на внутренних аккаунтах → бета с `MEMORY_ALLOWLIST` → общий доступ после порогов качества и согласований; он
-по-прежнему доступен теми же переменными.
-
 **Откат функции:** `MEMORY_MODE: "off"`, применить ConfigMap, `kubectl -n agent rollout restart deploy/agent`. Сводка пропадает со
-следующего хода, данные остаются (человек может прочитать, скачать и стереть их и при `off`). Откат образа на схему v1 — нет (выше).
-
-**Резервные копии.** Сейчас бэкапов файла нет, и для памяти они не вводятся. Когда появятся (PostgreSQL, D6): срок хранения копий —
-не больше 30 дней, а при восстановлении из копии заново применяется журнал стираний людей и «забыть всё».
+следующего хода, данные в Cognee остаются (человек может прочитать, скачать и стереть их и при `off`).
 
 ## Ограничения (честно)
 
-- **Диалоги на диске, но без бэкапа.** Диалоги дублируются в SQLite на PVC `agent-data` и переживают перезапуск и выкат пода
-  (раздел «Хранилище диалогов»). Реплика одна, `strategy: Recreate`, поэтому на время выката агент недоступен (около минуты вместе с
-  прогревом озвучки, плюс отсоединение и присоединение диска, десятки секунд); текущие сокеты обрываются, а клиент переподключается к
+- **Диалоги в PostgreSQL, реплика одна.** Диалоги дублируются в базу `agent` в CNPG ryadom-db (раздел «Хранилище
+  диалогов») и покрыты общими бэкапами CNPG. Реплика одна, `strategy: Recreate`, поэтому на время выката агент недоступен (около минуты вместе с
+  прогревом озвучки); текущие сокеты обрываются, а клиент переподключается к
   тому же диалогу.
 - **Прогрев.** Первую минуту после старта приветствие может прочитать приложение своим голосом: Qwen через прокси отдаёт
   первый звук за 1-2 с, а клиент ждёт приветствие не больше 0,9 с. Ответы приложение само не читает.
