@@ -4,6 +4,11 @@
 [`k8s/agent/POSTDEPLOY-0.6.0.md`](../agent/POSTDEPLOY-0.6.0.md), автоматические проверки — [`k8s/postdeploy/`](../postdeploy/README.md).
 Пулреквест: https://github.com/playa69/ryadom/pull/60. Всё ниже выполняется только после отдельного одобрения человеком (прод).
 
+**Статус (24.10.2026):** БД (`0009`), api 0.9.0, web 0.8.0 и pwa 0.8.0 выкачены, агент нет. В кластере работает `agent:0.8.5`, собранный не из `main`
+(отличается от `0.8.1` в `dialog_live.py`, `dialog_store.py`, `dialog_db.py`, `replies.py`, `cognee.py`, `cognee_backend.py`), поэтому манифесты агента
+в этом PR **не менялись**: `agent:0.9.0` из `main` откатил бы те правки. Пока исходники `0.8.5` не в `main`, агент не выкатывать; после этого собрать
+`0.9.0`, поднять `APP_VERSION` и образ в `k8s/agent/` и выкатить по шагу 2 ниже. До тех пор выбранный голос сохраняется, но разговор идёт голосом рода.
+
 ## Что внутри
 
 | Что | Образ / ресурс | Эффект |
@@ -14,7 +19,7 @@
 | `voiceName` в `POST …/dialogs`, голос Gemini Live | `agent/agent:0.9.0`, `APP_VERSION` в `agent-config` | голос разговора и приветствий |
 
 Версии в манифестах: `k8s/app/db/06-job-migrate-0006.yaml`, `k8s/app/api/03-deployment.yaml` (0.9.0), `k8s/app/web/03-deployment.yaml` и
-`k8s/app/pwa/03-deployment.yaml` (0.8.0), `k8s/agent/00-config.yaml` и `02-deployment.yaml` (0.9.0). Тег `latest` не используется.
+`k8s/app/pwa/03-deployment.yaml` (0.8.0), `k8s/agent/00-config.yaml` и `02-deployment.yaml` поднимаются до 0.9.0 отдельным изменением (см. статус). Тег `latest` не используется.
 
 ## Порядок и почему именно он
 
