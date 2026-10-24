@@ -74,6 +74,10 @@ export const RATE_LIMITS = {
    * still stops a script from using the proxy as a free relay to PostHog.
    */
   ingest: { perIp: { limit: 1200, windowMs: 60_000 } },
+  /** Making a link to a conversation (`REQ-DATA-05`): a person does it a few times a day at most. */
+  dialogShareCreate: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
+  /** Opening a link without signing in: per address, a household or a carrier NAT included, and still no use for guessing tokens. */
+  sharedView: { perIp: { limit: 60, windowMs: 60_000 } },
   /** Starting a dialog: protection against an accidental loop in the client. */
   dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
   /**

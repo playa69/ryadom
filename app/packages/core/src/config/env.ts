@@ -88,6 +88,8 @@ const baseShape = {
   LOG_LEVEL: z.preprocess(emptyToUndefined, z.enum(LOG_LEVELS).default('info')),
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
   AUTH_SECRET: z.string().min(32, 'must be at least 32 characters'),
+  /** Kill switch of links to a conversation (`REQ-DATA-05`): on by default, this turns creating and opening them off. */
+  DIALOG_SHARE_DISABLED: booleanFlag,
   PUBLIC_WEB_URL: publicUrl,
   /**
    * Public ORIGIN of the application server (API and OTA bundles): `https://example.com`, never
