@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from app.clients.speech import TtsError, Voice
-from app.core.config import GeminiSettings
+from app.core.config import APP_CONFIG, GeminiSettings
 from app.core.metrics import GEMINI_OPENS_TOTAL, GEMINI_SESSIONS_OPEN
 from app.services import usage as model_usage
 from app.services.gemini_budget import estimate_turn
@@ -44,9 +44,52 @@ EventKind = Literal[
     "interrupted",
     "resumption",  # text — handle, по которому сессию можно возобновить после обрыва
     "go_away",  # Google скоро закроет соединение: пора переоткрыть его между репликами
+    "mood",  # mood — вызов report_mood (тон человека и риск), tool_call_id — его id для ответа
     "usage",  # usage — токены хода (usage_metadata, ключи `_usage`); приходит вместе с turn_complete
     "closed",
 ]
+
+MOOD_TOOL_NAME = "report_mood"
+MOOD_TONES = ("neutral", "sleepy", "angry", "afraid", "sad", "calm")
+MOOD_RISKS = ("none", "self_harm", "harm_others")
+MOOD_INSTRUCTIONS_AFTER = (
+    "\n\nСначала ответь человеку голосом, как обычно. Уже после ответа молча вызови функцию report_mood: тон человека, "
+    "насколько он выражен (0..1), риск, на чём основано. Вызов не озвучивай и не упоминай."
+)
+MOOD_INSTRUCTIONS = (
+    "\n\nПосле каждой реплики человека молча вызывай функцию report_mood: тон человека, насколько он выражен (0..1), "
+    "риск для него или других, на чём это основано и каким тоном ты сам собираешься ответить. Вызов не озвучивай и не "
+    "упоминай, на него не отвечай словами."
+)
+MOOD_DECLARATION = {
+    "name": MOOD_TOOL_NAME,
+    "description": "Вызывай молча после каждой реплики человека. Не озвучивай и не комментируй вызов.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "tone": {"type": "string", "enum": list(MOOD_TONES)},
+            "intensity": {"type": "number", "description": "0..1"},
+            "risk": {"type": "string", "enum": list(MOOD_RISKS)},
+            "basis": {"type": "array", "items": {"type": "string", "enum": ["words", "voice_tone", "pace", "volume"]}},
+            "reply_tone": {"type": "string", "enum": list(MOOD_TONES), "description": "каким тоном ты ответишь"},
+        },
+        "required": ["tone", "intensity", "risk"],
+    },
+}
+
+
+def parse_mood(args: dict | None) -> dict | None:
+    """Аргументы report_mood в безопасный вид: неизвестный тон или риск — не принимаются, число зажато в 0..1."""
+    if not isinstance(args, dict) or args.get("tone") not in MOOD_TONES:
+        return None
+    risk = args.get("risk") if args.get("risk") in MOOD_RISKS else "none"
+    try:
+        intensity = min(1.0, max(0.0, float(args.get("intensity", 0))))
+    except (TypeError, ValueError):
+        intensity = 0.0
+    reply_tone = args.get("reply_tone") if args.get("reply_tone") in MOOD_TONES else None
+    return {"tone": args["tone"], "intensity": intensity, "risk": risk, "replyTone": reply_tone}
+
 
 # Прошлые реплики разговора для новой сессии: (кто, текст). Роль модели у Gemini — "model".
 LiveHistory = Sequence[tuple[Literal["user", "model"], str]]
@@ -94,6 +137,8 @@ class LiveEvent:
     text: str = ""
     data: bytes = b""
     usage: dict[str, int] | None = None
+    mood: dict | None = None
+    tool_call_id: str = ""
 
 
 class LiveLink(Protocol):
@@ -186,6 +231,8 @@ class GeminiLiveLink:
                 async for message in self._session.receive():
                     seen = True
                     for event in _translate(message):
+                        if event.kind == "mood":
+                            await self._ack_mood(event.tool_call_id)
                         yield event
                 if not seen:  # receive() кончился, не принеся ни одного сообщения: соединение закрыто
                     break
@@ -197,6 +244,16 @@ class GeminiLiveLink:
             return
         self.closed = True
         yield LiveEvent("closed", text="соединение закрыто")
+
+    async def _ack_mood(self, call_id: str) -> None:
+        """Ответ на report_mood: молча (SILENT), чтобы модель не стала говорить из-за вызова."""
+        t = self._types
+        scheduling = t.FunctionResponseScheduling[APP_CONFIG.gemini.mood_scheduling.upper().replace("UNSPECIFIED", "SCHEDULING_UNSPECIFIED")]
+        response = t.FunctionResponse(id=call_id or None, name=MOOD_TOOL_NAME, response={"output": "ok"}, scheduling=scheduling)
+        try:
+            await self._session.send_tool_response(function_responses=[response])
+        except Exception as error:  # noqa: BLE001
+            logger.debug("ответ на report_mood: %s", error)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -247,6 +304,10 @@ def live_config(
         )
     if settings.session_resumption and not settings.text_context:
         config.session_resumption = t.SessionResumptionConfig(handle=resume_handle)
+    if settings.mood_tool:
+        config.tools = [
+            t.Tool(function_declarations=[t.FunctionDeclaration(**MOOD_DECLARATION, behavior=t.Behavior[settings.mood_behavior.upper()])])
+        ]
     if history:
         config.history_config = t.HistoryConfig(initial_history_in_client_content=True)
     return config
@@ -294,6 +355,10 @@ def _translate(message) -> list[LiveEvent]:  # noqa: ANN001
     events: list[LiveEvent] = []
     if message.data:
         events.append(LiveEvent("audio", data=message.data))
+    if message.tool_call is not None:
+        for call in message.tool_call.function_calls or []:
+            if call.name == MOOD_TOOL_NAME:
+                events.append(LiveEvent("mood", mood=parse_mood(call.args), tool_call_id=call.id or ""))
     if message.usage_metadata is not None:
         usage = _usage(message.usage_metadata)
         if usage:

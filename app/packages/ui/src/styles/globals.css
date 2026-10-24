@@ -426,6 +426,69 @@
   --orb-ring: rgb(247 190 130);
 }
 
+/*
+ * Mood over the state (prototype PROTEUS-168). After the state rules on purpose: same specificity, the later wins.
+ * The colour properties are registered, so the change is the same slow dissolve.
+ */
+.voice-orb[data-mood='sleepy'] {
+  --orb-hi: rgb(238 228 255);
+  --orb-warm: rgb(170 130 240);
+  --orb-mid: rgb(124 77 212);
+  --orb-deep: rgb(62 38 140);
+  --orb-halo: rgb(110 70 200);
+  --orb-ring: rgb(160 120 235);
+}
+
+.voice-orb[data-mood='angry'] {
+  --orb-hi: rgb(255 226 200);
+  --orb-warm: rgb(255 120 70);
+  --orb-mid: rgb(220 38 38);
+  --orb-deep: rgb(127 20 20);
+  --orb-halo: rgb(239 68 68);
+  --orb-ring: rgb(248 113 113);
+}
+
+.voice-orb[data-mood='afraid'] {
+  --orb-hi: rgb(228 255 236);
+  --orb-warm: rgb(110 220 150);
+  --orb-mid: rgb(34 160 90);
+  --orb-deep: rgb(20 90 70);
+  --orb-halo: rgb(52 190 130);
+  --orb-ring: rgb(110 220 150);
+}
+
+/* The ember of anger: a small flickering flame at the top of the sphere. */
+.voice-orb[data-mood='angry']::after {
+  content: '';
+  position: absolute;
+  left: 38%;
+  top: 4%;
+  width: 24%;
+  height: 24%;
+  border-radius: 50% 50% 45% 45%;
+  background: radial-gradient(circle at 50% 70%, rgb(255 230 150), rgb(255 110 40) 55%, transparent 75%);
+  filter: blur(2px);
+  animation: orb-ember 1.1s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes orb-ember {
+  from {
+    opacity: 0.6;
+    transform: scale(0.85) translateY(2%);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.15) translateY(-4%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb[data-mood='angry']::after {
+    animation: none;
+  }
+}
+
 /* A small lit sphere as the face of a button: the way back to the voice. */
 @utility orb-chip {
   background: radial-gradient(

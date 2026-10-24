@@ -14,23 +14,27 @@ import { startOrbMotion, type OrbMotionState } from '@ryadom/client-core/voice/o
  *  - thinking: violet, the lit edge travels slowly around while the agent prepares an answer
  *  - speaking: warm, swells with the agent's voice
  *
- * The tone follows the state only. Colour by the person's mood or intent needs a field from the
- * agent that the contract does not have yet; it would plug in here as another `data-orb` value.
+ * The tone follows the state, and over it the mood (prototype PROTEUS-168): `data-mood` recolours the
+ * sphere (sleepy: violet, angry: red with an ember, afraid: green) when the agent reports one.
  *
  * Size it with `className` (a width); the shape is always square. The motion is one loop for the whole
  * life of the sphere (client-core's orb-motion), which reaches the DOM through CSSOM, never a `style`
  * attribute: the CSP of the web app forbids those in markup.
  */
 export type OrbState = OrbMotionState
+export type OrbMood = 'sleepy' | 'angry' | 'afraid'
 
 function VoiceOrb({
   state,
   level,
+  mood,
   className,
 }: {
   state: OrbState
   /** Loudness 0..1 of whoever is making sound now, read on every animation frame. */
   level: () => number
+  /** Mood to show over the state's colours; none for the plain look. */
+  mood?: OrbMood | null
   className?: string
 }) {
   const swell = useRef<HTMLDivElement>(null)
@@ -51,7 +55,7 @@ function VoiceOrb({
   }, [])
 
   return (
-    <div data-slot="voice-orb" data-orb={state} aria-hidden="true" className={cn('voice-orb', className)}>
+    <div data-slot="voice-orb" data-orb={state} data-mood={mood ?? undefined} aria-hidden="true" className={cn('voice-orb', className)}>
       <div ref={swell} className="voice-orb-swell">
         <span className="voice-orb-layer voice-orb-glow" />
         <span className="voice-orb-layer voice-orb-core" />
