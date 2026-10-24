@@ -1,0 +1,105 @@
+# =============================================================================
+# Deployment cognee — Cognee API, память агента (ns agent)
+# =============================================================================
+# Официальный образ Docker Hub cognee/cognee:1.5.3 (та же версия, что годами
+# работает в кластере fantomasai; смена версии — отдельная проверка совместимости).
+#
+# РОВНО 1 РЕПЛИКА и strategy Recreate: том RWO не примонтируется к двум подам,
+# а вторая реплика всё равно не видела бы чужое состояние Kuzu.
+#
+# Прогрев пода 3–5 минут (загрузка моделей/миграции) — readiness-проба с запасом
+# (30 × 10с ≈ 5 мин после initialDelay). До готовности Service не отдаёт трафик.
+#
+# env: несекретное — ConfigMap cognee-config (10-cognee-config.yaml); секреты —
+# cognee-db-credentials (DB_PASSWORD) и ПЕРЕИСПОЛЬЗУЕМЫЙ agent-secrets
+# (AGENT_API_TOKEN как ключ LiteLLM-прокси). VECTOR_DB_* повторяют DB_* через
+# $(...): без явных VECTOR_DB_* cognee падает с "Missing required pgvector
+# credentials" (порядок env важен — ссылки $(VAR) резолвятся в уже объявленные).
+# =============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cognee
+  namespace: agent
+  labels:
+    app: cognee
+    app.kubernetes.io/part-of: ryadom
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cognee
+  template:
+    metadata:
+      labels:
+        app: cognee
+        app.kubernetes.io/part-of: ryadom
+    spec:
+      securityContext:
+        fsGroup: 1000          # cognee работает под uid 1000: дать писать на том
+      containers:
+        - name: cognee
+          image: cognee/cognee:1.5.3
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: cognee-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cognee-db-credentials
+                  key: DB_PASSWORD
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: AGENT_API_TOKEN
+            - name: EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: AGENT_API_TOKEN
+            # Подпись JWT (multi-user access control, см. 10-cognee-config.yaml)
+            - name: FASTAPI_USERS_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cognee-auth
+                  key: FASTAPI_USERS_JWT_SECRET
+            # pgvector использует ту же БД, что и реляционное хранилище
+            - name: VECTOR_DB_HOST
+              value: "$(DB_HOST)"
+            - name: VECTOR_DB_PORT
+              value: "$(DB_PORT)"
+            - name: VECTOR_DB_NAME
+              value: "$(DB_NAME)"
+            - name: VECTOR_DB_USERNAME
+              value: "$(DB_USERNAME)"
+            - name: VECTOR_DB_PASSWORD
+              value: "$(DB_PASSWORD)"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "1Gi"
+            limits:
+              cpu: "1500m"
+              memory: "3Gi"
+          volumeMounts:
+            - name: cognee-storage
+              mountPath: /cognee-storage
+      volumes:
+        - name: cognee-storage
+          persistentVolumeClaim:
+            claimName: cognee-storage

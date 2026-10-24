@@ -4,8 +4,20 @@
 # Источник значений: backend/.env.example (список env полностью покрывает
 # config.py). Секреты (PG_PASSWORD, REDIS_PASSWORD, JWT_SECRET_KEY) здесь НЕ
 # хранятся — подключаются через secretKeyRef в Deployment/Job.
-# TRUSTED_PROXY_IPS — pod-CIDR кластера (Calico ippool 10.244.0.0/16,
-# kubectl get ippool): XFF доверен только от подов (istio-ingressgateway).
+#
+# TRUSTED_PROXY_IPS = ["127.0.0.6/32"] — единственный реальный peer
+# приложения в meshed-поде: ВЕСЬ inbound (gateway, другие поды, пробы)
+# перехватывается iptables в istio-sidecar, который переотправляет запрос
+# на app с source 127.0.0.6 (стабильное поведение istio virtualInbound).
+# Pod CIDR кластера (10.244.0.0/16) в список НЕ входит осознанно: в mesh
+# прямых соединений из pod-сети к app не бывает вообще — запись была бы
+# мёртвым доверием к несуществующему hop'у. Цепочка XFF: ingressgateway
+# (listener HCM use_remote_address=true) дописывает реальный client IP
+# ПОСЛЕДНИМ в XFF (hostPort DNAT без SNAT — gateway видит настоящий peer),
+# sidecar (use_remote_address=false) передаёт XFF без изменений; app берёт
+# последний элемент XFF (app/api/deps.py get_request_security_context).
+# Подделка XFF возможна только от подов, которым NetworkPolicy разрешает
+# ingress :8000 (gateway, same-ns, monitoring) — принятый риск design.md.
 # =============================================================================
 
 ---
@@ -23,7 +35,7 @@ data:
   APP_PORT: "8000"
   TIMEZONE: "Europe/Moscow"
   APP_VERSION: "0.1.0"
-  TRUSTED_PROXY_IPS: '["10.244.0.0/16"]'
+  TRUSTED_PROXY_IPS: '["127.0.0.6/32"]'
   # --- Логирование ---
   LOG_PATH: "/app/logs"
   LOG_FILE_NAME: "app.log"
