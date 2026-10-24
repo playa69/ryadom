@@ -1346,6 +1346,73 @@ input:-webkit-autofill:focus {
   outline: none;
 }
 
+.rd-segment {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-pill);
+}
+
+.rd-segment button {
+  flex: 1 1 0;
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--ryadom-r-pill);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-segment button[aria-checked='true'] {
+  background: var(--ryadom-brand-fill);
+  color: var(--ryadom-cta-ink);
+  font-weight: 600;
+}
+
+.rd-warning {
+  margin: 0;
+  padding: var(--ryadom-s-3);
+  border: 1px solid rgba(var(--ryadom-peach-rgb), 0.4);
+  border-radius: var(--ryadom-r-s);
+  background: rgba(var(--ryadom-peach-rgb), 0.1);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-warning b {
+  color: var(--ryadom-text);
+}
+
+.rd-sheet-body .button.rd-danger {
+  color: var(--ryadom-danger);
+}
+
+.rd-share-ok {
+  margin: 0;
+  font-weight: 700;
+  color: var(--ryadom-sage);
+}
+
+.rd-share-url {
+  width: 100%;
+  padding: var(--ryadom-s-3);
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-s);
+  background: var(--ryadom-surface);
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--ryadom-brand-400);
+}
+
+.rd-share-button {
+  margin: var(--ryadom-s-4) auto 0;
+  width: fit-content;
+}
+
 .rd-sheet-title {
   margin: 0;
   font-size: 20px;

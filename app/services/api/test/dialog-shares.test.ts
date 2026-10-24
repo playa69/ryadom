@@ -40,7 +40,7 @@ describe('ссылка на разговор', () => {
     const created = ok<DialogShareApiResponse>(
       await call(app, 'POST', '/api/dialogs/d-1/share', { ttlHours: 72 }, tokens.accessToken),
     )
-    expect(created.url).toMatch(/\/app\/s\/[A-Za-z0-9_-]{43}$/)
+    expect(created.url).toMatch(/\/s\/[A-Za-z0-9_-]{43}$/)
     expect(Date.parse(created.expiresAt) - Date.parse(created.createdAt)).toBe(72 * 3_600_000)
 
     // Seen again, the same link: the token is derived, not stored.

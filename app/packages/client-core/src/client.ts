@@ -82,7 +82,21 @@ import {
   type UpdateMemorySettingsApiRequest,
   type UpdateMemorySettingsApiResponse,
 } from '@ryadom/contracts/api/memory'
-import { ApiPath, dialogEndPath, dialogPath, memoryFactPath, sessionPath } from '@ryadom/contracts/api/paths'
+import {
+  DialogShareApiErrorCode,
+  type CreateDialogShareApiRequest,
+  type DialogShareApiResponse,
+  type SharedDialogApiResponse,
+} from '@ryadom/contracts/api/dialog-shares'
+import {
+  ApiPath,
+  dialogEndPath,
+  dialogPath,
+  dialogSharePath,
+  memoryFactPath,
+  sessionPath,
+  sharedDialogPath,
+} from '@ryadom/contracts/api/paths'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { newDeviceCredentials } from './device'
 import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from './dialog-socket'
@@ -671,6 +685,44 @@ export function createClient(config: ClientConfig) {
 
     getDialog,
 
+    /** The person's active link to a dialog; null when there is none. */
+    getDialogShare: (dialogId: string): Promise<ApiOutcome<DialogShareApiResponse | null, DialogApiErrorCode>> =>
+      apiOutcome<DialogShareApiResponse | null, DialogApiErrorCode>(dialogSharePath(dialogId)),
+
+    createDialogShare: (
+      dialogId: string,
+      data: CreateDialogShareApiRequest,
+    ): Promise<ApiOutcome<DialogShareApiResponse, DialogApiErrorCode | DialogShareApiErrorCode>> =>
+      apiOutcome<DialogShareApiResponse, DialogApiErrorCode | DialogShareApiErrorCode>(dialogSharePath(dialogId), {
+        method: 'POST',
+        body: data,
+      }),
+
+    revokeDialogShare: async (dialogId: string): Promise<ApiOutcome<void, DialogApiErrorCode>> =>
+      voidOutcome(
+        await apiOutcome<null, DialogApiErrorCode>(dialogSharePath(dialogId), { method: 'DELETE' }),
+      ),
+
+    /**
+     * What a link opens, for someone who may not be signed in at all: no Authorization header, no
+     * refresh. `gone` is one answer for every reason the link no longer works.
+     */
+    getSharedDialog: async (token: string): Promise<SharedDialogResult> => {
+      let res: Response
+      try {
+        res = await fetch(`${config.apiBase()}${sharedDialogPath(token)}`, {
+          headers: { ...(await versionHeaders()), ...tracing() },
+        })
+      } catch {
+        return { status: 'unavailable' }
+      }
+      if (res.status === 404) return { status: 'gone' }
+      if (!res.ok) return { status: 'unavailable' }
+      const envelope = (await res.json().catch(() => null)) as ApiEnvelope<SharedDialogApiResponse> | null
+      if (!envelope || !envelope.status) return { status: 'unavailable' }
+      return { status: 'ok', dialog: envelope.result }
+    },
+
     endDialog: (
       dialogId: string,
       data: EndDialogApiRequest,
@@ -776,5 +828,11 @@ export function createClient(config: ClientConfig) {
       apiFetch<MemoryExportApiResponse>(ApiPath.MemoryExport),
   }
 }
+
+/** The answer to opening a link. */
+export type SharedDialogResult =
+  | { status: 'ok'; dialog: SharedDialogApiResponse }
+  | { status: 'gone' }
+  | { status: 'unavailable' }
 
 export type RyadomClient = ReturnType<typeof createClient>

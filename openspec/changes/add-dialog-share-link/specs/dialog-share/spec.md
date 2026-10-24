@@ -8,16 +8,16 @@
 
 ### Requirement: Создание ссылки
 
-Владелец разговора SHALL создавать ссылку через `POST /api/dialogs/{dialogId}/share` с `ttlHours` из {24, 72, 168}. Ответ SHALL содержать `shareId`, `url`, `expiresAt`. Токен MUST вычисляться как HMAC-SHA256 от `shareId` секретом сервера и MUST NOT храниться. У разговора MUST быть не более одной активной ссылки. Создание SHALL требовать `DIALOG_SHARE_ENABLED` и сессии владельца.
+Владелец разговора SHALL создавать ссылку через `POST /api/dialogs/{dialogId}/share` с `ttlHours` из {24, 72, 168}. Ответ SHALL содержать `shareId`, `url`, `expiresAt`. Токен MUST вычисляться как HMAC-SHA256 от `shareId` секретом сервера и MUST NOT храниться. У разговора MUST быть не более одной активной ссылки. Создание и открытие ссылок MUST отключаться переключателем `DIALOG_SHARE_DISABLED` (по умолчанию включено); создание SHALL требовать сессии владельца.
 
 #### Scenario: Успешное создание
 - **WHEN** владелец просит ссылку на 72 часа для своего завершённого разговора
-- **THEN** ответ `201` содержит `url` вида `<origin>/app/s/<token>` и `expiresAt` = сейчас + 72 часа
+- **THEN** ответ `201` содержит `url` вида `<адрес веб-клиента>/s/<token>` (в проде `https://<хост>/app/s/<token>`) и `expiresAt` = сейчас + 72 часа
 - **AND** в `dialog_shares` нет самого токена
 
 #### Scenario: Ссылка уже есть
 - **WHEN** у разговора есть активная ссылка и владелец просит создать ещё одну
-- **THEN** ответ `409 SHARE_EXISTS`, а `GET …/share` возвращает ту же ссылку
+- **THEN** отказ с кодом `SHARE_EXISTS`, а `GET …/share` возвращает ту же ссылку
 
 #### Scenario: Недопустимый срок
 - **WHEN** `ttlHours` равно 1 или 200
@@ -29,7 +29,7 @@
 
 #### Scenario: Лимиты
 - **WHEN** у аккаунта уже 5 активных ссылок
-- **THEN** ответ `409 SHARE_LIMIT`, новая ссылка не создаётся
+- **THEN** отказ с кодом `SHARE_LIMIT`, новая ссылка не создаётся
 
 ### Requirement: Граница среза
 
@@ -61,7 +61,7 @@
 
 ### Requirement: Защита страницы
 
-Ответы `/api/shared/*` и страница `/app/s/*` MUST нести `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`; `robots.txt` MUST запрещать `/s/`. Запросы MUST ограничиваться по IP. Токен MUST NOT попадать в логи, аналитику и в `Referer`; IP и User-Agent получателя MUST NOT сохраняться.
+Ответы `/api/shared/*` и страница `/s/*` веб-клиента MUST нести `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`; `robots.txt` MUST запрещать `/s/`. Запросы MUST ограничиваться по IP. Токен MUST NOT попадать в логи, аналитику и в `Referer`; IP и User-Agent получателя MUST NOT сохраняться.
 
 #### Scenario: Заголовки
 - **WHEN** запрашивается действующая ссылка

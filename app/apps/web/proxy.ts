@@ -45,6 +45,12 @@ export function proxy(request: NextRequest) {
   response.headers.set('X-Robots-Tag', 'noindex, nofollow')
   response.headers.set('X-Content-Type-Options', 'nosniff')
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  // The address of a link to a conversation (`/s/<token>`) is a secret: it must not be cached, and it
+  // must not leave in a Referer header. `nextUrl.pathname` has no base path.
+  if (request.nextUrl.pathname.startsWith('/s/')) {
+    response.headers.set('Referrer-Policy', 'no-referrer')
+    response.headers.set('Cache-Control', 'no-store')
+  }
   return response
 }
 

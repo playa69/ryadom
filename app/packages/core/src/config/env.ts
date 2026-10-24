@@ -91,6 +91,8 @@ const baseShape = {
   /** Kill switch of links to a conversation (`REQ-DATA-05`): on by default, this turns creating and opening them off. */
   DIALOG_SHARE_DISABLED: booleanFlag,
   PUBLIC_WEB_URL: publicUrl,
+  /** Where the web client lives (`https://host/app`); the link to a conversation opens there. Without it: `<PUBLIC_APP_URL>/app`. */
+  PUBLIC_WEBAPP_URL: z.preprocess(emptyToUndefined, publicUrl.optional()),
   /**
    * Public ORIGIN of the application server (API and OTA bundles): `https://example.com`, never
    * with a path.

@@ -14,10 +14,11 @@ export function shareTokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
-/** `<origin>/app/s/<token>`: the link always opens the web client, whichever client made it. */
+/** `<web client>/s/<token>`: the link always opens the web client, whichever client made it. */
 export function shareUrl(token: string): string {
-  const origin = getEnv().PUBLIC_APP_URL.replace(/\/+$/, '')
-  return `${origin}/app/s/${token}`
+  const env = getEnv()
+  const webClient = env.PUBLIC_WEBAPP_URL ?? `${env.PUBLIC_APP_URL}/app`
+  return `${webClient}/s/${token}`
 }
 
 export function isShareDisabled(): boolean {

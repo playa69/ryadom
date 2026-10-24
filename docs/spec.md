@@ -249,7 +249,7 @@ flowchart LR
 | `user_consents` | `kind`, `version`, время | 18+, обработка данных, оферта |
 | `email_codes` | одноразовые коды | Подтверждение почты, сброс пароля, вход в админку |
 | `audit_log` | действия администраторов | |
-| `dialog_shares` | `user_id`, `dialog_id`, `token_hash` (токен не хранится, HMAC от `shareId`), `up_to_message_id`, `expires_at`, `revoked_at`, `view_count` | Ссылка на один разговор, `REQ-DATA-05` (план); токена и текстов в таблице нет |
+| `dialog_shares` | `user_id`, `dialog_id`, `token_hash` (токен не хранится, HMAC от `shareId`), `up_to_message_id`, `expires_at`, `revoked_at`, `view_count` | Ссылка на один разговор, `REQ-DATA-05`; токена и текстов в таблице нет |
 
 ### 5.2. Сущности агента
 
@@ -589,7 +589,7 @@ Recall на валидационном наборе (собирается с к�
 **`REQ-DATA-04`** — Шифрование. Статус: **план**.
 Тексты L0/L2 в БД агента — шифрование на уровне колонки ключом из Secret; в транзите — TLS (внутри кластера — mTLS Istio, где включён sidecar).
 
-**`REQ-DATA-05`** — Ссылка на разговор. Статус: **план** (`openspec/changes/add-dialog-share-link`).
+**`REQ-DATA-05`** — Ссылка на разговор. Статус: **реализовано** (`openspec/changes/add-dialog-share-link`; отключается `DIALOG_SHARE_DISABLED`; юридическое согласование текста предупреждения — открыто).
 Владелец MAY создать ссылку на один разговор сроком 24 часа – 7 дней. Получатель без входа видит только реплики до границы среза, без аудио, сводки и идентификаторов. Токен вычисляется HMAC от id ссылки и не хранится; одна активная ссылка на разговор; отказ единообразен; ссылка умирает вместе с разговором, памятью или аккаунтом.
 
 ### 6.12. Аккаунты и доступ (шлюз, кратко)
@@ -871,6 +871,7 @@ sequenceDiagram
 | `REQ-DATA-02` | `agent/app/api/dialogs.py` (`erase_user`), `agent/app/services/dialog_db.py` (`erase_user`), `app/packages/core/src/processes/account-deletion` | `agent/tests/test_rest.py`, `agent/tests/test_memory_erase.py`, `app/packages/core/test/account-deletion.test.ts` |
 | `REQ-MEM-01..05`, `REQ-DATA-03` | `agent/app/memory/*`, `agent/app/api/memory.py`, `app/services/api/src/routes/memory`, `app/packages/core/src/processes/memory` | `agent/tests/test_memory_*.py`, `app/packages/core/test/memory.test.ts`, `app/services/api/test/memory.test.ts` |
 | `REQ-ACC-*` | `app/services/api/src/routes/auth`, `app/packages/core/src/processes` | `app/services/api/test`, `app/packages/core/test`, `app/e2e/tests` |
+| `REQ-DATA-05` | `app/packages/db/src/schema/dialog-shares.ts`, `app/packages/core/src/processes/dialog-shares`, `app/services/api/src/routes/dialog-shares`, `app/apps/web/components/ShareDialogModal.tsx`, `SharedDialogScreen.tsx`, `app/apps/mobile/src/client/components/pages/journal/ShareSheet.tsx` | `app/services/api/test/dialog-shares.test.ts`, `app/e2e/tests/web-share.spec.ts` |
 | `REQ-CARE-04` | `app/services/api/src/dialogs/gateway.ts`, `limits.ts` | `app/services/api/test/dialogs.test.ts` |
 | `REQ-OBS-01` | `agent/app/core/metrics.py` | `agent/tests/test_voice_turn.py` |
 | Конфигурация | `agent/app/core/config.py` | `agent/tests/conftest.py` |
