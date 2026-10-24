@@ -92,6 +92,15 @@ class Dialog:
     reply_index: int = 0
     # Голос озвучки этого диалога (род): задаётся при старте или кадром set_voice.
     voice: Voice = "male"
+    # Конкретный голос Gemini (выбор в профиле), если человек его выбрал; иначе озвучивает голос рода. Только в памяти: приложение
+    # присылает его при каждом старте диалога, поэтому после перезапуска агента возобновлённый диалог получает его заново.
+    voice_name: str | None = None
+
+    @property
+    def voice_key(self) -> str:
+        """Ключ голоса для Gemini Live: имя выбранного голоса или род (его имя берёт коннектор из GEMINI_LIVE_VOICE_*)."""
+        return self.voice_name or self.voice
+
     # Один живой сокет на диалог (specs/agent-api «Обрыв и переподключение»).
     has_live_socket: bool = False
     # Зовёт хранилище, когда диалог завершён снаружи сокета (человек начал новый разговор с другого экрана): сокет сообщает
@@ -203,6 +212,8 @@ class DialogStore:
         self._default_voice = default_voice
         # Последний выбор голоса человека: следующий диалог без явного голоса получит его.
         self._voice_prefs: dict[str, Voice] = {}
+        # Конкретный голос Gemini из профиля; задаётся вместе с родом при старте и сбрасывается выбором рода (`set_voice`).
+        self._voice_name_prefs: dict[str, str] = {}
         self._last_started: datetime | None = None
         # Диск. Всё ниже, кроме _db, нужно только при подключённой базе.
         self._db: DialogDatabase | None = None
@@ -253,7 +264,12 @@ class DialogStore:
         return next((d for d in self._dialogs(user_id).values() if d.ended_at is None), None)
 
     def start(
-        self, user_id: str, voice: Voice | None = None, new: bool = False, memory_mode: MemoryMode = "on"
+        self,
+        user_id: str,
+        voice: Voice | None = None,
+        new: bool = False,
+        memory_mode: MemoryMode = "on",
+        voice_name: str | None = None,
     ) -> tuple[Dialog, bool, int | None]:
         """Начать или возобновить диалог. Возвращает (диалог, resumed, часов с прошлого разговора).
 
@@ -285,7 +301,13 @@ class DialogStore:
         self._dialogs(user_id)[dialog.id] = dialog
         if voice is not None:
             self._voice_prefs[user_id] = voice
+            # Приложение присылает голос целиком: без имени человек остановился на голосе рода.
+            if voice_name is None:
+                self._voice_name_prefs.pop(user_id, None)
+            else:
+                self._voice_name_prefs[user_id] = voice_name
         dialog.voice = voice or self._voice_prefs.get(user_id) or self._default_voice
+        dialog.voice_name = self._voice_name_prefs.get(user_id)
         dialog.greeting = GREETING_RESUMED if resumed else GREETING_NEW
         dialog.greeting_pending = True
         self._touch(dialog)
@@ -313,7 +335,9 @@ class DialogStore:
     def set_voice(self, dialog: Dialog, voice: Voice) -> None:
         """Сменить голос идущего диалога; запоминается и как предпочтение человека."""
         dialog.voice = voice
+        dialog.voice_name = None  # род выбран прямо: голос рода, а не прежний выбранный по имени
         self._voice_prefs[dialog.user_id] = voice
+        self._voice_name_prefs.pop(dialog.user_id, None)
         self._touch(dialog)
 
     def add_message(
@@ -498,6 +522,7 @@ class DialogStore:
             self._watch.pop(dialog_id, None)
             self._persisted.pop(dialog_id, None)
         self._voice_prefs.pop(user_id, None)
+        self._voice_name_prefs.pop(user_id, None)
         self._persisted_prefs.pop(user_id, None)
         memory = self.memory
         if memory is not None:
@@ -871,6 +896,7 @@ class DialogStore:
             self._watch.pop(dialog_id, None)
             self._persisted.pop(dialog_id, None)
         self._voice_prefs.pop(user_id, None)
+        self._voice_name_prefs.pop(user_id, None)
         self._persisted_prefs.pop(user_id, None)
         self._loaded.discard(user_id)
         self._last_access.pop(user_id, None)
