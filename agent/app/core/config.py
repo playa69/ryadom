@@ -218,6 +218,15 @@ class GeminiSettings(BaseAppSettings):
     # Прототип PROTEUS-168: модель молча вызывает функцию `report_mood` после реплики человека (тон, интенсивность, риск), агент
     # шлёт клиенту кадр `mood`, шарик окрашивается. Выключено по умолчанию: ход и токены не меняются, пока не измерены.
     mood_tool: bool = Field(validation_alias="GEMINI_MOOD_TOOL", default=False)
+    # Классификатор тона отдельным запросом к текстовой модели по расшифровке (имя модели; пусто — выключен). Замеры PROTEUS-168:
+    # report_mood внутри сессии Live подменяет ответ, а отдельный запрос ответу не мешает.
+    mood_classifier: str = Field(validation_alias="GEMINI_MOOD_CLASSIFIER", default="")
+    mood_classifier_timeout_seconds: float = Field(validation_alias="GEMINI_MOOD_CLASSIFIER_TIMEOUT_SECONDS", default=5.0, gt=0)
+    # Пауза без новых слов расшифровки, после которой реплика уходит на классификацию.
+    mood_debounce_ms: int = Field(validation_alias="GEMINI_MOOD_DEBOUNCE_MS", default=300, ge=0)
+    # report_mood в сессии: поведение функции и порядок («before» — вызвать до ответа, «after» — сперва ответить голосом).
+    mood_behavior: Literal["non_blocking", "blocking"] = Field(validation_alias="GEMINI_MOOD_BEHAVIOR", default="non_blocking")
+    mood_order: Literal["before", "after"] = Field(validation_alias="GEMINI_MOOD_ORDER", default="before")
     # Как отвечаем на report_mood: silent (модель молчит из-за вызова), when_idle, interrupt или unspecified (решает Google).
     mood_scheduling: Literal["silent", "when_idle", "interrupt", "unspecified"] = Field(
         validation_alias="GEMINI_MOOD_SCHEDULING", default="silent"

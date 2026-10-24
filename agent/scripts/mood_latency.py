@@ -24,7 +24,8 @@ import httpx
 from websockets.asyncio.client import connect
 
 IN_FRAME = 3200  # 100 мс PCM16 16 кГц
-ANSWER_TIMEOUT = 45.0
+ANSWER_TIMEOUT = 12.0
+MOOD_GRACE = 4.0  # сколько ждать mood после первого звука ответа
 
 
 async def one_run(http: httpx.AsyncClient, ws_base: str, auth: dict, pcm: bytes, pace: float) -> dict[str, float | None]:
@@ -33,6 +34,7 @@ async def one_run(http: httpx.AsyncClient, ws_base: str, auth: dict, pcm: bytes,
     started.raise_for_status()
     dialog = started.json()["dialogId"]
     marks: dict[str, float] = {}
+    tones: dict[str, str] = {}
     async with connect(f"{ws_base}/v1/users/{user}/dialogs/{dialog}/ws", additional_headers=auth, max_size=None) as ws:
         async for message in ws:  # приветствие проходит до своего tts_end, потом наш ход
             if not isinstance(message, bytes) and json.loads(message).get("type") == "tts_end":
@@ -51,17 +53,26 @@ async def one_run(http: httpx.AsyncClient, ws_base: str, auth: dict, pcm: bytes,
                 if isinstance(message, bytes):
                     if message[:1] == b"\x02":
                         marks.setdefault("first_audio", now)
+                    if "first_audio" in marks and ("mood" in marks or now - marks["first_audio"] > MOOD_GRACE):
                         return
                     continue
-                kind = json.loads(message).get("type")
+                frame = json.loads(message)
+                kind = frame.get("type")
+                if kind == "transcript" and frame.get("final"):
+                    marks.setdefault("transcript", now)
                 if kind in ("mood", "assistant_start"):
                     marks.setdefault(kind, now)
+                if kind == "mood":
+                    tones.setdefault("tone", frame["tone"])
+                if "first_audio" in marks and "mood" in marks:
+                    return
 
         try:
             await asyncio.wait_for(listen(), ANSWER_TIMEOUT)
         except TimeoutError:
             pass
-    return {name: marks.get(name) for name in ("mood", "assistant_start", "first_audio")}
+    print(f"    tone={tones.get('tone', '—')}")
+    return {name: marks.get(name) for name in ("transcript", "mood", "assistant_start", "first_audio")}
 
 
 def summary(values: list[float | None]) -> dict[str, float | int | None]:
@@ -89,7 +100,7 @@ async def main() -> None:
         for i in range(args.runs):
             runs.append(await one_run(http, ws_base, auth, pcm, args.pace))
             print(f"  {i + 1}/{args.runs}: " + " ".join(f"{k}={v:.2f}" if v is not None else f"{k}=—" for k, v in runs[-1].items()))
-    report = {name: summary([r[name] for r in runs]) for name in ("mood", "assistant_start", "first_audio")}
+    report = {name: summary([r[name] for r in runs]) for name in ("transcript", "mood", "assistant_start", "first_audio")}
     print(json.dumps({"label": args.label, "runs": args.runs, "from_audio_end_seconds": report}, ensure_ascii=False))
 
 

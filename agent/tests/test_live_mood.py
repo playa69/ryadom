@@ -105,3 +105,27 @@ def test_a_tool_call_message_from_google_becomes_a_mood_event() -> None:
     events = _translate(message)
     assert [(e.kind, e.tool_call_id) for e in events] == [("mood", "fc_9")]
     assert events[0].mood["tone"] == "sleepy"  # type: ignore[index]
+
+
+def test_the_classifier_sends_a_mood_frame_without_touching_the_answer(user_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Классификатор по расшифровке (GEMINI_MOOD_CLASSIFIER): mood приходит кадром, ответ модели идёт как обычно."""
+    from pydantic import SecretStr
+
+    from app.clients import mood_classifier
+
+    async def fake(self: object, text: str) -> dict:
+        return {"tone": "afraid", "intensity": 0.7, "risk": "none", "replyTone": None}
+
+    monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings: None)
+    monkeypatch.setattr(mood_classifier.MoodClassifier, "classify", fake)
+    monkeypatch.setattr(APP_CONFIG.gemini, "mood_classifier", "fake-model")
+    monkeypatch.setattr(APP_CONFIG.gemini, "api_key", SecretStr("x"))
+    monkeypatch.setattr(APP_CONFIG.gemini, "mood_debounce_ms", 0)
+    connector = FakeConnector(heard="мне страшно")
+    with make_live_client(connector, FakeTts()) as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            speak_turn(ws)
+            frames = read_frames(ws, lambda f: reply_done(f) and any(x[0] == "json" and x[1]["type"] == "mood" for x in f))
+    assert moods(frames)[0]["tone"] == "afraid"
+    assert has(frames, "assistant_end")

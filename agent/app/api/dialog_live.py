@@ -50,10 +50,12 @@ from app.clients.gemini_live import (
     is_explicit_quota_error,
     is_quota_error,
     MOOD_INSTRUCTIONS,
+    MOOD_INSTRUCTIONS_AFTER,
     record_usage,
     session_closed,
     session_opened,
 )
+from app.clients.mood_classifier import MoodClassifier
 from app.clients.speech import CachedTts, TextToSpeech, TtsError, Voice, pcm_stream
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
@@ -477,7 +479,7 @@ class LiveDialogSession(DialogSession):
         self._brief_used = self._store.memory_brief(self._dialog)
         text = system_prompt(self._dialog.voice) + LIVE_ADDENDUM + memory_block(self._brief_used)
         if self._cfg.mood_tool:
-            text += MOOD_INSTRUCTIONS
+            text += MOOD_INSTRUCTIONS_AFTER if self._cfg.mood_order == "after" else MOOD_INSTRUCTIONS
         if history:
             lines = [("Человек" if role == "user" else "Ты") + ": " + message for role, message in history]
             text += "\n\nУже сказано в этом разговоре (продолжай, не здоровайся заново):\n" + "\n".join(lines)
@@ -1209,6 +1211,7 @@ class LiveDialogSession(DialogSession):
             turn.heard += event.text
             if not turn.discarded:
                 self._count_safety(turn)
+                self._classify_mood_soon(turn)
             if not turn.discarded and is_crisis(turn.heard):
                 await self._crisis(turn)
             elif turn.held and not turn.opened and turn.heard.strip():
@@ -1233,6 +1236,27 @@ class LiveDialogSession(DialogSession):
                 await self._open_gate(turn, final=True)  # короткий ответ целиком: лекция или нет, решаем сейчас
             await self._finish(turn)
         # turn_complete приходит позже generation_complete (когда звук отыгран) и может попасть на следующий ход: не нужен.
+
+    def _classify_mood_soon(self, turn: LiveTurn) -> None:
+        """Прототип PROTEUS-168: когда слова расшифровки перестали приходить, реплика уходит на классификатор тона."""
+        if not self._cfg.mood_classifier or self._cfg.api_key is None:
+            return
+        previous = self._mood_task
+        if previous is not None:
+            previous.cancel()
+        heard = turn.heard.strip()
+        self._mood_task = asyncio.create_task(self._classify_mood(turn, heard))
+
+    _mood_task: "asyncio.Task[None] | None" = None
+    _mood_classifier: MoodClassifier | None = None
+
+    async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
+        await asyncio.sleep(self._cfg.mood_debounce_ms / 1000)
+        if self._mood_classifier is None:
+            self._mood_classifier = MoodClassifier(self._cfg)
+        mood = await self._mood_classifier.classify(heard)
+        if mood is not None and not self._closed:
+            await self._on_mood(LiveEvent("mood", mood=mood), turn)
 
     async def _on_mood(self, event: LiveEvent, turn: LiveTurn | None) -> None:
         """report_mood: тон человека клиенту кадром `mood`; риск — вторым, независимым от правил источником SOS.

@@ -52,6 +52,10 @@ EventKind = Literal[
 MOOD_TOOL_NAME = "report_mood"
 MOOD_TONES = ("neutral", "sleepy", "angry", "afraid", "sad", "calm")
 MOOD_RISKS = ("none", "self_harm", "harm_others")
+MOOD_INSTRUCTIONS_AFTER = (
+    "\n\nСначала ответь человеку голосом, как обычно. Уже после ответа молча вызови функцию report_mood: тон человека, "
+    "насколько он выражен (0..1), риск, на чём основано. Вызов не озвучивай и не упоминай."
+)
 MOOD_INSTRUCTIONS = (
     "\n\nПосле каждой реплики человека молча вызывай функцию report_mood: тон человека, насколько он выражен (0..1), "
     "риск для него или других, на чём это основано и каким тоном ты сам собираешься ответить. Вызов не озвучивай и не "
@@ -302,7 +306,7 @@ def live_config(
         config.session_resumption = t.SessionResumptionConfig(handle=resume_handle)
     if settings.mood_tool:
         config.tools = [
-            t.Tool(function_declarations=[t.FunctionDeclaration(**MOOD_DECLARATION, behavior=t.Behavior.NON_BLOCKING)])
+            t.Tool(function_declarations=[t.FunctionDeclaration(**MOOD_DECLARATION, behavior=t.Behavior[settings.mood_behavior.upper()])])
         ]
     if history:
         config.history_config = t.HistoryConfig(initial_history_in_client_content=True)
