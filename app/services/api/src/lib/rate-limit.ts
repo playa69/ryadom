@@ -87,6 +87,12 @@ export const RATE_LIMITS = {
    */
   memoryRead: { perUser: { limit: 120, windowMs: 60_000 } },
   memoryWrite: { perUser: { limit: 60, windowMs: 60_000 } },
+  /** The mood diary: screens read often, notes and summaries are taps; a summary also costs a model call. */
+  diaryRead: { perUser: { limit: 120, windowMs: 60_000 } },
+  diaryWrite: { perUser: { limit: 60, windowMs: 60_000 } },
+  diarySummary: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
+  /** The Android widget with its own token: a few taps a day, plus reads when it redraws. */
+  widget: { perIp: { limit: 120, windowMs: 60_000 } },
   /** "Download my memory": the whole of it at once, so a few times per ten minutes. */
   memoryExport: { perUser: { limit: 5, windowMs: 10 * 60_000 } },
 } as const

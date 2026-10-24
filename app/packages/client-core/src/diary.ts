@@ -31,11 +31,11 @@ export { MOOD_FACTORS, MOOD_LEVELS }
 
 /** CSS colour of a level: the `--ryadom-mood-N` token, with a fallback for a page without the design tokens. */
 export const MOOD_COLORS: Record<MoodLevel, string> = {
-  1: '#c4553f',
-  2: '#d98a3d',
-  3: '#d6b84a',
-  4: '#7fb06a',
-  5: '#3f9a8c',
+  1: '#e5645f',
+  2: '#ee9a55',
+  3: '#e9d36b',
+  4: '#86cf86',
+  5: '#4ec5d9',
 }
 export const moodColor = (mood: MoodLevel): string => `var(--ryadom-mood-${mood}, ${MOOD_COLORS[mood]})`
 

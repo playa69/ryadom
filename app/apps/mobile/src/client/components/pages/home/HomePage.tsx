@@ -8,6 +8,7 @@ import { DialogMode, StartDialogApiErrorCode, type StartDialogApiResponse } from
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { memoryInUse } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText, getMemory, startDialog } from '../../../lib/api'
+import { START_TALK_EVENT } from '../../../lib/nav'
 import { unlockSpeech } from '../../../lib/voice/speech'
 import { useAuth } from '../../../lib/store'
 import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
@@ -47,8 +48,8 @@ const MODES: Array<{ id: DialogMode; label: string; hint: string; icon: string; 
   },
   {
     id: DialogMode.Journal,
-    label: 'Дневник',
-    hint: 'Вопросы, чтобы лучше понять себя',
+    label: 'Письмо',
+    hint: 'Написать то, что не сказано',
     icon: 'book',
     ready: false,
   },
@@ -186,6 +187,15 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
       release(navigated)
     }
   }
+
+  // The diary's bridge: «Поговорить» there is this button, pressed from afar.
+  const talkRef = useRef(handleTalk)
+  talkRef.current = handleTalk
+  useEffect(() => {
+    const onTalk = () => void talkRef.current()
+    window.addEventListener(START_TALK_EVENT, onTalk)
+    return () => window.removeEventListener(START_TALK_EVENT, onTalk)
+  }, [])
 
   /** "Продолжить": the same dialog, as a start without a question used to open it. */
   function continueDialog() {

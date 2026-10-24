@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { connection } from 'next/server'
 import '@fontsource-variable/inter/wght.css'
 import './globals.css'
-import { readApiBase } from '@/lib/api-url'
+import { readApiBase, readDiaryEnabled } from '@/lib/api-url'
 import { appPath } from '@/lib/base-path'
 import Providers from './providers'
 
@@ -28,7 +28,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     // scroll-pt: the sticky AppHeader (h-14 plus the notch inset) must not cover the control that keyboard focus scrolls into view.
     <html lang="ru" className="dark scroll-pt-[calc(4rem+env(safe-area-inset-top,0px))]">
       <body>
-        <Providers apiBase={readApiBase()}>{children}</Providers>
+        <Providers apiBase={readApiBase()} diaryEnabled={readDiaryEnabled()}>{children}</Providers>
       </body>
     </html>
   )

@@ -46,7 +46,7 @@ export function toAuthUser(user: UserDTO): AuthUserApiResponse {
   return { id: user.id, email: user.email, name: user.name, telegramLinked: user.telegramId !== null }
 }
 
-export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
+export function toMe(user: UserDTO, consent: ConsentStatusDTO, diaryEnabled = false): MeApiResponse {
   return {
     id: user.id,
     email: user.email,
@@ -59,6 +59,7 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     voice: user.agentVoice,
     analyticsOptOut: user.analyticsOptOut,
     timezone: user.timezone,
+    diaryEnabled,
   }
 }
 

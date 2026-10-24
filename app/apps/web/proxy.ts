@@ -70,7 +70,7 @@ export const config = {
     },
     {
       // The liveness probe is JSON: it needs no nonce and must answer even if this function is broken.
-      source: '/((?!api/health|_next/static|_next/image|favicon.svg|voice-worklet.js).*)',
+      source: '/((?!api/health|_next/static|_next/image|favicon.svg|voice-worklet.js|sw.js).*)',
       missing: [
         { type: 'header', key: 'next-router-prefetch' },
         { type: 'header', key: 'purpose', value: 'prefetch' },

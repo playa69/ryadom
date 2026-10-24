@@ -32,6 +32,8 @@ export enum DiaryApiErrorCode {
   NOT_ENOUGH_DAYS = 'NOT_ENOUGH_DAYS',
   /** Fewer week summaries than `YEAR_STORY_MIN_WEEKS`. */
   NOT_ENOUGH_WEEKS = 'NOT_ENOUGH_WEEKS',
+  /** The summary of this period was made less than a day ago. */
+  TOO_SOON = 'TOO_SOON',
   /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
   DATE_OUT_OF_RANGE = 'DATE_OUT_OF_RANGE',
   /** The diary is switched off on the server (`DIARY_ENABLED`). */
@@ -93,8 +95,10 @@ export interface DiaryYearApiResponse {
   days: MoodCheckinApi[]
   markedDays: number
   mostFrequent: MoodLevel | null
+  /** Final week summaries of the year so far. */
   weeklyCount: number
-  story: { text: string; generatedAt: string } | null
+  /** `weeklyCount` is how many week summaries the text was written from: "Add more" needs four more. */
+  story: { text: string; generatedAt: string; weeklyCount: number } | null
 }
 
 /** `GET /api/diary/summaries?kind=week&before=<periodStart>`, newest first. */

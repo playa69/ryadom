@@ -45,7 +45,7 @@ const patchBody = z.object({
 })
 
 /** The profile in contract shape; null means there is no such user. Shared by GET and PATCH. */
-async function readMe(userId: string): Promise<MeApiResponse | null> {
+async function readMe(userId: string, diaryEnabled: boolean): Promise<MeApiResponse | null> {
   const found = await usersManager.execute(new GetUserByIdQuery({ userId }))
   if (!found.success) {
     switch (found.error) {
@@ -56,12 +56,12 @@ async function readMe(userId: string): Promise<MeApiResponse | null> {
     }
   }
   const { status } = await consentsProcess.execute(new GetConsentStatusOperation({ userId }))
-  return toMe(found.user, status)
+  return toMe(found.user, status, diaryEnabled)
 }
 
-export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDeps): void {
+export function meRoutes(app: Hono<AppEnv>, { env, jwt, logger, analytics }: RouteDeps): void {
   app.get(ApiPath.Me, requireAuth(jwt), async (c) => {
-    const me = await readMe(authUser(c).userId)
+    const me = await readMe(authUser(c).userId, Boolean(env.DIARY_ENABLED))
     if (!me) return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
     return apiOk(c, me)
   })
@@ -141,7 +141,7 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
     if (body.voice !== undefined) fields.push('voice')
     if (fields.length > 0) analytics.capture(userId, AnalyticsEvent.ProfileUpdated, { fields })
 
-    const me = await readMe(userId)
+    const me = await readMe(userId, Boolean(env.DIARY_ENABLED))
     if (!me) return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
     return apiOk(c, me)
   })

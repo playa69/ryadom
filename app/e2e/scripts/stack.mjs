@@ -146,6 +146,8 @@ const apiEnv = {
   DIALOG_SESSION_CHECK_SEC: '2',
   // As in production: Chromium decodes Opus with WebCodecs, so the voice scenarios play Opus speech.
   DIALOG_AUDIO_CODECS: 'opus,mulaw',
+  // The mood diary and its reminders (REQ-WELL-01…04) are on; the web app reads the same switch.
+  DIARY_ENABLED: 'true',
   // A made-up bot: support/telegram.ts signs the Mini App launches with the same value.
   TELEGRAM_BOT_TOKEN: '100000001:e2e-only-telegram-bot-token-0123456789',
 }

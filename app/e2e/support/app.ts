@@ -114,6 +114,6 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
 }
 
-export async function openTab(page: Page, label: 'Главная' | 'Журнал' | 'Профиль'): Promise<void> {
+export async function openTab(page: Page, label: 'Главная' | 'Журнал' | 'Дневник' | 'Профиль'): Promise<void> {
   await page.locator('#rd-tabbar').getByText(label, { exact: true }).click()
 }

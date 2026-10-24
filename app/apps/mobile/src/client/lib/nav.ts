@@ -8,18 +8,20 @@ import { f7, f7ready } from 'framework7-react'
 export const TAB_IDS = {
   home: 'view-home',
   journal: 'view-journal',
+  diary: 'view-diary',
   profile: 'view-profile',
 } as const
 
 const TAB_BY_PREFIX: Array<[string, string]> = [
   ['/home/', TAB_IDS.home],
   ['/journal/', TAB_IDS.journal],
+  ['/diary/', TAB_IDS.diary],
   ['/profile/', TAB_IDS.profile],
 ]
 
 /** A route from outside, a notification for instance: our screens only, never an external URL. */
 export function isAppRoute(route: unknown): route is string {
-  return typeof route === 'string' && /^\/(home|journal|profile|dialog)\/([\w-]+\/)*$/.test(route)
+  return typeof route === 'string' && /^\/(home|journal|diary|profile|dialog)\/([\w-]+\/)*$/.test(route)
 }
 
 export function openRoute(route: string): void {
@@ -37,5 +39,17 @@ export function openRoute(route: string): void {
       if (route === entry[0]) view.router.navigate(route, { clearPreviousHistory: true })
       else view.router.navigate(route)
     }, 80)
+  })
+}
+
+/** Asks the home screen to start a conversation, as its own «Поговорить» button does. */
+export const START_TALK_EVENT = 'ryadom:start-talk'
+
+/** The diary's bridge to a conversation: home comes forward and starts it, voice first. */
+export function startTalk(): void {
+  f7ready((f7app) => {
+    f7app.tab.show(`#${TAB_IDS.home}`)
+    // The home screen is mounted already (it is the first tab); the frame lets the tab switch settle.
+    setTimeout(() => window.dispatchEvent(new Event(START_TALK_EVENT)), 80)
   })
 }

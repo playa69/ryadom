@@ -1,9 +1,9 @@
 'use client'
 
-import { ChevronsUpDown, LogOut, SquarePen, UserRound, Users } from 'lucide-react'
+import { BookHeart, ChevronsUpDown, LogOut, SquarePen, UserRound, Users } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { Avatar, AvatarFallback } from '@ryadom/ui/components/avatar'
@@ -30,6 +30,8 @@ import {
   useSidebar,
 } from '@ryadom/ui/components/sidebar'
 import { useAuth } from '@/lib/auth'
+import { readLastSegment, segmentHref } from '@/lib/diary'
+import { useFeatures } from '@/lib/features'
 import { useJournal } from '@/lib/journal'
 import { groupJournal } from '@/lib/journal-groups'
 import { BrandMark } from './Brand'
@@ -45,7 +47,7 @@ function itemTitle(item: DialogListItemApiResponse): string {
 }
 
 /**
- * The left column of the signed-in app: the brand, "new conversation", the people-nearby page, the
+ * The left column of the signed-in app: the brand, "new conversation", the people-nearby page, the diary, the
  * history of conversations grouped by day, and the account menu at the bottom. On a phone the same
  * content opens as a drawer from the menu button in the page header; on a desktop it collapses to an
  * icon rail.
@@ -55,6 +57,13 @@ export default function AppSidebar() {
   const { user, logout } = useAuth()
   const { items, error, refresh } = useJournal()
   const { isMobile, setOpenMobile } = useSidebar()
+  const { diary } = useFeatures()
+  // The diary link returns to the segment the person left it in (read after hydration: it is a browser setting).
+  const [diaryHref, setDiaryHref] = useState('/diary')
+  useEffect(() => {
+    setDiaryHref(segmentHref(readLastSegment()))
+  }, [pathname])
+  const inDiary = pathname === '/diary' || pathname.startsWith('/diary/')
 
   // The history is cheap to re-read (parallel calls share one request) and a conversation that just
   // ended or started must show up as soon as the person navigates.
@@ -128,6 +137,21 @@ export default function AppSidebar() {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                {diary && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={isMobile ? undefined : 'Дневник'}
+                      isActive={inDiary}
+                      className="h-10 text-[0.9375rem]"
+                    >
+                      <Link href={diaryHref} aria-current={inDiary ? 'page' : undefined} data-testid="nav-diary">
+                        <BookHeart />
+                        <span>Дневник</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

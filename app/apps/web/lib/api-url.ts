@@ -18,3 +18,12 @@ export function readWebUrl(): string {
 export function toWsBase(apiBase: string): string {
   return apiBase.replace(/^http/, 'ws')
 }
+
+/**
+ * The mood diary switch (`DIARY_ENABLED`). On unless set to a false-like value, so a local run shows it
+ * without configuration; the server gates its own routes by the same variable.
+ */
+export function readDiaryEnabled(): boolean {
+  const raw = process.env.DIARY_ENABLED?.trim().toLowerCase()
+  return !(raw === 'false' || raw === '0' || raw === 'no' || raw === 'off')
+}

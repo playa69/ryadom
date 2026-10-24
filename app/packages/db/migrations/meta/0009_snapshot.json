@@ -1,5 +1,5 @@
 {
-  "id": "23cfccac-29a1-42da-82d6-dc305dd460a4",
+  "id": "515e2aa0-0b4e-4239-a1b8-4daf291e59c0",
   "prevId": "6745c8dc-5c50-4be9-b464-63b436eedef2",
   "version": "7",
   "dialect": "postgresql",
@@ -1277,6 +1277,12 @@
         },
         "paused_at": {
           "name": "paused_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "streak_reset_at": {
+          "name": "streak_reset_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

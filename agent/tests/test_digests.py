@@ -1,0 +1,114 @@
+"""Итоги недели и года (add-mood-diary, D6): `POST /v1/users/{userId}/digests`."""
+
+import re
+
+from tests.conftest import AUTH, make_client
+
+
+class ScriptedChat:
+    name = "scripted"
+
+    def __init__(self, reply: str) -> None:
+        self.reply = reply
+        self.seen: list[list[dict[str, str]]] = []
+
+    async def complete(self, messages):
+        self.seen.append(messages)
+        return self.reply
+
+    async def aclose(self) -> None:
+        return None
+
+
+def marks(*moods, factor="work"):
+    return [{"date": f"2026-10-{19 + i:02d}", "mood": mood, "factor": factor} for i, mood in enumerate(moods)]
+
+
+def post(client, user_id, body, headers=AUTH):
+    return client.post(f"/v1/users/{user_id}/digests", json=body, headers=headers)
+
+
+WEEK = {"kind": "week", "periodStart": "2026-10-19"}
+FORBIDDEN = re.compile(r"\bнадо\b|\bдолжен\b|подряд|\d+[.,]\d+\s*из", re.IGNORECASE)
+
+
+def test_needs_the_internal_token(client, user_id):
+    assert post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}, headers={}).status_code == 401
+
+
+def test_week_template_text_is_deterministic_and_clean(client, user_id):
+    body = {**WEEK, "marks": marks(3, 4, 4, 5)}
+    first = post(client, user_id, body).json()
+    assert post(client, user_id, body).json() == first
+    assert first["stats"] == {"markedDays": 4, "hardDays": 0, "mostFrequent": 4}
+    assert 4 <= len(re.findall(r"[.!?]", first["text"])) <= 6
+    assert "хорошо" in first["text"] and "работа" in first["text"]
+    assert not FORBIDDEN.search(first["text"])
+    assert "людей" not in first["text"] and "люди" not in first["text"]
+
+
+def test_hard_week_ends_with_a_soft_line_about_people(client, user_id):
+    reply = post(client, user_id, {**WEEK, "marks": marks(1, 1, 1, 3)}).json()
+    assert reply["stats"]["hardDays"] == 3
+    assert reply["text"].rstrip().endswith("и я тоже здесь.")
+    assert "люди" in reply["text"]
+
+
+def test_year_uses_the_weekly_texts_and_has_at_most_twelve_sentences(client, user_id):
+    reply = post(client, user_id, {"kind": "year", "periodStart": "2026-01-01", "marks": marks(2, 3, 4), "weekly": ["Неделя раз.", "Неделя два."]}).json()
+    assert "история" in reply["text"]
+    assert len(re.findall(r"[.!?]", reply["text"])) <= 12
+    assert not FORBIDDEN.search(reply["text"])
+
+
+def test_validation(client, user_id):
+    bad = [
+        {**WEEK, "marks": [{"date": "2026-10-19", "mood": 6}]},
+        {**WEEK, "marks": [{"date": "19.10.2026", "mood": 3}]},
+        {**WEEK, "periodStart": "вчера", "marks": marks(3)},
+        {"kind": "month", "periodStart": "2026-10-19", "marks": marks(3)},
+        {"kind": "year", "periodStart": "2026-01-01", "marks": [{"date": "2026-01-01", "mood": 3}] * 367},
+        {**WEEK, "marks": marks(3) * 8},
+    ]
+    for body in bad:
+        response = post(client, user_id, body)
+        assert response.status_code == 400, body
+        assert response.json()["error"]["code"] == "AGENT_VALIDATION"
+    assert post(client, "not-a-uuid", {**WEEK, "marks": marks(3)}).status_code == 400
+
+
+def test_model_text_is_used_when_it_is_fine_and_gets_only_codes(user_id):
+    chat = ScriptedChat("Неделя была разной. Ты заглядывал в себя. Чаще всего было спокойно. Спасибо, что делишься.")
+    with make_client(None, chat=chat) as client:
+        reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
+    assert reply["text"].startswith("Неделя была разной.")
+    sent = " ".join(m["content"] for m in chat.seen[0])
+    assert "2026-10-19: 3, фактор: работа" in sent
+    assert "@" not in sent
+
+
+def test_model_text_with_forbidden_words_falls_back_to_the_template(user_id):
+    for bad in (
+        "Тебе надо отдыхать. Это важно. Вот так. И так.",
+        "Средний балл недели 3,5 из 5. Это хорошо. Так бывает. Всё ок.",
+        "Ты отмечал пять дней подряд. Это здорово. Так держать. Рядом.",
+        "Слишком коротко.",
+    ):
+        with make_client(None, chat=ScriptedChat(bad)) as client:
+            reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
+        assert not FORBIDDEN.search(reply["text"]), bad
+        assert reply["text"].startswith("Эта неделя прошла рядом с тобой")
+
+
+def test_model_failure_is_a_502_without_the_body(user_id):
+    from app.clients.llm import ModelError
+
+    class Down(ScriptedChat):
+        async def complete(self, messages):
+            raise ModelError("секрет в тексте")
+
+    with make_client(None, chat=Down("")) as client:
+        response = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)})
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "DIGEST_UNAVAILABLE"
+    assert "секрет" not in response.text

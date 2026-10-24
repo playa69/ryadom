@@ -86,6 +86,8 @@ export const notificationSettings = pgTable('notification_settings', {
   moodReminderTime: time('mood_reminder_time').notNull().default('20:00'),
   /** Set after 7 reminders in a row went unopened; cleared by opening the app. */
   pausedAt: timestamp('paused_at', { withTimezone: true }),
+  /** Unopened reminders are counted from here: "Return" on a paused reminder moves it to now. */
+  streakResetAt: timestamp('streak_reset_at', { withTimezone: true }),
   /** The person answered the "remind in the evening?" question, either way. */
   offerAnsweredAt: timestamp('offer_answered_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

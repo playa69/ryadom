@@ -1,0 +1,87 @@
+"""Итоги недели и года (add-mood-diary, D6): `POST /v1/users/{userId}/digests`.
+
+Агент пишет текст по кодам отметок и ничего не хранит: ни запрос, ни ответ. Тела запроса и ответа в журнал не попадают.
+"""
+
+import datetime
+import logging
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.api.deps import canonical_user_id, require_token
+from app.clients.llm import ChatModel, ModelError
+from app.core.errors import AgentError, validation_error
+from app.services import digests
+
+logger = logging.getLogger("agent.digests")
+
+router = APIRouter(prefix="/v1/users/{user_id}/digests", dependencies=[Depends(require_token)])
+
+MAX_MARKS = 366
+MAX_WEEKLY = 60
+MAX_WEEKLY_CHARS = 2000
+
+
+def _date(value: str) -> str:
+    try:
+        return datetime.date.fromisoformat(value).isoformat()
+    except ValueError as error:
+        raise ValueError("дата должна быть YYYY-MM-DD") from error
+
+
+class Mark(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    date: str
+    mood: int = Field(ge=1, le=5)
+    factor: Literal["work", "people", "health", "money", "sleep"] | None = None
+
+    _date = field_validator("date")(_date)
+
+
+class DigestBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    kind: Literal["week", "year"]
+    period_start: str = Field(alias="periodStart")
+    marks: list[Mark] = Field(max_length=MAX_MARKS)
+    weekly: list[str] = Field(default_factory=list, max_length=MAX_WEEKLY)
+
+    _period = field_validator("period_start")(_date)
+
+    @field_validator("weekly")
+    @classmethod
+    def _weekly_size(cls, value: list[str]) -> list[str]:
+        if any(len(item) > MAX_WEEKLY_CHARS for item in value):
+            raise ValueError("слишком длинный текст итогов недели")
+        return value
+
+
+@router.post("")
+async def create_digest(user_id: str, body: DigestBody, request: Request) -> dict[str, object]:
+    if canonical_user_id(user_id) is None:
+        raise validation_error("userId должен быть UUID")
+    if body.kind == "week" and len(body.marks) > 7:
+        raise validation_error("в неделе не больше семи отметок")
+    marks = [m.model_dump() for m in body.marks]
+    stats = digests.stats_of(marks)
+    weekly = body.weekly if body.kind == "year" else []
+
+    chat: ChatModel | None = request.app.state.chat
+    text: str | None = None
+    if chat is not None:
+        try:
+            reply = await chat.complete(digests.build_messages(body.kind, body.period_start, marks, weekly))
+        except ModelError as error:
+            # Текст ошибки может нести кусок ответа модели, поэтому в журнал идёт только факт.
+            logger.warning("digest model failed kind=%s", body.kind, exc_info=False)
+            raise AgentError(502, "DIGEST_UNAVAILABLE", "Модель не написала итоги") from error
+        text = digests.clean_digest(body.kind, reply, marks)
+        if text is None:
+            logger.info("digest rejected by the validator kind=%s", body.kind)
+    if text is None:
+        text = digests.template_digest(body.kind, marks, weekly)
+    logger.info("digest kind=%s marks=%d chars=%d", body.kind, len(marks), len(text))
+    return {"text": text, "stats": stats}

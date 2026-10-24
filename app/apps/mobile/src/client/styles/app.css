@@ -2630,3 +2630,365 @@ input:-webkit-autofill:focus {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+
+/* ── Mood diary ──────────────────────────────────────────────────────────── */
+
+.rd-diary {
+  padding-bottom: var(--ryadom-s-8);
+}
+
+.rd-diary-segments {
+  margin: var(--ryadom-s-3) var(--ryadom-s-4) 0;
+}
+
+.rd-diary-note {
+  padding: var(--ryadom-s-4);
+  text-align: center;
+}
+
+.rd-card-title {
+  margin: 0 0 var(--ryadom-s-3);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-mood-faces {
+  display: flex;
+  gap: 2px;
+  justify-content: space-between;
+}
+
+.rd-mood-face {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 0;
+  border: 2px solid transparent;
+  border-radius: var(--ryadom-r-m, 14px);
+  background: transparent;
+  font: inherit;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.rd-mood-face svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.rd-mood-face-label {
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.rd-mood-face--on {
+  border-color: var(--ryadom-text);
+  color: var(--ryadom-text);
+  transform: scale(1.04);
+}
+
+.rd-mood-face--dim {
+  opacity: 0.45;
+}
+
+.rd-mood-factors-title,
+.rd-reminder-title,
+.rd-bridge-text {
+  margin: var(--ryadom-s-4) 0 var(--ryadom-s-2);
+  font-size: 15px;
+  color: var(--ryadom-text);
+}
+
+.rd-factor-strip {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  padding-bottom: 4px;
+  overflow-x: auto;
+}
+
+.rd-factor {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-pill);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-factor--on {
+  border-color: transparent;
+  background: var(--ryadom-brand-fill);
+  color: var(--ryadom-cta-ink);
+  font-weight: 600;
+}
+
+.rd-bridge,
+.rd-reminder,
+.rd-reminder-offer {
+  margin-top: var(--ryadom-s-4);
+  padding-top: var(--ryadom-s-3);
+  border-top: 1px solid var(--ryadom-line);
+}
+
+.rd-bridge-text,
+.rd-reminder-title {
+  margin-top: 0;
+}
+
+.rd-reminder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ryadom-s-2);
+}
+
+.rd-reminder-line {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+}
+
+.rd-reminder-line .rd-reminder-title {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.rd-reminder-time {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: 10px;
+  background: var(--ryadom-surface-2);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text);
+}
+
+.rd-reminder-paused {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--ryadom-s-3);
+}
+
+.rd-reminder-hint {
+  margin-top: var(--ryadom-s-3);
+}
+
+.rd-chart-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.rd-chart-month {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-chart-month-name {
+  min-width: 56px;
+  text-align: center;
+  text-transform: capitalize;
+}
+
+.rd-chart-arrow {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-chart-arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.rd-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.rd-chart-grid {
+  stroke: var(--ryadom-line);
+  stroke-width: 1;
+}
+
+.rd-chart-line {
+  fill: none;
+  stroke: var(--ryadom-text-faint);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.rd-chart-dot {
+  stroke: var(--ryadom-paper);
+  stroke-width: 2;
+}
+
+.rd-chart-future {
+  fill: rgba(255, 255, 255, 0.04);
+  rx: 6;
+}
+
+.rd-chart-tick {
+  font-size: 10px;
+  fill: var(--ryadom-text-faint);
+}
+
+.rd-chart-today {
+  fill: var(--ryadom-brand);
+}
+
+.rd-chart-today-text {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--ryadom-cta-ink);
+}
+
+.rd-chart-empty {
+  padding: var(--ryadom-s-4) 0;
+}
+
+.rd-summary-text {
+  margin: 0 0 var(--ryadom-s-3);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ryadom-text);
+}
+
+.rd-events-day ul {
+  margin: 0 0 var(--ryadom-s-3);
+  padding-left: 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ryadom-text);
+}
+
+.rd-year {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--ryadom-s-3) 0;
+}
+
+.rd-year-row {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.rd-year-month {
+  flex: none;
+  width: 26px;
+  font-size: 10px;
+  color: var(--ryadom-text-faint);
+}
+
+.rd-year-tick {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 8px;
+  text-align: center;
+  color: var(--ryadom-text-faint);
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.rd-year-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+}
+
+.rd-year-cell--future {
+  opacity: 0.5;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.rd-year-cell--picked {
+  outline: 2px solid var(--ryadom-text);
+  outline-offset: 1px;
+}
+
+.rd-year-caption {
+  min-height: 1.4em;
+  margin: 0 0 var(--ryadom-s-3);
+  font-size: 14px;
+  text-align: center;
+  color: var(--ryadom-text);
+}
+
+.rd-year-legend {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--ryadom-s-3);
+  font-size: 12px;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-year-legend-cell {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.rd-year-plaques {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ryadom-s-2);
+  margin-bottom: var(--ryadom-s-3);
+}
+
+.rd-plaque {
+  flex: 1 1 140px;
+  padding: 10px 12px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m, 14px);
+  background: var(--ryadom-surface-2);
+  font-size: 14px;
+  text-align: center;
+  color: var(--ryadom-text);
+}
+
+.rd-progress {
+  height: 8px;
+  margin: var(--ryadom-s-3) 0;
+  border-radius: 4px;
+  background: var(--ryadom-surface-3);
+  overflow: hidden;
+}
+
+.rd-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--ryadom-brand);
+}

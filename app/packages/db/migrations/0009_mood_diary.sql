@@ -42,6 +42,7 @@ CREATE TABLE "notification_settings" (
 	"mood_reminder_enabled" boolean DEFAULT true NOT NULL,
 	"mood_reminder_time" time DEFAULT '20:00' NOT NULL,
 	"paused_at" timestamp with time zone,
+	"streak_reset_at" timestamp with time zone,
 	"offer_answered_at" timestamp with time zone,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );

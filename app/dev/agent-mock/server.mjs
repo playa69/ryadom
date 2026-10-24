@@ -59,6 +59,8 @@ function effectiveTts() {
  * Texts of facts and messages never reach the log here either: ids and counts only.
  */
 const MEMORY_MODES = ['on', 'shadow', 'off']
+/** `POST /dev/digests {"fail": true}` makes `/digests` answer 502, as an agent whose model is down. */
+let digestsFail = false
 let memoryMode = MEMORY_MODES.includes(process.env.MOCK_MEMORY_MODE) ? process.env.MOCK_MEMORY_MODE : 'on'
 const MEMORY_ALLOWLIST = (process.env.MOCK_MEMORY_ALLOWLIST ?? '')
   .split(',')
@@ -672,10 +674,48 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { mode: memoryMode, available: memoryAvailable(), delayMs: MEMORY_DELAY_MS })
   }
 
+  // Dev only: switch the digests route into failure and back.
+  if (path === '/dev/digests' && method === 'POST') {
+    const body = await readBody(req)
+    digestsFail = body.fail === true
+    return json(res, 200, { fail: digestsFail })
+  }
+
   // /v1/users/{userId}...
   const parts = path.split('/').filter(Boolean)
   if (parts[0] !== 'v1' || parts[1] !== 'users' || !parts[2]) return json(res, 404, { error: 'not_found' })
   const userId = decodeURIComponent(parts[2])
+
+  // POST /v1/users/{userId}/digests - the text of a week summary or a year story. The real agent asks the
+  // model; the mock writes a fixed text from the marks, in the shape the spec asks for (the person's own
+  // "ты", no scores, no "надо", no count of days in a row). It keeps nothing. `POST /dev/digests {fail: true}`
+  // makes it answer 502 once more, for the "agent is down" screen.
+  if (parts.length === 4 && parts[3] === 'digests' && method === 'POST') {
+    const body = await readBody(req)
+    if (digestsFail) return json(res, 502, { error: { code: 'DIGEST_UNAVAILABLE', message: 'mock: digests are down' } })
+    const marks = Array.isArray(body.marks) ? body.marks : []
+    const levels = ['тяжело', 'так себе', 'нормально', 'хорошо', 'отлично']
+    const counts = [0, 0, 0, 0, 0]
+    for (const mark of marks) if (mark?.mood >= 1 && mark.mood <= 5) counts[mark.mood - 1] += 1
+    let top = 2
+    counts.forEach((count, i) => { if (count > 0 && count >= counts[top]) top = i })
+    const hard = counts[0]
+    if (body.kind === 'year') {
+      const weekly = Array.isArray(body.weekly) ? body.weekly.length : 0
+      const text =
+        `Этот год ты отмечал настроение ${marks.length} раз, и чаще всего оно было «${levels[top]}». ` +
+        `За это время я собрал для тебя ${weekly} итогов недель. Были дни полегче и дни потяжелее, и это нормально. ` +
+        'Рядом с тобой всегда можно поговорить, когда захочется.'
+      return json(res, 200, { text, stats: { markedDays: marks.length } })
+    }
+    const text =
+      `На этой неделе ты отметил настроение ${marks.length} раз. Чаще всего было «${levels[top]}». ` +
+      'Заметно, что ты находишь минутку, чтобы остановиться и прислушаться к себе. ' +
+      (hard >= 3
+        ? 'Неделя выдалась непростой. Рядом могут быть люди, с которыми можно поговорить, и я тоже здесь.'
+        : 'Спасибо, что делишься со мной тем, как ты.')
+    return json(res, 200, { text, stats: { markedDays: marks.length, hardDays: hard } })
+  }
 
   // DELETE /v1/users/{userId} - erase everything
   if (parts.length === 3 && method === 'DELETE') {

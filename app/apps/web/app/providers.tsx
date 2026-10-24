@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react'
 import { AnalyticsProvider } from '@/lib/analytics-provider'
 import { AuthProvider } from '@/lib/auth'
+import { FeaturesProvider } from '@/lib/features'
 import { NoticeProvider } from '@/components/Notice'
 import { SosProvider } from '@/components/Sos'
 
@@ -18,14 +19,24 @@ if (typeof document !== 'undefined') {
 }
 
 /** Thin on purpose: the logic lives in lib/ and components/. */
-export default function Providers({ apiBase, children }: { apiBase: string; children: ReactNode }) {
+export default function Providers({
+  apiBase,
+  diaryEnabled,
+  children,
+}: {
+  apiBase: string
+  diaryEnabled: boolean
+  children: ReactNode
+}) {
   return (
-    <AuthProvider apiBase={apiBase}>
-      <AnalyticsProvider apiBase={apiBase}>
-        <NoticeProvider>
-          <SosProvider>{children}</SosProvider>
-        </NoticeProvider>
-      </AnalyticsProvider>
-    </AuthProvider>
+    <FeaturesProvider features={{ diary: diaryEnabled }}>
+      <AuthProvider apiBase={apiBase}>
+        <AnalyticsProvider apiBase={apiBase}>
+          <NoticeProvider>
+            <SosProvider>{children}</SosProvider>
+          </NoticeProvider>
+        </AnalyticsProvider>
+      </AuthProvider>
+    </FeaturesProvider>
   )
 }
