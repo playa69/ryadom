@@ -9,7 +9,7 @@ import re
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 
-from app.services.dialog_store import Message
+from app.services.dialog_store import Message, now_iso
 
 # Заглушка режима без моделей (`LLM_MODE=template`), по кругу. Она не знает, что сказал человек, поэтому годится и для
 # хорошего, и для плохого настроения: проблему не предполагает, тему не меняет и ответа не требует.
@@ -192,18 +192,24 @@ def chat_messages(history: Sequence[Message], limit: int, memory: str = "", voic
     Реплики человека подряд (он договаривал мысль после паузы) склеиваются в одну: модель ждёт чередования.
     `memory` — сводка памяти о человеке (из кэша, без диска и сети): дописывается к системному сообщению вместе с правилами.
     В одно сообщение, а не вторым системным: не все модели прокси принимают два системных сообщения подряд.
-    `voice` — голос диалога: по нему правило, в каком роде агент говорит о себе.
+    `voice` — голос диалога: по нему правило, в каком роде агент говорит о себе. Перед каждой репликой стоит её время
+    в ISO 8601 (UTC), а в системном сообщении — текущее время, чтобы отвечать на вопросы о ходе разговора.
     """
     recent = list(history[-limit:])
     while recent and recent[0].role != "user":
         recent.pop(0)
     messages: list[dict[str, str]] = []
     for m in recent:
+        content = f"[{m.created_at}] {m.text}"
         if messages and messages[-1]["role"] == "user" and m.role == "user":
-            messages[-1]["content"] += " " + m.text
+            messages[-1]["content"] += " " + content
         else:
-            messages.append({"role": m.role, "content": m.text})
-    return [{"role": "system", "content": system_prompt(voice) + memory_block(memory)}, *messages]
+            messages.append({"role": m.role, "content": content})
+    time_context = (
+        f"\n\nТекущее время: {now_iso()} (UTC). Перед репликами истории указано их время в ISO 8601; "
+        "используй его при вопросах о дате, времени и длительности разговора."
+    )
+    return [{"role": "system", "content": system_prompt(voice) + memory_block(memory) + time_context}, *messages]
 
 
 # Конец предложения: знаки, возможные закрывающие кавычки и скобки, и сразу за ними пробел или конец текста.

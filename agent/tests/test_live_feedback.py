@@ -293,8 +293,10 @@ def test_cascade_prompt_carries_the_gender_rule_too() -> None:
     from app.services.replies import SELF_GENDER, SYSTEM_PROMPT, chat_messages, system_prompt
 
     history = [Message("1", "user", "Привет", "t")]
-    assert chat_messages(history, 12, voice="female")[0]["content"] == SYSTEM_PROMPT + "\n" + SELF_GENDER["female"]
-    assert chat_messages(history, 12)[0]["content"] == SYSTEM_PROMPT  # без голоса — без правила
+    assert chat_messages(history, 12, voice="female")[0]["content"].startswith(
+        SYSTEM_PROMPT + "\n" + SELF_GENDER["female"]
+    )
+    assert chat_messages(history, 12)[0]["content"].startswith(SYSTEM_PROMPT)  # без голоса — без правила
     assert REPEAT_REQUEST not in system_prompt("male")  # модель не копирует дословно фразу из примера
 
 
