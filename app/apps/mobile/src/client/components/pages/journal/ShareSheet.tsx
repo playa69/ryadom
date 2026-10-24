@@ -1,4 +1,4 @@
-import { Button, f7, Preloader, Sheet } from 'framework7-react'
+import { Button, f7, Icon, Preloader, Sheet } from 'framework7-react'
 import { useCallback, useEffect, useState } from 'react'
 import { DialogApiErrorCode } from '@ryadom/contracts/api/dialogs'
 import {
@@ -210,5 +210,25 @@ export default function ShareSheet({
         )}
       </div>
     </Sheet>
+  )
+}
+
+/**
+ * The share control of a screen's navigation bar: the system "share" glyph (an arrow out of a box), the way
+ * iOS and the apps built on this client mark it, at the right of the bar before SOS. Icon only: the name is
+ * for screen readers.
+ */
+export function ShareNavButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      slot="right"
+      type="button"
+      className="rd-navbar-icon ph-no-capture"
+      aria-label="Поделиться разговором"
+      data-testid="share-nav"
+      onClick={onClick}
+    >
+      <Icon f7="square_arrow_up" size={22} />
+    </button>
   )
 }
