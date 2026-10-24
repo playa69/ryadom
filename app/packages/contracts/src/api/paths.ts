@@ -46,6 +46,25 @@ export enum ApiPath {
   /** "Download my memory". */
   MemoryExport = '/api/memory/export',
 
+  /** The mood diary (`REQ-WELL-01`): `?month=`; the rest are under it. */
+  Diary = '/api/diary',
+  DiaryCheckinToday = '/api/diary/checkins/today',
+  DiaryYear = '/api/diary/year',
+  DiarySummaries = '/api/diary/summaries',
+  DiaryWeekSummary = '/api/diary/summaries/week',
+  DiaryYearSummary = '/api/diary/summaries/year',
+  DiaryEvents = '/api/diary/events',
+  /** Creates (`POST`) and revokes (`DELETE`) the token of the Android widget. */
+  DiaryWidgetToken = '/api/diary/widget-token',
+  /** Widget token only (`Authorization: Widget <token>`). */
+  DiaryWidgetToday = '/api/diary/widget/today',
+  DiaryWidgetCheckin = '/api/diary/widget/checkin',
+
+  /** Reminders (`REQ-WELL-02`). */
+  NotificationSettings = '/api/notifications/settings',
+  NotificationSubscriptions = '/api/notifications/subscriptions',
+  NotificationOpened = '/api/notifications/opened',
+
   /** Open: which analytics features are on and the (public) PostHog project token. */
   AnalyticsConfig = '/api/analytics/config',
   /**
@@ -87,4 +106,9 @@ export function sessionPath(sessionId: string): string {
 /** `/api/ota/<file>`: the exact file name a client was told to fetch by `/api/app-status`. */
 export function otaBundlePath(file: string): string {
   return `${ApiPath.OtaBundle}/${encodeURIComponent(file)}`
+}
+
+/** `/api/notifications/subscriptions/:id`: one device or chat the reminder reaches. */
+export function notificationSubscriptionPath(id: string): string {
+  return `${ApiPath.NotificationSubscriptions}/${encodeURIComponent(id)}`
 }

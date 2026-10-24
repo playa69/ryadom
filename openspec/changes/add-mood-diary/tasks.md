@@ -16,8 +16,8 @@
 
 ## 1. Данные и контракты
 
-- [ ] 1.1 Миграция `0009_mood_diary`: `users.timezone` и таблицы из D11 (Drizzle, `app/packages/db`). Приёмка: миграция применяется на копии базы, тест схемы
-- [ ] 1.2 Контракты `api/diary.ts`, `api/notifications.ts`, поле `timezone` в `me.ts`. Приёмка: `conventions.test.ts`
+- [x] 1.1 Миграция `0009_mood_diary`: `users.timezone` и таблицы из D11 (Drizzle, `app/packages/db`). Приёмка: миграция применяется на копии базы, тест схемы
+- [x] 1.2 Контракты `api/diary.ts`, `api/notifications.ts`, поле `timezone` в `me.ts`. Приёмка: `conventions.test.ts`
 - [ ] 1.3 Часовой пояс: клиент шлёт при входе и смене, сервер проверяет по списку IANA. Приёмка: требование «Местное время человека»
 
 ## 2. Сервер: дневник

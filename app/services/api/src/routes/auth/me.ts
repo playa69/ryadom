@@ -6,6 +6,9 @@ import {
   SetUserAnalyticsOptOutCommandErrorCode,
   UpdateUserNameCommand,
   UpdateUserNameCommandErrorCode,
+  UpdateUserTimezoneCommand,
+  UpdateUserTimezoneCommandErrorCode,
+  isKnownTimezone,
   UpdateUserVoiceCommand,
   UpdateUserVoiceCommandErrorCode,
   usersManager,
@@ -38,6 +41,7 @@ const patchBody = z.object({
   name: z.string().optional(),
   voice: z.enum(AGENT_VOICES).optional(),
   analyticsOptOut: z.boolean().optional(),
+  timezone: z.string().optional(),
 })
 
 /** The profile in contract shape; null means there is no such user. Shared by GET and PATCH. */
@@ -65,12 +69,18 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
   /** The profile can change the name and the agent's voice; the email never changes at all. */
   app.patch(ApiPath.Me, requireAuth(jwt), jsonBody(patchBody), async (c) => {
     const body = c.req.valid('json')
-    if (body.name === undefined && body.voice === undefined && body.analyticsOptOut === undefined) {
-      return apiError(c, 422, 'Nothing to update: send name, voice and/or analyticsOptOut')
+    if (body.name === undefined && body.voice === undefined &&
+      body.analyticsOptOut === undefined &&
+      body.timezone === undefined
+    ) {
+      return apiError(c, 422, 'Nothing to update: send name, voice, analyticsOptOut and/or timezone')
     }
     // Both are checked before anything is written: a bad name must not leave a half-applied change.
     const name = body.name === undefined ? undefined : inputOrNull(nameInputSchema, body.name)
     if (name === null) return apiError(c, 422, 'Name length is out of range')
+    if (body.timezone !== undefined && !isKnownTimezone(body.timezone)) {
+      return apiError(c, 422, 'Unknown IANA time zone')
+    }
 
     const { userId } = authUser(c)
     // First, so that a "no" said together with other changes already silences their report.
@@ -105,6 +115,18 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
       if (!updated.success) {
         switch (updated.error) {
           case UpdateUserVoiceCommandErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
+          default:
+            return assertNever(updated.error)
+        }
+      }
+    }
+
+    if (body.timezone !== undefined) {
+      const updated = await usersManager.execute(new UpdateUserTimezoneCommand({ userId, timezone: body.timezone }))
+      if (!updated.success) {
+        switch (updated.error) {
+          case UpdateUserTimezoneCommandErrorCode.USER_NOT_FOUND:
             return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
           default:
             return assertNever(updated.error)

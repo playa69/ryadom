@@ -2,7 +2,7 @@
  * The current user's profile:
  *
  * - `GET /api/auth/me` — the profile for the profile screen;
- * - `PATCH /api/auth/me` `{ name?, voice?, analyticsOptOut? }` — change the name (422 when empty or
+ * - `PATCH /api/auth/me` `{ name?, voice?, analyticsOptOut?, timezone? }` — change the name (422 when empty or
  *   longer than `InputLimit.NameMax`), the voice the agent speaks with (400 for a value other than
  *   `AgentVoice`) and/or whether product analytics are off for the account; at least one field is
  *   required (422 for an empty body);
@@ -31,6 +31,8 @@ export interface MeApiResponse {
    * them, on any device; the clients follow it (and tell the account about a "no" said before sign-in).
    */
   analyticsOptOut: boolean
+  /** IANA time zone of the person; the diary day, the reminder and the weekly summary follow it. */
+  timezone: string
 }
 
 /** The agent's voice by gender. The agent maps it to the voice of its speech provider. */
@@ -43,7 +45,12 @@ export interface UpdateMeApiRequest {
   name?: string
   voice?: AgentVoice
   analyticsOptOut?: boolean
+  /** IANA name (`Europe/Moscow`); 422 for a name the server does not know. */
+  timezone?: string
 }
+
+/** The zone an account has until a client reports the person's own. */
+export const DEFAULT_TIMEZONE = 'Europe/Moscow'
 
 export enum MeApiErrorCode {
   /** The account is gone: deleted between requests. */
