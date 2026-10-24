@@ -56,36 +56,34 @@ export default function VoicePage({ f7router }: { f7router: { back: () => void }
     }
   }
 
-  const group = (list: readonly { id: string; name: string }[]) => (
-    <>
-      {list.map((v) => (
-        <ListItem
-          key={v.id}
-          radio
-          radioIcon="end"
-          title={v.name}
-          name="voice"
-          value={v.id}
-          checked={draft === v.id}
-          onChange={() => void choose(v.id)}
-          data-testid={`voice-${v.id}`}
+  // An array of ListItem, not a fragment: Framework7's List wraps direct ListItem children in <ul>, and without it the <li> get bullets.
+  const rows = (list: readonly { id: string; name: string }[]) =>
+    list.map((v) => (
+      <ListItem
+        key={v.id}
+        radio
+        radioIcon="end"
+        title={v.name}
+        name="voice"
+        value={v.id}
+        checked={draft === v.id}
+        onChange={() => void choose(v.id)}
+        data-testid={`voice-${v.id}`}
+      >
+        <Link
+          slot="media"
+          iconOnly
+          aria-label={`${playingId === v.id ? 'Остановить' : 'Прослушать'}: ${v.name}`}
+          onClick={(e: { preventDefault: () => void; stopPropagation: () => void }) => {
+            e.preventDefault()
+            e.stopPropagation()
+            toggle(v.id)
+          }}
         >
-          <Link
-            slot="media"
-            iconOnly
-            aria-label={`${playingId === v.id ? 'Остановить' : 'Прослушать'}: ${v.name}`}
-            onClick={(e: { preventDefault: () => void; stopPropagation: () => void }) => {
-              e.preventDefault()
-              e.stopPropagation()
-              toggle(v.id)
-            }}
-          >
-            <Icon f7={playingId === v.id ? 'stop_circle_fill' : 'play_circle_fill'} size={28} />
-          </Link>
-        </ListItem>
-      ))}
-    </>
-  )
+          <Icon f7={playingId === v.id ? 'stop_circle_fill' : 'play_circle_fill'} size={28} />
+        </Link>
+      </ListItem>
+    ))
 
   return (
     <Page name="voice" className="ph-no-capture">
@@ -106,7 +104,7 @@ export default function VoicePage({ f7router }: { f7router: { back: () => void }
         style={{ marginTop: 8, marginBottom: 0 }}
         data-testid="voice-list"
       >
-        {group(tab === 'female' ? FEMALE_VOICES : MALE_VOICES)}
+        {rows(tab === 'female' ? FEMALE_VOICES : MALE_VOICES)}
       </List>
     </Page>
   )
