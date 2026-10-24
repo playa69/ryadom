@@ -57,8 +57,8 @@ data:
   # Голосовой конвейер. cascade = распознавание whisper → чат-модель → озвучка Qwen (боевой, всё, что выше);
   # gemini_live = речь в речь через Gemini Live (одна модель слушает, отвечает и говорит). Для gemini_live нужны
   # Secret `agent-gemini` и образ с google-genai (agent ≥ 0.2.0). Переключение: сменить значение, применить ConfigMap и
-  # перезапустить агента (kubectl -n agent rollout restart deploy/agent). Откат: вернуть cascade. Подробно: README.md.
-  VOICE_PIPELINE: "gemini_live"
+  # перезапустить агента (kubectl -n agent rollout restart deploy/agent). Откат: вернуть gemini_live. Подробно: README.md.
+  VOICE_PIPELINE: "cascade"
   # Трейсинг LLM-ходов в self-hosted Langfuse (ns infra): трасса на ход диалога (расшифровка → ответ,
   # токены Gemini, задержки этапов), сессия = диалог. Ключи — в Secret `agent-secrets` (см. шапку).
   # Тексты реплик в Langfuse НЕ уходят (решение владельца 2026-10-13): вместо них число символов и слов, длительность речи,
