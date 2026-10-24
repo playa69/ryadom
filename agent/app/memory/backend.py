@@ -1,8 +1,8 @@
-"""Контракт бэкенда памяти агента: то, что умеют и SQLite-сервис (`app/memory/service.py`), и Cognee (`cognee_backend.py`).
+"""Контракт бэкенда памяти агента. Единственная реализация — Cognee (`cognee_backend.py`).
 
-Бэкенд выбирается конфигом (`MEMORY_BACKEND`, `MemorySettings.backend`); `app.state.memory` и `DialogStore.memory` имеют
-этот тип. Часть `MemoryLink` (сводка, загрузка, конец диалога, стирание) вызывает хранилище диалогов, остальное —
-REST памяти (`app/api/memory.py`) и `/health/ready` (`status`). Коды ошибок — каталог из `app/memory/service.py`.
+`app.state.memory` и `DialogStore.memory` имеют этот тип. Часть `MemoryLink` (сводка, загрузка, конец диалога,
+стирание) вызывает хранилище диалогов, остальное — REST памяти (`app/api/memory.py`) и `/health/ready` (`status`).
+Коды ошибок — `app/memory/errors.py`.
 """
 
 from typing import Any, Protocol

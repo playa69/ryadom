@@ -4,9 +4,11 @@
 # Образ cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:<тег> (agent/Dockerfile; сборка и push —
 # k8s/agent/README.md). Тег в манифесте должен совпадать с отправленным; latest не используем.
 #
-# РОВНО 1 РЕПЛИКА и strategy Recreate: диалоги лежат в памяти процесса, поэтому вторая
-# реплика не увидит чужие диалоги (404), а при каждом перезапуске (в том числе при выкате новой
-# версии) все диалоги агента пропадают. Настоящее хранилище появится вместе с полноценным агентом.
+# РОВНО 1 РЕПЛИКА и strategy Recreate: рабочий набор диалогов живёт в памяти процесса (на диск/в БД он дублируется
+# в фоне), поэтому вторая реплика не увидит чужие диалоги (404), а Recreate оставляет одного писателя в хранилище.
+# Хранилище диалогов — PostgreSQL (база agent в CNPG ryadom-db, DIALOG_DATABASE_URL из Secret agent-db); том
+# agent-data со старым SQLite оставлен смонтированным до завершения миграции (k8s/agent/README.md «Миграция
+# диалогов в PostgreSQL»), после неё volume и PVC удаляются.
 #
 # Пробы — только httpGet (NetworkPolicy пускает kubelet на :15020, istio переписывает пробы
 # на pilot-agent; tcpSocket был бы заблокирован). /health отвечает всегда, пока жив процесс.
@@ -51,7 +53,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.6.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:0.8.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -104,6 +106,25 @@ spec:
                   name: agent-gemini
                   key: GEMINI_RELAY_TOKEN
                   optional: true
+            # DSN PostgreSQL диалогов (база agent в CNPG ryadom-db). Secret agent-db: kubectl create secret generic agent-db \
+            #   --from-literal=DIALOG_DATABASE_URL="postgresql://agent:<пароль agent-db-credentials>@ryadom-db-rw.ryadom-db:5432/agent"
+            - name: DIALOG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-db
+                  key: DIALOG_DATABASE_URL
+            # Сервисный пользователь Cognee (память агента, COGNEE_BASE_URL в ConfigMap): логин агента в Cognee API,
+            # датасеты пользователей создаются от него. Secret уже существует (деплой Cognee, README «Cognee»).
+            - name: COGNEE_SERVICE_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: cognee-service-account
+                  key: COGNEE_SERVICE_EMAIL
+            - name: COGNEE_SERVICE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cognee-service-account
+                  key: COGNEE_SERVICE_PASSWORD
             # Ключи проекта ryadom в Langfuse (LANGFUSE_ENABLED в ConfigMap). optional: без них при
             # выключенном трейсинге агент стартует как раньше; при включённом без ключей — не стартует (fail-fast).
             - name: LANGFUSE_PUBLIC_KEY
@@ -143,7 +164,7 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            # Диалоги (SQLite): переживают перезапуск и выкат; 03-pvc.yaml. Остальная файловая система read-only.
+            # Том со старым SQLite диалогов: нужен только разовой миграции в PostgreSQL (после неё volume удаляется)
             - name: data
               mountPath: /data
           resources:

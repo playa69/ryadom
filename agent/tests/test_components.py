@@ -30,9 +30,6 @@ from tests.conftest import (
     start_dialog,
     ws_url,
 )
-from tests import memory_support
-from tests.test_memory_dialog import prepare
-
 BASE = "https://proxy.test/v1"
 
 RECALL_TOOLS_STUB = [
@@ -272,36 +269,3 @@ def test_a_spoken_turn_reports_each_part_it_used(user_id: str) -> None:
             ws.send_text(json.dumps({"type": "audio_end"}))
             frames = read_frames(ws, done)
     assert components(frames) == [("safety", "ok", False)]
-
-
-# ─── Память ───────────────────────────────────────────────────────────────────
-
-
-def test_a_reply_with_memory_looks_memory_up_once_and_a_reply_without_it_does_not(tmp_path) -> None:  # noqa: ANN001
-    """Обращение к памяти — поиск сводки для ответа. В разговоре «Без памяти» его нет."""
-    person = memory_support.user()
-    with memory_support.make_client(tmp_path / "d.sqlite3", memory_support.FakeModel(), chat=FakeChat()) as client:
-        prepare(client, person)
-        for mode, expected in (("on", 1), ("off", 0)):
-            dialog = client.post(f"/v1/users/{person}/dialogs", json={"memory": mode, "new": True}, headers=AUTH).json()
-            with client.websocket_connect(ws_url(person, dialog["dialogId"]), headers=AUTH) as ws:
-                send_user_message(ws, "c-1", "привет")
-                frames = read_frames(ws, lambda f: has(f, "assistant_end"))
-            assert [c for c in components(frames) if c[0] == "memory"] == [("memory", "ok", False)] * expected, mode
-
-
-async def test_the_background_extraction_is_counted_in_the_counter() -> None:
-    """Извлечение фактов идёт в фоне после разговора: настоящий вызов модели, но к диалогу и человеку не привязан."""
-    from app.memory.llm import MemoryLlm
-
-    model = MemoryLlm(
-        BASE,
-        "key",
-        "memory-model",
-        max_tokens=100,
-        timeout_seconds=5,
-        client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=completion("{}")))),
-    )
-    before = counted("memory")
-    await model.complete([{"role": "user", "content": "x"}])
-    assert counted("memory") == before + 1

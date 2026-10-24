@@ -27,8 +27,8 @@ async def ready(request: Request) -> dict[str, str]:
         "tts": tts.name if tts else "none",
         "llm": chat.name if chat else "none",
         "stt": recognizer.name if recognizer else "none",
-        # sqlite: диалоги пишутся на диск и переживают перезапуск; memory: только в памяти (диск не задан или не открылся)
-        "dialogs": "sqlite" if request.app.state.store.persistent else "memory",
+        # postgres: диалоги в PostgreSQL и переживают перезапуск; memory: только в памяти (не задано или не открылось)
+        "dialogs": request.app.state.store.persistence,
         # Память агента: off | shadow | on | unavailable (режим задан, но диск или модель извлечения не готовы)
         "memory": memory.status() if memory is not None else "off",
     }

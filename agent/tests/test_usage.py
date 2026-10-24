@@ -7,7 +7,6 @@
 import asyncio
 import json
 import logging
-import sqlite3
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -23,7 +22,8 @@ from app.api.dialog_live import LiveDialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveTts
 from app.main import create_app
 from app.services import usage as model_usage
-from app.services.dialog_db import DialogDatabase
+from app.services.dialog_db import DialogDbError
+from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from app.services.dialog_store import GREETING_NEW, DialogStore
 from app.services.replies import split_sentences
 from app.services.usage import Usage
@@ -50,17 +50,17 @@ def wait_until(condition: Any, what: str, timeout: float = 3.0) -> None:
 
 def usage_by_message(path: Path) -> list[tuple[Any, ...]]:
     """Расход по сообщениям: (роль сообщения или "dialog", модель, задача, направление, модальность, единица, сумма)."""
-    with sqlite3.connect(path) as conn:
-        return conn.execute(
-            "SELECT COALESCE(m.role, 'dialog'), u.model, u.task, u.direction, u.modality, u.unit, SUM(u.amount) "
-            "FROM model_usage u LEFT JOIN messages m ON m.dialog_id = u.dialog_id AND m.id = u.message_id "
-            "GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY 1, 2, 3, 4, 5"
-        ).fetchall()
+    roles = {(m[1], m[0]): m[3] for m in DialogDatabase.message_rows(str(path))}
+    grouped: dict[tuple, float] = {}
+    for row in DialogDatabase.usage_rows(str(path)):
+        dialog_id, message_id, _, model, task, direction, modality, unit, amount = row
+        key = (roles.get((dialog_id, message_id), "dialog"), model, task, direction, modality, unit)
+        grouped[key] = grouped.get(key, 0.0) + amount
+    return sorted((*key, total) for key, total in grouped.items())
 
 
 def speech_by_message(path: Path) -> list[tuple[str, str, float | None]]:
-    with sqlite3.connect(path) as conn:
-        return conn.execute("SELECT role, text, audio_seconds FROM messages ORDER BY position").fetchall()
+    return [(m[3], m[4], m[6]) for m in DialogDatabase.message_rows(str(path))]
 
 
 # ─── Клиенты моделей ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -248,8 +248,10 @@ async def test_live_usage_without_an_answer_message_goes_on_the_dialog(tmp_path:
     await session._finish(early)
     await store.detach()
 
-    with sqlite3.connect(tmp_path / "d.sqlite3") as conn:
-        rows = conn.execute("SELECT message_id, modality, amount FROM model_usage ORDER BY amount").fetchall()
+    rows = sorted(
+        ((row[1], row[6], row[8]) for row in DialogDatabase.usage_rows(str(tmp_path / "d.sqlite3"))),
+        key=lambda row: row[2],
+    )
     assert rows == [
         (answered.message_id, "text", 10.0),
         (None, "audio", 20.0),
