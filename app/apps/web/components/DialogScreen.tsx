@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowDown, CircleCheck, EyeOff } from 'lucide-react'
+import { ArrowDown, CircleCheck, EyeOff, Share2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -54,6 +54,7 @@ import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import DialogAlert from './DialogAlert'
 import DialogEndSheet from './DialogEndSheet'
+import ShareDialogModal from './ShareDialogModal'
 import DialogFeed from './DialogFeed'
 import DialogVoice from './DialogVoice'
 import { BUTTON, COLUMN } from './controls'
@@ -124,6 +125,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [messages, setMessages] = useState<DialogMessageView[]>(() => greetingMessages(start?.greeting))
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [view, setView] = useState<DialogView>(() => initialDialogView(dialogId))
+  const [sharing, setSharing] = useState(false)
   const [recording, setRecording] = useState(false)
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
   const [handsFree] = useState(() => readHandsFree(WEB_HANDS_FREE_KEY) && isTurnDetectionSupported())
@@ -759,24 +761,41 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         // Breakable anywhere: with a large text size a whole word can be wider than the room left, and clipped is worse than wrapped.
         title={<span className="wrap-anywhere">Разговор</span>}
         actions={
-          view === 'text' ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              // The glass in `outline` redraws the border as the faint hairline; a control keeps its 3:1 edge.
-              className={cn(BUTTON, 'w-11 shrink-0 border-input! px-0 outline-none tab:w-auto tab:px-5')}
-              disabled={state === 'ended' || ending}
-              onClick={openEnd}
-              data-testid="dialog-end"
-            >
-              {/* The bar also holds the menu, the title and SOS: on a phone the word would squeeze the page's only h1 until it is clipped, so the button is just an icon there (its name stays whole). */}
-              <CircleCheck aria-hidden="true" className="size-5 tab:hidden" />
-              <span className="sr-only tab:not-sr-only">Завершить разговор</span>
-            </Button>
-          ) : undefined
+          <>
+            {/* Sharing needs something said: the link shows the stored messages, and the greeting is not one of them. */}
+            {messages.some((message) => message.role === 'user') && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={cn(BUTTON, 'w-11 shrink-0 border-input! px-0 outline-none tab:w-auto tab:px-4')}
+                onClick={() => setSharing(true)}
+                data-testid="dialog-share"
+              >
+                <Share2 aria-hidden="true" className="size-5 tab:size-4" />
+                <span className="sr-only tab:not-sr-only">Поделиться</span>
+              </Button>
+            )}
+            {view === 'text' ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                // The glass in `outline` redraws the border as the faint hairline; a control keeps its 3:1 edge.
+                className={cn(BUTTON, 'w-11 shrink-0 border-input! px-0 outline-none tab:w-auto tab:px-5')}
+                disabled={state === 'ended' || ending}
+                onClick={openEnd}
+                data-testid="dialog-end"
+              >
+                {/* The bar also holds the menu, the title and SOS: on a phone the word would squeeze the page's only h1 until it is clipped, so the button is just an icon there (its name stays whole). */}
+                <CircleCheck aria-hidden="true" className="size-5 tab:hidden" />
+                <span className="sr-only tab:not-sr-only">Завершить разговор</span>
+              </Button>
+            ) : null}
+          </>
         }
       />
+      <ShareDialogModal dialogId={dialogId} open={sharing} onClose={() => setSharing(false)} />
 
       {memoryMode === DialogMemoryMode.Off && (
         <div className={cn(COLUMN, 'pt-3')}>
