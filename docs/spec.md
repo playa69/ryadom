@@ -627,7 +627,7 @@ Recall на валидационном наборе (собирается с к�
 
 ### 6.13. Дневник настроения и тесты
 
-Функции живут в `app/services/api` (ответ на Q-02 для дневника и тестов). Тексты итогов пишет агент. Детали — change'и [`add-mood-diary`](../openspec/changes/add-mood-diary/proposal.md) и [`add-self-check-tests`](../openspec/changes/add-self-check-tests/proposal.md). Серии, награды и подсчёт дней подряд MUST NOT появляться (`REQ-PRD-04`). Значения настроения, баллы тестов и тексты итогов MUST NOT попадать в продуктовую аналитику.
+Функции живут в `app/services/api` (ответ на Q-02 для дневника, уведомлений и тестов). Тексты итогов пишет агент. Детали — change'и [`add-mood-diary`](../openspec/changes/add-mood-diary/proposal.md), [`add-notifications`](../openspec/changes/add-notifications/proposal.md) и [`add-self-check-tests`](../openspec/changes/add-self-check-tests/proposal.md). Серии, награды и подсчёт дней подряд MUST NOT появляться (`REQ-PRD-04`). Значения настроения, баллы тестов и тексты итогов MUST NOT попадать в продуктовую аналитику.
 
 **`REQ-WELL-01`** — Раздел «Дневник». Статус: **план**.
 Сегменты «Дневник», «Итоги», «Год», «Тесты»; в мобильном клиенте — четвёртая вкладка, в вебе — пункт сайдбара.
@@ -640,8 +640,8 @@ Recall на валидационном наборе (собирается с к�
 **`REQ-WELL-03`** — Итоги недели и года, «Год в пикселях». Статус: **план**.
 Итоги недели доступны с 3 отмеченных дней недели. История года пишется после 6 итогов недели. Сетка года раскрашивается по дням. «Поделиться» отдаёт картинку без текстов.
 
-**`REQ-WELL-04`** — Напоминание о настроении. Статус: **план**.
-Включено по умолчанию, вечером, по местному времени человека. Не больше одного в день, не после отметки. После 7 неоткрытых — пауза. Системное разрешение не спрашивается при первом запуске. Каналы: локальные уведомления в нативных сборках, Web Push в PWA и вебе, сообщение бота в Telegram Mini App. Закрывает «утром бережный пуш» из сценария А в части канала доставки.
+**`REQ-WELL-04`** — Напоминание о настроении. Статус: **план** (`add-notifications`).
+Включено по умолчанию, вечером, по местному времени человека. Не больше одного в день, не после отметки. После 7 неоткрытых — пауза. Системное разрешение не спрашивается при первом запуске. Каналы: локальные уведомления в нативных сборках, Web Push в PWA и вебе, сообщение бота в Telegram Mini App. Закрывает «утром бережный пуш» из сценария А в части канала доставки. Текст уведомления MUST NOT содержать личных данных: его видно на экране блокировки.
 
 **`REQ-WELL-05`** — Виджет. Статус: **план**.
 Виджет Android 4×1: отметка одним касанием по отдельному ограниченному токену. В PWA — ярлык «Отметить настроение».
@@ -896,7 +896,7 @@ sequenceDiagram
 | ID | Вопрос | Кого касается |
 |---|---|---|
 | Q-01 | Куда прокси программы направляет тексты и голос, и подтверждена ли обработка в РФ? Если нет — переключаемся на Cloud.ru Foundation Models (`LLM_BASE_URL`) | Владелец продукта, `CON-LAW-03` |
-| Q-02 | Судьба `backend/` и change'ов `add-backend-*`: развивать функции (журнал, ритуалы, чекины, пуши, контент) в `app/services/api` или поднимать `backend/`. Для дневника, напоминаний и тестов предложено `app/services/api` (`add-mood-diary`, `add-self-check-tests`) | Архитектура |
+| Q-02 | Судьба `backend/` и change'ов `add-backend-*`: развивать функции (журнал, ритуалы, чекины, пуши, контент) в `app/services/api` или поднимать `backend/`. Для дневника, уведомлений и тестов предложено `app/services/api` (`add-mood-diary`, `add-notifications`, `add-self-check-tests`) | Архитектура |
 | Q-03 | Хранилище памяти агента: PostgreSQL + pgvector (план `add-agent-service`) или Cognee поверх PostgreSQL. Где живёт БД агента: отдельная БД в CNPG `ryadom-db` или в ns `agent` | Архитектура, инфраструктура |
 | Q-04 | Передавать ли клиенту `yellow` (`safety.level = concern`) и что клиент при этом показывает | Продукт, консультанты |
 | Q-05 | Сохранять ли текст деэскалации (`safety.text`) в историю, чтобы журнал и экран «Если сейчас тяжело» не расходились | Продукт |
@@ -927,7 +927,8 @@ sequenceDiagram
 | `REQ-ACC-*` | `app/services/api/src/routes/auth`, `app/packages/core/src/processes` | `app/services/api/test`, `app/packages/core/test`, `app/e2e/tests` |
 | `REQ-DATA-05` | `app/packages/db/src/schema/dialog-shares.ts`, `app/packages/core/src/processes/dialog-shares`, `app/services/api/src/routes/dialog-shares`, `app/apps/web/components/ShareDialogModal.tsx`, `SharedDialogScreen.tsx`, `app/apps/mobile/src/client/components/pages/journal/ShareSheet.tsx` | `app/services/api/test/dialog-shares.test.ts`, `app/e2e/tests/web-share.spec.ts` |
 | `REQ-MEM-07..09` | план: `openspec/changes/add-memory-notes/tasks.md` | — |
-| `REQ-WELL-01..05` | план: `openspec/changes/add-mood-diary/tasks.md` | — |
+| `REQ-WELL-01..03`, `REQ-WELL-05` | план: `openspec/changes/add-mood-diary/tasks.md` | — |
+| `REQ-WELL-04` | план: `openspec/changes/add-notifications/tasks.md` | — |
 | `REQ-WELL-06..08` | план: `openspec/changes/add-self-check-tests/tasks.md` | — |
 | `REQ-CARE-04` | `app/services/api/src/dialogs/gateway.ts`, `limits.ts` | `app/services/api/test/dialogs.test.ts` |
 | `REQ-OBS-01` | `agent/app/core/metrics.py` | `agent/tests/test_voice_turn.py` |
