@@ -12,7 +12,7 @@
 
 #### Scenario: Успешное создание
 - **WHEN** владелец просит ссылку на 72 часа для своего завершённого разговора
-- **THEN** ответ `201` содержит `url` вида `<origin>/s/<token>` и `expiresAt` = сейчас + 72 часа
+- **THEN** ответ `201` содержит `url` вида `<origin>/app/s/<token>` и `expiresAt` = сейчас + 72 часа
 - **AND** в `dialog_shares` нет самого токена
 
 #### Scenario: Ссылка уже есть
@@ -41,7 +41,7 @@
 
 ### Requirement: Просмотр получателем
 
-`GET /api/shared/{token}` SHALL работать без авторизации и возвращать `startedAt`, `sharedAt`, `expiresAt`, `isOpen` и список `{role, text, createdAt}`. Ответ MUST NOT содержать аудио, сводку, напряжение, темы, `safety`, `userId`, `dialogId`, почту и имя. Страница `/s/<token>` SHALL быть только для чтения.
+`GET /api/shared/{token}` SHALL работать без авторизации и возвращать `startedAt`, `sharedAt`, `expiresAt`, `isOpen` и список `{role, text, createdAt}`. Ответ MUST NOT содержать аудио, сводку, напряжение, темы, `safety`, `userId`, `dialogId`, почту и имя. Страница `/app/s/<token>` SHALL быть только для чтения.
 
 #### Scenario: Открытие действующей ссылки
 - **WHEN** получатель открывает действующую ссылку в чистом браузере
@@ -61,7 +61,7 @@
 
 ### Requirement: Защита страницы
 
-Ответы `/api/shared/*` и страница `/s/*` MUST нести `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`; `robots.txt` MUST запрещать `/s/`. Запросы MUST ограничиваться по IP. Токен MUST NOT попадать в логи, аналитику и в `Referer`; IP и User-Agent получателя MUST NOT сохраняться.
+Ответы `/api/shared/*` и страница `/app/s/*` MUST нести `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`; `robots.txt` MUST запрещать `/s/`. Запросы MUST ограничиваться по IP. Токен MUST NOT попадать в логи, аналитику и в `Referer`; IP и User-Agent получателя MUST NOT сохраняться.
 
 #### Scenario: Заголовки
 - **WHEN** запрашивается действующая ссылка
