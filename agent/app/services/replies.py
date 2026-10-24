@@ -206,8 +206,9 @@ def chat_messages(history: Sequence[Message], limit: int, memory: str = "", voic
         else:
             messages.append({"role": m.role, "content": content})
     time_context = (
-        f"\n\nТекущее время: {now_iso()} (UTC). Перед репликами истории указано их время в ISO 8601; "
-        "используй его при вопросах о дате, времени и длительности разговора."
+        f"\n\nТекущее время: {now_iso()} (UTC). Перед репликами истории указано их время в ISO 8601. "
+        "Используй его при вопросах о дате, времени и длительности разговора: сохраняй цифры точно, ничего не округляй "
+        "и не изменяй. Сами служебные метки и квадратные скобки в обычный ответ не копируй; называй время только по делу."
     )
     return [{"role": "system", "content": system_prompt(voice) + memory_block(memory) + time_context}, *messages]
 
