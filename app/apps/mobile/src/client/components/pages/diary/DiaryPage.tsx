@@ -1,6 +1,6 @@
 import { Block, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { currentWeekStart, diary, rememberedSegment, SEGMENT_URLS, useDiary } from '../../../lib/diary'
 import { deviceDate } from '../../../lib/diary-queue'
 import DiaryShell, { segmentChosen } from './DiaryShell'
@@ -18,6 +18,8 @@ const restore = { done: false }
  */
 export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
   const { data, error } = useDiary()
+  // The events block asks again whenever the tab is shown: memory may have been switched in the profile meanwhile.
+  const [shown, setShown] = useState(0)
 
   useEffect(() => {
     void diary.refresh()
@@ -31,7 +33,10 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
   }, [f7router])
 
   return (
-    <DiaryShell segment="diary" f7router={f7router} onTabShow={() => void diary.refresh()}>
+    <DiaryShell segment="diary" f7router={f7router} onTabShow={() => {
+        void diary.refresh()
+        setShown((n) => n + 1)
+      }}>
       {data === null && !error && (
         <Block className="text-align-center">
           <Preloader />
@@ -53,7 +58,7 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
             </h2>
             <p className="rd-muted">Скоро: короткие вопросы, чтобы лучше понять, как ты</p>
           </section>
-          <EventsCard week={currentWeekStart()} />
+          <EventsCard key={shown} week={currentWeekStart()} />
         </>
       )}
     </DiaryShell>

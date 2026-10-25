@@ -2683,10 +2683,19 @@ input:-webkit-autofill:focus {
 }
 
 .rd-mood-face-label {
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.2;
+  letter-spacing: -0.1px;
   text-align: center;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+}
+
+/* 320px: five faces share about 250px, «Нормально» still has to stay in one line. */
+@media (max-width: 340px) {
+  .rd-mood-face-label {
+    font-size: 9px;
+    letter-spacing: -0.2px;
+  }
 }
 
 .rd-mood-face--on {
@@ -2825,6 +2834,45 @@ input:-webkit-autofill:focus {
 .rd-chart-month-name {
   font-size: 14px;
   color: var(--ryadom-text-dim);
+  white-space: nowrap;
+}
+
+/* The month label never squeezes the title: it sits on its own line under it. */
+.rd-chart-card .rd-chart-head {
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+/* The year switch of «Год в пикселях»: small ghost round buttons, not the native grey squares. */
+.rd-chart-month {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.rd-chart-arrow {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-chart-arrow:active:not(:disabled) {
+  background: var(--ryadom-surface-2);
+}
+
+.rd-chart-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .rd-chart-area {

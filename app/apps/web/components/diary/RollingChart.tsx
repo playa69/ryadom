@@ -45,10 +45,10 @@ export default function RollingChart({
 
   return (
     <Card className="gap-4 rounded-lg px-5 py-5 shadow-none" data-testid="diary-chart-card">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-2">
         <h2 className="min-w-0 flex-1 text-lg font-semibold text-foreground">Динамика настроения</h2>
         {!empty && (
-          <span className="text-sm font-medium text-dim" data-testid="diary-chart-month">
+          <span className="text-sm font-medium whitespace-nowrap text-dim" data-testid="diary-chart-month">
             {chart.header}
           </span>
         )}

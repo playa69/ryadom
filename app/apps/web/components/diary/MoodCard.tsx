@@ -109,7 +109,7 @@ export default function MoodCard({
                 </span>
               )}
               <MoodFace mood={level} muted={today !== null && !selected} />
-              <span>{MOOD_LABELS[level]}</span>
+              <span className="whitespace-nowrap max-[360px]:text-[10px]">{MOOD_LABELS[level]}</span>
             </button>
           )
         })}
