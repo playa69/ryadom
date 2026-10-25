@@ -2,34 +2,12 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Завершение диалога
-
-Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/end` с телом `{ "takeaway"?: string, "tensionAfter"?: 1..10, "recap"?: { "about": string, "main": string, "agreements": string[] } }` и ответом `200 { "summary" }` либо `404`. Поле `recap` — итог, написанный человеком (способы «вручную» и «предзаполнить»).
-
-Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": { "about": string, "main": string, "agreements": string[] } | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null }`.
-
-Автоматический итог (`recapSource: auto`) считается в фоне после завершения любым путём и готов не позже чем через 60 секунд, если включена настройка `recapEnabled` («Подводить итог автоматически») или у человека её нет в базе (по умолчанию включена). До этого `recapStatus` равен `pending`, а `recap` — `null`. Итог, пришедший в `recap` тела запроса, сохраняется сразу (`ready`) и не заменяется автоматическим. Для не сохраняемого разговора, разговора с кризисом и разговора, где человек сказал меньше 40 знаков, `recapStatus` равен `none`.
-
-Эндпоинт — запасной путь на случай, когда сокет уже закрыт. Повторный вызов для завершённого диалога SHOULD возвращать ту же сводку с актуальным итогом.
-
-Сводка MAY также содержать `userMessages` и `assistantMessages`: сколько реплик человека и агента сохранено за весь диалог (все соединения и выкаты между ними). Они нужны продуктовой аналитике шлюза, который видит лишь своё соединение. В контракт приложения они не входят, шлюз их клиенту не отдаёт.
-
-#### Scenario: Завершение без сокета
-
-- **WHEN** клиент закрыл приложение и сокета нет, а диалог открыт
-- **THEN** `POST …/end` завершает диалог и возвращает сводку с `recapStatus: pending`
-
-#### Scenario: Повторное завершение
-
-- **WHEN** `POST …/end` вызывается для уже завершённого диалога
-- **THEN** агент отвечает `200` с той же сводкой, а если итог готов — с `recap` и `recapStatus: ready`
-
 ### Requirement: Память
 
 Агент SHALL помнить о человеке короткие заметки и SHALL искать по его прошлым разговорам (capability `memory-notes`). Маршруты `/v1/users/{userId}/memory`:
 
 - `GET` — настройки, заметки, лимит, совместимые `mode`, `facts`, `limits.maxFacts`;
-- `PUT …/settings {enabled?, sensitiveEnabled?, chatSearchEnabled?, recapEnabled?, consentVersion?}`;
+- `PUT …/settings {enabled?, sensitiveEnabled?, chatSearchEnabled?, consentVersion?}`;
 - `PATCH …/notes/{id} {text}`, `DELETE …/notes/{id}`;
 - `POST …/notes/instruction {text}` — «скажи, что поправить или убрать»;
 - `DELETE …/notes` и `DELETE` — удалить всю память, настройки не меняются;
@@ -80,15 +58,6 @@
 
 
 ## ADDED Requirements
-
-### Requirement: Черновик итога
-
-Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/recap/draft` с ответом `200 { "recap": { "about", "main", "agreements" } }`. Черновик MUST NOT сохраняться. Для чужого или несуществующего диалога — `404`, для не сохраняемого, кризисного и слишком короткого — `409 RECAP_NOT_AVAILABLE`.
-
-#### Scenario: Черновик не сохраняется
-
-- **WHEN** вызывающая сторона запросила черновик итога
-- **THEN** ответ содержит `recap`, а `GET` истории и `recapStatus` разговора не изменились
 
 ### Requirement: Срок хранения разговоров
 
