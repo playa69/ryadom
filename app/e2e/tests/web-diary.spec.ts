@@ -11,16 +11,12 @@ import {
 
 /**
  * Дневник настроения в вебе (`REQ-WELL-01`, `openspec/changes/add-mood-diary`): отметка
- * в два касания, «передумал», мост к разговору, график, «Год в пикселях» с подписью клетки и картинка «Поделиться моим годом». Один сценарий на одну регистрацию, как в остальных
+ * в два касания, «передумал», мост к разговору, график, сегмент «Журнал» (бывший отдельный раздел) и перенос со старого адреса `/journal`. Один сценарий на одну регистрацию, как в остальных
  * web-спеках. Итоги недели от трёх отмеченных дней проверяются отдельно (нужны данные за прошлые дни).
  */
-test('дневник: отметка в два касания, график, мост, год и «Поделиться»', async ({ page, shot }) => {
+test('дневник: отметка в два касания, график, мост, журнал внутри дневника', async ({ page, shot }) => {
   test.setTimeout(180_000)
   await clearMailbox()
-  // Headless Chromium on desktop has no file sharing: the picture must fall back to a download.
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'canShare', { value: undefined, configurable: true })
-  })
   await openWebApp(page)
   await registerAndConfirm(page, uniqueEmail('web-diary'))
 
@@ -92,35 +88,18 @@ test('дневник: отметка в два касания, график, м�
 
   await openWebApp(page, '/diary')
 
-  // ── сегменты: «Итоги» — пустое состояние, «Год» — сетка ────────
-  await page.getByTestId('diary-segment-recaps').click()
-  await expect(page).toHaveURL(/\/diary\/recaps$/)
-  await expect(page.getByTestId('diary-recaps-empty')).toContainText('Здесь будут итоги ваших разговоров')
-  await page.getByTestId('diary-segment-year').click()
-  await expect(page).toHaveURL(/\/diary\/year$/)
+  // ── сегмент «Журнал» внутри дневника: пустой журнал, сайдбар отмечает «Дневник» ──
+  await page.getByTestId('diary-segment-journal').click()
+  await expect(page).toHaveURL(/\/diary\/journal$/)
+  await expect(page.getByTestId('journal-empty')).toContainText('Здесь появятся твои разговоры')
+  await expect(page.getByTestId('diary-segment-journal')).toHaveAttribute('aria-current', 'page')
+  await shot(page, 'web-diary-journal')
 
-  const cells = page.getByTestId('diary-year-cell')
-  await expect(cells).toHaveCount(365 + (isLeapYear(new Date().getFullYear()) ? 1 : 0))
-  const marked = page.locator('[data-testid="diary-year-cell"]:not([data-mood=""])')
-  await expect(marked).toHaveCount(1)
-  await expect(page.getByTestId('diary-year-marked')).toContainText('1')
-  await expect(page.getByTestId('diary-year-most')).toContainText('так себе')
-  await marked.click()
-  await expect(page.getByTestId('diary-year-caption')).toContainText('— так себе')
-  await expect(page.getByTestId('diary-story-progress')).toHaveAttribute('aria-valuenow', '0')
-  await shot(page, 'web-diary-year')
-
-  // Сайдбар отмечает «Дневник» на любом сегменте.
   await openSidebar(page)
   await expect(nav(page).getByRole('link', { name: 'Дневник', exact: true })).toHaveAttribute('aria-current', 'page')
   await closeSidebar(page)
 
-  // ── «Поделиться моим годом»: без отправки файлов картинка скачивается ─────
-  const download = page.waitForEvent('download')
-  await page.getByTestId('diary-year-share').click()
-  expect((await download).suggestedFilename()).toBe(`ryadom-${new Date().getFullYear()}.png`)
+  // ── старый адрес журнала ведёт в дневник ─────────────────────────────────
+  await openWebApp(page, '/journal')
+  await expect(page).toHaveURL(/\/diary\/journal$/)
 })
-
-function isLeapYear(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
-}

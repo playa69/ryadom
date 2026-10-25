@@ -6,5 +6,5 @@ export interface RecomputeMarkerDTO {
   periodStart: string
 }
 
-/** Week markers first, then year markers; people with markers only for active accounts, ordered by person. */
+/** Markers of weeks to write again; only for active accounts, ordered by person. */
 export type ListRecomputeMarkersQueryResult = { success: true; markers: RecomputeMarkerDTO[] }

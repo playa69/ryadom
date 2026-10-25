@@ -450,7 +450,7 @@ test('после первого разговора предложена почт
 
   // The journal reminds as well, with a way to the same dialog.
   await goTo(page, 'Все разговоры')
-  await expect(page).toHaveURL(/\/journal$/)
+  await expect(page).toHaveURL(/\/diary\/journal$/)
   const reminder = page.getByTestId('journal-link-email')
   await expect(page.getByTestId('journal-item').first()).toBeVisible({ timeout: 20_000 })
   if (isPhone(page)) {

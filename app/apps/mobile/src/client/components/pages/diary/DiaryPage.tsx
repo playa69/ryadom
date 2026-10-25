@@ -7,6 +7,7 @@ import DiaryShell, { segmentChosen } from './DiaryShell'
 import EventsCard from './EventsCard'
 import MoodCard from './MoodCard'
 import MoodChart from './MoodChart'
+import PreviousWeekCard from './PreviousWeekCard'
 import WeekCard from './WeekCard'
 
 /** Opened once per launch: the stored segment is where the tab opens, not a trap for «Дневник». */
@@ -52,6 +53,7 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
           <MoodCard data={data} f7router={f7router} />
           <MoodChart data={data} today={deviceDate()} />
           <WeekCard data={data} f7router={f7router} />
+          {data.previousWeek && <PreviousWeekCard summary={data.previousWeek} />}
           <section className="rd-card" data-testid="diary-selfcheck" aria-labelledby="diary-selfcheck-title">
             <h2 className="rd-card-title" id="diary-selfcheck-title">
               Самопроверка

@@ -7,14 +7,12 @@ import { f7, f7ready } from 'framework7-react'
 
 export const TAB_IDS = {
   home: 'view-home',
-  journal: 'view-journal',
   diary: 'view-diary',
   profile: 'view-profile',
 } as const
 
 const TAB_BY_PREFIX: Array<[string, string]> = [
   ['/home/', TAB_IDS.home],
-  ['/journal/', TAB_IDS.journal],
   ['/diary/', TAB_IDS.diary],
   ['/profile/', TAB_IDS.profile],
 ]
@@ -24,7 +22,13 @@ export function isAppRoute(route: unknown): route is string {
   return typeof route === 'string' && /^\/(home|journal|diary|profile|dialog)\/([\w-]+\/)*$/.test(route)
 }
 
-export function openRoute(route: string): void {
+/** The journal tab moved into the diary: an old address (a link, a restored entry) lands there. */
+export function currentRoute(requested: string): string {
+  return requested.startsWith('/journal/') ? `/diary${requested}` : requested
+}
+
+export function openRoute(requested: string): void {
+  const route = currentRoute(requested)
   const entry = TAB_BY_PREFIX.find(([prefix]) => route.startsWith(prefix))
   if (!entry) return
   const tabSelector = `#${entry[1]}`

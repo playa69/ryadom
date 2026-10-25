@@ -188,9 +188,9 @@ test('разговор в вебе: приветствие, ответ, криз
 
   // ── history: all conversations, then one of them ─────────────────────────
   await goTo(page, 'Все разговоры')
-  await expect(page).toHaveURL(/\/journal$/)
-  await expect(page).toHaveTitle('Все разговоры — Рядом')
-  await expect(pageTitle(page)).toHaveText('Все разговоры')
+  await expect(page).toHaveURL(/\/diary\/journal$/)
+  await expect(page).toHaveTitle('Дневник — Рядом')
+  await expect(pageTitle(page)).toHaveText('Дневник')
   const row = page.getByTestId('journal-item').first()
   await expect(row).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('journal-list').getByRole('heading', { level: 2 })).toHaveText(['Сегодня'])
@@ -200,7 +200,7 @@ test('разговор в вебе: приветствие, ответ, криз
 
   // A past conversation is a page of its own at every width: no pane beside the list.
   await row.click()
-  await expect(page).toHaveURL(/\/journal\/[^/]+$/)
+  await expect(page).toHaveURL(/\/diary\/journal\/[^/]+$/)
   await expect(page).toHaveTitle('Разговор — Рядом')
   // The header holds the h1: the conversation's title, with the way back beside it.
   await expect(pageTitle(page)).toHaveText(TAKEAWAY, { timeout: 20_000 })
@@ -218,9 +218,9 @@ test('разговор в вебе: приветствие, ответ, криз
   await closeSidebar(page)
 
   await page.getByRole('main').getByRole('link', { name: 'Все разговоры', exact: true }).click()
-  await expect(page).toHaveURL(/\/journal$/)
+  await expect(page).toHaveURL(/\/diary\/journal$/)
   await row.click()
-  await expect(page).toHaveURL(/\/journal\/[^/]+$/)
+  await expect(page).toHaveURL(/\/diary\/journal\/[^/]+$/)
   // Carrying on from a finished conversation is a new one.
   await page.getByTestId('journal-continue').click()
   await expect(page).toHaveURL(/\/home$/)

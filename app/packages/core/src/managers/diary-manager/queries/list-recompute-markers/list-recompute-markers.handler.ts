@@ -1,5 +1,5 @@
 import { requestHandler, type RequestHandler } from 'mediatr-ts'
-import { and, asc, eq, gte, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, sql } from 'drizzle-orm'
 import { diarySummaries, users } from '@ryadom/db/schema'
 import { getDb } from '../../../../shared'
 import { ListRecomputeMarkersQuery } from './list-recompute-markers.query'
@@ -21,7 +21,7 @@ export class ListRecomputeMarkersQueryHandler implements RequestHandler<ListReco
           sql`coalesce((${diarySummaries.stats}->>'recompute')::boolean, false) = true`,
           eq(users.isActive, true),
           eq(users.isDeleted, false),
-          or(eq(diarySummaries.kind, 'year'), gte(diarySummaries.periodStart, c.weeksSince)),
+          gte(diarySummaries.periodStart, c.weeksSince),
         ),
       )
       .orderBy(asc(diarySummaries.userId), asc(diarySummaries.kind), asc(diarySummaries.periodStart))

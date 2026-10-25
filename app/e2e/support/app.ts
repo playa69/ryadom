@@ -114,6 +114,12 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
 }
 
-export async function openTab(page: Page, label: 'Главная' | 'Журнал' | 'Дневник' | 'Профиль'): Promise<void> {
+export async function openTab(page: Page, label: 'Главная' | 'Дневник' | 'Профиль'): Promise<void> {
   await page.locator('#rd-tabbar').getByText(label, { exact: true }).click()
+}
+
+/** The journal lives inside the diary: the tab «Дневник», then its segment «Журнал». */
+export async function openJournal(page: Page): Promise<void> {
+  await openTab(page, 'Дневник')
+  await page.getByTestId('diary-segment-journal').click()
 }

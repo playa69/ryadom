@@ -9,7 +9,7 @@ import { seedMarks } from '../support/diary'
 
 /**
  * The mood diary in the app (PWA), `REQ-WELL-01`…`03`: the card in two taps, a change of mind, the chart,
- * the bridge to a conversation, a note made without a network, the year, and the week summary after three marked days (agent mock: fixed text).
+ * the bridge to a conversation, a note made without a network, the journal segment, and the week summary after three marked days (agent mock: fixed text).
  */
 
 /** The day in the browser's zone (the config sets Europe/Moscow), as the diary counts it. */
@@ -97,56 +97,36 @@ test('дневник: пустой → отметка в два касания �
     .toBe(3)
 })
 
-test('дневник: сегменты — итоги, год, тесты; год в пикселях и «Поделиться»', async ({ page, request, shot }) => {
+test('дневник: сегменты «Дневник» и «Журнал»; последний открытый помнится', async ({ page, shot }) => {
   test.setTimeout(120_000)
-  const session = trackSession(page)
   await openApp(page)
   await startAnonymously(page)
   await openTab(page, 'Дневник')
-  const diary = page.locator('.page-current[data-name="diary"]')
-  await diary.getByTestId('diary-mood-3').click()
-  await diary.getByTestId('diary-factor-work').click()
-  await expect
-    .poll(async () => (await serverDiary(request, session.accessToken())).today?.factor)
-    .toBe('work')
+  await expect(page.getByTestId('diary-segment-diary')).toHaveAttribute('aria-checked', 'true')
+  // Two segments: the year and the recaps are not in the diary, the tests come later.
+  await expect(page.locator('.page-current [data-testid^="diary-segment-"]')).toHaveCount(2)
+  await expect(page.getByTestId('diary-year-card')).toHaveCount(0)
 
-  await diary.getByTestId('diary-segment-recaps').click()
-  const recaps = page.locator('.page-current[data-name="diary"]')
-  await expect(recaps.getByTestId('diary-recaps-empty')).toContainText('Здесь будут итоги ваших разговоров')
-
-  await page.locator('.page-current').getByTestId('diary-segment-year').click()
-  const year = page.locator('.page-current[data-name="diary"]')
-  await expect(year.getByTestId('diary-year-card')).toContainText('Каждый квадратик — один день')
-  await expect(year.getByTestId('diary-year-cell')).toHaveCount(365 + (new Date().getFullYear() % 4 === 0 ? 1 : 0))
-  const cell = year.locator(`[data-testid="diary-year-cell"][data-date="${today()}"]`)
-  await expect(cell).toHaveAttribute('data-mood', '3')
-  await expect(year.getByTestId('diary-year-marked')).toHaveText('Отмечено дней: 1')
-  await expect(year.getByTestId('diary-year-top')).toHaveText('Чаще всего: нормально')
-  await cell.click()
-  await expect(year.getByTestId('diary-year-caption')).toContainText('— нормально · Работа')
-  await expect(year.getByTestId('diary-story-card')).toContainText('Собрано 0 из 6')
-  await shot(page, 'diary-year', { fullPage: true })
-
-  // Without the system's file sharing the picture is downloaded.
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    year.getByTestId('diary-year-share').click(),
-  ])
-  expect(download.suggestedFilename()).toBe(`ryadom-${new Date().getFullYear()}.png`)
+  await page.getByTestId('diary-segment-journal').click()
+  await expect(page.getByTestId('diary-segment-journal')).toHaveAttribute('aria-checked', 'true')
+  // A new account has no conversations yet.
+  await expect(page.locator('.page-current').getByText('Здесь появятся твои разговоры.')).toBeVisible()
+  await shot(page, 'diary-journal-empty')
 
   // The last segment is remembered for the next opening of the tab.
   await page.reload()
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
   await openTab(page, 'Дневник')
-  await expect(page.locator('.page-current[data-name="diary"]').getByTestId('diary-year-card')).toBeVisible()
+  await expect(page.getByTestId('diary-segment-journal')).toHaveAttribute('aria-checked', 'true')
+  await expect(page.locator('.page-current').getByText('Здесь появятся твои разговоры.')).toBeVisible()
 })
 
-test('четыре вкладки помещаются на ширине 320px без обрезки подписей', async ({ page, shot }) => {
+test('три вкладки помещаются на ширине 320px без обрезки подписей', async ({ page, shot }) => {
   await page.setViewportSize({ width: 320, height: 640 })
   await openApp(page)
   await startAnonymously(page)
   const labels = page.locator('#rd-tabbar .tab-link-text, #rd-tabbar .tabbar-label')
-  await expect(labels).toHaveCount(4)
+  await expect(labels).toHaveCount(3)
   for (const label of await labels.all()) {
     const fits = await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)
     expect(fits, `подпись «${await label.textContent()}» обрезана`).toBe(true)
@@ -185,4 +165,29 @@ test('итоги недели: после трёх отмеченных дней
   await expect(diary.getByTestId('diary-week-collect')).toHaveCount(0)
   await expect(diary.getByTestId('diary-week-people')).toBeVisible()
   await shot(page, 'diary-week-summary')
+})
+
+test('итоги прошлой недели: карточка появляется, когда планировщик закрыл неделю', async ({ page, request, shot }) => {
+  test.setTimeout(240_000)
+  const session = trackSession(page)
+  await openApp(page)
+  await startAnonymously(page)
+  await openTab(page, 'Дневник')
+  const diary = page.locator('.page-current[data-name="diary"]')
+  await expect(diary.getByTestId('diary-today-title')).toBeVisible()
+  await expect(diary.getByTestId('diary-previous-week')).toHaveCount(0)
+
+  // Three marked days of the last finished week: the minute tick closes it with a final summary (agent mock: fixed text).
+  const { week } = await serverDiary(request, session.accessToken())
+  const lastMonday = new Date(Date.parse(week.start) - 7 * 86_400_000)
+  const days = [0, 1, 2].map((i) => new Date(lastMonday.getTime() + i * 86_400_000).toISOString().slice(0, 10))
+  await seedMarks(session.userId(), days.map((date) => ({ date, mood: 3 as const })))
+
+  await expect
+    .poll(async () => (await serverDiary(request, session.accessToken())).previousWeek?.text ?? '', { timeout: 150_000, intervals: [5_000] })
+    .not.toBe('')
+  await openTab(page, 'Главная')
+  await openTab(page, 'Дневник')
+  await expect(diary.getByTestId('diary-previous-week')).toContainText('Итоги прошлой недели')
+  await shot(page, 'diary-previous-week')
 })

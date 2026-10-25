@@ -7,15 +7,14 @@ import { rememberSegment, SEGMENT_URLS, type DiarySegment } from '../../../lib/d
 import { SosButton } from '../../SosSheet'
 
 /**
- * The frame of the four diary screens: the bar, SOS and the segments «Дневник · Итоги · Год».
+ * The frame of the diary screens: the bar, SOS and the segments «Дневник · Журнал» («Тесты» comes with PROTEUS-218).
  * Each segment is a route of its own (`/diary/…`), swapped in place so the tab keeps one entry in its
  * history; the last one opened is remembered on the device.
  */
 
 const SEGMENTS: Array<{ id: DiarySegment; label: string }> = [
   { id: 'diary', label: 'Дневник' },
-  { id: 'recaps', label: 'Итоги' },
-  { id: 'year', label: 'Год' },
+  { id: 'journal', label: 'Журнал' },
 ]
 
 /** Set once the person has chosen a segment by hand: the stored one is for opening the tab, not for going back. */
@@ -34,6 +33,7 @@ export default function DiaryShell({
 }) {
   // Which segment was opened, once per opening of the page: never what is on it.
   useEffect(() => {
+    // The journal has its own event (an entry opened); only the diary card counts as «diary opened».
     track(AnalyticsEvent.DiaryOpened, { tab: segment })
   }, [segment])
 
@@ -46,10 +46,14 @@ export default function DiaryShell({
   }
 
   return (
-    <Page name="diary" className="rd-diary-page ph-no-capture" onPageTabShow={onTabShow}>
+    <Page
+      name="diary"
+      className={`rd-diary-page ph-no-capture${segment === 'journal' ? ' rd-journal-page' : ''}`}
+      onPageTabShow={onTabShow}
+    >
       <Navbar title="Дневник" />
       <SosButton slot="fixed" source="header" />
-      <div className="rd-diary">
+      <div className={segment === 'journal' ? 'rd-diary rd-diary--journal' : 'rd-diary'}>
         <div className="rd-segment rd-diary-segments" role="radiogroup" aria-label="Раздел дневника">
           {SEGMENTS.map((item) => (
             <button

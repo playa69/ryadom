@@ -19,9 +19,6 @@ export type MoodSource = (typeof MOOD_SOURCES)[number]
 
 /** Marked days a week needs before "Week summary" can be made. */
 export const WEEK_SUMMARY_MIN_DAYS = 3
-/** Week summaries a year story needs; "Add more" appears after this many more. */
-export const YEAR_STORY_MIN_WEEKS = 6
-export const YEAR_STORY_EXTEND_WEEKS = 4
 /** Days back a note without network may be written for (the offline queue). */
 export const MOOD_BACKFILL_MAX_DAYS = 7
 /** After 3 days of "hard" in a row the bridge to the conversation says more. */
@@ -30,8 +27,6 @@ export const MOOD_HARD_STREAK_DAYS = 3
 export enum DiaryApiErrorCode {
   /** Fewer marked days in the week than `WEEK_SUMMARY_MIN_DAYS`. */
   NOT_ENOUGH_DAYS = 'NOT_ENOUGH_DAYS',
-  /** Fewer week summaries than `YEAR_STORY_MIN_WEEKS`. */
-  NOT_ENOUGH_WEEKS = 'NOT_ENOUGH_WEEKS',
   /** The summary of this period was made less than a day ago. */
   TOO_SOON = 'TOO_SOON',
   /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
@@ -48,8 +43,8 @@ export interface MoodCheckinApi {
 }
 
 export interface DiarySummaryApi {
-  kind: 'week' | 'year'
-  /** `YYYY-MM-DD`: Monday of the week, or 1 January of the year. */
+  kind: 'week'
+  /** `YYYY-MM-DD`: Monday of the week. */
   periodStart: string
   text: string
   generatedAt: string
@@ -69,6 +64,8 @@ export interface DiaryApiResponse {
    */
   streak: number
   week: { start: string; markedDays: number; summary: DiarySummaryApi | null }
+  /** The final summary of the last finished week (closed by the scheduler), or null while it has none. */
+  previousWeek: DiarySummaryApi | null
 }
 
 /** `PUT /api/diary/checkins/today`: save or replace; `date` is for the offline queue only. */
@@ -87,18 +84,6 @@ export interface PutMoodCheckinApiResponse {
   hardStreak: number
 }
 
-/** `GET /api/diary/year?year=2026`. */
-export interface DiaryYearApiResponse {
-  year: number
-  days: MoodCheckinApi[]
-  markedDays: number
-  mostFrequent: MoodLevel | null
-  /** Final week summaries of the year so far. */
-  weeklyCount: number
-  /** `weeklyCount` is how many week summaries the text was written from: "Add more" needs four more. */
-  story: { text: string; generatedAt: string; weeklyCount: number } | null
-}
-
 /** `GET /api/diary/summaries?kind=week&before=<periodStart>`, newest first. */
 export interface DiarySummariesApiResponse {
   items: DiarySummaryApi[]
@@ -109,11 +94,6 @@ export interface DiarySummariesApiResponse {
 export interface CreateWeekSummaryApiRequest {
   /** `YYYY-MM-DD`, Monday. */
   weekStart: string
-}
-
-/** `POST /api/diary/summaries/year`. */
-export interface CreateYearStoryApiRequest {
-  year: number
 }
 
 /** `GET /api/diary/events?week=<weekStart>`: notes of the week from the agent's memory. */

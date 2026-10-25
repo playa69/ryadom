@@ -9,7 +9,6 @@ import { getDb } from '@ryadom/core/shared'
 import {
   DiaryApiErrorCode,
   type DiaryApiResponse,
-  type DiaryYearApiResponse,
   type PutMoodCheckinApiResponse,
   type WidgetTokenApiResponse,
 } from '@ryadom/contracts/api/diary'
@@ -49,8 +48,7 @@ describe('отметка в два касания', () => {
     expect(diary.recent).toHaveLength(1)
     expect(diary).not.toHaveProperty('reminder')
 
-    const year = ok<DiaryYearApiResponse>(await call(app, 'GET', '/api/diary/year', undefined, token))
-    expect(year).toMatchObject({ markedDays: 1, mostFrequent: 4, weeklyCount: 0, story: null })
+    expect(diary.previousWeek).toBeNull()
   })
 
   it('экран отдаёт серию и окно графика за 28 дней', async () => {
@@ -125,11 +123,6 @@ describe('итоги недели', () => {
     )
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Готово.', stats: {} }) })
     ok(await call(app, 'POST', '/api/diary/summaries/week', { weekStart: dayOfThisWeek(0) }, token))
-  })
-
-  it('история года: меньше шести итогов — NOT_ENOUGH_WEEKS', async () => {
-    const { token } = await signedIn()
-    refusedWith(await call(app, 'POST', '/api/diary/summaries/year', { year: 2026 }, token), DiaryApiErrorCode.NOT_ENOUGH_WEEKS)
   })
 
   it('события недели: пустой список и признак «память включена»', async () => {

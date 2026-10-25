@@ -9,7 +9,7 @@ export interface MoodCheckinDTO {
   updatedAt: Date
 }
 
-/** The text of a week or a year, written by the agent and kept by the app. */
+/** The text of a week, written by the agent and kept by the app. */
 export interface DiarySummaryDTO {
   kind: DiarySummaryKind
   periodStart: string

@@ -54,20 +54,13 @@ def test_hard_week_ends_with_a_soft_line_about_people(client, user_id):
     assert "люди" in reply["text"]
 
 
-def test_year_uses_the_weekly_texts_and_has_at_most_twelve_sentences(client, user_id):
-    reply = post(client, user_id, {"kind": "year", "periodStart": "2026-01-01", "marks": marks(2, 3, 4), "weekly": ["Неделя раз.", "Неделя два."]}).json()
-    assert "история" in reply["text"]
-    assert len(re.findall(r"[.!?]", reply["text"])) <= 12
-    assert not FORBIDDEN.search(reply["text"])
-
-
 def test_validation(client, user_id):
     bad = [
         {**WEEK, "marks": [{"date": "2026-10-19", "mood": 6}]},
         {**WEEK, "marks": [{"date": "19.10.2026", "mood": 3}]},
         {**WEEK, "periodStart": "вчера", "marks": marks(3)},
         {"kind": "month", "periodStart": "2026-10-19", "marks": marks(3)},
-        {"kind": "year", "periodStart": "2026-01-01", "marks": [{"date": "2026-01-01", "mood": 3}] * 367},
+        {"kind": "year", "periodStart": "2026-01-01", "marks": marks(3)},
         {**WEEK, "marks": marks(3) * 8},
     ]
     for body in bad:
@@ -117,11 +110,10 @@ def test_model_failure_is_a_502_without_the_body(user_id):
 def test_prompt_forbids_quoting():
     from app.services import digests
 
-    system = digests.build_messages("week", "2026-10-19", marks(3, 3, 4), [])[0]["content"]
-    task = digests.build_messages("week", "2026-10-19", marks(3, 3, 4), [])[1]["content"]
+    system = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[0]["content"]
+    task = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[1]["content"]
     assert "Не цитируй" in system
     assert "Без цитат" in task
-    assert "Без цитат" in digests.build_messages("year", "2026-01-01", marks(3), ["Неделя."])[1]["content"]
 
 
 def test_quotation_marks_with_more_than_two_words_are_a_quotation():

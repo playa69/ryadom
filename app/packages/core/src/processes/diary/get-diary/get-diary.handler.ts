@@ -18,12 +18,16 @@ export class GetDiaryOperationHandler implements RequestHandler<GetDiaryOperatio
     if (!zone) return { success: false, error: GetDiaryOperationErrorCode.USER_NOT_FOUND }
     const local = localMoment(now, zone)
     const start = weekStart(local.date)
-    const [recentDays, weekDays, summaries, streak] = await Promise.all([
+    const lastWeek = addDaysToDate(start, -7)
+    const [recentDays, weekDays, summaries, previous, streak] = await Promise.all([
       checkinsBetween(c.userId, addDaysToDate(local.date, -(RECENT_DAYS - 1)), local.date),
       checkinsBetween(c.userId, start, addDaysToDate(start, 6)),
       diaryManager.execute(new ListDiarySummariesQuery({ userId: c.userId, kind: 'week', from: start, to: start, limit: 1 })),
+      diaryManager.execute(new ListDiarySummariesQuery({ userId: c.userId, kind: 'week', from: lastWeek, to: lastWeek, limit: 1 })),
       markStreak(c.userId, local.date),
     ])
+    // Only a final summary (closed by the scheduler) is shown as «last week»; a button-made draft of that week is not.
+    const previousWeek = previous.summaries[0]?.stats?.final === true ? previous.summaries[0] : null
     return {
       success: true,
       diary: {
@@ -31,6 +35,7 @@ export class GetDiaryOperationHandler implements RequestHandler<GetDiaryOperatio
         recent: recentDays,
         streak,
         week: { start, markedDays: weekDays.length, summary: summaries.summaries[0] ?? null },
+        previousWeek,
       },
     }
   }

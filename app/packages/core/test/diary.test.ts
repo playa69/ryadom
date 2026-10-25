@@ -1,6 +1,6 @@
 /**
  * The mood diary on the real core and database (`REQ-WELL-01`, `openspec/changes/add-mood-diary`):
- * the local day, one note a day, the week and year summaries the agent writes and the app keeps.
+ * the local day, one note a day, the week summaries the agent writes and the app keeps.
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
@@ -8,14 +8,11 @@ import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import {
   CreateWeekSummaryOperation,
   CreateWidgetTokenOperation,
-  CreateYearStoryOperation,
   CreateWeekSummaryOperationErrorCode,
-  CreateYearStoryOperationErrorCode,
   PutMoodCheckinOperationErrorCode,
   diaryProcess,
   GetDiaryEventsOperation,
   GetDiaryOperation,
-  GetYearOperation,
   ListWeekSummariesOperation,
   PutMoodCheckinOperation,
   RunWeeklyDigestsOperation,
@@ -238,52 +235,6 @@ describe('итоги недели в понедельник и история г
     await mark(user.id, '2026-10-19')
     expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 0 })
   })
-
-  it('шестой окончательный итог недели приносит историю года; «Дописать» — после ещё четырёх', async () => {
-    const user = await registerConfirmedUser()
-    const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
-    const seed = async (monday: string) => {
-      await getDb().insert(diarySummaries).values({
-        userId: user.id, kind: 'week', periodStart: monday, text: `итог ${monday}`, stats: { final: true }, generatedAt: new Date('2026-09-01T00:00:00Z'),
-      })
-    }
-    const mondays = ['2026-08-31', '2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28']
-    for (const monday of mondays) await seed(monday)
-    expect(
-      await diaryProcess.execute(new CreateYearStoryOperation({ userId: user.id, year: 2026, now: NOW })),
-    ).toEqual({ success: false, error: CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS })
-
-    await weekOfMarks(user.id, '2026-10-19')
-    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 1, yearly: 1 })
-    const yearCall = calls.find((c) => JSON.parse(c.body as string).kind === 'year')
-    expect(JSON.parse(yearCall!.body as string).weekly).toHaveLength(6)
-
-    const year = await diaryProcess.execute(new GetYearOperation({ userId: user.id, year: 2026, now: NOW }))
-    if (!year.success) throw new Error('refused')
-    expect(year.year).toMatchObject({ weeklyCount: 6, story: { weeklyCount: 6 } })
-
-    // Not enough new weeks for «Дописать» yet.
-    expect(
-      await diaryProcess.execute(new CreateYearStoryOperation({ userId: user.id, year: 2026, now: NOW })),
-    ).toEqual({ success: false, error: CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS })
-    for (const monday of ['2026-10-05', '2026-10-12', '2026-10-26', '2026-11-02']) await seed(monday)
-    expect(
-      (await diaryProcess.execute(new CreateYearStoryOperation({ userId: user.id, year: 2026, now: NOW }))).success,
-    ).toBe(true)
-  })
-})
-
-describe('год в пикселях', () => {
-  it('отдаёт отмеченные дни, их число и самый частый уровень (при равенстве — выше)', async () => {
-    const user = await registerConfirmedUser()
-    await mark(user.id, '2026-01-10', 2)
-    await mark(user.id, '2026-02-10', 4)
-    await mark(user.id, '2026-10-19', 3, 'work')
-    const result = await diaryProcess.execute(new GetYearOperation({ userId: user.id, year: 2026, now: NOW }))
-    if (!result.success) throw new Error('refused')
-    expect(result.year).toMatchObject({ markedDays: 3, mostFrequent: 4, weeklyCount: 0, story: null })
-    expect(result.year.days.find((d) => d.date === '2026-10-19')).toMatchObject({ mood: 3, factor: 'work' })
-  })
 })
 
 describe('удаление аккаунта', () => {
@@ -372,7 +323,7 @@ describe('тик итогов недели: период занимает одн
   })
 })
 
-describe('удаление разговора: итоги недели и года пересобираются', () => {
+describe('удаление разговора: итоги недели пересобираются', () => {
   const dialogAt = new Date('2026-10-07T10:00:00Z') // Wednesday of the week of 5 Oct, a finished week
   const digestCalls = (calls: { url: URL; body: string }[]) => calls.filter((c) => c.url.pathname.endsWith('/digests'))
 
@@ -384,49 +335,42 @@ describe('удаление разговора: итоги недели и год
   const recompute = (userId: string, at = dialogAt) => recomputeSummariesAfterDialogDeleted({ userId, dialogAt: at, now: NOW })
   const rowsOf = (userId: string) => getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, userId))
 
-  it('текст недели и история года пропадают сразу; тик пишет неделю заново один раз (две реплики), затем год', async () => {
+  it('текст недели пропадает сразу; тик пишет неделю заново один раз (две реплики)', async () => {
     const user = await registerConfirmedUser()
     for (const day of ['05', '06', '07']) await mark(user.id, `2026-10-${day}`)
     for (const monday of ['2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05', '2026-10-12']) await finalWeek(user.id, monday)
-    await getDb().insert(diarySummaries).values({
-      userId: user.id, kind: 'year', periodStart: '2026-01-01', text: 'история года', stats: { weeklyCount: 6 }, generatedAt: new Date('2026-10-01T00:00:00Z'),
-    })
 
-    expect(await recompute(user.id)).toEqual({ success: true, weekDeleted: true, yearDeleted: true, scheduled: true })
+    expect(await recompute(user.id)).toEqual({ success: true, weekDeleted: true, scheduled: true })
 
     // At once: the retelling is gone from every place that shows it.
     const listed = await diaryProcess.execute(new ListWeekSummariesOperation({ userId: user.id }))
     if (!listed.success) throw new Error('refused')
     expect(listed.summaries.map((x) => x.periodStart)).not.toContain('2026-10-05')
     expect(listed.summaries).toHaveLength(5)
-    const year = await diaryProcess.execute(new GetYearOperation({ userId: user.id, year: 2026, now: NOW }))
-    if (!year.success) throw new Error('refused')
-    expect(year.year).toMatchObject({ weeklyCount: 5, story: null })
 
-    // The scheduler writes it again; two replicas at once ask the agent once for the week and once for the year.
+    // The scheduler writes it again; two replicas at once ask the agent once for the week.
     const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
     await Promise.all([
       diaryProcess.execute(new RunWeeklyDigestsOperation({ now: NOW })),
       diaryProcess.execute(new RunWeeklyDigestsOperation({ now: NOW })),
     ])
     const sent = digestCalls(calls).map((c) => JSON.parse(c.body).kind)
-    expect(sent.sort()).toEqual(['week', 'year'])
+    expect(sent).toEqual(['week'])
     const rows = await rowsOf(user.id)
     expect(rows.filter((r) => r.status === 'pending')).toEqual([])
     expect(rows.find((r) => r.kind === 'week' && r.periodStart === '2026-10-05')).toMatchObject({ status: 'ready', stats: { final: true } })
-    expect(rows.find((r) => r.kind === 'year')).toMatchObject({ status: 'ready', stats: { weeklyCount: 6 } })
     // Other weeks were not touched.
     expect(rows.find((r) => r.periodStart === '2026-09-14')?.text).toBe('итог 2026-09-14')
     // And a later pass has nothing left to do.
     await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: NOW }))
-    expect(digestCalls(calls)).toHaveLength(2)
+    expect(digestCalls(calls)).toHaveLength(1)
   })
 
   it('у недели осталось меньше трёх отмеченных дней: текст убран и заново не пишется, маркера не остаётся', async () => {
     const user = await registerConfirmedUser()
     for (const day of ['05', '06']) await mark(user.id, `2026-10-${day}`)
     await finalWeek(user.id, '2026-10-05')
-    expect(await recompute(user.id)).toMatchObject({ success: true, weekDeleted: true, yearDeleted: false, scheduled: true })
+    expect(await recompute(user.id)).toMatchObject({ success: true, weekDeleted: true, scheduled: true })
     const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
     await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: NOW }))
     expect(digestCalls(calls)).toHaveLength(0)
@@ -454,29 +398,46 @@ describe('удаление разговора: итоги недели и год
       userId: user.id, kind: 'week', periodStart: '2026-10-19', text: 'черновик', stats: { final: false }, generatedAt: NOW,
     })
     expect(await recompute(user.id, new Date('2026-08-05T10:00:00Z'))).toMatchObject({ weekDeleted: true, scheduled: false })
-    expect(await recompute(user.id, new Date('2026-10-22T10:00:00Z'))).toMatchObject({ weekDeleted: true, yearDeleted: false, scheduled: false })
+    expect(await recompute(user.id, new Date('2026-10-22T10:00:00Z'))).toMatchObject({ weekDeleted: true, scheduled: false })
     expect(await rowsOf(user.id)).toEqual([])
   })
 
   it('нет итога у недели: ничего не удаляется, для законченной недели ставится маркер; неизвестный человек — отказ', async () => {
     const user = await registerConfirmedUser()
-    expect(await recompute(user.id)).toEqual({ success: true, weekDeleted: false, yearDeleted: false, scheduled: true })
+    expect(await recompute(user.id)).toEqual({ success: true, weekDeleted: false, scheduled: true })
     expect(await recompute('00000000-0000-4000-8000-000000000000')).toMatchObject({ success: false })
   })
 
-  it('строки «считается» и маркеры не видны ни в экране дневника, ни в списках, ни в годе', async () => {
+  it('строки «считается» и маркеры не видны ни в экране дневника, ни в списках', async () => {
     const user = await registerConfirmedUser()
     await getDb().insert(diarySummaries).values([
       { userId: user.id, kind: 'week', periodStart: '2026-10-19', text: '', status: 'pending', generatedAt: NOW },
       { userId: user.id, kind: 'week', periodStart: '2026-10-05', text: '', status: 'pending', stats: { recompute: true }, generatedAt: new Date(0) },
-      { userId: user.id, kind: 'year', periodStart: '2026-01-01', text: '', status: 'pending', stats: { recompute: true }, generatedAt: new Date(0) },
     ])
     const diary = await diaryProcess.execute(new GetDiaryOperation({ userId: user.id, now: NOW }))
     if (!diary.success) throw new Error('refused')
     expect(diary.diary.week.summary).toBeNull()
     expect(await diaryProcess.execute(new ListWeekSummariesOperation({ userId: user.id }))).toMatchObject({ summaries: [] })
-    const year = await diaryProcess.execute(new GetYearOperation({ userId: user.id, year: 2026, now: NOW }))
-    if (!year.success) throw new Error('refused')
-    expect(year.year).toMatchObject({ weeklyCount: 0, story: null })
+  })
+})
+
+describe('итог прошлой недели на экране', () => {
+  it('previousWeek — окончательный итог прошлой недели; черновик и чужая неделя не подходят', async () => {
+    const user = await registerConfirmedUser()
+    const read = async () => {
+      const diary = await diaryProcess.execute(new GetDiaryOperation({ userId: user.id, now: NOW }))
+      if (!diary.success) throw new Error('refused')
+      return diary.diary.previousWeek
+    }
+    expect(await read()).toBeNull()
+    const row = { userId: user.id, kind: 'week' as const, generatedAt: NOW }
+    // A draft of the previous week and a final one of the week before it do not count.
+    await getDb().insert(diarySummaries).values([
+      { ...row, periodStart: '2026-10-12', text: 'черновик', stats: { final: false } },
+      { ...row, periodStart: '2026-10-05', text: 'давняя', stats: { final: true } },
+    ])
+    expect(await read()).toBeNull()
+    await getDb().update(diarySummaries).set({ stats: { final: true }, text: 'прошлая' }).where(eq(diarySummaries.periodStart, '2026-10-12'))
+    expect(await read()).toMatchObject({ periodStart: '2026-10-12', text: 'прошлая' })
   })
 })

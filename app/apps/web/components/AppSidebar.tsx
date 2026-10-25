@@ -38,7 +38,7 @@ import { BrandMark } from './Brand'
 /** An open conversation is resumed in the dialog screen; a finished one opens read-only in the journal. */
 function itemHref(item: DialogListItemApiResponse): string {
   const id = encodeURIComponent(item.dialogId)
-  return item.endedAt ? `/journal/${id}` : `/dialog/${id}`
+  return item.endedAt ? `/diary/journal/${id}` : `/dialog/${id}`
 }
 
 function itemTitle(item: DialogListItemApiResponse): string {
@@ -229,7 +229,7 @@ export default function AppSidebar() {
                 size="sm"
                 className="h-10 w-full justify-start px-3 text-[0.9375rem] font-medium text-dim hover:text-foreground aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-foreground"
               >
-                <Link href="/journal" aria-current={pathname === '/journal' ? 'page' : undefined}>
+                <Link href="/diary/journal" aria-current={pathname === '/diary/journal' ? 'page' : undefined}>
                   Все разговоры
                 </Link>
               </Button>

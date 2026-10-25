@@ -1,5 +1,5 @@
 {
-  "id": "8e202cff-4cb5-43e8-9d61-923880b4e905",
+  "id": "be876731-7dbe-44df-bc83-50fa0bc595b3",
   "prevId": "6745c8dc-5c50-4be9-b464-63b436eedef2",
   "version": "7",
   "dialect": "postgresql",
@@ -1067,7 +1067,7 @@
       "checkConstraints": {
         "diary_summaries_kind_check": {
           "name": "diary_summaries_kind_check",
-          "value": "\"diary_summaries\".\"kind\" in ('week', 'year')"
+          "value": "\"diary_summaries\".\"kind\" = 'week'"
         },
         "diary_summaries_status_check": {
           "name": "diary_summaries_status_check",

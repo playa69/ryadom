@@ -27,9 +27,6 @@ export const PROCESSES_CONFIG = {
   DIARY: {
     /** Marked days of a week before «Collect the week summary» is offered (`REQ-WELL-01`). */
     WEEK_SUMMARY_MIN_DAYS: 3,
-    /** Final week summaries of a year before the year story is written, and how many more «Add more» needs. */
-    YEAR_STORY_MIN_WEEKS: 6,
-    YEAR_STORY_EXTEND_WEEKS: 4,
     /** A summary of the same period is made at most once in this long. */
     SUMMARY_COOLDOWN_MS: 24 * 60 * 60 * 1000,
     /** The finished week is closed after this local time on Monday. */

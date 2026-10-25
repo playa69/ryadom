@@ -91,12 +91,10 @@ import {
 import {
   DiaryApiErrorCode,
   type CreateWeekSummaryApiRequest,
-  type CreateYearStoryApiRequest,
   type DiaryApiResponse,
   type DiaryEventsApiResponse,
   type DiarySummariesApiResponse,
   type DiarySummaryApi,
-  type DiaryYearApiResponse,
   type PutMoodCheckinApiRequest,
   type PutMoodCheckinApiResponse,
   type WidgetTokenApiResponse,
@@ -789,9 +787,6 @@ export function createClient(config: ClientConfig) {
         body: data,
       }),
 
-    getDiaryYear: (year?: number): Promise<DiaryYearApiResponse> =>
-      apiFetch<DiaryYearApiResponse>(`${ApiPath.DiaryYear}${year ? `?year=${year}` : ''}`),
-
     listDiarySummaries: (before?: string): Promise<DiarySummariesApiResponse> =>
       apiFetch<DiarySummariesApiResponse>(
         `${ApiPath.DiarySummaries}?kind=week${before ? `&before=${encodeURIComponent(before)}` : ''}`,
@@ -801,11 +796,6 @@ export function createClient(config: ClientConfig) {
       data: CreateWeekSummaryApiRequest,
     ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
       apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
-
-    createYearStory: (
-      data: CreateYearStoryApiRequest,
-    ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
-      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryYearSummary, { method: 'POST', body: data }),
 
     getDiaryEvents: (week?: string): Promise<DiaryEventsApiResponse> =>
       apiFetch<DiaryEventsApiResponse>(`${ApiPath.DiaryEvents}${week ? `?week=${encodeURIComponent(week)}` : ''}`),

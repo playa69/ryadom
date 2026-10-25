@@ -60,10 +60,8 @@ export const {
   exportMemory,
   getDiary,
   putMoodCheckin,
-  getDiaryYear,
   listDiarySummaries,
   createWeekSummary,
-  createYearStory,
   getDiaryEvents,
   createWidgetToken,
 } = client

@@ -15,7 +15,6 @@ export class CreateAgentDigestRequestHandler implements RequestHandler<CreateAge
           kind: request.kind,
           periodStart: request.periodStart,
           marks: request.marks,
-          ...(request.kind === 'year' ? { weekly: request.weekly } : {}),
         },
       },
     )

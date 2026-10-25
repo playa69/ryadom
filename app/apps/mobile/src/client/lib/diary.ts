@@ -3,13 +3,12 @@ import { useSyncExternalStore } from 'react'
 import type {
   DiaryApiResponse,
   DiaryEventsApiResponse,
-  DiaryYearApiResponse,
   MoodCheckinApi,
   MoodFactor,
   MoodLevel,
 } from '@ryadom/contracts/api/diary'
 import { weekStartOf } from '@ryadom/client-core/diary'
-import { ApiError, NETWORK_ERROR_STATUS, apiErrorText, getDiary, getDiaryEvents, getDiaryYear, putMoodCheckin } from './api'
+import { ApiError, NETWORK_ERROR_STATUS, apiErrorText, getDiary, getDiaryEvents, putMoodCheckin } from './api'
 import {
   deviceDate,
   enqueueMark,
@@ -28,11 +27,11 @@ import {
 const QUEUE_KEY = 'ryadom.diary.queue'
 const SEGMENT_KEY = 'ryadom.diary.segment'
 
-export type DiarySegment = 'diary' | 'recaps' | 'year'
+/** «Тесты» (PROTEUS-218) will be the third one. */
+export type DiarySegment = 'diary' | 'journal'
 export const SEGMENT_URLS: Record<DiarySegment, string> = {
   diary: '/diary/',
-  recaps: '/diary/recaps/',
-  year: '/diary/year/',
+  journal: '/diary/journal/',
 }
 
 export async function rememberedSegment(): Promise<DiarySegment> {
@@ -205,10 +204,6 @@ export function useDiary(): DiaryState {
 
 /** The week of the diary as `YYYY-MM-DD` of its Monday (the week the card shows). */
 export const currentWeekStart = (): string => weekStartOf(deviceDate())
-
-export function loadDiaryYear(year?: number): Promise<DiaryYearApiResponse> {
-  return getDiaryYear(year)
-}
 
 export function loadDiaryEvents(week: string): Promise<DiaryEventsApiResponse> {
   return getDiaryEvents(week)

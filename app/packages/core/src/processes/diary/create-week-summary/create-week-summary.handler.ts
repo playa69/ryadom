@@ -37,8 +37,6 @@ export class CreateWeekSummaryOperationHandler implements RequestHandler<CreateW
         return { success: false, error: CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS }
       case DigestFailureCode.SUMMARY_UNAVAILABLE:
         return { success: false, error: CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE }
-      case DigestFailureCode.NOT_ENOUGH_WEEKS:
-        throw new Error('A week summary does not depend on other weeks')
       default:
         return assertNever(made.error)
     }

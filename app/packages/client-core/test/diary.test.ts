@@ -2,9 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   bridgeFor,
   buildRollingChart,
-  buildYearGrid,
   CHART_MIN_SLOTS,
-  dayCaption,
   daysBetween,
   isoWeekday,
   moodInsight,
@@ -17,18 +15,6 @@ describe('помощники дневника (REQ-WELL-01)', () => {
   it('самый частый уровень: при равенстве — более высокий', () => {
     expect(mostFrequentMood([{ mood: 2 }, { mood: 4 }, { mood: 4 }, { mood: 2 }])).toBe(4)
     expect(mostFrequentMood([])).toBeNull()
-  })
-
-  it('подпись клетки года', () => {
-    expect(dayCaption({ date: '2026-10-19', mood: 3, factor: 'work' })).toBe('19 октября — нормально · Работа')
-  })
-
-  it('сетка года: 12 месяцев без несуществующих дат, будущее отмечено', () => {
-    const grid = buildYearGrid(2026, [{ date: '2026-02-03', mood: 5, factor: null }], '2026-10-24')
-    expect(grid.map((row) => row.length)).toEqual([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31])
-    expect(grid[1]![2]!.entry?.mood).toBe(5)
-    expect(grid[10]![0]!.future).toBe(true)
-    expect(grid[9]![23]!.future).toBe(false)
   })
 
   it('неделя начинается с понедельника; мост после «тяжело» и «так себе»', () => {

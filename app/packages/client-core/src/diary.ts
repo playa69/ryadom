@@ -8,7 +8,7 @@ import {
 
 /**
  * Pure helpers of the mood diary screens (`REQ-WELL-01`), shared by the mobile client and the web:
- * words, dates, the rolling chart, the year grid. Nothing here touches the network or the clock.
+ * words, dates, the rolling chart. Nothing here touches the network or the clock.
  */
 
 export const MOOD_LABELS: Record<MoodLevel, string> = {
@@ -70,12 +70,6 @@ export function longDate(date: string): string {
   return `${day} ${MONTHS_GENITIVE[month - 1] ?? ''}`
 }
 
-/** `19 октября — нормально · Работа`: what a tap on a year cell says. */
-export function dayCaption(entry: MoodCheckinApi): string {
-  const factor = entry.factor ? ` · ${FACTOR_LABELS[entry.factor]}` : ''
-  return `${longDate(entry.date)} — ${MOOD_LABELS[entry.mood].toLowerCase()}${factor}`
-}
-
 /** The most frequent level of the notes; a tie goes to the higher level. Null without notes. */
 export function mostFrequentMood(days: readonly Pick<MoodCheckinApi, 'mood'>[]): MoodLevel | null {
   const counts = new Map<MoodLevel, number>()
@@ -99,28 +93,6 @@ export function plural(n: number, one: string, few: string, many: string): strin
   if (mod10 === 1) return one
   if (mod10 >= 2 && mod10 <= 4) return few
   return many
-}
-
-export interface YearCell {
-  date: string
-  day: number
-  entry: MoodCheckinApi | null
-  future: boolean
-}
-
-/** 12 rows of months; each row holds only the days the month has (no 31 February). */
-export function buildYearGrid(
-  year: number,
-  days: readonly MoodCheckinApi[],
-  today: string,
-): YearCell[][] {
-  const byDate = new Map(days.map((d) => [d.date, d]))
-  return Array.from({ length: 12 }, (_, m) =>
-    Array.from({ length: daysInMonth(year, m + 1) }, (_, d) => {
-      const date = toDate(year, m + 1, d + 1)
-      return { date, day: d + 1, entry: byDate.get(date) ?? null, future: date > today }
-    }),
-  )
 }
 
 /** Monday of the ISO week of a `YYYY-MM-DD` date. */

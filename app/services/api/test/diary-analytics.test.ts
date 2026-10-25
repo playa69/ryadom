@@ -29,7 +29,6 @@ function dayOfThisWeek(n: number): string {
 const DIARY_EVENTS: string[] = [
   AnalyticsEvent.MoodCheckedIn,
   AnalyticsEvent.WeekSummaryGenerated,
-  AnalyticsEvent.YearStoryGenerated,
   AnalyticsEvent.DiarySummaryRefused,
 ]
 const diaryEvents = () => analytics.events.filter((e) => DIARY_EVENTS.includes(e.event))
@@ -67,14 +66,12 @@ describe('аналитика дневника', () => {
     ok(await call(app, 'PUT', '/api/diary/checkins/today', { mood: 3 }, token))
     const week = { weekStart: dayOfThisWeek(0) }
     await call(app, 'POST', '/api/diary/summaries/week', week, token)
-    await call(app, 'POST', '/api/diary/summaries/year', { year: new Date().getUTCFullYear() }, token)
     // Three marked days and a dead agent: the third kind of refusal.
     for (const n of [1, 2]) await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(n), mood: 2, source: 'app' }).onConflictDoNothing()
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({}, 502) })
     await call(app, 'POST', '/api/diary/summaries/week', week, token)
     expect(diaryEvents().filter((e) => e.event === AnalyticsEvent.DiarySummaryRefused).map((e) => e.properties)).toEqual([
       { kind: 'week', reason: 'not_enough' },
-      { kind: 'year', reason: 'not_enough' },
       { kind: 'week', reason: 'agent_unavailable' },
     ])
     expectNoPersonalData()

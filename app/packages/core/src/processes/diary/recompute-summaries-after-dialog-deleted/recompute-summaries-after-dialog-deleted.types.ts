@@ -3,9 +3,9 @@ export enum RecomputeSummariesAfterDialogDeletedOperationErrorCode {
 }
 
 /**
- * `weekDeleted` / `yearDeleted`: a text was removed. `scheduled`: a rebuild marker was left for the week
+ * `weekDeleted`: the week text was removed. `scheduled`: a rebuild marker was left for the week
  * (only for a finished week; the current week is rebuilt by the person's own button).
  */
 export type RecomputeSummariesAfterDialogDeletedResult =
-  | { success: true; weekDeleted: boolean; yearDeleted: boolean; scheduled: boolean }
+  | { success: true; weekDeleted: boolean; scheduled: boolean }
   | { success: false; error: RecomputeSummariesAfterDialogDeletedOperationErrorCode }

@@ -18,7 +18,7 @@ import { users } from './users'
 export type MoodSource = 'app' | 'widget' | 'reminder' | 'telegram'
 /** The one factor a person may name beside the mood. */
 export type MoodFactor = 'work' | 'people' | 'health' | 'money' | 'sleep'
-export type DiarySummaryKind = 'week' | 'year'
+export type DiarySummaryKind = 'week'
 /** `pending`: a replica has taken the period and the agent is writing; `ready`: the text is there (design D9). */
 export type DiarySummaryStatus = 'pending' | 'ready'
 
@@ -54,7 +54,7 @@ export const moodCheckins = pgTable(
   ],
 )
 
-/** The agent writes the text, the app keeps it: a week or a year story of the diary. */
+/** The agent writes the text, the app keeps it: the summary of a week of the diary. */
 export const diarySummaries = pgTable(
   'diary_summaries',
   {
@@ -71,7 +71,7 @@ export const diarySummaries = pgTable(
   },
   (t) => [
     unique('diary_summaries_user_kind_period_unique').on(t.userId, t.kind, t.periodStart),
-    check('diary_summaries_kind_check', sql`${t.kind} in ('week', 'year')`),
+    check('diary_summaries_kind_check', sql`${t.kind} = 'week'`),
     check('diary_summaries_status_check', sql`${t.status} in ('pending', 'ready')`),
   ],
 )

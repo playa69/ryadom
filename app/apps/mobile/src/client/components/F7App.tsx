@@ -52,7 +52,6 @@ const f7params = {
 
 const TABS = [
   { id: TAB_IDS.home, url: '/home/', label: 'Главная', icon: 'house', iconActive: 'house_fill' },
-  { id: TAB_IDS.journal, url: '/journal/', label: 'Журнал', icon: 'book', iconActive: 'book_fill' },
   // The mood diary (`REQ-WELL-01`), on for everyone.
   { id: TAB_IDS.diary, url: '/diary/', label: 'Дневник', icon: 'face_smiling', iconActive: 'face_smiling_fill' },
   {

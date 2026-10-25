@@ -8,7 +8,7 @@ CREATE TABLE "diary_summaries" (
 	"stats" jsonb,
 	"generated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "diary_summaries_user_kind_period_unique" UNIQUE("user_id","kind","period_start"),
-	CONSTRAINT "diary_summaries_kind_check" CHECK ("diary_summaries"."kind" in ('week', 'year')),
+	CONSTRAINT "diary_summaries_kind_check" CHECK ("diary_summaries"."kind" = 'week'),
 	CONSTRAINT "diary_summaries_status_check" CHECK ("diary_summaries"."status" in ('pending', 'ready'))
 );
 --> statement-breakpoint

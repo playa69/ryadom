@@ -3,15 +3,11 @@ import {
   CreateWidgetTokenOperation,
   CreateWidgetTokenOperationErrorCode,
   CreateWeekSummaryOperationErrorCode,
-  CreateYearStoryOperation,
-  CreateYearStoryOperationErrorCode,
   diaryProcess,
   GetDiaryEventsOperation,
   GetDiaryEventsOperationErrorCode,
   GetDiaryOperation,
   GetDiaryOperationErrorCode,
-  GetYearOperation,
-  GetYearOperationErrorCode,
   ListWeekSummariesOperation,
   ListWeekSummariesOperationErrorCode,
   PutMoodCheckinOperation,
@@ -32,7 +28,6 @@ import {
   type DiaryEventsApiResponse,
   type DiarySummariesApiResponse,
   type DiarySummaryApi,
-  type DiaryYearApiResponse,
   type MoodCheckinApi,
   type MoodLevel,
   type PutMoodCheckinApiResponse,
@@ -70,11 +65,9 @@ const widgetCheckinBody = z.object({
   factor: factorSchema.nullable().optional(),
   date: dateSchema.optional(),
 })
-const yearQuery = z.object({ year: z.coerce.number().int().optional() })
 const summariesQuery = z.object({ kind: z.literal('week').optional(), before: dateSchema.optional() })
 const eventsQuery = z.object({ week: dateSchema.optional() })
 const weekBody = z.object({ weekStart: dateSchema })
-const yearBody = z.object({ year: z.number().int() })
 
 function perUser(limiter: RateLimiter, name: string, rule: RateLimitRule): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
@@ -95,35 +88,27 @@ const toSummary = (s: DiarySummaryDTO): DiarySummaryApi => ({
 type Refusal =
   | GetDiaryOperationErrorCode
   | PutMoodCheckinOperationErrorCode
-  | GetYearOperationErrorCode
   | ListWeekSummariesOperationErrorCode
   | CreateWeekSummaryOperationErrorCode
-  | CreateYearStoryOperationErrorCode
   | GetDiaryEventsOperationErrorCode
 
 function refuse(c: Context, error: Refusal): Response {
   switch (error) {
     case GetDiaryOperationErrorCode.USER_NOT_FOUND:
     case PutMoodCheckinOperationErrorCode.USER_NOT_FOUND:
-    case GetYearOperationErrorCode.USER_NOT_FOUND:
     case ListWeekSummariesOperationErrorCode.USER_NOT_FOUND:
     case CreateWeekSummaryOperationErrorCode.USER_NOT_FOUND:
-    case CreateYearStoryOperationErrorCode.USER_NOT_FOUND:
     case GetDiaryEventsOperationErrorCode.USER_NOT_FOUND:
       return apiError(c, 401, 'Unauthorised')
     case PutMoodCheckinOperationErrorCode.DATE_OUT_OF_RANGE:
     case CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE:
-    case GetYearOperationErrorCode.YEAR_OUT_OF_RANGE:
       // A date from the client that is not today or yesterday of the person: the spec's 422 (REQ-WELL-01).
       return apiError(c, 422, 'The date must be today or yesterday in your time zone')
     case CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS:
       return apiRefused(c, DiaryApiErrorCode.NOT_ENOUGH_DAYS, 'Not enough marked days')
-    case CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS:
-      return apiRefused(c, DiaryApiErrorCode.NOT_ENOUGH_WEEKS, 'Not enough week summaries')
     case CreateWeekSummaryOperationErrorCode.TOO_SOON:
       return apiRefused(c, DiaryApiErrorCode.TOO_SOON, 'The summary was made less than a day ago')
     case CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE:
-    case CreateYearStoryOperationErrorCode.SUMMARY_UNAVAILABLE:
       return apiRefused(c, DiaryApiErrorCode.SUMMARY_UNAVAILABLE, 'The agent could not write the summary')
     default:
       return assertNever(error)
@@ -132,16 +117,14 @@ function refuse(c: Context, error: Refusal): Response {
 
 /** The reason a summary was refused, as the fixed word analytics keeps; null for errors that are not a refusal of the ask. */
 function refusalReason(
-  error: CreateWeekSummaryOperationErrorCode | CreateYearStoryOperationErrorCode,
+  error: CreateWeekSummaryOperationErrorCode,
 ): DiarySummaryRefusal | null {
   switch (error) {
     case CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS:
-    case CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS:
       return 'not_enough'
     case CreateWeekSummaryOperationErrorCode.TOO_SOON:
       return 'too_soon'
     case CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE:
-    case CreateYearStoryOperationErrorCode.SUMMARY_UNAVAILABLE:
       return 'agent_unavailable'
     default:
       return null
@@ -154,7 +137,7 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
   const summary = perUser(rateLimiter, 'diary-summary', RATE_LIMITS.diarySummary.perUser)
 
   // The funnel of failures: that a summary was refused and why, never what it was about.
-  const reportRefusal = (userId: string, kind: DiarySummaryKind, error: CreateWeekSummaryOperationErrorCode | CreateYearStoryOperationErrorCode): void => {
+  const reportRefusal = (userId: string, kind: DiarySummaryKind, error: CreateWeekSummaryOperationErrorCode): void => {
     const reason = refusalReason(error)
     if (reason) analytics.capture(userId, AnalyticsEvent.DiarySummaryRefused, { kind, reason })
   }
@@ -172,6 +155,7 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
         markedDays: diary.week.markedDays,
         summary: diary.week.summary ? toSummary(diary.week.summary) : null,
       },
+      previousWeek: diary.previousWeek ? toSummary(diary.previousWeek) : null,
     }
     return apiOk(c, body)
   })
@@ -204,25 +188,6 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
     return apiOk(c, response)
   })
 
-  app.get(ApiPath.DiaryYear, requireAuth(jwt), requireActiveSession(sessions), read, queryParams(yearQuery), async (c) => {
-    const result = await diaryProcess.execute(
-      new GetYearOperation({ userId: authUser(c).userId, year: c.req.valid('query').year }),
-    )
-    if (!result.success) return refuse(c, result.error)
-    const { year } = result
-    const body: DiaryYearApiResponse = {
-      year: year.year,
-      days: year.days.map(toCheckin),
-      markedDays: year.markedDays,
-      mostFrequent: year.mostFrequent as MoodLevel | null,
-      weeklyCount: year.weeklyCount,
-      story: year.story
-        ? { text: year.story.text, generatedAt: year.story.generatedAt.toISOString(), weeklyCount: year.story.weeklyCount }
-        : null,
-    }
-    return apiOk(c, body)
-  })
-
   app.get(ApiPath.DiarySummaries, requireAuth(jwt), requireActiveSession(sessions), read, queryParams(summariesQuery), async (c) => {
     const result = await diaryProcess.execute(
       new ListWeekSummariesOperation({ userId: authUser(c).userId, before: c.req.valid('query').before }),
@@ -242,17 +207,6 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
       return refuse(c, result.error)
     }
     analytics.capture(userId, AnalyticsEvent.WeekSummaryGenerated, { trigger: 'button' })
-    return apiOk(c, toSummary(result.summary))
-  })
-
-  app.post(ApiPath.DiaryYearSummary, requireAuth(jwt), requireActiveSession(sessions), summary, jsonBody(yearBody), async (c) => {
-    const { userId } = authUser(c)
-    const result = await diaryProcess.execute(new CreateYearStoryOperation({ userId, year: c.req.valid('json').year }))
-    if (!result.success) {
-      reportRefusal(userId, 'year', result.error)
-      return refuse(c, result.error)
-    }
-    analytics.capture(userId, AnalyticsEvent.YearStoryGenerated, {})
     return apiOk(c, toSummary(result.summary))
   })
 

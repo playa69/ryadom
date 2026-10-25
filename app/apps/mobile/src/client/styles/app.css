@@ -2567,9 +2567,23 @@ input:-webkit-autofill:focus {
     padding-left: 16px;
   }
 
+  /* The segments stay on top; the two panes take the rest of the height. */
+  .rd-diary--journal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding-bottom: 0;
+  }
+
+  .rd-diary--journal > .rd-diary-segments {
+    flex: none;
+    margin-bottom: var(--ryadom-s-3);
+  }
+
   .rd-split {
     display: flex;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
   }
 
   .rd-split-side {
@@ -2844,37 +2858,6 @@ input:-webkit-autofill:focus {
   align-items: flex-start;
 }
 
-/* The year switch of «Год в пикселях»: small ghost round buttons, not the native grey squares. */
-.rd-chart-month {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.rd-chart-arrow {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--ryadom-text-dim);
-  cursor: pointer;
-}
-
-.rd-chart-arrow:active:not(:disabled) {
-  background: var(--ryadom-surface-2);
-}
-
-.rd-chart-arrow:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
 .rd-chart-area {
   fill: rgba(88, 130, 255, 0.18);
   stroke: none;
@@ -2965,111 +2948,4 @@ input:-webkit-autofill:focus {
   font-size: 15px;
   line-height: 1.5;
   color: var(--ryadom-text);
-}
-
-.rd-year {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: var(--ryadom-s-3) 0;
-}
-
-.rd-year-row {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-}
-
-.rd-year-month {
-  flex: none;
-  width: 26px;
-  font-size: 10px;
-  color: var(--ryadom-text-faint);
-}
-
-.rd-year-tick {
-  flex: 1 1 0;
-  min-width: 0;
-  font-size: 8px;
-  text-align: center;
-  color: var(--ryadom-text-faint);
-  overflow: visible;
-  white-space: nowrap;
-}
-
-.rd-year-cell {
-  flex: 1 1 0;
-  min-width: 0;
-  aspect-ratio: 1;
-  padding: 0;
-  border: 0;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.12);
-  cursor: pointer;
-}
-
-.rd-year-cell--future {
-  opacity: 0.5;
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.rd-year-cell--picked {
-  outline: 2px solid var(--ryadom-text);
-  outline-offset: 1px;
-}
-
-.rd-year-caption {
-  min-height: 1.4em;
-  margin: 0 0 var(--ryadom-s-3);
-  font-size: 14px;
-  text-align: center;
-  color: var(--ryadom-text);
-}
-
-.rd-year-legend {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: var(--ryadom-s-3);
-  font-size: 12px;
-  color: var(--ryadom-text-dim);
-}
-
-.rd-year-legend-cell {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-}
-
-.rd-year-plaques {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ryadom-s-2);
-  margin-bottom: var(--ryadom-s-3);
-}
-
-.rd-plaque {
-  flex: 1 1 140px;
-  padding: 10px 12px;
-  border: 1px solid var(--ryadom-line);
-  border-radius: var(--ryadom-r-m, 14px);
-  background: var(--ryadom-surface-2);
-  font-size: 14px;
-  text-align: center;
-  color: var(--ryadom-text);
-}
-
-.rd-progress {
-  height: 8px;
-  margin: var(--ryadom-s-3) 0;
-  border-radius: 4px;
-  background: var(--ryadom-surface-3);
-  overflow: hidden;
-}
-
-.rd-progress > span {
-  display: block;
-  height: 100%;
-  background: var(--ryadom-brand);
 }

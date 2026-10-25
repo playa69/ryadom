@@ -49,10 +49,8 @@ export enum ApiPath {
   /** The mood diary (`REQ-WELL-01`): the rest are under it. */
   Diary = '/api/diary',
   DiaryCheckinToday = '/api/diary/checkins/today',
-  DiaryYear = '/api/diary/year',
   DiarySummaries = '/api/diary/summaries',
   DiaryWeekSummary = '/api/diary/summaries/week',
-  DiaryYearSummary = '/api/diary/summaries/year',
   DiaryEvents = '/api/diary/events',
   /** Creates (`POST`) and revokes (`DELETE`) the token of the Android widget. */
   DiaryWidgetToken = '/api/diary/widget-token',

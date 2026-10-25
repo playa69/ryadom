@@ -89,8 +89,8 @@ test('история: сайдбар растёт с разговорами, «�
   await expect(nav(page).getByRole('link', { name: 'Все разговоры', exact: true })).toHaveCount(0)
   await closeSidebar(page)
 
-  await openWebApp(page, '/journal')
-  await expect(pageTitle(page)).toHaveText('Все разговоры')
+  await openWebApp(page, '/diary/journal')
+  await expect(pageTitle(page)).toHaveText('Дневник')
   await expect(page.getByTestId('journal-empty')).toContainText('Здесь появятся твои разговоры.')
   await expectSingleSos(page)
   await expectNoHorizontalOverflow(page)
@@ -118,7 +118,7 @@ test('история: сайдбар растёт с разговорами, «�
   await expect(historyItems(page).first()).toHaveText(TAKEAWAY)
   await expect(openMark(page)).toHaveCount(0)
   // A finished conversation opens read-only, in the history.
-  await expect(historyItems(page).first()).toHaveAttribute('href', /\/journal\/[^/]+$/)
+  await expect(historyItems(page).first()).toHaveAttribute('href', /\/diary\/journal\/[^/]+$/)
   await expect(nav(page).getByRole('link', { name: 'Все разговоры', exact: true })).toBeVisible()
   await closeSidebar(page)
 
@@ -142,14 +142,14 @@ test('история: сайдбар растёт с разговорами, «�
 
   // ── all conversations: the same list as a page ───────────────────────────
   await goTo(page, 'Все разговоры')
-  await expect(page).toHaveURL(/\/journal$/)
+  await expect(page).toHaveURL(/\/diary\/journal$/)
   await expect(rows).toHaveCount(2, { timeout: 30_000 })
   await expect(days).toHaveText(['Сегодня'])
   await expect(rows.nth(0)).toContainText('Не завершён')
   await expect(rows.nth(0)).toHaveAttribute('href', /\/dialog\/[^/]+$/)
   await expect(rows.nth(1)).toContainText(TAKEAWAY)
   await expect(rows.nth(1)).not.toContainText('Не завершён')
-  await expect(rows.nth(1)).toHaveAttribute('href', /\/journal\/[^/]+$/)
+  await expect(rows.nth(1)).toHaveAttribute('href', /\/diary\/journal\/[^/]+$/)
 
   // ── days: yesterday, this week and long ago join today's ─────────────────
   older = [
@@ -190,22 +190,22 @@ test('история: сайдбар растёт с разговорами, «�
   // ── opening them ─────────────────────────────────────────────────────────
   // A finished conversation is read-only, on a page of its own with the way back.
   await rows.filter({ hasText: TAKEAWAY }).click()
-  await expect(page).toHaveURL(/\/journal\/[^/]+$/)
+  await expect(page).toHaveURL(/\/diary\/journal\/[^/]+$/)
   await expect(pageTitle(page)).toHaveText(TAKEAWAY, { timeout: 20_000 })
   const said = page.getByTestId('journal-messages').getByTestId('dialog-message').filter({ hasText: FIRST_MESSAGE })
   await expect(said).toHaveCount(1)
   await expect(said).toHaveAttribute('data-role', 'user')
   await expectNoHorizontalOverflow(page)
   await page.getByRole('main').getByRole('link', { name: 'Все разговоры', exact: true }).click()
-  await expect(page).toHaveURL(/\/journal$/)
+  await expect(page).toHaveURL(/\/diary\/journal$/)
 
   // One the server does not know (a stale link) says so and does not break the page.
   await rows.filter({ hasText: 'Давний разговор' }).click()
-  await expect(page).toHaveURL(/\/journal\/e2e-earlier$/)
+  await expect(page).toHaveURL(/\/diary\/journal\/e2e-earlier$/)
   await expect(page.getByTestId('journal-entry-error')).toBeVisible({ timeout: 20_000 })
   await expectSingleSos(page)
   await goTo(page, 'Все разговоры')
-  await expect(page).toHaveURL(/\/journal$/)
+  await expect(page).toHaveURL(/\/diary\/journal$/)
 
   // The one that is not finished opens where it was left: in the conversation, not read-only.
   await rows.filter({ hasText: 'Не завершён' }).click()

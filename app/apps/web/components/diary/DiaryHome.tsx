@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import { moodInsight, toDate, parseDate, weekStartOf } from '@ryadom/client-core/diary'
 import type { DiaryApiResponse, MoodCheckinApi } from '@ryadom/contracts/api/diary'
+import { Card } from '@ryadom/ui/components/card'
 import { Skeleton } from '@ryadom/ui/components/skeleton'
 import { useClient } from '@/lib/auth'
 import { deviceToday, useLoaded } from '@/lib/diary'
@@ -66,6 +67,12 @@ export default function DiaryHome() {
         heavyWeek={heavyWeek}
         onSummary={(summary) => set((d) => ({ ...d, week: { ...d.week, summary } }))}
       />
+      {data.previousWeek && (
+        <Card className="gap-3 rounded-lg px-5 py-5 shadow-none" data-testid="diary-previous-week">
+          <h2 className="text-lg font-semibold text-foreground">Итоги прошлой недели</h2>
+          <p className="text-[0.9375rem] leading-[1.55] whitespace-pre-line text-foreground">{data.previousWeek.text}</p>
+        </Card>
+      )}
       <EventsCard weekStart={data.week.start || weekStartOf(today)} />
     </>
   )

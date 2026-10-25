@@ -1,6 +1,6 @@
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Navbar, Page, Preloader } from 'framework7-react'
+import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useRef } from 'react'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
@@ -9,7 +9,7 @@ import { journal, useJournal } from '../../../lib/journal'
 import { TAB_IDS } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
 import { useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
-import { SosButton } from '../../SosSheet'
+import DiaryShell from '../diary/DiaryShell'
 import { formatJournalDate, nbspDash, tensionLabel } from './format'
 import { JournalEntryBody } from './JournalEntryPage'
 
@@ -19,7 +19,7 @@ import { JournalEntryBody } from './JournalEntryPage'
  *
  * On a wide screen (WIDE, lib/viewport.ts) it is master-detail: the list stays on the left and an
  * entry opens on the right without leaving the screen. Narrower — as on a phone, the entry is its
- * own screen /journal/:id/. Which entry is open lives in lib/journal.ts, so resizing the window
+ * own screen /diary/journal/:id/. Which entry is open lives in lib/journal.ts, so resizing the window
  * keeps the same one open: here when it narrows, in JournalEntryPage when it widens.
  */
 export default function JournalPage({ f7router }: { f7router: Router.Router }) {
@@ -39,25 +39,19 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
   useEffect(() => {
     const narrowed = wasWide.current && !isWide
     wasWide.current = isWide
-    if (!narrowed || !openId || f7router.currentRoute.url !== '/journal/') return
-    f7router.navigate(`/journal/${openId}/`, { animate: false })
+    if (!narrowed || !openId || f7router.currentRoute.url !== '/diary/journal/') return
+    f7router.navigate(`/diary/journal/${openId}/`, { animate: false })
   }, [isWide, openId, f7router])
 
   function openEntry(dialogId: string) {
     track(AnalyticsEvent.JournalEntryOpened)
     journal.open(dialogId)
-    if (!isWide) f7router.navigate(`/journal/${dialogId}/`)
+    if (!isWide) f7router.navigate(`/diary/journal/${dialogId}/`)
   }
 
   return (
     // A conversation may have ended on another tab since the list was loaded.
-    <Page name="journal" className="rd-journal-page ph-no-capture" onPageTabShow={() => void journal.refresh()}>
-      <Navbar title="Журнал" />
-      {/* slot="fixed": this page has a Navbar, and framework7 only lifts known slot names out of
-          .page-content. Left at the default slot, the button was trapped inside .page-content's
-          own stacking context and rendered invisible under the navbar (design review). */}
-      <SosButton slot="fixed" source="header" />
-
+    <DiaryShell segment="journal" f7router={f7router} onTabShow={() => void journal.refresh()}>
       <div className="rd-split">
         <div className="rd-split-side">
           {items === null && (
@@ -159,6 +153,6 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
           </div>
         )}
       </div>
-    </Page>
+    </DiaryShell>
   )
 }

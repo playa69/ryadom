@@ -119,16 +119,12 @@ export enum AnalyticsEvent {
   MoodCheckedIn = 'mood_checked_in',
   /** Server. A week summary was made, on the button or by the Monday pass. */
   WeekSummaryGenerated = 'week_summary_generated',
-  /** Server. The year story was written or extended (by the button or after the sixth final week). */
-  YearStoryGenerated = 'year_story_generated',
   /** Server. A summary was refused: too few days or weeks, asked again within a day, or the agent did not answer. */
   DiarySummaryRefused = 'diary_summary_refused',
   /** Client. A diary segment was opened. */
   DiaryOpened = 'diary_opened',
   /** Client. A tap on the bridge after a heavy day: «Поговорить» or «Люди рядом». */
   MoodBridgeClicked = 'mood_bridge_clicked',
-  /** Client. The picture of the year was handed to the share sheet or downloaded. */
-  YearShared = 'year_shared',
 
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
   FaqOpened = 'faq_opened',
@@ -235,8 +231,8 @@ export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confir
 /** A point of the card "Я запомнил": taken off ("убрать") or accepted ("Запомнить"). */
 export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
 
-export type DiaryTab = 'diary' | 'recaps' | 'year'
-export type DiarySummaryKind = 'week' | 'year'
+export type DiaryTab = 'diary' | 'journal'
+export type DiarySummaryKind = 'week'
 export type DiarySummaryRefusal = 'not_enough' | 'too_soon' | 'agent_unavailable'
 export type MoodSourceName = 'app' | 'widget' | 'reminder' | 'telegram'
 
@@ -334,10 +330,8 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
   [AnalyticsEvent.MoodCheckedIn]: { source: MoodSourceName; with_factor: boolean; changed: boolean }
   [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'button' | 'auto' }
-  [AnalyticsEvent.YearStoryGenerated]: NoProperties
   [AnalyticsEvent.DiaryOpened]: { tab: DiaryTab }
   [AnalyticsEvent.MoodBridgeClicked]: { target: 'dialog' | 'people' }
-  [AnalyticsEvent.YearShared]: NoProperties
   [AnalyticsEvent.DiarySummaryRefused]: { kind: DiarySummaryKind; reason: DiarySummaryRefusal }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }

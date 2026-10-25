@@ -21,11 +21,10 @@ const MINUTE_MS = 60_000
 export async function runDiaryPass(
   analytics: Pick<ServerAnalytics, 'capture'>,
   now?: Date,
-): Promise<{ weekly: number; yearly: number }> {
+): Promise<{ weekly: number }> {
   const result = await diaryProcess.execute(new RunWeeklyDigestsOperation({ now }))
   for (const userId of result.weeklyUserIds) analytics.capture(userId, AnalyticsEvent.WeekSummaryGenerated, { trigger: 'auto' })
-  for (const userId of result.yearlyUserIds) analytics.capture(userId, AnalyticsEvent.YearStoryGenerated, {})
-  return { weekly: result.weekly, yearly: result.yearly }
+  return { weekly: result.weekly }
 }
 
 export function startDiaryScheduler(logger: Logger, analytics: Pick<ServerAnalytics, 'capture'>): () => void {
@@ -35,9 +34,7 @@ export function startDiaryScheduler(logger: Logger, analytics: Pick<ServerAnalyt
     running = true
     runDiaryPass(analytics)
       .then((result) => {
-        if (result.weekly > 0 || result.yearly > 0) {
-          logger.info({ weekly: result.weekly, yearly: result.yearly }, 'итоги недели собраны')
-        }
+        if (result.weekly > 0) logger.info({ weekly: result.weekly }, 'итоги недели собраны')
       })
       .catch((error: unknown) => logger.warn({ err: error }, 'Не удалось собрать итоги недели'))
       .finally(() => {

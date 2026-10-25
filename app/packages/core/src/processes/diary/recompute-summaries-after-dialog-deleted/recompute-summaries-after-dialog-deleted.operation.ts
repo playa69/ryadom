@@ -9,7 +9,7 @@ export interface RecomputeSummariesAfterDialogDeletedOperationData {
 }
 
 /**
- * A person deleted a conversation by hand: the text of its week (and the year story built on final weeks) may retell it,
+ * A person deleted a conversation by hand: the text of its week may retell it,
  * so it goes at once, and the scheduler writes it again from what is left. The retention job must NOT call this: a
  * summary is a generalisation without quotes and stays when a conversation only ages out.
  */
