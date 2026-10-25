@@ -166,7 +166,7 @@
 | `mood_checked_in` | сервер | отметка дня сохранена или заменена | `source`: `app`/`widget`/`reminder`/`telegram`; `with_factor`; `changed` |
 | `week_summary_generated` | сервер | итоги недели собраны | `trigger`: `button` (кнопка) / `auto` (понедельничный проход планировщика) |
 | `diary_summary_refused` | сервер | итоги не собраны | `kind`: `week`; `reason`: `not_enough` (мало отмеченных дней) / `too_soon` (раньше суток) / `agent_unavailable` |
-| `diary_opened` | клиенты | открыт сегмент дневника | `tab`: `diary`/`journal` |
+| `diary_opened` | клиенты | открыт сегмент дневника | `tab`: `diary`/`journal`/`tests` |
 | `mood_bridge_clicked` | клиенты | нажата кнопка моста после тяжёлого дня | `target`: `dialog`/`people` |
 
 ## Как добавить событие

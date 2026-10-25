@@ -436,6 +436,9 @@ importers:
       '@ryadom/design':
         specifier: workspace:*
         version: link:../../packages/design
+      '@ryadom/self-check':
+        specifier: workspace:*
+        version: link:../../packages/self-check
       '@ryadom/ui':
         specifier: workspace:*
         version: link:../../packages/ui

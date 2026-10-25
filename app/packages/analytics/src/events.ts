@@ -273,7 +273,7 @@ export type SelfCheckProgress = 'first_third' | 'second_third' | 'last_third'
 export type SelfCheckResultActionName = 'close' | 'save' | 'copy_summary' | 'retake'
 export type SelfCheckDeleteScope = 'one' | 'test' | 'all'
 
-export type DiaryTab = 'diary' | 'journal'
+export type DiaryTab = 'diary' | 'journal' | 'tests'
 export type DiarySummaryKind = 'week'
 export type DiarySummaryRefusal = 'not_enough' | 'too_soon' | 'agent_unavailable'
 export type MoodSourceName = 'app' | 'widget' | 'reminder' | 'telegram'

@@ -120,7 +120,8 @@ log('собираю клиент, api, сайт и веб-приложение')
 runSync('pnpm', ['--filter', '@ryadom/mobile', 'build'])
 runSync('pnpm', ['--filter', '@ryadom/api', 'build'])
 runSync('pnpm', ['--filter', '@ryadom/landing', 'build'])
-runSync('pnpm', ['--filter', '@ryadom/web', 'build'])
+// The tests of wave 1 wait for the owner's sign-off (status review): the dev stack shows them.
+runSync('pnpm', ['--filter', '@ryadom/web', 'build'], { env: { ...process.env, NEXT_PUBLIC_SELF_CHECK_PREVIEW: '1' } })
 
 const apiEnv = {
   ...process.env,

@@ -10,6 +10,8 @@ import { FOCUS_RING } from '../controls'
 import { Page } from '../Page'
 import JournalScreen from '../JournalScreen'
 import DiaryHome from './DiaryHome'
+import TestsCatalog from '../self-check/TestsCatalog'
+import { SelfCheckProvider } from '../self-check/useSelfCheck'
 
 /**
  * The «Дневник» section: the segments «Дневник · Журнал» under the header and the content
@@ -23,6 +25,7 @@ export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
   }, [segment])
 
   return (
+    <SelfCheckProvider>
     <Page
       title="Дневник"
       measure={segment === 'journal' ? 'reading' : 'form'}
@@ -53,6 +56,8 @@ export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
         </Suspense>
       )}
       {segment === 'journal' && <JournalScreen />}
+      {segment === 'tests' && <TestsCatalog />}
     </Page>
+    </SelfCheckProvider>
   )
 }

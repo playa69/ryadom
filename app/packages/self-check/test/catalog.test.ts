@@ -51,3 +51,12 @@ describe('повтор теста', () => {
     expect(retakeAfterDays(phq, 3)).toBe(28)
   })
 })
+
+import { visible } from '../src/catalog'
+
+describe('видимость', () => {
+  it('без preview в проде пусто, с preview видны тесты на ревью', () => {
+    expect(visible(false)).toEqual([])
+    expect(visible(true).length).toBe(7)
+  })
+})

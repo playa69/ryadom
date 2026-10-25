@@ -1,0 +1,280 @@
+'use client'
+
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useState } from 'react'
+import { track } from '@ryadom/analytics/browser'
+import { AnalyticsEvent, type SelfCheckFrom, type SelfCheckProgress } from '@ryadom/analytics/events'
+import { band as bandOf, isHigh, retakeAfterDays, score as scoreOf } from '@ryadom/self-check/score'
+import type { SelfCheckTest } from '@ryadom/self-check/types'
+import { Button } from '@ryadom/ui/components/button'
+import { BUTTON } from '../controls'
+import Modal from '../Modal'
+import { useSos } from '../Sos'
+import { DISCLAIMER, TONE_COLOR, lengthLine, plural } from './ui'
+
+/** Answers before «×» asks whether to stop: a couple of taps are not worth a question. */
+const INTERRUPT_FROM = 3
+
+type Phase = 'question' | 'interrupt' | 'crisis' | 'result'
+
+function progressOf(step: number, total: number): SelfCheckProgress {
+  const third = total / 3
+  return step < third ? 'first_third' : step < 2 * third ? 'second_third' : 'last_third'
+}
+
+/**
+ * One pass of one test in a sheet: a question at a time, a tap answers and moves on, «Назад» keeps the
+ * answer. Nothing leaves the device here: the answers live in this component until the sheet closes.
+ */
+export default function TestSheet({ test, from, onClose }: { test: SelfCheckTest; from: SelfCheckFrom; onClose(): void }) {
+  const router = useRouter()
+  const { openSos } = useSos()
+  const [step, setStep] = useState(0)
+  const [answers, setAnswers] = useState<(number | null)[]>(() => test.items.map(() => null))
+  const [phase, setPhase] = useState<Phase>('question')
+  const total = test.items.length
+
+  // A first question is shown: the start of a pass (once per mount, the sheet is keyed by the test).
+  useState(() => {
+    track(AnalyticsEvent.SelfCheckStarted, { test_id: test.id, from })
+    return null
+  })
+
+  const answered = answers.filter((a) => a !== null).length
+  const complete = answered === total
+
+  function answer(value: number) {
+    const next = answers.slice()
+    next[step] = value
+    setAnswers(next)
+    const crisis = test.items[step]?.crisis === true && value > 0
+    const last = step === total - 1
+    if (crisis) {
+      // The help screen comes first, whatever the score ends up as and whether or not there is a network.
+      setPhase('crisis')
+      return
+    }
+    if (last) finish(next)
+    else setStep(step + 1)
+  }
+
+  function finish(finalAnswers: (number | null)[]) {
+    if (finalAnswers.every((a) => a !== null)) {
+      track(AnalyticsEvent.SelfCheckCompleted, { test_id: test.id })
+      setPhase('result')
+    } else {
+      // Answered the crisis item out of order: go to the first question left.
+      setStep(finalAnswers.findIndex((a) => a === null))
+      setPhase('question')
+    }
+  }
+
+  function afterCrisis() {
+    if (step === total - 1) finish(answers)
+    else {
+      setStep(step + 1)
+      setPhase('question')
+    }
+  }
+
+  function requestClose() {
+    if (phase === 'question' && answered >= INTERRUPT_FROM && !complete) setPhase('interrupt')
+    else onClose()
+  }
+
+  const header = (
+    <div className="flex items-center gap-3">
+      <div className="min-w-0 flex-1">
+        {/* The sheet's own heading already names the test. */}
+        <div className="text-sm text-dim" data-testid="test-subtitle">
+          {lengthLine(test)}
+        </div>
+      </div>
+      {/* No way out of the help screen except its three buttons: the result is not opened until one is chosen. */}
+      {phase !== 'crisis' && (
+        <button type="button" aria-label="Закрыть" className={`${BUTTON} px-2 text-2xl text-dim`} onClick={requestClose} data-testid="test-close">
+          ×
+        </button>
+      )}
+    </div>
+  )
+
+  return (
+    <Modal open onClose={requestClose} title={test.title} dismissible={phase === 'question' || phase === 'result'} className="max-h-[calc(100dvh-1rem)] overflow-y-auto">
+      {header}
+
+      {phase === 'question' && (
+        <div className="flex flex-col gap-3" data-testid="test-question">
+          <div className="text-sm font-semibold text-brand-400" data-testid="test-progress-label">
+            Вопрос {step + 1} из {total}
+          </div>
+          <div role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={step} className="h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-brand" style={{ width: `${(step / total) * 100}%` }} />
+          </div>
+          <p className="text-sm text-dim">{test.preface}</p>
+          <h2 className="text-lg font-semibold text-foreground" data-testid="test-item">
+            {test.items[step]?.text}
+          </h2>
+          <div className="flex flex-col gap-2">
+            {test.options.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                data-testid={`test-option-${o.value}`}
+                aria-pressed={answers[step] === o.value}
+                onClick={() => answer(o.value)}
+                className={`${BUTTON} min-h-12 rounded-lg border px-4 py-3 text-base ${answers[step] === o.value ? 'border-brand bg-brand/20' : 'border-line-strong'}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          {step > 0 && (
+            <button
+              type="button"
+              className={`${BUTTON} self-start text-sm text-dim`}
+              data-testid="test-back"
+              onClick={() => {
+                track(AnalyticsEvent.SelfCheckStepBack, { test_id: test.id })
+                setStep(step - 1)
+              }}
+            >
+              ← Назад
+            </button>
+          )}
+          <p className="text-xs text-faint">Ответы остаются на устройстве, пока ты не нажмёшь «Сохранить».</p>
+        </div>
+      )}
+
+      {phase === 'interrupt' && (
+        <div className="flex flex-col gap-3 text-center" data-testid="test-interrupt">
+          <h2 className="text-lg font-semibold">Прервать тест?</h2>
+          <p className="text-dim">Ответы не сохранятся.</p>
+          <Button
+            className={BUTTON}
+            data-testid="test-continue"
+            onClick={() => {
+              track(AnalyticsEvent.SelfCheckInterruptChoice, { test_id: test.id, action: 'continue', progress: progressOf(step, total) })
+              setPhase('question')
+            }}
+          >
+            Продолжить тест
+          </Button>
+          <Button
+            variant="outline"
+            className={BUTTON}
+            data-testid="test-abort"
+            onClick={() => {
+              track(AnalyticsEvent.SelfCheckInterruptChoice, { test_id: test.id, action: 'abort', progress: progressOf(step, total) })
+              onClose()
+            }}
+          >
+            Прервать
+          </Button>
+        </div>
+      )}
+
+      {phase === 'crisis' && (
+        <div className="flex flex-col gap-3 text-center" data-testid="test-crisis" role="alertdialog" aria-label="Помощь">
+          <h2 className="text-xl font-semibold">Спасибо, что ответил честно</h2>
+          <p className="text-dim">Тебе может быть очень тяжело. Ты не обязан справляться один — помощь есть прямо сейчас.</p>
+          {/* No event for any of these: a crisis answer is never reported and never tied to a person. */}
+          <Button variant="outline" className={`${BUTTON} border-sos text-sos`} data-testid="crisis-call" onClick={() => openSos()}>
+            Позвонить на линию помощи
+          </Button>
+          <Button className={BUTTON} data-testid="crisis-talk" onClick={() => router.push('/')}>
+            Поговорить с Рядом
+          </Button>
+          <Button variant="outline" className={BUTTON} data-testid="crisis-result" onClick={afterCrisis}>
+            Посмотреть результат
+          </Button>
+          <p className="text-xs text-faint">Этот ответ не сохраняется и не передаётся.</p>
+        </div>
+      )}
+
+      {phase === 'result' && <Result test={test} answers={answers as number[]} onClose={onClose} />}
+    </Modal>
+  )
+}
+
+function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: number[]; onClose(): void }) {
+  const result = scoreOf(test, answers)
+  const level = bandOf(test, result.score)
+  const high = isHigh(test, result.score)
+  const weeks = retakeAfterDays(test, result.score) / 7
+  const index = level ? test.bands.indexOf(level) : -1
+  const [copied, setCopied] = useState(false)
+
+  async function copy() {
+    track(AnalyticsEvent.SelfCheckResultAction, { test_id: test.id, action: 'copy_summary' })
+    const date = new Date().toLocaleDateString('ru-RU')
+    const line = `${test.title} (${test.code}), ${date}: ${result.score} из ${result.max}${level ? ` — ${level.label}` : ''}`
+    try {
+      await navigator.clipboard.writeText(line)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="test-result">
+      <h2 className="text-lg font-semibold">Результат</h2>
+      <div className="text-5xl font-bold" data-testid="result-score">
+        {result.score} <span className="text-xl font-normal text-dim">/ {result.max}</span>
+      </div>
+      {result.subscales.length > 0 && (
+        <ul className="text-sm text-dim">
+          {result.subscales.map((s) => (
+            <li key={s.id}>
+              {s.label}: {s.score}
+            </li>
+          ))}
+        </ul>
+      )}
+      {level && (
+        <span
+          className="self-start rounded-full px-3 py-1 text-sm font-semibold"
+          style={{ background: `${TONE_COLOR[level.tone]}33`, color: TONE_COLOR[level.tone] }}
+          data-testid="result-level"
+        >
+          {level.label}
+        </span>
+      )}
+      <div className="flex gap-1" aria-hidden>
+        {test.bands.map((b, i) => (
+          <i key={b.from} className="h-2.5 flex-1 rounded-full" style={{ background: TONE_COLOR[b.tone], opacity: i === index ? 1 : 0.35 }} />
+        ))}
+      </div>
+      {level && <p className="text-[0.9375rem] text-dim">{level.text}</p>}
+      {high && (
+        <Link href="/people" className={`${BUTTON} rounded-lg border border-line-strong p-4`} data-testid="result-specialist">
+          <div className="font-semibold">Поговорить со специалистом</div>
+          <div className="text-sm text-dim">Подберём человека в разделе «Люди рядом»</div>
+        </Link>
+      )}
+      <p className="text-sm text-dim" data-testid="result-retake">
+        Повтори тест через {weeks} {plural(weeks, ['неделю', 'недели', 'недель'])} — так видно динамику.
+      </p>
+      <p className="text-xs text-faint">{DISCLAIMER}</p>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          className={`${BUTTON} flex-1`}
+          data-testid="result-close"
+          onClick={() => {
+            track(AnalyticsEvent.SelfCheckResultAction, { test_id: test.id, action: 'close' })
+            onClose()
+          }}
+        >
+          Закрыть
+        </Button>
+        {/* «Сохранить» arrives with the server part (migration 0010, /api/self-check): until then a pass stays on the device. */}
+      </div>
+      <button type="button" className={`${BUTTON} text-sm text-dim`} data-testid="result-copy" onClick={copy}>
+        {copied ? 'Скопировано' : 'Скопировать итог для специалиста'}
+      </button>
+    </div>
+  )
+}

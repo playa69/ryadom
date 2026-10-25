@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { WEB_DIARY_SEGMENT_KEY } from './storage-keys'
 
-export type DiarySegment = 'diary' | 'journal'
+export type DiarySegment = 'diary' | 'journal' | 'tests'
 
 export const DIARY_SEGMENTS: { key: DiarySegment; label: string; href: string }[] = [
   { key: 'diary', label: 'Дневник', href: '/diary' },
   { key: 'journal', label: 'Журнал', href: '/diary/journal' },
+  { key: 'tests', label: 'Тесты', href: '/diary/tests' },
 ]
 
 /** The segment the person left the diary in; the sidebar link and a bare `/diary` return to it. */
