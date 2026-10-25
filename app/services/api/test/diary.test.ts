@@ -4,7 +4,7 @@
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { moodCheckins, users } from '@ryadom/db/schema'
+import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import { getDb } from '@ryadom/core/shared'
 import {
   DiaryApiErrorCode,
@@ -103,12 +103,27 @@ describe('итоги недели', () => {
     refusedWith(await call(app, 'POST', '/api/diary/summaries/week', body, token), DiaryApiErrorCode.NOT_ENOUGH_DAYS)
     await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(2), mood: 1, source: 'app' })
     const made = ok<{ text: string; kind: string }>(await call(app, 'POST', '/api/diary/summaries/week', body, token))
-    expect(made).toMatchObject({ kind: 'week', text: 'Спасибо, что ты рядом с собой.' })
+    // The week had one «Тяжело» day (seeded below): the count rides with the summary, not the mood values.
+    expect(made).toMatchObject({ kind: 'week', text: 'Спасибо, что ты рядом с собой.', hardDays: 1 })
     refusedWith(await call(app, 'POST', '/api/diary/summaries/week', body, token), DiaryApiErrorCode.TOO_SOON)
     expect(agent.calls).toHaveLength(1)
 
     const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
     expect(diary.week.summary?.text).toBe('Спасибо, что ты рядом с собой.')
+  })
+
+  it('число тяжёлых дней едет вместе с итогом прошлой недели (для кнопки «Люди рядом»)', async () => {
+    const { token, userId } = await signedIn()
+    await getDb().insert(diarySummaries).values({
+      userId,
+      kind: 'week',
+      periodStart: dayOfThisWeek(-7),
+      text: 'Неделя была непростой.',
+      stats: { final: true, hardDays: 3, markedDays: 5 },
+      status: 'ready',
+    })
+    const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
+    expect(diary.previousWeek).toMatchObject({ text: 'Неделя была непростой.', hardDays: 3 })
   })
 
   it('агент не ответил — код SUMMARY_UNAVAILABLE, повторить можно сразу', async () => {

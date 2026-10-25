@@ -48,6 +48,8 @@ export interface DiarySummaryApi {
   periodStart: string
   text: string
   generatedAt: string
+  /** Days of «Тяжело» in the week the text was written for; 3 or more brings «Люди рядом». */
+  hardDays: number
 }
 
 /** The mood chart shows this many days up to and including today. */

@@ -53,7 +53,7 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
           <MoodCard data={data} f7router={f7router} />
           <MoodChart data={data} today={deviceDate()} />
           <WeekCard data={data} f7router={f7router} />
-          {data.previousWeek && <PreviousWeekCard summary={data.previousWeek} />}
+          {data.previousWeek && <PreviousWeekCard summary={data.previousWeek} f7router={f7router} />}
           <section className="rd-card" data-testid="diary-selfcheck" aria-labelledby="diary-selfcheck-title">
             <h2 className="rd-card-title" id="diary-selfcheck-title">
               Самопроверка

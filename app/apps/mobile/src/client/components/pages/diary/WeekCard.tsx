@@ -14,7 +14,7 @@ export default function WeekCard({ data, f7router }: { data: DiaryApiResponse; f
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const { week } = data
-  const heavy = data.recent.filter((d) => d.date >= week.start && d.mood === 1).length >= 3
+  const heavy = (week.summary?.hardDays ?? 0) >= 3
   const builtToday = week.summary !== null && deviceDate(new Date(week.summary.generatedAt)) === deviceDate()
   const enough = week.markedDays >= WEEK_SUMMARY_MIN_DAYS
 

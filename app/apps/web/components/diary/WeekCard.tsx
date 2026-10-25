@@ -20,17 +20,16 @@ const FAILED = 'Не получилось собрать итоги. Попро�
  */
 export default function WeekCard({
   week,
-  heavyWeek,
   onSummary,
 }: {
   week: Week
-  heavyWeek: boolean
   onSummary(summary: NonNullable<Week['summary']>): void
 }) {
   const client = useClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const summary = week.summary
+  const heavyWeek = (summary?.hardDays ?? 0) >= 3
   const collectedToday = summary
     ? new Date(summary.generatedAt).toDateString() === new Date().toDateString()
     : false

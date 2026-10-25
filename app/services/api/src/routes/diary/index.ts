@@ -82,6 +82,7 @@ const toSummary = (s: DiarySummaryDTO): DiarySummaryApi => ({
   periodStart: s.periodStart,
   text: s.text,
   generatedAt: s.generatedAt.toISOString(),
+  hardDays: typeof s.stats?.hardDays === 'number' ? s.stats.hardDays : 0,
 })
 
 /** Every way a diary operation can refuse; the meaning is the same in every route. */

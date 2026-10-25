@@ -169,6 +169,10 @@ test('итоги недели: после трёх отмеченных дней
 
 test('итоги прошлой недели: карточка появляется, когда планировщик закрыл неделю', async ({ page, request, shot }) => {
   test.setTimeout(240_000)
+  // By design the weekly tick does nothing before 06:00 local time on Monday (REQ-WELL-03), so the card cannot appear then.
+  const moscow = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Moscow', weekday: 'short', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date())
+  const part = (type: string) => moscow.find((p) => p.type === type)?.value
+  test.skip(part('weekday') === 'Mon' && Number(part('hour')) < 6, 'до 06:00 в понедельник по Москве планировщик итоги недели не считает')
   const session = trackSession(page)
   await openApp(page)
   await startAnonymously(page)
