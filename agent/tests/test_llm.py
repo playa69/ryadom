@@ -57,7 +57,8 @@ def test_reply_comes_from_the_chat_model_and_sees_the_dialog(user_id):
         assert [m["role"] for m in history(client, user_id, dialog["dialogId"])] == ["user", "assistant"]
 
     # Промпт с правилом рода по голосу диалога (по умолчанию мужской).
-    assert chat.calls == [[{"role": "system", "content": system_prompt("male")}, {"role": "user", "content": "Мне плохо"}]]
+    assert len(chat.calls) == 1 and chat.calls[0][0]["content"].startswith(system_prompt("male"))
+    assert chat.calls[0][1]["role"] == "user" and chat.calls[0][1]["content"].endswith(" Мне плохо")
 
 
 def test_second_turn_carries_the_whole_conversation(user_id):
@@ -71,7 +72,9 @@ def test_second_turn_carries_the_whole_conversation(user_id):
             read_frames(ws, reply_done)
 
     roles = [(m["role"], m["content"]) for m in chat.calls[1][1:]]
-    assert roles == [("user", "раз"), ("assistant", "Понимаю."), ("user", "два")]
+    assert [role for role, _ in roles] == ["user", "assistant", "user"]
+    assert [content for _, content in roles] == [m["content"] for m in chat.calls[1][1:]]
+    assert roles[0][1].endswith(" раз") and roles[1][1].endswith(" Понимаю.") and roles[2][1].endswith(" два")
 
 
 def model_unavailable(frames):
@@ -133,8 +136,17 @@ def test_chat_messages_start_with_the_person_and_are_limited():
     history_ = [Message(str(i), "assistant" if i % 2 == 0 else "user", f"m{i}", "t") for i in range(10)]
     messages = chat_messages(history_, 4)
     assert messages[0]["role"] == "system"
-    assert [m["content"] for m in messages[1:]] == ["m7", "m8", "m9"]  # m6 — ответ агента, он не может открывать окно
+    assert [m["content"] for m in messages[1:]] == ["[t] m7", "[t] m8", "[t] m9"]  # m6 не открывает окно
     assert messages[1]["role"] == "user"
+
+
+def test_chat_messages_include_time_context():
+    from app.services.dialog_store import Message
+
+    history = [Message("1", "user", "Привет", "2026-10-24T21:01:36.000Z")]
+    messages = chat_messages(history, 12)
+    assert messages[1]["content"] == "[2026-10-24T21:01:36.000Z] Привет"
+    assert "Текущее время:" in messages[0]["content"] and "длительности разговора" in messages[0]["content"]
 
 
 # ─── Промпт и шаблоны: оффтоп и хорошее настроение ────────────────────────────
@@ -149,7 +161,7 @@ def test_chat_messages_carry_the_offtopic_and_good_mood_rules():
         Message("3", "user", "А при какой температуре?", "t"),
     ]
     messages = chat_messages(offtopic, 12)
-    assert messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert messages[0]["role"] == "system" and messages[0]["content"].startswith(SYSTEM_PROMPT)
     # Модель видит свой прошлый ответ: по нему она решает, пора ли снова напоминать.
     assert [m["role"] for m in messages[1:]] == ["user", "assistant", "user"]
 
@@ -271,7 +283,7 @@ def test_voice_is_recognized_and_answered_by_the_model(user_id):
         assert [(m["role"], m["text"]) for m in messages] == [("user", "мне сегодня тяжело"), ("assistant", "Слышу тебя.")]
 
     assert len(stt.calls) == 1 and len(stt.calls[0]) == 10 * 3200  # ровно звук кадров, без заголовков
-    assert chat.calls[0][-1] == {"role": "user", "content": "мне сегодня тяжело"}
+    assert chat.calls[0][-1]["role"] == "user" and chat.calls[0][-1]["content"].endswith(" мне сегодня тяжело")
 
 
 def test_recognized_crisis_is_handled_like_typed_crisis(user_id):

@@ -7,7 +7,7 @@
 | | Видимые записи «что я о тебе знаю» | Поиск по прошлым разговорам | Как забыть |
 |---|---|---|---|
 | **Claude** | Отдельные записи по категориям, пишутся во время разговора. Каждую можно открыть, поправить, удалить. «Пауза» и «Сброс» | Поиск по прошлым чатам (RAG, виден в чате как вызов инструмента), свой переключатель | Удаление чата не удаляет записи памяти из него, их удаляют отдельно |
-| **ChatGPT** | «Saved memories»: короткие факты, удаляются по одному или все | «Reference chat history»: не виден и меняется со временем, свой переключатель | Чтобы забыть полностью, нужно удалить и запись, и разговор |
+| **ChatGPT** | «Saved memories»: короткие факты, удаляются по одному или все | «Reference chat history»: не виден и меняется со временем, свой переключатель | Чтобы забыть полностью, нужно удалить и запись, и разговор. **По пересказу поиска, официальная страница недоступна (403), проверить вручную:** [Memory FAQ](https://help.openai.com/en/articles/8590148-memory-faq), [What is memory](https://help.openai.com/en/articles/8983136-what-is-memory) |
 | **Gemini** | «Saved info»: факты, можно добавить, поправить, удалить | Опора на прошлые разговоры, включена по умолчанию | Разговоры удаляются в истории активности |
 | **Replika** | Вкладка «Memory»: факты, можно поправить и удалить | «Глубокая» память по истории, не видна | Удаление фактов по одному |
 | **AI Therapist** | Заметки по персонажу, «×» и «удалить все» | нет | «×» |
@@ -32,8 +32,8 @@
 - Запись по ходу разговора, правка и удаление по одной, пауза, сброс, «запомни», «забудь», «поправь».
 - Чувствительное по согласию с уведомлением. Граница самочувствия — открытый вопрос: для приложения эмоциональной поддержки самочувствие — основной контекст.
 - Отдельный переключатель поиска. «Удалить разговор» убирает его из поиска, заметки остаются.
-- «Без памяти» = инкогнито.
-- От конкурента: итог разговора и карточка «В прошлый раз».
+- «Без памяти» = инкогнито (у нас теперь галочка «Не сохранять этот разговор», `add-unsaved-dialog`).
+- От конкурента: итог разговора. Карточку «В прошлый раз» мы не делаем: итог журнальный, в следующий разговор не попадает (D7).
 
 ## Источники
 
@@ -45,3 +45,11 @@
 - https://help.openai.com/en/articles/11146739-how-does-reference-saved-memories-work
 - https://support.google.com/gemini/answer/16413516
 - https://help.replika.com/hc/en-us/articles/37208679176077-How-does-Replika-s-memory-work
+
+## Дословные цитаты Anthropic (проверено 25.10.2026)
+
+Источник, страница открыта целиком: [Use Claude's chat search and memory to build on previous context](https://support.claude.com/en/articles/11817273-use-claude-s-chat-search-and-memory-to-build-on-previous-context).
+
+- Удаление чата: «When a conversation is deleted, including under a retention period, memory entries generated from it aren’t removed».
+- Поиск по чатам отдельно от памяти: «These searches use Retrieval-Augmented Generation (RAG) and will appear as tool calls during your conversations.»
+- Инкогнито: «Claude won’t remember your chats, so they won’t be saved to Claude’s memory» и «Claude won’t pull information from incognito chats when searching previous conversations.»

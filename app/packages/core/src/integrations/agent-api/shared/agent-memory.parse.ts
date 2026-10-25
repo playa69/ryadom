@@ -97,7 +97,7 @@ const memorySchema = z.object({
   consentVersion: nullableString,
   consentAt: nullableString,
   rulesVersion: z.string().catch(''),
-  limits: z.object({ maxFacts: z.number() }),
+  limits: z.object({ maxFacts: z.number().nullable() }),
   facts: z.array(z.unknown()),
 })
 

@@ -128,7 +128,13 @@ def create_app(
     def make_configured_database() -> DialogDatabase | None:
         # DIALOG_DATABASE_URL задан — диалоги в PostgreSQL; пусто — только в памяти процесса (разработка).
         if APP_CONFIG.dialog.database_url:
-            return DialogDatabase(APP_CONFIG.dialog.database_url)
+            return DialogDatabase(
+                APP_CONFIG.dialog.database_url,
+                min_size=APP_CONFIG.dialog.db_pool_min_size,
+                max_size=APP_CONFIG.dialog.db_pool_max_size,
+                max_idle=APP_CONFIG.dialog.db_pool_max_idle_seconds,
+                max_lifetime=APP_CONFIG.dialog.db_pool_max_lifetime_seconds,
+            )
         return None
 
     make_database = database_factory or make_configured_database
