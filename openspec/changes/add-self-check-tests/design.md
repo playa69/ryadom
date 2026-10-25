@@ -170,13 +170,24 @@
 
 ### D8. Аналитика
 
+Полный перечень событий, свойств и места отправки (клиент или сервер) — в `docs/analytics.md`, раздел «Тесты». Кратко:
+
 | Событие | Свойства |
 |---|---|
-| `self_check_opened` | `from: diary \| tests` |
-| `self_check_started` | `test_id` |
+| `self_check_opened` | `from: diary \| tests \| history` |
+| `self_check_searched` | `found` |
+| `self_check_started` | `test_id`, `from` |
+| `self_check_step_back` | `test_id` |
+| `self_check_interrupt_choice` | `test_id`, `action`, `progress` |
 | `self_check_completed` | `test_id` |
-| `self_check_saved` | `test_id` |
-| `self_check_result_deleted` | `all: bool` |
+| `self_check_result_action` | `test_id`, `action: close \| save \| copy_summary \| retake` |
+| `self_check_consent_shown`, `self_check_consent_choice` | `action` |
+| `self_check_save_failed` | `test_id` |
+| `self_check_history_opened` | `test_id` |
+| `self_check_warning_choice` | `test_id`, `action` |
+| `self_check_saved` (сервер) | `test_id` |
+| `self_check_result_deleted` (сервер) | `scope: one \| test \| all` |
+| `self_check_consent_revoked` (сервер) | — |
 
 Баллов, уровней и ответов в событиях нет. Кризисные ответы — только счётчик Prometheus (D4).
 

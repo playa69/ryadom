@@ -115,6 +115,40 @@ export enum AnalyticsEvent {
   /** A point of the card "Я запомнил" after a conversation was taken off or accepted. */
   MemoryCardAction = 'memory_card_action',
 
+  // ── Self-check tests ────────────────────────────────────────────────────────────────────────
+  // Which test and which step, never a score, a level, an answer or whether a crisis item fired: the
+  // crisis help screen has no event of its own (only the server counter `self_check_crisis_total{test}`),
+  // and the card "Поговорить со специалистом" is not counted because a tap on it would show a high level.
+  /** The list of tests was opened: in the diary block, in the segment "Тесты" or on the screen of one test. */
+  SelfCheckOpened = 'self_check_opened',
+  /** A search in the catalog: whether it found anything, never the words. */
+  SelfCheckSearched = 'self_check_searched',
+  /** The first question was shown. */
+  SelfCheckStarted = 'self_check_started',
+  /** "← Назад" on a question. */
+  SelfCheckStepBack = 'self_check_step_back',
+  /** "Прервать тест?" was answered: go on or stop. `progress` is a third of the way, not the exact question. */
+  SelfCheckInterruptChoice = 'self_check_interrupt_choice',
+  /** The last question was answered and the result was computed. Nothing about the result is reported. */
+  SelfCheckCompleted = 'self_check_completed',
+  /** A button on the result sheet. */
+  SelfCheckResultAction = 'self_check_result_action',
+  /** The sheet of consent for storing results was shown / answered. */
+  SelfCheckConsentShown = 'self_check_consent_shown',
+  SelfCheckConsentChoice = 'self_check_consent_choice',
+  /** Saving failed on the client ("Не получилось сохранить"). */
+  SelfCheckSaveFailed = 'self_check_save_failed',
+  /** The screen of one test, with the history and the chart. */
+  SelfCheckHistoryOpened = 'self_check_history_opened',
+  /** The warning before a clinical screening (wave 3) was answered. */
+  SelfCheckWarningChoice = 'self_check_warning_choice',
+  /** Server: a result was saved (the server recomputed it from the answers). */
+  SelfCheckSaved = 'self_check_saved',
+  /** Server: results were deleted: one, all of one test, or all of them. */
+  SelfCheckResultDeleted = 'self_check_result_deleted',
+  /** Server: the consent for storing results was withdrawn. */
+  SelfCheckConsentRevoked = 'self_check_consent_revoked',
+
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
   FaqOpened = 'faq_opened',
   StoreLinkClicked = 'store_link_clicked',
@@ -220,6 +254,14 @@ export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confir
 /** A point of the card "Я запомнил": taken off ("убрать") or accepted ("Запомнить"). */
 export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
 
+/** Where the list of tests was opened from. */
+export type SelfCheckFrom = 'diary' | 'tests' | 'history'
+/** A test id from the catalog (`phq9`, `gad7`…): a fixed short set, never typed by a person. */
+export type SelfCheckTestId = string
+export type SelfCheckProgress = 'first_third' | 'second_third' | 'last_third'
+export type SelfCheckResultActionName = 'close' | 'save' | 'copy_summary' | 'retake'
+export type SelfCheckDeleteScope = 'one' | 'test' | 'all'
+
 export type PasswordChangeKind = 'change' | 'reset'
 
 /** Properties that every event of a platform carries are added by the SDK wrapper, not here. */
@@ -315,6 +357,22 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties
+
+  [AnalyticsEvent.SelfCheckOpened]: { from: SelfCheckFrom }
+  [AnalyticsEvent.SelfCheckSearched]: { found: boolean }
+  [AnalyticsEvent.SelfCheckStarted]: { test_id: SelfCheckTestId; from: SelfCheckFrom }
+  [AnalyticsEvent.SelfCheckStepBack]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckInterruptChoice]: { test_id: SelfCheckTestId; action: 'continue' | 'abort'; progress: SelfCheckProgress }
+  [AnalyticsEvent.SelfCheckCompleted]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckResultAction]: { test_id: SelfCheckTestId; action: SelfCheckResultActionName }
+  [AnalyticsEvent.SelfCheckConsentShown]: NoProperties
+  [AnalyticsEvent.SelfCheckConsentChoice]: { action: 'accepted' | 'declined' }
+  [AnalyticsEvent.SelfCheckSaveFailed]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckHistoryOpened]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckWarningChoice]: { test_id: SelfCheckTestId; action: 'start' | 'later' }
+  [AnalyticsEvent.SelfCheckSaved]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckResultDeleted]: { scope: SelfCheckDeleteScope }
+  [AnalyticsEvent.SelfCheckConsentRevoked]: NoProperties
 
   [AnalyticsEvent.FaqOpened]: { question: string }
   [AnalyticsEvent.StoreLinkClicked]: { store: StoreLink }
