@@ -15,9 +15,27 @@ WORKDIR /repo
 COPY package.json ./
 RUN npm install -g "pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]")" --no-audit --no-fund
 
-COPY . .
+# Dependencies before the sources: this layer depends only on the lockfile and the manifests, so a code change
+# reuses it instead of writing a new node_modules layer (about 1 GB) on every build. Every workspace package's
+# manifest is listed so that "..." below resolves exactly as in the repository: a new package goes here too.
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/admin/package.json apps/admin/
+COPY apps/landing/package.json apps/landing/
+COPY apps/mobile/package.json apps/mobile/
+COPY apps/web/package.json apps/web/
+COPY services/api/package.json services/api/
+COPY packages/analytics/package.json packages/analytics/
+COPY packages/client-core/package.json packages/client-core/
+COPY packages/contracts/package.json packages/contracts/
+COPY packages/core/package.json packages/core/
+COPY packages/db/package.json packages/db/
+COPY packages/design/package.json packages/design/
+COPY packages/ui/package.json packages/ui/
+COPY dev/agent-mock/package.json dev/agent-mock/
+COPY e2e/package.json e2e/
 RUN --mount=type=cache,id=ryadom-pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter "@ryadom/admin..."
+COPY . .
 ARG BASE_PATH=""
 ENV BASE_PATH=$BASE_PATH
 RUN pnpm --filter @ryadom/admin build
