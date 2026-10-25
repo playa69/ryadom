@@ -1,6 +1,8 @@
 import { Navbar, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import type { ReactNode } from 'react'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { track } from '@ryadom/analytics/browser'
+import { useEffect, type ReactNode } from 'react'
 import { rememberSegment, SEGMENT_URLS, type DiarySegment } from '../../../lib/diary'
 import { SosButton } from '../../SosSheet'
 
@@ -30,6 +32,11 @@ export default function DiaryShell({
   onTabShow?: () => void
   children: ReactNode
 }) {
+  // Which segment was opened, once per opening of the page: never what is on it.
+  useEffect(() => {
+    track(AnalyticsEvent.DiaryOpened, { tab: segment })
+  }, [segment])
+
   function choose(next: DiarySegment) {
     if (next === segment) return
     segmentChosen.value = true

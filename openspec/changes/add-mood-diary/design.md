@@ -219,13 +219,13 @@ widget_tokens(id uuid pk, user_id fk users, token_hash bytea unique, created_at,
 
 | Событие | Свойства |
 |---|---|
-| `diary_opened` | `tab` |
+| `diary_opened` | `tab`: `diary \| recaps \| year` |
 | `mood_checked_in` | `source`, `with_factor`, `changed` |
 | `mood_bridge_clicked` | `target: dialog \| people` |
 | `week_summary_generated` | `trigger: button \| auto` |
 | `year_story_generated` | — |
+| `diary_summary_refused` | `kind: week \| year`, `reason: not_enough \| too_soon \| agent_unavailable` |
 | `year_shared` | — |
-| `widget_pin_requested` | `result` |
 
 Значений настроения, факторов и текстов в событиях нет. Значение настроения вместе с id аккаунта может считаться данными о здоровье (предупреждение в `services/api/.env.example`).
 

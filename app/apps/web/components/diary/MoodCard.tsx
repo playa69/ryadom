@@ -1,5 +1,7 @@
 'use client'
 
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { track } from '@ryadom/analytics/browser'
 import { Flame } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
@@ -171,7 +173,10 @@ export default function MoodCard({
               size="sm"
               className={BUTTON}
               data-testid="diary-bridge-talk"
-              onClick={() => router.push('/home')}
+              onClick={() => {
+                track(AnalyticsEvent.MoodBridgeClicked, { target: 'dialog' })
+                router.push('/home')
+              }}
             >
               Поговорить
             </Button>
@@ -181,7 +186,10 @@ export default function MoodCard({
                 variant="outline"
                 className={BUTTON}
                 data-testid="diary-bridge-people"
-                onClick={() => router.push('/people')}
+                onClick={() => {
+                  track(AnalyticsEvent.MoodBridgeClicked, { target: 'people' })
+                  router.push('/people')
+                }}
               >
                 Люди рядом
               </Button>

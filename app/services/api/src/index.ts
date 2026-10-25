@@ -102,7 +102,7 @@ if (!env.ANONYMOUS_PURGE_DISABLED) {
 }
 
 // The diary's automatic week summaries (REQ-WELL-01).
-startDiaryScheduler(logger)
+startDiaryScheduler(logger, analytics)
 
 const server = serve({ fetch: app.fetch, port: env.PORT, createServer }, (info) => {
   logger.info({ port: info.port, appEnv: env.APP_ENV }, 'приложение слушает порт')

@@ -1,3 +1,5 @@
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { track } from '@ryadom/analytics/browser'
 import { Button } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState } from 'react'
@@ -116,11 +118,17 @@ export default function MoodCard({ data, f7router }: { data: DiaryApiResponse; f
               : 'Хочешь рассказать, что случилось?'}
           </p>
           <div className="rd-bridge-actions">
-            <Button small round fill data-testid="diary-bridge-talk" onClick={() => startTalk()}>
+            <Button small round fill data-testid="diary-bridge-talk" onClick={() => {
+                track(AnalyticsEvent.MoodBridgeClicked, { target: 'dialog' })
+                startTalk()
+              }}>
               Поговорить
             </Button>
             {bridge === 'hard-streak' && (
-              <Button small round outline data-testid="diary-bridge-people" onClick={() => f7router.navigate('/people/')}>
+              <Button small round outline data-testid="diary-bridge-people" onClick={() => {
+                  track(AnalyticsEvent.MoodBridgeClicked, { target: 'people' })
+                  f7router.navigate('/people/')
+                }}>
                 Люди рядом
               </Button>
             )}

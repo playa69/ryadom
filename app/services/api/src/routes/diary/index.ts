@@ -21,7 +21,7 @@ import {
   type DiarySummaryDTO,
   type MoodCheckinDTO,
 } from '@ryadom/core/processes/diary'
-import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { AnalyticsEvent, type DiarySummaryKind, type DiarySummaryRefusal } from '@ryadom/analytics/events'
 import assertNever from 'assert-never'
 import type { Context, Hono, MiddlewareHandler } from 'hono'
 import { z } from 'zod'
@@ -132,10 +132,34 @@ function refuse(c: Context, error: Refusal): Response {
   }
 }
 
+/** The reason a summary was refused, as the fixed word analytics keeps; null for errors that are not a refusal of the ask. */
+function refusalReason(
+  error: CreateWeekSummaryOperationErrorCode | CreateYearStoryOperationErrorCode,
+): DiarySummaryRefusal | null {
+  switch (error) {
+    case CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS:
+    case CreateYearStoryOperationErrorCode.NOT_ENOUGH_WEEKS:
+      return 'not_enough'
+    case CreateWeekSummaryOperationErrorCode.TOO_SOON:
+      return 'too_soon'
+    case CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE:
+    case CreateYearStoryOperationErrorCode.SUMMARY_UNAVAILABLE:
+      return 'agent_unavailable'
+    default:
+      return null
+  }
+}
+
 export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, analytics }: RouteDeps): void {
   const read = perUser(rateLimiter, 'diary-read', RATE_LIMITS.diaryRead.perUser)
   const write = perUser(rateLimiter, 'diary-write', RATE_LIMITS.diaryWrite.perUser)
   const summary = perUser(rateLimiter, 'diary-summary', RATE_LIMITS.diarySummary.perUser)
+
+  // The funnel of failures: that a summary was refused and why, never what it was about.
+  const reportRefusal = (userId: string, kind: DiarySummaryKind, error: CreateWeekSummaryOperationErrorCode | CreateYearStoryOperationErrorCode): void => {
+    const reason = refusalReason(error)
+    if (reason) analytics.capture(userId, AnalyticsEvent.DiarySummaryRefused, { kind, reason })
+  }
 
   app.get(ApiPath.Diary, requireAuth(jwt), requireActiveSession(sessions), read, queryParams(monthQuery), async (c) => {
     const result = await diaryProcess.execute(
@@ -218,7 +242,10 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
     const result = await diaryProcess.execute(
       new CreateWeekSummaryOperation({ userId, weekStart: c.req.valid('json').weekStart }),
     )
-    if (!result.success) return refuse(c, result.error)
+    if (!result.success) {
+      reportRefusal(userId, 'week', result.error)
+      return refuse(c, result.error)
+    }
     analytics.capture(userId, AnalyticsEvent.WeekSummaryGenerated, { trigger: 'button' })
     return apiOk(c, toSummary(result.summary))
   })
@@ -226,7 +253,10 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
   app.post(ApiPath.DiaryYearSummary, requireAuth(jwt), requireActiveSession(sessions), summary, jsonBody(yearBody), async (c) => {
     const { userId } = authUser(c)
     const result = await diaryProcess.execute(new CreateYearStoryOperation({ userId, year: c.req.valid('json').year }))
-    if (!result.success) return refuse(c, result.error)
+    if (!result.success) {
+      reportRefusal(userId, 'year', result.error)
+      return refuse(c, result.error)
+    }
     analytics.capture(userId, AnalyticsEvent.YearStoryGenerated, {})
     return apiOk(c, toSummary(result.summary))
   })

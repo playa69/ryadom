@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { track } from '@ryadom/analytics/browser'
 import { Suspense, useEffect } from 'react'
 import { Card } from '@ryadom/ui/components/card'
 import { cn } from '@ryadom/ui/lib/utils'
@@ -17,6 +19,8 @@ import YearView from './YearView'
 export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
   useEffect(() => {
     writeLastSegment(segment)
+    // Which segment was opened, once per opening: never what is on it.
+    track(AnalyticsEvent.DiaryOpened, { tab: segment })
   }, [segment])
 
   return (

@@ -64,7 +64,7 @@ export async function shareYearImage(
   year: number,
   days: readonly MoodCheckinApi[],
   today: string,
-): Promise<'shared' | 'downloaded' | 'failed'> {
+): Promise<'shared' | 'downloaded' | 'failed' | 'cancelled'> {
   const canvas = document.createElement('canvas')
   drawYearImage(canvas, year, days, today)
   const blob = await toBlob(canvas)
@@ -76,7 +76,7 @@ export async function shareYearImage(
       return 'shared'
     } catch (error) {
       // The person closed the sheet: the picture was offered, which is what they asked for.
-      if (error instanceof DOMException && error.name === 'AbortError') return 'shared'
+      if (error instanceof DOMException && error.name === 'AbortError') return 'cancelled'
     }
   }
   // A store build's WebView ignores download links; there is nothing more to try with it.

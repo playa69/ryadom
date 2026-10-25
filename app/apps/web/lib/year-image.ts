@@ -70,7 +70,7 @@ export async function renderYearImage(year: number, days: readonly MoodCheckinAp
 }
 
 /** The system share sheet with the file where the browser has one; a download everywhere else. */
-export async function shareYearImage(year: number, blob: Blob): Promise<'shared' | 'downloaded'> {
+export async function shareYearImage(year: number, blob: Blob): Promise<'shared' | 'downloaded' | 'cancelled'> {
   const file = new File([blob], yearImageFileName(year), { type: 'image/png' })
   if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
     try {
@@ -78,7 +78,7 @@ export async function shareYearImage(year: number, blob: Blob): Promise<'shared'
       return 'shared'
     } catch (error) {
       // The person closed the sheet: nothing to download after that.
-      if (error instanceof DOMException && error.name === 'AbortError') return 'shared'
+      if (error instanceof DOMException && error.name === 'AbortError') return 'cancelled'
     }
   }
   const url = URL.createObjectURL(blob)

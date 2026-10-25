@@ -1,3 +1,5 @@
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import type { ServerAnalytics } from '@ryadom/analytics/server'
 import { diaryProcess, RunWeeklyDigestsOperation } from '@ryadom/core/processes/diary'
 import type { Logger } from './logger'
 
@@ -12,13 +14,26 @@ import type { Logger } from './logger'
 
 const MINUTE_MS = 60_000
 
-export function startDiaryScheduler(logger: Logger): () => void {
+/**
+ * One pass: closes the finished weeks and reports the fact of each to analytics (never a text or a mood).
+ * Exported for the test, which runs it with a recording analytics and a fixed clock.
+ */
+export async function runDiaryPass(
+  analytics: Pick<ServerAnalytics, 'capture'>,
+  now?: Date,
+): Promise<{ weekly: number; yearly: number }> {
+  const result = await diaryProcess.execute(new RunWeeklyDigestsOperation({ now }))
+  for (const userId of result.weeklyUserIds) analytics.capture(userId, AnalyticsEvent.WeekSummaryGenerated, { trigger: 'auto' })
+  for (const userId of result.yearlyUserIds) analytics.capture(userId, AnalyticsEvent.YearStoryGenerated, {})
+  return { weekly: result.weekly, yearly: result.yearly }
+}
+
+export function startDiaryScheduler(logger: Logger, analytics: Pick<ServerAnalytics, 'capture'>): () => void {
   let running = false
   const timer = setInterval(() => {
     if (running) return
     running = true
-    diaryProcess
-      .execute(new RunWeeklyDigestsOperation())
+    runDiaryPass(analytics)
       .then((result) => {
         if (result.weekly > 0 || result.yearly > 0) {
           logger.info({ weekly: result.weekly, yearly: result.yearly }, 'итоги недели собраны')

@@ -1,5 +1,7 @@
 'use client'
 
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { track } from '@ryadom/analytics/browser'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import {
@@ -59,6 +61,7 @@ export default function YearView() {
     try {
       const blob = await renderYearImage(year, data.days, today)
       const how = await shareYearImage(year, blob)
+      if (how === 'shared' || how === 'downloaded') track(AnalyticsEvent.YearShared)
       if (how === 'downloaded') setNote(`Картинка сохранена: ryadom-${year}.png`)
     } catch {
       setNote('Не получилось сделать картинку')

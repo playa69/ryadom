@@ -29,10 +29,10 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
     const { users: people } = await diaryManager.execute(
       new ListUsersWithRecentCheckinsQuery({ since, limit: config.WEEKLY_PEOPLE_MAX }),
     )
-    let weekly = 0
-    let yearly = 0
+    const weeklyUserIds: string[] = []
+    const yearlyUserIds: string[] = []
     for (const { userId, timezone } of people) {
-      if (weekly + yearly >= limit) break
+      if (weeklyUserIds.length + yearlyUserIds.length >= limit) break
       const local = localMoment(now, timezone)
       // Monday after 06:00 and later: a missed Monday is made up on the next passes of the week.
       if (local.isoWeekday === 1 && local.minutes < config.WEEKLY_CLOSE_MINUTES) continue
@@ -66,9 +66,9 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
       try {
         closed = (await makeWeekSummary(userId, lastWeek, true, now)).success
         if (closed) {
-          weekly += 1
+          weeklyUserIds.push(userId)
           const story = await makeYearStory(userId, Number(lastWeek.slice(0, 4)), now)
-          if (story.success) yearly += 1
+          if (story.success) yearlyUserIds.push(userId)
         }
       } catch (error) {
         log.error('Не удалось собрать итоги недели', error)
@@ -77,6 +77,6 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
         if (!closed) await diaryManager.execute(new ReleaseDiarySummaryCommand({ userId, kind: 'week', periodStart: lastWeek }))
       }
     }
-    return { success: true, weekly, yearly }
+    return { success: true, weekly: weeklyUserIds.length, yearly: yearlyUserIds.length, weeklyUserIds, yearlyUserIds }
   }
 }

@@ -1,3 +1,5 @@
+import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { track } from '@ryadom/analytics/browser'
 import { Block, Button, Icon, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useState } from 'react'
@@ -57,6 +59,7 @@ export default function YearPage({ f7router }: { f7router: Router.Router }) {
   async function share() {
     if (!data) return
     const result = await shareYearImage(year, data.days, today)
+    if (result === 'shared' || result === 'downloaded') track(AnalyticsEvent.YearShared)
     setShareNote(
       result === 'downloaded' ? `Картинка сохранена: ryadom-${year}.png` : result === 'failed' ? 'Не получилось поделиться' : '',
     )
