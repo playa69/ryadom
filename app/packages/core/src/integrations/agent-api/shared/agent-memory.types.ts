@@ -86,7 +86,7 @@ export interface AgentMemoryResponse {
   consentVersion: string | null
   consentAt: string | null
   rulesVersion: string
-  limits: { maxFacts: number }
+  limits: { maxFacts: number | null }
   facts: AgentMemoryFactResponse[]
 }
 

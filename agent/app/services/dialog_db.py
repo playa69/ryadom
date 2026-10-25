@@ -5,9 +5,11 @@
 `ryadom-db` (k8s/agent/README.md «Хранилище диалогов»).
 
 `DialogStore` зовёт базу синхронно, через `asyncio.to_thread`, по одному обращению под замком. Драйвер psycopg3
-синхронный: асинхронный здесь ничего не дал бы, а зависимостей и кода было бы больше. Соединение в
-`autocommit=True`: `conn.transaction()` тогда сам делает BEGIN/COMMIT на записях, а чтения не оставляют за собой
-висячую неявную транзакцию (иначе она держала бы блокировки, а записи через savepoint никогда не коммитились).
+синхронный: асинхронный здесь ничего не дал бы, а зависимостей и кода было бы больше. Каждая операция берёт соединение
+из `ConnectionPool`; перед выдачей пул проверяет его и заменяет разорванное, поэтому после сбоя сети или смены primary
+агент восстанавливается без перезапуска. Соединение в `autocommit=True`: `conn.transaction()` тогда сам делает
+BEGIN/COMMIT на записях, а чтения не оставляют висячую неявную транзакцию (иначе она держала бы блокировки, а записи
+через savepoint никогда не коммитились).
 
 Схема — только диалоговые таблицы (`dialogs`, `messages`, `client_ids`, `voice_prefs`, `model_usage`). Таблиц памяти
 здесь нет: память агента — Cognee (`app/memory/cognee_backend.py`), стирание человека в памяти делает она. DDL
@@ -23,14 +25,15 @@
 import json
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeVar
+from typing import Any
 
 import psycopg
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 logger = logging.getLogger("agent.db")
-
-_T = TypeVar("_T")
 
 DDL = (
     """CREATE TABLE IF NOT EXISTS dialogs (
@@ -142,89 +145,90 @@ class DialogDatabase:
 
     label = "postgres"
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        min_size: int = 1,
+        max_size: int = 4,
+        max_idle: float = 300,
+        max_lifetime: float = 3600,
+    ) -> None:
+        """Сохраняет параметры пула PostgreSQL."""
         self.dsn = dsn
-        self._conn: psycopg.Connection | None = None
+        self._min_size = min_size
+        self._max_size = max_size
+        self._max_idle = max_idle
+        self._max_lifetime = max_lifetime
+        self._pool: ConnectionPool | None = None
         self._lock = threading.Lock()
 
-    def _connect(self) -> psycopg.Connection:
-        # keepalives: сетевой слой (сайдкар, балансировщик) закрывает молчащие соединения; ядро тогда держит их живыми
-        # и быстро замечает обрыв.
-        return psycopg.connect(
-            self.dsn,
-            connect_timeout=10,
-            application_name="agent",
-            autocommit=True,
-            keepalives=1,
-            keepalives_idle=30,
-            keepalives_interval=10,
-            keepalives_count=3,
-        )
+    @staticmethod
+    def _configure(conn: psycopg.Connection) -> None:
+        """Настраивает новое соединение пула."""
+        conn.autocommit = True
+        conn.prepare_threshold = None
 
     def open(self) -> None:
-        """Подключиться и гарантировать схему. Исключение — `DialogDbError`."""
+        """Открывает пул и гарантирует схему. Исключение — `DialogDbError`."""
+        pool: ConnectionPool | None = None
         try:
-            conn = self._connect()
-            with conn.transaction():
+            pool = ConnectionPool(
+                self.dsn,
+                min_size=self._min_size,
+                max_size=self._max_size,
+                max_idle=self._max_idle,
+                max_lifetime=self._max_lifetime,
+                timeout=10,
+                kwargs={"connect_timeout": 10, "application_name": "agent"},
+                configure=self._configure,
+                check=ConnectionPool.check_connection,
+                open=False,
+            )
+            pool.open(wait=True)
+            with pool.connection() as conn, conn.transaction():
                 for statement in DDL:
                     conn.execute(statement)
-            self._conn = conn
+            self._pool = pool
         except DialogDbError:
             raise
-        except (psycopg.Error, OSError) as error:
+        except (psycopg.Error, PoolTimeout, OSError) as error:
+            if pool is not None:
+                pool.close()
             raise DialogDbError(f"{type(error).__name__}: {error}") from error
         dialogs, messages = self.counts()
         logger.info("dialog db opened postgres dialogs=%d messages=%d", dialogs, messages)
 
     def close(self) -> None:
+        """Закрывает пул и все его соединения."""
         with self._lock:
-            if self._conn is None:
+            if self._pool is None:
                 return
-            self._conn.close()
-            self._conn = None
+            self._pool.close()
+            self._pool = None
 
-    def _connection(self) -> psycopg.Connection:
-        """Живое соединение. Закрытое или оборванное (сервер или сеть закрыли его) открывается заново: одно соединение
-        на весь процесс не должно навсегда выводить агента из строя после первого разрыва."""
-        if self._conn is None:
+    @contextmanager
+    def _connection(self) -> Iterator[psycopg.Connection]:
+        """Выдаёт проверенное соединение из пула на одну операцию."""
+        if self._pool is None:
             raise DialogDbError("база диалогов не открыта")
-        if self._conn.closed or self._conn.broken:
-            self._reconnect()
-        return self._conn
-
-    def _reconnect(self) -> None:
-        logger.warning("dialog db connection lost, reconnecting")
         try:
-            self._conn.close()  # type: ignore[union-attr]
-        except psycopg.Error:
-            pass
-        try:
-            self._conn = self._connect()
-        except (psycopg.Error, OSError) as error:
+            with self._pool.connection() as conn:
+                yield conn
+        except (psycopg.Error, PoolTimeout, OSError) as error:
             raise DialogDbError(f"{type(error).__name__}: {error}") from error
 
-    def _retrying(self, operation: Callable[[psycopg.Connection], _T]) -> _T:
-        """Выполнить операцию под замком; если соединение оборвалось на ходу, переоткрыть его и повторить один раз.
-        Повтор безопасен: записи идут одной транзакцией (оборвалась — откатилась), остальное — чтение или идемпотентное
-        удаление."""
-        with self._lock:
-            try:
-                return operation(self._connection())
-            except (psycopg.OperationalError, psycopg.InterfaceError):
-                self._reconnect()
-                return operation(self._connection())
-
     def counts(self) -> tuple[int, int]:
-        return self._retrying(
-            lambda conn: (
+        """Возвращает число диалогов и сообщений."""
+        with self._lock, self._connection() as conn:
+            return (
                 conn.execute("SELECT COUNT(*) FROM dialogs").fetchone()[0],
                 conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0],
             )
-        )
 
     def load_user(self, user_id: str) -> tuple[list[StoredDialog], str | None]:
         """Все диалоги человека (от старых к новым) с сообщениями и выбранный им голос."""
-        def read(conn: psycopg.Connection) -> tuple[list[StoredDialog], str | None]:
+        with self._lock, self._connection() as conn:
             dialogs = {
                 row[0]: StoredDialog(
                     id=row[0],
@@ -258,50 +262,50 @@ class DialogDatabase:
             ).fetchall():
                 dialogs[dialog_id].client_ids[client_id] = message_id
             pref = conn.execute("SELECT voice FROM voice_prefs WHERE user_id = %s", (user_id,)).fetchone()
-            return list(dialogs.values()), (pref[0] if pref else None)
-
-        return self._retrying(read)
+        return list(dialogs.values()), (pref[0] if pref else None)
 
     def apply(self, writes: list[DialogWrite]) -> None:
         """Записать пачку одной транзакцией: либо всё, либо ничего."""
-        def write(conn: psycopg.Connection) -> None:
-            with conn.cursor() as cur, conn.transaction():
-                for write in writes:
-                    # memory_mode неизменяем после создания, crisis_seen только растёт, memory_extracted_at писатель
-                    # диалогов не трогает (это отметка бэкенда памяти о забранном диалоге).
+        with (
+            self._lock,
+            self._connection() as conn,
+            conn.cursor() as cur,
+            conn.transaction(),
+        ):
+            for write in writes:
+                # memory_mode неизменяем после создания, crisis_seen только растёт, memory_extracted_at писатель
+                # диалогов не трогает (это отметка бэкенда памяти о забранном диалоге).
+                cur.execute(
+                    "INSERT INTO dialogs (id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, "
+                    "memory_mode, crisis_seen) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (id) DO UPDATE SET "
+                    "ended_at = EXCLUDED.ended_at, summary = EXCLUDED.summary, greeting = EXCLUDED.greeting, "
+                    "voice = EXCLUDED.voice, reply_index = EXCLUDED.reply_index, "
+                    "crisis_seen = GREATEST(dialogs.crisis_seen, EXCLUDED.crisis_seen)",
+                    clean_row(write.row),
+                )
+                cur.executemany(
+                    "INSERT INTO messages (id, dialog_id, position, role, text, created_at, audio_seconds) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dialog_id, id) DO UPDATE SET "
+                    "text = EXCLUDED.text, position = EXCLUDED.position, audio_seconds = EXCLUDED.audio_seconds",
+                    [clean_row(item) for item in write.messages],
+                )
+                cur.executemany(
+                    "INSERT INTO model_usage (dialog_id, message_id, created_at, model, task, direction, modality, "
+                    "unit, amount) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    [clean_row(item) for item in write.usage],
+                )
+                cur.executemany(
+                    "INSERT INTO client_ids (dialog_id, client_id, message_id) VALUES (%s, %s, %s) "
+                    "ON CONFLICT DO NOTHING",
+                    [clean_row(item) for item in write.client_ids],
+                )
+                if write.pref is not None:
                     cur.execute(
-                        "INSERT INTO dialogs (id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, "
-                        "memory_mode, crisis_seen) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                        "ON CONFLICT (id) DO UPDATE SET "
-                        "ended_at = EXCLUDED.ended_at, summary = EXCLUDED.summary, greeting = EXCLUDED.greeting, "
-                        "voice = EXCLUDED.voice, reply_index = EXCLUDED.reply_index, "
-                        "crisis_seen = GREATEST(dialogs.crisis_seen, EXCLUDED.crisis_seen)",
-                        clean_row(write.row),
+                        "INSERT INTO voice_prefs (user_id, voice) VALUES (%s, %s) "
+                        "ON CONFLICT (user_id) DO UPDATE SET voice = EXCLUDED.voice",
+                        clean_row(write.pref),
                     )
-                    cur.executemany(
-                        "INSERT INTO messages (id, dialog_id, position, role, text, created_at, audio_seconds) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dialog_id, id) DO UPDATE SET "
-                        "text = EXCLUDED.text, position = EXCLUDED.position, audio_seconds = EXCLUDED.audio_seconds",
-                        [clean_row(item) for item in write.messages],
-                    )
-                    cur.executemany(
-                        "INSERT INTO model_usage (dialog_id, message_id, created_at, model, task, direction, modality, "
-                        "unit, amount) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                        [clean_row(item) for item in write.usage],
-                    )
-                    cur.executemany(
-                        "INSERT INTO client_ids (dialog_id, client_id, message_id) VALUES (%s, %s, %s) "
-                        "ON CONFLICT DO NOTHING",
-                        [clean_row(item) for item in write.client_ids],
-                    )
-                    if write.pref is not None:
-                        cur.execute(
-                            "INSERT INTO voice_prefs (user_id, voice) VALUES (%s, %s) "
-                            "ON CONFLICT (user_id) DO UPDATE SET voice = EXCLUDED.voice",
-                            clean_row(write.pref),
-                        )
-
-        self._retrying(write)
 
     def checkpoint(self) -> None:
         """Нет-оп: метод нужен контракту `DialogStore`; журнал транзакций ведёт кластер PostgreSQL."""
@@ -309,13 +313,9 @@ class DialogDatabase:
     def erase_user(self, user_id: str) -> None:
         """Стереть всё о человеке (диалоги с сообщениями, расходом и идентификаторами — каскадом, выбор голоса) одной
         транзакцией. Идемпотентно. Память человека стирает бэкенд памяти (Cognee), здесь её таблиц нет."""
-
-        def erase(conn: psycopg.Connection) -> None:
-            with conn.transaction():
-                conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
-                conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
-
-        self._retrying(erase)
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         """Удалить один диалог человека целиком (сообщения и расход уходят каскадом).
@@ -323,9 +323,5 @@ class DialogDatabase:
         `forget_derived` принимается ради контракта: фактами, выведенными из удалённого диалога, управляет бэкенд
         памяти (Cognee), а не хранилище диалогов.
         """
-
-        def delete(conn: psycopg.Connection) -> None:
-            with conn.transaction():
-                conn.execute("DELETE FROM dialogs WHERE id = %s AND user_id = %s", (dialog_id, user_id))
-
-        self._retrying(delete)
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM dialogs WHERE id = %s AND user_id = %s", (dialog_id, user_id))
