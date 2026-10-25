@@ -111,7 +111,7 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
   return (
     <Page
       title={head?.summary?.title || 'Разговор'}
-      back={{ href: '/journal', label: 'Все разговоры' }}
+      back={{ href: '/diary/journal', label: 'Все разговоры' }}
       measure="reading"
       actions={
         // Only a conversation with something in it can be shared.
@@ -137,7 +137,7 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
             <RetryButton onClick={retry} />
           ) : (
             <Button asChild variant="outline" size="sm" className={cn(BUTTON, 'px-4')}>
-              <Link href="/journal">К списку разговоров</Link>
+              <Link href="/diary/journal">К списку разговоров</Link>
             </Button>
           )}
         </StatePanel>

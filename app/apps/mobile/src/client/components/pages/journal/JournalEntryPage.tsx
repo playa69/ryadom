@@ -128,7 +128,7 @@ export function JournalEntryBody({
 
 export default function JournalEntryPage({ dialogId, f7router }: { dialogId: string; f7router: Router.Router }) {
   const isWide = useMediaQuery(WIDE_QUERY)
-  const url = `/journal/${dialogId}/`
+  const url = `/diary/journal/${dialogId}/`
 
   useEffect(() => journal.open(dialogId), [dialogId])
 
@@ -140,8 +140,8 @@ export default function JournalEntryPage({ dialogId, f7router }: { dialogId: str
   const handOff = useCallback(() => {
     if (!matchesQuery(WIDE_QUERY) || f7router.currentRoute.url !== url) return
     const previous = f7router.history[f7router.history.length - 2]
-    if (previous === '/journal/') f7router.back('/journal/', { animate: false })
-    else f7router.navigate('/journal/', { reloadCurrent: true, animate: false })
+    if (previous === '/diary/journal/') f7router.back('/diary/journal/', { animate: false })
+    else f7router.navigate('/diary/journal/', { reloadCurrent: true, animate: false })
   }, [f7router, url])
 
   useEffect(() => {

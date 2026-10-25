@@ -58,4 +58,10 @@ export const {
   forgetAllMemory,
   getMemoryChanges,
   exportMemory,
+  getDiary,
+  putMoodCheckin,
+  listDiarySummaries,
+  createWeekSummary,
+  getDiaryEvents,
+  createWidgetToken,
 } = client

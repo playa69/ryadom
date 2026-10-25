@@ -26,3 +26,6 @@ export const WEB_HANDS_FREE_KEY = `${WEB_STORAGE_PREFIX}hands-free`
 
 /** "Скрывать тексты" of the screen "Память" in this browser (localStorage); see client-core/memory. */
 export const WEB_MEMORY_HIDDEN_KEY = `${WEB_STORAGE_PREFIX}memory-hidden`
+
+/** The last open segment of the diary in this browser (localStorage). */
+export const WEB_DIARY_SEGMENT_KEY = `${WEB_STORAGE_PREFIX}diary-segment`

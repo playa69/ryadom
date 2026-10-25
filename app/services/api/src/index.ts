@@ -8,6 +8,7 @@ import { closeAllDialogSessions, handleDialogSocket } from './dialogs/gateway'
 import { createAnalytics, hasInvalidProjectToken } from './lib/analytics'
 import { purgeInactiveAnonymous } from './lib/anonymous-retention'
 import { shutdownCore } from './lib/core'
+import { startDiaryScheduler } from './lib/diary-scheduler'
 import { EnvValidationError, parseEnv } from './lib/env'
 import { createJwt } from './lib/jwt'
 import { startDraining } from './lib/lifecycle'
@@ -99,6 +100,9 @@ if (!env.ANONYMOUS_PURGE_DISABLED) {
   setTimeout(() => void purge(), 2 * 60_000).unref()
   setInterval(() => void purge(), 60 * 60_000).unref()
 }
+
+// The diary's automatic week summaries (REQ-WELL-01).
+startDiaryScheduler(logger, analytics)
 
 const server = serve({ fetch: app.fetch, port: env.PORT, createServer }, (info) => {
   logger.info({ port: info.port, appEnv: env.APP_ENV }, 'приложение слушает порт')

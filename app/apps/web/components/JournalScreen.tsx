@@ -17,7 +17,7 @@ import { groupJournal } from '@/lib/journal-groups'
 import { BUSY } from './busy'
 import { BUTTON } from './controls'
 import { BADGE_COMPACT, conversationHref, RetryButton, StatePanel } from './JournalParts'
-import { Page, SECTION_HEADING } from './Page'
+import { SECTION_HEADING } from './Page'
 
 function entryTitle(item: DialogListItemApiResponse): string {
   return item.summary?.title || 'Разговор'
@@ -156,7 +156,7 @@ export default function JournalScreen() {
   const isEmpty = items !== null && items.length === 0
 
   return (
-    <Page title="Все разговоры" measure="reading" className="gap-8" data-testid="journal">
+    <div className="flex flex-col gap-8" data-testid="journal">
       {items === null && <ListSkeleton />}
 
       {isEmpty && (
@@ -265,6 +265,6 @@ export default function JournalScreen() {
           </p>
         </>
       )}
-    </Page>
+    </div>
   )
 }

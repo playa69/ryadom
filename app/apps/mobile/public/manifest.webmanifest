@@ -8,6 +8,14 @@
   "display": "standalone",
   "background_color": "#00051a",
   "theme_color": "#00051a",
+  "shortcuts": [
+    {
+      "name": "Отметить настроение",
+      "short_name": "Настроение",
+      "url": "./diary/?checkin=1",
+      "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
   "categories": ["health", "lifestyle"],
   "icons": [
     { "src": "pwa-192x192.png", "sizes": "192x192", "type": "image/png" },

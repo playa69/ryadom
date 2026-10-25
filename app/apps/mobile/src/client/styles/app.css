@@ -2567,9 +2567,23 @@ input:-webkit-autofill:focus {
     padding-left: 16px;
   }
 
+  /* The segments stay on top; the two panes take the rest of the height. */
+  .rd-diary--journal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding-bottom: 0;
+  }
+
+  .rd-diary--journal > .rd-diary-segments {
+    flex: none;
+    margin-bottom: var(--ryadom-s-3);
+  }
+
   .rd-split {
     display: flex;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
   }
 
   .rd-split-side {
@@ -2629,4 +2643,309 @@ input:-webkit-autofill:focus {
   display: inline-block;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+/* ── Mood diary ──────────────────────────────────────────────────────────── */
+
+.rd-diary {
+  padding-bottom: var(--ryadom-s-8);
+}
+
+.rd-diary-segments {
+  margin: var(--ryadom-s-3) var(--ryadom-s-4) 0;
+}
+
+.rd-diary-note {
+  padding: var(--ryadom-s-4);
+  text-align: center;
+}
+
+.rd-card-title {
+  margin: 0 0 var(--ryadom-s-3);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-mood-faces {
+  display: flex;
+  gap: 2px;
+  justify-content: space-between;
+}
+
+.rd-mood-face {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 0;
+  border: 2px solid transparent;
+  border-radius: var(--ryadom-r-m, 14px);
+  background: transparent;
+  font: inherit;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.rd-mood-face svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.rd-mood-face-label {
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: -0.1px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* 320px: five faces share about 250px, «Нормально» still has to stay in one line. */
+@media (max-width: 340px) {
+  .rd-mood-face-label {
+    font-size: 9px;
+    letter-spacing: -0.2px;
+  }
+}
+
+.rd-mood-face--on {
+  color: var(--ryadom-text);
+}
+
+.rd-mood-face--on .rd-mood-face-label {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+/* The chosen face keeps its colour and wears a check, so the choice reads without colour too; the rest go grey. */
+.rd-mood-face--on::before {
+  position: absolute;
+  top: 2px;
+  left: calc(50% + 9px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ryadom-text);
+  color: #0c1438;
+  content: '✓';
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.rd-mood-face--dim {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.rd-mood-factors-title,
+.rd-bridge-text {
+  margin: var(--ryadom-s-4) 0 var(--ryadom-s-2);
+  font-size: 15px;
+  color: var(--ryadom-text);
+}
+
+.rd-factor-strip {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  padding-bottom: 4px;
+  overflow-x: auto;
+}
+
+.rd-factor {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-pill);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-factor--on {
+  border-color: transparent;
+  background: var(--ryadom-brand-fill);
+  color: var(--ryadom-cta-ink);
+  font-weight: 600;
+}
+
+.rd-bridge {
+  margin-top: var(--ryadom-s-4);
+  padding-top: var(--ryadom-s-3);
+  border-top: 1px solid var(--ryadom-line);
+}
+
+.rd-bridge-text {
+  margin-top: 0;
+}
+
+.rd-bridge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ryadom-s-2);
+}
+
+.rd-mood-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rd-mood-head .rd-card-title {
+  margin-bottom: var(--ryadom-s-3);
+}
+
+.rd-streak {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: var(--ryadom-s-3);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-streak-flame {
+  color: #ff8a3d;
+}
+
+.rd-mood-factor-line {
+  display: block;
+  margin: var(--ryadom-s-3) 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ryadom-text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rd-chart-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.rd-chart-month-name {
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  white-space: nowrap;
+}
+
+/* The month label never squeezes the title: it sits on its own line under it. */
+.rd-chart-card .rd-chart-head {
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.rd-chart-area {
+  fill: rgba(88, 130, 255, 0.18);
+  stroke: none;
+}
+
+.rd-chart-weekend {
+  fill: rgba(255, 255, 255, 0.05);
+}
+
+.rd-chart-insight {
+  margin: var(--ryadom-s-3) 0 0;
+  padding: 10px 12px;
+  border-radius: var(--ryadom-r-m, 14px);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.rd-chart-grid {
+  stroke: var(--ryadom-line);
+  stroke-width: 1;
+}
+
+.rd-chart-line {
+  fill: none;
+  stroke: #5b86ff;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.rd-chart-dot {
+  stroke: var(--ryadom-paper);
+  stroke-width: 2;
+}
+
+.rd-chart-tick {
+  font-size: 10px;
+  fill: var(--ryadom-text-faint);
+}
+
+.rd-chart-today {
+  fill: var(--ryadom-brand);
+}
+
+.rd-chart-today-text {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--ryadom-cta-ink);
+}
+
+.rd-chart-empty {
+  padding: var(--ryadom-s-4) 0;
+}
+
+.rd-week-building {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  align-items: center;
+  margin: 0;
+  font-size: 15px;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-section-title {
+  margin: var(--ryadom-s-4) var(--ryadom-s-4) var(--ryadom-s-2);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-summary-text {
+  margin: 0 0 var(--ryadom-s-3);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ryadom-text);
+}
+
+.rd-events-day ul {
+  margin: 0 0 var(--ryadom-s-3);
+  padding-left: 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ryadom-text);
 }

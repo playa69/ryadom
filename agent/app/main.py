@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
-from app.api import dev, dialog_ws, dialogs, health, memory
+from app.api import dev, dialog_ws, dialogs, digests, health, memory
 from app.clients.cognee import CogneeClient, build_cognee_client
 from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
@@ -276,6 +276,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(dialogs.router)
     app.include_router(memory.router)
+    app.include_router(digests.router)
     app.include_router(dialog_ws.router)
     app.include_router(dev.router)
     return app

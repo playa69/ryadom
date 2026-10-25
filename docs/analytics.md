@@ -159,6 +159,16 @@
 | `self_check_result_deleted` | сервер удалил результаты | `scope`: `one` / `test` / `all` |
 | `self_check_consent_revoked` | согласие отозвано | — |
 
+**Дневник настроения** (`REQ-WELL-01`, `openspec/changes/add-mood-diary`, D12): только что действие было, а не настроение, фактор, дата, число отмеченных дней, серия или текст итога. Экран дневника, журнал внутри него и итоги закрыты от автосбора так же, как «Память».
+
+| Событие | Где | Когда | Свойства |
+|---|---|---|---|
+| `mood_checked_in` | сервер | отметка дня сохранена или заменена | `source`: `app`/`widget`/`reminder`/`telegram`; `with_factor`; `changed` |
+| `week_summary_generated` | сервер | итоги недели собраны | `trigger`: `button` (кнопка) / `auto` (понедельничный проход планировщика) |
+| `diary_summary_refused` | сервер | итоги не собраны | `kind`: `week`; `reason`: `not_enough` (мало отмеченных дней) / `too_soon` (раньше суток) / `agent_unavailable` |
+| `diary_opened` | клиенты | открыт сегмент дневника | `tab`: `diary`/`journal` |
+| `mood_bridge_clicked` | клиенты | нажата кнопка моста после тяжёлого дня | `target`: `dialog`/`people` |
+
 ## Как добавить событие
 
 1. Добавить член в `AnalyticsEvent` и его свойства в `AnalyticsEventProperties` ([`events.ts`](../app/packages/analytics/src/events.ts)). Свойство — булево, число или значение из набора, не строка из пользовательского ввода.

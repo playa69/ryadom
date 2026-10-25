@@ -89,6 +89,17 @@ import {
   type SharedDialogApiResponse,
 } from '@ryadom/contracts/api/dialog-shares'
 import {
+  DiaryApiErrorCode,
+  type CreateWeekSummaryApiRequest,
+  type DiaryApiResponse,
+  type DiaryEventsApiResponse,
+  type DiarySummariesApiResponse,
+  type DiarySummaryApi,
+  type PutMoodCheckinApiRequest,
+  type PutMoodCheckinApiResponse,
+  type WidgetTokenApiResponse,
+} from '@ryadom/contracts/api/diary'
+import {
   ApiPath,
   dialogEndPath,
   dialogPath,
@@ -759,6 +770,39 @@ export function createClient(config: ClientConfig) {
 
     getAppStatus: (query: string): Promise<AppStatusApiResponse> =>
       apiFetch<AppStatusApiResponse>(`${ApiPath.AppStatus}?${query}`),
+
+    // ─── mood diary ───────────────────────────────────────────────────────────
+    // Moods and summaries are the person's own: the screens show them and keep them in memory only,
+    // never in logs or analytics.
+
+    /** Today's note, the last 28 days, the streak and the week. */
+    getDiary: (): Promise<DiaryApiResponse> => apiFetch<DiaryApiResponse>(ApiPath.Diary),
+
+    /** Saves or replaces the note of today (`date` is for the offline queue: today or yesterday). */
+    putMoodCheckin: (
+      data: PutMoodCheckinApiRequest,
+    ): Promise<ApiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>> =>
+      apiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>(ApiPath.DiaryCheckinToday, {
+        method: 'PUT',
+        body: data,
+      }),
+
+    listDiarySummaries: (before?: string): Promise<DiarySummariesApiResponse> =>
+      apiFetch<DiarySummariesApiResponse>(
+        `${ApiPath.DiarySummaries}?kind=week${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    createWeekSummary: (
+      data: CreateWeekSummaryApiRequest,
+    ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
+      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
+
+    getDiaryEvents: (week?: string): Promise<DiaryEventsApiResponse> =>
+      apiFetch<DiaryEventsApiResponse>(`${ApiPath.DiaryEvents}${week ? `?week=${encodeURIComponent(week)}` : ''}`),
+
+    /** The token of the Android widget; shown once. */
+    createWidgetToken: (): Promise<WidgetTokenApiResponse> =>
+      apiFetch<WidgetTokenApiResponse>(ApiPath.DiaryWidgetToken, { method: 'POST' }),
 
     // ─── memory ───────────────────────────────────────────────────────────────
     // What comes back holds the person's own words: the screens show it and keep it in memory only,

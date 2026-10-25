@@ -46,6 +46,18 @@ export enum ApiPath {
   /** "Download my memory". */
   MemoryExport = '/api/memory/export',
 
+  /** The mood diary (`REQ-WELL-01`): the rest are under it. */
+  Diary = '/api/diary',
+  DiaryCheckinToday = '/api/diary/checkins/today',
+  DiarySummaries = '/api/diary/summaries',
+  DiaryWeekSummary = '/api/diary/summaries/week',
+  DiaryEvents = '/api/diary/events',
+  /** Creates (`POST`) and revokes (`DELETE`) the token of the Android widget. */
+  DiaryWidgetToken = '/api/diary/widget-token',
+  /** Widget token only (`Authorization: Widget <token>`). */
+  DiaryWidgetToday = '/api/diary/widget/today',
+  DiaryWidgetCheckin = '/api/diary/widget/checkin',
+
   /** Open: which analytics features are on and the (public) PostHog project token. */
   AnalyticsConfig = '/api/analytics/config',
   /**
@@ -88,3 +100,4 @@ export function sessionPath(sessionId: string): string {
 export function otaBundlePath(file: string): string {
   return `${ApiPath.OtaBundle}/${encodeURIComponent(file)}`
 }
+

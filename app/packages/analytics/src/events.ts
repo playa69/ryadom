@@ -114,6 +114,17 @@ export enum AnalyticsEvent {
   MemoryIncognitoToggled = 'memory_incognito_toggled',
   /** A point of the card "Я запомнил" after a conversation was taken off or accepted. */
   MemoryCardAction = 'memory_card_action',
+  // ── Mood diary (REQ-WELL-01…04). Only that an action happened: never a mood, a factor or a text. ──
+  /** Server. A note of the day was saved or replaced. */
+  MoodCheckedIn = 'mood_checked_in',
+  /** Server. A week summary was made, on the button or by the Monday pass. */
+  WeekSummaryGenerated = 'week_summary_generated',
+  /** Server. A summary was refused: too few days or weeks, asked again within a day, or the agent did not answer. */
+  DiarySummaryRefused = 'diary_summary_refused',
+  /** Client. A diary segment was opened. */
+  DiaryOpened = 'diary_opened',
+  /** Client. A tap on the bridge after a heavy day: «Поговорить» or «Люди рядом». */
+  MoodBridgeClicked = 'mood_bridge_clicked',
 
   // ── Self-check tests ────────────────────────────────────────────────────────────────────────
   // Which test and which step, never a score, a level, an answer or whether a crisis item fired: the
@@ -262,6 +273,11 @@ export type SelfCheckProgress = 'first_third' | 'second_third' | 'last_third'
 export type SelfCheckResultActionName = 'close' | 'save' | 'copy_summary' | 'retake'
 export type SelfCheckDeleteScope = 'one' | 'test' | 'all'
 
+export type DiaryTab = 'diary' | 'journal'
+export type DiarySummaryKind = 'week'
+export type DiarySummaryRefusal = 'not_enough' | 'too_soon' | 'agent_unavailable'
+export type MoodSourceName = 'app' | 'widget' | 'reminder' | 'telegram'
+
 export type PasswordChangeKind = 'change' | 'reset'
 
 /** Properties that every event of a platform carries are added by the SDK wrapper, not here. */
@@ -354,6 +370,11 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MemoryExport]: NoProperties
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
   [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
+  [AnalyticsEvent.MoodCheckedIn]: { source: MoodSourceName; with_factor: boolean; changed: boolean }
+  [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'button' | 'auto' }
+  [AnalyticsEvent.DiaryOpened]: { tab: DiaryTab }
+  [AnalyticsEvent.MoodBridgeClicked]: { target: 'dialog' | 'people' }
+  [AnalyticsEvent.DiarySummaryRefused]: { kind: DiarySummaryKind; reason: DiarySummaryRefusal }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties

@@ -12,6 +12,7 @@ import './delete-memory-fact/delete-agent-memory-fact.handler'
 import './forget-memory/forget-agent-memory.handler'
 import './get-memory-changes/get-agent-memory-changes.handler'
 import './export-memory/export-agent-memory.handler'
+import './create-digest/create-agent-digest.handler'
 
 import type { RequestData } from 'mediatr-ts'
 import { mediatr } from '../../shared'
@@ -44,7 +45,12 @@ export type { GetAgentMemoryChangesRequestData } from './get-memory-changes/get-
 export { ExportAgentMemoryRequest } from './export-memory/export-agent-memory.request'
 export type { ExportAgentMemoryRequestData } from './export-memory/export-agent-memory.request'
 
+export { CreateAgentDigestRequest } from './create-digest/create-agent-digest.request'
+export type { AgentDigestMark, CreateAgentDigestRequestData } from './create-digest/create-agent-digest.request'
+
 // 3. Type re-exports
+export type { CreateAgentDigestResult } from './create-digest/create-agent-digest.types'
+export { CreateAgentDigestRequestErrorCode } from './create-digest/create-agent-digest.types'
 export type { StartAgentDialogResponse } from './start-dialog/start-agent-dialog.types'
 export type { ListAgentDialogsResponse } from './list-dialogs/list-agent-dialogs.types'
 export type { GetAgentDialogResult } from './get-dialog/get-agent-dialog.types'
@@ -105,6 +111,7 @@ import type { DeleteAgentMemoryFactRequest } from './delete-memory-fact/delete-a
 import type { ForgetAgentMemoryRequest } from './forget-memory/forget-agent-memory.request'
 import type { GetAgentMemoryChangesRequest } from './get-memory-changes/get-agent-memory-changes.request'
 import type { ExportAgentMemoryRequest } from './export-memory/export-agent-memory.request'
+import type { CreateAgentDigestRequest } from './create-digest/create-agent-digest.request'
 
 export type AgentApiIntegrationRequests =
   | StartAgentDialogRequest
@@ -120,6 +127,7 @@ export type AgentApiIntegrationRequests =
   | ForgetAgentMemoryRequest
   | GetAgentMemoryChangesRequest
   | ExportAgentMemoryRequest
+  | CreateAgentDigestRequest
 
 // 5. Facade
 export class AgentApiIntegration implements IAgentApiIntegration {

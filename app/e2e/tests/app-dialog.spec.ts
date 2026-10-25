@@ -2,7 +2,7 @@ import {
   button,
   closeSheet,
   openApp,
-  openTab,
+  openJournal,
   registerAndConfirm,
   sheetButton,
   uniqueEmail,
@@ -108,7 +108,7 @@ test('разговор: приветствие, ответ, кризис, жур
   await shot(page, 'dialog-summary')
   await done.getByText('ОК').click()
 
-  await openTab(page, 'Журнал')
+  await openJournal(page)
   await expect(page.getByTestId('journal-item').first()).toBeVisible({ timeout: 30_000 })
   await shot(page, 'journal')
 })

@@ -361,7 +361,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         if (result?.ok) {
           // The conversation is over: its record is in the journal.
           if (result.data.endedAt) {
-            router.replace(`/journal/${encodeURIComponent(dialogId)}`)
+            router.replace(`/diary/journal/${encodeURIComponent(dialogId)}`)
             return
           }
           history = result.data.messages.map(({ id, role, text }) => ({ id, role, text }))
