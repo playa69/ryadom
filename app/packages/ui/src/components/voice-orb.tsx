@@ -59,6 +59,7 @@ function VoiceOrb({
       <div ref={swell} className="voice-orb-swell">
         <span className="voice-orb-layer voice-orb-glow" />
         <span className="voice-orb-layer voice-orb-core" />
+        <span className="voice-orb-layer voice-orb-flame" />
         <span className="voice-orb-layer voice-orb-ring" />
       </div>
     </div>

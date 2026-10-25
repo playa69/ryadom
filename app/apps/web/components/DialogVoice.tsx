@@ -80,7 +80,7 @@ export default function DialogVoice({
 
       <div
         ref={captionBox}
-        className="max-h-[6.75em] w-full max-w-xl overflow-y-auto text-center text-xl leading-normal text-balance text-foreground wrap-anywhere empty:hidden"
+        className="max-h-[6.75em] min-h-[6.75em] w-full max-w-xl overflow-y-auto text-center text-xl leading-normal text-balance text-foreground wrap-anywhere"
         data-testid="voice-caption"
       >
         {caption}

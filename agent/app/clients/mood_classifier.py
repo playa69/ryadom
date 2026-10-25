@@ -52,11 +52,12 @@ class MoodClassifier:
             temperature=0,
             max_output_tokens=60,
         )
-        try:
-            response = await asyncio.wait_for(
-                self._client.aio.models.generate_content(model=self._model, contents=text, config=config), self._timeout
-            )
-            return parse_mood(json.loads(response.text))
-        except Exception as error:  # noqa: BLE001
-            logger.warning("классификатор тона: %s: %s", type(error).__name__, str(error)[:120])
-            return None
+        for attempt in (1, 2):  # один повтор: редкий холодный или потерянный запрос
+            try:
+                response = await asyncio.wait_for(
+                    self._client.aio.models.generate_content(model=self._model, contents=text, config=config), self._timeout
+                )
+                return parse_mood(json.loads(response.text))
+            except Exception as error:  # noqa: BLE001
+                logger.warning("классификатор тона (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
+        return None

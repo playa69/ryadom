@@ -221,7 +221,7 @@ class GeminiSettings(BaseAppSettings):
     # Классификатор тона отдельным запросом к текстовой модели по расшифровке (имя модели; пусто — выключен). Замеры PROTEUS-168:
     # report_mood внутри сессии Live подменяет ответ, а отдельный запрос ответу не мешает.
     mood_classifier: str = Field(validation_alias="GEMINI_MOOD_CLASSIFIER", default="")
-    mood_classifier_timeout_seconds: float = Field(validation_alias="GEMINI_MOOD_CLASSIFIER_TIMEOUT_SECONDS", default=5.0, gt=0)
+    mood_classifier_timeout_seconds: float = Field(validation_alias="GEMINI_MOOD_CLASSIFIER_TIMEOUT_SECONDS", default=2.5, gt=0)
     # Пауза без новых слов расшифровки, после которой реплика уходит на классификацию.
     mood_debounce_ms: int = Field(validation_alias="GEMINI_MOOD_DEBOUNCE_MS", default=300, ge=0)
     # report_mood в сессии: поведение функции и порядок («before» — вызвать до ответа, «after» — сперва ответить голосом).

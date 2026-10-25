@@ -457,34 +457,91 @@
   --orb-ring: rgb(110 220 150);
 }
 
-/* The ember of anger: a small flickering flame at the top of the sphere. */
-.voice-orb[data-mood='angry']::after {
+/* A layer of its own for the flames: the core's box and breath, turned back by the sphere's turn. */
+.voice-orb-flame {
+  --pulse: var(--orb-breath-lag, 0.5);
+  inset: 22%;
+  rotate: calc(var(--orb-turn, 0) * -1deg);
+  border-radius: 9999px;
+}
+
+/*
+ * The ember of anger: two small flames on the rim of the core. The layer has the core's box and breath but turns
+ * against the sphere's turn, so the flames stay on top however the lit edge travels, and never float apart. Always there, invisible; anger only lights them, with the same slow dissolve as the colours.
+ * Each flickers on its own period (never in step, so it does not read as a pulse), by stretching and leaning, not by
+ * changing size.
+ */
+.voice-orb-flame::before,
+.voice-orb-flame::after {
   content: '';
   position: absolute;
-  left: 38%;
-  top: 4%;
+  left: 50%;
+  bottom: 86%;
   width: 24%;
-  height: 24%;
-  border-radius: 50% 50% 45% 45%;
-  background: radial-gradient(circle at 50% 70%, rgb(255 230 150), rgb(255 110 40) 55%, transparent 75%);
-  filter: blur(2px);
-  animation: orb-ember 1.1s ease-in-out infinite alternate;
+  height: 34%;
+  margin-left: -12%;
+  border-radius: 50% 50% 50% 50% / 68% 68% 32% 32%;
+  background: radial-gradient(
+    ellipse 70% 70% at 50% 78%,
+    rgb(255 236 170) 0,
+    rgb(255 140 50) 45%,
+    rgb(220 40 30 / 0.55) 72%,
+    transparent 100%
+  );
+  filter: blur(1.5px);
+  transform-origin: 50% 100%;
+  opacity: 0;
+  transition: opacity 1.4s ease-in-out;
   pointer-events: none;
 }
 
-@keyframes orb-ember {
-  from {
-    opacity: 0.6;
-    transform: scale(0.85) translateY(2%);
+.voice-orb-flame::after {
+  width: 15%;
+  margin-left: -1%;
+  height: 26%;
+  bottom: 84%;
+  animation: orb-flame-b 1.9s ease-in-out infinite;
+}
+
+.voice-orb-flame::before {
+  margin-left: -20%;
+  animation: orb-flame-a 1.3s ease-in-out infinite;
+}
+
+.voice-orb[data-mood='angry'] .voice-orb-flame::before,
+.voice-orb[data-mood='angry'] .voice-orb-flame::after {
+  opacity: 0.95;
+}
+
+@keyframes orb-flame-a {
+  0%,
+  100% {
+    transform: scale(1, 0.9) skewX(-4deg);
   }
-  to {
-    opacity: 1;
-    transform: scale(1.15) translateY(-4%);
+  35% {
+    transform: scale(0.92, 1.12) skewX(5deg);
+  }
+  70% {
+    transform: scale(1.04, 0.98) skewX(-2deg);
+  }
+}
+
+@keyframes orb-flame-b {
+  0%,
+  100% {
+    transform: scale(1, 1.05) skewX(6deg);
+  }
+  40% {
+    transform: scale(0.9, 0.88) skewX(-5deg);
+  }
+  75% {
+    transform: scale(1.08, 1.15) skewX(3deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .voice-orb[data-mood='angry']::after {
+  .voice-orb-flame::before,
+  .voice-orb-flame::after {
     animation: none;
   }
 }

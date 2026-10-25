@@ -412,6 +412,8 @@ class LiveDialogSession(DialogSession):
             asyncio.create_task(self._send_loop()),
             asyncio.create_task(self._pump()),
         ]
+        if self._cfg.mood_classifier and self._cfg.api_key is not None:
+            self._tasks.append(asyncio.create_task(self._warm_mood_classifier()))  # первый запрос иначе ждёт TLS и релей
         if not self._cfg.lazy_open:  # соединение готово к первой реплике (лениво — откроется по audio_start или сообщению)
             self._tasks.append(asyncio.create_task(self._ensure_link()))
         try:
@@ -1249,6 +1251,12 @@ class LiveDialogSession(DialogSession):
 
     _mood_task: "asyncio.Task[None] | None" = None
     _mood_classifier: MoodClassifier | None = None
+
+    async def _warm_mood_classifier(self) -> None:
+        """Соединение классификатора открывается до первой реплики: холодный первый запрос укладывался не в срок."""
+        if self._mood_classifier is None:
+            self._mood_classifier = MoodClassifier(self._cfg)
+        await self._mood_classifier.classify("привет")
 
     async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
         await asyncio.sleep(self._cfg.mood_debounce_ms / 1000)
