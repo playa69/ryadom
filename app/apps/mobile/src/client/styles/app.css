@@ -2660,6 +2660,7 @@ input:-webkit-autofill:focus {
 }
 
 .rd-mood-face {
+  position: relative;
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
@@ -2689,13 +2690,37 @@ input:-webkit-autofill:focus {
 }
 
 .rd-mood-face--on {
-  border-color: var(--ryadom-text);
   color: var(--ryadom-text);
-  transform: scale(1.04);
+}
+
+.rd-mood-face--on .rd-mood-face-label {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+/* The chosen face keeps its colour and wears a check, so the choice reads without colour too; the rest go grey. */
+.rd-mood-face--on::before {
+  position: absolute;
+  top: 2px;
+  left: calc(50% + 9px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ryadom-text);
+  color: #0c1438;
+  content: '✓';
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .rd-mood-face--dim {
-  opacity: 0.45;
+  opacity: 0.4;
+  filter: grayscale(1);
 }
 
 .rd-mood-factors-title,

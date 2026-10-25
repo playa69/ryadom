@@ -80,10 +80,19 @@ export default function MoodCard({
               onClick={() => void save(level, today?.factor ?? null)}
               className={cn(
                 BUTTON,
-                'flex min-h-20 flex-col items-center gap-1.5 rounded-lg px-1 py-2 text-xs font-medium text-dim transition-colors hover:bg-white/5',
-                selected && 'bg-white/8 text-foreground',
+                'relative flex min-h-20 flex-col items-center gap-1.5 rounded-lg px-1 py-2 text-xs font-medium text-dim transition-colors hover:bg-white/5',
+                selected && 'font-bold text-foreground',
               )}
             >
+              {/* The chosen face keeps its colour and wears a check (readable without colour); the rest go grey. */}
+              {selected && (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-1 left-[calc(50%+9px)] flex size-[18px] items-center justify-center rounded-full bg-foreground text-xs font-extrabold leading-none text-[#0c1438]"
+                >
+                  ✓
+                </span>
+              )}
               <MoodFace mood={level} muted={today !== null && !selected} />
               <span>{MOOD_LABELS[level]}</span>
             </button>
