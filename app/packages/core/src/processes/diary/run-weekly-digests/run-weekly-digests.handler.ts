@@ -3,14 +3,16 @@ import assertNever from 'assert-never'
 import {
   ClaimDiarySummaryCommand,
   ClaimDiarySummaryCommandErrorCode,
+  DeleteDiarySummaryCommand,
   diaryManager,
   ListDiarySummariesQuery,
+  ListRecomputeMarkersQuery,
   ListUsersWithRecentCheckinsQuery,
   ReleaseDiarySummaryCommand,
 } from '../../../managers/diary-manager'
 import { addDaysToDate, createLogger, localMoment, weekStart } from '../../../shared'
 import { PROCESSES_CONFIG } from '../../config'
-import { checkinsBetween, makeWeekSummary, makeYearStory } from '../shared/digests'
+import { checkinsBetween, DigestFailureCode, makeWeekSummary, makeYearStory } from '../shared/digests'
 
 const log = createLogger('diary')
 import { RunWeeklyDigestsOperation } from './run-weekly-digests.operation'
@@ -77,6 +79,83 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
         if (!closed) await diaryManager.execute(new ReleaseDiarySummaryCommand({ userId, kind: 'week', periodStart: lastWeek }))
       }
     }
+    await this.rebuildAfterDeletions(now, limit, weeklyUserIds, yearlyUserIds)
     return { success: true, weekly: weeklyUserIds.length, yearly: yearlyUserIds.length, weeklyUserIds, yearlyUserIds }
+  }
+
+  /**
+   * Texts removed with a conversation (`RecomputeSummariesAfterDialogDeletedOperation`) leave markers: a finished week of
+   * the last weeks is written again from what is left (if it still has 3 marked days), then the year story of a person
+   * whose weeks are all done. A marker is claimed like any period, so with several replicas the agent is asked once.
+   */
+  private async rebuildAfterDeletions(now: Date, limit: number, weeklyUserIds: string[], yearlyUserIds: string[]): Promise<void> {
+    const config = PROCESSES_CONFIG.DIARY
+    const today = now.toISOString().slice(0, 10)
+    const weeksSince = addDaysToDate(today, -7 * (config.RECOMPUTE_WEEKS + 1))
+    const { markers } = await diaryManager.execute(new ListRecomputeMarkersQuery({ weeksSince, limit: config.RECOMPUTE_PASS_MAX }))
+    const staleBefore = new Date(now.getTime() - config.PENDING_STALE_MS)
+    // Weeks a person still waits for in a year: the year story waits for them (an agent that is down, a marker not yet claimed).
+    const waiting = new Set<string>()
+    for (const marker of markers.filter((m) => m.kind === 'week')) {
+      const key = `${marker.userId}:${marker.periodStart.slice(0, 4)}`
+      if (weeklyUserIds.length + yearlyUserIds.length >= limit) {
+        waiting.add(key)
+        continue
+      }
+      const days = await checkinsBetween(marker.userId, marker.periodStart, addDaysToDate(marker.periodStart, 6))
+      if (days.length < config.WEEK_SUMMARY_MIN_DAYS) {
+        // Nothing to write any more: the week stays without a text.
+        await diaryManager.execute(new DeleteDiarySummaryCommand({ userId: marker.userId, kind: 'week', periodStart: marker.periodStart, status: 'pending' }))
+        continue
+      }
+      const claimed = await this.claim(marker.userId, 'week', marker.periodStart, now, staleBefore)
+      if (!claimed) {
+        waiting.add(key)
+        continue
+      }
+      let made = false
+      try {
+        made = (await makeWeekSummary(marker.userId, marker.periodStart, true, now)).success
+        if (made) weeklyUserIds.push(marker.userId)
+      } catch (error) {
+        log.error('Не удалось пересобрать итоги недели после удаления разговора', error)
+      } finally {
+        if (!made) {
+          waiting.add(key)
+          await diaryManager.execute(new ReleaseDiarySummaryCommand({ userId: marker.userId, kind: 'week', periodStart: marker.periodStart }))
+        }
+      }
+    }
+    for (const marker of markers.filter((m) => m.kind === 'year')) {
+      const year = Number(marker.periodStart.slice(0, 4))
+      if (waiting.has(`${marker.userId}:${year}`) || weeklyUserIds.length + yearlyUserIds.length >= limit) continue
+      if (!(await this.claim(marker.userId, 'year', marker.periodStart, now, staleBefore))) continue
+      let made = false
+      try {
+        const story = await makeYearStory(marker.userId, year, now, true)
+        made = story.success
+        if (story.success) yearlyUserIds.push(marker.userId)
+        // Fewer than six final weeks are left: there is no story to write, the marker goes.
+        else if (story.error === DigestFailureCode.NOT_ENOUGH_WEEKS) {
+          await diaryManager.execute(new DeleteDiarySummaryCommand({ userId: marker.userId, kind: 'year', periodStart: marker.periodStart, status: 'pending' }))
+          made = true
+        }
+      } catch (error) {
+        log.error('Не удалось пересобрать историю года после удаления разговора', error)
+      } finally {
+        if (!made) await diaryManager.execute(new ReleaseDiarySummaryCommand({ userId: marker.userId, kind: 'year', periodStart: marker.periodStart }))
+      }
+    }
+  }
+
+  private async claim(userId: string, kind: 'week' | 'year', periodStart: string, now: Date, staleBefore: Date): Promise<boolean> {
+    const claim = await diaryManager.execute(new ClaimDiarySummaryCommand({ userId, kind, periodStart, now, staleBefore }))
+    if (claim.success) return true
+    switch (claim.error) {
+      case ClaimDiarySummaryCommandErrorCode.ALREADY_CLAIMED:
+        return false
+      default:
+        return assertNever(claim.error)
+    }
   }
 }

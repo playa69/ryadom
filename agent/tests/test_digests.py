@@ -112,3 +112,54 @@ def test_model_failure_is_a_502_without_the_body(user_id):
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "DIGEST_UNAVAILABLE"
     assert "секрет" not in response.text
+
+
+def test_prompt_forbids_quoting():
+    from app.services import digests
+
+    system = digests.build_messages("week", "2026-10-19", marks(3, 3, 4), [])[0]["content"]
+    task = digests.build_messages("week", "2026-10-19", marks(3, 3, 4), [])[1]["content"]
+    assert "Не цитируй" in system
+    assert "Без цитат" in task
+    assert "Без цитат" in digests.build_messages("year", "2026-01-01", marks(3), ["Неделя."])[1]["content"]
+
+
+def test_quotation_marks_with_more_than_two_words_are_a_quotation():
+    from app.services import digests
+
+    for quoted in (
+        "«я больше не могу так работать»",
+        '"я больше не могу"',
+        "„всё это слишком тяжело“",
+        "“мне нужна пауза от всего”",
+    ):
+        assert digests.has_quotation(f"Неделя была разной, ты сказал {quoted}.")
+    # одно–два слова в кавычках — не цитата: названия уровней и тем
+    assert not digests.has_quotation("Чаще всего было «тяжело», а ещё «так себе».")
+    assert not digests.has_quotation("Тема «работа» возвращалась.")
+
+
+def test_six_words_in_a_row_from_what_the_person_said_are_a_quotation():
+    from app.services import digests
+
+    said = ["Начальник постоянно меняет приоритеты и я не успеваю закончить ничего важного"]
+    assert digests.has_quotation("Ты говорил, что начальник постоянно меняет приоритеты и я не успеваю, и это выматывает.", said)
+    assert not digests.has_quotation("Ты говорил про смену приоритетов на работе и нехватку времени.", said)
+    assert not digests.has_quotation("Начальник меняет приоритеты.", said)  # короче шести слов
+
+
+def test_model_text_with_a_quotation_falls_back_to_the_template(user_id):
+    bad = "Неделя была непростой. Ты написал «я больше не могу так работать». Это было важно. Спасибо, что делишься."
+    with make_client(None, chat=ScriptedChat(bad)) as client:
+        reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
+    assert "не могу" not in reply["text"]
+    assert reply["text"].startswith("Эта неделя прошла рядом с тобой")
+
+
+def test_clean_digest_rejects_a_verbatim_piece_of_the_source():
+    from app.services import digests
+
+    reply = "Неделя была ровной. Ты писал, что начальник постоянно меняет приоритеты и я не успеваю, поэтому сил мало. Спасибо, что делишься. Я рядом."
+    said = ["начальник постоянно меняет приоритеты и я не успеваю"]
+    assert digests.clean_digest("week", reply, marks(3, 3, 4), said) is None
+    assert digests.clean_digest("week", reply, marks(3, 3, 4), []) is not None

@@ -3,6 +3,10 @@
 В модель уходят только коды отметок (уровень 1–5, фактор) и тексты прошлых итогов недель, без имени и почты. Запрос и ответ
 не пишутся в журнал. Ответ модели проверяется (`clean_digest`); если в нём «надо», среднее число, счёт дней подряд или он
 не укладывается в длину, вместо него возвращается шаблонный текст — так же отвечает режим `LLM_MODE=template`.
+
+Прямых цитат нет: итог — обобщение своими словами. Из ответа отбраковываются слова в кавычках длиннее двух слов и дословные
+куски (шесть слов подряд) из текстов, которые человек сам сказал (`source_texts`: итоги разговоров и заметки, когда они
+подключатся из `add-memory-notes`; пока агент получает только отметки и прошлые итоги недель, и список пуст).
 """
 
 import re
@@ -22,7 +26,8 @@ PEOPLE_LINE = "Если сейчас непросто, рядом могут б�
 SYSTEM_PROMPT = (
     "Ты — Рядом, тёплый голосовой спутник для эмоциональной поддержки. Напиши человеку итоги по его отметкам настроения. "
     "Обращайся на «ты». Не оценивай человека, не ставь диагнозов, не давай советов со словом «надо» и «должен», "
-    "не считай дни подряд, не называй средний балл числом. Пиши спокойно и бережно, без восклицательных знаков и без эмодзи. "
+    "не считай дни подряд, не называй средний балл числом. Не цитируй слова человека и тексты его разговоров ни в кавычках, ни дословно: "
+    "только обобщение своими словами. Пиши спокойно и бережно, без восклицательных знаков и без эмодзи. "
     "Уровни: 1 — тяжело, 2 — так себе, 3 — нормально, 4 — хорошо, 5 — отлично."
 )
 
@@ -30,6 +35,11 @@ _FORBIDDEN = re.compile(r"\b(надо|должен|должна|нужно)\b", 
 _AVERAGE = re.compile(r"средн\w*\s+(балл|оценк|значени|уровен)|\d+[.,]\d+\s*(из|/)\s*5|\b\d+\s*/\s*5\b", re.IGNORECASE)
 _STREAK = re.compile(r"\b(подряд|серия|серию|серии|без пропусков)\b", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"[.!?…]+(?:\s+|$)")
+# Слова в кавычках: «…», "…", „…“, “…”. Одно-два слова в кавычках (названия уровней, тем) допустимы, длиннее — цитата.
+_QUOTED = re.compile(r"«([^»]*)»|\"([^\"]*)\"|„([^“”\"]*)[“”\"]|“([^”]*)”")
+_WORDS = re.compile(r"\w+", re.UNICODE)
+QUOTE_MAX_WORDS = 2
+VERBATIM_WORDS = 6
 
 
 def stats_of(marks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -83,7 +93,7 @@ def build_messages(kind: Literal["week", "year"], period_start: str, marks: list
     if kind == "week":
         task = (
             f"Итоги недели с {period_start}. Напиши {WEEK_SENTENCES[0]}–{WEEK_SENTENCES[1]} предложений: как прошла неделя по отметкам "
-            "(без среднего балла цифрами), что чаще всего влияло, одно наблюдение без оценки и советов."
+            "(без среднего балла цифрами), что чаще всего влияло, одно наблюдение без оценки и советов. Без цитат: только обобщение."
         )
         if stats_of(marks)["hardDays"] >= HARD_WEEK_DAYS:
             task += " Закончи мягкой строкой про людей рядом."
@@ -91,7 +101,7 @@ def build_messages(kind: Literal["week", "year"], period_start: str, marks: list
     else:
         task = (
             f"История года, начиная с {period_start}. Напиши до {YEAR_SENTENCES_MAX} предложений: как менялось настроение по сезонам, "
-            "что помогало, к чему человек пришёл."
+            "что помогало, к чему человек пришёл. Без цитат: только обобщение."
         )
         body = task + "\nОтметки:\n" + "\n".join(lines)
         if weekly:
@@ -99,10 +109,30 @@ def build_messages(kind: Literal["week", "year"], period_start: str, marks: list
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": body}]
 
 
-def clean_digest(kind: Literal["week", "year"], text: str, marks: list[dict[str, Any]]) -> str | None:
+def has_quotation(text: str, source_texts: list[str] | None = None) -> bool:
+    """Есть ли в тексте цитата: слова в кавычках длиннее двух слов или шесть слов подряд, взятые дословно из `source_texts`."""
+    for match in _QUOTED.finditer(text):
+        quoted = next((group for group in match.groups() if group is not None), "")
+        if len(_WORDS.findall(quoted)) > QUOTE_MAX_WORDS:
+            return True
+    if source_texts:
+        words = [w.lower() for w in _WORDS.findall(text)]
+        grams = {tuple(words[i : i + VERBATIM_WORDS]) for i in range(len(words) - VERBATIM_WORDS + 1)}
+        for source in source_texts:
+            source_words = [w.lower() for w in _WORDS.findall(source)]
+            if any(tuple(source_words[i : i + VERBATIM_WORDS]) in grams for i in range(len(source_words) - VERBATIM_WORDS + 1)):
+                return True
+    return False
+
+
+def clean_digest(
+    kind: Literal["week", "year"], text: str, marks: list[dict[str, Any]], source_texts: list[str] | None = None
+) -> str | None:
     """Ответ модели, если он годится, иначе None (тогда подставляется шаблон)."""
     text = " ".join(text.split())
     if not text or _FORBIDDEN.search(text) or _AVERAGE.search(text) or _STREAK.search(text):
+        return None
+    if has_quotation(text, source_texts):
         return None
     count = sentence_count(text)
     low, high = WEEK_SENTENCES if kind == "week" else (1, YEAR_SENTENCES_MAX)

@@ -102,11 +102,15 @@ export async function makeWeekSummary(userId: string, start: string, final: bool
   return { success: true, summary: await readSummary(userId, 'week', start) }
 }
 
-export async function makeYearStory(userId: string, year: number, now: Date): Promise<DigestResult> {
+/**
+ * The year story of `year`. `force` is the rebuild after a conversation was deleted: the story was removed on purpose,
+ * so the «add more» rule (four new weeks since the last text) does not apply.
+ */
+export async function makeYearStory(userId: string, year: number, now: Date, force = false): Promise<DigestResult> {
   const weekly = await finalWeekSummaries(userId, year)
   if (weekly.length < YEAR_STORY_MIN_WEEKS) return { success: false, error: DigestFailureCode.NOT_ENOUGH_WEEKS }
   const previous = await yearStoryOf(userId, year)
-  if (previous && weekly.length - Number(previous.stats?.weeklyCount ?? 0) < YEAR_STORY_EXTEND_WEEKS) {
+  if (!force && previous && weekly.length - Number(previous.stats?.weeklyCount ?? 0) < YEAR_STORY_EXTEND_WEEKS) {
     return { success: false, error: DigestFailureCode.NOT_ENOUGH_WEEKS }
   }
   const days = await checkinsBetween(userId, `${year}-01-01`, `${year}-12-31`)

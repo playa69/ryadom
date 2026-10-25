@@ -8,6 +8,9 @@ import './queries/list-diary-summaries/list-diary-summaries.handler'
 import './queries/list-users-with-recent-checkins/list-users-with-recent-checkins.handler'
 import './commands/claim-diary-summary/claim-diary-summary.handler'
 import './commands/release-diary-summary/release-diary-summary.handler'
+import './commands/delete-diary-summary/delete-diary-summary.handler'
+import './commands/mark-diary-summary-for-recompute/mark-diary-summary-for-recompute.handler'
+import './queries/list-recompute-markers/list-recompute-markers.handler'
 import './commands/create-widget-token/create-widget-token.handler'
 import './commands/revoke-widget-tokens/revoke-widget-tokens.handler'
 import './queries/find-widget-token/find-widget-token.handler'
@@ -34,6 +37,12 @@ export { ClaimDiarySummaryCommand } from './commands/claim-diary-summary/claim-d
 export type { ClaimDiarySummaryCommandData } from './commands/claim-diary-summary/claim-diary-summary.command'
 export { ReleaseDiarySummaryCommand } from './commands/release-diary-summary/release-diary-summary.command'
 export type { ReleaseDiarySummaryCommandData } from './commands/release-diary-summary/release-diary-summary.command'
+export { DeleteDiarySummaryCommand } from './commands/delete-diary-summary/delete-diary-summary.command'
+export type { DeleteDiarySummaryCommandData } from './commands/delete-diary-summary/delete-diary-summary.command'
+export { MarkDiarySummaryForRecomputeCommand } from './commands/mark-diary-summary-for-recompute/mark-diary-summary-for-recompute.command'
+export type { MarkDiarySummaryForRecomputeCommandData } from './commands/mark-diary-summary-for-recompute/mark-diary-summary-for-recompute.command'
+export { ListRecomputeMarkersQuery } from './queries/list-recompute-markers/list-recompute-markers.query'
+export type { ListRecomputeMarkersQueryData } from './queries/list-recompute-markers/list-recompute-markers.query'
 export { CreateWidgetTokenCommand } from './commands/create-widget-token/create-widget-token.command'
 export type { CreateWidgetTokenCommandData } from './commands/create-widget-token/create-widget-token.command'
 export { RevokeWidgetTokensCommand } from './commands/revoke-widget-tokens/revoke-widget-tokens.command'
@@ -52,6 +61,9 @@ export type { ListUsersWithRecentCheckinsQueryResult } from './queries/list-user
 export type { ClaimDiarySummaryCommandResult } from './commands/claim-diary-summary/claim-diary-summary.types'
 export { ClaimDiarySummaryCommandErrorCode } from './commands/claim-diary-summary/claim-diary-summary.types'
 export type { ReleaseDiarySummaryCommandResult } from './commands/release-diary-summary/release-diary-summary.types'
+export type { DeleteDiarySummaryCommandResult } from './commands/delete-diary-summary/delete-diary-summary.types'
+export type { MarkDiarySummaryForRecomputeCommandResult } from './commands/mark-diary-summary-for-recompute/mark-diary-summary-for-recompute.types'
+export type { ListRecomputeMarkersQueryResult, RecomputeMarkerDTO } from './queries/list-recompute-markers/list-recompute-markers.types'
 export type { CreateWidgetTokenCommandResult } from './commands/create-widget-token/create-widget-token.types'
 export type { RevokeWidgetTokensCommandResult } from './commands/revoke-widget-tokens/revoke-widget-tokens.types'
 export type { FindWidgetTokenQueryResult } from './queries/find-widget-token/find-widget-token.types'
@@ -67,6 +79,9 @@ import type { ListDiarySummariesQuery } from './queries/list-diary-summaries/lis
 import type { ListUsersWithRecentCheckinsQuery } from './queries/list-users-with-recent-checkins/list-users-with-recent-checkins.query'
 import type { ClaimDiarySummaryCommand } from './commands/claim-diary-summary/claim-diary-summary.command'
 import type { ReleaseDiarySummaryCommand } from './commands/release-diary-summary/release-diary-summary.command'
+import type { DeleteDiarySummaryCommand } from './commands/delete-diary-summary/delete-diary-summary.command'
+import type { MarkDiarySummaryForRecomputeCommand } from './commands/mark-diary-summary-for-recompute/mark-diary-summary-for-recompute.command'
+import type { ListRecomputeMarkersQuery } from './queries/list-recompute-markers/list-recompute-markers.query'
 import type { CreateWidgetTokenCommand } from './commands/create-widget-token/create-widget-token.command'
 import type { RevokeWidgetTokensCommand } from './commands/revoke-widget-tokens/revoke-widget-tokens.command'
 import type { FindWidgetTokenQuery } from './queries/find-widget-token/find-widget-token.query'
@@ -81,6 +96,9 @@ export type DiaryManagerRequests =
   | ListUsersWithRecentCheckinsQuery
   | ClaimDiarySummaryCommand
   | ReleaseDiarySummaryCommand
+  | DeleteDiarySummaryCommand
+  | MarkDiarySummaryForRecomputeCommand
+  | ListRecomputeMarkersQuery
   | CreateWidgetTokenCommand
   | RevokeWidgetTokensCommand
   | FindWidgetTokenQuery

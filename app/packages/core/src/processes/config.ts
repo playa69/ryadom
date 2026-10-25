@@ -40,5 +40,9 @@ export const PROCESSES_CONFIG = {
     WEEKLY_PEOPLE_MAX: 500,
     /** A period claimed by a replica that did not finish within this long can be taken again (design D9). */
     PENDING_STALE_MS: 15 * 60 * 1000,
+    /** A week text deleted with a conversation is written again if the week is at most this many weeks back. */
+    RECOMPUTE_WEEKS: 5,
+    /** Markers the scheduler works through in one pass. */
+    RECOMPUTE_PASS_MAX: 200,
   },
 } as const

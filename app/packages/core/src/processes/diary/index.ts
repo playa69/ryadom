@@ -7,6 +7,7 @@ import './create-week-summary/create-week-summary.handler'
 import './create-year-story/create-year-story.handler'
 import './get-diary-events/get-diary-events.handler'
 import './run-weekly-digests/run-weekly-digests.handler'
+import './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.handler'
 import './create-widget-token/create-widget-token.handler'
 import './revoke-widget-token/revoke-widget-token.handler'
 import './resolve-widget-token/resolve-widget-token.handler'
@@ -31,6 +32,8 @@ export { GetDiaryEventsOperation } from './get-diary-events/get-diary-events.ope
 export type { GetDiaryEventsOperationData } from './get-diary-events/get-diary-events.operation'
 export { RunWeeklyDigestsOperation } from './run-weekly-digests/run-weekly-digests.operation'
 export type { RunWeeklyDigestsOperationData } from './run-weekly-digests/run-weekly-digests.operation'
+export { RecomputeSummariesAfterDialogDeletedOperation } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.operation'
+export type { RecomputeSummariesAfterDialogDeletedOperationData } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.operation'
 export { CreateWidgetTokenOperation } from './create-widget-token/create-widget-token.operation'
 export type { CreateWidgetTokenOperationData } from './create-widget-token/create-widget-token.operation'
 export { RevokeWidgetTokenOperation } from './revoke-widget-token/revoke-widget-token.operation'
@@ -56,6 +59,8 @@ export { GetDiaryEventsOperationErrorCode } from './get-diary-events/get-diary-e
 export type { RunWeeklyDigestsResult } from './run-weekly-digests/run-weekly-digests.types'
 export type { DiaryView } from './get-diary/get-diary.types'
 export type { YearView } from './get-year/get-year.types'
+export type { RecomputeSummariesAfterDialogDeletedResult } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.types'
+export { RecomputeSummariesAfterDialogDeletedOperationErrorCode } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.types'
 export type { CreateWidgetTokenResult } from './create-widget-token/create-widget-token.types'
 export { CreateWidgetTokenOperationErrorCode } from './create-widget-token/create-widget-token.types'
 export type { RevokeWidgetTokenResult } from './revoke-widget-token/revoke-widget-token.types'
@@ -72,6 +77,7 @@ import type { CreateWeekSummaryOperation } from './create-week-summary/create-we
 import type { CreateYearStoryOperation } from './create-year-story/create-year-story.operation'
 import type { GetDiaryEventsOperation } from './get-diary-events/get-diary-events.operation'
 import type { RunWeeklyDigestsOperation } from './run-weekly-digests/run-weekly-digests.operation'
+import type { RecomputeSummariesAfterDialogDeletedOperation } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.operation'
 import type { CreateWidgetTokenOperation } from './create-widget-token/create-widget-token.operation'
 import type { RevokeWidgetTokenOperation } from './revoke-widget-token/revoke-widget-token.operation'
 import type { ResolveWidgetTokenOperation } from './resolve-widget-token/resolve-widget-token.operation'
@@ -85,6 +91,7 @@ export type DiaryOperations =
   | CreateYearStoryOperation
   | GetDiaryEventsOperation
   | RunWeeklyDigestsOperation
+  | RecomputeSummariesAfterDialogDeletedOperation
   | CreateWidgetTokenOperation
   | RevokeWidgetTokenOperation
   | ResolveWidgetTokenOperation
@@ -103,3 +110,17 @@ export interface IDiaryProcess {
 }
 
 export const diaryProcess: IDiaryProcess = new DiaryProcess()
+
+import {
+  RecomputeSummariesAfterDialogDeletedOperation as RecomputeOperation,
+  type RecomputeSummariesAfterDialogDeletedOperationData as RecomputeData,
+} from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.operation'
+
+/**
+ * The conversation of `userId` held at `dialogAt` was deleted by hand: its week text (and the year story) go at once and
+ * are written again from what is left. For the delete-dialog route of `services/api` to call after the agent confirmed the
+ * deletion; never for retention by age.
+ */
+export function recomputeSummariesAfterDialogDeleted(data: RecomputeData) {
+  return diaryProcess.execute(new RecomputeOperation(data))
+}

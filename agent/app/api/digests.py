@@ -78,7 +78,8 @@ async def create_digest(user_id: str, body: DigestBody, request: Request) -> dic
             # Текст ошибки может нести кусок ответа модели, поэтому в журнал идёт только факт.
             logger.warning("digest model failed kind=%s", body.kind, exc_info=False)
             raise AgentError(502, "DIGEST_UNAVAILABLE", "Модель не написала итоги") from error
-        text = digests.clean_digest(body.kind, reply, marks)
+        # Тексты, сказанные человеком (итоги разговоров, заметки), сюда придут из add-memory-notes: их дословно в итог не берём.
+        text = digests.clean_digest(body.kind, reply, marks, source_texts=[])
         if text is None:
             logger.info("digest rejected by the validator kind=%s", body.kind)
     if text is None:
