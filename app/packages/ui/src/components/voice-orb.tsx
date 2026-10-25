@@ -15,7 +15,7 @@ import { startOrbMotion, type OrbMotionState } from '@ryadom/client-core/voice/o
  *  - speaking: warm, swells with the agent's voice
  *
  * The tone follows the state, and over it the mood (prototype PROTEUS-168): `data-mood` recolours the
- * sphere (sleepy: violet, angry: red with an ember, afraid: green) when the agent reports one.
+ * sphere (sleepy: violet, angry: red, afraid: green) when the agent reports one.
  *
  * Size it with `className` (a width); the shape is always square. The motion is one loop for the whole
  * life of the sphere (client-core's orb-motion), which reaches the DOM through CSSOM, never a `style`
@@ -59,7 +59,6 @@ function VoiceOrb({
       <div ref={swell} className="voice-orb-swell">
         <span className="voice-orb-layer voice-orb-glow" />
         <span className="voice-orb-layer voice-orb-core" />
-        <span className="voice-orb-layer voice-orb-flame" />
         <span className="voice-orb-layer voice-orb-ring" />
       </div>
     </div>
