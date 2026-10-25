@@ -1,5 +1,6 @@
 'use client'
 
+import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { DiaryApiErrorCode, WEEK_SUMMARY_MIN_DAYS, type DiaryApiResponse } from '@ryadom/contracts/api/diary'
@@ -30,7 +31,9 @@ export default function WeekCard({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const summary = week.summary
-  const collectedToday = summary ? new Date(summary.generatedAt).toDateString() === new Date().toDateString() : false
+  const collectedToday = summary
+    ? new Date(summary.generatedAt).toDateString() === new Date().toDateString()
+    : false
 
   async function collect() {
     setBusy(true)
@@ -51,19 +54,38 @@ export default function WeekCard({
     <Card className="gap-3 rounded-lg px-5 py-5 shadow-none" data-testid="diary-week-card">
       <h2 className="text-lg font-semibold text-foreground">Итоги недели</h2>
       {summary && (
-        <p className="text-[0.9375rem] leading-[1.6] whitespace-pre-line text-foreground" data-testid="diary-week-text">
+        <p
+          className="text-[0.9375rem] leading-[1.6] whitespace-pre-line text-foreground"
+          data-testid="diary-week-text"
+        >
           {summary.text}
         </p>
       )}
       {!summary && week.markedDays < WEEK_SUMMARY_MIN_DAYS && (
         <p className="text-[0.9375rem] leading-snug text-dim" data-testid="diary-week-hint">
-          Отметь настроение хотя бы 3 дня на этой неделе (сейчас: {week.markedDays}) — и я соберу для тебя итоги
+          Отметь настроение хотя бы 3 дня на этой неделе (сейчас: {week.markedDays}) — и я соберу для тебя
+          итоги
         </p>
       )}
-      {week.markedDays >= WEEK_SUMMARY_MIN_DAYS && !collectedToday && (
+      {busy && (
+        <p
+          className="flex items-center gap-2.5 text-[0.9375rem] font-medium text-foreground"
+          role="status"
+          data-testid="diary-week-busy"
+        >
+          <Loader2 aria-hidden="true" className="size-5 animate-spin text-brand-400" />
+          Собираю итоги…
+        </p>
+      )}
+      {!busy && week.markedDays >= WEEK_SUMMARY_MIN_DAYS && !collectedToday && (
         <div>
-          <Button size="sm" className={BUTTON} disabled={busy} data-testid="diary-week-collect" onClick={() => void collect()}>
-            {busy ? 'Собираю…' : 'Собрать итоги недели'}
+          <Button
+            size="sm"
+            className={BUTTON}
+            data-testid="diary-week-collect"
+            onClick={() => void collect()}
+          >
+            Собрать итоги недели
           </Button>
         </div>
       )}

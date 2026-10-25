@@ -115,10 +115,16 @@ function withToday(
     .sort((a, b) => a.date.localeCompare(b.date))
   const inWeek = date >= data.week.start
   const wasMarked = data.month.some((d) => d.date === date)
+  // The window of the chart: the same note replaces the day, the oldest days stay as the server sent them.
+  const recent = [...data.recent.filter((d) => d.date !== date), entry].sort((a, b) => a.date.localeCompare(b.date))
+  const isToday = date === deviceDate()
   return {
     ...data,
-    today: date === deviceDate() ? { mood, factor } : data.today,
+    today: isToday ? { mood, factor } : data.today,
     month,
+    recent,
+    // A new note today continues the run that ended yesterday; a change of mind does not add a day.
+    streak: isToday && !data.today ? data.streak + 1 : data.streak,
     week: { ...data.week, markedDays: data.week.markedDays + (inWeek && !wasMarked ? 1 : 0) },
   }
 }

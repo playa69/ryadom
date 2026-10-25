@@ -92,6 +92,55 @@ describe('экран дневника', () => {
     expect(view.diary).not.toHaveProperty('reminder')
   })
 
+  const view = async (userId: string, now = NOW) => {
+    const result = await diaryProcess.execute(new GetDiaryOperation({ userId, now }))
+    if (!result.success) throw new Error('refused')
+    return result.diary
+  }
+
+  it('серия: дни подряд до сегодня; пока сегодня не отмечено, считается по вчера; пропуск обрывает; без отметок 0', async () => {
+    const user = await registerConfirmedUser()
+    expect((await view(user.id)).streak).toBe(0)
+
+    for (const d of ['2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23']) await mark(user.id, d)
+    // Today (24th) is not marked yet: the run ending yesterday still counts, nothing is lost before the day is over.
+    expect((await view(user.id)).streak).toBe(4)
+
+    await mark(user.id, '2026-10-24')
+    expect((await view(user.id)).streak).toBe(5)
+
+    // A missing day cuts the run: 19th is absent, 18th and earlier do not count.
+    await mark(user.id, '2026-10-17')
+    await mark(user.id, '2026-10-18')
+    expect((await view(user.id)).streak).toBe(5)
+
+    // The next local day nobody has marked and yesterday is the 24th: still 5 until that day ends...
+    expect((await view(user.id, new Date('2026-10-25T09:00:00Z'))).streak).toBe(5)
+    // ...and gone when two days passed without a note.
+    expect((await view(user.id, new Date('2026-10-26T09:00:00Z'))).streak).toBe(0)
+  })
+
+  it('серия длиннее одного чтения (400 дней) считается целиком', async () => {
+    const user = await registerConfirmedUser()
+    const days: { userId: string; localDate: string; mood: number; source: 'app' }[] = []
+    for (let i = 0; i < 450; i += 1) {
+      const date = new Date(Date.UTC(2026, 9, 24 - i)).toISOString().slice(0, 10)
+      days.push({ userId: user.id, localDate: date, mood: 3, source: 'app' })
+    }
+    await getDb().insert(moodCheckins).values(days)
+    expect((await view(user.id)).streak).toBe(450)
+  })
+
+  it('окно графика: 28 дней до сегодня включительно, через границу месяца; старше и будущее не попадают', async () => {
+    const user = await registerConfirmedUser()
+    // 24 Oct is today: the window is 27 Sep … 24 Oct.
+    for (const d of ['2026-09-26', '2026-09-27', '2026-10-01', '2026-10-24', '2026-10-25']) await mark(user.id, d)
+    const diary = await view(user.id)
+    expect(diary.recent.map((d) => d.date)).toEqual(['2026-09-27', '2026-10-01', '2026-10-24'])
+    // `month` stays the calendar month, `recent` is not tied to it.
+    expect(diary.month.map((d) => d.date)).toEqual(['2026-10-01', '2026-10-24', '2026-10-25'])
+  })
+
   it('«События этой недели»: память включена — пустой список; агент недоступен — не ошибка', async () => {
     const user = await registerConfirmedUser()
     mockFetch({

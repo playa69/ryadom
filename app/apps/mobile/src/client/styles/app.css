@@ -2773,6 +2773,48 @@ input:-webkit-autofill:focus {
   gap: var(--ryadom-s-2);
 }
 
+.rd-mood-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rd-mood-head .rd-card-title {
+  margin-bottom: var(--ryadom-s-3);
+}
+
+.rd-streak {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: var(--ryadom-s-3);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-streak-flame {
+  color: #ff8a3d;
+}
+
+.rd-mood-factor-line {
+  display: block;
+  margin: var(--ryadom-s-3) 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ryadom-text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
 .rd-chart-head {
   display: flex;
   gap: var(--ryadom-s-3);
@@ -2780,35 +2822,28 @@ input:-webkit-autofill:focus {
   justify-content: space-between;
 }
 
-.rd-chart-month {
-  display: flex;
-  gap: 4px;
-  align-items: center;
+.rd-chart-month-name {
   font-size: 14px;
   color: var(--ryadom-text-dim);
 }
 
-.rd-chart-month-name {
-  min-width: 56px;
-  text-align: center;
-  text-transform: capitalize;
+.rd-chart-area {
+  fill: rgba(88, 130, 255, 0.18);
+  stroke: none;
 }
 
-.rd-chart-arrow {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
+.rd-chart-weekend {
+  fill: rgba(255, 255, 255, 0.05);
+}
+
+.rd-chart-insight {
+  margin: var(--ryadom-s-3) 0 0;
+  padding: 10px 12px;
+  border-radius: var(--ryadom-r-m, 14px);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  line-height: 1.4;
   color: var(--ryadom-text-dim);
-  cursor: pointer;
-}
-
-.rd-chart-arrow:disabled {
-  opacity: 0.3;
-  cursor: default;
 }
 
 .rd-chart {
@@ -2824,7 +2859,7 @@ input:-webkit-autofill:focus {
 
 .rd-chart-line {
   fill: none;
-  stroke: var(--ryadom-text-faint);
+  stroke: #5b86ff;
   stroke-width: 2;
   stroke-linejoin: round;
 }
@@ -2832,11 +2867,6 @@ input:-webkit-autofill:focus {
 .rd-chart-dot {
   stroke: var(--ryadom-paper);
   stroke-width: 2;
-}
-
-.rd-chart-future {
-  fill: rgba(255, 255, 255, 0.04);
-  rx: 6;
 }
 
 .rd-chart-tick {
@@ -2856,6 +2886,22 @@ input:-webkit-autofill:focus {
 
 .rd-chart-empty {
   padding: var(--ryadom-s-4) 0;
+}
+
+.rd-week-building {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  align-items: center;
+  margin: 0;
+  font-size: 15px;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-section-title {
+  margin: var(--ryadom-s-4) var(--ryadom-s-4) var(--ryadom-s-2);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ryadom-text);
 }
 
 .rd-summary-text {

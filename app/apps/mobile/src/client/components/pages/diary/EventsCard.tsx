@@ -28,10 +28,11 @@ export default function EventsCard({ week }: { week: string }) {
   for (const item of events?.items ?? []) days.set(item.date, [...(days.get(item.date) ?? []), item.text])
 
   return (
-    <section className="rd-card rd-events-card" data-testid="diary-events-card" aria-labelledby="diary-events-title">
-      <h2 className="rd-card-title" id="diary-events-title">
+    <section className="rd-events" aria-labelledby="diary-events-title">
+      <h2 className="rd-section-title" id="diary-events-title" data-testid="diary-events-title">
         События этой недели
       </h2>
+      <div className="rd-card rd-events-card" data-testid="diary-events-card">
       {events === null && !failed && <Preloader size={20} />}
       {failed && <p className="rd-muted">Не получилось загрузить события</p>}
       {events && !events.memoryEnabled && (
@@ -57,6 +58,7 @@ export default function EventsCard({ week }: { week: string }) {
           </ul>
         </div>
       ))}
+      </div>
     </section>
   )
 }

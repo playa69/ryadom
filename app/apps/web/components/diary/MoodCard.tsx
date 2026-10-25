@@ -1,14 +1,9 @@
 'use client'
 
+import { Flame } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import {
-  FACTOR_LABELS,
-  MOOD_FACTORS,
-  MOOD_LABELS,
-  MOOD_LEVELS,
-  bridgeFor,
-} from '@ryadom/client-core/diary'
+import { FACTOR_LABELS, MOOD_FACTORS, MOOD_LABELS, MOOD_LEVELS, bridgeFor } from '@ryadom/client-core/diary'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import type { DiaryApiResponse, MoodFactor, MoodLevel } from '@ryadom/contracts/api/diary'
 import { Button } from '@ryadom/ui/components/button'
@@ -22,14 +17,18 @@ type Today = DiaryApiResponse['today']
 
 /**
  * "Как ты сегодня?": five levels, then one factor. A tap on a level saves the day at once (a new tap
- * replaces it, the factor stays); a tap on a factor saves it, a second tap takes it off. The value
+ * replaces it, the factor stays); a tap on a factor saves it and folds the strip into «Повлияло: …»
+ * (a tap on that line opens it again, where a second tap on the factor takes it off). The value
  * stays in this component and the server: it goes to no analytics event and to no log.
  */
 export default function MoodCard({
   today,
+  streak,
   onChange,
 }: {
   today: Today
+  /** Days in a row with a note, up to today (or up to yesterday while today is not marked). */
+  streak: number
   onChange(today: NonNullable<Today>): void
 }) {
   const client = useClient()
@@ -37,6 +36,8 @@ export default function MoodCard({
   const [error, setError] = useState<string | null>(null)
   const [hardStreak, setHardStreak] = useState(0)
   const [busy, setBusy] = useState(false)
+  // The factor strip folds into «Повлияло: …» once a factor is chosen; a tap on the line opens it again.
+  const [editingFactor, setEditingFactor] = useState(false)
 
   async function save(mood: MoodLevel, factor: MoodFactor | null) {
     const before = today
@@ -63,9 +64,21 @@ export default function MoodCard({
 
   return (
     <Card className="gap-5 rounded-lg px-5 py-5 shadow-none" data-testid="diary-mood-card">
-      <h2 className="text-lg font-semibold text-foreground" data-testid="diary-today-title">
-        {today ? `Сегодня: ${MOOD_LABELS[today.mood].toLowerCase()}` : 'Как ты сегодня?'}
-      </h2>
+      <div className="flex items-center gap-3">
+        <h2 className="min-w-0 flex-1 text-lg font-semibold text-foreground" data-testid="diary-today-title">
+          {today ? `Сегодня: ${MOOD_LABELS[today.mood].toLowerCase()}` : 'Как ты сегодня?'}
+        </h2>
+        {/* A plain counter, no rewards and no warnings (an owner-approved exception to REQ-PRD-04). */}
+        {streak > 0 && (
+          <span
+            className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/8 px-3 py-1.5 text-sm font-bold text-[#ffb347]"
+            data-testid="diary-streak"
+          >
+            <Flame aria-hidden="true" className="size-4" />
+            {streak} дн.
+          </span>
+        )}
+      </div>
 
       <div role="group" aria-label="Настроение сегодня" className="grid grid-cols-5 gap-1.5">
         {MOOD_LEVELS.map((level) => {
@@ -100,7 +113,18 @@ export default function MoodCard({
         })}
       </div>
 
-      {today && (
+      {today && today.factor && !editingFactor && (
+        <button
+          type="button"
+          data-testid="diary-factor-summary"
+          className={cn(BUTTON, 'self-start text-left text-sm font-semibold text-dim')}
+          onClick={() => setEditingFactor(true)}
+        >
+          Повлияло: {FACTOR_LABELS[today.factor].toLowerCase()}
+        </button>
+      )}
+
+      {today && (!today.factor || editingFactor) && (
         <div className="flex flex-col gap-2.5" data-testid="diary-factors">
           <p className="text-sm font-semibold text-dim">Что повлияло больше всего?</p>
           <div className="flex gap-2 overflow-x-auto pb-1" role="group" aria-label="Что повлияло">
@@ -113,7 +137,11 @@ export default function MoodCard({
                   data-testid={`diary-factor-${factor}`}
                   aria-pressed={selected}
                   disabled={busy}
-                  onClick={() => void save(today.mood, selected ? null : factor)}
+                  onClick={() => {
+                    // Choosing folds the strip; taking the factor off keeps it open.
+                    if (!selected) setEditingFactor(false)
+                    void save(today.mood, selected ? null : factor)
+                  }}
                   className={cn(
                     BUTTON,
                     'h-10 shrink-0 rounded-full border border-line px-4 text-sm font-medium text-dim transition-colors hover:bg-white/5',
@@ -129,14 +157,22 @@ export default function MoodCard({
       )}
 
       {bridge && (
-        <div className="flex flex-col gap-3 rounded-lg border border-line bg-white/4 p-4" data-testid="diary-bridge">
+        <div
+          className="flex flex-col gap-3 rounded-lg border border-line bg-white/4 p-4"
+          data-testid="diary-bridge"
+        >
           <p className="text-[0.9375rem] leading-snug text-foreground">
             {bridge === 'hard-streak'
               ? 'Похоже, сейчас непросто. Можно поговорить со мной или с теми, кто рядом'
               : 'Хочешь рассказать, что случилось?'}
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" className={BUTTON} data-testid="diary-bridge-talk" onClick={() => router.push('/home')}>
+            <Button
+              size="sm"
+              className={BUTTON}
+              data-testid="diary-bridge-talk"
+              onClick={() => router.push('/home')}
+            >
               Поговорить
             </Button>
             {bridge === 'hard-streak' && (

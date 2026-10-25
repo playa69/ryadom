@@ -53,6 +53,18 @@ describe('отметка в два касания', () => {
     expect(year).toMatchObject({ markedDays: 1, mostFrequent: 4, weeklyCount: 0, story: null })
   })
 
+  it('экран отдаёт серию и окно графика за 28 дней', async () => {
+    const { token } = await signedIn()
+    const before = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
+    expect(before).toMatchObject({ streak: 0, recent: [] })
+
+    ok(await call(app, 'PUT', '/api/diary/checkins/today', { mood: 2 }, token))
+    const after = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
+    expect(after.streak).toBe(1)
+    expect(after.recent).toHaveLength(1)
+    expect(after.recent[0]).toMatchObject({ mood: 2, factor: null })
+  })
+
   it('уровень вне 1–5 и неизвестный фактор — 400; чужая дата — 422', async () => {
     const { token } = await signedIn()
     for (const bad of [{ mood: 0 }, { mood: 6 }, { mood: 3, factor: 'weather' }, {}]) {

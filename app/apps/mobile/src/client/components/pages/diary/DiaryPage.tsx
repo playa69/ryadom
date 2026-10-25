@@ -13,11 +13,11 @@ import WeekCard from './WeekCard'
 const restore = { done: false }
 
 /**
- * Segment «Дневник»: the mood card, the month chart, the week summary, the self-check (PROTEUS-218) and
+ * Segment «Дневник»: the mood card, the 28-day chart, the week summary, the self-check (PROTEUS-218) and
  * the events of the week, top to bottom.
  */
 export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
-  const { data, month, error } = useDiary()
+  const { data, error } = useDiary()
 
   useEffect(() => {
     void diary.refresh()
@@ -45,7 +45,7 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
       {data && (
         <>
           <MoodCard data={data} f7router={f7router} />
-          <MoodChart data={data} month={month} today={deviceDate()} onMonth={diary.setMonth} />
+          <MoodChart data={data} today={deviceDate()} />
           <WeekCard data={data} f7router={f7router} />
           <section className="rd-card" data-testid="diary-selfcheck" aria-labelledby="diary-selfcheck-title">
             <h2 className="rd-card-title" id="diary-selfcheck-title">

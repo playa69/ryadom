@@ -1,5 +1,6 @@
 import { Button } from 'framework7-react'
 import type { Router } from 'framework7/types'
+import { useState } from 'react'
 import {
   FACTOR_LABELS,
   MOOD_FACTORS,
@@ -30,6 +31,9 @@ export default function MoodCard({ data, f7router }: { data: DiaryApiResponse; f
   const today = data.today
   const streak = today ? hardStreak(data.month, deviceDate()) : 0
   const bridge = today ? bridgeFor(today.mood, streak) : null
+  // With a factor chosen the strip folds into one line; a tap on it opens the strip again.
+  const [editingFactor, setEditingFactor] = useState(false)
+  const showStrip = today !== null && (today.factor === null || editingFactor)
 
   function chooseMood(mood: MoodLevel) {
     void diary.mark(mood, today?.factor ?? null)
@@ -39,13 +43,28 @@ export default function MoodCard({ data, f7router }: { data: DiaryApiResponse; f
     if (!today) return
     // The same factor again takes it off.
     void diary.mark(today.mood, today.factor === factor ? null : factor)
+    setEditingFactor(false)
   }
 
   return (
     <section className="rd-card rd-mood-card" data-testid="diary-mood-card" aria-labelledby="diary-today-title">
-      <h2 className="rd-card-title" id="diary-today-title" data-testid="diary-today-title">
-        {today ? `Сегодня: ${MOOD_LABELS[today.mood].toLowerCase()}` : 'Как ты сегодня?'}
-      </h2>
+      <div className="rd-mood-head">
+        <h2 className="rd-card-title" id="diary-today-title" data-testid="diary-today-title">
+          {today ? `Сегодня: ${MOOD_LABELS[today.mood].toLowerCase()}` : 'Как ты сегодня?'}
+        </h2>
+        {data.streak >= 1 && (
+          // Only the number (owner's exception to REQ-PRD-04): no rewards, no warning about losing it.
+          <span className="rd-streak" data-testid="diary-streak">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" className="rd-streak-flame">
+              <path
+                d="M12 2c.6 3.2-1.4 4.8-2.9 6.6C7.6 10.4 6 12.3 6 15a6 6 0 0 0 12 0c0-2.2-1-3.9-2.2-5.2-.3 1.2-.9 2-1.8 2.4.6-3.6-.4-7.7-2-10.2Z"
+                fill="currentColor"
+              />
+            </svg>
+            {data.streak} дн.
+          </span>
+        )}
+      </div>
       <div className="rd-mood-faces" role="group" aria-label="Настроение сегодня">
         {MOOD_LEVELS.map((level) => (
           <button
@@ -63,7 +82,13 @@ export default function MoodCard({ data, f7router }: { data: DiaryApiResponse; f
         ))}
       </div>
 
-      {today && (
+      {today && !showStrip && (
+        <button type="button" className="rd-mood-factor-line" data-testid="diary-factor-line" onClick={() => setEditingFactor(true)}>
+          Повлияло: {FACTOR_LABELS[today.factor!].toLowerCase()}
+        </button>
+      )}
+
+      {today && showStrip && (
         <div className="rd-mood-factors" data-testid="diary-factors">
           <p className="rd-mood-factors-title">Что повлияло больше всего?</p>
           <div className="rd-factor-strip" role="group" aria-label="Что повлияло">

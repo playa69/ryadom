@@ -47,17 +47,22 @@ export default function WeekCard({ data, f7router }: { data: DiaryApiResponse; f
           Отметь настроение хотя бы 3 дня на этой неделе (сейчас: {week.markedDays}) — и я соберу для тебя итоги
         </p>
       )}
-      {enough && !builtToday && (
+      {busy && (
+        <p className="rd-week-building" data-testid="diary-week-busy">
+          <Preloader size={18} />
+          <span>Собираю итоги…</span>
+        </p>
+      )}
+      {enough && !builtToday && !busy && (
         <Button
           small
           round
           fill={!week.summary}
           outline={week.summary !== null}
-          disabled={busy}
           data-testid="diary-week-collect"
           onClick={() => void collect()}
         >
-          {busy ? <Preloader size={16} /> : week.summary ? 'Собрать заново' : 'Собрать итоги недели'}
+          {week.summary ? 'Собрать заново' : 'Собрать итоги недели'}
         </Button>
       )}
       {error && (

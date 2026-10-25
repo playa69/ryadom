@@ -3,8 +3,12 @@ import { diaryManager, ListDiarySummariesQuery } from '../../../managers/diary-m
 import { addDaysToDate, localMoment, weekStart } from '../../../shared'
 import { userZone } from '../shared/user-zone'
 import { checkinsBetween } from '../shared/digests'
+import { markStreak } from '../shared/streak'
 import { GetDiaryOperation } from './get-diary.operation'
 import { GetDiaryOperationErrorCode, type GetDiaryResult } from './get-diary.types'
+
+/** The mood chart shows this many days up to and including today. */
+const RECENT_DAYS = 28
 
 @requestHandler(GetDiaryOperation)
 export class GetDiaryOperationHandler implements RequestHandler<GetDiaryOperation, GetDiaryResult> {
@@ -18,16 +22,20 @@ export class GetDiaryOperationHandler implements RequestHandler<GetDiaryOperatio
     const [y, m] = month.split('-').map(Number) as [number, number]
     const lastDay = String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')
     const start = weekStart(local.date)
-    const [monthDays, weekDays, summaries] = await Promise.all([
+    const [monthDays, recentDays, weekDays, summaries, streak] = await Promise.all([
       checkinsBetween(c.userId, `${month}-01`, `${month}-${lastDay}`),
+      checkinsBetween(c.userId, addDaysToDate(local.date, -(RECENT_DAYS - 1)), local.date),
       checkinsBetween(c.userId, start, addDaysToDate(start, 6)),
       diaryManager.execute(new ListDiarySummariesQuery({ userId: c.userId, kind: 'week', from: start, to: start, limit: 1 })),
+      markStreak(c.userId, local.date),
     ])
     return {
       success: true,
       diary: {
         today: weekDays.find((d) => d.date === local.date) ?? null,
         month: monthDays,
+        recent: recentDays,
+        streak,
         week: { start, markedDays: weekDays.length, summary: summaries.summaries[0] ?? null },
       },
     }

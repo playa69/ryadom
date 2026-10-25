@@ -55,10 +55,21 @@ export interface DiarySummaryApi {
   generatedAt: string
 }
 
+/** The mood chart shows this many days up to and including today. */
+export const MOOD_CHART_DAYS = 28
+
 /** `GET /api/diary?month=YYYY-MM` (the current month by default). */
 export interface DiaryApiResponse {
   today: { mood: MoodLevel; factor: MoodFactor | null } | null
+  /** Notes of the asked calendar month (kept for the year and summary screens; the chart uses `recent`). */
   month: MoodCheckinApi[]
+  /** Notes of the last `MOOD_CHART_DAYS` days including today: the window of the mood chart. */
+  recent: MoodCheckinApi[]
+  /**
+   * Consecutive marked days ending today, or ending yesterday while today is not marked yet; 0 when
+   * neither is marked. A plain counter «🔥 N дн.» in the mood card header, nothing more (`REQ-WELL-01`).
+   */
+  streak: number
   week: { start: string; markedDays: number; summary: DiarySummaryApi | null }
 }
 

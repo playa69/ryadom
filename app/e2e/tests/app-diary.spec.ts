@@ -34,7 +34,9 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-chart-empty')).toContainText('здесь появится график')
   await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 0)')
   await expect(diary.getByTestId('diary-selfcheck')).toBeVisible()
+  await expect(diary.getByTestId('diary-events-title')).toHaveText('События этой недели')
   await expect(diary.getByTestId('diary-events-card')).toBeVisible()
+  await expect(diary.getByTestId('diary-streak')).toHaveCount(0)
   await shot(page, 'diary-empty')
 
   // ── two taps ─────────────────────────────────────────────────────────────────────────────
@@ -42,9 +44,12 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-today-title')).toHaveText('Сегодня: нормально')
   await expect(diary.getByTestId('diary-factors')).toContainText('Что повлияло больше всего?')
   await diary.getByTestId('diary-factor-work').click()
-  await expect(diary.getByTestId('diary-factor-work')).toHaveAttribute('aria-pressed', 'true')
+  // The strip folds into one line; the streak badge counts the first day.
+  await expect(diary.getByTestId('diary-factor-line')).toHaveText('Повлияло: работа')
+  await expect(diary.getByTestId('diary-factors')).toHaveCount(0)
+  await expect(diary.getByTestId('diary-streak')).toContainText('1 дн.')
   await expect(diary.getByTestId('diary-chart-point')).toHaveCount(1)
-  await expect(diary.getByTestId('diary-chart')).toHaveAttribute('aria-label', /отмечен[о]? 1 день, чаще всего — нормально/)
+  await expect(diary.getByTestId('diary-chart')).toHaveAttribute('aria-label', /отмечено 1 день, чаще всего — нормально/)
   await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 1)')
   await shot(page, 'diary-marked')
 
@@ -56,10 +61,12 @@ test('дневник: пустой → отметка в два касания �
   // ── a change of mind: the day keeps one note and the factor ──────────────────────────────
   await diary.getByTestId('diary-mood-4').click()
   await expect(diary.getByTestId('diary-today-title')).toHaveText('Сегодня: хорошо')
-  await expect(diary.getByTestId('diary-factor-work')).toHaveAttribute('aria-pressed', 'true')
+  await expect(diary.getByTestId('diary-factor-line')).toHaveText('Повлияло: работа')
   await expect(diary.getByTestId('diary-chart-point')).toHaveCount(1)
   await expect(diary.getByTestId('diary-chart-point')).toHaveAttribute('data-mood', '4')
-  // The same factor again takes it off.
+  // A tap on the line opens the strip again; the same factor once more takes it off.
+  await diary.getByTestId('diary-factor-line').click()
+  await expect(diary.getByTestId('diary-factor-work')).toHaveAttribute('aria-pressed', 'true')
   await diary.getByTestId('diary-factor-work').click()
   await expect(diary.getByTestId('diary-factor-work')).toHaveAttribute('aria-pressed', 'false')
 
@@ -170,6 +177,8 @@ test('итоги недели: после трёх отмеченных дней
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await expect(diary.getByTestId('diary-week-collect')).toBeVisible({ timeout: 15_000 })
+  // One button and nothing else: no hint next to it.
+  await expect(diary.getByTestId('diary-week-waiting')).toHaveCount(0)
   await shot(page, 'diary-week-ready')
   await diary.getByTestId('diary-week-collect').click()
   await expect(diary.getByTestId('diary-week-text')).toBeVisible({ timeout: 30_000 })

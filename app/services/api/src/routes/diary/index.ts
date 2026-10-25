@@ -146,6 +146,8 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
     const body: DiaryApiResponse = {
       today: diary.today ? { mood: diary.today.mood as MoodLevel, factor: diary.today.factor } : null,
       month: diary.month.map(toCheckin),
+      recent: diary.recent.map(toCheckin),
+      streak: diary.streak,
       week: {
         start: diary.week.start,
         markedDays: diary.week.markedDays,
