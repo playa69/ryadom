@@ -8,7 +8,7 @@ export type Option = { label: string; value: number }
 
 export type Item = {
   text: string
-  /** Обратный пункт: балл ответа считается как `max - value`. */
+  /** Обратный пункт: балл ответа считается как `min + max - value`. */
   reverse?: boolean
   /** Ненулевой ответ открывает экран помощи (PHQ-9, пункт 9). */
   crisis?: boolean

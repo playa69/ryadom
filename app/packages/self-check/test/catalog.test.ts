@@ -26,3 +26,18 @@ describe('волна 1', () => {
     for (const t of wave1) for (const b of t.bands) expect(b.label + b.text).not.toMatch(/депресси|расстройств|диагноз:/i)
   })
 })
+
+import { miniIpip } from '../src/tests/miniipip'
+import { wave2 } from '../src/catalog'
+
+describe('Mini-IPIP', () => {
+  it('обратные пункты считаются как 6 − ответ', () => {
+    const a = miniIpip.items.map((i) => (i.reverse ? 1 : 5))
+    const r = score(miniIpip, a)
+    expect(r.subscales.map((s) => s.score)).toEqual([5, 5, 5, 5, 5])
+  })
+  it('в каждой черте 4 пункта и всего 20', () => {
+    expect(miniIpip.items).toHaveLength(20)
+    expect(wave2).toContain(miniIpip)
+  })
+})

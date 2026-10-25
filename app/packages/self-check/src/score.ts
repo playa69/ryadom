@@ -7,6 +7,7 @@ const round = (n: number, digits = 2) => {
 
 /** Наибольшее значение варианта ответа. */
 const optionMax = (t: SelfCheckTest) => Math.max(...t.options.map((o) => o.value))
+const optionMin = (t: SelfCheckTest) => Math.min(...t.options.map((o) => o.value))
 
 /** Ошибка, если ответы не подходят к описанию теста. */
 export function validateAnswers(t: SelfCheckTest, answers: readonly number[]): void {
@@ -21,7 +22,7 @@ export function validateAnswers(t: SelfCheckTest, answers: readonly number[]): v
 
 /** Балл пункта с учётом обратных. */
 function itemScore(t: SelfCheckTest, i: number, answer: number): number {
-  return t.items[i]?.reverse ? optionMax(t) - answer : answer
+  return t.items[i]?.reverse ? optionMax(t) + optionMin(t) - answer : answer
 }
 
 /** Подсчёт без побочных эффектов; бросает `RangeError` на неверных ответах. */
