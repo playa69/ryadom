@@ -41,3 +41,13 @@ describe('Mini-IPIP', () => {
     expect(wave2).toContain(miniIpip)
   })
 })
+
+import { retakeAfterDays } from '../src/score'
+
+describe('повтор теста', () => {
+  it('высокий уровень — через 2 недели, остальные — через 4', () => {
+    const phq = byId('phq9')!
+    expect(retakeAfterDays(phq, 20)).toBe(14)
+    expect(retakeAfterDays(phq, 3)).toBe(28)
+  })
+})

@@ -66,3 +66,12 @@ export function isHigh(t: SelfCheckTest, value: number): boolean {
 export function hasCrisisAnswer(t: SelfCheckTest, answers: readonly number[]): boolean {
   return t.items.some((it, i) => it.crisis === true && (answers[i] ?? 0) > 0)
 }
+
+/**
+ * Через сколько дней предложить повторить тест: при высоком уровне — через 2 недели
+ * (окно вопросов PHQ-9 и GAD-7), иначе через 4 недели. Ориентир из практики скринингов
+ * Mental Health America; пересмотреть с психологом (подзадача 0.4).
+ */
+export function retakeAfterDays(t: SelfCheckTest, value: number): number {
+  return isHigh(t, value) ? 14 : 28
+}
