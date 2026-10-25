@@ -576,10 +576,7 @@ Recall на валидационном наборе (собирается с к�
 
 **`REQ-MEM-09`** — Итоги разговоров. Перенесено в `REQ-WELL-09`: итог не относится к памяти (заметки и поиск), его делает `add-mood-diary`.
 
-**`REQ-MEM-10`** — Срок хранения разговоров. Статус: **план** (`add-memory-notes`).
-Текст разговора, его итог и документ в Cognee хранятся 21 день после последнего сообщения (`DIALOG_RETENTION_DAYS`, `0` — без срока) и удаляются фоновым проходом агента. Раньше срока не было совсем. Заметки (слой 1 памяти) срока давности не имеют: их удаляет только человек («×», правка, «Удалить всю память») или удаление аккаунта; удаление разговора и срок хранения заметки не трогают. Итоги недели и года, отметки настроения срок не затрагивает; автоматическая чистка итоги недели не пересчитывает. Копии в резервных архивах (CNPG, 30 дней) хранятся дольше; подтверждения удаления говорят об этом. Выкат чистки поэтапный: сухой прогон с метрикой, предупреждение в приложении за неделю, бэкап.
-
-- WHEN последнее сообщение разговора старше 21 дня THEN при ближайшем проходе удалены разговор, итог и документ в Cognee, а заметки и итоги недели остались.
+**`REQ-MEM-10`** — Срок хранения разговоров. Перенесено в `REQ-WELL-10`: срок касается журнала и итогов, а не памяти.
 
 **`REQ-MEM-11`** — Удаление разговора и итоги недели. Статус: **план** (`add-memory-notes`, `add-mood-diary`).
 «Удалить разговор» в журнале удаляет текст, итог и документ в Cognee, гасит ссылки «Поделиться», оставляет заметки (с подсказкой, где их удалить) и сразу удаляет итог недели этого разговора (и историю года, если неделя в неё вошла); итоги собираются заново по оставшимся источникам. Итоги недели и года не содержат дословных цитат из разговоров.
@@ -672,6 +669,11 @@ Recall на валидационном наборе (собирается с к�
 Каждый завершённый разговор, кроме не сохранённого, кризисного и почти пустого (меньше 40 знаков человека), получает итог: о чём говорили, что стало главным, о чём договорились. Итог журнальный: виден в записи журнала (внутри «Дневника»), служит источником итогов недели, в следующий разговор не попадает (карточки «В прошлый раз» нет), в Cognee не индексируется, не зависит от переключателя «Память», живёт столько же, сколько разговор. Заводится тремя способами: человек пишет сам, «Предзаполнить» (черновик модели, который человек правит) или автоматически после оценки (галочка «Подводить итог автоматически»). Голосовое приветствие не меняется.
 
 - WHEN переключатель «Память» выключен, а разговор закончился THEN итог подведён и виден в журнале, заметок и документа в Cognee нет.
+
+**`REQ-WELL-10`** — Срок хранения разговоров. Статус: **план** (`add-mood-diary`, capability `dialog-recaps`).
+Текст разговора, его итог и документ в Cognee хранятся 21 день после последнего сообщения (`DIALOG_RETENTION_DAYS`, `0` — без срока) и удаляются фоновым проходом агента. Раньше срока не было совсем. Заметки (слой 1 памяти) срока давности не имеют: их удаляет только человек («×», правка, «Удалить всю память») или удаление аккаунта; удаление разговора и срок хранения заметки не трогают. Итоги недели и года, отметки настроения срок не затрагивает; автоматическая чистка итоги недели не пересчитывает. Копии в резервных архивах (CNPG, 30 дней) хранятся дольше; подтверждения удаления говорят об этом. Выкат чистки поэтапный: сухой прогон с метрикой, предупреждение в приложении за неделю, бэкап.
+
+- WHEN последнее сообщение разговора старше 21 дня THEN при ближайшем проходе удалены разговор, итог и документ в Cognee, а заметки и итоги недели остались.
 
 ## 7. Контракты
 
@@ -937,7 +939,7 @@ sequenceDiagram
 | `REQ-VOICE-06` | `app/packages/client-core/src/voice/*` | `app/packages/client-core/test/turn-detector.test.ts`, `app/e2e/tests/web-hands-free.spec.ts` |
 | `REQ-DATA-01` | `agent/app/clients/llm.py` (логирование без текстов) | — |
 | `REQ-DATA-02` | `agent/app/api/dialogs.py` (`erase_user`), `agent/app/services/dialog_db.py` (`erase_user`), `app/packages/core/src/processes/account-deletion` | `agent/tests/test_rest.py`, `agent/tests/test_memory_erase.py`, `app/packages/core/test/account-deletion.test.ts` |
-| `REQ-MEM-01..05`, `REQ-MEM-10`, `REQ-MEM-11`, `REQ-DATA-03` | `agent/app/memory/*`, `agent/app/api/memory.py`, `agent/app/services/dialog_store.py`, `app/services/api/src/routes/{memory,dialogs}`, `app/packages/core/src/processes/{memory,diary}` | `agent/tests/test_memory_*.py`, `agent/tests/test_retention.py`, `app/services/api/test/{memory,dialogs,diary}.test.ts` |
+| `REQ-MEM-01..05`, `REQ-MEM-11`, `REQ-DATA-03` | `agent/app/memory/*`, `agent/app/api/memory.py`, `agent/app/services/dialog_store.py`, `app/services/api/src/routes/{memory,dialogs}`, `app/packages/core/src/processes/{memory,diary}` | `agent/tests/test_memory_*.py`, `agent/tests/test_retention.py`, `app/services/api/test/{memory,dialogs,diary}.test.ts` |
 | `REQ-ACC-*` | `app/services/api/src/routes/auth`, `app/packages/core/src/processes` | `app/services/api/test`, `app/packages/core/test`, `app/e2e/tests` |
 | `REQ-DATA-05` | `app/packages/db/src/schema/dialog-shares.ts`, `app/packages/core/src/processes/dialog-shares`, `app/services/api/src/routes/dialog-shares`, `app/apps/web/components/ShareDialogModal.tsx`, `SharedDialogScreen.tsx`, `app/apps/mobile/src/client/components/pages/journal/ShareSheet.tsx` | `app/services/api/test/dialog-shares.test.ts`, `app/e2e/tests/web-share.spec.ts` |
 | `REQ-MEM-07..09` | план: `openspec/changes/add-memory-notes/tasks.md` | — |
