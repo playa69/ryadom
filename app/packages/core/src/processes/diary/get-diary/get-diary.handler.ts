@@ -17,13 +17,8 @@ export class GetDiaryOperationHandler implements RequestHandler<GetDiaryOperatio
     const zone = await userZone(c.userId)
     if (!zone) return { success: false, error: GetDiaryOperationErrorCode.USER_NOT_FOUND }
     const local = localMoment(now, zone)
-    const month = c.month ?? local.date.slice(0, 7)
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return { success: false, error: GetDiaryOperationErrorCode.INVALID_MONTH }
-    const [y, m] = month.split('-').map(Number) as [number, number]
-    const lastDay = String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')
     const start = weekStart(local.date)
-    const [monthDays, recentDays, weekDays, summaries, streak] = await Promise.all([
-      checkinsBetween(c.userId, `${month}-01`, `${month}-${lastDay}`),
+    const [recentDays, weekDays, summaries, streak] = await Promise.all([
       checkinsBetween(c.userId, addDaysToDate(local.date, -(RECENT_DAYS - 1)), local.date),
       checkinsBetween(c.userId, start, addDaysToDate(start, 6)),
       diaryManager.execute(new ListDiarySummariesQuery({ userId: c.userId, kind: 'week', from: start, to: start, limit: 1 })),
@@ -33,7 +28,6 @@ export class GetDiaryOperationHandler implements RequestHandler<GetDiaryOperatio
       success: true,
       diary: {
         today: weekDays.find((d) => d.date === local.date) ?? null,
-        month: monthDays,
         recent: recentDays,
         streak,
         week: { start, markedDays: weekDays.length, summary: summaries.summaries[0] ?? null },

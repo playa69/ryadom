@@ -46,7 +46,7 @@ describe('отметка в два касания', () => {
 
     const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
     expect(diary.today).toEqual({ mood: 4, factor: 'work' })
-    expect(diary.month).toHaveLength(1)
+    expect(diary.recent).toHaveLength(1)
     expect(diary).not.toHaveProperty('reminder')
 
     const year = ok<DiaryYearApiResponse>(await call(app, 'GET', '/api/diary/year', undefined, token))
@@ -88,7 +88,7 @@ describe('отметка в два касания', () => {
     const other = await signedIn()
     const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, other.token))
     expect(diary.today).toBeNull()
-    expect(diary.month).toEqual([])
+    expect(diary.recent).toEqual([])
   })
 })
 

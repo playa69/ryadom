@@ -233,7 +233,7 @@ widget_tokens(id uuid pk, user_id fk users, token_hash bytea unique, created_at,
 
 | Маршрут | Описание |
 |---|---|
-| `GET /diary?month=YYYY-MM` | `{today: {mood, factor} \| null, month: [{date, mood, factor}], recent: [{date, mood, factor}], streak, week: {start, markedDays, summary \| null}}`; `recent` — отметки последних 28 дней (окно графика), `streak` — дней подряд |
+| `GET /diary` | `{today: {mood, factor} \| null, recent: [{date, mood, factor}], streak, week: {start, markedDays, summary \| null}}`; `recent` — отметки последних 28 дней (окно графика), `streak` — дней подряд |
 | `PUT /diary/checkins/today` `{mood, factor?, date?}` | сохранить или заменить отметку; `date` нужен только очереди без сети |
 | `GET /diary/year?year=2026` | `{days: [{date, mood, factor}], markedDays, mostFrequent, weeklyCount, story: {text, generatedAt} \| null}` |
 | `GET /diary/summaries?kind=week&before=` | итоги недель, постранично |

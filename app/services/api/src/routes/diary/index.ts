@@ -70,7 +70,6 @@ const widgetCheckinBody = z.object({
   factor: factorSchema.nullable().optional(),
   date: dateSchema.optional(),
 })
-const monthQuery = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() })
 const yearQuery = z.object({ year: z.coerce.number().int().optional() })
 const summariesQuery = z.object({ kind: z.literal('week').optional(), before: dateSchema.optional() })
 const eventsQuery = z.object({ week: dateSchema.optional() })
@@ -112,7 +111,6 @@ function refuse(c: Context, error: Refusal): Response {
     case CreateYearStoryOperationErrorCode.USER_NOT_FOUND:
     case GetDiaryEventsOperationErrorCode.USER_NOT_FOUND:
       return apiError(c, 401, 'Unauthorised')
-    case GetDiaryOperationErrorCode.INVALID_MONTH:
     case PutMoodCheckinOperationErrorCode.DATE_OUT_OF_RANGE:
     case CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE:
     case GetYearOperationErrorCode.YEAR_OUT_OF_RANGE:
@@ -161,15 +159,12 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
     if (reason) analytics.capture(userId, AnalyticsEvent.DiarySummaryRefused, { kind, reason })
   }
 
-  app.get(ApiPath.Diary, requireAuth(jwt), requireActiveSession(sessions), read, queryParams(monthQuery), async (c) => {
-    const result = await diaryProcess.execute(
-      new GetDiaryOperation({ userId: authUser(c).userId, month: c.req.valid('query').month }),
-    )
+  app.get(ApiPath.Diary, requireAuth(jwt), requireActiveSession(sessions), read, async (c) => {
+    const result = await diaryProcess.execute(new GetDiaryOperation({ userId: authUser(c).userId }))
     if (!result.success) return refuse(c, result.error)
     const { diary } = result
     const body: DiaryApiResponse = {
       today: diary.today ? { mood: diary.today.mood as MoodLevel, factor: diary.today.factor } : null,
-      month: diary.month.map(toCheckin),
       recent: diary.recent.map(toCheckin),
       streak: diary.streak,
       week: {

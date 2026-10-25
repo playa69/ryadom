@@ -145,7 +145,7 @@
 
 #### Что сделать
 Маршруты в `app/services/api/src/routes/diary/index.ts`, все за сессией:
-- `GET /api/diary?month=YYYY-MM` — сегодня, месяц, отметки последних 28 дней (`recent`), число дней подряд (`streak`), неделя (начало, отмечено дней, итог);
+- `GET /api/diary` — сегодня, отметки последних 28 дней (`recent`), число дней подряд (`streak`), неделя (начало, отмечено дней, итог);
 - `PUT /api/diary/checkins/today` `{mood, factor?, date?}`;
 - `GET /api/diary/year?year=` — дни, отмечено, чаще всего, число итогов недели, история года;
 - `GET /api/diary/summaries?kind=week&before=` — итоги недель постранично.

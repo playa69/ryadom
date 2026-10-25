@@ -87,7 +87,7 @@ describe('экран дневника', () => {
     const view = await diaryProcess.execute(new GetDiaryOperation({ userId: user.id, now: NOW }))
     if (!view.success) throw new Error('refused')
     expect(view.diary.today).toMatchObject({ date: '2026-10-24', mood: 4, factor: 'sleep' })
-    expect(view.diary.month.map((d) => d.date)).toEqual(['2026-10-19', '2026-10-24'])
+    expect(view.diary.recent.map((d) => d.date)).toEqual(['2026-10-19', '2026-10-24'])
     expect(view.diary.week).toMatchObject({ start: '2026-10-19', markedDays: 2, summary: null })
     expect(view.diary).not.toHaveProperty('reminder')
   })
@@ -137,8 +137,6 @@ describe('экран дневника', () => {
     for (const d of ['2026-09-26', '2026-09-27', '2026-10-01', '2026-10-24', '2026-10-25']) await mark(user.id, d)
     const diary = await view(user.id)
     expect(diary.recent.map((d) => d.date)).toEqual(['2026-09-27', '2026-10-01', '2026-10-24'])
-    // `month` stays the calendar month, `recent` is not tied to it.
-    expect(diary.month.map((d) => d.date)).toEqual(['2026-10-01', '2026-10-24', '2026-10-25'])
   })
 
   it('«События этой недели»: память включена — пустой список; агент недоступен — не ошибка', async () => {

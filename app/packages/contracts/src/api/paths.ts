@@ -46,7 +46,7 @@ export enum ApiPath {
   /** "Download my memory". */
   MemoryExport = '/api/memory/export',
 
-  /** The mood diary (`REQ-WELL-01`): `?month=`; the rest are under it. */
+  /** The mood diary (`REQ-WELL-01`): the rest are under it. */
   Diary = '/api/diary',
   DiaryCheckinToday = '/api/diary/checkins/today',
   DiaryYear = '/api/diary/year',

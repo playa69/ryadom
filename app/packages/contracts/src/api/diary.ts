@@ -58,11 +58,9 @@ export interface DiarySummaryApi {
 /** The mood chart shows this many days up to and including today. */
 export const MOOD_CHART_DAYS = 28
 
-/** `GET /api/diary?month=YYYY-MM` (the current month by default). */
+/** `GET /api/diary`. */
 export interface DiaryApiResponse {
   today: { mood: MoodLevel; factor: MoodFactor | null } | null
-  /** Notes of the asked calendar month (kept for the year and summary screens; the chart uses `recent`). */
-  month: MoodCheckinApi[]
   /** Notes of the last `MOOD_CHART_DAYS` days including today: the window of the mood chart. */
   recent: MoodCheckinApi[]
   /**

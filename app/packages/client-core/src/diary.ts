@@ -8,7 +8,7 @@ import {
 
 /**
  * Pure helpers of the mood diary screens (`REQ-WELL-01`), shared by the mobile client and the web:
- * words, dates, the month chart, the year grid. Nothing here touches the network or the clock.
+ * words, dates, the rolling chart, the year grid. Nothing here touches the network or the clock.
  */
 
 export const MOOD_LABELS: Record<MoodLevel, string> = {
@@ -46,10 +46,6 @@ const MONTHS_NOMINATIVE = [
 const MONTHS_GENITIVE = [
   'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
   'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
-]
-const MONTHS_PREPOSITIONAL = [
-  'январе', 'феврале', 'марте', 'апреле', 'мае', 'июне',
-  'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре',
 ]
 
 export const monthName = (month: number): string => MONTHS_NOMINATIVE[month - 1] ?? ''
@@ -96,14 +92,6 @@ export function mostFrequentMood(days: readonly Pick<MoodCheckinApi, 'mood'>[]):
   return best
 }
 
-/** The text alternative of the month chart for a screen reader. */
-export function chartAlt(year: number, month: number, days: readonly MoodCheckinApi[]): string {
-  const name = MONTHS_PREPOSITIONAL[month - 1] ?? ''
-  if (days.length === 0) return `В ${name} отметок пока нет`
-  const top = mostFrequentMood(days)
-  return `В ${name} отмечено ${days.length} ${plural(days.length, 'день', 'дня', 'дней')}, чаще всего — ${MOOD_LABELS[top ?? 3].toLowerCase()}`
-}
-
 export function plural(n: number, one: string, few: string, many: string): string {
   const mod100 = n % 100
   const mod10 = n % 10
@@ -111,52 +99,6 @@ export function plural(n: number, one: string, few: string, many: string): strin
   if (mod10 === 1) return one
   if (mod10 >= 2 && mod10 <= 4) return few
   return many
-}
-
-export interface ChartPoint {
-  day: number
-  mood: MoodLevel
-  x: number
-  y: number
-}
-
-export interface ChartGeometry {
-  width: number
-  height: number
-  points: ChartPoint[]
-  /** Runs of neighbouring days: a missing day breaks the line. */
-  segments: ChartPoint[][]
-  /** x of each day of the month, for the axis. */
-  dayX: (day: number) => number
-  moodY: (mood: MoodLevel) => number
-}
-
-/** Month chart: days along x, five levels along y (5 on top). A gap in the days breaks the line. */
-export function buildChart(
-  year: number,
-  month: number,
-  days: readonly MoodCheckinApi[],
-  size: { width: number; height: number; padX?: number; padY?: number },
-): ChartGeometry {
-  const { width, height, padX = 14, padY = 14 } = size
-  const count = daysInMonth(year, month)
-  const dayX = (day: number) => padX + ((day - 1) / Math.max(count - 1, 1)) * (width - 2 * padX)
-  const moodY = (mood: MoodLevel) => padY + ((5 - mood) / 4) * (height - 2 * padY)
-  const byDay = new Map<number, MoodLevel>()
-  for (const entry of days) {
-    const parsed = parseDate(entry.date)
-    if (parsed.year === year && parsed.month === month) byDay.set(parsed.day, entry.mood)
-  }
-  const points: ChartPoint[] = [...byDay.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([day, mood]) => ({ day, mood, x: dayX(day), y: moodY(mood) }))
-  const segments: ChartPoint[][] = []
-  for (const point of points) {
-    const current = segments[segments.length - 1]
-    if (current && current[current.length - 1]!.day === point.day - 1) current.push(point)
-    else segments.push([point])
-  }
-  return { width, height, points, segments, dayX, moodY }
 }
 
 export interface YearCell {

@@ -20,7 +20,7 @@ import {
 } from './diary-queue'
 
 /**
- * The diary's data on screen: today's note, the month, and the week. Module state like
+ * The diary's data on screen: today's note, the last 28 days, the streak and the week. Module state like
  * the journal, so the segments share one read and a note made on the card shows on the chart at once.
  * The moods are the person's own: they live here and on the server, never in logs or analytics.
  */
@@ -49,8 +49,6 @@ export function rememberSegment(segment: DiarySegment): void {
 }
 
 export interface DiaryState {
-  /** The month shown on the chart as `YYYY-MM`. */
-  month: string
   data: DiaryApiResponse | null
   loading: boolean
   /** Text for the screen; empty when all is well. */
@@ -59,9 +57,7 @@ export interface DiaryState {
   queued: number
 }
 
-const currentMonth = (): string => deviceDate().slice(0, 7)
-
-const INITIAL: DiaryState = { month: currentMonth(), data: null, loading: false, error: '', queued: 0 }
+const INITIAL: DiaryState = { data: null, loading: false, error: '', queued: 0 }
 let state: DiaryState = INITIAL
 const listeners = new Set<() => void>()
 let generation = 0
@@ -110,18 +106,14 @@ function withToday(
   factor: MoodFactor | null,
 ): DiaryApiResponse {
   const entry: MoodCheckinApi = { date, mood, factor }
-  const month = [...data.month.filter((d) => d.date !== date), entry]
-    .filter((d) => d.date.startsWith(state.month))
-    .sort((a, b) => a.date.localeCompare(b.date))
   const inWeek = date >= data.week.start
-  const wasMarked = data.month.some((d) => d.date === date)
+  const wasMarked = data.recent.some((d) => d.date === date)
   // The window of the chart: the same note replaces the day, the oldest days stay as the server sent them.
   const recent = [...data.recent.filter((d) => d.date !== date), entry].sort((a, b) => a.date.localeCompare(b.date))
   const isToday = date === deviceDate()
   return {
     ...data,
     today: isToday ? { mood, factor } : data.today,
-    month,
     recent,
     // A new note today continues the run that ended yesterday; a change of mind does not add a day.
     streak: isToday && !data.today ? data.streak + 1 : data.streak,
@@ -130,13 +122,13 @@ function withToday(
 }
 
 export const diary = {
-  /** Reads the diary for a month (the current one by default) and sends what waited for a network. */
-  async refresh(month: string = state.month): Promise<void> {
+  /** Reads the diary and sends what waited for a network. */
+  async refresh(): Promise<void> {
     const started = generation
     await loadQueue()
-    update({ loading: true, month })
+    update({ loading: true })
     try {
-      let data = await getDiary(month === currentMonth() ? undefined : month)
+      let data = await getDiary()
       if (started !== generation) return
       // Notes still waiting show as made: the server has not seen them yet.
       for (const mark of queue) data = withToday(data, mark.date, mark.mood, mark.factor)
@@ -198,16 +190,12 @@ export const diary = {
   /** On sign-in and sign-out: the next account must not see this one's notes. */
   reset(): void {
     generation += 1
-    state = { ...INITIAL, month: currentMonth() }
+    state = INITIAL
     queue = []
     queueLoaded = null
     flushing = false
     void Preferences.remove({ key: QUEUE_KEY }).catch(() => undefined)
     for (const listener of listeners) listener()
-  },
-
-  setMonth(month: string): void {
-    void diary.refresh(month)
   },
 }
 

@@ -777,9 +777,8 @@ export function createClient(config: ClientConfig) {
     // Moods and summaries are the person's own: the screens show them and keep them in memory only,
     // never in logs or analytics.
 
-    /** Today's note, the month (`YYYY-MM`, the current one by default), the week and the reminder. */
-    getDiary: (month?: string): Promise<DiaryApiResponse> =>
-      apiFetch<DiaryApiResponse>(`${ApiPath.Diary}${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+    /** Today's note, the last 28 days, the streak and the week. */
+    getDiary: (): Promise<DiaryApiResponse> => apiFetch<DiaryApiResponse>(ApiPath.Diary),
 
     /** Saves or replaces the note of today (`date` is for the offline queue: today or yesterday). */
     putMoodCheckin: (

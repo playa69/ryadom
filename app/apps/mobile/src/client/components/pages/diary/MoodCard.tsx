@@ -16,9 +16,9 @@ import { deviceDate, previousDate } from '../../../lib/diary-queue'
 import { startTalk } from '../../../lib/nav'
 import MoodFace from './MoodFace'
 
-/** Days of «Тяжело» in a row ending today, from the month read (a streak across months is not counted). */
-export function hardStreak(month: DiaryApiResponse['month'], today: string): number {
-  const hard = new Set(month.filter((d) => d.mood === 1).map((d) => d.date))
+/** Days of «Тяжело» in a row ending today, from the last 28 days (the bridge needs three). */
+export function hardStreak(recent: DiaryApiResponse['recent'], today: string): number {
+  const hard = new Set(recent.filter((d) => d.mood === 1).map((d) => d.date))
   let count = 0
   for (let day = today; hard.has(day); day = previousDate(day)) count += 1
   return count
@@ -31,7 +31,7 @@ export function hardStreak(month: DiaryApiResponse['month'], today: string): num
  */
 export default function MoodCard({ data, f7router }: { data: DiaryApiResponse; f7router: Router.Router }) {
   const today = data.today
-  const streak = today ? hardStreak(data.month, deviceDate()) : 0
+  const streak = today ? hardStreak(data.recent, deviceDate()) : 0
   const bridge = today ? bridgeFor(today.mood, streak) : null
   // With a factor chosen the strip folds into one line; a tap on it opens the strip again.
   const [editingFactor, setEditingFactor] = useState(false)
