@@ -83,12 +83,10 @@ test('дневник: отметка в два касания, график, м�
 
   await openWebApp(page, '/diary')
 
-  // ── сегменты: «Итоги» и «Тесты» — пустые состояния, «Год» — сетка ────────
+  // ── сегменты: «Итоги» — пустое состояние, «Год» — сетка ────────
   await page.getByTestId('diary-segment-recaps').click()
   await expect(page).toHaveURL(/\/diary\/recaps$/)
   await expect(page.getByTestId('diary-recaps-empty')).toContainText('Здесь будут итоги ваших разговоров')
-  await page.getByTestId('diary-segment-tests').click()
-  await expect(page).toHaveURL(/\/diary\/tests$/)
   await page.getByTestId('diary-segment-year').click()
   await expect(page).toHaveURL(/\/diary\/year$/)
 

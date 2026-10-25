@@ -106,8 +106,6 @@ test('дневник: сегменты — итоги, год, тесты; го�
   await diary.getByTestId('diary-segment-recaps').click()
   const recaps = page.locator('.page-current[data-name="diary"]')
   await expect(recaps.getByTestId('diary-recaps-empty')).toContainText('Здесь будут итоги ваших разговоров')
-  await recaps.getByTestId('diary-segment-tests').click()
-  await expect(page.locator('.page-current').getByTestId('diary-tests-soon')).toBeVisible()
 
   await page.locator('.page-current').getByTestId('diary-segment-year').click()
   const year = page.locator('.page-current[data-name="diary"]')

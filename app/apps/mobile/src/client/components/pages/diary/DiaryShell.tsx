@@ -5,7 +5,7 @@ import { rememberSegment, SEGMENT_URLS, type DiarySegment } from '../../../lib/d
 import { SosButton } from '../../SosSheet'
 
 /**
- * The frame of the four diary screens: the bar, SOS and the segments «Дневник · Итоги · Год · Тесты».
+ * The frame of the four diary screens: the bar, SOS and the segments «Дневник · Итоги · Год».
  * Each segment is a route of its own (`/diary/…`), swapped in place so the tab keeps one entry in its
  * history; the last one opened is remembered on the device.
  */
@@ -14,7 +14,6 @@ const SEGMENTS: Array<{ id: DiarySegment; label: string }> = [
   { id: 'diary', label: 'Дневник' },
   { id: 'recaps', label: 'Итоги' },
   { id: 'year', label: 'Год' },
-  { id: 'tests', label: 'Тесты' },
 ]
 
 /** Set once the person has chosen a segment by hand: the stored one is for opening the tab, not for going back. */

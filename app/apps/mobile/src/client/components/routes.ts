@@ -6,7 +6,6 @@ import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import WelcomePage from './pages/auth/WelcomePage'
 import DiaryPage from './pages/diary/DiaryPage'
 import RecapsPage from './pages/diary/RecapsPage'
-import TestsPage from './pages/diary/TestsPage'
 import YearPage from './pages/diary/YearPage'
 import DialogPage from './pages/dialog/DialogPage'
 import HomePage from './pages/home/HomePage'
@@ -37,7 +36,6 @@ export const routes = [
   { path: '/diary/', component: DiaryPage },
   { path: '/diary/recaps/', component: RecapsPage },
   { path: '/diary/year/', component: YearPage },
-  { path: '/diary/tests/', component: TestsPage },
   { path: '/profile/', component: ProfilePage },
   { path: '/profile/change-password/', component: ChangePasswordPage },
   { path: '/profile/link-email/', component: LinkEmailPage },

@@ -11,7 +11,7 @@ import DiaryHome from './DiaryHome'
 import YearView from './YearView'
 
 /**
- * The «Дневник» section: the segments «Дневник · Итоги · Год · Тесты» under the header and the content
+ * The «Дневник» section: the segments «Дневник · Итоги · Год» under the header and the content
  * of the open one. The last open segment is remembered on the device.
  */
 export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
@@ -51,12 +51,6 @@ export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
             Здесь будут итоги ваших разговоров: о чём говорили, что стало главным и о чём договорились. Итог появляется сам, когда
             разговор закончился
           </p>
-        </Card>
-      )}
-      {segment === 'tests' && (
-        <Card className="rounded-lg px-5 py-6 shadow-none" data-testid="diary-tests-soon">
-          <h2 className="text-lg font-semibold text-foreground">Скоро</h2>
-          <p className="text-[0.9375rem] leading-[1.55] text-dim">Короткие тесты для самопроверки появятся здесь.</p>
         </Card>
       )}
     </Page>

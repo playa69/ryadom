@@ -28,12 +28,11 @@ import {
 const QUEUE_KEY = 'ryadom.diary.queue'
 const SEGMENT_KEY = 'ryadom.diary.segment'
 
-export type DiarySegment = 'diary' | 'recaps' | 'year' | 'tests'
+export type DiarySegment = 'diary' | 'recaps' | 'year'
 export const SEGMENT_URLS: Record<DiarySegment, string> = {
   diary: '/diary/',
   recaps: '/diary/recaps/',
   year: '/diary/year/',
-  tests: '/diary/tests/',
 }
 
 export async function rememberedSegment(): Promise<DiarySegment> {

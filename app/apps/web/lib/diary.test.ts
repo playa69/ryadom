@@ -8,9 +8,9 @@ import { WEB_DIARY_SEGMENT_KEY, WEB_STORAGE_PREFIX } from './storage-keys'
 import { YEAR_IMAGE_FOOTER, yearImageFileName } from './year-image'
 
 describe('дневник в вебе', () => {
-  it('сегменты идут в порядке «Дневник · Итоги · Год · Тесты» и ведут на свои адреса', () => {
-    expect(DIARY_SEGMENTS.map((s) => s.label)).toEqual(['Дневник', 'Итоги', 'Год', 'Тесты'])
-    expect(DIARY_SEGMENTS.map((s) => segmentHref(s.key))).toEqual(['/diary', '/diary/recaps', '/diary/year', '/diary/tests'])
+  it('сегменты идут в порядке «Дневник · Итоги · Год» и ведут на свои адреса', () => {
+    expect(DIARY_SEGMENTS.map((s) => s.label)).toEqual(['Дневник', 'Итоги', 'Год'])
+    expect(DIARY_SEGMENTS.map((s) => segmentHref(s.key))).toEqual(['/diary', '/diary/recaps', '/diary/year'])
   })
 
   it('картинка года: имя файла и подпись, без дат и факторов', () => {
