@@ -31,8 +31,6 @@ export interface MeApiResponse {
    * them, on any device; the clients follow it (and tell the account about a "no" said before sign-in).
    */
   analyticsOptOut: boolean
-  /** The mood diary is switched on on this server (`DIARY_ENABLED`): without it the clients show no diary section. */
-  diaryEnabled: boolean
   /** IANA time zone of the person; the diary day, the reminder and the weekly summary follow it. */
   timezone: string
 }

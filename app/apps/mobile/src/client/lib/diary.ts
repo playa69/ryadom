@@ -23,12 +23,7 @@ import {
  * The diary's data on screen: today's note, the month, and the week. Module state like
  * the journal, so the segments share one read and a note made on the card shows on the chart at once.
  * The moods are the person's own: they live here and on the server, never in logs or analytics.
- *
- * `DIARY_ENABLED` here is the build's switch (`VITE_DIARY_ENABLED=false` hides the tab); the server's
- * own `DIARY_ENABLED` answers 404 for the routes, which the screens treat as "no diary".
  */
-
-export const DIARY_ENABLED = import.meta.env.VITE_DIARY_ENABLED !== 'false'
 
 const QUEUE_KEY = 'ryadom.diary.queue'
 const SEGMENT_KEY = 'ryadom.diary.segment'
@@ -61,15 +56,13 @@ export interface DiaryState {
   loading: boolean
   /** Text for the screen; empty when all is well. */
   error: string
-  /** The server has no diary (the flag is off there): the screens say so instead of an error. */
-  unavailable: boolean
   /** Notes waiting for a network. */
   queued: number
 }
 
 const currentMonth = (): string => deviceDate().slice(0, 7)
 
-const INITIAL: DiaryState = { month: currentMonth(), data: null, loading: false, error: '', unavailable: false, queued: 0 }
+const INITIAL: DiaryState = { month: currentMonth(), data: null, loading: false, error: '', queued: 0 }
 let state: DiaryState = INITIAL
 const listeners = new Set<() => void>()
 let generation = 0
@@ -109,7 +102,6 @@ async function saveQueue(next: QueuedMark[]): Promise<void> {
 }
 
 const isNetworkError = (error: unknown): boolean => error instanceof ApiError && error.status === NETWORK_ERROR_STATUS
-const isMissing = (error: unknown): boolean => error instanceof ApiError && error.status === 404
 
 /** The note shown for today before the server has answered, and when it cannot. */
 function withToday(
@@ -143,12 +135,11 @@ export const diary = {
       if (started !== generation) return
       // Notes still waiting show as made: the server has not seen them yet.
       for (const mark of queue) data = withToday(data, mark.date, mark.mood, mark.factor)
-      update({ data, error: '', unavailable: false, loading: false })
+      update({ data, error: '', loading: false })
       void diary.flush()
     } catch (error) {
       if (started !== generation) return
-      if (isMissing(error)) update({ unavailable: true, loading: false, error: '' })
-      else update({ loading: false, error: apiErrorText(error, {}, 'Не получилось загрузить дневник') })
+      update({ loading: false, error: apiErrorText(error, {}, 'Не получилось загрузить дневник') })
     }
   },
 

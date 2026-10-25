@@ -77,5 +77,4 @@
 - **`app/packages/design`:** токены цветов настроения `--ryadom-mood-1…5` и иконки лиц.
 - **`app/packages/analytics`:** события дневника без значений настроения.
 - **`agent/`:** `POST /v1/users/{userId}/digests` (итоги недели и года).
-- **`k8s/app`:** флаг `DIARY_ENABLED`.
 - **Документы:** `docs/spec.md` — новая область `WELL` (`REQ-WELL-01`…`REQ-WELL-05`; `REQ-WELL-04` реализует `add-notifications`), Q-02 закрывается в пользу `app/services/api` для функций дневника.

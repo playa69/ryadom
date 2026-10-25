@@ -48,8 +48,8 @@ const MODES: Array<{ id: DialogMode; label: string; hint: string; icon: string; 
   },
   {
     id: DialogMode.Journal,
-    label: 'Письмо',
-    hint: 'Написать то, что не сказано',
+    label: 'Дневник',
+    hint: 'Вопросы, чтобы лучше понять себя',
     icon: 'book',
     ready: false,
   },

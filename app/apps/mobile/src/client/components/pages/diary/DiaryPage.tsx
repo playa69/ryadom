@@ -17,7 +17,7 @@ const restore = { done: false }
  * the events of the week, top to bottom.
  */
 export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
-  const { data, month, error, unavailable } = useDiary()
+  const { data, month, error } = useDiary()
 
   useEffect(() => {
     void diary.refresh()
@@ -32,15 +32,10 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
 
   return (
     <DiaryShell segment="diary" f7router={f7router} onTabShow={() => void diary.refresh()}>
-      {data === null && !error && !unavailable && (
+      {data === null && !error && (
         <Block className="text-align-center">
           <Preloader />
         </Block>
-      )}
-      {unavailable && (
-        <p className="rd-muted rd-diary-note" data-testid="diary-unavailable">
-          Дневник сейчас недоступен
-        </p>
       )}
       {error && !data && (
         <p className="rd-form-error" data-testid="form-error">

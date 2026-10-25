@@ -6,7 +6,6 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { moodCheckins, users } from '@ryadom/db/schema'
 import { getDb } from '@ryadom/core/shared'
-import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import {
   DiaryApiErrorCode,
   type DiaryApiResponse,
@@ -16,7 +15,7 @@ import {
 } from '@ryadom/contracts/api/diary'
 import { call, json, makeApp, mockFetch, ok, refusedWith, signUpAndIn } from './helpers'
 
-const { app, resetLimits } = makeApp({ env: { DIARY_ENABLED: 'true' } })
+const { app, resetLimits } = makeApp()
 
 async function signedIn() {
   resetLimits()
@@ -30,23 +29,6 @@ function dayOfThisWeek(n: number): string {
   const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - ((now.getUTCDay() + 6) % 7) + n))
   return monday.toISOString().slice(0, 10)
 }
-
-describe('флаг DIARY_ENABLED', () => {
-  it('выключен — маршрутов дневника и уведомлений нет (404), а профиль говорит об этом', async () => {
-    const off = makeApp()
-    const login = await signUpAndIn(off.app)
-    const token = login.tokens.accessToken
-    for (const path of ['/api/diary', '/api/diary/year']) {
-      expect((await call(off.app, 'GET', path, undefined, token)).status).toBe(404)
-    }
-    expect(ok<MeApiResponse>(await call(off.app, 'GET', '/api/auth/me', undefined, token)).diaryEnabled).toBe(false)
-  })
-
-  it('включён — профиль сообщает флаг клиентам', async () => {
-    const { token } = await signedIn()
-    expect(ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, token)).diaryEnabled).toBe(true)
-  })
-})
 
 describe('отметка в два касания', () => {
   it('без сессии — 401', async () => {

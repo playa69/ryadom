@@ -90,13 +90,6 @@ const baseShape = {
   AUTH_SECRET: z.string().min(32, 'must be at least 32 characters'),
   /** Kill switch of links to a conversation (`REQ-DATA-05`): on by default, this turns creating and opening them off. */
   DIALOG_SHARE_DISABLED: booleanFlag,
-  /**
-   * The mood diary (`REQ-WELL-01`…`03`, `05`). Off by default: with it off `/api/diary/*`
-   * answers 404, the clients hide the section, and the scheduler of the automatic week summaries does not run.
-   * Mood values with the account id may count as health data (152-FZ art. 10): get the lawyer's answer
-   * (add-mood-diary, task 0.2) before switching it on in production.
-   */
-  DIARY_ENABLED: booleanFlag,
   PUBLIC_WEB_URL: publicUrl,
   /** Where the web client lives (`https://host/app`); the link to a conversation opens there. Without it: `<PUBLIC_APP_URL>/app`. */
   PUBLIC_WEBAPP_URL: z.preprocess(emptyToUndefined, publicUrl.optional()),

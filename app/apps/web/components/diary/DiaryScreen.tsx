@@ -1,12 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Suspense, useEffect } from 'react'
 import { Card } from '@ryadom/ui/components/card'
 import { cn } from '@ryadom/ui/lib/utils'
 import { DIARY_SEGMENTS, segmentHref, writeLastSegment, type DiarySegment } from '@/lib/diary'
-import { useFeatures } from '@/lib/features'
 import { FOCUS_RING } from '../controls'
 import { Page } from '../Page'
 import DiaryHome from './DiaryHome'
@@ -14,22 +12,12 @@ import YearView from './YearView'
 
 /**
  * The «Дневник» section: the segments «Дневник · Итоги · Год · Тесты» under the header and the content
- * of the open one. The last open segment is remembered on the device. With `DIARY_ENABLED` off the
- * section does not exist and the person goes home.
+ * of the open one. The last open segment is remembered on the device.
  */
 export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
-  const { diary } = useFeatures()
-  const router = useRouter()
-
-  useEffect(() => {
-    if (!diary) router.replace('/home')
-  }, [diary, router])
-
   useEffect(() => {
     writeLastSegment(segment)
   }, [segment])
-
-  if (!diary) return null
 
   return (
     <Page title="Дневник" measure="form" className="gap-5 max-w-150" data-testid="diary-page">

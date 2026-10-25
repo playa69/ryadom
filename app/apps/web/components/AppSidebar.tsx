@@ -31,7 +31,6 @@ import {
 } from '@ryadom/ui/components/sidebar'
 import { useAuth } from '@/lib/auth'
 import { readLastSegment, segmentHref } from '@/lib/diary'
-import { useFeatures } from '@/lib/features'
 import { useJournal } from '@/lib/journal'
 import { groupJournal } from '@/lib/journal-groups'
 import { BrandMark } from './Brand'
@@ -57,7 +56,6 @@ export default function AppSidebar() {
   const { user, logout } = useAuth()
   const { items, error, refresh } = useJournal()
   const { isMobile, setOpenMobile } = useSidebar()
-  const { diary } = useFeatures()
   // The diary link returns to the segment the person left it in (read after hydration: it is a browser setting).
   const [diaryHref, setDiaryHref] = useState('/diary')
   useEffect(() => {
@@ -137,21 +135,19 @@ export default function AppSidebar() {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {diary && (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      tooltip={isMobile ? undefined : 'Дневник'}
-                      isActive={inDiary}
-                      className="h-10 text-[0.9375rem]"
-                    >
-                      <Link href={diaryHref} aria-current={inDiary ? 'page' : undefined} data-testid="nav-diary">
-                        <BookHeart />
-                        <span>Дневник</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )}
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip={isMobile ? undefined : 'Дневник'}
+                    isActive={inDiary}
+                    className="h-10 text-[0.9375rem]"
+                  >
+                    <Link href={diaryHref} aria-current={inDiary ? 'page' : undefined} data-testid="nav-diary">
+                      <BookHeart />
+                      <span>Дневник</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

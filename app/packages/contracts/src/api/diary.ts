@@ -36,8 +36,6 @@ export enum DiaryApiErrorCode {
   TOO_SOON = 'TOO_SOON',
   /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
   DATE_OUT_OF_RANGE = 'DATE_OUT_OF_RANGE',
-  /** The diary is switched off on the server (`DIARY_ENABLED`). */
-  DIARY_DISABLED = 'DIARY_DISABLED',
   /** The agent could not write the text; try again later. */
   SUMMARY_UNAVAILABLE = 'SUMMARY_UNAVAILABLE',
 }

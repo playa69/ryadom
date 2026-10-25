@@ -5,7 +5,6 @@ import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { ACCOUNT_UNAVAILABLE_EVENT, deviceLogin, getCurrentUser, hasDevice, linkTelegram, telegramLogin } from '../lib/api'
 import { initAppUpdates } from '../lib/app-update'
 import { initBackButton, initBackTrap, initTelegramBackButton } from '../lib/native'
-import { DIARY_ENABLED } from '../lib/diary'
 import { initLaunchRouting } from '../lib/launch'
 import { TAB_IDS } from '../lib/nav'
 import { isWebBuild } from '../lib/platform'
@@ -54,10 +53,8 @@ const f7params = {
 const TABS = [
   { id: TAB_IDS.home, url: '/home/', label: 'Главная', icon: 'house', iconActive: 'house_fill' },
   { id: TAB_IDS.journal, url: '/journal/', label: 'Журнал', icon: 'book', iconActive: 'book_fill' },
-  // The mood diary (`REQ-WELL-01`); the build can switch it off (VITE_DIARY_ENABLED=false) and then there are three.
-  ...(DIARY_ENABLED
-    ? [{ id: TAB_IDS.diary, url: '/diary/', label: 'Дневник', icon: 'face_smiling', iconActive: 'face_smiling_fill' }]
-    : []),
+  // The mood diary (`REQ-WELL-01`), on for everyone.
+  { id: TAB_IDS.diary, url: '/diary/', label: 'Дневник', icon: 'face_smiling', iconActive: 'face_smiling_fill' },
   {
     id: TAB_IDS.profile,
     url: '/profile/',
@@ -74,7 +71,7 @@ function SignedInViews() {
   // The diary's day and the summaries follow the person's zone: the device tells it on
   // opening and whenever the app comes back (a trip changes it).
   useEffect(() => {
-    if (!DIARY_ENABLED || !userId) return
+    if (!userId) return
     void syncTimezone(userId)
     const onVisible = () => document.visibilityState === 'visible' && void syncTimezone(userId)
     document.addEventListener('visibilitychange', onVisible)
@@ -82,7 +79,7 @@ function SignedInViews() {
   }, [userId])
 
   // The PWA shortcut opens the diary.
-  useEffect(() => (DIARY_ENABLED ? initLaunchRouting() : undefined), [])
+  useEffect(() => initLaunchRouting(), [])
 
   return (
     <Views tabs className="safe-areas">
