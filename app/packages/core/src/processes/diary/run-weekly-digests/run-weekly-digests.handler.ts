@@ -12,7 +12,7 @@ import {
 } from '../../../managers/diary-manager'
 import { addDaysToDate, createLogger, localMoment, weekStart } from '../../../shared'
 import { PROCESSES_CONFIG } from '../../config'
-import { checkinsBetween, makeWeekSummary } from '../shared/digests'
+import { checkinsBetween, inputsVersion, isStale, makeWeekSummary, writtenAt } from '../shared/digests'
 
 const log = createLogger('diary')
 import { RunWeeklyDigestsOperation } from './run-weekly-digests.operation'
@@ -22,7 +22,8 @@ import { type RunWeeklyDigestsResult } from './run-weekly-digests.types'
 export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeeklyDigestsOperation, RunWeeklyDigestsResult> {
   async handle(c: RunWeeklyDigestsOperation): Promise<RunWeeklyDigestsResult> {
     // For people whose local clock passed Monday 06:00 the finished week gets its final summary (3 or more
-    // marked days). A repeat makes nothing new.
+    // marked days); the week in progress gets its text once 3 days are marked and a new one after its marks
+    // change. A repeat makes nothing new.
     const config = PROCESSES_CONFIG.DIARY
     const now = c.now ?? new Date()
     const limit = c.limit ?? config.WEEKLY_PASS_LIMIT
@@ -35,47 +36,47 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
     for (const { userId, timezone } of people) {
       if (weeklyUserIds.length >= limit) break
       const local = localMoment(now, timezone)
+      const currentWeek = weekStart(local.date)
       // Monday after 06:00 and later: a missed Monday is made up on the next passes of the week.
-      if (local.isoWeekday === 1 && local.minutes < config.WEEKLY_CLOSE_MINUTES) continue
-      const lastWeek = addDaysToDate(weekStart(local.date), -7)
-      const existing = await diaryManager.execute(
-        new ListDiarySummariesQuery({ userId, kind: 'week', from: lastWeek, to: lastWeek, limit: 1 }),
-      )
-      if (existing.summaries[0]?.stats?.final === true) continue
-      // Fewer than 3 marked days: nothing to close, and nothing worth claiming every minute.
-      const days = await checkinsBetween(userId, lastWeek, addDaysToDate(lastWeek, 6))
-      if (days.length < config.WEEK_SUMMARY_MIN_DAYS) continue
-      // The period is taken by a `pending` row first; the agent is called only by the replica that got it (D9).
-      const claim = await diaryManager.execute(
-        new ClaimDiarySummaryCommand({
-          userId,
-          kind: 'week',
-          periodStart: lastWeek,
-          now,
-          staleBefore: new Date(now.getTime() - config.PENDING_STALE_MS),
-        }),
-      )
-      if (!claim.success) {
-        switch (claim.error) {
-          case ClaimDiarySummaryCommandErrorCode.ALREADY_CLAIMED:
-            continue
-          default:
-            assertNever(claim.error)
-        }
-      }
-      let closed = false
-      try {
-        closed = (await makeWeekSummary(userId, lastWeek, true, now)).success
-        if (closed) weeklyUserIds.push(userId)
-      } catch (error) {
-        log.error('Не удалось собрать итоги недели', error)
-      } finally {
-        // The agent did not answer (or something broke): the claim goes back, the next pass tries again.
-        if (!closed) await diaryManager.execute(new ReleaseDiarySummaryCommand({ userId, kind: 'week', periodStart: lastWeek }))
-      }
+      const closing = !(local.isoWeekday === 1 && local.minutes < config.WEEKLY_CLOSE_MINUTES)
+      if (closing && (await this.write(userId, addDaysToDate(currentWeek, -7), true, now))) weeklyUserIds.push(userId)
+      // The week in progress: written once 3 days are marked, rewritten after the marks change.
+      if (weeklyUserIds.length < limit && (await this.write(userId, currentWeek, false, now))) weeklyUserIds.push(userId)
     }
     await this.rebuildAfterDeletions(now, limit, weeklyUserIds)
     return { success: true, weekly: weeklyUserIds.length, weeklyUserIds }
+  }
+
+  /**
+   * Writes the text of the week `periodStart` if it has none, was not closed yet (`final`) or a mark changed after it
+   * was written, and the last change is at least `AUTO_QUIET_MS` old. The period is claimed first (D9): of several replicas
+   * one asks the agent; the old text stays in view until the new one replaces it. True when a text was written.
+   */
+  private async write(userId: string, periodStart: string, final: boolean, now: Date): Promise<boolean> {
+    const config = PROCESSES_CONFIG.DIARY
+    const days = await checkinsBetween(userId, periodStart, addDaysToDate(periodStart, 6))
+    // Fewer than 3 marked days: nothing to write, and nothing worth claiming every minute.
+    if (days.length < config.WEEK_SUMMARY_MIN_DAYS) return false
+    if (now.getTime() - inputsVersion(days).getTime() < config.AUTO_QUIET_MS) return false
+    const existing = (
+      await diaryManager.execute(new ListDiarySummariesQuery({ userId, kind: 'week', from: periodStart, to: periodStart, limit: 1 }))
+    ).summaries[0]
+    if (existing && !isStale(existing, days) && (!final || existing.stats?.final === true)) return false
+    // A text of the week in progress is rewritten after a change at most once in AUTO_MIN_GAP_MS (the button «Обновить итоги»
+    // does not wait); the first text and the Monday close do not wait either.
+    if (existing && !final && now.getTime() - writtenAt(existing).getTime() < config.AUTO_MIN_GAP_MS) return false
+    const staleBefore = new Date(now.getTime() - config.PENDING_STALE_MS)
+    if (!(await this.claim(userId, 'week', periodStart, now, staleBefore, final))) return false
+    let written = false
+    try {
+      written = (await makeWeekSummary(userId, periodStart, final, now)).success
+    } catch (error) {
+      log.error('Не удалось собрать итоги недели', error)
+    } finally {
+      // The agent did not answer (or something broke): the claim goes back, the next pass tries again.
+      if (!written) await diaryManager.execute(new ReleaseDiarySummaryCommand({ userId, kind: 'week', periodStart }))
+    }
+    return written
   }
 
   /**
@@ -110,8 +111,15 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
     }
   }
 
-  private async claim(userId: string, kind: 'week', periodStart: string, now: Date, staleBefore: Date): Promise<boolean> {
-    const claim = await diaryManager.execute(new ClaimDiarySummaryCommand({ userId, kind, periodStart, now, staleBefore }))
+  private async claim(
+    userId: string,
+    kind: 'week',
+    periodStart: string,
+    now: Date,
+    staleBefore: Date,
+    allowFinal = false,
+  ): Promise<boolean> {
+    const claim = await diaryManager.execute(new ClaimDiarySummaryCommand({ userId, kind, periodStart, now, staleBefore, allowFinal }))
     if (claim.success) return true
     switch (claim.error) {
       case ClaimDiarySummaryCommandErrorCode.ALREADY_CLAIMED:

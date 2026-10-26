@@ -5,11 +5,11 @@ import { button, openApp, openTab, startAnonymously } from '../support/app'
 import { expect, test } from '../support/fixtures'
 import { trackSession } from '../support/session'
 // Written by the server side of the change (a direct write to the table: the API takes only today and yesterday).
-import { seedMarks } from '../support/diary'
+import { ageWeekSummary, seedMarks } from '../support/diary'
 
 /**
  * The mood diary in the app (PWA), `REQ-WELL-01`…`03`: the card in two taps, a change of mind, the chart,
- * the bridge to a conversation, a note made without a network, the journal segment, and the week summary after three marked days (agent mock: fixed text).
+ * the bridge to a conversation, a note made without a network, the journal segment, and the week summary that the background pass writes after three marked days and rewrites when the mood changes (agent mock: a fixed text from the marks).
  */
 
 /** The day in the browser's zone (the config sets Europe/Moscow), as the diary counts it. */
@@ -32,10 +32,11 @@ test('дневник: пустой → отметка в два касания �
   const diary = page.locator('.page-current[data-name="diary"]')
   await expect(diary.getByTestId('diary-today-title')).toHaveText('Как ты сегодня?')
   await expect(diary.getByTestId('diary-chart-empty')).toContainText('здесь появится график')
-  await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 0)')
-  await expect(diary.getByTestId('diary-selfcheck')).toBeVisible()
-  await expect(diary.getByTestId('diary-events-title')).toHaveText('События этой недели')
-  await expect(diary.getByTestId('diary-events-card')).toBeVisible()
+  await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 0 из 3)')
+  // Neither the self-check (PROTEUS-218) nor the events of the week live on this page, and memory is not mentioned.
+  await expect(diary.getByTestId('diary-selfcheck')).toHaveCount(0)
+  await expect(diary.getByTestId('diary-events-card')).toHaveCount(0)
+  await expect(diary).not.toContainText(/Самопроверка|События|памят/i)
   await expect(diary.getByTestId('diary-streak')).toHaveCount(0)
   await shot(page, 'diary-empty')
 
@@ -50,7 +51,7 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-streak')).toContainText('1 дн.')
   await expect(diary.getByTestId('diary-chart-point')).toHaveCount(1)
   await expect(diary.getByTestId('diary-chart')).toHaveAttribute('aria-label', /отмечено 1 день, чаще всего — нормально/)
-  await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 1)')
+  await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 1 из 3)')
   await shot(page, 'diary-marked')
 
   // The server has it, so another device of the person sees it too.
@@ -137,8 +138,8 @@ test('три вкладки помещаются на ширине 320px без 
   await shot(page, 'diary-tabs-320')
 })
 
-test('итоги недели: после трёх отмеченных дней — кнопка и текст агента; «Люди рядом» после тяжёлой недели', async ({ page, request, shot }) => {
-  test.setTimeout(180_000)
+test('первый текст недели пишется сам, потом — «Обновить итоги» и автоматическая перезапись после паузы; «Люди рядом» после тяжёлой недели', async ({ page, request, shot }) => {
+  test.setTimeout(900_000)
   const session = trackSession(page)
   await openApp(page)
   await startAnonymously(page)
@@ -156,19 +157,52 @@ test('итоги недели: после трёх отмеченных дней
   )
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
-  await expect(diary.getByTestId('diary-week-collect')).toBeVisible({ timeout: 15_000 })
-  // One button and nothing else: no hint next to it.
+  // Four days: no button, the text is being written in the background (a minute after the last tap, then the minute tick).
+  await expect(diary.getByTestId('diary-week-busy')).toBeVisible({ timeout: 15_000 })
+  await expect(diary.getByTestId('diary-week-refresh')).toHaveCount(0)
   await expect(diary.getByTestId('diary-week-waiting')).toHaveCount(0)
-  await shot(page, 'diary-week-ready')
-  await diary.getByTestId('diary-week-collect').click()
-  await expect(diary.getByTestId('diary-week-text')).toBeVisible({ timeout: 30_000 })
-  await expect(diary.getByTestId('diary-week-collect')).toHaveCount(0)
+  await shot(page, 'diary-week-building')
+  await expect
+    .poll(async () => (await serverDiary(request, session.accessToken())).week.summary?.text ?? '', { timeout: 180_000, intervals: [5_000] })
+    .toContain('Тяжёлых дней было 4')
+  await openTab(page, 'Главная')
+  await openTab(page, 'Дневник')
+  await expect(diary.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 4')
+  await expect(diary.getByTestId('diary-week-busy')).toHaveCount(0)
   await expect(diary.getByTestId('diary-week-people')).toBeVisible()
   await shot(page, 'diary-week-summary')
+
+  // The first text is written; «Обновить итоги» is there now. A change of mood does NOT rewrite it by itself within the six hours.
+  await expect(diary.getByTestId('diary-week-refresh')).toBeVisible()
+  await diary.getByTestId('diary-mood-4').click()
+  await expect.poll(async () => (await serverDiary(request, session.accessToken())).today?.mood).toBe(4)
+  await page.waitForTimeout(150_000)
+  expect((await serverDiary(request, session.accessToken())).week.summary?.text).toContain('Тяжёлых дней было 4')
+
+  // The button rewrites it at once; the old text stays under «Собираю итоги…» until the new one is there.
+  await diary.getByTestId('diary-week-refresh').click()
+  await expect(diary.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 3', { timeout: 30_000 })
+  await expect(diary.getByTestId('diary-week-busy')).toHaveCount(0)
+  await shot(page, 'diary-week-rewritten')
+  // And once more within ten minutes: the friendly refusal.
+  await diary.getByTestId('diary-week-refresh').click()
+  await expect(diary.getByTestId('diary-week-error')).toContainText('Подожди немного')
+
+  // After the six-hour gap (aged in the table) a changed mood is rewritten by the background pass alone.
+  await diary.getByTestId('diary-mood-2').click()
+  await expect.poll(async () => (await serverDiary(request, session.accessToken())).today?.mood).toBe(2)
+  await ageWeekSummary(session.userId())
+  await expect
+    .poll(async () => (await serverDiary(request, session.accessToken())).week.summary?.text ?? '', { timeout: 180_000, intervals: [5_000] })
+    .toContain('лёгких — 0')
 })
 
 test('итоги прошлой недели: карточка появляется, когда планировщик закрыл неделю', async ({ page, request, shot }) => {
   test.setTimeout(240_000)
+  // By design the weekly tick does nothing before 06:00 local time on Monday (REQ-WELL-03), so the card cannot appear then.
+  const moscow = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Moscow', weekday: 'short', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date())
+  const part = (type: string) => moscow.find((p) => p.type === type)?.value
+  test.skip(part('weekday') === 'Mon' && Number(part('hour')) < 6, 'до 06:00 в понедельник по Москве планировщик итоги недели не считает')
   const session = trackSession(page)
   await openApp(page)
   await startAnonymously(page)

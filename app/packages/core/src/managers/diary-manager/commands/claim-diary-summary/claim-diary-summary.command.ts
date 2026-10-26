@@ -9,6 +9,8 @@ export interface ClaimDiarySummaryCommandData {
   now: Date
   /** A `pending` claim made before this moment is stale: its replica is gone. */
   staleBefore: Date
+  /** The closing pass may take a final text again: a mark was changed after it was written. */
+  allowFinal?: boolean
 }
 
 /** Takes a period for one replica by a `pending` row; the unique key lets exactly one of several win. */
@@ -21,6 +23,7 @@ export class ClaimDiarySummaryCommand extends RequestData<ClaimDiarySummaryComma
   public readonly periodStart: string
   public readonly now: Date
   public readonly staleBefore: Date
+  public readonly allowFinal: boolean
 
   constructor(data: ClaimDiarySummaryCommandData) {
     super()
@@ -29,5 +32,6 @@ export class ClaimDiarySummaryCommand extends RequestData<ClaimDiarySummaryComma
     this.periodStart = data.periodStart
     this.now = data.now
     this.staleBefore = data.staleBefore
+    this.allowFinal = data.allowFinal ?? false
   }
 }

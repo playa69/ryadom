@@ -4,9 +4,9 @@ import { DIARY_SEGMENTS, deviceToday, segmentHref } from './diary'
 import { WEB_DIARY_SEGMENT_KEY, WEB_STORAGE_PREFIX } from './storage-keys'
 
 describe('дневник в вебе', () => {
-  it('сегменты идут в порядке «Дневник · Журнал» и ведут на свои адреса', () => {
-    expect(DIARY_SEGMENTS.map((s) => s.label)).toEqual(['Дневник', 'Журнал'])
-    expect(DIARY_SEGMENTS.map((s) => segmentHref(s.key))).toEqual(['/diary', '/diary/journal'])
+  it('сегменты идут в порядке «Дневник · Журнал · Тесты» и ведут на свои адреса', () => {
+    expect(DIARY_SEGMENTS.map((s) => s.label)).toEqual(['Дневник', 'Журнал', 'Тесты'])
+    expect(DIARY_SEGMENTS.map((s) => segmentHref(s.key))).toEqual(['/diary', '/diary/journal', '/diary/tests'])
   })
 
   it('сегодня на устройстве — местная дата, а не UTC', () => {

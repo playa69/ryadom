@@ -2,7 +2,7 @@
 
 import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { DiaryApiErrorCode, WEEK_SUMMARY_MIN_DAYS, type DiaryApiResponse } from '@ryadom/contracts/api/diary'
 import { Button } from '@ryadom/ui/components/button'
 import { Card } from '@ryadom/ui/components/card'
@@ -11,40 +11,40 @@ import { BUTTON } from '../controls'
 
 type Week = DiaryApiResponse['week']
 
-const FAILED = 'Не получилось собрать итоги. Попробуй позже'
+/** While the card is on screen the diary is asked again this often: the text is written in the background. */
+const POLL_MS = 30_000
 
 /**
- * "Итоги недели": under 3 marked days it says how many there are; from 3 it offers to collect the
- * text (once a day); the text is written by the agent and kept by the app. A heavy week (three hard
- * days) adds the way to people nearby.
+ * "Итоги недели": under 3 marked days it says how many there are; from 3 the agent writes the text in
+ * the background (and rewrites it, at most every six hours, after the mood changes); «Обновить итоги» rewrites it now. A heavy week (three
+ * hard days) adds the way to people nearby.
  */
-export default function WeekCard({
-  week,
-  heavyWeek,
-  onSummary,
-}: {
-  week: Week
-  heavyWeek: boolean
-  onSummary(summary: NonNullable<Week['summary']>): void
-}) {
+export default function WeekCard({ week, onPoll }: { week: Week; onPoll(): void }) {
   const client = useClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const summary = week.summary
-  const collectedToday = summary
-    ? new Date(summary.generatedAt).toDateString() === new Date().toDateString()
-    : false
+  const heavyWeek = (summary?.hardDays ?? 0) >= 3
+  const enough = week.markedDays >= WEEK_SUMMARY_MIN_DAYS
 
-  async function collect() {
+  useEffect(() => {
+    if (!enough) return
+    const timer = setInterval(() => {
+      if (!document.hidden) onPoll()
+    }, POLL_MS)
+    return () => clearInterval(timer)
+  }, [enough, onPoll])
+
+  async function refresh() {
     setBusy(true)
     setError(null)
     try {
       const result = await client.createWeekSummary({ weekStart: week.start })
-      if (result.ok) onSummary(result.data)
-      else if (result.code === DiaryApiErrorCode.NOT_ENOUGH_DAYS) setError(FAILED)
-      else setError(FAILED)
+      if (result.ok) onPoll()
+      else if (result.code === DiaryApiErrorCode.TOO_SOON) setError('Подожди немного — итоги уже обновлялись. Попробуй через несколько минут')
+      else setError('Не получилось обновить итоги. Попробуй позже')
     } catch {
-      setError(FAILED)
+      setError('Не получилось обновить итоги. Попробуй позже')
     } finally {
       setBusy(false)
     }
@@ -61,13 +61,13 @@ export default function WeekCard({
           {summary.text}
         </p>
       )}
-      {!summary && week.markedDays < WEEK_SUMMARY_MIN_DAYS && (
+      {!enough && (
         <p className="text-[0.9375rem] leading-snug text-dim" data-testid="diary-week-hint">
-          Отметь настроение хотя бы 3 дня на этой неделе (сейчас: {week.markedDays}) — и я соберу для тебя
-          итоги
+          Итоги недели появятся, когда отметишь {WEEK_SUMMARY_MIN_DAYS} дня (сейчас: {week.markedDays} из{' '}
+          {WEEK_SUMMARY_MIN_DAYS})
         </p>
       )}
-      {busy && (
+      {(busy || (enough && !summary)) && (
         <p
           className="flex items-center gap-2.5 text-[0.9375rem] font-medium text-foreground"
           role="status"
@@ -77,17 +77,17 @@ export default function WeekCard({
           Собираю итоги…
         </p>
       )}
-      {!busy && week.markedDays >= WEEK_SUMMARY_MIN_DAYS && !collectedToday && (
+      {enough && summary && !busy && (
         <div>
-          <Button
-            size="sm"
-            className={BUTTON}
-            data-testid="diary-week-collect"
-            onClick={() => void collect()}
-          >
-            Собрать итоги недели
+          <Button size="sm" variant="outline" className={BUTTON} data-testid="diary-week-refresh" onClick={() => void refresh()}>
+            Обновить итоги
           </Button>
         </div>
+      )}
+      {error && (
+        <p role="status" className="text-sm text-danger" data-testid="diary-week-error">
+          {error}
+        </p>
       )}
       {summary && heavyWeek && (
         <div>
@@ -97,11 +97,6 @@ export default function WeekCard({
             </Link>
           </Button>
         </div>
-      )}
-      {error && (
-        <p role="status" className="text-sm text-danger" data-testid="diary-week-error">
-          {error}
-        </p>
       )}
     </Card>
   )

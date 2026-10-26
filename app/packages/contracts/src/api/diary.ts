@@ -19,6 +19,8 @@ export type MoodSource = (typeof MOOD_SOURCES)[number]
 
 /** Marked days a week needs before "Week summary" can be made. */
 export const WEEK_SUMMARY_MIN_DAYS = 3
+/** Minutes between two manual re-runs of the week text. */
+export const MANUAL_REFRESH_COOLDOWN_MIN = 10
 /** Days back a note without network may be written for (the offline queue). */
 export const MOOD_BACKFILL_MAX_DAYS = 7
 /** After 3 days of "hard" in a row the bridge to the conversation says more. */
@@ -27,12 +29,12 @@ export const MOOD_HARD_STREAK_DAYS = 3
 export enum DiaryApiErrorCode {
   /** Fewer marked days in the week than `WEEK_SUMMARY_MIN_DAYS`. */
   NOT_ENOUGH_DAYS = 'NOT_ENOUGH_DAYS',
-  /** The summary of this period was made less than a day ago. */
+  /** The text of this week was re-run by hand less than `MANUAL_REFRESH_COOLDOWN_MIN` minutes ago (or is being written). */
   TOO_SOON = 'TOO_SOON',
-  /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
-  DATE_OUT_OF_RANGE = 'DATE_OUT_OF_RANGE',
   /** The agent could not write the text; try again later. */
   SUMMARY_UNAVAILABLE = 'SUMMARY_UNAVAILABLE',
+  /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
+  DATE_OUT_OF_RANGE = 'DATE_OUT_OF_RANGE',
 }
 
 export interface MoodCheckinApi {
@@ -48,6 +50,8 @@ export interface DiarySummaryApi {
   periodStart: string
   text: string
   generatedAt: string
+  /** Days of «Тяжело» in the week the text was written for; 3 or more brings «Люди рядом». */
+  hardDays: number
 }
 
 /** The mood chart shows this many days up to and including today. */
@@ -84,23 +88,16 @@ export interface PutMoodCheckinApiResponse {
   hardStreak: number
 }
 
+/** `POST /api/diary/summaries/week`: re-run the text of the current week now («Обновить итоги»). */
+export interface CreateWeekSummaryApiRequest {
+  /** `YYYY-MM-DD`, Monday of the current week. */
+  weekStart: string
+}
+
 /** `GET /api/diary/summaries?kind=week&before=<periodStart>`, newest first. */
 export interface DiarySummariesApiResponse {
   items: DiarySummaryApi[]
   nextBefore: string | null
-}
-
-/** `POST /api/diary/summaries/week`. */
-export interface CreateWeekSummaryApiRequest {
-  /** `YYYY-MM-DD`, Monday. */
-  weekStart: string
-}
-
-/** `GET /api/diary/events?week=<weekStart>`: notes of the week from the agent's memory. */
-export interface DiaryEventsApiResponse {
-  /** Memory is off or has no notes: the client shows the empty state. */
-  memoryEnabled: boolean
-  items: { id: string; text: string; date: string }[]
 }
 
 /** `POST /api/diary/widget-token` (the token is shown once) and `DELETE` to revoke. */

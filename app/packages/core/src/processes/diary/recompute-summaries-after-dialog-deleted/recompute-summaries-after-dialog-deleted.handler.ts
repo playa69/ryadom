@@ -32,7 +32,7 @@ export class RecomputeSummariesAfterDialogDeletedOperationHandler
     const existing = summaries[0] ?? null
     if (existing) await diaryManager.execute(new DeleteDiarySummaryCommand({ userId: c.userId, kind: 'week', periodStart: week, status: 'ready' }))
 
-    // A finished week within the window is written again by the scheduler; the current one by the person's button.
+    // A finished week within the window is written again by the scheduler through the marker; the current one needs no marker: with no text left the next background pass writes it.
     const windowStart = addDaysToDate(currentWeek, -7 * PROCESSES_CONFIG.DIARY.RECOMPUTE_WEEKS)
     const scheduled = week < currentWeek && week >= windowStart
     if (scheduled) await diaryManager.execute(new MarkDiarySummaryForRecomputeCommand({ userId: c.userId, kind: 'week', periodStart: week }))

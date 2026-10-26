@@ -64,8 +64,34 @@ async function writeDigest(
   }
 }
 
+/** When the text was last written (the claim of a rewrite moves `generatedAt`, this stays); texts without it fall back to `generatedAt`. */
+export function writtenAt(summary: DiarySummaryDTO): Date {
+  const at = typeof summary.stats?.writtenAt === 'string' ? Date.parse(summary.stats.writtenAt) : NaN
+  return Number.isNaN(at) ? summary.generatedAt : new Date(at)
+}
+
+/** The moment of the latest change among the marks of the week: the version of the input a text is written from. */
+export function inputsVersion(days: readonly MoodCheckinDTO[]): Date {
+  return new Date(Math.max(...days.map((d) => d.updatedAt.getTime())))
+}
+
+/**
+ * A text needs rewriting when a mark was added or changed after the marks it was written from (design D9).
+ * Texts without the version fall back to the time they were written.
+ */
+export function isStale(summary: DiarySummaryDTO, days: readonly MoodCheckinDTO[]): boolean {
+  const written = typeof summary.stats?.inputsAt === 'string' ? Date.parse(summary.stats.inputsAt) : summary.generatedAt.getTime()
+  return inputsVersion(days).getTime() > written
+}
+
 /** The text of the week starting `start`; `final` is true when the scheduler closes a finished week. */
-export async function makeWeekSummary(userId: string, start: string, final: boolean, now: Date): Promise<DigestResult> {
+export async function makeWeekSummary(
+  userId: string,
+  start: string,
+  final: boolean,
+  now: Date,
+  manual = false,
+): Promise<DigestResult> {
   const days = await checkinsBetween(userId, start, addDaysToDate(start, 6))
   if (days.length < WEEK_SUMMARY_MIN_DAYS) return { success: false, error: DigestFailureCode.NOT_ENOUGH_DAYS }
   const digest = await writeDigest(userId, start, toMarks(days))
@@ -77,7 +103,7 @@ export async function makeWeekSummary(userId: string, start: string, final: bool
       kind: 'week',
       periodStart: start,
       text: digest.text,
-      stats: { ...(digest.stats ?? {}), markedDays: days.length, hardDays, final },
+      stats: { ...(digest.stats ?? {}), markedDays: days.length, hardDays, final, inputsAt: inputsVersion(days).toISOString(), writtenAt: now.toISOString(), ...(manual ? { manualAt: now.toISOString() } : {}) },
       generatedAt: now,
     }),
   )

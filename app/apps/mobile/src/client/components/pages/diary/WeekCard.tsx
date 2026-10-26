@@ -1,32 +1,43 @@
 import { Button, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useState } from 'react'
-import { WEEK_SUMMARY_MIN_DAYS, type DiaryApiResponse } from '@ryadom/contracts/api/diary'
+import { useEffect, useState } from 'react'
+import { DiaryApiErrorCode, WEEK_SUMMARY_MIN_DAYS, type DiaryApiResponse } from '@ryadom/contracts/api/diary'
 import { createWeekSummary } from '../../../lib/api'
 import { diary } from '../../../lib/diary'
-import { deviceDate } from '../../../lib/diary-queue'
+
+/** While the card is on screen the diary is asked again this often: the text is written in the background. */
+const POLL_MS = 30_000
 
 /**
- * «Итоги недели»: waits for three marked days, then one button; the text is the agent's, the app keeps it.
- * One build a day: a text from today leaves no button. A failed build does not use the day up.
+ * «Итоги недели»: the text is written by the agent in the background once three days are marked and
+ * rewritten (at most every six hours) after the mood changes; the card shows it. «Обновить итоги» is the way to
+ * rewrite it now, once there is a text.
  */
 export default function WeekCard({ data, f7router }: { data: DiaryApiResponse; f7router: Router.Router }) {
+  const { week } = data
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const { week } = data
-  const heavy = data.recent.filter((d) => d.date >= week.start && d.mood === 1).length >= 3
-  const builtToday = week.summary !== null && deviceDate(new Date(week.summary.generatedAt)) === deviceDate()
+  const heavy = (week.summary?.hardDays ?? 0) >= 3
   const enough = week.markedDays >= WEEK_SUMMARY_MIN_DAYS
 
-  async function collect() {
+  useEffect(() => {
+    if (!enough) return
+    const timer = setInterval(() => {
+      if (!document.hidden) void diary.refresh()
+    }, POLL_MS)
+    return () => clearInterval(timer)
+  }, [enough])
+
+  async function refresh() {
     setBusy(true)
     setError('')
     try {
       const outcome = await createWeekSummary({ weekStart: week.start })
-      if (!outcome.ok) setError('Не получилось собрать итоги. Попробуй позже')
-      else await diary.refresh()
+      if (outcome.ok) await diary.refresh()
+      else if (outcome.code === DiaryApiErrorCode.TOO_SOON) setError('Подожди немного — итоги уже обновлялись. Попробуй через несколько минут')
+      else setError('Не получилось обновить итоги. Попробуй позже')
     } catch {
-      setError('Не получилось собрать итоги. Попробуй позже')
+      setError('Не получилось обновить итоги. Попробуй позже')
     } finally {
       setBusy(false)
     }
@@ -42,27 +53,21 @@ export default function WeekCard({ data, f7router }: { data: DiaryApiResponse; f
           {week.summary.text}
         </p>
       )}
-      {!week.summary && !enough && (
+      {!enough && (
         <p className="rd-muted" data-testid="diary-week-waiting">
-          Отметь настроение хотя бы 3 дня на этой неделе (сейчас: {week.markedDays}) — и я соберу для тебя итоги
+          Итоги недели появятся, когда отметишь {WEEK_SUMMARY_MIN_DAYS} дня (сейчас: {week.markedDays} из{' '}
+          {WEEK_SUMMARY_MIN_DAYS})
         </p>
       )}
-      {busy && (
+      {(busy || (enough && !week.summary)) && (
         <p className="rd-week-building" data-testid="diary-week-busy">
           <Preloader size={18} />
           <span>Собираю итоги…</span>
         </p>
       )}
-      {enough && !builtToday && !busy && (
-        <Button
-          small
-          round
-          fill={!week.summary}
-          outline={week.summary !== null}
-          data-testid="diary-week-collect"
-          onClick={() => void collect()}
-        >
-          {week.summary ? 'Собрать заново' : 'Собрать итоги недели'}
+      {enough && week.summary && !busy && (
+        <Button small round outline data-testid="diary-week-refresh" onClick={() => void refresh()}>
+          Обновить итоги
         </Button>
       )}
       {error && (

@@ -92,7 +92,6 @@ import {
   DiaryApiErrorCode,
   type CreateWeekSummaryApiRequest,
   type DiaryApiResponse,
-  type DiaryEventsApiResponse,
   type DiarySummariesApiResponse,
   type DiarySummaryApi,
   type PutMoodCheckinApiRequest,
@@ -792,13 +791,11 @@ export function createClient(config: ClientConfig) {
         `${ApiPath.DiarySummaries}?kind=week${before ? `&before=${encodeURIComponent(before)}` : ''}`,
       ),
 
+    /** «Обновить итоги»: writes the text of the current week again now (once in ten minutes). */
     createWeekSummary: (
       data: CreateWeekSummaryApiRequest,
     ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
       apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
-
-    getDiaryEvents: (week?: string): Promise<DiaryEventsApiResponse> =>
-      apiFetch<DiaryEventsApiResponse>(`${ApiPath.DiaryEvents}${week ? `?week=${encodeURIComponent(week)}` : ''}`),
 
     /** The token of the Android widget; shown once. */
     createWidgetToken: (): Promise<WidgetTokenApiResponse> =>

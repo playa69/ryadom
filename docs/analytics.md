@@ -164,8 +164,7 @@
 | Событие | Где | Когда | Свойства |
 |---|---|---|---|
 | `mood_checked_in` | сервер | отметка дня сохранена или заменена | `source`: `app`/`widget`/`reminder`/`telegram`; `with_factor`; `changed` |
-| `week_summary_generated` | сервер | итоги недели собраны | `trigger`: `button` (кнопка) / `auto` (понедельничный проход планировщика) |
-| `diary_summary_refused` | сервер | итоги не собраны | `kind`: `week`; `reason`: `not_enough` (мало отмеченных дней) / `too_soon` (раньше суток) / `agent_unavailable` |
+| `week_summary_generated` | сервер | итоги недели собраны | `trigger`: `auto` (фоновый проход планировщика: первый текст, перезапись после смены отметки не чаще раза в 6 часов, итог понедельника) / `button` («Обновить итоги») |
 | `diary_opened` | клиенты | открыт сегмент дневника | `tab`: `diary`/`journal`/`tests` |
 | `mood_bridge_clicked` | клиенты | нажата кнопка моста после тяжёлого дня | `target`: `dialog`/`people` |
 
