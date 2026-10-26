@@ -102,6 +102,8 @@ export interface DialogSummaryApiResponse {
   recap?: DialogRecapApi | null
   recapStatus?: DialogRecapStatus
   recapSource?: DialogRecapSource | null
+  /** `false`: no recap can be made for this conversation (little said, a crisis, held without memory): the journal does not offer one. */
+  recapAvailable?: boolean
 }
 
 export interface DialogListItemApiResponse {
@@ -113,6 +115,11 @@ export interface DialogListItemApiResponse {
   summary: DialogSummaryApiResponse | null
   /** `off`: a conversation "without memory", deleted 24 hours after its last message. */
   memoryMode: DialogMemoryMode
+  /**
+   * `false`: a conversation the person asked not to keep (`add-unsaved-dialog`): the journal shows a mark without text,
+   * with the date, the time and how long it lasted. Absent or `true`: an ordinary conversation.
+   */
+  saved?: boolean
 }
 
 export interface ListDialogsApiResponse {

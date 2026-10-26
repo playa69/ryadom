@@ -386,6 +386,7 @@ describe('завершение разговора', () => {
         recap: null,
         recapStatus: 'none',
         recapSource: null,
+        recapAvailable: null,
         recapAt: null,
       },
     })

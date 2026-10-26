@@ -104,6 +104,7 @@ export function toDialogSummary(summary: DialogSummaryDTO | null): DialogSummary
     recap: summary.recap,
     recapStatus: summary.recapStatus,
     recapSource: summary.recapSource,
+    ...(summary.recapAvailable === null ? {} : { recapAvailable: summary.recapAvailable }),
   }
 }
 
@@ -126,6 +127,7 @@ export function toDialogListItem(item: DialogListItemDTO): DialogListItemApiResp
     endedAt: item.endedAt?.toISOString() ?? null,
     summary: toDialogSummary(item.summary),
     memoryMode: toDialogMemoryMode(item.memoryMode),
+    saved: item.saved,
   }
 }
 

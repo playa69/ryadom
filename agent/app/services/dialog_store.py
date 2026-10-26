@@ -416,6 +416,8 @@ class DialogStore:
             "recap": None,
             "recapStatus": "none",
             "recapSource": None,
+            # Можно ли у этого разговора завести итог (мало сказано, кризис, «Без памяти» — нельзя): журнал предлагает «Написать итог» только если можно.
+            "recapAvailable": recaps.eligible(dialog),
         }
         given = recaps.clean_recap(recap) if recap is not None else None
         if given is not None and recaps.eligible(dialog):

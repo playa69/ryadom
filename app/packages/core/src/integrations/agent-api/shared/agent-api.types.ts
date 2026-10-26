@@ -16,6 +16,8 @@ export interface AgentDialogSummaryResponse {
   recap?: AgentRecapResponse | null
   recapStatus?: 'pending' | 'ready' | 'none'
   recapSource?: 'manual' | 'draft' | 'auto' | null
+  /** Whether a recap can be made for this conversation at all. */
+  recapAvailable?: boolean
   /** When the recap was stored, ISO. */
   recapAt?: string | null
 }
@@ -45,6 +47,8 @@ export interface AgentDialogListItemResponse {
   summary: AgentDialogSummaryResponse | null
   /** `off`: a conversation "without memory". Absent from an agent without memory, which means `on`. */
   memoryMode?: string
+  /** `false`: a conversation kept only as a mark (`add-unsaved-dialog`); absent from an agent that has none. */
+  saved?: boolean
 }
 
 export interface AgentMessageResponse {

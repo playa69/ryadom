@@ -35,6 +35,8 @@ export interface DialogSummaryDTO {
   recap: DialogRecapDTO | null
   recapStatus: DialogRecapStatus
   recapSource: DialogRecapSource | null
+  /** `false`: no recap can be made for this conversation; null: the agent did not say. */
+  recapAvailable: boolean | null
   /** When the recap was stored. */
   recapAt: Date | null
 }
@@ -56,6 +58,8 @@ export interface DialogListItemDTO {
   summary: DialogSummaryDTO | null
   /** `off`: a conversation "without memory", deleted by the agent 24 hours after its last message. */
   memoryMode: AgentDialogMemoryMode
+  /** `false`: a conversation the person asked not to keep: the journal shows a mark without text. */
+  saved: boolean
 }
 
 export interface DialogMessageDTO {
@@ -116,6 +120,7 @@ export function toDialogSummaryDTO(summary: AgentDialogSummaryResponse | null): 
     // An agent without recaps (an older one) never says `pending` or `ready`.
     recapStatus: summary.recapStatus === 'pending' || summary.recapStatus === 'ready' ? summary.recapStatus : 'none',
     recapSource: toRecapSource(summary.recapSource),
+    recapAvailable: typeof summary.recapAvailable === 'boolean' ? summary.recapAvailable : null,
     recapAt: toDate(summary.recapAt),
   }
 }
@@ -129,6 +134,7 @@ export function toDialogListItemDTO(item: AgentDialogListItemResponse): DialogLi
     summary: toDialogSummaryDTO(item.summary),
     // An agent that does not report it (an older one) held every dialog with memory as usual.
     memoryMode: item.memoryMode === 'off' ? 'off' : 'on',
+    saved: item.saved !== false,
   }
 }
 

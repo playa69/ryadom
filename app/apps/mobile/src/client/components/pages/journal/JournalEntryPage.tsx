@@ -1,11 +1,12 @@
 import { Block, Button, Message, Messages, Navbar, Page, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useState } from 'react'
-import { DialogApiErrorCode, type DialogApiResponse } from '@ryadom/contracts/api/dialogs'
+import { DialogApiErrorCode, type DialogApiResponse, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText, getDialog } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
 import { matchesQuery, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import { formatJournalDate, nbspDash } from './format'
+import { DeleteDialogRow, RecapBlock, UnsavedMark } from './RecapParts'
 import ShareSheet, { ShareNavButton } from './ShareSheet'
 
 /**
@@ -21,6 +22,7 @@ export function JournalEntryBody({
   sharing: sharingFromPage,
   onShareClose,
   onShareable,
+  onDeleted,
 }: {
   dialogId: string
   heading?: boolean
@@ -28,6 +30,8 @@ export function JournalEntryBody({
   sharing?: boolean
   onShareClose?: () => void
   onShareable?: (shareable: boolean) => void
+  /** The conversation was deleted: the route goes back to the list, the pane clears. */
+  onDeleted?: () => void
 }) {
   const [dialog, setDialog] = useState<DialogApiResponse | null>(null)
   const [error, setError] = useState('')
@@ -40,6 +44,25 @@ export function JournalEntryBody({
     onShareable?.(shareable)
     return () => onShareable?.(false)
   }, [shareable, onShareable])
+
+  /** Reads the conversation again without the loading state: a recap that was pending may be ready now. */
+  const reload = useCallback(() => {
+    getDialog(dialogId)
+      .then((result) => {
+        if (result.ok) setDialog(result.data)
+      })
+      .catch(() => undefined)
+  }, [dialogId])
+
+  function summaryChanged(summary: DialogSummaryApiResponse) {
+    setDialog((current) => (current ? { ...current, summary } : current))
+  }
+
+  function deleted() {
+    void journal.refresh()
+    journal.open(null)
+    onDeleted?.()
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -79,7 +102,14 @@ export function JournalEntryBody({
       )}
       {error && <div className="rd-empty">{error}</div>}
 
-      {dialog?.summary && (
+      {dialog?.saved === false && (
+        <>
+          <UnsavedMark dialog={dialog} />
+          <DeleteDialogRow dialogId={dialogId} label="Удалить пометку" onDeleted={deleted} />
+        </>
+      )}
+
+      {dialog && dialog.saved !== false && dialog.summary && (
         <div className="rd-card">
           {!heading && <p className="rd-caption">{formatJournalDate(dialog.startedAt)}</p>}
           <p className="rd-muted">{dialog.summary.themes.join(', ') || 'Без тем'}</p>
@@ -90,6 +120,8 @@ export function JournalEntryBody({
           )}
         </div>
       )}
+
+      {dialog && dialog.saved !== false && <RecapBlock dialog={dialog} onSummary={summaryChanged} onRefresh={reload} />}
 
       {/* A finished conversation is read from the start: left alone, Messages scrolls to the last line
           and the summary card above it is out of sight. */}
@@ -117,10 +149,14 @@ export function JournalEntryBody({
         </>
       )}
 
-      {dialog && dialog.messages.length === 0 && (
+      {dialog && dialog.saved !== false && dialog.messages.length === 0 && (
         <div className="rd-empty">
           <p className="rd-muted">Текст этого разговора не сохранён.</p>
         </div>
+      )}
+
+      {dialog && dialog.saved !== false && dialog.endedAt && (
+        <DeleteDialogRow dialogId={dialogId} label="Удалить разговор" onDeleted={deleted} />
       )}
     </div>
   )
@@ -154,7 +190,8 @@ export default function JournalEntryPage({ dialogId, f7router }: { dialogId: str
   useEffect(() => {
     // The navbar title comes from the list the person just tapped, so it does not flash "Разговор".
     const item = journal.peek(dialogId)
-    if (item?.summary?.title) setTitle(item.summary.title)
+    if (item?.saved === false) setTitle('Разговор не сохранён')
+    else if (item?.summary?.title) setTitle(item.summary.title)
   }, [dialogId])
 
   return (
@@ -167,6 +204,7 @@ export default function JournalEntryPage({ dialogId, f7router }: { dialogId: str
         sharing={sharing}
         onShareClose={() => setSharing(false)}
         onShareable={setShareable}
+        onDeleted={() => f7router.back('/diary/journal/', { force: true })}
       />
     </Page>
   )

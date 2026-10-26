@@ -8,6 +8,7 @@ import { cn } from '@ryadom/ui/lib/utils'
 import { formatJournalDate } from '@/lib/journal'
 import { BUTTON } from './controls'
 import { ChatMessage } from './ChatMessage'
+import { DeleteDialogButton, RecapBlock, UnsavedMark } from './JournalEntryRecap'
 import { BADGE_COMPACT, conversationHref, StatePanel } from './JournalParts'
 
 /** "7 → 4", or "было 7" while the conversation has no closing score (the list row says the same). */
@@ -82,11 +83,33 @@ function EntryMeta({ dialog }: { dialog: DialogApiResponse }) {
  * (there is only ever one, and the API resumes it) goes back to where it left off, and says so. The
  * route (JournalEntryScreen) owns the header and the loading; this is the ready state.
  */
-export default function JournalEntry({ dialog }: { dialog: DialogApiResponse }) {
+export default function JournalEntry({
+  dialog,
+  onSummary,
+  onRefresh,
+  onDeleted,
+}: {
+  dialog: DialogApiResponse
+  onSummary(summary: DialogSummaryApiResponse): void
+  onRefresh(): void
+  onDeleted(): void
+}) {
   const isOpen = !dialog.endedAt
+  // A conversation the person asked not to keep leaves only a mark: no text, no recap, no way to carry on.
+  if (dialog.saved === false) {
+    return (
+      <>
+        <UnsavedMark dialog={dialog} />
+        <div className="flex justify-center border-t border-line pt-8">
+          <DeleteDialogButton dialogId={dialog.dialogId} label="Удалить пометку" onDeleted={onDeleted} />
+        </div>
+      </>
+    )
+  }
   return (
     <>
       <EntryMeta dialog={dialog} />
+      <RecapBlock dialog={dialog} onSummary={onSummary} onRefresh={onRefresh} />
 
       {dialog.messages.length > 0 ? (
         <ol className="flex flex-col gap-6" aria-label="Текст разговора" data-testid="journal-messages">
@@ -116,6 +139,11 @@ export default function JournalEntry({ dialog }: { dialog: DialogApiResponse }) 
           </Link>
         </Button>
       </div>
+      {!isOpen && (
+        <div className="flex justify-center">
+          <DeleteDialogButton dialogId={dialog.dialogId} label="Удалить разговор" onDeleted={onDeleted} />
+        </div>
+      )}
     </>
   )
 }
