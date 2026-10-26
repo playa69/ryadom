@@ -307,6 +307,8 @@ class MemorySettings(BaseAppSettings):
     # Сколько памяти уходит в голосовую модель: minimal — только как говорить и о чём не говорить (и мягкий тон после тяжёлого
     # разговора); standard — плюс близкие (без имён), что помогает, планы, обстоятельства, прошлый разговор; full — с именами.
     brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")
+    # Заметки о человеке (слой 1, PROTEUS-242): лимит живых заметок на человека. Срока давности у заметок нет.
+    notes_max: int = Field(validation_alias="MEMORY_NOTES_MAX", default=200, ge=1)
     # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
     allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
 

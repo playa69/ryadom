@@ -416,6 +416,25 @@ class DialogDatabase:
         with self._lock, self._connection() as conn, conn.transaction():
             return conn.execute(sql, (user_id,)).rowcount
 
+    def get_memory_flags(self, user_id: str) -> tuple[bool, bool]:
+        """(запоминать чувствительное, опираться на прошлые разговоры); без строки — значения по умолчанию (False, True)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                "SELECT sensitive_enabled, chat_search_enabled FROM memory_settings WHERE user_id = %s", (user_id,)
+            ).fetchone()
+        return (False, True) if row is None else (bool(row[0]), bool(row[1]))
+
+    def put_memory_flags(self, user_id: str, sensitive: bool, chat_search: bool, updated_at: str) -> None:
+        """Записать переключатели «Запоминать чувствительное» и «Опираться на прошлые разговоры», не трогая паузу и согласие."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_settings (user_id, enabled, sensitive_enabled, chat_search_enabled, updated_at) "
+                "VALUES (%s, FALSE, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
+                "sensitive_enabled = EXCLUDED.sensitive_enabled, chat_search_enabled = EXCLUDED.chat_search_enabled, "
+                "updated_at = EXCLUDED.updated_at",
+                (user_id, sensitive, chat_search, updated_at),
+            )
+
     def put_memory_settings(
         self, user_id: str, enabled: bool, consent_version: str | None, consent_at: str | None, updated_at: str
     ) -> None:

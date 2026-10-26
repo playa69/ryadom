@@ -15,7 +15,6 @@ recall занимает 15–30 секунд, поэтому сводка (`brie
 import asyncio
 import logging
 import re
-import uuid
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
@@ -23,7 +22,14 @@ from typing import Any
 from app.clients.cognee import CogneeClient
 from app.core.config import MemorySettings
 from app.memory.models import iso
-from app.memory.errors import MemoryDisabled, MemoryNotAllowed, MemoryUnavailable, MemoryValidation
+from app.memory.errors import (
+    MemoryActionUnsupported,
+    MemoryDisabled,
+    MemoryNotAllowed,
+    MemoryUnavailable,
+    MemoryValidation,
+)
+from app.memory.notes import NotesService, kind_of_category, note_as_fact
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import Dialog
 
@@ -45,12 +51,6 @@ def dataset_name(user_id: str) -> str:
     return "ryadom_user_" + re.sub(r"[^A-Za-z0-9]", "_", user_id)
 
 
-def _unsupported() -> MemoryValidation:
-    error = MemoryValidation("Бэкенд Cognee не поддерживает правку отдельных фактов")
-    error.reason = "unsupported_in_cognee"
-    return error
-
-
 class CogneeMemoryBackend:
     """Память людей на Cognee. Реализует `MemoryBackend`: сводка из кэша, запись и согласие — через `CogneeClient`."""
 
@@ -65,6 +65,7 @@ class CogneeMemoryBackend:
         # База диалогов (PostgreSQL), если подключена: в ней живут настройки памяти («включена или пауза», согласие).
         # Без неё (разработка) настройки хранятся только в памяти процесса.
         self._database = database or (lambda: None)
+        self.notes = NotesService(self._database, config.notes_max)
         self._datasets: dict[str, bool] = {}  # user_id → память включена (датасет существует)
         self._opted_out: set[str] = set()  # явно отказались: default_enabled их не включает обратно
         self._briefs: dict[str, str] = {}  # user_id → сводка из последнего recall
@@ -333,15 +334,21 @@ class CogneeMemoryBackend:
             await self._load_state(user_id)
         enabled = self._effective_enabled(user_id)
         version, at = await self._consent_of(user_id) if enabled else (None, None)
+        notes = await self.notes.list(user_id)
+        sensitive, chat_search = await self.notes.flags(user_id)
         return {
             "available": self.available,
             "mode": "on",
             "enabled": enabled,
+            "paused": not enabled,
+            "sensitiveEnabled": sensitive,
+            "chatSearchEnabled": chat_search,
             "consentVersion": version,
             "consentAt": at,
-            "rulesVersion": "cognee",
-            "limits": {"maxFacts": None},
-            "facts": [],
+            "rulesVersion": "notes-1",
+            "limits": {"maxFacts": self.notes.max_notes, "maxNotes": self.notes.max_notes},
+            "notes": notes,
+            "facts": [note_as_fact(note) for note in notes],
             "cogneeBrief": self._briefs.get(user_id, ""),
         }
 
@@ -361,6 +368,7 @@ class CogneeMemoryBackend:
                 "epochAt": None,
                 "updatedAt": None,
             },
+            "notes": await self.notes.list(user_id),
             "facts": [],
             "events": [],
             "cogneeBrief": self._briefs.get(user_id, ""),
@@ -372,7 +380,32 @@ class CogneeMemoryBackend:
 
     # ─── изменения по просьбе человека ────────────────────────────────────────
 
-    async def update_settings(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
+    async def update_settings(
+        self,
+        user_id: str,
+        enabled: bool | None,
+        consent_version: str | None,
+        sensitive_enabled: bool | None = None,
+        chat_search_enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        """Настройки памяти: «Память» (с согласием) и переключатели «Запоминать чувствительное», «Опираться на прошлые
+        разговоры». Любое поле можно не передавать. Выключение «чувствительного» удаляет такие заметки."""
+        if sensitive_enabled is not None or chat_search_enabled is not None:
+            await self.notes.set_flags(user_id, sensitive_enabled, chat_search_enabled)
+        if enabled is None:
+            current = await self.get_memory(user_id)
+            return {
+                "enabled": current["enabled"],
+                "consentVersion": current["consentVersion"],
+                "consentAt": current["consentAt"],
+                "sensitiveEnabled": current["sensitiveEnabled"],
+                "chatSearchEnabled": current["chatSearchEnabled"],
+            }
+        result = await self._update_enabled(user_id, enabled, consent_version)
+        sensitive, chat_search = await self.notes.flags(user_id)
+        return {**result, "sensitiveEnabled": sensitive, "chatSearchEnabled": chat_search}
+
+    async def _update_enabled(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
         """Включение — документ-зерно согласия (создаёт датасет); выключение — только флаг, данные не трогаем.
 
         Выключенная память не делает вызовов в Cognee (все пути режутся `_effective_enabled`),
@@ -405,34 +438,13 @@ class CogneeMemoryBackend:
 
     async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:
         """Факт, который человек написал сам: документом в его датасет. Ответ — в форме факта API (201)."""
-        client = self._require_client()
         if not self._effective_enabled(user_id):
             raise MemoryDisabled()
         rendered = text if isinstance(text, str) and text else ", ".join(f"{key}: {value}" for key, value in (slots or {}).items())
         if not rendered:
             raise MemoryValidation("нужен текст")
-        await client.remember(f"Факт о человеке ({category}): {rendered}", dataset_name(user_id))
-        self._briefs.pop(user_id, None)
-        self._spawn(self._prefetch(user_id))
-        now = iso(datetime.now(UTC))
-        return {
-            "id": str(uuid.uuid4()),
-            "category": category,
-            "text": rendered,
-            "slots": slots,
-            "importance": 5,
-            "confidence": 1.0,
-            "status": "pinned",
-            "origin": "user_edit",
-            "sensitivity": "normal",
-            "sources": [],
-            "createdAt": now,
-            "updatedAt": now,
-            "lastConfirmedAt": None,
-            "expiresAt": None,
-            "confirmCount": 0,
-            "seenByUser": True,
-        }
+        note = await self.notes.add(user_id, kind_of_category(category), rendered)
+        return note_as_fact(note)
 
     async def patch_fact(
         self,
@@ -443,16 +455,23 @@ class CogneeMemoryBackend:
         status: str | None = None,
         confirm: bool = False,
     ) -> dict[str, Any]:
-        raise _unsupported()
+        """Прежний маршрут факта: правка текста заметки; закрепление и «Верно» больше не поддержаны (`design.md` D11)."""
+        if status == "pinned" or confirm or (text is None and slots is None):
+            raise MemoryActionUnsupported()
+        if not isinstance(text, str) or not text:
+            raise MemoryValidation("нужен текст")
+        return note_as_fact(await self.notes.patch(user_id, fact_id, text))
 
     async def delete_fact(self, user_id: str, fact_id: str) -> None:
-        raise _unsupported()
+        """Прежний маршрут факта: удаляет заметку."""
+        await self.notes.delete(user_id, fact_id)
 
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
         """«Забыть всё»: данные человека в Cognee удаляются, а настройки не меняются — память остаётся включённой (или на паузе) и
         согласие остаётся. Если память включена, датасет тут же создаётся заново с зерном согласия: так выглядит «включено, но пусто»."""
         client = self._require_client()
         version, at = await self._consent_of(user_id)
+        await self.notes.delete_all(user_id)
         await client.forget_dataset(dataset_name(user_id))
         self._briefs.pop(user_id, None)
         self._turn_recalls.pop(user_id, None)

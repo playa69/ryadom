@@ -238,7 +238,7 @@ async def test_update_settings_on_creates_seed() -> None:
     await service.drain()  # prefetch после включения
     memory = await service.get_memory(user)
     assert memory["enabled"] is True and memory["consentVersion"] == CONSENT
-    assert memory["rulesVersion"] == "cognee" and memory["facts"] == []
+    assert memory["rulesVersion"] == "notes-1" and memory["facts"] == []
 
 
 async def test_update_settings_requires_consent() -> None:
@@ -323,30 +323,38 @@ async def test_brief_memory_off_dialog() -> None:
     assert fake.remembered == []
 
 
-async def test_add_fact_remembers_and_disables_check() -> None:
+async def test_add_fact_makes_a_note_and_checks_consent() -> None:
+    """Прежний `POST /facts` создаёт заметку (через проверки) и отвечает в форме факта; без включённой памяти — отказ."""
+    FakeDialogDatabase.reset()
     fake = FakeCognee()
-    service = backend(fake)
+    service, db = with_db(fake)
     user = uid()
     with pytest.raises(MemoryDisabled):
         await service.add_fact(user, "works", "Помогают прогулки", None)
     await service.update_settings(user, True, CONSENT)
     await service.drain()
     created = await service.add_fact(user, "works", "Помогают прогулки", None)
-    assert created["category"] == "works" and created["text"] == "Помогают прогулки"
-    assert fake.remembered[-1][0] == "Факт о человеке (works): Помогают прогулки"
+    assert created["category"] == "interest" and created["text"] == "Помогают прогулки"
+    assert [row[2] for row in db.list_notes(user)] == ["Помогают прогулки"]
 
 
-async def test_patch_delete_unsupported() -> None:
-    """Правка и удаление отдельного факта у Cognee нет: 422 с reason unsupported_in_cognee."""
-    service = backend(FakeCognee())
+async def test_legacy_fact_routes_work_on_notes() -> None:
+    """Прежние маршруты факта: правка текста и удаление работают на заметках, закрепление и «Верно» — отказ, чужой факт — 404."""
+    FakeDialogDatabase.reset()
+    service, db = with_db(FakeCognee())
     user = uid()
-    for call in (
-        lambda: service.patch_fact(user, "fact-1", text="новое"),
-        lambda: service.delete_fact(user, "fact-1"),
-    ):
-        with pytest.raises(MemoryServiceError) as caught:
-            await call()
-        assert caught.value.status == 422 and caught.value.reason == "unsupported_in_cognee"
+    await service.update_settings(user, True, CONSENT)
+    fact = await service.add_fact(user, "situation", "Работает в продажах", None)
+    edited = await service.patch_fact(user, fact["id"], text="Работает в продажах уже год")
+    assert edited["text"] == "Работает в продажах уже год"
+    with pytest.raises(MemoryServiceError) as pinned:
+        await service.patch_fact(user, fact["id"], status="pinned")
+    assert pinned.value.status == 422 and pinned.value.code == "MEMORY_ACTION_UNSUPPORTED"
+    await service.delete_fact(user, fact["id"])
+    with pytest.raises(MemoryServiceError) as gone:
+        await service.delete_fact(user, fact["id"])
+    assert gone.value.status == 404 and gone.value.code == "NOTE_NOT_FOUND"
+    assert db.list_notes(user) == []
 
 
 async def test_forget_all_deletes_data_keeps_settings() -> None:
@@ -429,12 +437,12 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
         assert response.status_code == 200, response.text
         assert response.json()["enabled"] is True
         memory = client.get(f"/v1/users/{user}/memory", headers=AUTH).json()
-        assert memory["enabled"] is True and memory["rulesVersion"] == "cognee"
+        assert memory["enabled"] is True and memory["rulesVersion"] == "notes-1"
         client.delete(f"/v1/users/{user}/memory", headers=AUTH)
         assert fake.deleted == [dataset_name(user)]
-        unsupported = client.patch(f"/v1/users/{user}/memory/facts/f-1", json={"text": "новое"}, headers=AUTH)
-        assert unsupported.status_code == 422
-        assert unsupported.json()["error"]["details"] == {"reason": "unsupported_in_cognee"}
+        pinned = client.patch(f"/v1/users/{user}/memory/facts/f-1", json={"status": "pinned"}, headers=AUTH)
+        assert pinned.status_code == 422
+        assert pinned.json()["error"]["code"] == "MEMORY_ACTION_UNSUPPORTED"
 
 
 # ─── MEMORY_DEFAULT_ENABLED: стендовый opt-out (память всем по умолчанию) ─────
@@ -480,7 +488,7 @@ async def test_default_enabled_get_memory_reports_on() -> None:
     user = uid()
     memory = await service.get_memory(user)
     await service.drain()
-    assert memory["enabled"] is True and memory["rulesVersion"] == "cognee"
+    assert memory["enabled"] is True and memory["rulesVersion"] == "notes-1"
 
 
 # ─── recall по ходу разговора: фон после реплики и инструмент модели ───────────

@@ -26,6 +26,7 @@ class _File:
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
         self.memory_settings: dict[str, tuple[bool, str | None, str | None]] = {}  # user_id -> (enabled, version, at)
+        self.flags: dict[str, tuple[bool, bool]] = {}  # user_id -> (sensitive, chat_search)
         self.notes: dict[str, tuple] = {}  # id -> (id, user_id, kind, text, sensitive, event_date, dialog_id, created, updated)
         self.usage: list[tuple] = []
 
@@ -152,6 +153,7 @@ class FakeDialogDatabase:
             state.usage = [row for row in state.usage if row[0] not in gone]
             state.prefs.pop(user_id, None)
             state.memory_settings.pop(user_id, None)
+            state.flags.pop(user_id, None)
             state.notes = {k: v for k, v in state.notes.items() if v[1] != user_id}
 
     def list_notes(self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None) -> list[tuple]:
@@ -196,6 +198,14 @@ class FakeDialogDatabase:
             for key in gone:
                 del state.notes[key]
             return len(gone)
+
+    def get_memory_flags(self, user_id: str) -> tuple[bool, bool]:
+        with self._lock:
+            return self._state().flags.get(user_id, (False, True))
+
+    def put_memory_flags(self, user_id: str, sensitive: bool, chat_search: bool, updated_at: str) -> None:
+        with self._lock:
+            self._state().flags[user_id] = (sensitive, chat_search)
 
     def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         with self._lock:

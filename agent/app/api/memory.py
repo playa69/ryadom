@@ -38,6 +38,11 @@ def get_memory_service(request: Request) -> MemoryBackend:
 Memory = Annotated[MemoryBackend, Depends(get_memory_service)]
 
 
+def _notes(memory: MemoryBackend) -> Any:
+    """Сервис заметок бэкенда памяти (`NotesService`)."""
+    return memory.notes  # type: ignore[attr-defined]
+
+
 def _error(error: MemoryServiceError) -> AgentError:
     details = {"reason": error.reason} if error.reason else None
     return AgentError(error.status, error.code, error.message, details)
@@ -46,8 +51,10 @@ def _error(error: MemoryServiceError) -> AgentError:
 class SettingsBody(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    enabled: bool
+    enabled: bool | None = None
     consent_version: str | None = Field(default=None, alias="consentVersion", max_length=32)
+    sensitive_enabled: bool | None = Field(default=None, alias="sensitiveEnabled")
+    chat_search_enabled: bool | None = Field(default=None, alias="chatSearchEnabled")
 
 
 class FactBody(BaseModel):
@@ -56,6 +63,12 @@ class FactBody(BaseModel):
     category: str = Field(max_length=20)
     text: str | None = Field(default=None, max_length=1000)
     slots: dict[str, Any] | None = None
+
+
+class NoteBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class PatchBody(BaseModel):
@@ -82,7 +95,9 @@ async def put_settings(user_id: str, body: SettingsBody, store: Store, memory: M
     user = _user(user_id)
     await store.ensure_user(user)
     try:
-        return await memory.update_settings(user, body.enabled, body.consent_version)
+        return await memory.update_settings(
+            user, body.enabled, body.consent_version, body.sensitive_enabled, body.chat_search_enabled
+        )
     except MemoryServiceError as error:
         raise _error(error) from error
 
@@ -124,6 +139,54 @@ async def forget_all(user_id: str, memory: Memory) -> Response:
     except MemoryServiceError as error:
         raise _error(error) from error
     return Response(status_code=204)
+
+
+@router.patch("/notes/{note_id}")
+async def patch_note(user_id: str, note_id: str, body: NoteBody, store: Store, memory: Memory) -> dict[str, Any]:
+    """Правка заметки: те же проверки, что у новой; отказ — `422 NOTE_REJECTED` с кодом правила."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    try:
+        return await _notes(memory).patch(user, note_id, body.text)
+    except MemoryServiceError as error:
+        raise _error(error) from error
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+async def delete_note(user_id: str, note_id: str, memory: Memory) -> Response:
+    try:
+        await _notes(memory).delete(_user(user_id), note_id)
+    except MemoryServiceError as error:
+        raise _error(error) from error
+    return Response(status_code=204)
+
+
+@router.delete("/notes", status_code=204)
+async def delete_all_notes(user_id: str, memory: Memory) -> Response:
+    """«Удалить всю память»: заметки и данные в Cognee уходят, настройки и согласие остаются."""
+    try:
+        await memory.forget_all(_user(user_id))
+    except MemoryServiceError as error:
+        raise _error(error) from error
+    return Response(status_code=204)
+
+
+@router.get("/notes")
+async def list_notes(
+    user_id: str,
+    store: Store,
+    memory: Memory,
+    since: Annotated[str | None, Query(max_length=40)] = None,
+    kinds: Annotated[str | None, Query(max_length=200)] = None,
+) -> dict[str, Any]:
+    """Заметки за период (для «Событий недели» дневника): `since` — ISO-время, `kinds` — виды через запятую."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    wanted = tuple(item for item in (kinds or "").split(",") if item) or None
+    try:
+        return {"notes": await _notes(memory).list(user, since, wanted)}
+    except MemoryServiceError as error:
+        raise _error(error) from error
 
 
 @router.get("/changes")
