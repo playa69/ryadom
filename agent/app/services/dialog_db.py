@@ -424,6 +424,20 @@ class DialogDatabase:
             ).fetchone()
         return (False, True) if row is None else (bool(row[0]), bool(row[1]))
 
+    def get_notes_cursor(self, dialog_id: str) -> int:
+        """Сколько реплик человека в разговоре уже отдано извлекателю заметок (0 — ни одной или разговора нет в базе)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT memory_notes_cursor FROM dialogs WHERE id = %s", (dialog_id,)).fetchone()
+        try:
+            return int(row[0]) if row and row[0] is not None else 0
+        except ValueError:
+            return 0
+
+    def set_notes_cursor(self, dialog_id: str, cursor: int) -> None:
+        """Запомнить, сколько реплик человека уже разобрано: после перезапуска агента разбор продолжится с этого места."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE dialogs SET memory_notes_cursor = %s WHERE id = %s", (str(cursor), dialog_id))
+
     def put_memory_flags(self, user_id: str, sensitive: bool, chat_search: bool, updated_at: str) -> None:
         """Записать переключатели «Запоминать чувствительное» и «Опираться на прошлые разговоры», не трогая паузу и согласие."""
         with self._lock, self._connection() as conn, conn.transaction():

@@ -26,6 +26,7 @@ class _File:
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
         self.memory_settings: dict[str, tuple[bool, str | None, str | None]] = {}  # user_id -> (enabled, version, at)
+        self.cursors: dict[str, int] = {}  # dialog_id -> сколько реплик человека разобрано извлекателем
         self.flags: dict[str, tuple[bool, bool]] = {}  # user_id -> (sensitive, chat_search)
         self.notes: dict[str, tuple] = {}  # id -> (id, user_id, kind, text, sensitive, event_date, dialog_id, created, updated)
         self.usage: list[tuple] = []
@@ -198,6 +199,14 @@ class FakeDialogDatabase:
             for key in gone:
                 del state.notes[key]
             return len(gone)
+
+    def get_notes_cursor(self, dialog_id: str) -> int:
+        with self._lock:
+            return self._state().cursors.get(dialog_id, 0)
+
+    def set_notes_cursor(self, dialog_id: str, cursor: int) -> None:
+        with self._lock:
+            self._state().cursors[dialog_id] = cursor
 
     def get_memory_flags(self, user_id: str) -> tuple[bool, bool]:
         with self._lock:

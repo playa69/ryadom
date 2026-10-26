@@ -129,3 +129,35 @@ def test_instruction_route(monkeypatch: pytest.MonkeyPatch) -> None:
         done = client.post(f"{base}/notes/instruction", json={"text": "Убери тему про отца"}, headers=AUTH)
         assert done.status_code == 200 and done.json()["changes"]["deleted"] == [note["id"]]
         assert client.get(f"{base}/notes", headers=AUTH).json()["notes"] == []
+
+
+async def test_unprocessed_messages_survive_an_agent_restart() -> None:
+    """Агент перезапустился (выкат), не разобрав две реплики: новый процесс берёт курсор из базы и добирает их из диалога."""
+    service, model, db = build(fail=True)
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    current = dialog(user, 0)
+    from app.services.dialog_store import Message, now_iso
+
+    def say(text: str) -> None:
+        current.messages.append(Message(id=str(len(current.messages)), role="user", text=text, created_at=now_iso()))
+        service.user_message(current, text)
+
+    say("Я работаю в продажах")
+    say("и очень устаю")
+    await service.drain()
+    assert db.list_notes(user) == [] and db.get_notes_cursor(current.id) == 0  # модель была недоступна, курсор не сдвинулся
+
+    # «перезапуск»: новый бэкенд, та же база и тот же диалог с сохранёнными репликами
+    restarted = CogneeMemoryBackend(FakeCognee(), memory_settings(MEMORY_NOTES_ENABLED="true"), lambda: db)  # type: ignore[arg-type]
+    model2 = FakeModel(ADD_WORK)
+    restarted.set_extractor(NotesExtractor(model2, restarted.notes))
+    await restarted.update_settings(user, True, CONSENT)
+    current.messages.append(Message(id="2", role="user", text="вот ещё", created_at=now_iso()))
+    restarted.user_message(current, "вот ещё")
+    restarted.dialog_ended(current)
+    await restarted.drain()
+    sent = json.dumps(model2.seen, ensure_ascii=False)
+    assert "Я работаю в продажах" in sent and "и очень устаю" in sent and "вот ещё" in sent
+    assert [row[2] for row in db.list_notes(user)] == ["Работает в продажах"]
+    assert db.get_notes_cursor(current.id) == 3  # разобрано всё

@@ -23,12 +23,9 @@ from app.core.config import MemorySettings
 
 
 def memory_settings(**values: object) -> MemorySettings:
-    """Настройки памяти для теста (по умолчанию включена, уровень standard, settle 0), без чтения окружения."""
+    """Настройки памяти для теста (без чтения окружения), без чтения окружения."""
     defaults: dict[str, object] = {
-        "MEMORY_MODE": "on",
-        "MEMORY_BRIEF_LEVEL": "standard",
         "MEMORY_ALLOWLIST": "",
-        "MEMORY_COGNIFY_SETTLE_SECONDS": "0",
     }
     defaults.update(values)
     return MemorySettings(**defaults)  # type: ignore[arg-type]
@@ -454,55 +451,6 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
         pinned = client.patch(f"/v1/users/{user}/memory/facts/f-1", json={"status": "pinned"}, headers=AUTH)
         assert pinned.status_code == 422
         assert pinned.json()["error"]["code"] == "MEMORY_ACTION_UNSUPPORTED"
-
-
-# ─── MEMORY_DEFAULT_ENABLED: стендовый opt-out (память всем по умолчанию) ─────
-
-
-def backend_default_on(fake: FakeCognee | None) -> CogneeMemoryBackend:
-    return CogneeMemoryBackend(fake, memory_settings(MEMORY_DEFAULT_ENABLED="true"))  # type: ignore[arg-type]
-
-
-async def test_default_enabled_new_user_writes_without_dataset() -> None:
-    """Без датасета и без тумблера память включена: конец диалога пишет транскрипт (датасет создаётся записью)."""
-    fake = FakeCognee()
-    service = backend_default_on(fake)
-    user = uid()
-    assert service.enabled(user) is True
-    service.dialog_ended(dialog(user))
-    await service.drain()
-    assert fake.remembered and fake.remembered[0][1] == dataset_name(user)
-
-
-async def test_default_enabled_optout_stays_off() -> None:
-    """Выключение — явный отказ: default_enabled память обратно не включает."""
-    fake = FakeCognee()
-    service = backend_default_on(fake)
-    user = uid()
-    service.dialog_ended(dialog(user))
-    await service.drain()
-    assert fake.remembered  # до отказа писалось
-    await service.update_settings(user, False, None)
-    assert service.enabled(user) is False
-    fake.remembered.clear()
-    service.dialog_ended(dialog(user))
-    await service.drain()
-    assert fake.remembered == []  # после отказа — молчим, пока человек сам не включит обратно
-    await service.update_settings(user, True, CONSENT)
-    assert service.enabled(user) is True
-
-
-async def test_default_enabled_get_memory_reports_on() -> None:
-    """Экран памяти у нового человека: enabled=true, хотя датасета ещё нет."""
-    fake = FakeCognee()
-    service = backend_default_on(fake)
-    user = uid()
-    memory = await service.get_memory(user)
-    await service.drain()
-    assert memory["enabled"] is True and memory["rulesVersion"] == "notes-1"
-
-
-# ─── recall по ходу разговора: фон после реплики и инструмент модели ───────────
 
 
 async def test_user_message_spawns_turn_recall_into_brief() -> None:
