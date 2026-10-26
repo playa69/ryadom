@@ -267,7 +267,7 @@ test('«Запомнил: … · Убрать»: новая чувствител
   // Deleted for real: the sheet has no such note.
   const sheet = page.locator('.sheet-modal.modal-in')
   await page.locator('.page-current').getByTestId('memory-nav').click()
-  await expect(sheet.getByTestId('memory-notes').or(sheet.getByTestId('memory-empty'))).toBeVisible()
+  await expect(sheet.getByTestId('memory-notes').or(sheet.getByTestId('memory-empty')).first()).toBeVisible()
   await expect(sheet.getByTestId('memory-note').filter({ hasText: SLEEP_NOTE })).toHaveCount(0)
 })
 
