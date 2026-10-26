@@ -71,6 +71,8 @@ import {
   type CreateMemoryFactApiErrorCode,
   type CreateMemoryFactApiRequest,
   type ForgetMemoryApiErrorCode,
+  type MemoryInstructionApiErrorCode,
+  type MemoryInstructionApiResponse,
   type MemoryApiResponse,
   type MemoryChangesApiErrorCode,
   type MemoryChangesApiResponse,
@@ -822,6 +824,15 @@ export function createClient(config: ClientConfig) {
       apiOutcome<MemoryChangesApiResponse, MemoryChangesApiErrorCode>(
         `${ApiPath.MemoryChanges}?dialogId=${encodeURIComponent(dialogId)}`,
       ),
+
+    /** "Скажи, что поправить или убрать": a request in the person's words, carried out on the notes. */
+    memoryInstruction: (
+      text: string,
+    ): Promise<ApiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>> =>
+      apiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>(ApiPath.MemoryInstruction, {
+        method: 'POST',
+        body: { text },
+      }),
 
     /** "Скачать мою память": everything, guesses and proposed facts included. */
     exportMemory: (): Promise<MemoryExportApiResponse> =>

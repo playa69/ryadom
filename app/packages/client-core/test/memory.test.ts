@@ -607,3 +607,89 @@ describe('скачать мою память', () => {
     expect(memoryExportFileName(new Date(2026, 9, 2, 23, 59))).toBe('ryadom-memory-2026-10-02.json')
   })
 })
+
+// ─── notes: the sheet "Что помнит Рядом" ──────────────────────────────────────
+
+import {
+  MemoryInstructionApiErrorCode as InstructionErrors,
+  MemoryNoteKind,
+  type MemoryInstructionApiResponse,
+  type MemoryNoteApiResponse,
+} from '@ryadom/contracts/api/memory'
+import {
+  groupNotes,
+  instructionResultText,
+  MEMORY_INSTRUCTION_ERRORS,
+  memorySwitches,
+  noteDateLabel,
+  replaceNote,
+} from '../src/memory'
+
+function note(overrides: Partial<MemoryNoteApiResponse> = {}): MemoryNoteApiResponse {
+  return {
+    id: 'n-1',
+    kind: MemoryNoteKind.Situation,
+    text: 'Работает в продажах',
+    sensitive: false,
+    eventDate: null,
+    createdAt: '2026-10-12T10:00:00.000Z',
+    updatedAt: '2026-10-12T10:00:00.000Z',
+    dialogId: null,
+    ...overrides,
+  }
+}
+
+describe('заметки в листе «Что помнит Рядом»', () => {
+  it('группы идут в порядке экрана, пустые не показываются, порядок внутри группы — как у сервера', () => {
+    const view = groupNotes([
+      note({ id: 'a', kind: MemoryNoteKind.Boundary, text: 'Не хочет обсуждать отца' }),
+      note({ id: 'b', kind: MemoryNoteKind.Name, text: 'Зовут Алекс' }),
+      note({ id: 'c', kind: MemoryNoteKind.Style, text: 'Просит на ты' }),
+      note({ id: 'd', kind: MemoryNoteKind.Wellbeing, sensitive: true, text: 'Плохо спит' }),
+    ])
+    expect(view.count).toBe(4)
+    expect(view.groups.map((g) => g.title)).toEqual([
+      'Обо мне и как со мной говорить',
+      'О чём не говорить',
+      'Самочувствие',
+    ])
+    expect(view.groups[0]!.notes.map((n) => n.id)).toEqual(['b', 'c'])
+  })
+
+  it('неизвестный вид нового сервера всё равно виден — «Другое»', () => {
+    const view = groupNotes([note({ id: 'x', kind: 'future_kind' as MemoryNoteKind })])
+    expect(view.groups.map((g) => g.title)).toEqual(['Другое'])
+  })
+
+  it('дата заметки и дата события', () => {
+    const now = new Date('2026-10-26T12:00:00Z')
+    expect(noteDateLabel(note(), now)).toBe('12 окт.')
+    expect(noteDateLabel(note({ eventDate: '2026-11-01' }), now)).toContain('событие')
+  })
+
+  it('ответ на «Скажи, что поправить»: что изменено; ничего; отказ правила — нейтрально, без причины', () => {
+    const empty: MemoryInstructionApiResponse = { added: [], updated: [], deleted: [], blocked: [] }
+    expect(instructionResultText({ ...empty, updated: [note()], deleted: ['x', 'y'] })).toBe('Изменено: 1, удалено: 2')
+    expect(instructionResultText(empty)).toBe('Ничего не нашлось')
+    const refused = instructionResultText({ ...empty, blocked: ['medication'] })
+    expect(refused).toBe('Так запомнить не получится')
+    expect(refused).not.toContain('medication')
+  })
+
+  it('тексты отказов поля правки есть на каждый код', () => {
+    for (const code of Object.values(InstructionErrors)) expect(MEMORY_INSTRUCTION_ERRORS[code]).toBeTruthy()
+  })
+
+  it('переключатели чувствительного и поиска недоступны на паузе и без сервиса', () => {
+    const on = { enabled: true, available: true, sensitiveEnabled: false, chatSearchEnabled: true }
+    expect(memorySwitches(on)).toMatchObject({ memory: true, sensitive: false, chatSearch: true, sensitiveDisabled: false })
+    expect(memorySwitches({ ...on, enabled: false })).toMatchObject({ sensitiveDisabled: true, chatSearchDisabled: true })
+    expect(memorySwitches({ ...on, available: false }).sensitiveDisabled).toBe(true)
+  })
+
+  it('замена и удаление заметки в списке экрана', () => {
+    const list = [note({ id: 'a' }), note({ id: 'b' })]
+    expect(replaceNote(list, 'a', note({ id: 'a', text: 'Новый текст' }))[0]!.text).toBe('Новый текст')
+    expect(replaceNote(list, 'a', null).map((n) => n.id)).toEqual(['b'])
+  })
+})
