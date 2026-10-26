@@ -2919,6 +2919,26 @@ input:-webkit-autofill:focus {
   padding: var(--ryadom-s-4) 0;
 }
 
+.rd-week-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.rd-week-refresh {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 44px;
+  margin: -12px -8px 0 0;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--ryadom-text-faint);
+  background: none;
+  border: 0;
+}
+
 .rd-week-building {
   display: flex;
   gap: var(--ryadom-s-2);

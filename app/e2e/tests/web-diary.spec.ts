@@ -136,7 +136,7 @@ test('дневник: первый текст недели пишется сам
     .toContain('Тяжёлых дней было 4')
   await openWebApp(page, '/diary')
   await expect(page.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 4')
-  await expect(page.getByTestId('diary-week-people')).toBeVisible()
+  await expect(page.getByTestId('diary-week-people')).toHaveCount(0)
   await shot(page, 'web-diary-week-summary')
 
   // «Обновить итоги» is there once a text exists; a change of mood is rewritten by the button at once (not by the six-hour pass).

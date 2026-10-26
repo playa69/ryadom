@@ -45,8 +45,8 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
         <>
           <MoodCard data={data} f7router={f7router} />
           <MoodChart data={data} today={deviceDate()} />
-          <WeekCard data={data} f7router={f7router} />
-          {data.previousWeek && <PreviousWeekCard summary={data.previousWeek} f7router={f7router} />}
+          <WeekCard data={data} />
+          {data.previousWeek && <PreviousWeekCard summary={data.previousWeek} />}
         </>
       )}
     </DiaryShell>

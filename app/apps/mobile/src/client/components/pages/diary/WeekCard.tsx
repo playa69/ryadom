@@ -1,5 +1,4 @@
-import { Button, Preloader } from 'framework7-react'
-import type { Router } from 'framework7/types'
+import { Preloader } from 'framework7-react'
 import { useEffect, useState } from 'react'
 import { DiaryApiErrorCode, WEEK_SUMMARY_MIN_DAYS, type DiaryApiResponse } from '@ryadom/contracts/api/diary'
 import { createWeekSummary } from '../../../lib/api'
@@ -13,11 +12,10 @@ const POLL_MS = 30_000
  * rewritten (at most every six hours) after the mood changes; the card shows it. «Обновить итоги» is the way to
  * rewrite it now, once there is a text.
  */
-export default function WeekCard({ data, f7router }: { data: DiaryApiResponse; f7router: Router.Router }) {
+export default function WeekCard({ data }: { data: DiaryApiResponse }) {
   const { week } = data
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const heavy = (week.summary?.hardDays ?? 0) >= 3
   const enough = week.markedDays >= WEEK_SUMMARY_MIN_DAYS
 
   useEffect(() => {
@@ -45,9 +43,20 @@ export default function WeekCard({ data, f7router }: { data: DiaryApiResponse; f
 
   return (
     <section className="rd-card rd-week-card" data-testid="diary-week-card" aria-labelledby="diary-week-title">
-      <h2 className="rd-card-title" id="diary-week-title">
-        Итоги недели
-      </h2>
+      <div className="rd-week-head">
+        <h2 className="rd-card-title" id="diary-week-title">
+          Итоги недели
+        </h2>
+        {enough && week.summary && !busy && (
+          <button type="button" className="rd-week-refresh" data-testid="diary-week-refresh" aria-label="Обновить итоги" onClick={() => void refresh()}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+            Обновить
+          </button>
+        )}
+      </div>
       {week.summary && (
         <p className="rd-summary-text" data-testid="diary-week-text">
           {week.summary.text}
@@ -65,20 +74,10 @@ export default function WeekCard({ data, f7router }: { data: DiaryApiResponse; f
           <span>Собираю итоги…</span>
         </p>
       )}
-      {enough && week.summary && !busy && (
-        <Button small round outline data-testid="diary-week-refresh" onClick={() => void refresh()}>
-          Обновить итоги
-        </Button>
-      )}
       {error && (
         <p className="rd-form-error" data-testid="diary-week-error">
           {error}
         </p>
-      )}
-      {week.summary && heavy && (
-        <Button small round outline data-testid="diary-week-people" onClick={() => f7router.navigate('/people/')}>
-          Люди рядом
-        </Button>
       )}
     </section>
   )
