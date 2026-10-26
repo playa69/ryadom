@@ -4,6 +4,13 @@
  *
  * Its own compose project and its own ports: a test run must not break the database used for
  * development (`pnpm infra:up` on 55433). The ports here are 55434 / 8080+ / 3100 / 3102 / 3103 / 3104.
+ * E2E_PORT_OFFSET shifts all of them (playwright.config.ts computes the same addresses) and gives the
+ * compose project its own name, so several runs on one machine, e.g. parallel agents, each get a stack of
+ * their own instead of queueing for these ports or reusing a stranger's.
+ *
+ * The apps are built through Turborepo with its cache: an app whose sources (and those of the packages it
+ * uses) did not change since a previous build comes back in seconds. TURBO_CACHE_DIR can point several
+ * checkouts at one cache.
  *
  * Built servers rather than `dev`: what has to be checked is what ships in the image. The one
  * exception is the PWA: in production it is an nginx image (apps/mobile/Dockerfile), here the same
@@ -20,14 +27,32 @@ const e2eRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = join(e2eRoot, '..')
 const isWindows = process.platform === 'win32'
 
-const DB_URL = 'postgres://ryadom:ryadom@127.0.0.1:55434/ryadom'
-const AGENT_URL = 'http://127.0.0.1:8081'
+const OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0)
+const port = (base) => String(base + OFFSET)
+const DB_PORT = port(55434)
+const SMTP_PORT = port(1027)
+const DB_URL = `postgres://ryadom:ryadom@127.0.0.1:${DB_PORT}/ryadom`
+const AGENT_URL = `http://127.0.0.1:${port(8081)}`
 // 3100 is the landing site (its env var is still called WEB_*: the legal pages live there), 3102
 // is the API, 3103 is the signed-in web app and 3104 is the PWA.
-const WEB_PORT = '3100'
-const APP_PORT = '3102'
-const WEBAPP_PORT = '3103'
-const PWA_PORT = '3104'
+const WEB_PORT = port(3100)
+const APP_PORT = port(3102)
+const WEBAPP_PORT = port(3103)
+const PWA_PORT = port(3104)
+
+// The project follows the caller's (an agent run sets COMPOSE_PROJECT_NAME) or the offset, so that two stacks
+// never share containers. compose.yaml reads the ports from these variables; through WSL only the names
+// listed in WSLENV get across.
+const PROJECT = process.env.COMPOSE_PROJECT_NAME
+  ? `${process.env.COMPOSE_PROJECT_NAME}-e2e`
+  : OFFSET ? `ryadom-e2e-${OFFSET}` : 'ryadom-e2e'
+const COMPOSE_PORTS = { E2E_DB_PORT: DB_PORT, E2E_SMTP_PORT: SMTP_PORT, E2E_MAIL_PORT: port(8027), E2E_AGENT_PORT: port(8081) }
+const composeEnv = {
+  ...process.env,
+  ...COMPOSE_PORTS,
+  WSLENV: [process.env.WSLENV, ...Object.keys(COMPOSE_PORTS)].filter(Boolean).join(':'),
+}
+const compose = (...args) => ['scripts/docker.mjs', 'compose', '-p', PROJECT, '-f', 'e2e/compose.yaml', ...args]
 
 const children = []
 let shuttingDown = false
@@ -79,10 +104,11 @@ function shutdown(code) {
   for (const { child } of children) child.kill()
   // Always tear the containers down, including on failure: they hold a tmpfs database, and the
   // next run must start from an empty one.
-  spawnSync('node', ['scripts/docker.mjs', 'compose', '-f', 'e2e/compose.yaml', 'down', '-v'], {
+  spawnSync('node', compose('down', '-v'), {
     stdio: 'inherit',
     shell: isWindows,
     cwd: repoRoot,
+    env: composeEnv,
   })
   process.exit(code)
 }
@@ -110,17 +136,18 @@ async function waitFor(url, what, timeoutMs = 120_000) {
 log('поднимаю Postgres, Mailpit и заглушку агента')
 // --build: without it compose reuses a cached image, and a changed agent mock silently would
 // not reach the tests.
-runSync('node', ['scripts/docker.mjs', 'compose', '-f', 'e2e/compose.yaml', 'up', '-d', '--wait', '--build'])
+runSync('node', compose('up', '-d', '--wait', '--build'), { env: composeEnv })
 
 log('применяю миграции')
 runSync('pnpm', ['--filter', '@ryadom/db', 'migrate'], { env: { ...process.env, DATABASE_URL: DB_URL } })
 
 log('собираю клиент, api, сайт и веб-приложение')
 // apps/mobile's "build" is build:pwa: the web build into dist/pwa, which `vite preview` serves below.
-runSync('pnpm', ['--filter', '@ryadom/mobile', 'build'])
-runSync('pnpm', ['--filter', '@ryadom/api', 'build'])
-runSync('pnpm', ['--filter', '@ryadom/landing', 'build'])
-runSync('pnpm', ['--filter', '@ryadom/web', 'build'])
+// Two at a time: four Next.js and Vite builds at once would need several gigabytes of memory.
+runSync('pnpm', [
+  'exec', 'turbo', 'run', 'build', '--concurrency=2', '--output-logs=new-only',
+  '--filter=@ryadom/mobile', '--filter=@ryadom/api', '--filter=@ryadom/landing', '--filter=@ryadom/web',
+])
 
 const apiEnv = {
   ...process.env,
@@ -137,7 +164,7 @@ const apiEnv = {
   EMAIL_TRANSPORT: 'smtp',
   EMAIL_FROM: 'Рядом <noreply@ryadom.local>',
   SMTP_HOST: '127.0.0.1',
-  SMTP_PORT: '1027',
+  SMTP_PORT,
   AGENT_API_URL: AGENT_URL,
   AGENT_TIMEOUT_MS: '10000',
   DIALOG_IDLE_TIMEOUT_SEC: '900',
