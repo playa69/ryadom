@@ -7,7 +7,7 @@ RUN apk add --no-cache espeak-ng
 WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
-COPY server.mjs ./
+COPY server.mjs memory-notes.mjs ./
 ENV PORT=8080
 EXPOSE 8080
 USER node
