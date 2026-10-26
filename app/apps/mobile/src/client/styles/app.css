@@ -2518,3 +2518,26 @@ input:-webkit-autofill:focus {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+
+/* The line "Запомнил: … · Убрать" in the conversation stream (6.4). */
+.rd-memory-notice {
+  margin: var(--ryadom-s-2) var(--ryadom-s-4);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-memory-notice-undo {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
+.rd-memory-notice .rd-form-error {
+  display: block;
+}

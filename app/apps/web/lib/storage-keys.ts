@@ -26,3 +26,6 @@ export const WEB_HANDS_FREE_KEY = `${WEB_STORAGE_PREFIX}hands-free`
 
 /** "Скрывать тексты" of the screen "Память" in this browser (localStorage); see client-core/memory. */
 export const WEB_MEMORY_HIDDEN_KEY = `${WEB_STORAGE_PREFIX}memory-hidden`
+
+/** "Не сейчас" on the sheet "Рядом теперь запоминает важное" in this browser (localStorage); see client-core/memory. */
+export const WEB_MEMORY_INVITE_DISMISSED_KEY = `${WEB_STORAGE_PREFIX}memory-invite-dismissed`

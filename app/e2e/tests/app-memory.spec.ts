@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { button, openApp, openTab, sheetButton, startAnonymously } from '../support/app'
 import { expect, test } from '../support/fixtures'
 
@@ -163,4 +164,120 @@ test('память в приложении: согласие → разгово�
   await expect(sheet.getByTestId('memory-empty')).toBeVisible()
   await expect(sheet.getByTestId('memory-note')).toHaveCount(0)
   await shot(page, 'memory-deleted')
+})
+
+// ── the invitation to memory on home (REQ-MEM-*, task 6.7) ─────────────────────────────────────────
+
+test('приглашение к памяти: аноним видит лист; «Не сейчас» не возвращается; «Включить» → согласие → память включена', async ({
+  page,
+  shot,
+}) => {
+  test.setTimeout(120_000)
+  await openApp(page, { keepMemoryInvite: true })
+  await startAnonymously(page)
+
+  const invite = page.locator('.sheet-modal.modal-in').getByTestId('memory-invite')
+  await expect(invite).toBeVisible({ timeout: 20_000 })
+  await expect(invite).toContainText('Рядом теперь запоминает важное')
+  await shot(page, 'memory-invite')
+
+  // "Не сейчас": closes, and does not come back after a reload.
+  await sheetButton(page, 'Не сейчас').click()
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await page.reload()
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await page.waitForTimeout(2500)
+  await expect(page.getByTestId('memory-invite')).toBeHidden()
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+
+  // A second person on a fresh device: "Включить" leads to the consent sheet, then memory is on.
+  await page.evaluate((key) => window.localStorage.removeItem(key), 'ryadom.memory-invite-dismissed')
+  await page.reload()
+  await expect(invite).toBeVisible({ timeout: 20_000 })
+  await sheetButton(page, 'Включить').first().click()
+  const consent = page.locator('.sheet-modal.modal-in')
+  await expect(consent.getByTestId('memory-consent')).toBeVisible({ timeout: 10_000 })
+  await sheetButton(page, 'Включить память').click()
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+
+  await openTab(page, 'Профиль')
+  await page.locator('.page-current').getByTestId('row-memory').click()
+  const memory = page.locator('.page-current[data-name="memory"]')
+  await expect(memory.getByTestId('memory-switch').locator('input[type="checkbox"]')).toBeChecked()
+
+  // Memory on: the invitation is not shown any more, even when the answer was forgotten.
+  await page.evaluate((key) => window.localStorage.removeItem(key), 'ryadom.memory-invite-dismissed')
+  await page.reload()
+  await expect(page.locator('.page-current')).toBeVisible()
+  await page.waitForTimeout(2500)
+  await expect(page.getByTestId('memory-invite')).toBeHidden()
+})
+
+// ── "Запомнил: … · Убрать" in the conversation (task 6.4) ──────────────────────────────────────────
+
+const SLEEP_SAID = 'Последние недели плохо сплю'
+const SLEEP_NOTE = 'Последние недели плохо спит'
+
+async function turnMemoryOn(page: Page, sensitive: boolean): Promise<void> {
+  await openTab(page, 'Профиль')
+  await page.locator('.page-current').getByTestId('row-memory').click()
+  const memory = page.locator('.page-current[data-name="memory"]')
+  await expect(memory).toBeVisible()
+  await memory.getByTestId('memory-switch').locator('.toggle').click()
+  await sheetButton(page, 'Включить память').click()
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  const sensitiveSwitch = memory.getByTestId('memory-sensitive-switch')
+  if (sensitive) {
+    await expect(sensitiveSwitch.locator('input[type="checkbox"]')).toBeEnabled()
+    await sensitiveSwitch.locator('.toggle').click()
+    await expect(sensitiveSwitch.locator('input[type="checkbox"]')).toBeChecked()
+  }
+  await openTab(page, 'Главная')
+}
+
+async function say(page: Page, text: string): Promise<void> {
+  await button(page, 'Поговорить').click()
+  await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Писать текстом' }).click()
+  const input = page.getByPlaceholder('Напиши, что происходит')
+  await expect(input).toBeVisible()
+  await input.fill(text)
+  await page.getByRole('button', { name: 'Отправить' }).click()
+  await expect(page.locator('.message-sent')).toHaveCount(2, { timeout: 20_000 })
+}
+
+test('«Запомнил: … · Убрать»: новая чувствительная заметка → строка по опросу → «Убрать» удаляет', async ({
+  page,
+  shot,
+}) => {
+  test.setTimeout(180_000)
+  await openApp(page)
+  await startAnonymously(page)
+  await turnMemoryOn(page, true)
+  await say(page, SLEEP_SAID)
+
+  const notice = page.getByTestId('memory-notice')
+  await expect(notice).toContainText(`Запомнил: ${SLEEP_NOTE}`, { timeout: 30_000 })
+  await expect(notice).toContainText('Убрать')
+  await shot(page, 'memory-notice')
+  await page.getByTestId('memory-notice-remove').click()
+  await expect(notice).toHaveCount(0)
+  await shot(page, 'memory-notice-removed')
+
+  // Deleted for real: the sheet has no such note.
+  const sheet = page.locator('.sheet-modal.modal-in')
+  await page.locator('.page-current').getByTestId('memory-nav').click()
+  await expect(sheet.getByTestId('memory-notes').or(sheet.getByTestId('memory-empty'))).toBeVisible()
+  await expect(sheet.getByTestId('memory-note').filter({ hasText: SLEEP_NOTE })).toHaveCount(0)
+})
+
+test('«Запомнил: …»: без «Запоминать чувствительное» строки нет', async ({ page }) => {
+  test.setTimeout(120_000)
+  await openApp(page)
+  await startAnonymously(page)
+  await turnMemoryOn(page, false)
+  await say(page, SLEEP_SAID)
+  // Longer than the poll interval and the mock's delay.
+  await page.waitForTimeout(14_000)
+  await expect(page.getByTestId('memory-notice')).toHaveCount(0)
 })

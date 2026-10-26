@@ -12,7 +12,7 @@ import {
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { chosenMemoryMode, nextStartStep } from '@ryadom/client-core/dialog-start'
-import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import { memoryInUse } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { Badge } from '@ryadom/ui/components/badge'
@@ -24,6 +24,7 @@ import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import { BUTTON, FOCUS_RING } from './controls'
 import { rememberDialogStart } from './dialog-start'
+import MemoryInvite from './MemoryInvite'
 import ResumeDialogSheet from './ResumeDialogSheet'
 import { unlockSpeech } from '@ryadom/client-core/voice/speech'
 
@@ -95,6 +96,8 @@ export default function HomeScreen() {
   const memoryEnabled = user?.memoryEnabled
   /** "Без памяти" for the next conversation; home starts without it every time. */
   const [withoutMemory, setWithoutMemory] = useState(false)
+  /** What the server said about memory, for the invitation; null until it arrives. */
+  const [memoryState, setMemoryState] = useState<MemoryApiResponse | null>(null)
   const wanted = chosenMemoryMode(memoryEnabled, withoutMemory)
 
   // Whether to offer "Без памяти" is asked each time home opens: the person's switch and whether the
@@ -105,7 +108,9 @@ export default function HomeScreen() {
     client
       .getMemory()
       .then((memory) => {
-        if (!cancelled) updateUser({ memoryEnabled: memoryInUse(memory) })
+        if (cancelled) return
+        setMemoryState(memory)
+        updateUser({ memoryEnabled: memoryInUse(memory) })
       })
       .catch(() => {})
     return () => {
@@ -382,6 +387,8 @@ export default function HomeScreen() {
           </div>
         </div>
       </div>
+
+      <MemoryInvite memory={memoryState} onMemory={setMemoryState} />
 
       <ResumeDialogSheet
         open={pending !== null}

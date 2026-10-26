@@ -25,7 +25,7 @@ import {
   updateMemorySettings,
 } from '../../../lib/api'
 import { saveTextFile } from '../../../lib/download'
-import { pendingForgets } from '../../../lib/memory'
+import { enableMemory, pendingForgets } from '../../../lib/memory'
 import { useAuth } from '../../../lib/store'
 import Switch from '../../Switch'
 import MemoryConsentSheet from './MemoryConsentSheet'
@@ -83,29 +83,19 @@ export default function MemoryPage() {
   async function enable() {
     setSwitching(true)
     setConsentError('')
-    try {
-      const result = await setMemoryEnabled(true)
-      if (!result.ok) {
-        const text = codeText(MEMORY_SETTINGS_ERRORS, result.code, 'Не получилось включить память')
-        if (sheet === 'consent') setConsentError(text)
-        else toast(text)
-        setSwitchOn(false)
-        return
-      }
+    const result = await enableMemory()
+    if (!result.ok) {
+      if (sheet === 'consent') setConsentError(result.text)
+      else toast(result.text)
+      setSwitchOn(false)
+    } else {
       setMemory((current) => (current ? { ...current, ...result.data, paused: false } : current))
       setSwitchOn(result.data.enabled)
       updateUser({ memoryEnabled: memory !== null && memoryInUse({ ...memory, ...result.data }) })
-      track(AnalyticsEvent.MemoryEnabled, { enabled: true })
       setSheet(null)
       toast('Память включена')
-    } catch (error) {
-      const text = apiErrorText(error, {}, 'Не получилось включить память')
-      if (sheet === 'consent') setConsentError(text)
-      else toast(text)
-      setSwitchOn(false)
-    } finally {
-      setSwitching(false)
     }
+    setSwitching(false)
   }
 
   async function disable() {

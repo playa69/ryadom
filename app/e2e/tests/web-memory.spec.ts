@@ -11,6 +11,7 @@ import {
   openProfile,
   openWebApp,
   startAnonymously,
+  talkButton,
 } from '../support/web'
 import { expect, test } from '../support/fixtures'
 
@@ -311,6 +312,99 @@ test('память в вебе: разговор «Без памяти» нич�
   await openSheet(page)
   await expect(sheet(page).getByTestId('memory-sheet-empty')).toBeVisible()
   await shot(page, 'web-memory-incognito-sheet')
+})
+
+const invite = (page: Page) => page.getByTestId('memory-invite')
+
+test('приглашение «Рядом теперь запоминает важное»: «Не сейчас» закрывает насовсем, «Включить» ведёт через согласие', async ({
+  browser,
+  page,
+  shot,
+}) => {
+  test.setTimeout(180_000)
+  // REQ-MEM: nothing is chosen in advance; "Не сейчас" is remembered in this browser.
+  await openWebApp(page)
+  await startAnonymously(page, { keepMemoryInvite: true })
+  await expect(invite(page)).toBeVisible({ timeout: 20_000 })
+  await expect(modal(page)).toContainText('Рядом теперь запоминает важное')
+  await expect(modal(page).getByRole('checkbox')).toHaveCount(0)
+  await shot(page, 'web-memory-invite')
+  await modalButton(page, 'Не сейчас').click()
+  await expect(modal(page)).toHaveCount(0)
+  await page.reload()
+  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
+  await page.waitForTimeout(2_000)
+  await expect(invite(page)).toHaveCount(0)
+  // Not asked again, and memory stayed off.
+  await openMemory(page)
+  await expect(memorySwitch(page)).not.toBeChecked()
+
+  // Another person: "Включить" opens the consent sheet, accepting it turns memory on.
+  const other = await browser.newContext(test.info().project.use)
+  try {
+    const second = await other.newPage()
+    await openWebApp(second)
+    await startAnonymously(second, { keepMemoryInvite: true })
+    await expect(invite(second)).toBeVisible({ timeout: 20_000 })
+    await modalButton(second, 'Включить').click()
+    await expect(second.getByTestId('memory-consent')).toBeVisible()
+    await modalButton(second, 'Включить память').click()
+    await expect(modal(second)).toHaveCount(0)
+    await openMemory(second)
+    await expect(memorySwitch(second)).toBeChecked()
+  } finally {
+    await other.close()
+  }
+})
+
+test('«Запомнил: … · Убрать» в разговоре: новая чувствительная заметка → строка → «Убрать» удаляет; без «чувствительного» строки нет', async ({
+  page,
+  shot,
+}) => {
+  test.setTimeout(240_000)
+  await openWebApp(page)
+  await startAnonymously(page)
+  await openMemory(page)
+  await memorySwitch(page).click()
+  await modalButton(page, 'Включить память').click()
+  await expect(memorySwitch(page)).toBeChecked()
+
+  // Sensitive off: the notice never shows (the poll is not even started).
+  await goTo(page, 'Новый разговор')
+  await homeInput(page).fill(SLEEP)
+  await homeInput(page).press('Enter')
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(messages(page, 'assistant').last()).toBeVisible({ timeout: 30_000 })
+  await page.waitForTimeout(14_000)
+  await expect(page.getByTestId('memory-notice')).toHaveCount(0)
+  await page.getByTestId('dialog-end').click()
+  await modalButton(page, 'Завершить').click()
+  await page.getByTestId('alert-ok').click()
+  await expect(page).toHaveURL(/\/home$/)
+
+  await openMemory(page)
+  await sensitiveSwitch(page).click()
+  await expect(sensitiveSwitch(page)).toBeChecked()
+
+  await goTo(page, 'Новый разговор')
+  await homeInput(page).fill(SLEEP)
+  await homeInput(page).press('Enter')
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  const notice = page.getByTestId('memory-notice')
+  await expect(notice).toContainText(`Запомнил: ${SLEEP_NOTE}`, { timeout: 25_000 })
+  await expect(notice).toContainText('Убрать')
+  await shot(page, 'web-memory-notice')
+  await page.getByTestId('memory-notice-undo').click()
+  await expect(notice).toHaveCount(0)
+  await shot(page, 'web-memory-notice-removed')
+
+  await page.getByTestId('dialog-end').click()
+  await modalButton(page, 'Завершить').click()
+  await page.getByTestId('alert-ok').click()
+  await expect(page).toHaveURL(/\/home$/)
+  await openMemory(page)
+  await openSheet(page)
+  await expect(sheet(page)).not.toContainText(SLEEP_NOTE)
 })
 
 /** Switches memory on the agent mock: `off` is the feature off on the server. Dev control of the mock. */

@@ -60,7 +60,7 @@ async function eventually(page: Page, check: (text: string) => boolean, what: st
 }
 
 /** Starts a conversation with the typed words, waits for the model's reply, ends it, returns home. */
-async function talkAndEnd(page: Page, words: string): Promise<string> {
+async function talkAndEnd(page: Page, words: string, shotName?: string, shoot?: (page: Page, name: string) => Promise<void>): Promise<string> {
   await goTo(page, 'Новый разговор')
   await homeInput(page).fill(words)
   await homeInput(page).press('Enter')
@@ -70,6 +70,7 @@ async function talkAndEnd(page: Page, words: string): Promise<string> {
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 90_000 })
   const reply = (await messages(page, 'assistant').last().innerText()).toLowerCase()
   await expect(dialogInput(page)).toBeVisible()
+  if (shotName && shoot) await shoot(page, shotName) // the conversation with the answer of the model, before it is ended
   await page.getByTestId('dialog-end').click()
   await modalButton(page, 'Завершить').click()
   await expect(modal(page).getByRole('heading', { name: 'Спасибо, что поговорил(а)' })).toBeVisible({ timeout: 60_000 })
@@ -139,7 +140,6 @@ test('память на настоящем агенте: слова → заме
   expect(await sheetText(page)).not.toContain('продаж')
 
   // ── the next conversation knows the person: the memory block reaches the model ──────────────
-  const reply = await talkAndEnd(page, 'Скажи, как меня зовут?')
-  await shot(page, 'real-memory-next-conversation')
+  const reply = await talkAndEnd(page, 'Скажи, как меня зовут?', 'real-memory-next-conversation', shot)
   expect(reply).toContain('алекс')
 })
