@@ -110,7 +110,7 @@
 
 ### D9. Данные (`app/packages/db`)
 
-Миграция `0011_notifications`. Номер — по плановому порядку: `0009_mood_diary`, `0010_self_check`. Если выкат идёт в другом порядке, берётся следующий свободный номер.
+Миграция `0011_notifications`: идёт после `0009_mood_diary` и `0010_self_check`. Как её создают и почему номер в имени ничего не решает — «Порядок слияния и миграций» в Migration Plan.
 
 ```text
 notification_preferences(user_id fk users, kind text, enabled bool, time time null,
@@ -165,8 +165,19 @@ notification_deliveries(id bigserial pk, user_id, kind text, local_date date, ch
 
 ## Migration Plan
 
+**Порядок слияния и миграций.**
+
+- **Порядок слияния в `main`:** PROTEUS-183 (`add-mood-diary`) → PROTEUS-242 (`add-memory-notes`) → PROTEUS-218 (`add-self-check-tests`) → PROTEUS-243 (`add-notifications`) → PROTEUS-246 (`add-unsaved-dialog`) → PROTEUS-245 (`add-recap-search`).
+- **Миграции шлюза идут в том же порядке:** `0009_mood_diary` (183) → `0010_self_check` (218) → `0011_notifications` (243). PROTEUS-242, 246 и 245 миграций шлюза не добавляют.
+- **Номер в имени не важен.** Drizzle (`drizzle-orm/postgres-js/migrator`) применяет миграцию, только если её `when` в `meta/_journal.json` позже последней применённой. Миграция с более ранним `when` на базе, где уже применена более поздняя, не применится.
+- **Поэтому миграцию генерируют, а не переносят.** `drizzle-kit generate` (скрипт `generate` в `app/packages/db`, `--name notifications`) запускается после ребейза на `main`, где уже есть `0009_mood_diary` и `0010_self_check`. Если ветка сливается не в свою очередь, она удаляет свою миграцию (SQL, снимок и запись в `meta/_journal.json`) и генерирует её заново поверх `main`, а не переименовывает файл.
+- **Черновик кода** из `agent/PROTEUS-243-notifications-wip` не сливается: его таблицы уведомлений лежат внутри собственной копии `0009_mood_diary`. Из него берут только код, миграцию генерируют заново по D9.
+- **Выкат миграций** — в том же порядке.
+
+**Шаги выката.**
+
 1. **Ключи VAPID** создаются один раз и кладутся в Secret `app-secrets` (`WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, `WEB_PUSH_SUBJECT`).
-2. **Миграция `0011_notifications`.** Выполняется после `0009_mood_diary`: нужны `users.timezone` и `mood_checkins`.
+2. **Миграция `0011_notifications`.** Выполняется после `0009_mood_diary` (нужны `users.timezone` и `mood_checkins`) и `0010_self_check`, по порядку выше.
 3. **API и клиенты** выходят за флагом `NOTIFICATIONS_ENABLED`. Без флага строки напоминаний нет, маршруты отвечают `404`, тик не работает.
 4. **Нативная сборка APK** с плагином выходит отдельно (`native-app-build`).
 5. **Откат** — выключить флаг. Подписки остаются, отправка прекращается.

@@ -34,10 +34,17 @@
 - **`push_subscriptions`:** `channel` из (web_push, telegram, native_local), endpoint и ключи, `device_label`, `failures`, `unique (user_id, channel, endpoint)`.
 - **`notification_deliveries`:** `unique (user_id, kind, local_date)`, `opened_at`, `error`.
 
-**Номер миграции.** Номер `0011` — по плановому порядку (дневник `0009`, тесты `0010`). При другом порядке — следующий свободный. Зависит от `users.timezone` и `mood_checkins` из `0009_mood_diary`.
+**Порядок и номер** (`notifications-design.md`, Migration Plan). Миграции шлюза идут в порядке слияния: `0009_mood_diary` (183) → `0010_self_check` (218) → `0011_notifications`. Номер в имени не важен: Drizzle применяет миграцию, только если её `when` в `meta/_journal.json` позже последней применённой. Поэтому:
+- миграцию генерируют `drizzle-kit generate --name notifications` после ребейза на `main`, где уже есть `0009_mood_diary` и `0010_self_check`;
+- если ветка сливается не в свою очередь, свою миграцию удаляют (SQL, снимок, запись журнала) и генерируют заново поверх `main`, а не переименовывают файл.
+
+Зависит от `users.timezone` и `mood_checkins` из `0009_mood_diary`.
+
+**Черновик кода** `agent/PROTEUS-243-notifications-wip` не сливается: его таблицы уведомлений лежат внутри собственной копии `0009_mood_diary`. Из него берут только код, миграцию генерируют заново.
 
 #### Приёмка
 - Миграция применяется на копии прод-базы и на базах тестов.
+- В `meta/_journal.json` её `when` позже, чем у `0010_self_check`.
 - Ограничения проверены тестом схемы.
 
 ### 1.2 Контракты /api/notifications

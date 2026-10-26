@@ -9,7 +9,7 @@
 
 ## 1. Данные и контракты
 
-- [ ] 1.1 Миграция 0011_notifications. Приёмка: миграция применяется на копии прод-базы и на базах тестов
+- [ ] 1.1 Миграция 0011_notifications: `drizzle-kit generate` после ребейза на main с `0009_mood_diary` и `0010_self_check`; миграция из черновика `agent/PROTEUS-243-notifications-wip` не берётся (`design.md`, Migration Plan). Приёмка: миграция применяется на копии прод-базы и на базах тестов, её `when` в `meta/_journal.json` позже, чем у `0010_self_check`
 - [ ] 1.2 Контракты /api/notifications. Приёмка: `app/packages/contracts/test/conventions.test.ts` зелёный: в контрактах только `import type`
 
 ## 2. Сервер
