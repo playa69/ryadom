@@ -32,6 +32,7 @@ class _File:
         self.cursors: dict[str, int] = {}  # dialog_id -> сколько реплик человека разобрано извлекателем
         self.flags: dict[str, tuple[bool, bool]] = {}  # user_id -> (sensitive, chat_search)
         self.notes: dict[str, tuple] = {}  # id -> (id, user_id, kind, text, sensitive, event_date, dialog_id, created, updated)
+        self.sources: list[dict] = []  # отпечатки реплик-источников заметок
         self.usage: list[tuple] = []
 
 
@@ -160,6 +161,7 @@ class FakeDialogDatabase:
             state.flags.pop(user_id, None)
             state.outbox = [o for o in state.outbox if o["user_id"] != user_id]
             state.notes = {k: v for k, v in state.notes.items() if v[1] != user_id}
+            state.sources = [x for x in state.sources if x["user_id"] != user_id]
 
     def list_notes(self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None) -> list[tuple]:
         with self._lock:
@@ -186,6 +188,7 @@ class FakeDialogDatabase:
             if note is None or note[1] != user_id:
                 return False
             self._state().notes[note_id] = (*note[:3], text, *note[4:8], updated_at)
+            self._suppress(lambda x: x["note_id"] == note_id)
             return True
 
     def delete_note(self, user_id: str, note_id: str) -> bool:
@@ -194,6 +197,7 @@ class FakeDialogDatabase:
             if note is None or note[1] != user_id:
                 return False
             del self._state().notes[note_id]
+            self._suppress(lambda x: x["note_id"] == note_id)
             return True
 
     def delete_notes(self, user_id: str, only_sensitive: bool = False) -> int:
@@ -202,7 +206,42 @@ class FakeDialogDatabase:
             gone = [k for k, n in state.notes.items() if n[1] == user_id and (n[4] or not only_sensitive)]
             for key in gone:
                 del state.notes[key]
+                self._suppress(lambda x, key=key: x["note_id"] == key)
             return len(gone)
+
+    def _suppress(self, match) -> None:
+        for source in self._state().sources:
+            if match(source):
+                source["suppressed"] = True
+
+    def add_note_source(self, user_id: str, note_id: str, dialog_id: str, source_hash: str, created_at: str) -> None:
+        with self._lock:
+            self._state().sources.append(
+                {"user_id": user_id, "note_id": note_id, "dialog_id": dialog_id, "hash": source_hash, "suppressed": False}
+            )
+
+    def source_dialogs(self, user_id: str, note_id: str | None = None, only_sensitive: bool = False) -> list[str]:
+        with self._lock:
+            state = self._state()
+            found = set()
+            for x in state.sources:
+                note = state.notes.get(x["note_id"])
+                if x["user_id"] != user_id or x["suppressed"] or note is None:
+                    continue
+                if note_id is not None and x["note_id"] != note_id:
+                    continue
+                if note_id is None and only_sensitive and not note[4]:
+                    continue
+                found.add(x["dialog_id"])
+            return sorted(found)
+
+    def suppressed_hashes(self, user_id: str, dialog_id: str | None = None) -> set[str]:
+        with self._lock:
+            return {
+                x["hash"]
+                for x in self._state().sources
+                if x["user_id"] == user_id and x["suppressed"] and (dialog_id is None or x["dialog_id"] == dialog_id)
+            }
 
     def outbox_add(self, user_id: str, op: str, payload: dict, next_at: str, created_at: str) -> None:
         with self._lock:
@@ -297,6 +336,7 @@ class FakeDialogDatabase:
         with self._lock:
             state = self._state()
             state.dialogs.pop(dialog_id, None)
+            state.sources = [x for x in state.sources if x["dialog_id"] != dialog_id]
             state.messages = {k: v for k, v in state.messages.items() if k[0] != dialog_id}
             state.client_ids = {k: v for k, v in state.client_ids.items() if k[0] != dialog_id}
             state.usage = [row for row in state.usage if row[0] != dialog_id]

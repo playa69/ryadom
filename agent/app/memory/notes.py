@@ -96,10 +96,13 @@ class NotesService:
         database: Callable[[], DialogDatabase | None],
         max_notes: int = 200,
         on_change: Callable[[str], None] | None = None,
+        on_suppress: Callable[[str, list[str]], None] | None = None,
     ) -> None:
         self._database = database
         self._max = max_notes
         self._on_change = on_change or (lambda user_id: None)  # заметки человека изменились (кэш блока памяти)
+        # Реплики-источники убранных заметок подавлены в этих разговорах: документы в Cognee нужно пересобрать (D15).
+        self._on_suppress = on_suppress or (lambda user_id, dialog_ids: None)
 
     @property
     def max_notes(self) -> int:
@@ -135,7 +138,9 @@ class NotesService:
         new_chat = old_chat if chat_search is None else chat_search
         await self._call(db.put_memory_flags, user_id, new_sensitive, new_chat, iso(datetime.now(UTC)))
         if old_sensitive and not new_sensitive:
+            dialogs = await self._call(db.source_dialogs, user_id, None, True)
             removed = await self._call(db.delete_notes, user_id, True)
+            self._on_suppress(user_id, dialogs)
             logger.info("sensitive notes removed user=%s count=%d", user_id, removed)
         self._on_change(user_id)
         return new_sensitive, new_chat
@@ -159,6 +164,7 @@ class NotesService:
         dialog_id: str | None = None,
         event_date: str | None = None,
         sensitive_enabled: bool | None = None,
+        source_hash: str | None = None,
     ) -> dict[str, Any]:
         """Новая заметка после проверок. Запретное — `NOTE_REJECTED` с кодом, лимит — `MEMORY_FULL`."""
         db = self._db()
@@ -184,6 +190,8 @@ class NotesService:
         note_id = str(uuid.uuid4())
         parsed = date.fromisoformat(event_date) if event_date else None
         await self._call(db.add_note, (note_id, user_id, kind, cleaned, is_sensitive(kind), parsed, dialog_id, now, now))
+        if source_hash and dialog_id:
+            await self._call(db.add_note_source, user_id, note_id, dialog_id, source_hash, now)
         logger.info("memory note added user=%s kind=%s", user_id, kind)
         self._on_change(user_id)
         return note_json((note_id, kind, cleaned, is_sensitive(kind), parsed, dialog_id, now, now))
@@ -202,20 +210,29 @@ class NotesService:
             MEMORY_BLOCKED_TOTAL.labels(verdict.reason or "unknown").inc()
             raise NoteRejected(verdict.reason or "unknown")
         now = iso(datetime.now(UTC))
+        dialogs = await self._call(db.source_dialogs, user_id, note_id)
         if not await self._call(db.update_note, user_id, note_id, cleaned, now):
             raise NoteNotFound()
+        self._on_suppress(user_id, dialogs)
         self._on_change(user_id)
         return note_json((current[0], current[1], cleaned, current[3], current[4], current[5], current[6], now))
 
     async def delete(self, user_id: str, note_id: str) -> None:
-        if not await self._call(self._db().delete_note, user_id, note_id):
+        db = self._db()
+        dialogs = await self._call(db.source_dialogs, user_id, note_id)
+        if not await self._call(db.delete_note, user_id, note_id):
             raise NoteNotFound()
+        self._on_suppress(user_id, dialogs)
         self._on_change(user_id)
 
     async def delete_all(self, user_id: str) -> int:
         """«Удалить всю память» (заметки). Настройки и согласие не трогаются."""
         db = self._database()
-        removed = 0 if db is None else await self._call(db.delete_notes, user_id, False)
+        removed = 0
+        if db is not None:
+            dialogs = await self._call(db.source_dialogs, user_id)
+            removed = await self._call(db.delete_notes, user_id, False)
+            self._on_suppress(user_id, dialogs)
         self._on_change(user_id)
         return removed
 

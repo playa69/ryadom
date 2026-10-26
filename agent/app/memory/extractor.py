@@ -20,6 +20,7 @@ from app.core.metrics import MEMORY_BLOCKED_TOTAL, MEMORY_EXTRACTION_FAILURES_TO
 from app.memory.errors import MemoryFull, MemoryServiceError, NoteNotFound, NoteRejected
 from app.memory.masking import mask
 from app.memory.notes import NotesService
+from app.memory.suppress import fingerprint
 
 logger = logging.getLogger("agent.memory")
 
@@ -76,6 +77,13 @@ def _grounded(quote: Any, human_texts: list[str]) -> bool:
         return False
     needle = _norm(quote)
     return any(needle in _norm(text) for text in human_texts)
+
+
+def _source_hash(quote: Any, human_texts: list[str]) -> str | None:
+    """Отпечаток реплики человека, на которую опирается цитата: по нему удалённая заметка подавляет эту реплику в поиске."""
+    needle = _norm(str(quote))
+    text = next((text for text in human_texts if needle in _norm(text)), None)
+    return None if text is None else fingerprint(text)
 
 
 class NotesExtractor:
@@ -165,7 +173,12 @@ class NotesExtractor:
             try:
                 if kind_of_op == "add":
                     note = await self._notes.add(
-                        user_id, str(op.get("kind", "")), str(op.get("text", "")), dialog_id, _event_date(op.get("event_date"))
+                        user_id,
+                        str(op.get("kind", "")),
+                        str(op.get("text", "")),
+                        dialog_id,
+                        _event_date(op.get("event_date")),
+                        source_hash=_source_hash(op.get("quote"), human_texts),
                     )
                     outcome.added.append(note)
                 elif kind_of_op in ("update", "delete"):

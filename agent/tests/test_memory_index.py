@@ -165,3 +165,76 @@ def test_erase_user_waits_for_cognee_and_answers_503_when_it_is_down(monkeypatch
         fake.down = False
         assert client.delete(f"/v1/users/{user}", headers=AUTH).status_code == 204
         assert fake.deleted == [dataset_name(user)]
+
+
+# ─── удалённая заметка подавляет свою реплику в поиске (D15) ─────────────────────────────────────────────────────────
+
+
+FATHER = "Не хочу говорить про отца, он меня бросил"
+
+
+async def note_from_reply(service, db, user: str, dialog_id: str, reply: str, text: str = "Не хочет обсуждать отца") -> str:
+    from app.memory.suppress import fingerprint
+
+    note = await service.notes.add(user, "boundary", text, dialog_id, source_hash=fingerprint(reply))
+    return note["id"]
+
+
+async def test_deleting_a_note_rebuilds_the_dialog_document_without_the_source_reply() -> None:
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    dialog_id = stored_dialog(db, user, [("user", FATHER), ("assistant", "Понимаю"), ("user", "Работаю в продажах и люблю гулять"), ("user", "Сестра Маша меня поддерживает")])
+    current = dialog(user, 0)
+    current.id = dialog_id
+    service.dialog_ended(current)
+    await service.drain()
+    await service.outbox.tick()
+    first_id = db.get_cognee_data_id(dialog_id)
+    assert FATHER in next(iter(fake.documents[dataset_name(user)].values()))[1]
+    note_id = await note_from_reply(service, db, user, dialog_id, FATHER)
+
+    await service.notes.delete(user, note_id)
+    await service.drain()
+    while await service.outbox.tick():
+        pass
+
+    documents = fake.documents[dataset_name(user)]
+    assert first_id not in documents and len(documents) == 1  # старый удалён, новый собран
+    assert "отца" not in next(iter(documents.values()))[1] and "гулять" in next(iter(documents.values()))[1]
+    assert db.get_cognee_data_id(dialog_id) not in (None, first_id)
+
+
+async def test_found_chunks_hide_the_reply_of_a_deleted_note_before_the_document_is_rebuilt() -> None:
+    fake = FakeCognee(recall_text=f"Реплики человека в разговоре от 2026-10-20:\n- {FATHER}\n- Работаю в продажах")
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    dialog_id = stored_dialog(db, user, [("user", FATHER)])
+    note_id = await note_from_reply(service, db, user, dialog_id, FATHER)
+    current = dialog(user, 0)
+
+    assert FATHER in await service._visible(user, fake.recall_text)  # заметка жива: реплика находится
+    await service.notes.delete(user, note_id)
+    seen = await service._visible(user, fake.recall_text)
+    assert FATHER not in seen and "продажах" in seen
+    assert await service.recall_now(current, "расскажи про семью") == "" or FATHER not in await service.recall_now(current, "семья")
+
+
+async def test_clearing_all_notes_and_editing_one_suppress_their_sources_too() -> None:
+    service = backend(FakeCognee())
+    db = service._database()
+    user = uid()
+    first = await note_from_reply(service, db, user, "d1", "У меня есть кот Барсик", "Живёт с котом Барсиком")
+    await note_from_reply(service, db, user, "d2", "Работаю в продажах", "Работает в продажах")
+    from app.memory.suppress import fingerprint
+
+    await service.notes.patch(user, first, "Живёт с кошкой Муськой")
+    assert db.suppressed_hashes(user) == {fingerprint("У меня есть кот Барсик")}
+    await service.notes.delete_all(user)
+    assert db.suppressed_hashes(user) == {fingerprint("У меня есть кот Барсик"), fingerprint("Работаю в продажах")}
+    db.erase_user(user)
+    assert db.suppressed_hashes(user) == set()  # отпечатки уходят вместе с аккаунтом

@@ -135,3 +135,16 @@ def test_explicit_request_detection() -> None:
     assert is_explicit_request(["Забудь, что я говорил про работу"])
     assert is_explicit_request(["Не запоминай это"])
     assert not is_explicit_request(["Сегодня гулял с собакой"])
+
+
+async def test_added_note_remembers_the_fingerprint_of_its_source_reply() -> None:
+    """Удалённая заметка подавляет реплику, на которой выросла (D15): хранится отпечаток, не текст."""
+    from app.memory.suppress import fingerprint
+
+    reply = "Не хочу говорить про отца, он меня бросил"
+    extractor, notes, _ = setup({"ops": [{"op": "add", "kind": "boundary", "text": "Не хочет обсуждать отца", "quote": "не хочу говорить про отца"}]})
+    u = user()
+    await extractor.extract(u, [reply], [], "dlg-1")
+    note = (await notes.list(u))[0]
+    await notes.delete(u, note["id"])
+    assert notes._db().suppressed_hashes(u) == {fingerprint(reply)}

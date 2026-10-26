@@ -35,6 +35,7 @@ from app.memory.errors import (
 from app.memory.errors import NoteNotFound, NoteRejected
 from app.memory.indexer import CogneeOutbox, dataset_name
 from app.memory.extractor import NotesExtractor, Outcome
+from app.memory.suppress import filter_found
 from app.memory.notes import NotesService, build_notes_block, kind_of_category, note_as_fact
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import Dialog
@@ -81,7 +82,7 @@ class CogneeMemoryBackend:
         # База диалогов (PostgreSQL), если подключена: в ней живут настройки памяти («включена или пауза», согласие).
         # Без неё (разработка) настройки хранятся только в памяти процесса.
         self._database = database or (lambda: None)
-        self.notes = NotesService(self._database, config.notes_max, self._notes_changed)
+        self.notes = NotesService(self._database, config.notes_max, self._notes_changed, self._sources_suppressed)
         self.outbox = CogneeOutbox(self._database, lambda: self._client)  # индекс разговоров в Cognee: очередь с повторами
         self._outbox_task: asyncio.Task[None] | None = None
         self._notes_cache: dict[str, list[dict[str, Any]]] = {}  # user_id → заметки для блока памяти (без обращений к базе на ходу)
@@ -241,6 +242,26 @@ class CogneeMemoryBackend:
             and self._effective_enabled(dialog.user_id)
         )
 
+    def _sources_suppressed(self, user_id: str, dialog_ids: list[str]) -> None:
+        """Заметка убрана: документы её разговоров в Cognee пересобираются без реплик-источников (D15)."""
+        self._turn_recalls.pop(user_id, None)
+        if self._client is None or not dialog_ids:
+            return
+        for dialog_id in dialog_ids:
+            self._spawn(self.outbox.add(user_id, "reindex_dialog", {"dialog_id": dialog_id}))
+        self._spawn(self._tick_later())
+
+    async def _tick_later(self) -> None:
+        await asyncio.sleep(0)  # постановки выше успевают записаться
+        await self.outbox.tick()
+
+    async def _visible(self, user_id: str, found: str) -> str:
+        """Находки Cognee без реплик, из которых человек убрал заметку: пока документ не пересобран, фильтруем на выдаче."""
+        db = self._database()
+        if db is None or not found:
+            return found
+        return filter_found(found, await asyncio.to_thread(db.suppressed_hashes, user_id))
+
     def _queue_for_notes(self, dialog: Dialog, text: str) -> None:
         pending = self._pending.setdefault(dialog.id, _Pending(dialog.user_id))
         pending.texts.append(text)
@@ -309,7 +330,7 @@ class CogneeMemoryBackend:
         assert self._client is not None
         try:
             # CHUNKS, а не GRAPH_COMPLETION: фоновый поиск на каждую реплику, синтез LLM тут не нужен и втрое медленнее
-            found = await self._client.recall_chunks(text, dataset_name(user_id))
+            found = await self._visible(user_id, await self._client.recall_chunks(text, dataset_name(user_id)))
         except Exception:  # noqa: BLE001 - сбой поиска — просто старая сводка, разговор не трогаем
             logger.exception("cognee turn recall failed user=%s", user_id)
             return ""
@@ -339,7 +360,7 @@ class CogneeMemoryBackend:
             found = await pending
         else:
             try:
-                found = await self._require_client().recall_chunks(query, dataset_name(dialog.user_id))
+                found = await self._visible(dialog.user_id, await self._require_client().recall_chunks(query, dataset_name(dialog.user_id)))
             except Exception:  # noqa: BLE001 - сбой поиска — модель отвечает без находки, разговор не рвём
                 logger.exception("cognee tool recall failed user=%s", dialog.user_id)
                 return ""
@@ -464,7 +485,7 @@ class CogneeMemoryBackend:
             self._chat_search_cache[user_id] = after
             if before and not after:
                 # «Опираться на прошлые разговоры» выключили: индекс удаляется целиком, пока включён — ничего не догоняется
-                await self.outbox.drop(user_id, ("index_dialog", "rebuild", "delete_document"))
+                await self.outbox.drop(user_id, ("index_dialog", "reindex_dialog", "rebuild", "delete_document"))
                 await self.outbox.add(user_id, "delete_dataset")
                 self._turn_recalls.pop(user_id, None)
                 self._spawn(self.outbox.tick())
@@ -555,7 +576,7 @@ class CogneeMemoryBackend:
         self._turn_recalls.pop(user_id, None)
         self._turn_tasks.pop(user_id, None)
         if self._client is not None:
-            await self.outbox.drop(user_id, ("index_dialog", "rebuild", "delete_document"))
+            await self.outbox.drop(user_id, ("index_dialog", "reindex_dialog", "rebuild", "delete_document"))
             await self.outbox.add(user_id, "delete_dataset")
             self._spawn(self.outbox.tick())
         logger.info("memory forgotten user=%s", user_id)
@@ -580,7 +601,7 @@ class CogneeMemoryBackend:
         except Exception as error:  # noqa: BLE001
             logger.exception("cognee erase failed user=%s", user_id)
             raise MemoryUnavailable() from error
-        await self.outbox.drop(user_id, ("index_dialog", "rebuild", "delete_document", "delete_dataset"))
+        await self.outbox.drop(user_id, ("index_dialog", "reindex_dialog", "rebuild", "delete_document", "delete_dataset"))
         self._drop(user_id)
 
     def start_outbox(self, interval_seconds: float = 10.0) -> None:

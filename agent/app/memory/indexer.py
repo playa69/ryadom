@@ -16,6 +16,7 @@ from typing import Any
 from app.clients.cognee import CogneeClient
 from app.core.metrics import MEMORY_OUTBOX_PENDING
 from app.memory.masking import mask
+from app.memory.suppress import fingerprint
 from app.services.dialog_db import DialogDatabase
 from app.services.replies import is_crisis
 
@@ -35,13 +36,17 @@ def document_name(dialog_id: str) -> str:
     return "dialog-" + dialog_id
 
 
-def build_document(started_at: str, messages: list[tuple[str, str]]) -> str | None:
-    """Документ разговора для индекса: реплики человека с маскированием, без кризисных реплик. Мало осталось — документа нет."""
+def build_document(started_at: str, messages: list[tuple[str, str]], suppressed: set[str] | None = None) -> str | None:
+    """Документ разговора для индекса: реплики человека с маскированием, без кризисных реплик и без подавленных (человек убрал
+    заметку, выросшую из реплики, D15). Мало осталось — документа нет."""
     lines = []
     for role, text in messages:
         if role != "user" or not text.strip() or is_crisis(text):
             continue
-        lines.append(mask(text.strip()))
+        masked = mask(text.strip())
+        if suppressed and fingerprint(masked) in suppressed:
+            continue
+        lines.append(masked)
     if len(lines) < MIN_DOCUMENT_LINES:
         return None
     return f"Реплики человека в разговоре от {started_at[:10]}:\n" + "\n".join(f"- {line}" for line in lines)
@@ -103,26 +108,20 @@ class CogneeOutbox:
 
     async def _run(self, db: DialogDatabase, client: CogneeClient, user_id: str, op: str, payload: dict[str, Any]) -> None:
         dataset = dataset_name(user_id)
-        if op == "index_dialog":
+        if op == "reindex_dialog":
+            # Документ разговора пересобирается без подавленных реплик: старый удаляется жёстко, новый строится заново.
+            dialog_id = payload["dialog_id"]
+            data_id = await asyncio.to_thread(db.get_cognee_data_id, dialog_id)
+            if not data_id:
+                return  # в индексе его нет: при индексации подавленные реплики и так не попадут
+            await client.delete_document(dataset, data_id, document_name(dialog_id))
+            await asyncio.to_thread(db.set_cognee_data_id, dialog_id, None)
+            await self._index(db, client, user_id, dataset, dialog_id)
+        elif op == "index_dialog":
             dialog_id = payload["dialog_id"]
             if await asyncio.to_thread(db.get_cognee_data_id, dialog_id):
                 return  # уже в индексе
-            found = await asyncio.to_thread(db.dialog_for_index, dialog_id)
-            if found is None:
-                return  # разговор удалён, пока операция ждала: воскрешать нельзя
-            owner, started_at, mode, messages = found
-            if owner != user_id or mode != "on":
-                return
-            document = build_document(started_at, messages)
-            if document is None:
-                return
-            data_id = await client.add_document(document, dataset, document_name(dialog_id))
-            # Разговор могли удалить за время вызова: тогда документ сразу убираем, чтобы не воскресить удалённое.
-            if await asyncio.to_thread(db.dialog_for_index, dialog_id) is None:
-                await client.delete_document(dataset, data_id, document_name(dialog_id))
-                return
-            if data_id:
-                await asyncio.to_thread(db.set_cognee_data_id, dialog_id, data_id)
+            await self._index(db, client, user_id, dataset, dialog_id)
         elif op == "delete_document":
             await client.delete_document(dataset, payload.get("data_id"), document_name(payload["dialog_id"]))
         elif op == "delete_dataset":
@@ -133,3 +132,22 @@ class CogneeOutbox:
                 await asyncio.to_thread(db.outbox_add, user_id, "index_dialog", {"dialog_id": dialog_id}, _iso(datetime.now(UTC)), _iso(datetime.now(UTC)))
         else:
             logger.warning("cognee outbox: unknown op=%s", op)
+
+    async def _index(self, db: DialogDatabase, client: CogneeClient, user_id: str, dataset: str, dialog_id: str) -> None:
+        found = await asyncio.to_thread(db.dialog_for_index, dialog_id)
+        if found is None:
+            return  # разговор удалён, пока операция ждала: воскрешать нельзя
+        owner, started_at, mode, messages = found
+        if owner != user_id or mode != "on":
+            return
+        suppressed = await asyncio.to_thread(db.suppressed_hashes, user_id, dialog_id)
+        document = build_document(started_at, messages, suppressed)
+        if document is None:
+            return
+        data_id = await client.add_document(document, dataset, document_name(dialog_id))
+        # Разговор могли удалить за время вызова: тогда документ сразу убираем, чтобы не воскресить удалённое.
+        if await asyncio.to_thread(db.dialog_for_index, dialog_id) is None:
+            await client.delete_document(dataset, data_id, document_name(dialog_id))
+            return
+        if data_id:
+            await asyncio.to_thread(db.set_cognee_data_id, dialog_id, data_id)

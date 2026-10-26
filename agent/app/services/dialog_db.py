@@ -119,6 +119,18 @@ DDL = (
     created_at TEXT NOT NULL
 )""",
     "CREATE INDEX IF NOT EXISTS memory_outbox_next ON memory_outbox (next_at)",
+    # Реплика-источник заметки (отпечаток, без текста). Удалённая заметка подавляет свою реплику в поиске по прошлым разговорам.
+    """CREATE TABLE IF NOT EXISTS memory_sources (
+    note_id    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    dialog_id  TEXT NOT NULL,
+    hash       TEXT NOT NULL,
+    suppressed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (note_id, hash)
+)""",
+    "CREATE INDEX IF NOT EXISTS memory_sources_user ON memory_sources (user_id, suppressed)",
+    "CREATE INDEX IF NOT EXISTS memory_sources_dialog ON memory_sources (dialog_id)",
     "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS memory_notes_cursor TEXT",
     "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS cognee_data_id TEXT",
 )
@@ -357,6 +369,7 @@ class DialogDatabase:
             conn.execute("DELETE FROM memory_settings WHERE user_id = %s", (user_id,))
             conn.execute("DELETE FROM memory_notes WHERE user_id = %s", (user_id,))
             conn.execute("DELETE FROM memory_outbox WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_sources WHERE user_id = %s", (user_id,))
 
     def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         """Настройки памяти человека: (включена, версия согласия, когда). None — человек их ещё не задавал."""
@@ -401,6 +414,9 @@ class DialogDatabase:
 
     def update_note(self, user_id: str, note_id: str, text: str, updated_at: str) -> bool:
         with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "UPDATE memory_sources SET suppressed = TRUE WHERE user_id = %s AND note_id = %s", (user_id, note_id)
+            )  # старая формулировка поправлена: её реплика больше не источник правды
             cursor = conn.execute(
                 "UPDATE memory_notes SET text = %s, updated_at = %s WHERE id = %s AND user_id = %s",
                 (clean(text), updated_at, note_id, user_id),
@@ -409,12 +425,52 @@ class DialogDatabase:
 
     def delete_note(self, user_id: str, note_id: str) -> bool:
         with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE memory_sources SET suppressed = TRUE WHERE user_id = %s AND note_id = %s", (user_id, note_id))
             return conn.execute("DELETE FROM memory_notes WHERE id = %s AND user_id = %s", (note_id, user_id)).rowcount > 0
 
     def delete_notes(self, user_id: str, only_sensitive: bool = False) -> int:
         sql = "DELETE FROM memory_notes WHERE user_id = %s" + (" AND sensitive" if only_sensitive else "")
         with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "UPDATE memory_sources SET suppressed = TRUE WHERE user_id = %s AND note_id IN "
+                "(SELECT id FROM memory_notes WHERE user_id = %s" + (" AND sensitive" if only_sensitive else "") + ")",
+                (user_id, user_id),
+            )
             return conn.execute(sql, (user_id,)).rowcount
+
+    def add_note_source(self, user_id: str, note_id: str, dialog_id: str, source_hash: str, created_at: str) -> None:
+        """Запомнить отпечаток реплики, на которой выросла заметка."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_sources (note_id, user_id, dialog_id, hash, created_at) VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (note_id, user_id, dialog_id, source_hash, created_at),
+            )
+
+    def source_dialogs(self, user_id: str, note_id: str | None = None, only_sensitive: bool = False) -> list[str]:
+        """Разговоры-источники заметок: одной (`note_id`), чувствительных или всех заметок человека. Зовётся до удаления."""
+        sql = (
+            "SELECT DISTINCT s.dialog_id FROM memory_sources s JOIN memory_notes n ON n.id = s.note_id "
+            "WHERE s.user_id = %s AND NOT s.suppressed"
+        )
+        args: list[Any] = [user_id]
+        if note_id is not None:
+            sql += " AND s.note_id = %s"
+            args.append(note_id)
+        elif only_sensitive:
+            sql += " AND n.sensitive"
+        with self._lock, self._connection() as conn:
+            return [r[0] for r in conn.execute(sql, args).fetchall()]
+
+    def suppressed_hashes(self, user_id: str, dialog_id: str | None = None) -> set[str]:
+        """Отпечатки подавленных реплик человека (или одного разговора)."""
+        sql = "SELECT hash FROM memory_sources WHERE user_id = %s AND suppressed"
+        args: list[Any] = [user_id]
+        if dialog_id is not None:
+            sql += " AND dialog_id = %s"
+            args.append(dialog_id)
+        with self._lock, self._connection() as conn:
+            return {r[0] for r in conn.execute(sql, args).fetchall()}
 
     def get_memory_flags(self, user_id: str) -> tuple[bool, bool]:
         """(запоминать чувствительное, опираться на прошлые разговоры); без строки — значения по умолчанию (False, True)."""
@@ -538,4 +594,5 @@ class DialogDatabase:
         памяти (Cognee), а не хранилище диалогов.
         """
         with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM memory_sources WHERE dialog_id = %s AND user_id = %s", (dialog_id, user_id))
             conn.execute("DELETE FROM dialogs WHERE id = %s AND user_id = %s", (dialog_id, user_id))
