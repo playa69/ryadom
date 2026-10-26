@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 import uuid
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,6 +24,7 @@ from app.clients.cognee import CogneeClient
 from app.core.config import MemorySettings
 from app.memory.models import iso
 from app.memory.errors import MemoryDisabled, MemoryNotAllowed, MemoryUnavailable, MemoryValidation
+from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import Dialog
 
 logger = logging.getLogger("agent.memory")
@@ -53,9 +54,17 @@ def _unsupported() -> MemoryValidation:
 class CogneeMemoryBackend:
     """Память людей на Cognee. Реализует `MemoryBackend`: сводка из кэша, запись и согласие — через `CogneeClient`."""
 
-    def __init__(self, client: CogneeClient | None, config: MemorySettings) -> None:
+    def __init__(
+        self,
+        client: CogneeClient | None,
+        config: MemorySettings,
+        database: Callable[[], DialogDatabase | None] | None = None,
+    ) -> None:
         self._client = client
         self._cfg = config
+        # База диалогов (PostgreSQL), если подключена: в ней живут настройки памяти («включена или пауза», согласие).
+        # Без неё (разработка) настройки хранятся только в памяти процесса.
+        self._database = database or (lambda: None)
         self._datasets: dict[str, bool] = {}  # user_id → память включена (датасет существует)
         self._opted_out: set[str] = set()  # явно отказались: default_enabled их не включает обратно
         self._briefs: dict[str, str] = {}  # user_id → сводка из последнего recall
@@ -108,6 +117,29 @@ class CogneeMemoryBackend:
         self._turn_recalls.pop(user_id, None)
         self._turn_tasks.pop(user_id, None)
 
+    async def _read_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
+        """Сохранённые настройки памяти человека; None — база не подключена, не ответила или строки нет."""
+        db = self._database()
+        if db is None:
+            return None
+        try:
+            return await asyncio.to_thread(db.get_memory_settings, user_id)
+        except Exception:  # noqa: BLE001 - не прочиталось: живём по датасету, как до появления таблицы
+            logger.exception("memory settings read failed user=%s", user_id)
+            return None
+
+    async def _write_settings(self, user_id: str, enabled: bool, version: str | None, at: str | None) -> None:
+        """Записать настройки памяти. Не записалось — `MemoryUnavailable`: человеку нельзя сказать «выключено», когда после
+        перезапуска память включится обратно."""
+        db = self._database()
+        if db is None:
+            return
+        try:
+            await asyncio.to_thread(db.put_memory_settings, user_id, enabled, version, at, iso(datetime.now(UTC)))
+        except Exception as error:  # noqa: BLE001
+            logger.exception("memory settings write failed user=%s", user_id)
+            raise MemoryUnavailable() from error
+
     def _default_on(self, user_id: str) -> bool:
         """MEMORY_DEFAULT_ENABLED (стенды): память всем по умолчанию, пока человек явно не отказался."""
         return self._cfg.default_enabled and user_id not in self._opted_out
@@ -128,6 +160,18 @@ class CogneeMemoryBackend:
     async def _load_state(self, user_id: str) -> None:
         assert self._client is not None
         try:
+            saved = await self._read_settings(user_id)
+            if saved is not None:
+                # Решение человека хранится в базе и сильнее датасета: пауза остаётся паузой после перезапуска.
+                enabled, version, at = saved
+                self._datasets[user_id] = enabled
+                if version:
+                    self._consents[user_id] = (version, at)
+                if enabled:
+                    await self._prefetch(user_id)
+                else:
+                    self._opted_out.add(user_id)
+                return
             exists = await self._client.dataset_exists(dataset_name(user_id))
             # default_enabled: без датасета человек всё равно «включён», если сам не отказывался
             self._datasets[user_id] = exists or self._default_on(user_id)
@@ -343,6 +387,7 @@ class CogneeMemoryBackend:
                 raise MemoryNotAllowed()
             at = iso(datetime.now(UTC))
             await client.remember(f"CONSENT memory v{consent_version} {at}", dataset_name(user_id))
+            await self._write_settings(user_id, True, consent_version, at)
             self._datasets[user_id] = True
             self._opted_out.discard(user_id)
             self._consents[user_id] = (consent_version, at)
@@ -350,6 +395,8 @@ class CogneeMemoryBackend:
             self._spawn(self._prefetch(user_id))
             logger.info("cognee memory enabled user=%s", user_id)
             return {"enabled": True, "consentVersion": consent_version, "consentAt": at}
+        version, at = await self._consent_of(user_id)  # пауза не отзывает согласие: оно остаётся в строке настроек
+        await self._write_settings(user_id, False, version, at)
         self._briefs.pop(user_id, None)
         self._datasets[user_id] = False
         self._opted_out.add(user_id)
@@ -402,10 +449,14 @@ class CogneeMemoryBackend:
         raise _unsupported()
 
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
-        """«Забыть всё»: датасет человека удаляется целиком, память при этом выключается."""
+        """«Забыть всё»: данные человека в Cognee удаляются, а настройки не меняются — память остаётся включённой (или на паузе) и
+        согласие остаётся. Если память включена, датасет тут же создаётся заново с зерном согласия: так выглядит «включено, но пусто»."""
         client = self._require_client()
+        version, at = await self._consent_of(user_id)
         await client.forget_dataset(dataset_name(user_id))
-        self._drop(user_id)
-        self._datasets[user_id] = False
-        self._opted_out.add(user_id)
+        self._briefs.pop(user_id, None)
+        self._turn_recalls.pop(user_id, None)
+        self._turn_tasks.pop(user_id, None)
+        if self._effective_enabled(user_id) and version:
+            await client.remember(f"CONSENT memory v{version} {at or iso(datetime.now(UTC))}", dataset_name(user_id))
         logger.info("cognee memory forgotten user=%s", user_id)

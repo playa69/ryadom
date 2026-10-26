@@ -18,6 +18,7 @@ from app.main import create_app
 from app.memory.cognee_backend import BRIEF_QUERY, CogneeMemoryBackend, dataset_name
 from app.memory.errors import MemoryDisabled, MemoryServiceError, MemoryValidation
 from app.services.dialog_store import Dialog, Message, now_iso
+from tests.fake_db import FakeDialogDatabase
 from app.core.config import MemorySettings
 
 
@@ -348,7 +349,7 @@ async def test_patch_delete_unsupported() -> None:
         assert caught.value.status == 422 and caught.value.reason == "unsupported_in_cognee"
 
 
-async def test_forget_all_deletes_dataset_and_resets() -> None:
+async def test_forget_all_deletes_data_keeps_settings() -> None:
     fake = FakeCognee()
     service = backend(fake)
     user = uid()
@@ -356,8 +357,11 @@ async def test_forget_all_deletes_dataset_and_resets() -> None:
     await service.drain()
     assert service.brief(dialog(user))  # сводка была в кэше
     await service.forget_all(user)
+    await service.drain()
     assert fake.deleted == [dataset_name(user)]
-    assert service.enabled(user) is False
+    # «Забыть всё» не выключает память и не сбрасывает согласие: данные стёрты, настройки прежние
+    assert service.enabled(user) is True
+    assert (await service.get_memory(user))["consentVersion"] == CONSENT
     assert service.brief(dialog(user)) == ""
 
 
@@ -452,14 +456,14 @@ async def test_default_enabled_new_user_writes_without_dataset() -> None:
 
 
 async def test_default_enabled_optout_stays_off() -> None:
-    """«Забыть всё» или выключение — явный отказ: default_enabled память обратно не включает."""
+    """Выключение — явный отказ: default_enabled память обратно не включает."""
     fake = FakeCognee()
     service = backend_default_on(fake)
     user = uid()
     service.dialog_ended(dialog(user))
     await service.drain()
     assert fake.remembered  # до отказа писалось
-    await service.forget_all(user)
+    await service.update_settings(user, False, None)
     assert service.enabled(user) is False
     fake.remembered.clear()
     service.dialog_ended(dialog(user))
@@ -550,3 +554,83 @@ async def test_recall_now_reuses_the_inflight_turn_recall() -> None:
     await service.drain()
     assert found == fake.recall_text
     assert len(fake.recalls) == 1  # один поиск на двоих: фоновый и инструмент
+
+
+# ─── настройки памяти в базе: пауза и согласие переживают перезапуск (PROTEUS-242, 0.4) ─────
+
+
+def with_db(fake: FakeCognee, path: str = "mem-settings") -> tuple[CogneeMemoryBackend, FakeDialogDatabase]:
+    db = FakeDialogDatabase(path)
+    db.open()
+    return CogneeMemoryBackend(fake, memory_settings(), lambda: db), db  # type: ignore[arg-type]
+
+
+async def test_pause_survives_restart() -> None:
+    """Выключили память, агент перезапустился (новый бэкенд, тот же датасет в Cognee): память остаётся выключенной."""
+    FakeDialogDatabase.reset()
+    fake = FakeCognee()
+    user = uid()
+    service, db = with_db(fake)
+    await service.update_settings(user, True, CONSENT)
+    await service.update_settings(user, False, None)
+    assert dataset_name(user) in fake.datasets  # данные на месте, пауза не стирает
+
+    restarted = CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]
+    assert (await restarted.get_memory(user))["enabled"] is False
+    assert restarted.enabled(user) is False
+
+
+async def test_enabled_with_consent_survives_restart() -> None:
+    FakeDialogDatabase.reset()
+    fake = FakeCognee()
+    user = uid()
+    service, db = with_db(fake)
+    await service.update_settings(user, True, CONSENT)
+    await service.drain()
+
+    restarted = CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]
+    memory = await restarted.get_memory(user)
+    assert memory["enabled"] is True and memory["consentVersion"] == CONSENT
+
+
+async def test_forget_all_keeps_pause_and_consent_in_db() -> None:
+    """«Забыть всё» на паузе: данные стёрты, пауза и согласие в базе прежние, после перезапуска тоже."""
+    FakeDialogDatabase.reset()
+    fake = FakeCognee()
+    user = uid()
+    service, db = with_db(fake)
+    await service.update_settings(user, True, CONSENT)
+    await service.update_settings(user, False, None)
+    await service.forget_all(user)
+    assert fake.deleted == [dataset_name(user)]
+
+    restarted = CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]
+    assert (await restarted.get_memory(user))["enabled"] is False
+    assert db.get_memory_settings(user) == (False, CONSENT, db.get_memory_settings(user)[2])  # type: ignore[index]
+
+
+async def test_settings_write_failure_is_not_silent() -> None:
+    """Не записалось в базу — человеку не говорим «выключено»: после перезапуска память включилась бы обратно."""
+    FakeDialogDatabase.reset()
+    fake = FakeCognee()
+    user = uid()
+    service, db = with_db(fake)
+    await service.update_settings(user, True, CONSENT)
+
+    def broken(*args: Any) -> None:
+        raise RuntimeError("db down")
+
+    db.put_memory_settings = broken  # type: ignore[method-assign]
+    with pytest.raises(MemoryServiceError):
+        await service.update_settings(user, False, None)
+    assert service.enabled(user) is True  # состояние не изменилось
+
+
+async def test_erase_user_removes_settings() -> None:
+    FakeDialogDatabase.reset()
+    fake = FakeCognee()
+    user = uid()
+    service, db = with_db(fake)
+    await service.update_settings(user, True, CONSENT)
+    db.erase_user(user)
+    assert db.get_memory_settings(user) is None
