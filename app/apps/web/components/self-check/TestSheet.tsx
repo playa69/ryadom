@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, type SelfCheckFrom, type SelfCheckProgress } from '@ryadom/analytics/events'
-import { band as bandOf, isHigh, retakeAfterDays, score as scoreOf } from '@ryadom/self-check/score'
+import { band as bandOf, hasCrisisAnswer, isHigh, retakeAfterDays, score as scoreOf } from '@ryadom/self-check/score'
 import type { SelfCheckTest } from '@ryadom/self-check/types'
 import { Button } from '@ryadom/ui/components/button'
 import { BUTTON } from '../controls'
@@ -48,34 +48,14 @@ export default function TestSheet({ test, from, onClose }: { test: SelfCheckTest
     const next = answers.slice()
     next[step] = value
     setAnswers(next)
-    const crisis = test.items[step]?.crisis === true && value > 0
-    const last = step === total - 1
-    if (crisis) {
-      // The help screen comes first, whatever the score ends up as and whether or not there is a network.
-      setPhase('crisis')
+    if (step < total - 1) {
+      setStep(step + 1)
       return
     }
-    if (last) finish(next)
-    else setStep(step + 1)
-  }
-
-  function finish(finalAnswers: (number | null)[]) {
-    if (finalAnswers.every((a) => a !== null)) {
-      track(AnalyticsEvent.SelfCheckCompleted, { test_id: test.id })
-      setPhase('result')
-    } else {
-      // Answered the crisis item out of order: go to the first question left.
-      setStep(finalAnswers.findIndex((a) => a === null))
-      setPhase('question')
-    }
-  }
-
-  function afterCrisis() {
-    if (step === total - 1) finish(answers)
-    else {
-      setStep(step + 1)
-      setPhase('question')
-    }
+    track(AnalyticsEvent.SelfCheckCompleted, { test_id: test.id })
+    // After the last question and before the result: the help screen comes first whenever a crisis item fired,
+    // whatever the score ends up as and whether or not there is a network. No event is sent for it.
+    setPhase(hasCrisisAnswer(test, next as number[]) ? 'crisis' : 'result')
   }
 
   function requestClose() {
@@ -177,16 +157,16 @@ export default function TestSheet({ test, from, onClose }: { test: SelfCheckTest
 
       {phase === 'crisis' && (
         <div className="flex flex-col gap-3 text-center" data-testid="test-crisis" role="alertdialog" aria-label="Помощь">
-          <h2 className="text-xl font-semibold">Спасибо, что ответил честно</h2>
-          <p className="text-dim">Тебе может быть очень тяжело. Ты не обязан справляться один — помощь есть прямо сейчас.</p>
+          <h2 className="text-xl font-semibold">Ты отметил(а), что бывают мысли о смерти или о том, чтобы навредить себе</h2>
+          <p className="text-dim">С этим не нужно справляться одному. Если тяжело прямо сейчас — позвони, это бесплатно и анонимно.</p>
           {/* No event for any of these: a crisis answer is never reported and never tied to a person. */}
           <Button variant="outline" className={`${BUTTON} border-sos text-sos`} data-testid="crisis-call" onClick={() => openSos()}>
-            Позвонить на линию помощи
+            Позвонить
           </Button>
           <Button className={BUTTON} data-testid="crisis-talk" onClick={() => router.push('/')}>
             Поговорить с Рядом
           </Button>
-          <Button variant="outline" className={BUTTON} data-testid="crisis-result" onClick={afterCrisis}>
+          <Button variant="outline" className={BUTTON} data-testid="crisis-result" onClick={() => setPhase('result')}>
             Посмотреть результат
           </Button>
           <p className="text-xs text-faint">Этот ответ не сохраняется и не передаётся.</p>

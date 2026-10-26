@@ -13,6 +13,10 @@ export class EndAgentDialogRequestHandler
     const body: Record<string, unknown> = {}
     if (request.takeaway !== null) body.takeaway = request.takeaway
     if (request.tensionAfter !== null) body.tensionAfter = request.tensionAfter
+    if (request.recap !== null) {
+      body.recap = request.recap
+      body.recapSource = request.recapSource
+    }
 
     const { status, body: response } = await callAgent<{ summary?: AgentDialogSummaryResponse | null }>(
       `${userDialogsPath(request.userId)}/${encodeURIComponent(request.dialogId)}/end`,

@@ -1,5 +1,6 @@
 import { APP_URL } from '../playwright.config'
 import { clearMailbox } from '../support/mail'
+import { SELF_CHECK_ON } from '../support/flags'
 import { seedMarks } from '../support/diary'
 import { trackSession } from '../support/session'
 import { expect, test } from '../support/fixtures'
@@ -37,9 +38,19 @@ test('дневник: отметка в два касания, график, м�
   await expect(page.getByTestId('diary-chart-empty')).toHaveText('Отмечай настроение каждый день — здесь появится график')
   await expect(page.getByTestId('diary-week-hint')).toContainText('(сейчас: 0 из 3)')
   await expect(page.getByTestId('diary-streak')).toHaveCount(0)
-  // Neither the self-check (PROTEUS-218) nor the events of the week live on this page, and memory is not mentioned.
+  // The events of the week do not live on this page, and memory is not mentioned. The block «Самопроверка» and the
+  // segment «Тесты» exist only with the tests switched on (add-self-check-tests, D9): the stack has them on unless
+  // it was built with `E2E_SELF_CHECK=0`.
   await expect(page.getByTestId('diary-events-card')).toHaveCount(0)
-  await expect(page.getByRole('main')).not.toContainText(/Самопроверка|События|памят/i)
+  await expect(page.getByRole('main')).not.toContainText(/События|памят/i)
+  if (SELF_CHECK_ON) {
+    await expect(page.getByTestId('self-check-block')).toBeVisible()
+    await expect(page.getByTestId('diary-segment-tests')).toBeVisible()
+  } else {
+    await expect(page.getByRole('main')).not.toContainText('Самопроверка')
+    await expect(page.getByTestId('self-check-block')).toHaveCount(0)
+    await expect(page.getByTestId('diary-segment-tests')).toHaveCount(0)
+  }
   await shot(page, 'web-diary-empty')
 
   // ── два касания: «Нормально», затем «Работа» ──────────────────────────────
@@ -136,7 +147,7 @@ test('дневник: первый текст недели пишется сам
     .toContain('Тяжёлых дней было 4')
   await openWebApp(page, '/diary')
   await expect(page.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 4')
-  await expect(page.getByTestId('diary-week-people')).toBeVisible()
+  await expect(page.getByTestId('diary-week-people')).toHaveCount(0)
   await shot(page, 'web-diary-week-summary')
 
   // «Обновить итоги» is there once a text exists; a change of mood is rewritten by the button at once (not by the six-hour pass).

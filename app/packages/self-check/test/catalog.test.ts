@@ -42,7 +42,7 @@ describe('Mini-IPIP', () => {
   })
 })
 
-import { retakeAfterDays } from '../src/score'
+import { band, isHigh, retakeAfterDays } from '../src/score'
 
 describe('повтор теста', () => {
   it('высокий уровень — через 2 недели, остальные — через 4', () => {
@@ -58,5 +58,16 @@ describe('видимость', () => {
   it('без preview в проде пусто, с preview видны тесты на ревью', () => {
     expect(visible(false)).toEqual([])
     expect(visible(true).length).toBe(7)
+  })
+})
+
+describe('PHQ-9 по спеке', () => {
+  it('«сильная выраженность» и карточка специалиста от 20; 15–19 — без карточки', () => {
+    const phq = byId('phq9')!
+    expect(phq.highBandFrom).toBe(20)
+    expect(band(phq, 21)?.label).toBe('сильная выраженность')
+    expect(isHigh(phq, 21)).toBe(true)
+    expect(isHigh(phq, 19)).toBe(false)
+    expect(phq.items[8]?.crisis).toEqual({ from: 1 })
   })
 })

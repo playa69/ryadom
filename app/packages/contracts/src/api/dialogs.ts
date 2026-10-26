@@ -69,12 +69,41 @@ export interface StartDialogApiResponse {
   memoryEnabled: boolean
 }
 
+/**
+ * The recap of a conversation (add-mood-diary D13): three parts, in the second person. It belongs to the journal and feeds
+ * the week summary of the diary; it does not depend on the "Memory" switch and never goes into memory.
+ */
+export interface DialogRecapApi {
+  /** «What we talked about». */
+  about: string
+  /** «The main thing». */
+  main: string
+  /** «What we agreed»: 0 to 3 items. */
+  agreements: string[]
+}
+
+/** `pending`: being written (up to a minute); `ready`: there; `none`: there is none (short, crisis or switched off). */
+export type DialogRecapStatus = 'pending' | 'ready' | 'none'
+/** `manual`: written by the person; `draft`: pre-filled by the model and edited; `auto`: written in the background. */
+export type DialogRecapSource = 'manual' | 'draft' | 'auto'
+
+export const RECAP_ABOUT_MAX = 600
+export const RECAP_MAIN_MAX = 600
+export const RECAP_AGREEMENT_MAX = 240
+export const RECAP_AGREEMENTS_MAX = 3
+
 export interface DialogSummaryApiResponse {
   title: string
   themes: string[]
   /** Self-reported tension before and after, 1 to 10. */
   tensionBefore: number | null
   tensionAfter: number | null
+  /** Absent from a server that has no recaps; a client reads a missing field as `none`. */
+  recap?: DialogRecapApi | null
+  recapStatus?: DialogRecapStatus
+  recapSource?: DialogRecapSource | null
+  /** `false`: no recap can be made for this conversation (little said, a crisis, held without memory): the journal does not offer one. */
+  recapAvailable?: boolean
 }
 
 export interface DialogListItemApiResponse {
@@ -86,6 +115,11 @@ export interface DialogListItemApiResponse {
   summary: DialogSummaryApiResponse | null
   /** `off`: a conversation "without memory", deleted 24 hours after its last message. */
   memoryMode: DialogMemoryMode
+  /**
+   * `false`: a conversation the person asked not to keep (`add-unsaved-dialog`): the journal shows a mark without text,
+   * with the date, the time and how long it lasted. Absent or `true`: an ordinary conversation.
+   */
+  saved?: boolean
 }
 
 export interface ListDialogsApiResponse {
@@ -118,6 +152,61 @@ export interface EndDialogApiRequest {
   takeaway?: string
   /** Tension after the conversation, 1 to 10. */
   tensionAfter?: number
+  /** The recap the person wrote (or pre-filled and edited); without it and with "Write the recap myself" on, one is written in the background. */
+  recap?: DialogRecapApi
+  recapSource?: 'manual' | 'draft'
+}
+
+/** `PUT /api/dialogs/:id/recap`: the recap of an ended conversation, written in the journal. */
+export interface PutDialogRecapApiRequest extends DialogRecapApi {
+  source?: 'manual' | 'draft'
+}
+
+export interface PutDialogRecapApiResponse {
+  summary: DialogSummaryApiResponse | null
+}
+
+/** `POST /api/dialogs/:id/recap/draft`: a draft for "Pre-fill"; nothing is saved. */
+export interface DraftDialogRecapApiResponse {
+  recap: DialogRecapApi
+}
+
+export enum DialogRecapApiErrorCode {
+  USER_NOT_FOUND = 'USER_NOT_FOUND',
+  USER_INACTIVE = 'USER_INACTIVE',
+  DIALOG_NOT_FOUND = 'DIALOG_NOT_FOUND',
+  /** No recap for this conversation: the person said too little, there was a crisis, or it is not kept. */
+  RECAP_NOT_AVAILABLE = 'RECAP_NOT_AVAILABLE',
+  /** The model did not write a draft: the person can write the recap themselves. */
+  RECAP_UNAVAILABLE = 'RECAP_UNAVAILABLE',
+}
+
+/** `DELETE /api/dialogs/:id`: the conversation, its recap and the share link go; the facts of memory stay. */
+export interface DeleteDialogApiResponse {
+  deleted: true
+}
+
+/** A line of `GET /api/recaps`: a conversation with its recap (the journal reads it). */
+export interface DialogRecapItemApiResponse {
+  dialogId: string
+  startedAt: string
+  title: string | null
+  recap: DialogRecapApi
+  recapSource: DialogRecapSource | null
+}
+
+export interface ListDialogRecapsApiResponse {
+  items: DialogRecapItemApiResponse[]
+  next: string | null
+}
+
+/** `GET`/`PUT /api/dialog-settings`: "Write the recap automatically" (on by default), apart from the settings of memory. */
+export interface DialogSettingsApiResponse {
+  recapEnabled: boolean
+}
+
+export interface PutDialogSettingsApiRequest {
+  recapEnabled: boolean
 }
 
 export interface EndDialogApiResponse {
@@ -207,6 +296,8 @@ export interface EndFrame {
   type: DialogClientFrame.End
   takeaway?: string
   tensionAfter?: number
+  recap?: DialogRecapApi
+  recapSource?: 'manual' | 'draft'
 }
 
 export interface AudioStartFrame {

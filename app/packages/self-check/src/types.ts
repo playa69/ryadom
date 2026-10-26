@@ -10,8 +10,8 @@ export type Item = {
   text: string
   /** Обратный пункт: балл ответа считается как `min + max - value`. */
   reverse?: boolean
-  /** Ненулевой ответ открывает экран помощи (PHQ-9, пункт 9). */
-  crisis?: boolean
+  /** Ответ от `from` и выше открывает экран помощи после последнего вопроса (PHQ-9, пункт 9: от 1). */
+  crisis?: { from: number }
 }
 
 export type Subscale = { id: string; label: string; items: number[] }
@@ -48,6 +48,8 @@ export type SelfCheckTest = {
   source: string
   license: string
   status: TestStatus
+  /** Кто проверил текст и дату ревью; `ready` ставит владелец после ревью. */
+  reviewedBy?: { name: string; date: string }
 }
 
 export type SubscaleScore = { id: string; label: string; score: number }

@@ -123,6 +123,17 @@ DIALOG_EVICTIONS_SKIPPED_TOTAL = Counter(
     ["reason"],
 )
 
+# Срок хранения разговоров (D14, add-mood-diary): сухой прогон считает, боевой удаляет.
+DIALOG_RETENTION_WOULD_DELETE = Gauge(
+    "agent_dialogs_retention_would_delete",
+    "Разговоры старше срока хранения (DIALOG_RETENTION_DAYS) на последнем проходе: столько удалил бы проход, а в сухом прогоне не удалил.",
+)
+
+DIALOG_RETENTION_DELETED_TOTAL = Counter(
+    "agent_dialogs_retention_deleted_total",
+    "Разговоры, удалённые проходом по сроку хранения (DIALOG_RETENTION_DAYS).",
+)
+
 # kind: first — первая загрузка человека после старта пода; reload — загрузка после выгрузки.
 DIALOG_LOADS_TOTAL = Counter(
     "agent_dialog_loads_total",

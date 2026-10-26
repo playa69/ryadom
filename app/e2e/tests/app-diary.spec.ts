@@ -138,7 +138,7 @@ test('три вкладки помещаются на ширине 320px без 
   await shot(page, 'diary-tabs-320')
 })
 
-test('первый текст недели пишется сам, потом — «Обновить итоги» и автоматическая перезапись после паузы; «Люди рядом» после тяжёлой недели', async ({ page, request, shot }) => {
+test('первый текст недели пишется сам, потом — «Обновить итоги» и автоматическая перезапись после паузы', async ({ page, request, shot }) => {
   test.setTimeout(900_000)
   const session = trackSession(page)
   await openApp(page)
@@ -169,7 +169,7 @@ test('первый текст недели пишется сам, потом —
   await openTab(page, 'Дневник')
   await expect(diary.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 4')
   await expect(diary.getByTestId('diary-week-busy')).toHaveCount(0)
-  await expect(diary.getByTestId('diary-week-people')).toBeVisible()
+  await expect(diary.getByTestId('diary-week-people')).toHaveCount(0)
   await shot(page, 'diary-week-summary')
 
   // The first text is written; «Обновить итоги» is there now. A change of mood does NOT rewrite it by itself within the six hours.

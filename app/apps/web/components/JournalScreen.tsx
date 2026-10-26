@@ -18,8 +18,10 @@ import { BUSY } from './busy'
 import { BUTTON } from './controls'
 import { BADGE_COMPACT, conversationHref, RetryButton, StatePanel } from './JournalParts'
 import { SECTION_HEADING } from './Page'
+import RecapAutoSetting from './RecapAutoSetting'
 
 function entryTitle(item: DialogListItemApiResponse): string {
+  if (item.saved === false) return 'Разговор не сохранён'
   return item.summary?.title || 'Разговор'
 }
 
@@ -222,6 +224,8 @@ export default function JournalScreen() {
               </Button>
             </Alert>
           )}
+
+          <RecapAutoSetting />
 
           <div className="flex flex-col gap-7" data-testid="journal-list">
             {groups.map((group) => (

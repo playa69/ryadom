@@ -3,7 +3,7 @@
  * the local day, one note a day, the week summaries the agent writes and the app keeps.
  */
 import { and, eq } from 'drizzle-orm'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import {
   CreateWidgetTokenOperation,
@@ -18,7 +18,23 @@ import {
   CreateWeekSummaryOperationErrorCode,
 } from '../src/processes/diary'
 import { getDb } from '../src/shared'
-import { json, mockFetch, registerConfirmedUser } from './helpers'
+import { json, mockFetch as mockFetchRaw, registerConfirmedUser } from './helpers'
+
+/** The recaps of the conversations of the week, as the agent lists them; tests set them, the default is none. */
+let agentRecaps: unknown[] = []
+afterEach(() => {
+  agentRecaps = []
+})
+
+/** The diary reads the recaps of the week with the marks: every agent in these tests answers that list too. */
+const mockFetch: typeof mockFetchRaw = (routes) => {
+  const raw = mockFetchRaw({ 'GET http://agent.test/v1/users/*/recaps': () => json({ items: agentRecaps, next: null }), ...routes })
+  // The tests count the calls that matter (digests); the reads of recaps are not among them.
+  const calls = new Proxy(raw.calls, {
+    get: (target, prop) => Reflect.get(target.filter((call) => !call.url.pathname.endsWith('/recaps')), prop),
+  })
+  return { fn: raw.fn, calls }
+}
 
 /** Saturday 24 Oct 2026, 12:00 in Moscow; the week starts on Monday the 19th. */
 const NOW = new Date('2026-10-24T09:00:00Z')
@@ -541,5 +557,109 @@ describe('итог прошлой недели на экране', () => {
     expect(await read()).toBeNull()
     await getDb().update(diarySummaries).set({ stats: { final: true }, text: 'прошлая' }).where(eq(diarySummaries.periodStart, '2026-10-12'))
     expect(await read()).toMatchObject({ periodStart: '2026-10-12', text: 'прошлая' })
+  })
+})
+
+describe('итоги недели читают итоги разговоров (add-mood-diary, D13)', () => {
+  const tick = (now: Date) => diaryProcess.execute(new RunWeeklyDigestsOperation({ now }))
+  const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000)
+  const hours = (n: number) => minutes(n * 60)
+  const weekRows = (userId: string) => getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, userId))
+  /** What the agent lists for a conversation that began at `startedAt` and got its recap at `recapAt`. */
+  const recapItem = (dialogId: string, startedAt: string, recapAt: string, agreements: string[] = []) => ({
+    dialogId,
+    startedAt,
+    endedAt: startedAt,
+    title: 'Разговор',
+    recap: { about: 'Ты говорил о работе.', main: 'Стало легче.', agreements },
+    recapSource: 'auto',
+    recapAt,
+  })
+  const threeMarks = async (userId: string) => {
+    for (const day of ['19', '20', '21']) await mark(userId, `2026-10-${day}`)
+  }
+
+  it('итоги разговоров недели уходят агенту вторым входом; чужой недели и чужой день по поясу человека не берутся', async () => {
+    const user = await registerConfirmedUser()
+    await threeMarks(user.id)
+    agentRecaps = [
+      recapItem('d-week', '2026-10-20T10:00:00Z', '2026-10-20T10:05:00Z', ['Отдохнуть вечером']),
+      // 18 Oct 22:30 UTC is Monday 19 Oct 01:30 in Moscow: this conversation belongs to the week of the 19th.
+      recapItem('d-late-sunday', '2026-10-18T22:30:00Z', '2026-10-18T22:40:00Z'),
+      recapItem('d-before', '2026-10-18T10:00:00Z', '2026-10-18T10:05:00Z'),
+    ]
+    const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await tick(NOW)).toMatchObject({ weekly: 1 })
+    const sent = JSON.parse(calls[0]!.body as string)
+    expect(sent.recaps).toEqual([
+      { date: '2026-10-20', about: 'Ты говорил о работе.', main: 'Стало легче.', agreements: ['Отдохнуть вечером'] },
+      { date: '2026-10-19', about: 'Ты говорил о работе.', main: 'Стало легче.', agreements: [] },
+    ])
+    expect((await weekRows(user.id))[0]?.stats).toMatchObject({ recapsCount: 2 })
+  })
+
+  it('без итогов разговоров текст строится по отметкам, ошибки нет', async () => {
+    const user = await registerConfirmedUser()
+    await threeMarks(user.id)
+    const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await tick(NOW)).toMatchObject({ weekly: 1 })
+    expect(JSON.parse(calls[0]!.body as string).recaps).toEqual([])
+  })
+
+  it('новый итог разговора делает текст устаревшим: он пишется заново, но не чаще раза в шесть часов', async () => {
+    const user = await registerConfirmedUser()
+    await threeMarks(user.id)
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Первый текст.', stats: {} }) })
+    await tick(NOW)
+
+    // The conversation ended and its recap came a minute after the text was written.
+    agentRecaps = [recapItem('d-new', '2026-10-24T09:00:00Z', minutes(2).toISOString())]
+    const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Текст с итогом разговора.', stats: {} }) })
+    expect(await tick(minutes(4))).toMatchObject({ weekly: 0 }) // the gap of six hours is not over
+    expect(calls).toHaveLength(0)
+    expect(await tick(hours(7))).toMatchObject({ weekly: 1 })
+    expect(JSON.parse(calls[0]!.body as string).recaps).toHaveLength(1)
+    expect((await weekRows(user.id))[0]).toMatchObject({ text: 'Текст с итогом разговора.' })
+    // The same recap does not make it stale again.
+    expect(await tick(hours(14))).toMatchObject({ weekly: 0 })
+  })
+
+  it('итог разговора, которому нет минуты, ждёт: пока он свежий, текст не переписывается', async () => {
+    const user = await registerConfirmedUser()
+    await threeMarks(user.id)
+    agentRecaps = [recapItem('d-fresh', '2026-10-24T08:59:00Z', new Date(NOW.getTime() - 20_000).toISOString())]
+    const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await tick(NOW)).toMatchObject({ weekly: 0 })
+    expect(calls).toHaveLength(0)
+    expect(await tick(minutes(1))).toMatchObject({ weekly: 1 })
+  })
+
+  it('агент не отдаёт список итогов: текст не пишется без них, следующий тик пробует снова', async () => {
+    const user = await registerConfirmedUser()
+    await threeMarks(user.id)
+    const { calls } = mockFetch({
+      'GET http://agent.test/v1/users/*/recaps': () => json({ error: { code: 'AGENT_INTERNAL' } }, 503),
+      'POST http://agent.test/v1/users/*/digests': digestRoute,
+    })
+    expect(await tick(NOW)).toMatchObject({ weekly: 0 })
+    expect(calls).toHaveLength(0)
+    expect(await weekRows(user.id)).toEqual([])
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await tick(minutes(1))).toMatchObject({ weekly: 1 })
+  })
+
+  it('удалённый разговор больше не входит: итоги недели пересобираются из того, что осталось', async () => {
+    const user = await registerConfirmedUser()
+    await threeMarks(user.id)
+    agentRecaps = [recapItem('d-1', '2026-10-20T10:00:00Z', '2026-10-20T10:05:00Z')]
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    await tick(NOW)
+    // The person deleted the conversation: the agent no longer lists it, and the text of its week goes at once.
+    agentRecaps = []
+    await recomputeSummariesAfterDialogDeleted({ userId: user.id, dialogAt: new Date('2026-10-20T10:00:00Z'), now: NOW })
+    expect(await weekRows(user.id)).toEqual([])
+    const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    expect(await tick(minutes(2))).toMatchObject({ weekly: 1 })
+    expect(JSON.parse(calls[0]!.body as string).recaps).toEqual([])
   })
 })

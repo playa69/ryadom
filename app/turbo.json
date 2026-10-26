@@ -5,6 +5,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "env": ["BASE_PATH", "PWA_BASE", "RELEASE", "NEXT_PUBLIC_SELF_CHECK_ENABLED", "NEXT_PUBLIC_SELF_CHECK_PREVIEW"],
       "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "typecheck": {

@@ -12,6 +12,32 @@ export interface AgentDialogSummaryResponse {
   /** What was said in the whole dialog (the agent counts it); absent from an agent that does not. For analytics only. */
   userMessages?: number | null
   assistantMessages?: number | null
+  /** The recap of the conversation (add-mood-diary D13); absent from an agent that has none. */
+  recap?: AgentRecapResponse | null
+  recapStatus?: 'pending' | 'ready' | 'none'
+  recapSource?: 'manual' | 'draft' | 'auto' | null
+  /** Whether a recap can be made for this conversation at all. */
+  recapAvailable?: boolean
+  /** When the recap was stored, ISO. */
+  recapAt?: string | null
+}
+
+/** «What we talked about», «the main thing», «what we agreed» (0-3 items), in the second person. */
+export interface AgentRecapResponse {
+  about: string
+  main: string
+  agreements: string[]
+}
+
+/** A conversation with its recap, as the list of recaps returns it (the journal and the week summary read it). */
+export interface AgentRecapItemResponse {
+  dialogId: string
+  startedAt: string
+  endedAt: string | null
+  title: string | null
+  recap: AgentRecapResponse
+  recapSource: 'manual' | 'draft' | 'auto' | null
+  recapAt: string | null
 }
 
 export interface AgentDialogListItemResponse {
@@ -21,6 +47,8 @@ export interface AgentDialogListItemResponse {
   summary: AgentDialogSummaryResponse | null
   /** `off`: a conversation "without memory". Absent from an agent without memory, which means `on`. */
   memoryMode?: string
+  /** `false`: a conversation kept only as a mark (`add-unsaved-dialog`); absent from an agent that has none. */
+  saved?: boolean
 }
 
 export interface AgentMessageResponse {

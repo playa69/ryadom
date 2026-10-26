@@ -56,7 +56,14 @@ import type {
   DialogApiErrorCode,
   DialogApiResponse,
   DialogMode,
+  DeleteDialogApiResponse,
+  DialogRecapApiErrorCode,
+  DialogSettingsApiResponse,
+  DraftDialogRecapApiResponse,
   EndDialogApiRequest,
+  ListDialogRecapsApiResponse,
+  PutDialogRecapApiRequest,
+  PutDialogRecapApiResponse,
   EndDialogApiResponse,
   ListDialogsApiResponse,
   StartDialogApiErrorCode,
@@ -102,6 +109,7 @@ import {
   ApiPath,
   dialogEndPath,
   dialogPath,
+  dialogRecapPath,
   dialogSharePath,
   memoryFactPath,
   sessionPath,
@@ -741,6 +749,40 @@ export function createClient(config: ClientConfig) {
         method: 'POST',
         body: data,
       }),
+
+    /** «Удалить разговор»: the conversation, its recap and the share link go; the facts of memory stay. */
+    deleteDialog: (dialogId: string): Promise<ApiOutcome<DeleteDialogApiResponse, DialogApiErrorCode>> =>
+      apiOutcome<DeleteDialogApiResponse, DialogApiErrorCode>(dialogPath(dialogId), { method: 'DELETE' }),
+
+    /** The recap of an ended conversation, written by the person in the journal. */
+    putDialogRecap: (
+      dialogId: string,
+      data: PutDialogRecapApiRequest,
+    ): Promise<ApiOutcome<PutDialogRecapApiResponse, DialogRecapApiErrorCode>> =>
+      apiOutcome<PutDialogRecapApiResponse, DialogRecapApiErrorCode>(dialogRecapPath(dialogId), {
+        method: 'PUT',
+        body: data,
+      }),
+
+    /** «Предзаполнить»: a draft the person edits; nothing is saved. */
+    draftDialogRecap: (
+      dialogId: string,
+    ): Promise<ApiOutcome<DraftDialogRecapApiResponse, DialogRecapApiErrorCode>> =>
+      apiOutcome<DraftDialogRecapApiResponse, DialogRecapApiErrorCode>(`${dialogRecapPath(dialogId)}/draft`, {
+        method: 'POST',
+      }),
+
+    listDialogRecaps: (before?: string): Promise<ListDialogRecapsApiResponse> =>
+      apiFetch<ListDialogRecapsApiResponse>(
+        `${ApiPath.DialogRecaps}${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    /** «Подводить итог автоматически». */
+    getDialogSettings: (): Promise<DialogSettingsApiResponse> =>
+      apiFetch<DialogSettingsApiResponse>(ApiPath.DialogSettings),
+
+    putDialogSettings: (recapEnabled: boolean): Promise<DialogSettingsApiResponse> =>
+      apiFetch<DialogSettingsApiResponse>(ApiPath.DialogSettings, { method: 'PUT', body: { recapEnabled } }),
 
     /** A live dialog connection bound to this client's session and address. */
     createDialogSocket: (

@@ -1,5 +1,6 @@
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
+import { SELF_CHECK_ON } from '../support/flags'
 import { openWebApp, registerAndConfirm, uniqueEmail } from '../support/web'
 
 /**
@@ -9,7 +10,7 @@ import { openWebApp, registerAndConfirm, uniqueEmail } from '../support/web'
  * проходится без сети. Сохранение и история появятся с серверной частью (миграция 0010), здесь их нет.
  * Один сценарий на одну регистрацию, как в остальных web-спеках.
  */
-test.use({ video: 'on' })
+test.skip(!SELF_CHECK_ON, 'тесты выключены (E2E_SELF_CHECK=0): блока и сегмента нет, см. web-diary')
 
 test('тесты: самопроверка, каталог, прохождение, результат, кризисный пункт, без сети', async ({ page, shot }) => {
   test.setTimeout(180_000)
@@ -75,7 +76,7 @@ test('тесты: самопроверка, каталог, прохождени
   // Экран помощи до результата, без пропуска: Esc и клик мимо его не закрывают.
   const crisis = page.getByTestId('test-crisis')
   await expect(crisis).toBeVisible()
-  await expect(crisis).toContainText('Спасибо, что ответил честно')
+  await expect(crisis).toContainText('Ты отметил(а), что бывают мысли о смерти')
   await page.keyboard.press('Escape')
   await expect(crisis).toBeVisible()
   await expect(page.getByTestId('test-close')).toHaveCount(0)
@@ -87,7 +88,7 @@ test('тесты: самопроверка, каталог, прохождени
   await expect(crisis).toBeVisible()
   await page.getByTestId('crisis-result').click()
   await expect(page.getByTestId('result-score')).toContainText('25')
-  await expect(page.getByTestId('result-level')).toHaveText('высокая выраженность')
+  await expect(page.getByTestId('result-level')).toHaveText('сильная выраженность')
   await expect(page.getByTestId('result-specialist')).toContainText('Поговорить со специалистом')
   await expect(page.getByTestId('result-retake')).toContainText('через 2 недели')
   await shot(page, 'web-self-check-result-high')

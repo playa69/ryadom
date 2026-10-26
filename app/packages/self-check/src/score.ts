@@ -62,9 +62,18 @@ export function isHigh(t: SelfCheckTest, value: number): boolean {
   return t.highBandFrom !== undefined && value >= t.highBandFrom
 }
 
-/** Есть ли кризисный ответ: ненулевой на пункте с `crisis`. */
+/** Номера кризисных пунктов, на которые дан ответ от порога `crisis.from` и выше (от нуля). */
+export function crisisTriggered(t: SelfCheckTest, answers: readonly number[]): number[] {
+  const hit: number[] = []
+  t.items.forEach((it, i) => {
+    if (it.crisis && (answers[i] ?? -Infinity) >= it.crisis.from) hit.push(i)
+  })
+  return hit
+}
+
+/** Есть ли кризисный ответ: экран помощи показывается после последнего вопроса, до результата. */
 export function hasCrisisAnswer(t: SelfCheckTest, answers: readonly number[]): boolean {
-  return t.items.some((it, i) => it.crisis === true && (answers[i] ?? 0) > 0)
+  return crisisTriggered(t, answers).length > 0
 }
 
 /**

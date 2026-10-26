@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { band, hasCrisisAnswer, isHigh, score } from '../src/score'
+import { band, crisisTriggered, hasCrisisAnswer, isHigh, score } from '../src/score'
 import type { SelfCheckTest } from '../src/types'
 
 const opts = (n: number) => Array.from({ length: n }, (_, v) => ({ label: String(v), value: v }))
 const items = (n: number, reverse: number[] = [], crisis: number[] = []) =>
-  Array.from({ length: n }, (_, i) => ({ text: `q${i + 1}`, reverse: reverse.includes(i), crisis: crisis.includes(i) }))
+  Array.from({ length: n }, (_, i) => ({ text: `q${i + 1}`, reverse: reverse.includes(i), crisis: crisis.includes(i) ? { from: 1 } : undefined }))
 const base = { version: 1, code: 'T', title: 'T', subtitle: '', icon: 'x', preface: '', source: '', license: '', status: 'review' as const }
 
 const who5: SelfCheckTest = {
@@ -69,5 +69,13 @@ describe('band / crisis', () => {
   it('PHQ-9, пункт 9: ненулевой ответ — кризис', () => {
     expect(hasCrisisAnswer(phq9, [0, 0, 0, 0, 0, 0, 0, 0, 1])).toBe(true)
     expect(hasCrisisAnswer(phq9, [3, 3, 3, 3, 3, 3, 3, 3, 0])).toBe(false)
+  })
+})
+
+describe('crisis { from }', () => {
+  it('порог from: ответ ниже — нет, от порога и выше — да, номера сработавших пунктов', () => {
+    const t: SelfCheckTest = { ...phq9, items: phq9.items.map((it, i) => (i === 0 ? { ...it, crisis: { from: 3 } } : it)) }
+    expect(crisisTriggered(t, [2, 0, 0, 0, 0, 0, 0, 0, 0])).toEqual([])
+    expect(crisisTriggered(t, [3, 0, 0, 0, 0, 0, 0, 0, 1])).toEqual([0, 8])
   })
 })

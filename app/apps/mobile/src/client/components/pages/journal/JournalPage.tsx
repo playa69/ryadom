@@ -12,6 +12,7 @@ import { useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import DiaryShell from '../diary/DiaryShell'
 import { formatJournalDate, nbspDash, tensionLabel } from './format'
 import { JournalEntryBody } from './JournalEntryPage'
+import RecapAutoSetting from './RecapAutoSetting'
 
 /**
  * Journal: a feed of past conversations with their summaries. The agent stores the
@@ -93,6 +94,7 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
                   </Button>
                 </Block>
               )}
+              <RecapAutoSetting />
               <BlockTitle>Разговоры</BlockTitle>
               <List inset strong dividers mediaList className="rd-menu">
                 {items.map((item) => {
@@ -105,7 +107,7 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
                         isWide && openId === item.dialogId ? 'rd-journal-item rd-journal-item--open' : 'rd-journal-item'
                       }
                       data-testid="journal-item"
-                      title={nbspDash(item.summary?.title ?? 'Разговор')}
+                      title={nbspDash(item.saved === false ? 'Разговор не сохранён' : (item.summary?.title ?? 'Разговор'))}
                       subtitle={mark ? undefined : formatJournalDate(item.startedAt)}
                       text={item.summary?.themes.join(', ')}
                       after={tensionLabel(item) ?? undefined}
@@ -137,7 +139,7 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
         {isWide && (
           <div className="rd-split-main" data-testid="journal-pane">
             {openId ? (
-              <JournalEntryBody key={openId} dialogId={openId} heading />
+              <JournalEntryBody key={openId} dialogId={openId} heading onDeleted={() => journal.open(null)} />
             ) : (
               // With nothing in the list there is nothing to choose: the list's own message says it all.
               items !== null &&

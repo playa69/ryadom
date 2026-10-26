@@ -2,9 +2,7 @@
 
 import { Card } from '@ryadom/ui/components/card'
 import { Button } from '@ryadom/ui/components/button'
-import { wave1 } from '@ryadom/self-check/catalog'
-import { SELF_CHECK_PREVIEW } from '@/lib/self-check'
-import { visible } from '@ryadom/self-check/catalog'
+import { shownWave1 } from '@/lib/self-check'
 import { BUTTON } from '../controls'
 import { lengthLine } from './ui'
 import { useSelfCheck } from './useSelfCheck'
@@ -12,7 +10,7 @@ import { useSelfCheck } from './useSelfCheck'
 /** The block «Самопроверка» in the segment «Дневник»: the six scales of wave 1. */
 export default function SelfCheckBlock() {
   const { start } = useSelfCheck()
-  const tests = visible(SELF_CHECK_PREVIEW, wave1)
+  const tests = shownWave1()
   if (tests.length === 0) return null
   return (
     <Card className="gap-1 rounded-lg px-5 py-5 shadow-none" data-testid="self-check-block">

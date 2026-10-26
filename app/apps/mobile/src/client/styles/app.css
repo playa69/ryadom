@@ -2919,6 +2919,26 @@ input:-webkit-autofill:focus {
   padding: var(--ryadom-s-4) 0;
 }
 
+.rd-week-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.rd-week-refresh {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 44px;
+  margin: -12px -8px 0 0;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--ryadom-text-faint);
+  background: none;
+  border: 0;
+}
+
 .rd-week-building {
   display: flex;
   gap: var(--ryadom-s-2);
@@ -2940,4 +2960,99 @@ input:-webkit-autofill:focus {
   font-size: 15px;
   line-height: 1.55;
   color: var(--ryadom-text);
+}
+
+/* ─── Итог разговора (add-mood-diary, D13) ─────────────────────────────────── */
+
+.rd-sheet-body--scroll {
+  max-height: 88vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* In a column of fixed height the children must scroll, not shrink: a squeezed button has no height left to tap. */
+.rd-sheet-body--scroll > * {
+  flex-shrink: 0;
+}
+
+.rd-recap-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-recap-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-1);
+}
+
+.rd-recap-area {
+  min-height: 64px;
+}
+
+.rd-recap-draft {
+  align-self: flex-start;
+}
+
+.rd-recap-auto {
+  display: flex;
+  align-items: center;
+  gap: var(--ryadom-s-3);
+  min-height: 44px;
+  font-size: var(--ryadom-t-md);
+}
+
+.rd-recap-auto input {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.rd-recap-auto--setting {
+  align-items: flex-start;
+  margin: var(--ryadom-s-4) var(--ryadom-s-4) 0;
+}
+
+.rd-recap-auto--setting .rd-caption {
+  display: block;
+}
+
+.rd-link-button {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 var(--ryadom-s-1);
+  border: 0;
+  background: none;
+  color: var(--ryadom-text-dim, inherit);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.rd-recap {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-1);
+}
+
+.rd-recap dd {
+  margin: 0 0 var(--ryadom-s-2);
+  overflow-wrap: anywhere;
+}
+
+.rd-recap-list {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.rd-recap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-danger-button {
+  color: var(--ryadom-danger);
 }

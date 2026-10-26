@@ -4,6 +4,15 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  DeleteDialogOperation,
+  DeleteDialogOperationErrorCode,
+  DraftRecapOperation,
+  DraftRecapOperationErrorCode,
+  GetDialogSettingsOperation,
+  ListRecapsOperation,
+  PutDialogSettingsOperation,
+  PutRecapOperation,
+  PutRecapOperationErrorCode,
   dialogsProcess,
   EndDialogOperation,
   EndDialogOperationErrorCode,
@@ -14,6 +23,11 @@ import {
   StartDialogOperationErrorCode,
 } from '../src/processes/dialogs'
 import { agentApiIntegration, StartAgentDialogRequest } from '../src/integrations/agent-api'
+import {
+  CreateDialogShareCommand,
+  dialogSharesManager,
+  GetActiveDialogShareQuery,
+} from '../src/managers/dialog-shares-manager'
 import { UpdateUserVoiceCommand, usersManager } from '../src/managers/users-manager'
 import { AgentUnavailableError } from '../src/shared'
 import { blockDirectly, json, mockAgent, mockFetch, registerConfirmedUser } from './helpers'
@@ -369,6 +383,11 @@ describe('завершение разговора', () => {
         tensionAfter: 5,
         userMessages: null,
         assistantMessages: null,
+        recap: null,
+        recapStatus: 'none',
+        recapSource: null,
+        recapAvailable: null,
+        recapAt: null,
       },
     })
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ takeaway: 'Позвоню маме', tensionAfter: 5 })
@@ -394,5 +413,156 @@ describe('завершение разговора', () => {
         new EndDialogOperation({ userId: user.id, dialogId: 'd-x', takeaway: null, tensionAfter: null }),
       ),
     ).toEqual({ success: false, error: EndDialogOperationErrorCode.DIALOG_NOT_FOUND })
+  })
+})
+
+const RECAP = { about: 'Ты рассказал про работу.', main: 'Тебе важно, чтобы тебя услышали.', agreements: ['Поговорить с руководителем'] }
+
+describe('итог разговора', () => {
+  it('написанный человеком итог уходит агенту вместе с завершением и приходит в сводке', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/end': () =>
+        json({
+          summary: {
+            title: 'Разговор',
+            themes: [],
+            recap: RECAP,
+            recapStatus: 'ready',
+            recapSource: 'draft',
+            recapAt: '2026-10-24T09:00:00.000Z',
+          },
+        }),
+    })
+    const result = await dialogsProcess.execute(
+      new EndDialogOperation({ userId: user.id, dialogId: 'd-1', takeaway: null, tensionAfter: 4, recap: RECAP, recapSource: 'draft' }),
+    )
+    expect(result).toMatchObject({
+      success: true,
+      summary: { recap: RECAP, recapStatus: 'ready', recapSource: 'draft', recapAt: new Date('2026-10-24T09:00:00.000Z') },
+    })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ tensionAfter: 4, recap: RECAP, recapSource: 'draft' })
+  })
+
+  it('агент без итогов (прежний) не говорит ни pending, ни ready: статус none', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/end': () => json({ summary: { title: 'Разговор', themes: [] } }) })
+    const result = await dialogsProcess.execute(
+      new EndDialogOperation({ userId: user.id, dialogId: 'd-1', takeaway: null, tensionAfter: null }),
+    )
+    expect(result).toMatchObject({ success: true, summary: { recap: null, recapStatus: 'none', recapSource: null } })
+  })
+
+  it('список итогов: только разговоры с итогом, страница и курсор', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/recaps': () =>
+        json({
+          items: [
+            { dialogId: 'd-2', startedAt: '2026-10-24T09:00:00Z', title: 'Работа', recap: RECAP, recapSource: 'auto', recapAt: null },
+            { dialogId: 'd-bad', startedAt: '2026-10-23T09:00:00Z', title: null, recap: null, recapSource: null, recapAt: null },
+          ],
+          next: 'cursor-2',
+        }),
+    })
+    const result = await dialogsProcess.execute(new ListRecapsOperation({ userId: user.id, limit: 20, before: 'cursor-1' }))
+    expect(result).toMatchObject({ success: true, next: 'cursor-2', items: [{ dialogId: 'd-2', recap: RECAP, recapSource: 'auto' }] })
+    expect((result as { items: unknown[] }).items).toHaveLength(1)
+    expect(calls.at(-1)!.url.search).toBe('?limit=20&before=cursor-1')
+  })
+
+  it('«Предзаполнить»: черновик возвращается, отказы агента переводятся в коды', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ recap: RECAP }) })
+    expect(await dialogsProcess.execute(new DraftRecapOperation({ userId: user.id, dialogId: 'd-1' }))).toEqual({ success: true, recap: RECAP })
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
+    expect(await dialogsProcess.execute(new DraftRecapOperation({ userId: user.id, dialogId: 'd-1' }))).toEqual({
+      success: false,
+      error: DraftRecapOperationErrorCode.RECAP_NOT_AVAILABLE,
+    })
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'RECAP_UNAVAILABLE' } }, 502) })
+    expect(await dialogsProcess.execute(new DraftRecapOperation({ userId: user.id, dialogId: 'd-1' }))).toEqual({
+      success: false,
+      error: DraftRecapOperationErrorCode.UNAVAILABLE,
+    })
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404) })
+    expect(await dialogsProcess.execute(new DraftRecapOperation({ userId: user.id, dialogId: 'd-x' }))).toEqual({
+      success: false,
+      error: DraftRecapOperationErrorCode.DIALOG_NOT_FOUND,
+    })
+  })
+
+  it('итог из журнала: уходит агенту с источником, отказ — код', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'PUT http://agent.test/v1/users/*/dialogs/*/recap': () =>
+        json({ summary: { title: 'Разговор', themes: [], recap: RECAP, recapStatus: 'ready', recapSource: 'manual' } }),
+    })
+    expect(
+      await dialogsProcess.execute(new PutRecapOperation({ userId: user.id, dialogId: 'd-1', recap: RECAP, source: 'manual' })),
+    ).toMatchObject({ success: true, summary: { recap: RECAP, recapSource: 'manual' } })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ ...RECAP, source: 'manual' })
+    mockAgent({ 'PUT http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
+    expect(
+      await dialogsProcess.execute(new PutRecapOperation({ userId: user.id, dialogId: 'd-1', recap: RECAP, source: 'manual' })),
+    ).toEqual({ success: false, error: PutRecapOperationErrorCode.RECAP_NOT_AVAILABLE })
+  })
+
+  it('«Подводить итог автоматически»: читается и сохраняется у агента', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/dialog-settings': () => json({ recapEnabled: true }),
+      'PUT http://agent.test/v1/users/*/dialog-settings': () => json({ recapEnabled: false }),
+    })
+    expect(await dialogsProcess.execute(new GetDialogSettingsOperation({ userId: user.id }))).toEqual({ success: true, recapEnabled: true })
+    expect(await dialogsProcess.execute(new PutDialogSettingsOperation({ userId: user.id, recapEnabled: false }))).toEqual({
+      success: true,
+      recapEnabled: false,
+    })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ recapEnabled: false })
+  })
+})
+
+describe('удалить разговор', () => {
+  const dialog = { dialogId: 'd-1', startedAt: '2026-10-20T10:00:00.000Z', endedAt: '2026-10-20T10:10:00.000Z', summary: null, messages: [] }
+
+  it('агент стирает разговор, ссылка «Поделиться» гаснет, возвращается дата начала — по ней сбрасывается неделя', async () => {
+    const user = await registerConfirmedUser()
+    const now = new Date()
+    await dialogSharesManager.execute(
+      new CreateDialogShareCommand({
+        id: crypto.randomUUID(),
+        userId: user.id,
+        dialogId: 'd-1',
+        tokenHash: 'hash-1',
+        upToMessageId: null,
+        expiresAt: new Date(now.getTime() + 3_600_000),
+        now,
+        maxActive: 5,
+      }),
+    )
+    const before = await dialogSharesManager.execute(new GetActiveDialogShareQuery({ userId: user.id, dialogId: 'd-1', now: new Date() }))
+    expect(before).toMatchObject({ share: { dialogId: 'd-1' } })
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+      'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
+    })
+    const result = await dialogsProcess.execute(new DeleteDialogOperation({ userId: user.id, dialogId: 'd-1' }))
+    expect(result).toEqual({ success: true, startedAt: new Date('2026-10-20T10:00:00.000Z') })
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'DELETE'])
+    const active = await dialogSharesManager.execute(new GetActiveDialogShareQuery({ userId: user.id, dialogId: 'd-1', now: new Date() }))
+    expect(active).toMatchObject({ share: null })
+  })
+
+  it('чужого и несуществующего разговора нет: ничего не удалено', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404),
+    })
+    expect(await dialogsProcess.execute(new DeleteDialogOperation({ userId: user.id, dialogId: 'd-x' }))).toEqual({
+      success: false,
+      error: DeleteDialogOperationErrorCode.DIALOG_NOT_FOUND,
+    })
+    expect(calls.map((c) => c.method)).toEqual(['GET'])
   })
 })

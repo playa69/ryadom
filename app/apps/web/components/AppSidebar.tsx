@@ -42,6 +42,7 @@ function itemHref(item: DialogListItemApiResponse): string {
 }
 
 function itemTitle(item: DialogListItemApiResponse): string {
+  if (item.saved === false) return 'Разговор не сохранён'
   return item.summary?.title || 'Разговор'
 }
 

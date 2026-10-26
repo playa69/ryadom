@@ -168,7 +168,9 @@ export function json(body: unknown, status = 200): Response {
 }
 
 /** A fetch stub: the key is "METHOD origin/path", and `*` in the path matches one segment. */
-export function mockFetch(routes: Record<string, Route>) {
+export function mockFetch(given: Record<string, Route>) {
+  // The diary reads the recaps of the week's conversations with the marks: unless a test says otherwise there are none.
+  const routes: Record<string, Route> = { 'GET http://agent.test/v1/users/*/recaps': () => json({ items: [], next: null }), ...given }
   const calls: { method: string; url: URL; body: string; headers: Headers }[] = []
   const patterns = Object.keys(routes)
     .sort((a, b) => b.length - a.length)

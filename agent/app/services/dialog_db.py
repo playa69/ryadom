@@ -28,6 +28,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
@@ -70,6 +71,11 @@ DDL = (
     """CREATE TABLE IF NOT EXISTS voice_prefs (
     user_id TEXT PRIMARY KEY,
     voice   TEXT NOT NULL
+)""",
+    """CREATE TABLE IF NOT EXISTS dialog_settings (
+    user_id        TEXT PRIMARY KEY,
+    recap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at     TEXT NOT NULL
 )""",
     """CREATE TABLE IF NOT EXISTS model_usage (
     dialog_id  TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
@@ -264,6 +270,30 @@ class DialogDatabase:
             pref = conn.execute("SELECT voice FROM voice_prefs WHERE user_id = %s", (user_id,)).fetchone()
         return list(dialogs.values()), (pref[0] if pref else None)
 
+    def load_settings(self, user_id: str) -> bool | None:
+        """«Подводить итог автоматически» человека; None, если он ещё ничего не выбирал (по умолчанию включено)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT recap_enabled FROM dialog_settings WHERE user_id = %s", (user_id,)).fetchone()
+        return None if row is None else bool(row[0])
+
+    def save_settings(self, user_id: str, recap_enabled: bool) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO dialog_settings (user_id, recap_enabled, updated_at) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET recap_enabled = EXCLUDED.recap_enabled, updated_at = EXCLUDED.updated_at",
+                (user_id, recap_enabled, datetime.now(UTC).isoformat(timespec="milliseconds")),
+            )
+
+    def expired_dialogs(self, cutoff: str) -> list[tuple[str, str]]:
+        """(user_id, dialog_id) разговоров, чьё последнее сообщение (без сообщений — старт) старше `cutoff` (ISO, как в базе)."""
+        with self._lock, self._connection() as conn:
+            rows = conn.execute(
+                "SELECT d.user_id, d.id FROM dialogs d WHERE COALESCE("
+                "(SELECT MAX(m.created_at) FROM messages m WHERE m.dialog_id = d.id), d.started_at) < %s",
+                (cutoff,),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
     def apply(self, writes: list[DialogWrite]) -> None:
         """Записать пачку одной транзакцией: либо всё, либо ничего."""
         with (
@@ -316,6 +346,7 @@ class DialogDatabase:
         with self._lock, self._connection() as conn, conn.transaction():
             conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
             conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM dialog_settings WHERE user_id = %s", (user_id,))
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         """Удалить один диалог человека целиком (сообщения и расход уходят каскадом).

@@ -84,6 +84,13 @@ class DialogSettings(BaseAppSettings):
     # Автозавершение брошенных диалогов: открытый диалог без живого сокета и без активности столько секунд считается
     # конченным — ставится сводка и диалог уходит в память (извлечение/cognify). 0 — не завершать автоматически.
     idle_end_seconds: int = Field(validation_alias="DIALOG_IDLE_END_SECONDS", default=300, ge=0)
+    # Срок хранения разговоров (add-mood-diary, D14): разговор, итог (и документ в Cognee через память) удаляются через столько
+    # дней после последнего сообщения. Проход раз в час. 0 — хранить бессрочно (так на проде сейчас).
+    retention_days: int = Field(validation_alias="DIALOG_RETENTION_DAYS", default=21, ge=0)
+    # Сухой прогон: проход только считает (agent_dialogs_retention_would_delete) и ничего не удаляет. В первом выкате включён.
+    retention_dry_run: bool = Field(validation_alias="DIALOG_RETENTION_DRY_RUN", default=True)
+    # Сколько ждать модель при подведении итога разговора, секунды (add-mood-diary, D13).
+    recap_timeout_seconds: float = Field(validation_alias="RECAP_TIMEOUT_SECONDS", default=20, gt=0, le=120)
 
     @model_validator(mode="after")
     def _pool_sizes_in_order(self) -> "DialogSettings":

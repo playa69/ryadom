@@ -6,7 +6,7 @@
 
 Прямых цитат нет: итог — обобщение своими словами. Из ответа отбраковываются слова в кавычках длиннее двух слов и дословные
 куски (шесть слов подряд) из текстов, которые человек сам сказал (`source_texts`: итоги разговоров и заметки, когда они
-подключатся из `add-memory-notes`; пока агент получает только отметки, и список пуст).
+подключатся из `add-memory-notes`; пока агент получает отметки и итоги разговоров недели (они же служат `source_texts`).
 """
 
 import re
@@ -57,7 +57,7 @@ def _top_factor(marks: list[dict[str, Any]]) -> str | None:
     return FACTORS.get(factors.most_common(1)[0][0]) if factors else None
 
 
-def template_digest(kind: Literal["week"], marks: list[dict[str, Any]]) -> str:
+def template_digest(kind: Literal["week"], marks: list[dict[str, Any]], recaps: list[dict[str, Any]] | None = None) -> str:
     """Детерминированный текст без модели: для `LLM_MODE=template` и как запасной вариант при забракованном ответе."""
     stats = stats_of(marks)
     top = LEVELS.get(stats["mostFrequent"] or 3, "нормально")
@@ -67,13 +67,18 @@ def template_digest(kind: Literal["week"], marks: list[dict[str, Any]]) -> str:
         f"Чаще всего ты отмечал, что тебе {top}.",
     ]
     parts.append(f"Больше всего на настроение влияло: {factor}." if factor else "Что именно влияло, ты почти не отмечал, и это тоже нормально.")
+    if recaps:
+        agreed = sum(len(r.get("agreements") or []) for r in recaps)
+        parts.append(f"В разговорах на этой неделе мы подводили итоги ({len(recaps)}), договорённостей в них: {agreed}.")
     parts.append("Дни бывают разными, и в каждом из них ты был настоящим.")
     if stats["hardDays"] >= HARD_WEEK_DAYS:
         parts.append(PEOPLE_LINE)
     return " ".join(parts)
 
 
-def build_messages(kind: Literal["week"], period_start: str, marks: list[dict[str, Any]]) -> list[dict[str, str]]:
+def build_messages(
+    kind: Literal["week"], period_start: str, marks: list[dict[str, Any]], recaps: list[dict[str, Any]] | None = None
+) -> list[dict[str, str]]:
     lines = [f"{m['date']}: {m['mood']}" + (f", фактор: {FACTORS[m['factor']]}" if m.get("factor") else "") for m in marks]
     task = (
         f"Итоги недели с {period_start}. Напиши {WEEK_SENTENCES[0]}–{WEEK_SENTENCES[1]} предложений: как прошла неделя по отметкам "
@@ -82,6 +87,15 @@ def build_messages(kind: Literal["week"], period_start: str, marks: list[dict[st
     if stats_of(marks)["hardDays"] >= HARD_WEEK_DAYS:
         task += " Закончи мягкой строкой про людей рядом."
     body = task + "\nОтметки:\n" + "\n".join(lines)
+    if recaps:
+        # Итоги разговоров недели: обобщения самого человека, второй вход текста. Дословно их не берём.
+        body += "\nИтоги разговоров недели:\n" + "\n".join(
+            f"{r['date']}: о чём говорили: {r['about']}; главное: {r['main']}"
+            + (f"; договорились: {'; '.join(r['agreements'])}" if r.get("agreements") else "")
+            for r in recaps
+        )
+        task_tail = " Учти и итоги разговоров недели, но без цитат: только обобщение своими словами."
+        body = body.replace(task, task + task_tail, 1)
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": body}]
 
 

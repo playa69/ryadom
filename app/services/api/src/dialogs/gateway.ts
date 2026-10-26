@@ -29,6 +29,7 @@ import { dialogIdProperty, messageCounts, tensionOutcome } from '../lib/analytic
 import type { AppServerEnv } from '../lib/env'
 import { HOTLINES } from '../lib/hotlines'
 import type { Jwt } from '../lib/jwt'
+import { parseRecap } from './recap'
 import { openAgentSocket, type AgentSocket } from './agent-socket'
 import { isDraining } from '../lib/lifecycle'
 import type { Sessions } from '../lib/sessions'
@@ -313,6 +314,9 @@ class DialogSession {
           type: 'end',
           takeaway: typeof frame.takeaway === 'string' ? frame.takeaway : undefined,
           tensionAfter: typeof frame.tensionAfter === 'number' ? frame.tensionAfter : undefined,
+          // The recap the person wrote or pre-filled: the agent keeps it as it is (add-mood-diary D13).
+          recap: parseRecap(frame.recap) ?? undefined,
+          recapSource: frame.recapSource === 'draft' ? 'draft' : 'manual',
         })
         return
       case DialogClientFrame.AudioStart:
@@ -652,7 +656,12 @@ class DialogSession {
         // (DialogSummary).
         const raw = (frame.summary ?? null) as (DialogSummaryApiResponse & AgentSummaryCounts) | null
         // The counts of the whole dialog are for analytics only: they are not part of the contract with clients.
-        const { userMessages: _user, assistantMessages: _assistant, ...publicSummary } = raw ?? {}
+        const {
+          userMessages: _user,
+          assistantMessages: _assistant,
+          recapAt: _recapAt,
+          ...publicSummary
+        } = (raw ?? {}) as DialogSummaryApiResponse & AgentSummaryCounts & { recapAt?: unknown }
         const summary = raw ? (publicSummary as DialogSummaryApiResponse) : null
         if (this.userId && !this.outcomeReported) {
           this.outcomeReported = true

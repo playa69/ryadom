@@ -8,12 +8,22 @@ export interface AgentDigestMark {
   factor: string | null
 }
 
+/** What a conversation of the week came to (its recap, add-mood-diary D13); the agent reads it with the marks. */
+export interface AgentDigestRecap {
+  date: string
+  about: string
+  main: string
+  agreements: string[]
+}
+
 export interface CreateAgentDigestRequestData {
   userId: string
   kind: 'week'
   /** Monday of the week. */
   periodStart: string
   marks: AgentDigestMark[]
+  /** Recaps of the conversations of the week; empty when there are none. */
+  recaps?: AgentDigestRecap[]
 }
 
 /** The agent writes the summary text of a week; it keeps neither the request nor the answer. */
@@ -29,11 +39,16 @@ export class CreateAgentDigestRequest extends RequestData<CreateAgentDigestResul
   @hasPII(true)
   public readonly marks: AgentDigestMark[]
 
+  /** What the person said in conversations, summed up: personal data, never logged. */
+  @hasPII(true)
+  public readonly recaps: AgentDigestRecap[]
+
   constructor(data: CreateAgentDigestRequestData) {
     super()
     this.userId = data.userId
     this.kind = data.kind
     this.periodStart = data.periodStart
     this.marks = data.marks
+    this.recaps = data.recaps ?? []
   }
 }
