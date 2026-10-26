@@ -40,3 +40,36 @@ async def test_document_per_dialog_search_and_hard_delete(client: CogneeClient) 
     assert await client.delete_document(dataset, None, "dialog-two") is True
     assert await client.forget_dataset(dataset) is True
     assert await client.dataset_exists(dataset) is False
+
+
+async def test_reindex_dialog_drops_a_suppressed_reply_from_cognee(client: CogneeClient) -> None:
+    """D15: заметка удалена — `reindex_dialog` жёстко удаляет документ разговора и собирает новый без реплики-источника."""
+    from app.memory.indexer import CogneeOutbox, dataset_name
+    from app.memory.suppress import fingerprint
+    from tests.fake_db import FakeDialogDatabase
+    from tests.test_memory_cognee_backend import stored_dialog
+
+    FakeDialogDatabase.reset()
+    db = FakeDialogDatabase("live-reindex")
+    db.open()
+    user = str(uuid.uuid4())
+    unique = "Лиловый-Барсук-" + uuid.uuid4().hex[:8]
+    secret = f"Не хочу говорить про отца из-за {unique}"
+    dialog_id = stored_dialog(db, user, [("user", secret), ("user", "Люблю гулять у воды по вечерам"), ("user", "Работаю в продажах")])
+    outbox = CogneeOutbox(lambda: db, lambda: client)  # type: ignore[arg-type]
+    dataset = dataset_name(user)
+    try:
+        await outbox.add(user, "index_dialog", {"dialog_id": dialog_id})
+        assert await outbox.tick() == 1
+        assert unique in await client.recall_chunks(unique, dataset)
+
+        db.add_note(("n1", user, "boundary", "Не хочет обсуждать отца", False, None, dialog_id, "t", "t"))
+        db.add_note_source(user, "n1", dialog_id, fingerprint(secret), "t")
+        db.delete_note(user, "n1")
+        await outbox.add(user, "reindex_dialog", {"dialog_id": dialog_id})
+        assert await outbox.tick() == 1
+
+        assert unique not in await client.recall_chunks(unique, dataset)  # реплика-источник не находится
+        assert "гулять" in await client.recall_chunks("гулять у воды", dataset)  # остальное на месте
+    finally:
+        await client.forget_dataset(dataset)
