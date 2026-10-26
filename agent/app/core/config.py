@@ -63,6 +63,13 @@ class DialogSettings(BaseAppSettings):
     # `ryadom-db`, значение — в Secret `agent-db`. Пусто — диалоги только в памяти процесса и пропадают при
     # перезапуске (разработка); агент не падает и громко пишет об этом в журнал.
     database_url: str | None = Field(validation_alias="DIALOG_DATABASE_URL", default=None)
+    # Пул проверяет соединение перед выдачей и заменяет разорванное без перезапуска агента.
+    db_pool_min_size: int = Field(validation_alias="DIALOG_DB_POOL_MIN_SIZE", default=1, ge=0)
+    db_pool_max_size: int = Field(validation_alias="DIALOG_DB_POOL_MAX_SIZE", default=4, ge=1)
+    db_pool_max_idle_seconds: float = Field(validation_alias="DIALOG_DB_POOL_MAX_IDLE_SECONDS", default=300, ge=1)
+    db_pool_max_lifetime_seconds: float = Field(
+        validation_alias="DIALOG_DB_POOL_MAX_LIFETIME_SECONDS", default=3600, ge=1
+    )
     # Как часто записывать изменения диалогов на диск, мс (идущие ответы дописываются, поэтому не при каждом слове).
     db_flush_ms: int = Field(validation_alias="DIALOG_DB_FLUSH_MS", default=500, ge=50, le=10_000)
     # Выгрузка неактивных (только при диске): человек, к которому не обращались столько секунд, уходит из памяти пода, его
@@ -77,6 +84,13 @@ class DialogSettings(BaseAppSettings):
     # Автозавершение брошенных диалогов: открытый диалог без живого сокета и без активности столько секунд считается
     # конченным — ставится сводка и диалог уходит в память (извлечение/cognify). 0 — не завершать автоматически.
     idle_end_seconds: int = Field(validation_alias="DIALOG_IDLE_END_SECONDS", default=300, ge=0)
+
+    @model_validator(mode="after")
+    def _pool_sizes_in_order(self) -> "DialogSettings":
+        """Проверяет, что минимальный размер пула не превышает максимальный."""
+        if self.db_pool_min_size > self.db_pool_max_size:
+            raise ValueError("нужно DIALOG_DB_POOL_MIN_SIZE <= DIALOG_DB_POOL_MAX_SIZE")
+        return self
 
 
 class SpeechSettings(BaseAppSettings):

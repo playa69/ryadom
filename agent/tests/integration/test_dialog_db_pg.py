@@ -11,7 +11,8 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
-from app.services.dialog_db import DDL, DialogDatabase as PostgresDialogDatabase, encode_summary
+from app.services.dialog_db import DialogDatabase as PostgresDialogDatabase
+from app.services.dialog_db import encode_summary
 
 TABLES = ("model_usage", "client_ids", "messages", "voice_prefs", "dialogs")
 
@@ -96,6 +97,21 @@ def test_erase_user_cascades_and_keeps_others(db: PostgresDialogDatabase) -> Non
     assert [d.id for d in dialogs] == ["d2"]
     assert db.counts() == (1, 1)
     db.erase_user("u1")  # идемпотентно
+
+
+def test_closed_connection_is_replaced_without_reopen(db: PostgresDialogDatabase) -> None:
+    """Разорванное PostgreSQL соединение заменяется новым при следующей операции."""
+    db.apply([_write("d1", "u1")])
+    with db._connection() as conn:
+        old_pid = conn.execute("SELECT pg_backend_pid()").fetchone()[0]
+    with psycopg.connect(db.dsn, autocommit=True) as terminator:
+        assert terminator.execute("SELECT pg_terminate_backend(%s)", (old_pid,)).fetchone()[0] is True
+
+    assert db.counts() == (1, 1)
+    assert db.load_user("u1")[0][0].id == "d1"
+    with db._connection() as conn:
+        new_pid = conn.execute("SELECT pg_backend_pid()").fetchone()[0]
+    assert new_pid != old_pid
 
 
 def test_ddl_is_idempotent(db: PostgresDialogDatabase) -> None:
