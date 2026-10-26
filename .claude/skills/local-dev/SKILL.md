@@ -59,6 +59,15 @@ uv run python scripts/live_smoke.py --url http://127.0.0.1:8001 --token <ток�
 
 ## Проверки перед PR
 
+По ходу задачи хватает пакетов, которые ты менял, и тех, что от них зависят (Turborepo считает это по диффу с main;
+результаты typecheck при этом берутся из его кэша):
+
+```bash
+cd app && pnpm exec turbo run typecheck test --filter='...[origin/main]'
+```
+
+Весь набор — перед сдачей:
+
 ```bash
 cd app
 pnpm typecheck
