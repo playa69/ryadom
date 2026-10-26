@@ -881,6 +881,7 @@ sequenceDiagram
 | D-13 | Клиент | Flutter (v1.1, контекст workspace) | TypeScript + Capacitor | Зафиксировано: Flutter не используется |
 | D-14 | Cognee | Упомянут в стеке workspace | Нет в коде и планах OpenSpec | [Q-03](#13-открытые-вопросы) |
 | D-15 | `voice` в `POST …/dialogs` и `set_voice` | В `agent-api` выбор голоса «не входит в контракт v1» | Реализованы | Обновить `agent-api` и `speech-pipeline` |
+| D-16 | Удаление и срок хранения разговора | `REQ-WELL-09`, `REQ-WELL-10`: вместе с разговором и итогом удаляется документ в Cognee | Дневник удаляет у агента разговор и итог (маршрут `DELETE …/dialogs/{id}`, проход по `DIALOG_RETENTION_DAYS`), документ в Cognee не трогает: его удаление — шаг памяти (`add-memory-notes`, задача 3.5), дневник к памяти не обращается | Решение владельца: дневник и память — разные цепочки; удаление в Cognee делает `add-memory-notes` |
 
 ---
 

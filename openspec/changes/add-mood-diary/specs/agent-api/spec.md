@@ -6,7 +6,7 @@
 
 Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/end` с телом `{ "takeaway"?: string, "tensionAfter"?: 1..10, "recap"?: { "about": string, "main": string, "agreements": string[] } }` и ответом `200 { "summary" }` либо `404`. Поле `recap` — итог, написанный человеком (способы «вручную» и «предзаполнить»).
 
-Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": { "about": string, "main": string, "agreements": string[] } | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null }`.
+Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": { "about": string, "main": string, "agreements": string[] } | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null, "recapAvailable": boolean, "recapAt"?: string }`. `recapAvailable` равен `false`, когда итог для разговора невозможен (мало сказано, кризис, «Без памяти»); `recapAt` — когда итог сохранён.
 
 Автоматический итог (`recapSource: auto`) считается в фоне после завершения любым путём и готов не позже чем через 60 секунд, если включена настройка `recapEnabled` («Подводить итог автоматически») или у человека её нет в базе (по умолчанию включена). До этого `recapStatus` равен `pending`, а `recap` — `null`. Итог, пришедший в `recap` тела запроса, сохраняется сразу (`ready`) и не заменяется автоматическим. Для не сохраняемого разговора, разговора с кризисом и разговора, где человек сказал меньше 40 знаков, `recapStatus` равен `none`.
 
@@ -34,6 +34,24 @@
 
 - **WHEN** вызывающая сторона запросила черновик итога
 - **THEN** ответ содержит `recap`, а `GET` истории и `recapStatus` разговора не изменились
+
+### Requirement: Итог завершённого разговора из журнала
+
+Агент SHALL предоставлять `PUT /v1/users/{userId}/dialogs/{dialogId}/recap` с телом `{ "about", "main", "agreements", "source"?: "manual" | "draft" }` и ответом `200 { "summary" }`: итог завершённого разговора, написанный человеком в журнале (способы «вручную» и «предзаполнить» позже). Для чужого и несуществующего разговора — `404`, для незавершённого, не сохраняемого, кризисного и слишком короткого — `409 RECAP_NOT_AVAILABLE`. Ручной итог заменяет автоматический.
+
+#### Scenario: Написать итог позже
+
+- **WHEN** автоитог выключен и разговор закончился без итога, а человек сохранил итог в журнале
+- **THEN** `recapStatus` разговора равен `ready`, `recapSource` равен `manual` или `draft`
+
+### Requirement: Удаление разговора
+
+Агент SHALL предоставлять `DELETE /v1/users/{userId}/dialogs/{dialogId}` с ответом `204` (стёрты сообщения, итог и данные разговора) либо `404` для чужого и несуществующего. Заметки памяти и итоги недели агент не трогает. Открытый диалог с живым сокетом закрывается: сокет получает `ended`.
+
+#### Scenario: Разговор удалён
+
+- **WHEN** человек удалил разговор
+- **THEN** разговор и его итог пропали из журнала и из списка итогов, повторное удаление отвечает `404`
 
 ### Requirement: Настройка «Подводить итог автоматически»
 
