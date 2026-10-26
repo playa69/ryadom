@@ -26,21 +26,24 @@ async function recapCount(request: APIRequestContext, token: string): Promise<nu
 async function talk(page: Page, text: string): Promise<void> {
   await openTab(page, 'Главная')
   await button(page, 'Поговорить').click()
-  await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
-  await page.getByRole('button', { name: 'Писать текстом' }).click()
-  await page.getByPlaceholder('Напиши, что происходит').fill(text)
-  await page.getByRole('button', { name: 'Отправить' }).click()
-  await expect(page.locator('.message-sent')).toHaveCount(1, { timeout: 20_000 })
-  await expect(page.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
+  await expect(current(page).getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
+  await current(page).getByRole('button', { name: 'Писать текстом' }).click()
+  await current(page).getByPlaceholder('Напиши, что происходит').fill(text)
+  await current(page).getByRole('button', { name: 'Отправить' }).click()
+  await expect(current(page).locator('.message-sent')).toHaveCount(1, { timeout: 20_000 })
+  await expect(current(page).locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
   // Ending in the middle of a reply would only test the fallback timer.
   await page.waitForTimeout(1500)
 }
 
+/** On a wide screen the pages of earlier conversations stay in the stack: only the current one counts. */
+const current = (page: Page) => page.locator('.page-current')
+
 const sheet = (page: Page) => page.locator('.sheet-modal.modal-in')
 
 async function openEnd(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Завершить разговор' }).click()
-  await expect(page.getByText('Что забираешь с собой?')).toBeVisible()
+  await current(page).getByRole('button', { name: 'Завершить разговор' }).click()
+  await expect(sheet(page).getByText('Что забираешь с собой?')).toBeVisible()
 }
 
 /** «Завершить», the thank-you dialog; returns its text and leaves through «ОК». */

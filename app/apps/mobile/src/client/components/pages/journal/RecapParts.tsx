@@ -1,5 +1,5 @@
 import { Button, f7, Preloader, Sheet } from 'framework7-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DialogApiResponse, DialogRecapApi, DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import {
   DELETE_DIALOG_CONFIRM,
@@ -201,6 +201,8 @@ export function DeleteDialogRow({ dialogId, label, onDeleted }: { dialogId: stri
   const [opened, setOpened] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // The entry goes away with the sheet: «deleted» is reported only once the sheet has closed, or its backdrop stays on screen.
+  const deleted = useRef(false)
 
   async function remove() {
     if (busy) return
@@ -210,8 +212,8 @@ export function DeleteDialogRow({ dialogId, label, onDeleted }: { dialogId: stri
       const result = await deleteDialog(dialogId)
       // A conversation that is already gone is what the person wanted.
       if (result.ok || result.code === 'DIALOG_NOT_FOUND') {
+        deleted.current = true
         setOpened(false)
-        onDeleted()
       } else setError('Не получилось удалить разговор. Попробуй позже')
     } catch (err) {
       setError(apiErrorText(err, {}, 'Не получилось удалить разговор. Попробуй позже'))
@@ -233,7 +235,18 @@ export function DeleteDialogRow({ dialogId, label, onDeleted }: { dialogId: stri
       >
         {label}
       </Button>
-      <Sheet opened={opened} onSheetClosed={() => setOpened(false)} swipeToClose closeOnEscape backdrop style={{ height: 'auto' }}>
+      <Sheet opened={opened} onSheetClosed={() => {
+          setOpened(false)
+          if (deleted.current) {
+            deleted.current = false
+            onDeleted()
+          }
+        }}
+        swipeToClose
+        closeOnEscape
+        backdrop
+        style={{ height: 'auto' }}
+      >
         <div className="rd-sheet-body" data-testid="journal-delete-confirm">
           <h2 className="rd-sheet-title">{DELETE_DIALOG_CONFIRM.title}</h2>
           {DELETE_DIALOG_CONFIRM.lines.map((line) => (
