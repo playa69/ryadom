@@ -62,7 +62,10 @@ async def run() -> int:
         produced += len(outcome.added)
         # добавленная заметка верна, если ждали её слово (иначе лишняя)
         wanted = [kw for _, kw in case.get("expect", [])]
-        correct += sum(1 for n in outcome.added if any(kw in n["text"].lower() for kw in wanted))
+        right = [n for n in outcome.added if any(kw in n["text"].lower() for kw in wanted)]
+        correct += len(right)
+        for extra in [n for n in outcome.added if n not in right]:
+            failures.append(f"#{index} лишняя заметка: «{extra['text']}» (реплика: «{case['say'][0][:50]}»)")
         for word in case.get("forbid", []):
             if any(word in text for text in texts):
                 leaks += 1
