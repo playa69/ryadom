@@ -1,5 +1,7 @@
 # Infrastructure for e2e only: its own database, its own mail server, its own agent mock.
 # The ports do not overlap with `dev/compose.yaml`, so a test run does not disturb development.
+# scripts/stack.mjs sets the E2E_*_PORT variables (shifted by E2E_PORT_OFFSET) and the project name, so
+# several runs on one machine get stacks of their own; the defaults below are the unshifted ports.
 name: ryadom-e2e
 
 services:

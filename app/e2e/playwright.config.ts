@@ -23,6 +23,9 @@ export const WEBAPP_URL = process.env.E2E_WEBAPP_URL ?? at(3103)
 export const PWA_URL = process.env.E2E_PWA_URL ?? at(3104)
 /** Mailpit web UI: this is where the tests read the codes from the emails. */
 export const MAIL_URL = process.env.E2E_MAIL_URL ?? at(8027)
+/** The agent mock: the tests feed it speech and memory through its dev endpoints. */
+export const AGENT_URL =
+  process.env.E2E_AGENT_URL ?? `http://127.0.0.1:${process.env.E2E_AGENT_MOCK_PORT ?? 8081 + OFFSET}`
 
 /** A headless browser has no microphone of its own: the fake device plays a tone, and the fake prompt grants it. */
 const FAKE_MICROPHONE = { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] }

@@ -14,6 +14,7 @@ import {
   talkButton,
 } from '../support/web'
 import { expect, test } from '../support/fixtures'
+import { AGENT_URL } from '../playwright.config'
 
 /**
  * Memory in the web app, the notes model (PROTEUS-242, REQ-MEM-*): turning it on through its own consent
@@ -409,8 +410,7 @@ test('«Запомнил: … · Убрать» в разговоре: нова�
 
 /** Switches memory on the agent mock: `off` is the feature off on the server. Dev control of the mock. */
 async function setMemoryMode(mode: 'on' | 'off'): Promise<void> {
-  const base = process.env.E2E_AGENT_URL ?? 'http://127.0.0.1:8081'
-  const response = await fetch(`${base}/dev/memory`, {
+  const response = await fetch(`${AGENT_URL}/dev/memory`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mode }),
