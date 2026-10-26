@@ -1,8 +1,9 @@
 """Бэкенд памяти на Cognee: согласие и данные человека — его датасет в Cognee.
 
 Включённая память ⟺ существует датасет `ryadom_user_<user_id>` (не-алфанум в UUID заменяется на `_`). Включение —
-документ-зерно `CONSENT memory v<версия> <ISO-дата>`; выключение, «забыть всё» и стирание — удаление датасета целиком.
-Диалоги в этом режиме живут только в памяти процесса (диск не подключается).
+документ-зерно `CONSENT memory v<версия> <ISO-дата>`; выключение, «забыть всё» и стирание человека датасет НЕ
+удаляют: память выключается, кэши процесса сбрасываются, а физическое удаление делает отдельная джоба по метке
+`memory_deletions` в базе диалогов (её ставят `DialogDatabase.erase_user` и REST «забыть всё» до вызова сюда).
 
 recall занимает 15–30 секунд, поэтому сводка (`brief`) отдаётся синхронно из кэша процесса, а читается из Cognee в фоне
 (prefetch): после включения, после каждого разговора и при первом обращении к человеку. Изменение памяти сбрасывает
@@ -44,6 +45,11 @@ def dataset_name(user_id: str) -> str:
     return "ryadom_user_" + re.sub(r"[^A-Za-z0-9]", "_", user_id)
 
 
+def _dialog_chunks(text: str) -> str:
+    """Убирает служебные документы согласия из контекста разговора."""
+    return "\n".join(line for line in text.splitlines() if not line.startswith("CONSENT memory "))
+
+
 def _unsupported() -> MemoryValidation:
     error = MemoryValidation("Бэкенд Cognee не поддерживает правку отдельных фактов")
     error.reason = "unsupported_in_cognee"
@@ -63,7 +69,7 @@ class CogneeMemoryBackend:
         self._turn_tasks: dict[str, asyncio.Task[str]] = {}  # user_id → идущий фоновый recall по последней реплике
         self._consents: dict[str, tuple[str | None, str | None]] = {}  # user_id → (версия согласия, когда)
         self._loading: set[str] = set()
-        self._prefetching: set[str] = set()
+        self._prefetch_locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
 
     # ─── состояние ────────────────────────────────────────────────────────────
@@ -129,28 +135,40 @@ class CogneeMemoryBackend:
         assert self._client is not None
         try:
             exists = await self._client.dataset_exists(dataset_name(user_id))
-            # default_enabled: без датасета человек всё равно «включён», если сам не отказывался
-            self._datasets[user_id] = exists or self._default_on(user_id)
-            if exists:
-                await self._prefetch(user_id)
+            # default_enabled: без датасета человек всё равно «включён», если сам не отказывался. Отказавшийся или
+            # стёртый (opted_out) не включается обратно, даже если его датасет ещё не удалён джобой.
+            self._datasets[user_id] = user_id not in self._opted_out and (exists or self._default_on(user_id))
+            if exists and self._datasets[user_id]:
+                self._spawn(self._prefetch(user_id))
         except Exception:  # noqa: BLE001 - память не должна мешать разговору (I3)
             logger.exception("cognee memory state load failed user=%s", user_id)
         finally:
             self._loading.discard(user_id)
 
     async def _prefetch(self, user_id: str) -> None:
-        """Перечитать сводку человека из Cognee в кэш процесса. recall идёт 15–30 с — только в фоне."""
-        if self._client is None or user_id in self._prefetching:
+        """Перечитать сводку один раз за раз; ожидающие получают уже готовый кэш."""
+        if self._client is None or user_id in self._briefs:
             return
-        self._prefetching.add(user_id)
-        try:
-            self._briefs[user_id] = await self._client.recall(BRIEF_QUERY, dataset_name(user_id))
-        except Exception:  # noqa: BLE001 - сбой prefetch — пустая сводка, а не ошибка разговора
-            logger.exception("cognee brief prefetch failed user=%s", user_id)
-        finally:
-            self._prefetching.discard(user_id)
+        lock = self._prefetch_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            if self._client is None or user_id in self._briefs:
+                return
+            try:
+                self._briefs[user_id] = await self._client.recall(BRIEF_QUERY, dataset_name(user_id))
+            except Exception:  # noqa: BLE001 - сбой prefetch — пустая сводка, а не ошибка разговора
+                logger.exception("cognee brief prefetch failed user=%s", user_id)
 
     # ─── MemoryLink: то, что зовут хранилище и сессии разговора ───────────────
+
+    async def prepare(self, dialog: Dialog) -> None:
+        """Загрузить доступную сводку до первого ответа модели."""
+        if self._client is None or dialog.memory_mode != "on":
+            return
+        user_id = dialog.user_id
+        if user_id not in self._datasets:
+            await self._load_state(user_id)
+        if self._effective_enabled(user_id):
+            await self._prefetch(user_id)
 
     def brief(self, dialog: Dialog, count: bool = True) -> str:
         """Сводка для разговора из кэша процесса: синхронно, без сети (I3). Нет кэша — пусто и фоновый prefetch."""
@@ -185,8 +203,8 @@ class CogneeMemoryBackend:
         except Exception:  # noqa: BLE001 - сбой поиска — просто старая сводка, разговор не трогаем
             logger.exception("cognee turn recall failed user=%s", user_id)
             return ""
-        if found:
-            self._turn_recalls[user_id] = found[:TURN_RECALL_MAX_CHARS]
+        found = _dialog_chunks(found)
+        self._turn_recalls[user_id] = found[:TURN_RECALL_MAX_CHARS]
         return found
 
     def recall_supported(self, dialog: Dialog) -> bool:
@@ -211,8 +229,8 @@ class CogneeMemoryBackend:
             except Exception:  # noqa: BLE001 - сбой поиска — модель отвечает без находки, разговор не рвём
                 logger.exception("cognee tool recall failed user=%s", dialog.user_id)
                 return ""
-        if found:
-            self._turn_recalls[dialog.user_id] = found[:TURN_RECALL_MAX_CHARS]
+        found = _dialog_chunks(found)
+        self._turn_recalls[dialog.user_id] = found[:TURN_RECALL_MAX_CHARS]
         return found[:TOOL_RECALL_MAX_CHARS]
 
     def enabled(self, user_id: str) -> bool:
@@ -254,18 +272,12 @@ class CogneeMemoryBackend:
         await self._prefetch(user_id)
 
     def user_erased(self, user_id: str) -> None:
-        """Человек стёрт: датасет удаляется в фоне, кэши сбрасываются сразу."""
+        """Человек стёрт: кэши сбрасываются сразу, стёртый не «воскресает» — ни через default_enabled, ни через
+        оставшийся датасет (его физически удалит отдельная джоба по метке `memory_deletions`; метку ставит
+        `erase_user` базы диалогов, а хранилище зовёт этот метод и при холодной загрузке человека с меткой)."""
         self._drop(user_id)
+        self._datasets[user_id] = False  # не перепроверять датасет: он мог остаться до джобы
         self._opted_out.add(user_id)  # стёртый человек не «воскресает» через default_enabled
-        if self._client is not None:
-            self._spawn(self._forget(user_id))
-
-    async def _forget(self, user_id: str) -> None:
-        assert self._client is not None
-        try:
-            await self._client.forget_dataset(dataset_name(user_id))
-        except Exception:  # noqa: BLE001
-            logger.exception("cognee memory forget failed user=%s", user_id)
 
     # ─── чтение ───────────────────────────────────────────────────────────────
 
@@ -329,11 +341,7 @@ class CogneeMemoryBackend:
     # ─── изменения по просьбе человека ────────────────────────────────────────
 
     async def update_settings(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
-        """Включение — документ-зерно согласия (создаёт датасет); выключение — только флаг, данные не трогаем.
-
-        Выключенная память не делает вызовов в Cognee (все пути режутся `_effective_enabled`),
-        но датасет человека остаётся нетронутым — физическое удаление делает отдельная джоба.
-        """
+        """Сохраняет новое согласие до ответа, а построение графа выполняет в фоне."""
         client = self._require_client()
         if enabled:
             if not consent_version:
@@ -341,13 +349,16 @@ class CogneeMemoryBackend:
             allowed = self._cfg.allowed_users
             if allowed and user_id.lower() not in allowed:
                 raise MemoryNotAllowed()
-            at = iso(datetime.now(UTC))
-            await client.remember(f"CONSENT memory v{consent_version} {at}", dataset_name(user_id))
+            cached = self._consents.get(user_id)
+            unchanged = cached is not None and cached[0] == consent_version
+            at = cached[1] if unchanged and cached[1] is not None else iso(datetime.now(UTC))
+            if not unchanged:
+                await client.add(f"CONSENT memory v{consent_version} {at}", dataset_name(user_id))
             self._datasets[user_id] = True
             self._opted_out.discard(user_id)
             self._consents[user_id] = (consent_version, at)
-            self._briefs.pop(user_id, None)
-            self._spawn(self._prefetch(user_id))
+            if not unchanged:
+                self._spawn(self._index_consent(user_id))
             logger.info("cognee memory enabled user=%s", user_id)
             return {"enabled": True, "consentVersion": consent_version, "consentAt": at}
         self._briefs.pop(user_id, None)
@@ -355,6 +366,16 @@ class CogneeMemoryBackend:
         self._opted_out.add(user_id)
         logger.info("cognee memory disabled (данные сохранены) user=%s", user_id)
         return {"enabled": False, "consentVersion": None, "consentAt": None}
+
+    async def _index_consent(self, user_id: str) -> None:
+        """Индексирует новое согласие и обновляет сводку после включения."""
+        try:
+            await self._require_client().cognify(dataset_name(user_id))
+        except Exception:  # noqa: BLE001 - документ сохранён, индексацию не роняем в пользовательский запрос
+            logger.exception("cognee consent indexing failed user=%s", user_id)
+            return
+        self._briefs.pop(user_id, None)
+        await self._prefetch(user_id)
 
     async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:
         """Факт, который человек написал сам: документом в его датасет. Ответ — в форме факта API (201)."""
@@ -402,10 +423,10 @@ class CogneeMemoryBackend:
         raise _unsupported()
 
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
-        """«Забыть всё»: датасет человека удаляется целиком, память при этом выключается."""
-        client = self._require_client()
-        await client.forget_dataset(dataset_name(user_id))
+        """«Забыть всё»: память выключается, кэши сбрасываются. Датасет человека НЕ удаляется — физическое удаление
+        делает отдельная джоба по метке `memory_deletions`, которую REST ставит в базе диалогов до этого вызова."""
+        self._require_client()
         self._drop(user_id)
         self._datasets[user_id] = False
         self._opted_out.add(user_id)
-        logger.info("cognee memory forgotten user=%s", user_id)
+        logger.info("cognee memory forgotten (датасет сохранён до джобы удаления) user=%s", user_id)

@@ -14,6 +14,7 @@ from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import AgentError, validation_error
 from app.memory.backend import MemoryBackend
 from app.memory.errors import MemoryServiceError
+from app.services.dialog_db import DialogDbError
 
 logger = logging.getLogger("agent.memory")
 
@@ -82,9 +83,18 @@ async def put_settings(user_id: str, body: SettingsBody, store: Store, memory: M
     user = _user(user_id)
     await store.ensure_user(user)
     try:
-        return await memory.update_settings(user, body.enabled, body.consent_version)
+        result = await memory.update_settings(user, body.enabled, body.consent_version)
     except MemoryServiceError as error:
         raise _error(error) from error
+    if not body.enabled:
+        return result
+    try:
+        await store.clear_memory_deleted(user)
+    except DialogDbError as error:
+        memory.user_erased(user)
+        logger.error("memory enable failed: %s", type(error).__name__)
+        raise AgentError(503, "AGENT_INTERNAL", "Не удалось включить память, повторите позже") from error
+    return result
 
 
 @router.post("/facts", status_code=201)
@@ -118,9 +128,17 @@ async def delete_fact(user_id: str, fact_id: str, memory: Memory) -> Response:
 
 
 @router.delete("", status_code=204)
-async def forget_all(user_id: str, memory: Memory) -> Response:
+async def forget_all(user_id: str, store: Store, memory: Memory) -> Response:
+    user = _user(user_id)
     try:
-        await memory.forget_all(_user(user_id))
+        # Durable-метка в memory_deletions: по ней отдельная джоба физически удалит датасет Cognee. Без неё
+        # «забыто» не отвечаем: метка обязательна, когда диск задан (см. DialogStore.mark_memory_deleted).
+        await store.mark_memory_deleted(user)
+    except DialogDbError as error:
+        logger.error("memory forget failed: %s", type(error).__name__)
+        raise AgentError(503, "AGENT_INTERNAL", "Не удалось стереть данные, повторите позже") from error
+    try:
+        await memory.forget_all(user)
     except MemoryServiceError as error:
         raise _error(error) from error
     return Response(status_code=204)

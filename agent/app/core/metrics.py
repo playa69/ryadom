@@ -80,7 +80,7 @@ VOICE_HELD_TURNS_TOTAL = Counter(
     "Реплики, оборванные на полуслове (союз, запятая): ответ задержан, пока человек договаривает.",
 )
 
-# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase | delete.
+# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase | delete | mark | clear.
 DIALOG_DB_ERRORS_TOTAL = Counter(
     "agent_dialog_db_errors_total",
     "Сбои базы диалогов на диске: при сбое запись повторяется, диалоги остаются в памяти.",

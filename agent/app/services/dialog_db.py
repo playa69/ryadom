@@ -11,9 +11,12 @@
 BEGIN/COMMIT на записях, а чтения не оставляют висячую неявную транзакцию (иначе она держала бы блокировки, а записи
 через savepoint никогда не коммитились).
 
-Схема — только диалоговые таблицы (`dialogs`, `messages`, `client_ids`, `voice_prefs`, `model_usage`). Таблиц памяти
-здесь нет: память агента — Cognee (`app/memory/cognee_backend.py`), стирание человека в памяти делает она. DDL
-идемпотентен (`CREATE TABLE IF NOT EXISTS`) и выполняется при каждом `open`: своих миграций у агента нет, изменения
+Схема — диалоговые таблицы (`dialogs`, `messages`, `client_ids`, `voice_prefs`, `model_usage`) и `memory_deletions`:
+метка «память человека удалена», по которой отдельная джоба физически удалит датасет Cognee (самой памяти — графа и
+документов — здесь нет: память агента — Cognee, `app/memory/cognee_backend.py`). Стирание человека мягкое: диалоги и
+выбор голоса не удаляются, а получают `deleted_at`; чтения их не видят, запись стёртое не воскрешает, дочерние строки
+(сообщения, идентификаторы, расход) остаются. DDL идемпотентен (`CREATE TABLE IF NOT EXISTS`,
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) и выполняется при каждом `open`: своих миграций у агента нет, изменения
 схемы — только добавочные. Timestamps хранятся TEXT в ISO: формат задан писателем (`DialogStore`), переносимость
 важнее типовой строгости.
 
@@ -28,12 +31,18 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 logger = logging.getLogger("agent.db")
+
+
+def _now_iso() -> str:
+    """Отметка времени для `deleted_at`: тот же формат, что пишет `DialogStore` (ISO, миллисекунды, Z)."""
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 DDL = (
     """CREATE TABLE IF NOT EXISTS dialogs (
@@ -83,6 +92,16 @@ DDL = (
     amount     DOUBLE PRECISION NOT NULL
 )""",
     "CREATE INDEX IF NOT EXISTS model_usage_dialog ON model_usage (dialog_id, message_id)",
+    # Мягкое стирание: добавочные колонки (идемпотентно) и метка удаления памяти для будущей джобы-чистильщика.
+    "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS deleted_at TEXT",
+    "ALTER TABLE voice_prefs ADD COLUMN IF NOT EXISTS deleted_at TEXT",
+    """CREATE TABLE IF NOT EXISTS memory_deletions (
+    user_id    TEXT PRIMARY KEY,
+    deleted_at TEXT NOT NULL
+)""",
+    "CREATE INDEX IF NOT EXISTS dialogs_deleted_at ON dialogs (deleted_at)",
+    "CREATE INDEX IF NOT EXISTS voice_prefs_deleted_at ON voice_prefs (deleted_at)",
+    "CREATE INDEX IF NOT EXISTS memory_deletions_deleted_at ON memory_deletions (deleted_at)",
 )
 
 
@@ -141,7 +160,8 @@ def clean_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
 
 class DialogDatabase:
     """Хранилище диалогов в PostgreSQL. Интерфейс: `open`, `close`, `load_user`, `apply`, `erase_user`,
-    `delete_dialog`, `counts`, `checkpoint` (нет-оп, нужен `DialogStore`)."""
+    `mark_memory_deleted`, `clear_memory_deleted`, `is_memory_deleted`, `delete_dialog`, `counts`, `checkpoint`
+    (нет-оп, нужен `DialogStore`)."""
 
     label = "postgres"
 
@@ -227,7 +247,8 @@ class DialogDatabase:
             )
 
     def load_user(self, user_id: str) -> tuple[list[StoredDialog], str | None]:
-        """Все диалоги человека (от старых к новым) с сообщениями и выбранный им голос."""
+        """Все диалоги человека (от старых к новым) с сообщениями и выбранный им голос. Мягко стёртое
+        (`deleted_at`) не читается: для агента стёртого человека данных нет, физически их уберёт отдельная джоба."""
         with self._lock, self._connection() as conn:
             dialogs = {
                 row[0]: StoredDialog(
@@ -245,23 +266,26 @@ class DialogDatabase:
                 )
                 for row in conn.execute(
                     "SELECT id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, memory_mode, crisis_seen, "
-                    "memory_extracted_at FROM dialogs WHERE user_id = %s ORDER BY started_at, id",
+                    "memory_extracted_at FROM dialogs WHERE user_id = %s AND deleted_at IS NULL ORDER BY started_at, id",
                     (user_id,),
                 )
             }
             for dialog_id, message_id, role, text, created_at, audio_seconds in conn.execute(
                 "SELECT m.dialog_id, m.id, m.role, m.text, m.created_at, m.audio_seconds FROM messages m "
-                "JOIN dialogs d ON d.id = m.dialog_id WHERE d.user_id = %s ORDER BY m.dialog_id, m.position",
+                "JOIN dialogs d ON d.id = m.dialog_id WHERE d.user_id = %s AND d.deleted_at IS NULL "
+                "ORDER BY m.dialog_id, m.position",
                 (user_id,),
             ).fetchall():
                 dialogs[dialog_id].messages.append((message_id, role, text, created_at, audio_seconds))
             for dialog_id, client_id, message_id in conn.execute(
                 "SELECT c.dialog_id, c.client_id, c.message_id FROM client_ids c "
-                "JOIN dialogs d ON d.id = c.dialog_id WHERE d.user_id = %s",
+                "JOIN dialogs d ON d.id = c.dialog_id WHERE d.user_id = %s AND d.deleted_at IS NULL",
                 (user_id,),
             ).fetchall():
                 dialogs[dialog_id].client_ids[client_id] = message_id
-            pref = conn.execute("SELECT voice FROM voice_prefs WHERE user_id = %s", (user_id,)).fetchone()
+            pref = conn.execute(
+                "SELECT voice FROM voice_prefs WHERE user_id = %s AND deleted_at IS NULL", (user_id,)
+            ).fetchone()
         return list(dialogs.values()), (pref[0] if pref else None)
 
     def apply(self, writes: list[DialogWrite]) -> None:
@@ -274,14 +298,16 @@ class DialogDatabase:
         ):
             for write in writes:
                 # memory_mode неизменяем после создания, crisis_seen только растёт, memory_extracted_at писатель
-                # диалогов не трогает (это отметка бэкенда памяти о забранном диалоге).
+                # диалогов не трогает (это отметка бэкенда памяти о забранном диалоге). Мягко стёртый диалог
+                # (deleted_at) запись не воскрешает: отложенная пачка не вернёт стёртого человека.
                 cur.execute(
                     "INSERT INTO dialogs (id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, "
                     "memory_mode, crisis_seen) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (id) DO UPDATE SET "
                     "ended_at = EXCLUDED.ended_at, summary = EXCLUDED.summary, greeting = EXCLUDED.greeting, "
                     "voice = EXCLUDED.voice, reply_index = EXCLUDED.reply_index, "
-                    "crisis_seen = GREATEST(dialogs.crisis_seen, EXCLUDED.crisis_seen)",
+                    "crisis_seen = GREATEST(dialogs.crisis_seen, EXCLUDED.crisis_seen) "
+                    "WHERE dialogs.deleted_at IS NULL",
                     clean_row(write.row),
                 )
                 cur.executemany(
@@ -303,7 +329,8 @@ class DialogDatabase:
                 if write.pref is not None:
                     cur.execute(
                         "INSERT INTO voice_prefs (user_id, voice) VALUES (%s, %s) "
-                        "ON CONFLICT (user_id) DO UPDATE SET voice = EXCLUDED.voice",
+                        "ON CONFLICT (user_id) DO UPDATE SET voice = EXCLUDED.voice "
+                        "WHERE voice_prefs.deleted_at IS NULL",  # стёртый выбор голоса не воскрешает
                         clean_row(write.pref),
                     )
 
@@ -311,17 +338,57 @@ class DialogDatabase:
         """Нет-оп: метод нужен контракту `DialogStore`; журнал транзакций ведёт кластер PostgreSQL."""
 
     def erase_user(self, user_id: str) -> None:
-        """Стереть всё о человеке (диалоги с сообщениями, расходом и идентификаторами — каскадом, выбор голоса) одной
-        транзакцией. Идемпотентно. Память человека стирает бэкенд памяти (Cognee), здесь её таблиц нет."""
+        """Мягко стереть всё о человеке одной транзакцией: диалоги и выбор голоса получают `deleted_at` (дочерние
+        строки — сообщения, расход, идентификаторы — остаются вместе с ними), в `memory_deletions` вставляется метка
+        для джобы, которая физически удалит датасет Cognee. Идемпотентно: повтор не переписывает первые отметки.
+        Для чтений человека больше нет (см. `load_user`)."""
+        at = _now_iso()
         with self._lock, self._connection() as conn, conn.transaction():
-            conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
-            conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
+            conn.execute(
+                "UPDATE dialogs SET deleted_at = %s WHERE user_id = %s AND deleted_at IS NULL", (at, user_id)
+            )
+            conn.execute(
+                "UPDATE voice_prefs SET deleted_at = %s WHERE user_id = %s AND deleted_at IS NULL", (at, user_id)
+            )
+            conn.execute(
+                "INSERT INTO memory_deletions (user_id, deleted_at) VALUES (%s, %s) "
+                "ON CONFLICT (user_id) DO NOTHING",
+                (user_id, at),
+            )
+
+    def mark_memory_deleted(self, user_id: str) -> None:
+        """Поставить метку «память человека удалена» (`memory_deletions`), не трогая диалоги: «забыть всё» в памяти
+        (DELETE …/memory) стирает только память. По метке отдельная джоба физически удалит датасет Cognee.
+        Идемпотентно: повтор оставляет первую отметку."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_deletions (user_id, deleted_at) VALUES (%s, %s) "
+                "ON CONFLICT (user_id) DO NOTHING",
+                (user_id, _now_iso()),
+            )
+
+    def clear_memory_deleted(self, user_id: str) -> None:
+        """Снять техническую метку после повторного согласия на память, не трогая пользовательские данные."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM memory_deletions WHERE user_id = %s", (user_id,))
+
+    def is_memory_deleted(self, user_id: str) -> bool:
+        """Есть ли метка «память человека удалена». По ней хранилище при холодной загрузке человека сообщает бэкенду
+        памяти, что тот стёрт: оставшийся до джобы датасет Cognee не должен воскресать после рестарта/выгрузки."""
+        with self._lock, self._connection() as conn:
+            return conn.execute(
+                "SELECT 1 FROM memory_deletions WHERE user_id = %s", (user_id,)
+            ).fetchone() is not None
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
-        """Удалить один диалог человека целиком (сообщения и расход уходят каскадом).
+        """Мягко удалить один диалог человека: сообщения, расход и идентификаторы остаются вместе с ним.
 
         `forget_derived` принимается ради контракта: фактами, выведенными из удалённого диалога, управляет бэкенд
-        памяти (Cognee), а не хранилище диалогов.
+        памяти (Cognee), а не хранилище диалогов. Идемпотентно: повтор не переписывает первую отметку.
         """
         with self._lock, self._connection() as conn, conn.transaction():
-            conn.execute("DELETE FROM dialogs WHERE id = %s AND user_id = %s", (dialog_id, user_id))
+            conn.execute(
+                "UPDATE dialogs SET deleted_at = %s "
+                "WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+                (_now_iso(), dialog_id, user_id),
+            )
