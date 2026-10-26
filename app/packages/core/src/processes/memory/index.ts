@@ -7,6 +7,7 @@ import './forget-memory-fact/forget-memory-fact.handler'
 import './forget-memory/forget-memory.handler'
 import './get-memory-changes/get-memory-changes.handler'
 import './export-memory/export-memory.handler'
+import './memory-instruction/memory-instruction.handler'
 
 import type { RequestData } from 'mediatr-ts'
 import { mediatr } from '../../shared'
@@ -26,6 +27,8 @@ export { ForgetMemoryOperation } from './forget-memory/forget-memory.operation'
 export type { ForgetMemoryOperationData } from './forget-memory/forget-memory.operation'
 export { GetMemoryChangesOperation } from './get-memory-changes/get-memory-changes.operation'
 export type { GetMemoryChangesOperationData } from './get-memory-changes/get-memory-changes.operation'
+export { MemoryInstructionOperation } from './memory-instruction/memory-instruction.operation'
+export type { MemoryInstructionOperationData } from './memory-instruction/memory-instruction.operation'
 export { ExportMemoryOperation } from './export-memory/export-memory.operation'
 export type { ExportMemoryOperationData } from './export-memory/export-memory.operation'
 
@@ -44,6 +47,11 @@ export type { ForgetMemoryResult } from './forget-memory/forget-memory.types'
 export { ForgetMemoryOperationErrorCode } from './forget-memory/forget-memory.types'
 export type { GetMemoryChangesResult } from './get-memory-changes/get-memory-changes.types'
 export { GetMemoryChangesOperationErrorCode } from './get-memory-changes/get-memory-changes.types'
+export type {
+  MemoryInstructionChangesDTO,
+  MemoryInstructionResult,
+} from './memory-instruction/memory-instruction.types'
+export { MemoryInstructionOperationErrorCode } from './memory-instruction/memory-instruction.types'
 export type { ExportMemoryResult } from './export-memory/export-memory.types'
 export { ExportMemoryOperationErrorCode } from './export-memory/export-memory.types'
 export type {
@@ -53,6 +61,7 @@ export type {
   MemoryEventDTO,
   MemoryExportDTO,
   MemoryFactDTO,
+  MemoryNoteDTO,
   MemoryFactSlotsDTO,
   MemoryFactSourceDTO,
   MemorySettingsDTO,
@@ -67,6 +76,7 @@ import type { ForgetMemoryFactOperation } from './forget-memory-fact/forget-memo
 import type { ForgetMemoryOperation } from './forget-memory/forget-memory.operation'
 import type { GetMemoryChangesOperation } from './get-memory-changes/get-memory-changes.operation'
 import type { ExportMemoryOperation } from './export-memory/export-memory.operation'
+import type { MemoryInstructionOperation } from './memory-instruction/memory-instruction.operation'
 
 export type MemoryOperations =
   | GetMemoryOperation
@@ -77,6 +87,7 @@ export type MemoryOperations =
   | ForgetMemoryOperation
   | GetMemoryChangesOperation
   | ExportMemoryOperation
+  | MemoryInstructionOperation
 
 // 5. Facade
 export class MemoryProcess implements IMemoryProcess {

@@ -12,6 +12,7 @@ import './delete-memory-fact/delete-agent-memory-fact.handler'
 import './forget-memory/forget-agent-memory.handler'
 import './get-memory-changes/get-agent-memory-changes.handler'
 import './export-memory/export-agent-memory.handler'
+import './memory-instruction/agent-memory-instruction.handler'
 
 import type { RequestData } from 'mediatr-ts'
 import { mediatr } from '../../shared'
@@ -41,6 +42,8 @@ export { ForgetAgentMemoryRequest } from './forget-memory/forget-agent-memory.re
 export type { ForgetAgentMemoryRequestData } from './forget-memory/forget-agent-memory.request'
 export { GetAgentMemoryChangesRequest } from './get-memory-changes/get-agent-memory-changes.request'
 export type { GetAgentMemoryChangesRequestData } from './get-memory-changes/get-agent-memory-changes.request'
+export { AgentMemoryInstructionRequest } from './memory-instruction/agent-memory-instruction.request'
+export type { AgentMemoryInstructionRequestData } from './memory-instruction/agent-memory-instruction.request'
 export { ExportAgentMemoryRequest } from './export-memory/export-agent-memory.request'
 export type { ExportAgentMemoryRequestData } from './export-memory/export-agent-memory.request'
 
@@ -65,6 +68,11 @@ export type { ForgetAgentMemoryResult } from './forget-memory/forget-agent-memor
 export { ForgetAgentMemoryRequestErrorCode } from './forget-memory/forget-agent-memory.types'
 export type { GetAgentMemoryChangesResult } from './get-memory-changes/get-agent-memory-changes.types'
 export { GetAgentMemoryChangesRequestErrorCode } from './get-memory-changes/get-agent-memory-changes.types'
+export type {
+  AgentMemoryInstructionChanges,
+  AgentMemoryInstructionResult,
+} from './memory-instruction/agent-memory-instruction.types'
+export { AgentMemoryInstructionRequestErrorCode } from './memory-instruction/agent-memory-instruction.types'
 export type { ExportAgentMemoryResponse } from './export-memory/export-agent-memory.types'
 export {
   type AgentDialogListItemResponse,
@@ -82,6 +90,7 @@ export type {
   AgentMemoryFactCategory,
   AgentMemoryFactOrigin,
   AgentMemoryFactResponse,
+  AgentMemoryNoteResponse,
   AgentMemoryFactSensitivity,
   AgentMemoryFactSlots,
   AgentMemoryFactSource,
@@ -105,6 +114,7 @@ import type { DeleteAgentMemoryFactRequest } from './delete-memory-fact/delete-a
 import type { ForgetAgentMemoryRequest } from './forget-memory/forget-agent-memory.request'
 import type { GetAgentMemoryChangesRequest } from './get-memory-changes/get-agent-memory-changes.request'
 import type { ExportAgentMemoryRequest } from './export-memory/export-agent-memory.request'
+import type { AgentMemoryInstructionRequest } from './memory-instruction/agent-memory-instruction.request'
 
 export type AgentApiIntegrationRequests =
   | StartAgentDialogRequest
@@ -120,6 +130,7 @@ export type AgentApiIntegrationRequests =
   | ForgetAgentMemoryRequest
   | GetAgentMemoryChangesRequest
   | ExportAgentMemoryRequest
+  | AgentMemoryInstructionRequest
 
 // 5. Facade
 export class AgentApiIntegration implements IAgentApiIntegration {

@@ -13,6 +13,8 @@ import {
   GetMemoryOperation,
   GetMemoryOperationErrorCode,
   memoryProcess,
+  MemoryInstructionOperation,
+  MemoryInstructionOperationErrorCode,
   UpdateMemoryFactOperation,
   UpdateMemoryFactOperationErrorCode,
   UpdateMemorySettingsOperation,
@@ -29,6 +31,7 @@ import {
   MemoryChangesApiErrorCode,
   MemoryFactCategory,
   MemoryFactStatus,
+  MemoryInstructionApiErrorCode,
   UpdateMemoryFactApiErrorCode,
   UpdateMemorySettingsApiErrorCode,
 } from '@ryadom/contracts/api/memory'
@@ -38,6 +41,7 @@ import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guar
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import {
   fromMemoryFactCategory,
+  toMemoryInstruction,
   toMemory,
   toMemoryChanges,
   toMemoryExport,
@@ -77,9 +81,17 @@ const slotsBody = z
   .strict()
 
 const settingsBody = z.object({
-  enabled: z.boolean(),
+  enabled: z.boolean().optional(),
+  sensitiveEnabled: z.boolean().optional(),
+  chatSearchEnabled: z.boolean().optional(),
   consentAccepted: z.boolean().optional(),
   consentVersion: z.string().max(40).optional(),
+}).refine((body) => body.enabled !== undefined || body.sensitiveEnabled !== undefined || body.chatSearchEnabled !== undefined, {
+  message: 'Nothing to change',
+})
+
+const instructionBody = z.object({
+  text: z.string().trim().min(1).max(1000),
 })
 
 const createFactBody = z.object({
@@ -206,6 +218,8 @@ export function memoryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }: 
       new UpdateMemorySettingsOperation({
         userId: authUser(c).userId,
         enabled: body.enabled,
+        sensitiveEnabled: body.sensitiveEnabled,
+        chatSearchEnabled: body.chatSearchEnabled,
         consentAccepted: body.consentAccepted === true,
         consentVersion,
       }),
@@ -381,6 +395,31 @@ export function memoryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }: 
       }
     }
     return apiOk(c, toMemoryChanges(result.changes))
+  })
+
+  // POST /api/memory/notes/instruction: "Tell Ryadom what to correct or remove". The text is the person's own words.
+  app.post(ApiPath.MemoryInstruction, ...signedIn, write, jsonBody(instructionBody), async (c) => {
+    const { text } = c.req.valid('json')
+    const result = await memoryProcess.execute(
+      new MemoryInstructionOperation({ userId: authUser(c).userId, text }),
+    )
+    if (!result.success) {
+      switch (result.error) {
+        case MemoryInstructionOperationErrorCode.USER_NOT_FOUND:
+          return apiRefused(c, MemoryInstructionApiErrorCode.USER_NOT_FOUND, 'User not found')
+        case MemoryInstructionOperationErrorCode.MEMORY_DISABLED:
+          return apiRefused(c, MemoryInstructionApiErrorCode.MEMORY_DISABLED, 'Memory is turned off')
+        case MemoryInstructionOperationErrorCode.MEMORY_UNAVAILABLE:
+          return apiRefused(
+            c,
+            MemoryInstructionApiErrorCode.MEMORY_UNAVAILABLE,
+            'Memory is unavailable right now',
+          )
+        default:
+          return assertNever(result.error)
+      }
+    }
+    return apiOk(c, toMemoryInstruction(result.changes))
   })
 
   // GET /api/memory/export: "Download my memory". Works with memory off and while it is unavailable.

@@ -26,10 +26,13 @@ from app.memory.models import iso
 from app.memory.errors import (
     MemoryActionUnsupported,
     MemoryDisabled,
+    FactNotFound,
+    FactRejected,
     MemoryNotAllowed,
     MemoryUnavailable,
     MemoryValidation,
 )
+from app.memory.errors import NoteNotFound, NoteRejected
 from app.memory.extractor import NotesExtractor, Outcome
 from app.memory.notes import NotesService, build_notes_block, kind_of_category, note_as_fact
 from app.services.dialog_db import DialogDatabase
@@ -505,7 +508,10 @@ class CogneeMemoryBackend:
         rendered = text if isinstance(text, str) and text else ", ".join(f"{key}: {value}" for key, value in (slots or {}).items())
         if not rendered:
             raise MemoryValidation("нужен текст")
-        note = await self.notes.add(user_id, kind_of_category(category), rendered)
+        try:
+            note = await self.notes.add(user_id, kind_of_category(category), rendered)
+        except NoteRejected as error:  # прежний маршрут говорит прежним кодом
+            raise FactRejected(error.reason or "rejected") from error
         return note_as_fact(note)
 
     async def patch_fact(
@@ -522,11 +528,19 @@ class CogneeMemoryBackend:
             raise MemoryActionUnsupported()
         if not isinstance(text, str) or not text:
             raise MemoryValidation("нужен текст")
-        return note_as_fact(await self.notes.patch(user_id, fact_id, text))
+        try:
+            return note_as_fact(await self.notes.patch(user_id, fact_id, text))
+        except NoteRejected as error:
+            raise FactRejected(error.reason or "rejected") from error
+        except NoteNotFound as error:
+            raise FactNotFound() from error
 
     async def delete_fact(self, user_id: str, fact_id: str) -> None:
         """Прежний маршрут факта: удаляет заметку."""
-        await self.notes.delete(user_id, fact_id)
+        try:
+            await self.notes.delete(user_id, fact_id)
+        except NoteNotFound as error:
+            raise FactNotFound() from error
 
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
         """«Забыть всё»: данные человека в Cognee удаляются, а настройки не меняются — память остаётся включённой (или на паузе) и

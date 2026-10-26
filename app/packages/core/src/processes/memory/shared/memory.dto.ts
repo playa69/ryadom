@@ -6,6 +6,7 @@ import type {
   AgentMemoryFactCategory,
   AgentMemoryFactOrigin,
   AgentMemoryFactResponse,
+  AgentMemoryNoteResponse,
   AgentMemoryFactSensitivity,
   AgentMemoryFactSlots,
   AgentMemoryFactStatus,
@@ -59,6 +60,17 @@ export interface MemoryFactDTO {
   seenByUser: boolean
 }
 
+export interface MemoryNoteDTO {
+  id: string
+  kind: string
+  text: string
+  sensitive: boolean
+  eventDate: string | null
+  createdAt: Date
+  updatedAt: Date
+  dialogId: string | null
+}
+
 export interface MemoryDTO {
   available: boolean
   mode: AgentMemoryMode
@@ -67,11 +79,18 @@ export interface MemoryDTO {
   consentAt: Date | null
   rulesVersion: string
   maxFacts: number
+  maxNotes: number
+  paused: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
+  notes: MemoryNoteDTO[]
   facts: MemoryFactDTO[]
 }
 
 export interface MemorySettingsDTO {
   enabled: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
   consentVersion: string | null
   consentAt: Date | null
 }
@@ -105,6 +124,7 @@ export interface MemoryExportDTO {
     epochAt: Date | null
     updatedAt: Date | null
   }
+  notes: MemoryNoteDTO[]
   facts: MemoryFactDTO[]
   events: MemoryEventDTO[]
 }
@@ -166,13 +186,33 @@ export function toMemoryDTO(memory: AgentMemoryResponse): MemoryDTO {
     consentAt: toDate(memory.consentAt),
     rulesVersion: memory.rulesVersion,
     maxFacts: memory.limits.maxFacts ?? DEFAULT_MAX_FACTS,
+    maxNotes: memory.limits.maxNotes ?? DEFAULT_MAX_FACTS,
+    paused: memory.paused,
+    sensitiveEnabled: memory.sensitiveEnabled,
+    chatSearchEnabled: memory.chatSearchEnabled,
+    notes: memory.notes.map(toMemoryNoteDTO),
     facts: memory.facts.map(toMemoryFactDTO),
+  }
+}
+
+export function toMemoryNoteDTO(note: AgentMemoryNoteResponse): MemoryNoteDTO {
+  return {
+    id: note.id,
+    kind: note.kind,
+    text: note.text,
+    sensitive: note.sensitive,
+    eventDate: note.eventDate,
+    createdAt: toDate(note.createdAt) ?? new Date(0),
+    updatedAt: toDate(note.updatedAt) ?? new Date(0),
+    dialogId: note.dialogId,
   }
 }
 
 export function toMemorySettingsDTO(settings: AgentMemorySettingsResponse): MemorySettingsDTO {
   return {
     enabled: settings.enabled,
+    sensitiveEnabled: settings.sensitiveEnabled,
+    chatSearchEnabled: settings.chatSearchEnabled,
     consentVersion: settings.consentVersion,
     consentAt: toDate(settings.consentAt),
   }
@@ -197,6 +237,7 @@ export function toMemoryExportDTO(exported: AgentMemoryExportResponse): MemoryEx
       epochAt: toDate(exported.settings.epochAt),
       updatedAt: toDate(exported.settings.updatedAt),
     },
+    notes: exported.notes.map(toMemoryNoteDTO),
     facts: exported.facts.map(toMemoryFactDTO),
     events: exported.events.map((event) => ({
       factId: event.factId,

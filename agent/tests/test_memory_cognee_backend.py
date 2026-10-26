@@ -366,7 +366,7 @@ async def test_legacy_fact_routes_work_on_notes() -> None:
     await service.delete_fact(user, fact["id"])
     with pytest.raises(MemoryServiceError) as gone:
         await service.delete_fact(user, fact["id"])
-    assert gone.value.status == 404 and gone.value.code == "NOTE_NOT_FOUND"
+    assert gone.value.status == 404 and gone.value.code == "FACT_NOT_FOUND"
     assert db.list_notes(user) == []
 
 

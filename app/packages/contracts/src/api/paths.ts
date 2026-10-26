@@ -45,6 +45,8 @@ export enum ApiPath {
   MemoryChanges = '/api/memory/changes',
   /** "Download my memory". */
   MemoryExport = '/api/memory/export',
+  /** "Tell Ryadom what to correct or remove": a request in words, carried out on the notes. */
+  MemoryInstruction = '/api/memory/notes/instruction',
 
   /** Open: which analytics features are on and the (public) PostHog project token. */
   AnalyticsConfig = '/api/analytics/config',
