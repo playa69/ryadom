@@ -539,6 +539,8 @@ export const MEMORY_FACT_ERRORS: Record<UpdateMemoryFactApiErrorCode | CreateMem
 export const MEMORY_FORGET_ERRORS: Record<ForgetMemoryApiErrorCode, string> = {
   [ForgetMemoryApiErrorCode.USER_NOT_FOUND]: ACCOUNT_GONE,
   [ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE]: 'Сейчас не получается забыть. Попробуй чуть позже',
+  [ForgetMemoryApiErrorCode.FACT_UNSUPPORTED]:
+    'Отдельный факт пока забыть нельзя. Можно забыть всё сразу в разделе «Память»',
 }
 
 // ─── the card "Я запомнил" ────────────────────────────────────────────────────

@@ -162,7 +162,7 @@ def create_app(
                 await cognee_client.connect()
             except Exception:  # noqa: BLE001 - память недоступна до первого удачного перелогина, агент работает
                 logger.exception("cognee login failed at startup")
-        memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg)
+        memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg, lambda: store.database)
         store.memory = memory_service
         app.state.memory = memory_service
         if memory_service.status() == "unavailable":
