@@ -52,10 +52,10 @@ export const {
   refreshSession,
   getMemory,
   setMemoryEnabled,
-  createMemoryFact,
+  updateMemorySettings,
+  memoryInstruction,
   updateMemoryFact,
   forgetMemoryFact,
   forgetAllMemory,
-  getMemoryChanges,
   exportMemory,
 } = client

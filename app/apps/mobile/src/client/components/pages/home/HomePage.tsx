@@ -14,8 +14,6 @@ import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import Breathing from '../../Breathing'
 import Switch from '../../Switch'
 import { SosButton, openSos } from '../../SosSheet'
-import { memoryCard } from '../../../lib/memory'
-import MemoryCard from './MemoryCard'
 import ResumeDialogSheet from './ResumeDialogSheet'
 
 /**
@@ -128,8 +126,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   }
 
   function openDialog(data: StartDialogApiResponse) {
-    // A new conversation makes the card of the previous one old news.
-    memoryCard.close()
     f7router.navigate(`/dialog/${data.dialogId}/`, {
       props: {
         greeting: data.greeting,
@@ -283,8 +279,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
               </div>
             )}
           </div>
-
-          <MemoryCard owner={userId} />
 
           <div className="rd-modes">
             {MODES.map((item) => (

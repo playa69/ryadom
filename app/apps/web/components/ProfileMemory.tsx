@@ -1,177 +1,53 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { CircleAlert, Plus, Sparkles } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { CircleAlert, Sparkles } from 'lucide-react'
 import { track } from '@ryadom/analytics/browser'
-import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { AnalyticsEvent, type MemorySettingName } from '@ryadom/analytics/events'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import {
-  MEMORY_ACTION_LABEL,
-  MEMORY_FACT_ERRORS,
   MEMORY_FORGET_ERRORS,
   MEMORY_SETTINGS_ERRORS,
-  groupMemory,
+  MEMORY_SHEET,
+  MEMORY_SWITCHES,
   memoryExportFileName,
   memoryExportText,
-  memoryFactActions,
-  memoryFactBadge,
-  memoryFactChange,
-  memoryFactSource,
   memoryInUse,
+  memorySwitches,
   needsMemoryConsent,
-  newMemoryFactCategories,
   readHideMemoryTexts,
-  replaceMemoryFact,
   shouldShowMemorySection,
   writeHideMemoryTexts,
-  type MemoryFactAction,
 } from '@ryadom/client-core/memory'
-import {
-  MemoryFactStatus,
-  type MemoryApiResponse,
-  type MemoryFactApiResponse,
-} from '@ryadom/contracts/api/memory'
+import type { MemoryApiResponse, MemoryNoteApiResponse } from '@ryadom/contracts/api/memory'
 import { Alert, AlertDescription, AlertTitle } from '@ryadom/ui/components/alert'
-import { Badge } from '@ryadom/ui/components/badge'
-import { Button } from '@ryadom/ui/components/button'
-import { Card } from '@ryadom/ui/components/card'
 import { NativeCheckbox } from '@ryadom/ui/components/native-checkbox'
 import { Skeleton } from '@ryadom/ui/components/skeleton'
-import { cn } from '@ryadom/ui/lib/utils'
 import { useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
-import { HIDE_MEMORY_TEXTS_DEFAULT, memoryCard, pendingForgets, usePendingForgets } from '@/lib/memory'
+import { HIDE_MEMORY_TEXTS_DEFAULT, pendingForgets } from '@/lib/memory'
 import { WEB_MEMORY_HIDDEN_KEY } from '@/lib/storage-keys'
-import { BUTTON } from './controls'
-import { BADGE_COMPACT, RetryButton, StatePanel } from './JournalParts'
+import { RetryButton, StatePanel } from './JournalParts'
 import MemoryConsent from './MemoryConsent'
-import MemoryFactForm from './MemoryFactForm'
+import MemoryNotesSheet from './MemoryNotesSheet'
 import Modal from './Modal'
 import { useNotice } from './Notice'
-import { Page, SECTION_HEADING } from './Page'
+import { Page } from './Page'
 import { Busy, ModalActions, ModalText, ProfileButton, SettingsSection } from './ProfileParts'
 import ProfileRow from './ProfileRow'
 
 /**
- * Profile → Память: the switch "Запоминать" and everything the agent remembers, grouped the way a
- * person thinks of it, each fact with where it came from and what can be done with it. Above the
- * facts "Забыть всё"; below them the download and "Как это работает".
+ * Profile → Память: three switches ("Память" is a pause, the notes stay; "Запоминать чувствительное";
+ * "Опираться на прошлые разговоры"), the button that opens the sheet "Что помнит Рядом" with the notes,
+ * the download, "Удалить всю память" and "Как это работает".
  *
  * The texts are the person's own words: the profile is under `NoCapture`, nothing here is reported but
  * the kind of action, and nothing is stored in the browser but the "hide texts" switch. A browser is
  * where computers are shared, so the texts start hidden behind "Показать" until the person says this
- * one is theirs. Reading, forgetting and the download work even while memory is off or unavailable.
+ * one is theirs. Reading, deleting and the download work even while memory is paused or unavailable.
  */
 
 const LOAD_FALLBACK = 'Не получилось загрузить память'
-
-/** A small action under a fact. */
-const ACTION = cn(BUTTON, 'h-9 border-input! px-3.5 text-sm')
-
-function FactCard({
-  fact,
-  actions,
-  hidden,
-  busy,
-  onAction,
-}: {
-  fact: MemoryFactApiResponse
-  actions: MemoryFactAction[]
-  hidden: boolean
-  busy: boolean
-  onAction(action: MemoryFactAction): void
-}) {
-  const source = memoryFactSource(fact)
-  const badge = memoryFactBadge(fact)
-  return (
-    <li>
-      <Card
-        className={cn(
-          'gap-2.5 rounded-lg px-4 py-3.5 shadow-none',
-          fact.status === MemoryFactStatus.Proposed && 'border-brand-line',
-          fact.status === MemoryFactStatus.Candidate && 'border-dashed',
-        )}
-        data-testid="memory-fact"
-        data-status={fact.status}
-      >
-        <p
-          className={cn(
-            'text-base leading-[1.45] wrap-anywhere',
-            hidden ? 'text-faint italic' : 'text-foreground',
-          )}
-          data-testid="memory-fact-text"
-        >
-          {hidden ? 'Текст скрыт' : fact.text}
-        </p>
-        {(source || badge) && (
-          <p className="flex flex-wrap items-center gap-2 text-[0.8125rem] leading-[1.4] text-faint">
-            {badge && (
-              <Badge
-                variant={fact.status === MemoryFactStatus.Proposed ? 'soft' : 'outline'}
-                className={BADGE_COMPACT}
-              >
-                {badge}
-              </Badge>
-            )}
-            {source}
-          </p>
-        )}
-        {actions.length > 0 && (
-          <div className="flex flex-wrap gap-2 pt-0.5">
-            {actions.map((action) => {
-              const forget = action === 'delete' || action === 'decline'
-              return (
-                <Button
-                  key={action}
-                  type="button"
-                  size="sm"
-                  variant={action === 'accept' ? 'default' : 'outline'}
-                  disabled={busy}
-                  className={cn(
-                    ACTION,
-                    action === 'accept' && 'border-transparent! bg-clip-border',
-                    forget && 'text-danger hover:bg-danger-soft hover:text-danger',
-                  )}
-                  data-testid={`memory-${action}`}
-                  onClick={() => onAction(action)}
-                >
-                  {MEMORY_ACTION_LABEL[action]}
-                </Button>
-              )
-            })}
-          </div>
-        )}
-      </Card>
-    </li>
-  )
-}
-
-function UndoRow({ onUndo }: { onUndo(): void }) {
-  return (
-    <li>
-      <Card
-        className="flex-row items-center justify-between gap-3 rounded-lg px-4 py-2.5 shadow-none"
-        data-testid="memory-undo"
-      >
-        <span className="text-[0.9375rem] text-dim">Забыл.</span>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className={cn(ACTION, 'border-0!')}
-          onClick={onUndo}
-          data-testid="memory-undo-button"
-        >
-          Вернуть
-        </Button>
-      </Card>
-    </li>
-  )
-}
-
-function FactList({ children }: { children: ReactNode }) {
-  return <ul className="flex flex-col gap-2">{children}</ul>
-}
 
 function LoadingState() {
   return (
@@ -184,6 +60,41 @@ function LoadingState() {
   )
 }
 
+function SwitchRow({
+  title,
+  hint,
+  checked,
+  disabled,
+  busy,
+  testId,
+  onChange,
+}: {
+  title: string
+  hint: string
+  checked: boolean
+  disabled: boolean
+  busy: boolean
+  testId: string
+  onChange(on: boolean): void
+}) {
+  return (
+    <li className="px-4 py-3">
+      <label className="flex cursor-pointer items-start gap-3" data-testid={testId}>
+        <NativeCheckbox
+          checked={checked}
+          disabled={disabled}
+          aria-busy={busy || undefined}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span className="flex flex-col gap-1">
+          <span className="text-base leading-[1.35] font-medium text-foreground">{title}</span>
+          <span className="text-[0.8125rem] leading-[1.45] text-dim">{hint}</span>
+        </span>
+      </label>
+    </li>
+  )
+}
+
 export default function ProfileMemory() {
   const client = useClient()
   const notify = useNotice()
@@ -193,15 +104,13 @@ export default function ProfileMemory() {
   const [retrying, setRetrying] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [sheet, setSheet] = useState<'consent' | 'info' | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
   const [consentError, setConsentError] = useState('')
-  const [editing, setEditing] = useState<{ fact: MemoryFactApiResponse | null } | null>(null)
-  const [busyId, setBusyId] = useState<string | null>(null)
   const [hideTexts, setHideTexts] = useState(HIDE_MEMORY_TEXTS_DEFAULT)
   const [revealed, setRevealed] = useState(false)
   const [forgetAllOpen, setForgetAllOpen] = useState(false)
   const [forgettingAll, setForgettingAll] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const pending = usePendingForgets()
   const generation = useRef(0)
 
   useOnceFor('memory', () => track(AnalyticsEvent.MemoryScreenOpened))
@@ -237,7 +146,7 @@ export default function ProfileMemory() {
   async function setEnabled(enabled: boolean) {
     setSwitching(true)
     setConsentError('')
-    const fallback = enabled ? 'Не получилось включить память' : 'Не получилось выключить память'
+    const fallback = enabled ? 'Не получилось включить память' : 'Не получилось поставить память на паузу'
     try {
       const result = await client.setMemoryEnabled(enabled)
       if (!result.ok) {
@@ -246,16 +155,12 @@ export default function ProfileMemory() {
         else notify(text, 'error')
         return
       }
-      setMemory((current) => (current ? { ...current, ...result.data } : current))
+      setMemory((current) => (current ? { ...current, ...result.data, paused: !result.data.enabled } : current))
       updateUser({ memoryEnabled: memory !== null && memoryInUse({ ...memory, ...result.data }) })
       track(AnalyticsEvent.MemoryEnabled, { enabled: result.data.enabled })
+      track(AnalyticsEvent.MemorySettingChanged, { setting: 'memory', enabled: result.data.enabled })
       setSheet(null)
-      notify(
-        result.data.enabled
-          ? 'Память включена'
-          : 'Память выключена. Запомненное осталось, его можно забыть здесь',
-        'success',
-      )
+      notify(result.data.enabled ? 'Память включена' : 'Память на паузе. Заметки остались', 'success')
     } catch (err) {
       const text = apiErrorText(err, {}, fallback)
       if (sheet === 'consent') setConsentError(text)
@@ -276,65 +181,41 @@ export default function ProfileMemory() {
     void setEnabled(on)
   }
 
-  /** "Забыть" and "Не запоминать": hidden at once, sent when the seconds for "Вернуть" are over. */
-  function forget(fact: MemoryFactApiResponse, action: 'delete' | 'decline') {
-    pendingForgets.schedule(fact.id, async () => {
-      try {
-        const result = await client.forgetMemoryFact(fact.id)
-        if (!result.ok) {
-          notify(codeText(MEMORY_FORGET_ERRORS, result.code, 'Не получилось забыть'), 'error')
-          return
-        }
-        track(AnalyticsEvent.MemoryFactAction, { action })
-        memoryCard.remove(fact.id)
-        setMemory((current) =>
-          current ? { ...current, facts: current.facts.filter((item) => item.id !== fact.id) } : current,
-        )
-      } catch (err) {
-        notify(apiErrorText(err, {}, 'Не получилось забыть'), 'error')
-      }
-    })
-  }
-
-  async function act(fact: MemoryFactApiResponse, action: MemoryFactAction) {
-    if (action === 'edit') {
-      setEditing({ fact })
-      return
-    }
-    if (action === 'delete' || action === 'decline') {
-      forget(fact, action)
-      return
-    }
-    setBusyId(fact.id)
+  /** The two lower switches: without `enabled`, so no consent is involved. */
+  async function setOption(setting: Extract<MemorySettingName, 'sensitive' | 'chat_search'>, on: boolean) {
+    if (!memory || switching) return
+    setSwitching(true)
+    const fallback = 'Не получилось изменить настройку'
     try {
-      const result = await client.updateMemoryFact(fact.id, memoryFactChange(action))
+      const result = await client.updateMemorySettings(
+        setting === 'sensitive' ? { sensitiveEnabled: on } : { chatSearchEnabled: on },
+      )
       if (!result.ok) {
-        notify(codeText(MEMORY_FACT_ERRORS, result.code, 'Не получилось'), 'error')
+        notify(codeText(MEMORY_SETTINGS_ERRORS, result.code, fallback), 'error')
         return
       }
-      track(AnalyticsEvent.MemoryFactAction, { action })
-      memoryCard.update(result.data)
+      track(AnalyticsEvent.MemorySettingChanged, { setting, enabled: on })
       setMemory((current) =>
-        current ? { ...current, facts: replaceMemoryFact(current.facts, result.data) } : current,
+        current
+          ? { ...current, sensitiveEnabled: result.data.sensitiveEnabled, chatSearchEnabled: result.data.chatSearchEnabled }
+          : current,
       )
+      // Turning "чувствительное" off deletes the sensitive notes: the list is read again.
+      if (setting === 'sensitive' && !on) await load()
     } catch (err) {
-      notify(apiErrorText(err, {}, 'Не получилось'), 'error')
+      notify(apiErrorText(err, {}, fallback), 'error')
     } finally {
-      setBusyId(null)
+      setSwitching(false)
     }
   }
 
-  function saved(fact: MemoryFactApiResponse, created: boolean) {
-    // The catalog counts corrections; a fact the person adds is not one of its actions.
-    if (!created) track(AnalyticsEvent.MemoryFactAction, { action: 'edit' })
-    setMemory((current) =>
-      current
-        ? { ...current, facts: created ? [...current.facts, fact] : replaceMemoryFact(current.facts, fact) }
-        : current,
-    )
-    memoryCard.update(fact)
-    setEditing(null)
-    notify(created ? 'Запомнил' : 'Исправил', 'success')
+  function updateNotes(update: (current: MemoryNoteApiResponse[]) => MemoryNoteApiResponse[]) {
+    setMemory((current) => (current ? { ...current, notes: update(current.notes) } : current))
+  }
+
+  function openNotes() {
+    track(AnalyticsEvent.MemorySheetOpened, { source: 'profile' })
+    setNotesOpen(true)
   }
 
   async function forgetAll() {
@@ -342,17 +223,18 @@ export default function ProfileMemory() {
     try {
       const result = await client.forgetAllMemory()
       if (!result.ok) {
-        notify(codeText(MEMORY_FORGET_ERRORS, result.code, 'Не получилось забыть'), 'error')
+        notify(codeText(MEMORY_FORGET_ERRORS, result.code, 'Не получилось удалить'), 'error')
         return
       }
       track(AnalyticsEvent.MemoryForgetAll)
+      track(AnalyticsEvent.MemoryReset)
       pendingForgets.cancelAll()
-      memoryCard.close()
-      setMemory((current) => (current ? { ...current, facts: [] } : current))
+      // The switches and the consent stay as they were.
+      setMemory((current) => (current ? { ...current, notes: [], facts: [] } : current))
       setForgetAllOpen(false)
-      notify('Я всё забыл', 'success')
+      notify('Вся память удалена', 'success')
     } catch (err) {
-      notify(apiErrorText(err, {}, 'Не получилось забыть'), 'error')
+      notify(apiErrorText(err, {}, 'Не получилось удалить'), 'error')
     } finally {
       setForgettingAll(false)
     }
@@ -383,36 +265,7 @@ export default function ProfileMemory() {
   // The feature is off on the server and the person has nothing there (a link opened before it was
   // switched on): a neutral word, no switch and no actions.
   const hiddenSection = memory !== null && !shouldShowMemorySection(memory)
-  const view = memory && !hiddenSection ? groupMemory(memory.facts) : null
-  const canChange = memory !== null && memory.available && memory.enabled
-  const hidden = hideTexts && !revealed
-  const hasFacts = (view?.count ?? 0) > 0
-  // While memory is off or unavailable the facts are only read and forgotten.
-  const actionsOf = (fact: MemoryFactApiResponse): MemoryFactAction[] =>
-    canChange
-      ? memoryFactActions(fact)
-      : memoryFactActions(fact).filter((action) => action === 'delete' || action === 'decline')
-
-  function renderFacts(facts: MemoryFactApiResponse[]) {
-    return (
-      <FactList>
-        {facts.map((fact) =>
-          pending.has(fact.id) ? (
-            <UndoRow key={fact.id} onUndo={() => pendingForgets.undo(fact.id)} />
-          ) : (
-            <FactCard
-              key={fact.id}
-              fact={fact}
-              actions={actionsOf(fact)}
-              hidden={hidden}
-              busy={busyId === fact.id}
-              onAction={(action) => void act(fact, action)}
-            />
-          ),
-        )}
-      </FactList>
-    )
-  }
+  const switches = memory ? memorySwitches(memory) : null
 
   return (
     <Page title="Память" back={{ href: '/profile', label: 'Профиль' }} data-testid="memory">
@@ -434,27 +287,36 @@ export default function ProfileMemory() {
         </StatePanel>
       )}
 
-      {memory && view && (
+      {memory && switches && !hiddenSection && (
         <>
           <SettingsSection title="Настройка" testId="memory-settings">
-            <li className="px-4 py-3">
-              <label className="flex cursor-pointer items-start gap-3" data-testid="memory-switch">
-                <NativeCheckbox
-                  checked={memory.enabled}
-                  disabled={switching || (!memory.available && !memory.enabled)}
-                  aria-busy={switching || undefined}
-                  onChange={(event) => handleSwitch(event.target.checked)}
-                />
-                <span className="flex flex-col gap-1">
-                  <span className="text-base leading-[1.35] font-medium text-foreground">Запоминать</span>
-                  <span className="text-[0.8125rem] leading-[1.45] text-dim">
-                    {memory.enabled
-                      ? 'Я помню важное из наших разговоров, чтобы не начинать с нуля. Ты видишь всё, что я запомнил, и можешь это исправить или забыть.'
-                      : 'Пока память выключена, я ничего не запоминаю и не пользуюсь запомненным. Без неё всё остальное работает так же.'}
-                  </span>
-                </span>
-              </label>
-            </li>
+            <SwitchRow
+              title={MEMORY_SWITCHES.memory.title}
+              hint={MEMORY_SWITCHES.memory.hint}
+              checked={switches.memory}
+              disabled={switching || (!memory.available && !memory.enabled)}
+              busy={switching}
+              testId="memory-switch"
+              onChange={handleSwitch}
+            />
+            <SwitchRow
+              title={MEMORY_SWITCHES.sensitive.title}
+              hint={MEMORY_SWITCHES.sensitive.hint}
+              checked={switches.sensitive}
+              disabled={switching || switches.sensitiveDisabled}
+              busy={switching}
+              testId="memory-switch-sensitive"
+              onChange={(on) => void setOption('sensitive', on)}
+            />
+            <SwitchRow
+              title={MEMORY_SWITCHES.chatSearch.title}
+              hint={MEMORY_SWITCHES.chatSearch.hint}
+              checked={switches.chatSearch}
+              disabled={switching || switches.chatSearchDisabled}
+              busy={switching}
+              testId="memory-switch-chat-search"
+              onChange={(on) => void setOption('chat_search', on)}
+            />
           </SettingsSection>
 
           {!memory.available && (
@@ -462,114 +324,39 @@ export default function ProfileMemory() {
               <CircleAlert aria-hidden="true" />
               <AlertTitle className="font-bold">Недоступно сейчас</AlertTitle>
               <AlertDescription className="text-[0.9375rem] leading-normal text-dim">
-                Память временно не работает. Посмотреть, забыть и скачать запомненное можно и сейчас.
+                Память временно не работает. Посмотреть, удалить и скачать заметки можно и сейчас.
               </AlertDescription>
             </Alert>
           )}
 
-          {hasFacts && (
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Действия с памятью">
-              {canChange && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className={ACTION}
-                  onClick={() => setEditing({ fact: null })}
-                  data-testid="memory-add"
-                >
-                  <Plus aria-hidden="true" />
-                  Добавить
-                </Button>
-              )}
-              {hideTexts && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className={ACTION}
-                  aria-pressed={revealed}
-                  onClick={() => setRevealed((value) => !value)}
-                  data-testid="memory-reveal"
-                >
-                  {revealed ? 'Скрыть тексты' : 'Показать'}
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className={cn(ACTION, 'text-danger hover:bg-danger-soft hover:text-danger')}
+          <SettingsSection title="Заметки">
+            <li>
+              <ProfileRow
+                icon="memory"
+                label={MEMORY_SHEET.open}
+                value={memory.notes.length > 0 ? String(memory.notes.length) : undefined}
+                testId="memory-open"
+                onClick={openNotes}
+              />
+            </li>
+            <li>
+              <ProfileRow
+                icon="download"
+                label={exporting ? 'Готовим файл…' : MEMORY_SHEET.download}
+                testId="memory-export"
+                onClick={() => void download()}
+              />
+            </li>
+            <li>
+              <ProfileRow
+                icon="trash"
+                danger
+                label={MEMORY_SHEET.forgetAll}
+                testId="memory-forget-all"
                 onClick={() => setForgetAllOpen(true)}
-                data-testid="memory-forget-all"
-              >
-                Забыть всё
-              </Button>
-            </div>
-          )}
-
-          {view.proposed.length > 0 && (
-            <section
-              className="flex flex-col gap-2"
-              data-testid="memory-proposed"
-              aria-labelledby="memory-proposed"
-            >
-              <h2 id="memory-proposed" className={SECTION_HEADING}>
-                Ждут твоего решения
-              </h2>
-              <p className="px-1 text-[0.8125rem] leading-[1.45] text-faint">
-                Это важное и личное, поэтому я сначала спрашиваю. Пока ты не ответишь, я этим не пользуюсь.
-              </p>
-              {renderFacts(view.proposed)}
-            </section>
-          )}
-
-          {view.groups.map((group) => (
-            <section
-              key={group.id}
-              className="flex flex-col gap-2"
-              data-testid="memory-group"
-              data-group={group.id}
-              aria-labelledby={`memory-group-${group.id}`}
-            >
-              <h2 id={`memory-group-${group.id}`} className={SECTION_HEADING}>
-                {group.title}
-              </h2>
-              {group.id === 'guesses' && (
-                <p className="px-1 text-[0.8125rem] leading-[1.45] text-faint">
-                  Мои догадки. Я ими не пользуюсь, пока ты не скажешь «Верно» или это не повторится в другом
-                  разговоре.
-                </p>
-              )}
-              {renderFacts(group.facts)}
-            </section>
-          ))}
-
-          {!hasFacts && (
-            <StatePanel data-testid="memory-empty">
-              <Sparkles aria-hidden="true" className="size-8 text-faint" strokeWidth={1.6} />
-              <p className="max-w-[46ch] text-[0.9375rem] leading-normal text-dim">
-                {!memory.available
-                  ? 'Память сейчас недоступна. Загляни позже.'
-                  : memory.enabled
-                    ? 'Пока я ничего не запомнил. После разговора я покажу, что запомнил, а здесь это можно будет исправить или забыть.'
-                    : 'Если включить память, я буду помнить важное из наших разговоров. Всё запомненное будет здесь.'}
-              </p>
-              {canChange && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className={ACTION}
-                  onClick={() => setEditing({ fact: null })}
-                  data-testid="memory-add"
-                >
-                  <Plus aria-hidden="true" />
-                  Добавить самому
-                </Button>
-              )}
-            </StatePanel>
-          )}
+              />
+            </li>
+          </SettingsSection>
 
           <SettingsSection
             title="На этом устройстве"
@@ -591,20 +378,10 @@ export default function ProfileMemory() {
           </SettingsSection>
 
           <SettingsSection title="Ещё">
-            {hasFacts && (
-              <li>
-                <ProfileRow
-                  icon="download"
-                  label={exporting ? 'Готовим файл…' : 'Скачать мою память'}
-                  testId="memory-export"
-                  onClick={() => void download()}
-                />
-              </li>
-            )}
             <li>
               <ProfileRow
                 icon="help"
-                label="Как это работает"
+                label={MEMORY_SHEET.howItWorks}
                 testId="memory-how"
                 onClick={() => setSheet('info')}
               />
@@ -624,29 +401,25 @@ export default function ProfileMemory() {
         }}
       />
 
-      <Modal
-        open={editing !== null}
-        onClose={() => setEditing(null)}
-        title={editing?.fact ? 'Исправить' : 'Добавить в память'}
-        className="max-h-[calc(100dvh-1rem)] overflow-y-auto tab:w-[min(92vw,560px)]"
-      >
-        <MemoryFactForm
-          fact={editing?.fact ?? null}
-          categories={memory ? newMemoryFactCategories(memory.facts) : []}
-          onSaved={saved}
-          onCancel={() => setEditing(null)}
-        />
-      </Modal>
+      <MemoryNotesSheet
+        open={notesOpen && memory !== null}
+        notes={memory?.notes ?? []}
+        paused={memory !== null && !memory.enabled}
+        hidden={hideTexts && !revealed}
+        canReveal={hideTexts}
+        revealed={revealed}
+        onToggleReveal={() => setRevealed((value) => !value)}
+        onNotes={updateNotes}
+        onClose={() => setNotesOpen(false)}
+      />
 
       <Modal
         open={forgetAllOpen}
         onClose={() => setForgetAllOpen(false)}
-        title="Забыть всё?"
+        title={MEMORY_SHEET.forgetAll}
         dismissible={!forgettingAll}
       >
-        <ModalText>
-          Я забуду всё, что запомнил. Разговоры останутся в журнале. Вернуть забытое будет нельзя.
-        </ModalText>
+        <ModalText>{MEMORY_SHEET.forgetAllConfirm}</ModalText>
         <ModalActions>
           <ProfileButton
             type="button"
@@ -664,7 +437,7 @@ export default function ProfileMemory() {
             data-testid="memory-forget-all-confirm"
           >
             <Busy on={forgettingAll} />
-            Забыть всё
+            Удалить
           </ProfileButton>
         </ModalActions>
       </Modal>

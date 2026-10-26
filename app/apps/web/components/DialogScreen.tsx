@@ -12,7 +12,6 @@ import {
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText } from '@ryadom/client-core/errors'
-import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import type {
   DialogMessageView,
@@ -47,7 +46,6 @@ import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { appPath } from '@/lib/base-path'
-import { watchMemoryCard } from '@/lib/memory'
 import { WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
@@ -146,20 +144,6 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [missing, setMissing] = useState(false)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
   const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(start?.memoryMode)
-  /** What the end needs to decide whether to wait for the card "Я запомнил". */
-  const memoryWatch = useRef({
-    memoryMode,
-    memoryEnabled: start?.memoryEnabled ?? user?.memoryEnabled,
-    userId: user?.id,
-  })
-  useEffect(() => {
-    memoryWatch.current = {
-      memoryMode,
-      memoryEnabled: start?.memoryEnabled ?? user?.memoryEnabled,
-      userId: user?.id,
-    }
-  })
-
   const socket = useRef<DialogSocket | null>(null)
   const capture = useRef<VoiceCapture | null>(null)
   const player = useRef<VoicePlayer | null>(null)
@@ -244,9 +228,6 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setEnding(false)
       void stopRecording()
       voice.current?.cancel()
-      // What the conversation added to memory shows up on home as "Я запомнил" once the agent is done.
-      const { userId, ...memory } = memoryWatch.current
-      if (userId && shouldWatchMemoryChanges(memory)) void watchMemoryCard(client, dialogId, userId)
       setAlert({
         title: 'Спасибо, что поговорил(а)',
         text: summary?.title

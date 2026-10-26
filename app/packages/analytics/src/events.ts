@@ -104,16 +104,24 @@ export enum AnalyticsEvent {
   MemoryScreenOpened = 'memory_screen_opened',
   /** The switch "Запоминать" took effect (on after the consent sheet, or off). */
   MemoryEnabled = 'memory_enabled',
-  /** One action on one fact on the screen "Память"; `delete` is counted when the request goes, after "Вернуть" had its chance. */
-  MemoryFactAction = 'memory_fact_action',
   /** "Забыть всё" was confirmed and done. */
   MemoryForgetAll = 'memory_forget_all',
   /** "Скачать мою память": the file was handed to the person. */
   MemoryExport = 'memory_export',
   /** The switch "Без памяти" on home, before a conversation. */
   MemoryIncognitoToggled = 'memory_incognito_toggled',
-  /** A point of the card "Я запомнил" after a conversation was taken off or accepted. */
-  MemoryCardAction = 'memory_card_action',
+  /** The sheet "Что помнит Рядом" was opened. */
+  MemorySheetOpened = 'memory_sheet_opened',
+  /** A note was corrected by hand and saved. */
+  MemoryNoteEdited = 'memory_note_edited',
+  /** A note was deleted with "×"; `undone` when "Вернуть" took it back within its seconds. */
+  MemoryNoteDeleted = 'memory_note_deleted',
+  /** "Скажи, что поправить или убрать" was used. */
+  MemoryInstructionUsed = 'memory_instruction_used',
+  /** "Удалить всю память" was confirmed and done. */
+  MemoryReset = 'memory_reset',
+  /** One of the three switches of the section changed. */
+  MemorySettingChanged = 'memory_setting_changed',
 
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
   FaqOpened = 'faq_opened',
@@ -214,11 +222,8 @@ export type ResumeChoice = 'continue' | 'new' | 'dismissed'
 
 export type ProfileField = 'name' | 'voice'
 
-/** What was done with a fact of memory: the names are those of the buttons' meaning, never of the fact. */
-export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confirm' | 'accept' | 'decline'
-
-/** A point of the card "Я запомнил": taken off ("убрать") or accepted ("Запомнить"). */
-export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
+/** Which switch of the memory section: "Память", "Запоминать чувствительное", "Опираться на прошлые разговоры". */
+export type MemorySettingName = 'memory' | 'sensitive' | 'chat_search'
 
 export type PasswordChangeKind = 'change' | 'reset'
 
@@ -307,11 +312,15 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }
   [AnalyticsEvent.MemoryScreenOpened]: NoProperties
   [AnalyticsEvent.MemoryEnabled]: { enabled: boolean }
-  [AnalyticsEvent.MemoryFactAction]: { action: MemoryFactActionName }
   [AnalyticsEvent.MemoryForgetAll]: NoProperties
   [AnalyticsEvent.MemoryExport]: NoProperties
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
-  [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
+  [AnalyticsEvent.MemorySheetOpened]: { source: 'profile' }
+  [AnalyticsEvent.MemoryNoteEdited]: NoProperties
+  [AnalyticsEvent.MemoryNoteDeleted]: { undone: boolean }
+  [AnalyticsEvent.MemoryInstructionUsed]: NoProperties
+  [AnalyticsEvent.MemoryReset]: NoProperties
+  [AnalyticsEvent.MemorySettingChanged]: { setting: MemorySettingName; enabled: boolean }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties

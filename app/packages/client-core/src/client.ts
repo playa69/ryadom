@@ -788,6 +788,15 @@ export function createClient(config: ClientConfig) {
       )
     },
 
+    /** The switches "Запоминать чувствительное" and "Опираться на прошлые разговоры": without `enabled`, so no consent is involved. */
+    updateMemorySettings: (
+      change: Pick<UpdateMemorySettingsApiRequest, 'sensitiveEnabled' | 'chatSearchEnabled'>,
+    ): Promise<ApiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>> =>
+      apiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>(ApiPath.MemorySettings, {
+        method: 'PUT',
+        body: change,
+      }),
+
     /** A fact the person writes themselves: it is theirs and pinned. */
     createMemoryFact: (
       fact: CreateMemoryFactApiRequest,

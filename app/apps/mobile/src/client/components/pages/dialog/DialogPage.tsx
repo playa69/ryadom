@@ -3,7 +3,6 @@ import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
@@ -17,7 +16,6 @@ import {
 } from '../../../lib/dialog-socket'
 import { getDialog } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
-import { watchMemoryCard } from '../../../lib/memory'
 import { openRoute } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
 import { setTelegramClosingConfirmation } from '../../../lib/telegram'
@@ -47,6 +45,8 @@ import Breathing from '../../Breathing'
 import VoiceOrb, { type OrbState } from '../../VoiceOrb'
 import DialogEndSheet from './DialogEndSheet'
 import ShareSheet, { ShareNavButton } from '../journal/ShareSheet'
+import MemoryNotesSheet from '../profile/MemoryNotesSheet'
+import { MEMORY_SHEET } from '@ryadom/client-core/memory'
 
 /**
  * Conversation screen. Voice is the main way to talk: the sphere is the interface. Hands-free (the
@@ -153,6 +153,7 @@ export default function DialogPage({
   const [voiceOut, setVoiceOut] = useState(false)
   const [endOpened, setEndOpened] = useState(false)
   const [shareOpened, setShareOpened] = useState(false)
+  const [notesOpened, setNotesOpened] = useState(false)
   const [summary, setSummary] = useState<DialogSummaryApiResponse | null | undefined>(undefined)
 
   const socket = useRef<DialogSocket | null>(null)
@@ -602,13 +603,6 @@ export default function DialogPage({
     setEndOpened(false)
     // The journal lives on another tab; on a wide screen its list is visible right away.
     void journal.refresh()
-    // What the conversation added to memory shows up on home as "Я запомнил" once the agent is done.
-    if (
-      user &&
-      shouldWatchMemoryChanges({ memoryMode, memoryEnabled: memoryEnabled ?? user.memoryEnabled })
-    ) {
-      void watchMemoryCard(dialogId, user.id)
-    }
     const text = summary?.title
       ? `Забираешь с собой: ${summary.title}`
       : 'Разговор завершён. Я рядом, когда понадоблюсь.'
@@ -686,6 +680,19 @@ export default function DialogPage({
       <Navbar backLink="Назад" title="Разговор">
         {/* The link shows the stored messages, and the greeting is not one of them: it needs something said. */}
         {(saidBefore || messages.some((message) => message.role === 'user')) && <ShareNavButton onClick={() => setShareOpened(true)} />}
+        {/* What Ryadom remembers, one tap from the conversation. Not in a conversation held without memory. */}
+        {memoryMode !== DialogMemoryMode.Off && user?.memoryEnabled !== false && (
+          <button
+            slot="right"
+            type="button"
+            className="rd-navbar-icon ph-no-capture"
+            aria-label={MEMORY_SHEET.title}
+            data-testid="memory-nav"
+            onClick={() => setNotesOpened(true)}
+          >
+            <Icon f7="sparkles" size={22} />
+          </button>
+        )}
         <button
           slot="right"
           type="button"
@@ -697,6 +704,7 @@ export default function DialogPage({
       </Navbar>
 
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
+      <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />
 
       {memoryMode === DialogMemoryMode.Off && (
         <div className="rd-incognito-mark" role="note" data-testid="dialog-incognito">

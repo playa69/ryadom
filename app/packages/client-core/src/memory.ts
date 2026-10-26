@@ -101,7 +101,7 @@ export function memoryInUse(memory: Pick<MemoryApiResponse, 'mode' | 'enabled' |
 /** The quiet word beside the section's row in the profile. */
 export function memorySectionStatus(memory: Pick<MemoryApiResponse, 'enabled' | 'available'>): string {
   if (!memory.available) return 'недоступна'
-  return memory.enabled ? 'включена' : 'выключена'
+  return memory.enabled ? 'включена' : 'на паузе'
 }
 
 /** The mark of a conversation held "without memory" in the journal; null for any other. */

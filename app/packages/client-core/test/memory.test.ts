@@ -133,7 +133,7 @@ describe('показывать ли раздел «Память»', () => {
 
   it('слово у строки в профиле', () => {
     expect(memorySectionStatus({ enabled: true, available: true })).toBe('включена')
-    expect(memorySectionStatus({ enabled: false, available: true })).toBe('выключена')
+    expect(memorySectionStatus({ enabled: false, available: true })).toBe('на паузе')
     expect(memorySectionStatus({ enabled: true, available: false })).toBe('недоступна')
   })
 })

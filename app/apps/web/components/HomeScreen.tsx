@@ -19,13 +19,11 @@ import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
 import { useAuth, useClient } from '@/lib/auth'
-import { memoryCard } from '@/lib/memory'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import { BUTTON, FOCUS_RING } from './controls'
 import { rememberDialogStart } from './dialog-start'
-import MemoryCard from './MemoryCard'
 import ResumeDialogSheet from './ResumeDialogSheet'
 import { unlockSpeech } from '@ryadom/client-core/voice/speech'
 
@@ -122,8 +120,6 @@ export default function HomeScreen() {
 
   /** Hands a started dialog to the dialog screen, with what the person typed or asked for on home. */
   function openDialog(data: StartDialogApiResponse, draft: string, listen: boolean) {
-    // A new conversation makes the card of the previous one old news.
-    memoryCard.close()
     rememberDialogStart(
       data.dialogId,
       {
@@ -291,8 +287,6 @@ export default function HomeScreen() {
               {error}
             </p>
           )}
-
-          <MemoryCard />
 
           {/* Capped at the width of two chips per row until all four fit in one, so a narrow window gets a 2 + 2 grid, not 3 + 1. */}
           <div
