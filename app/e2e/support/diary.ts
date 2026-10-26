@@ -44,3 +44,24 @@ export async function ageWeekSummary(userId: string): Promise<void> {
     await sql.end()
   }
 }
+
+/** The agent mock's own address: the `seed` route fills a person's journal with ready-made conversations (dev only). */
+const AGENT_URL = 'http://127.0.0.1:8081'
+
+export interface SeedDialog {
+  startedAt: string
+  endedAt: string
+  summary: Record<string, unknown> | null
+  messages?: { role: 'user' | 'assistant'; text: string }[]
+  /** `false`: a conversation the person asked not to keep: only the mark exists. */
+  saved?: boolean
+}
+
+export async function seedDialogs(userId: string, dialogs: SeedDialog[]): Promise<void> {
+  const response = await fetch(`${AGENT_URL}/v1/users/${userId}/seed`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dialogs }),
+  })
+  if (!response.ok) throw new Error(`seed of dialogs failed: ${response.status}`)
+}

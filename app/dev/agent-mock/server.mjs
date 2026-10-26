@@ -160,7 +160,13 @@ function createDialog(userId, memory = 'on') {
 /** Ends the dialog and, when it was held with memory, starts the "extraction" (see `extractMemory`). */
 function endDialog(dialog, takeaway, tensionAfter, recap = null, recapSource = 'manual') {
   dialog.endedAt = new Date().toISOString()
-  dialog.summary = { ...buildSummary(dialog, takeaway, tensionAfter), recap: null, recapStatus: 'none', recapSource: null }
+  dialog.summary = {
+    ...buildSummary(dialog, takeaway, tensionAfter),
+    recap: null,
+    recapStatus: 'none',
+    recapSource: null,
+    recapAvailable: recapEligible(dialog),
+  }
   const written = cleanRecap(recap)
   if (recapEligible(dialog)) {
     if (written) storeRecap(dialog, written, recapSource === 'draft' ? 'draft' : 'manual')
@@ -203,6 +209,8 @@ function listItem(dialog) {
     endedAt: dialog.endedAt,
     summary: dialog.summary,
     memoryMode: dialog.memoryMode ?? 'on',
+    // `saved: false` marks a conversation the person asked not to keep: only the mark is listed (add-unsaved-dialog).
+    saved: dialog.saved !== false,
   }
 }
 
@@ -830,7 +838,10 @@ const server = createServer(async (req, res) => {
         })),
         replyIndex: 0,
         memoryMode: item.memoryMode === 'off' ? 'off' : 'on',
+        // A conversation the person asked not to keep: only the mark exists, with no text and no recap.
+        saved: item.saved === false ? false : undefined,
       }
+      if (dialog.saved === false) dialog.messages = []
       state.dialogs.set(dialog.dialogId, dialog)
     }
     return json(res, 200, { count: state.dialogs.size, facts: state.memory.facts.size })
