@@ -545,9 +545,9 @@ describe('WebSocket-шлюз', () => {
     const agentSide = await agent.waitFor('d-mood-1')
 
     agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'furious', intensity: 1 }))
-    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'angry', intensity: 7, risk: 'bomb', replyTone: 'calm', at: 5 }))
+    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'angry', intensity: 7, risk: 'self_harm', at: 5 }))
     const mood = await nextFrame(client, DialogServerFrame.Mood)
-    expect(mood).toMatchObject({ tone: 'angry', intensity: 1, risk: 'none', replyTone: 'calm', at: 5 })
+    expect(mood).toEqual({ v: 1, type: 'mood', tone: 'angry', intensity: 1, at: 5 })
     client.close()
   })
 

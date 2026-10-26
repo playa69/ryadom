@@ -427,7 +427,7 @@
 }
 
 /*
- * Mood over the state (prototype PROTEUS-168). After the state rules on purpose: same specificity, the later wins.
+ * Mood over the state (PROTEUS-168). After the state rules on purpose: same specificity, the later wins.
  * The colour properties are registered, so the change is the same slow dissolve.
  */
 .voice-orb[data-mood='sleepy'] {

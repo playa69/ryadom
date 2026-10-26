@@ -198,11 +198,11 @@ GEMINI_OPENS_TOTAL = Counter(
     ["purpose", "result"],
 )
 
-# Прототип PROTEUS-168 (GEMINI_MOOD_TOOL): сколько раз модель сообщила тон/риск и через сколько после конца реплики.
-GEMINI_MOOD_TOTAL = Counter("agent_gemini_mood_total", "Вызовы report_mood моделью Gemini Live.", ["tone", "risk"])
+# Цвет шарика (GEMINI_MOOD_CLASSIFIER): сколько раз определён тон и через сколько после конца реплики.
+GEMINI_MOOD_TOTAL = Counter("agent_gemini_mood_total", "Определения тона реплики классификатором.", ["tone"])
 GEMINI_MOOD_DELAY_SECONDS = Histogram(
     "agent_gemini_mood_delay_seconds",
-    "От конца реплики человека до вызова report_mood моделью.",
+    "От конца реплики человека до кадра mood.",
     buckets=(0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10),
 )
 

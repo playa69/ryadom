@@ -100,7 +100,6 @@ interface AgentTextFrame {
 }
 
 const MOOD_TONES = ['neutral', 'sleepy', 'angry', 'afraid', 'sad', 'calm'] as const
-const MOOD_RISKS = ['none', 'self_harm', 'harm_others'] as const
 
 class DialogSession {
   private readonly logger = createLogger('dialog-gateway')
@@ -639,18 +638,14 @@ class DialogSession {
         return
       }
       case 'mood': {
-        // Prototype PROTEUS-168: the tone of the person's last turn, from the agent's classifier. Only known values pass.
+        // The tone of the person's last turn, from the agent's classifier (PROTEUS-168). Only known values pass.
         const tone = MOOD_TONES.find((name) => name === frame.tone)
         const intensity = num('intensity')
         if (!tone || intensity === null) return
-        const risk = MOOD_RISKS.find((name) => name === frame.risk) ?? 'none'
-        const replyTone = MOOD_TONES.find((name) => name === frame.replyTone) ?? null
         return this.toClient({
           type: DialogServerFrame.Mood,
           tone,
           intensity: Math.min(1, Math.max(0, intensity)),
-          risk,
-          replyTone,
           at: num('at') ?? Date.now(),
         })
       }

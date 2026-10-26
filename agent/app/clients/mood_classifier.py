@@ -8,24 +8,34 @@ import asyncio
 import json
 import logging
 
-from app.clients.gemini_live import MOOD_RISKS, MOOD_TONES, parse_mood
 from app.core.config import GeminiSettings
 
 logger = logging.getLogger("agent.gemini")
 
+MOOD_TONES = ("neutral", "sleepy", "angry", "afraid", "sad", "calm")
+
+
+def parse_mood(args: dict | None) -> dict | None:
+    """Ответ классификатора в безопасный вид: неизвестный тон не принимается, интенсивность зажата в 0..1."""
+    if not isinstance(args, dict) or args.get("tone") not in MOOD_TONES:
+        return None
+    try:
+        intensity = min(1.0, max(0.0, float(args.get("intensity", 0))))
+    except (TypeError, ValueError):
+        intensity = 0.0
+    return {"tone": args["tone"], "intensity": intensity}
+
 INSTRUCTIONS = (
     "Ты определяешь эмоцию человека по его реплике. tone: neutral, sleepy (хочет спать, устал), angry (злость, оскорбления), "
-    "afraid (страх, тревога), sad, calm. intensity 0..1. risk: self_harm (суицид, самоповреждение), harm_others (всерьёз "
-    "намерен убить или навредить другому), иначе none. Фигуры речи («убил бы время») — не риск."
+    "afraid (страх, тревога), sad, calm. intensity 0..1."
 )
 SCHEMA = {
     "type": "object",
     "properties": {
         "tone": {"type": "string", "enum": list(MOOD_TONES)},
         "intensity": {"type": "number"},
-        "risk": {"type": "string", "enum": list(MOOD_RISKS)},
     },
-    "required": ["tone", "intensity", "risk"],
+    "required": ["tone", "intensity"],
 }
 
 

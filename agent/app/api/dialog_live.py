@@ -49,8 +49,6 @@ from app.clients.gemini_live import (
     LiveLink,
     is_explicit_quota_error,
     is_quota_error,
-    MOOD_INSTRUCTIONS,
-    MOOD_INSTRUCTIONS_AFTER,
     record_usage,
     session_closed,
     session_opened,
@@ -480,8 +478,6 @@ class LiveDialogSession(DialogSession):
         # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока.
         self._brief_used = self._store.memory_brief(self._dialog)
         text = system_prompt(self._dialog.voice) + LIVE_ADDENDUM + memory_block(self._brief_used)
-        if self._cfg.mood_tool:
-            text += MOOD_INSTRUCTIONS_AFTER if self._cfg.mood_order == "after" else MOOD_INSTRUCTIONS
         if history:
             lines = [("Человек" if role == "user" else "Ты") + ": " + message for role, message in history]
             text += "\n\nУже сказано в этом разговоре (продолжай, не здоровайся заново):\n" + "\n".join(lines)
@@ -1184,9 +1180,6 @@ class LiveDialogSession(DialogSession):
             logger.info("gemini live go_away dialog=%s time_left=%s", self._dialog.id, event.text)
             self._refresh = True  # переоткроем между репликами, с возобновлением сессии
             return
-        if kind == "mood":
-            await self._on_mood(event, turn)
-            return
         if kind == "interrupted":
             self._stale_until = 0.0
             if turn is not None and turn.got_output:
@@ -1264,24 +1257,17 @@ class LiveDialogSession(DialogSession):
             self._mood_classifier = MoodClassifier(self._cfg)
         mood = await self._mood_classifier.classify(heard)
         if mood is not None and not self._closed:
-            await self._on_mood(LiveEvent("mood", mood=mood), turn)
+            await self._on_mood(mood, turn)
 
-    async def _on_mood(self, event: LiveEvent, turn: LiveTurn | None) -> None:
-        """report_mood: тон человека клиенту кадром `mood`; риск — вторым, независимым от правил источником SOS.
+    async def _on_mood(self, mood: dict, turn: LiveTurn) -> None:
+        """Тон человека клиенту кадром `mood`: только цвет шарика. Кризисный путь (SOS) от него не зависит и не меняется.
 
         Метка `mood` в линейке хода (`live timeline`) даёт задержку от конца реплики до кадра, рядом с `out_first` (первый
-        звук ответа): по ним видно, мешает ли вызов функции ответу."""
-        mood = event.mood
-        if mood is None:
-            return
-        if turn is not None:
-            turn.mark("mood")
-            GEMINI_MOOD_DELAY_SECONDS.observe(time.monotonic() - turn.started)
-        GEMINI_MOOD_TOTAL.labels(mood["tone"], mood["risk"]).inc()
+        звук ответа): по ним видно, не мешает ли классификатор ответу."""
+        turn.mark("mood")
+        GEMINI_MOOD_DELAY_SECONDS.observe(time.monotonic() - turn.started)
+        GEMINI_MOOD_TOTAL.labels(mood["tone"]).inc()
         await self._send({"type": "mood", **mood, "at": int(time.time() * 1000)})
-        if mood["risk"] != "none" and turn is not None and not turn.discarded:
-            logger.info("gemini mood risk=%s dialog=%s", mood["risk"], self._dialog.id)
-            await self._crisis(turn)
 
     # Агент только что сам попросил повторить (не модель своими словами): если и следующий ответ про язык, человек, видимо,
     # правда просит другой язык, и второй раз ответ не подменяется. Сбрасывается, как только ход прошёл обычным путём.

@@ -85,7 +85,7 @@ const STATE_TEXT: Partial<Record<DialogSocketState, string>> = {
 
 /** Without an answer from the agent the person must not be stuck on the closing step. */
 const END_FALLBACK_MS = 2000
-// Prototype PROTEUS-168: below this strength a reported mood is not shown; the colour fades back after the hold.
+// PROTEUS-168: below this strength a reported mood is not shown; the colour fades back after the hold.
 const MOOD_MIN_INTENSITY = 0.4
 const MOOD_HOLD_MS = 15_000
 const ORB_MOODS: Partial<Record<MoodTone, OrbMood>> = { sleepy: 'sleepy', angry: 'angry', afraid: 'afraid' }
@@ -130,7 +130,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [view, setView] = useState<DialogView>(() => initialDialogView(dialogId))
   const [recording, setRecording] = useState(false)
-  // Prototype PROTEUS-168: the tone the agent reports for the person's last turn; fades back after a while.
+  // PROTEUS-168: the tone the agent reports for the person's last turn; fades back after a while.
   const [mood, setMood] = useState<OrbMood | null>(null)
   const moodTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
