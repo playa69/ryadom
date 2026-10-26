@@ -25,7 +25,9 @@ from app.core.errors import install_error_handlers
 from app.core.reclaim import MemoryReclaimer
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
 from app.memory.backend import MemoryBackend
+from app.clients.llm import ProxyChat
 from app.memory.cognee_backend import CogneeMemoryBackend
+from app.memory.extractor import NotesExtractor
 from app.core.tracing import build_tracer
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
@@ -87,6 +89,22 @@ NATIVE_TELEMETRY_OFF: Any = {
     "operation_spans": False,
     "auto_configure": False,
 }
+
+
+def _build_notes_model(memory_cfg: MemorySettings) -> ProxyChat | None:
+    """Модель извлечения заметок: чат-модель прокси программы (`MEMORY_NOTES_MODEL`, по умолчанию та же, что в разговоре).
+    Нет флага `MEMORY_NOTES_ENABLED`, режим шаблонов или нет ключа — извлечения нет, разговор идёт как раньше."""
+    llm = APP_CONFIG.llm
+    if not memory_cfg.notes_enabled or llm.mode != "proxy" or llm.api_key is None or not llm.base_url:
+        return None
+    return ProxyChat(
+        llm.base_url,
+        llm.api_key.get_secret_value(),
+        memory_cfg.notes_model or llm.chat_model,
+        max_tokens=600,
+        temperature=0.0,
+        timeout_seconds=max(llm.timeout_seconds, 30),
+    )
 
 
 def create_app(
@@ -165,6 +183,9 @@ def create_app(
         memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg, lambda: store.database)
         store.memory = memory_service
         app.state.memory = memory_service
+        notes_model = _build_notes_model(memory_cfg)
+        if notes_model is not None and isinstance(memory_service, CogneeMemoryBackend):
+            memory_service.set_extractor(NotesExtractor(notes_model, memory_service.notes))
         if memory_service.status() == "unavailable":
             logger.error("memory is NOT available: no COGNEE_BASE_URL/COGNEE_SERVICE_EMAIL/COGNEE_SERVICE_PASSWORD")
         live = live_factory() if live_factory is not None else None
@@ -238,6 +259,9 @@ def create_app(
                 langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
+            if notes_model is not None:
+                await memory_service.drain()  # дописать идущие проходы извлечения
+                await notes_model.aclose()
             if cognee_client is not None:
                 await memory_service.drain()  # дождаться идущих записей и prefetch'ей Cognee
                 await cognee_client.aclose()

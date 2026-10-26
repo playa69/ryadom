@@ -43,6 +43,7 @@ class Outcome:
     updated: list[dict[str, Any]] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)  # коды причин
+    failed: bool = False  # модель недоступна или ответила мусором: реплики нужно отдать на следующем проходе
 
     @property
     def changed(self) -> bool:
@@ -103,6 +104,7 @@ class NotesExtractor:
         payload = self._payload(texts, [mask(t) for t in agent_context[-2:]], live)
         ops = await self._ask(self._extract_prompt, payload)
         if ops is None:
+            outcome.failed = True
             return outcome
         await self._apply(user_id, ops, texts, live, explicit, dialog_id, outcome)
         return outcome
@@ -117,6 +119,7 @@ class NotesExtractor:
         payload = self._payload([text], [], live)
         ops = await self._ask(self._instruction_prompt, payload)
         if ops is None:
+            outcome.failed = True
             return outcome
         await self._apply(user_id, ops, [text], live, True, None, outcome)
         return outcome

@@ -152,6 +152,27 @@ async def patch_note(user_id: str, note_id: str, body: NoteBody, store: Store, m
         raise _error(error) from error
 
 
+@router.post("/notes/instruction")
+async def notes_instruction(user_id: str, body: NoteBody, store: Store, memory: Memory) -> dict[str, Any]:
+    """«Скажи, что поправить или убрать»: просьба человека выполняется извлекателем; ответ — что изменено, удалено, добавлено."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    try:
+        outcome = await memory.instruct(user, body.text)  # type: ignore[attr-defined]
+    except MemoryServiceError as error:
+        raise _error(error) from error
+    if outcome.failed:
+        raise AgentError(503, "MEMORY_UNAVAILABLE", "Память сейчас недоступна")
+    return {
+        "changes": {
+            "added": outcome.added,
+            "updated": outcome.updated,
+            "deleted": outcome.deleted,
+            "blocked": outcome.blocked,
+        }
+    }
+
+
 @router.delete("/notes/{note_id}", status_code=204)
 async def delete_note(user_id: str, note_id: str, memory: Memory) -> Response:
     try:

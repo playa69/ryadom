@@ -15,6 +15,7 @@ recall занимает 15–30 секунд, поэтому сводка (`brie
 import asyncio
 import logging
 import re
+import time
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
@@ -29,14 +30,13 @@ from app.memory.errors import (
     MemoryUnavailable,
     MemoryValidation,
 )
-from app.memory.notes import NotesService, kind_of_category, note_as_fact
+from app.memory.extractor import NotesExtractor, Outcome
+from app.memory.notes import NotesService, build_notes_block, kind_of_category, note_as_fact
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import Dialog
 
 logger = logging.getLogger("agent.memory")
 
-# Запрос сводки для разговора: всё, что Cognee знает о человеке, одним текстом.
-BRIEF_QUERY = "Все факты об этом человеке: имя, как обращаться, город, работа, семья, интересы, что помогает"
 # Меньше реплик человека — разговор в память не идёт.
 MIN_USER_MESSAGES = 4
 # Фоновая находка по реплике (CHUNKS) режется: это контекст следующего хода, а не весь транскрипт.
@@ -49,6 +49,19 @@ _CONSENT_RE = re.compile(r"CONSENT memory v(\S+) (\S+)")
 def dataset_name(user_id: str) -> str:
     """Имя датасета человека в Cognee."""
     return "ryadom_user_" + re.sub(r"[^A-Za-z0-9]", "_", user_id)
+
+
+EXTRACT_EVERY_MESSAGES = 2
+EXTRACT_EVERY_SECONDS = 20
+
+
+class _Pending:
+    """Реплики человека одного разговора, ещё не отданные извлекателю."""
+
+    def __init__(self, user_id: str) -> None:
+        self.user_id = user_id
+        self.texts: list[str] = []
+        self.last_run = time.monotonic()  # отсчёт «раз в 20 секунд» идёт от первой реплики, а не от начала времён
 
 
 class CogneeMemoryBackend:
@@ -65,15 +78,19 @@ class CogneeMemoryBackend:
         # База диалогов (PostgreSQL), если подключена: в ней живут настройки памяти («включена или пауза», согласие).
         # Без неё (разработка) настройки хранятся только в памяти процесса.
         self._database = database or (lambda: None)
-        self.notes = NotesService(self._database, config.notes_max)
+        self.notes = NotesService(self._database, config.notes_max, self._notes_changed)
+        self._notes_cache: dict[str, list[dict[str, Any]]] = {}  # user_id → заметки для блока памяти (без обращений к базе на ходу)
+        self._chat_search_cache: dict[str, bool] = {}
+        # Извлечение заметок по ходу разговора: не чаще одного прохода на EXTRACT_EVERY_MESSAGES реплик или раз в EXTRACT_EVERY_SECONDS.
+        self._extractor: NotesExtractor | None = None
+        self._pending: dict[str, _Pending] = {}  # dialog_id → реплики человека, ещё не отданные извлекателю
+        self._extracting: set[str] = set()
         self._datasets: dict[str, bool] = {}  # user_id → память включена (датасет существует)
         self._opted_out: set[str] = set()  # явно отказались: default_enabled их не включает обратно
-        self._briefs: dict[str, str] = {}  # user_id → сводка из последнего recall
         self._turn_recalls: dict[str, str] = {}  # user_id → находка recall по последней реплике человека
         self._turn_tasks: dict[str, asyncio.Task[str]] = {}  # user_id → идущий фоновый recall по последней реплике
         self._consents: dict[str, tuple[str | None, str | None]] = {}  # user_id → (версия согласия, когда)
         self._loading: set[str] = set()
-        self._prefetching: set[str] = set()
         self._tasks: set[asyncio.Task[Any]] = set()
 
     # ─── состояние ────────────────────────────────────────────────────────────
@@ -113,7 +130,6 @@ class CogneeMemoryBackend:
 
     def _drop(self, user_id: str) -> None:
         self._datasets.pop(user_id, None)
-        self._briefs.pop(user_id, None)
         self._consents.pop(user_id, None)
         self._turn_recalls.pop(user_id, None)
         self._turn_tasks.pop(user_id, None)
@@ -158,6 +174,18 @@ class CogneeMemoryBackend:
         self._loading.add(user_id)
         self._spawn(self._load_state(user_id))
 
+    def _notes_changed(self, user_id: str) -> None:
+        """Заметки человека изменились: кэш блока памяти перечитывается в фоне, следующая ротация сессии возьмёт новый блок."""
+        self._notes_cache.pop(user_id, None)
+        self._spawn(self._refresh_notes(user_id))
+
+    async def _refresh_notes(self, user_id: str) -> None:
+        try:
+            self._notes_cache[user_id] = await self.notes.list(user_id)
+            self._chat_search_cache[user_id] = (await self.notes.flags(user_id))[1]
+        except Exception:  # noqa: BLE001 - без базы блок памяти пуст, разговор идёт
+            logger.exception("memory notes cache refresh failed user=%s", user_id)
+
     async def _load_state(self, user_id: str) -> None:
         assert self._client is not None
         try:
@@ -168,37 +196,24 @@ class CogneeMemoryBackend:
                 self._datasets[user_id] = enabled
                 if version:
                     self._consents[user_id] = (version, at)
-                if enabled:
-                    await self._prefetch(user_id)
-                else:
+                if not enabled:
                     self._opted_out.add(user_id)
+                await self._refresh_notes(user_id)
                 return
             exists = await self._client.dataset_exists(dataset_name(user_id))
             # default_enabled: без датасета человек всё равно «включён», если сам не отказывался
             self._datasets[user_id] = exists or self._default_on(user_id)
-            if exists:
-                await self._prefetch(user_id)
+            await self._refresh_notes(user_id)
         except Exception:  # noqa: BLE001 - память не должна мешать разговору (I3)
             logger.exception("cognee memory state load failed user=%s", user_id)
         finally:
             self._loading.discard(user_id)
 
-    async def _prefetch(self, user_id: str) -> None:
-        """Перечитать сводку человека из Cognee в кэш процесса. recall идёт 15–30 с — только в фоне."""
-        if self._client is None or user_id in self._prefetching:
-            return
-        self._prefetching.add(user_id)
-        try:
-            self._briefs[user_id] = await self._client.recall(BRIEF_QUERY, dataset_name(user_id))
-        except Exception:  # noqa: BLE001 - сбой prefetch — пустая сводка, а не ошибка разговора
-            logger.exception("cognee brief prefetch failed user=%s", user_id)
-        finally:
-            self._prefetching.discard(user_id)
-
     # ─── MemoryLink: то, что зовут хранилище и сессии разговора ───────────────
 
     def brief(self, dialog: Dialog, count: bool = True) -> str:
-        """Сводка для разговора из кэша процесса: синхронно, без сети (I3). Нет кэша — пусто и фоновый prefetch."""
+        """Блок памяти для разговора из кэша процесса: синхронно, без сети (I3). Заметки человека и, если включён поиск, находка
+        из прошлых разговоров. Пересказ графа Cognee в разговор больше не подаётся (`design.md` D5)."""
         if dialog.memory_mode != "on":
             return ""
         user_id = dialog.user_id
@@ -206,16 +221,67 @@ class CogneeMemoryBackend:
             return ""
         if user_id not in self._datasets:
             self._ensure_state(user_id)
-        if user_id not in self._briefs:
-            self._spawn(self._prefetch(user_id))
-        base = self._briefs.get(user_id, "")
+        if user_id not in self._notes_cache:
+            self._spawn(self._refresh_notes(user_id))
+        parts: list[str] = []
+        block = build_notes_block(self._notes_cache.get(user_id, []), self._cfg.brief_max_tokens)
+        if block:
+            parts.append(block)
         found = self._turn_recalls.get(user_id, "")
-        if found and found not in base:
-            return (base + "\n\nПо недавнему вопросу человека в памяти нашлось: " + found).strip()
-        return base
+        if found and self._chat_search_cache.get(user_id, True):
+            parts.append("Из прошлых разговоров (слова человека, дословно):\n" + found)
+        return "\n\n".join(parts)
+
+    def set_extractor(self, extractor: NotesExtractor | None) -> None:
+        self._extractor = extractor
+
+    def _notes_active(self, dialog: Dialog) -> bool:
+        return (
+            self._cfg.notes_enabled
+            and self._extractor is not None
+            and dialog.memory_mode == "on"
+            and self._effective_enabled(dialog.user_id)
+        )
+
+    def _queue_for_notes(self, dialog: Dialog, text: str) -> None:
+        pending = self._pending.setdefault(dialog.id, _Pending(dialog.user_id))
+        pending.texts.append(text)
+        due = len(pending.texts) >= EXTRACT_EVERY_MESSAGES or time.monotonic() - pending.last_run >= EXTRACT_EVERY_SECONDS
+        if due and dialog.id not in self._extracting:
+            self._extracting.add(dialog.id)
+            self._spawn(self._extract_pending(dialog))
+
+    async def _extract_pending(self, dialog: Dialog) -> None:
+        """Один проход: новые реплики → заметки. Сбой модели оставляет реплики в очереди до следующего прохода."""
+        try:
+            pending = self._pending.get(dialog.id)
+            if pending is None or not pending.texts or self._extractor is None:
+                return
+            texts = list(pending.texts)
+            context = [m.text for m in dialog.messages if m.role == "assistant"][-2:]
+            started = time.monotonic()
+            outcome = await self._extractor.extract(pending.user_id, texts, context, dialog.id)
+            pending.last_run = time.monotonic()
+            if outcome is not None and (outcome.changed or not outcome.failed):
+                del pending.texts[: len(texts)]  # отданные реплики не возвращаем; при сбое модели остаются
+            logger.info("memory extraction user=%s ms=%d changed=%s", pending.user_id, (time.monotonic() - started) * 1000, outcome.changed)
+        except Exception:  # noqa: BLE001 - извлечение не должно мешать разговору (I3)
+            logger.exception("memory extraction task failed dialog=%s", dialog.id)
+        finally:
+            self._extracting.discard(dialog.id)
+
+    async def instruct(self, user_id: str, request: str) -> Outcome:
+        """«Скажи, что поправить или убрать»: просьба человека выполняется тем же извлекателем."""
+        if self._extractor is None:
+            raise MemoryUnavailable()
+        if not self._effective_enabled(user_id):
+            raise MemoryDisabled()
+        return await self._extractor.instruct(user_id, request)
 
     def user_message(self, dialog: Dialog, text: str) -> None:
         """Реплика человека: фоновый recall по её тексту — к следующему ходу сводка уже с находкой по теме."""
+        if self._notes_active(dialog) and text.strip():
+            self._queue_for_notes(dialog, text)
         if self._client is None or not text.strip() or not self._effective_enabled(dialog.user_id):
             return
         task = self._spawn(self._recall_turn(dialog.user_id, text))
@@ -272,12 +338,20 @@ class CogneeMemoryBackend:
         self._drop(user_id)  # при загрузке (`user_loaded`) состояние и сводка соберутся заново
 
     def dialog_ended(self, dialog: Dialog) -> None:
-        """Диалог завершён: транскрипт в датасет человека (в фоне), затем свежий prefetch сводки."""
+        """Диалог завершён: финальный проход извлечения и транскрипт в датасет человека (в фоне)."""
+        if self._notes_active(dialog) and self._pending.get(dialog.id) is not None:
+            self._extracting.add(dialog.id)
+            self._spawn(self._final_extract(dialog))
+        self._pending.pop(dialog.id, None) if not self._notes_active(dialog) else None
         if self._client is None or dialog.memory_mode != "on" or not self._effective_enabled(dialog.user_id):
             return
         if sum(1 for message in dialog.messages if message.role == "user") < MIN_USER_MESSAGES:
             return
         self._spawn(self._ingest(dialog))
+
+    async def _final_extract(self, dialog: Dialog) -> None:
+        await self._extract_pending(dialog)
+        self._pending.pop(dialog.id, None)
 
     async def _ingest(self, dialog: Dialog) -> None:
         assert self._client is not None
@@ -290,13 +364,6 @@ class CogneeMemoryBackend:
         except Exception:  # noqa: BLE001 - запись памяти не должна ронять завершение разговора
             logger.exception("cognee memory ingest failed dialog=%s", dialog.id)
             return
-        self._briefs.pop(dialog.user_id, None)
-        self._spawn(self._settled_prefetch(dialog.user_id))
-
-    async def _settled_prefetch(self, user_id: str) -> None:
-        """Перечитать сводку после паузы: cognify в Cognee асинхронный, сразу после записи граф ещё пустой."""
-        await asyncio.sleep(self._cfg.cognify_settle_seconds)
-        await self._prefetch(user_id)
 
     def user_erased(self, user_id: str) -> None:
         """Человек стёрт: датасет удаляется в фоне, кэши сбрасываются сразу."""
@@ -349,7 +416,6 @@ class CogneeMemoryBackend:
             "limits": {"maxFacts": self.notes.max_notes, "maxNotes": self.notes.max_notes},
             "notes": notes,
             "facts": [note_as_fact(note) for note in notes],
-            "cogneeBrief": self._briefs.get(user_id, ""),
         }
 
     async def export(self, user_id: str) -> dict[str, Any]:
@@ -371,7 +437,6 @@ class CogneeMemoryBackend:
             "notes": await self.notes.list(user_id),
             "facts": [],
             "events": [],
-            "cogneeBrief": self._briefs.get(user_id, ""),
         }
 
     async def changes(self, user_id: str, dialog_id: str) -> dict[str, Any]:
@@ -424,13 +489,10 @@ class CogneeMemoryBackend:
             self._datasets[user_id] = True
             self._opted_out.discard(user_id)
             self._consents[user_id] = (consent_version, at)
-            self._briefs.pop(user_id, None)
-            self._spawn(self._prefetch(user_id))
             logger.info("cognee memory enabled user=%s", user_id)
             return {"enabled": True, "consentVersion": consent_version, "consentAt": at}
         version, at = await self._consent_of(user_id)  # пауза не отзывает согласие: оно остаётся в строке настроек
         await self._write_settings(user_id, False, version, at)
-        self._briefs.pop(user_id, None)
         self._datasets[user_id] = False
         self._opted_out.add(user_id)
         logger.info("cognee memory disabled (данные сохранены) user=%s", user_id)
@@ -473,7 +535,6 @@ class CogneeMemoryBackend:
         version, at = await self._consent_of(user_id)
         await self.notes.delete_all(user_id)
         await client.forget_dataset(dataset_name(user_id))
-        self._briefs.pop(user_id, None)
         self._turn_recalls.pop(user_id, None)
         self._turn_tasks.pop(user_id, None)
         if self._effective_enabled(user_id) and version:

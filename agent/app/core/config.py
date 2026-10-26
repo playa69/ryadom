@@ -309,6 +309,11 @@ class MemorySettings(BaseAppSettings):
     brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")
     # Заметки о человеке (слой 1, PROTEUS-242): лимит живых заметок на человека. Срока давности у заметок нет.
     notes_max: int = Field(validation_alias="MEMORY_NOTES_MAX", default=200, ge=1)
+    # Сколько токенов блока памяти уходит в голосовую модель.
+    brief_max_tokens: int = Field(validation_alias="MEMORY_BRIEF_MAX_TOKENS", default=1200, ge=100)
+    # Извлечение заметок по ходу разговора (флаг выката) и модель извлечения (по умолчанию чат-модель прокси).
+    notes_enabled: bool = Field(validation_alias="MEMORY_NOTES_ENABLED", default=False)
+    notes_model: str | None = Field(validation_alias="MEMORY_NOTES_MODEL", default=None)
     # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
     allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
 
