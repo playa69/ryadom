@@ -183,6 +183,8 @@ def create_app(
         memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg, lambda: store.database)
         store.memory = memory_service
         app.state.memory = memory_service
+        if isinstance(memory_service, CogneeMemoryBackend):
+            memory_service.start_outbox()  # очередь индекса прошлых разговоров в Cognee
         notes_model = _build_notes_model(memory_cfg)
         if notes_model is not None and isinstance(memory_service, CogneeMemoryBackend):
             memory_service.set_extractor(NotesExtractor(notes_model, memory_service.notes))
@@ -259,6 +261,8 @@ def create_app(
                 langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
+            if isinstance(memory_service, CogneeMemoryBackend):
+                await memory_service.stop_outbox()
             if notes_model is not None:
                 await memory_service.drain()  # дописать идущие проходы извлечения
                 await notes_model.aclose()

@@ -306,6 +306,12 @@ MEMORY_JOBS = Gauge(
     ["status"],
 )
 
+# Очередь операций Cognee (`memory_outbox`): сколько операций ждут выполнения или повтора.
+MEMORY_OUTBOX_PENDING = Gauge(
+    "agent_memory_outbox_pending",
+    "Операции Cognee (индекс разговоров, удаление) в очереди.",
+)
+
 # Возврат памяти процесса (app/core/reclaim.py, настройка MEMORY_RECLAIM_SECONDS). Сама память процесса и работа сборщика мусора видны в
 # стандартных метриках prometheus_client: process_resident_memory_bytes, python_gc_collections_total,
 # python_gc_objects_collected_total. step: gc (полная сборка мусора, останавливает цикл событий целиком) | trim (malloc_trim

@@ -424,6 +424,75 @@ class DialogDatabase:
             ).fetchone()
         return (False, True) if row is None else (bool(row[0]), bool(row[1]))
 
+    # ─── очередь операций Cognee (слой 2 памяти) ──────────────────────────────
+
+    def outbox_add(self, user_id: str, op: str, payload: dict[str, Any], next_at: str, created_at: str) -> None:
+        """Поставить операцию Cognee в очередь: `index_dialog`, `delete_document`, `delete_dataset`, `rebuild`."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_outbox (user_id, op, payload, attempts, next_at, created_at) VALUES (%s, %s, %s::jsonb, 0, %s, %s)",
+                (user_id, op, json.dumps(payload, ensure_ascii=False), next_at, created_at),
+            )
+
+    def outbox_due(self, now: str, limit: int = 20) -> list[tuple[int, str, str, dict[str, Any], int]]:
+        """Операции, которым пора: (id, user_id, op, payload, attempts), старые первыми."""
+        with self._lock, self._connection() as conn:
+            rows = conn.execute(
+                "SELECT id, user_id, op, payload, attempts FROM memory_outbox WHERE next_at <= %s ORDER BY id LIMIT %s",
+                (now, limit),
+            ).fetchall()
+        return [(int(r[0]), r[1], r[2], r[3] if isinstance(r[3], dict) else json.loads(r[3]), int(r[4])) for r in rows]
+
+    def outbox_done(self, outbox_id: int) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM memory_outbox WHERE id = %s", (outbox_id,))
+
+    def outbox_retry(self, outbox_id: int, attempts: int, next_at: str) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE memory_outbox SET attempts = %s, next_at = %s WHERE id = %s", (attempts, next_at, outbox_id))
+
+    def outbox_pending(self) -> int:
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT count(*) FROM memory_outbox").fetchone()
+        return int(row[0]) if row else 0
+
+    def outbox_drop_user(self, user_id: str, ops: tuple[str, ...]) -> None:
+        """Убрать из очереди операции человека (например, индексацию, когда индекс уже решили удалить целиком)."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM memory_outbox WHERE user_id = %s AND op = ANY(%s)", (user_id, list(ops)))
+
+    def get_cognee_data_id(self, dialog_id: str) -> str | None:
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT cognee_data_id FROM dialogs WHERE id = %s", (dialog_id,)).fetchone()
+        return row[0] if row and row[0] else None
+
+    def set_cognee_data_id(self, dialog_id: str, data_id: str | None) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE dialogs SET cognee_data_id = %s WHERE id = %s", (data_id, dialog_id))
+
+    def clear_cognee_data_ids(self, user_id: str) -> None:
+        """Индекс человека в Cognee удалён целиком: ни у одного его разговора больше нет документа."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE dialogs SET cognee_data_id = NULL WHERE user_id = %s", (user_id,))
+
+    def dialog_for_index(self, dialog_id: str) -> tuple[str, str, str, list[tuple[str, str]]] | None:
+        """Разговор для индексации: (user_id, started_at, memory_mode, [(role, text)]) или None, если его уже нет."""
+        with self._lock, self._connection() as conn:
+            head = conn.execute("SELECT user_id, started_at, memory_mode FROM dialogs WHERE id = %s", (dialog_id,)).fetchone()
+            if head is None:
+                return None
+            rows = conn.execute("SELECT role, text FROM messages WHERE dialog_id = %s ORDER BY position", (dialog_id,)).fetchall()
+        return head[0], head[1], head[2], [(r[0], r[1]) for r in rows]
+
+    def indexable_dialog_ids(self, user_id: str) -> list[str]:
+        """Завершённые разговоры человека, которые идут в индекс: не «не сохранять», по порядку (для пересборки индекса)."""
+        with self._lock, self._connection() as conn:
+            rows = conn.execute(
+                "SELECT id FROM dialogs WHERE user_id = %s AND ended_at IS NOT NULL AND memory_mode = 'on' ORDER BY started_at",
+                (user_id,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def get_notes_cursor(self, dialog_id: str) -> int:
         """Сколько реплик человека в разговоре уже отдано извлекателю заметок (0 — ни одной или разговора нет в базе)."""
         with self._lock, self._connection() as conn:

@@ -33,6 +33,7 @@ from app.memory.errors import (
     MemoryValidation,
 )
 from app.memory.errors import NoteNotFound, NoteRejected
+from app.memory.indexer import CogneeOutbox, dataset_name
 from app.memory.extractor import NotesExtractor, Outcome
 from app.memory.notes import NotesService, build_notes_block, kind_of_category, note_as_fact
 from app.services.dialog_db import DialogDatabase
@@ -40,8 +41,6 @@ from app.services.dialog_store import Dialog
 
 logger = logging.getLogger("agent.memory")
 
-# Меньше реплик человека — разговор в память не идёт.
-MIN_USER_MESSAGES = 4
 # Фоновая находка по реплике (CHUNKS) режется: это контекст следующего хода, а не весь транскрипт.
 TURN_RECALL_MAX_CHARS = 800
 # Находка инструмента recall_memory в tool-сообщении: модели хватает пары чанков, длинное только раздувает контекст.
@@ -49,11 +48,7 @@ TOOL_RECALL_MAX_CHARS = 2000
 _CONSENT_RE = re.compile(r"CONSENT memory v(\S+) (\S+)")
 
 
-def dataset_name(user_id: str) -> str:
-    """Имя датасета человека в Cognee."""
-    return "ryadom_user_" + re.sub(r"[^A-Za-z0-9]", "_", user_id)
-
-
+INDEX_DELAY_SECONDS = 5  # разговор успевает записаться на диск, прежде чем из него соберётся документ
 EXTRACT_EVERY_MESSAGES = 2
 EXTRACT_EVERY_SECONDS = 20
 
@@ -87,6 +82,8 @@ class CogneeMemoryBackend:
         # Без неё (разработка) настройки хранятся только в памяти процесса.
         self._database = database or (lambda: None)
         self.notes = NotesService(self._database, config.notes_max, self._notes_changed)
+        self.outbox = CogneeOutbox(self._database, lambda: self._client)  # индекс разговоров в Cognee: очередь с повторами
+        self._outbox_task: asyncio.Task[None] | None = None
         self._notes_cache: dict[str, list[dict[str, Any]]] = {}  # user_id → заметки для блока памяти (без обращений к базе на ходу)
         self._chat_search_cache: dict[str, bool] = {}
         # Извлечение заметок по ходу разговора: не чаще одного прохода на EXTRACT_EVERY_MESSAGES реплик или раз в EXTRACT_EVERY_SECONDS.
@@ -297,7 +294,12 @@ class CogneeMemoryBackend:
         """Реплика человека: фоновый recall по её тексту — к следующему ходу сводка уже с находкой по теме."""
         if self._notes_active(dialog) and text.strip():
             self._queue_for_notes(dialog, text)
-        if self._client is None or not text.strip() or not self._effective_enabled(dialog.user_id):
+        if (
+            self._client is None
+            or not text.strip()
+            or not self._effective_enabled(dialog.user_id)
+            or not self._chat_search_cache.get(dialog.user_id, True)
+        ):
             return
         task = self._spawn(self._recall_turn(dialog.user_id, text))
         if task is not None:
@@ -317,7 +319,11 @@ class CogneeMemoryBackend:
 
     def recall_supported(self, dialog: Dialog) -> bool:
         """Инструмент recall_memory доступен, когда память человека включена и клиент настроен."""
-        return self._client is not None and self._effective_enabled(dialog.user_id)
+        return (
+            self._client is not None
+            and self._effective_enabled(dialog.user_id)
+            and self._chat_search_cache.get(dialog.user_id, True)
+        )
 
     async def recall_now(self, dialog: Dialog, query: str) -> str:
         """Прямой recall по запросу модели (инструмент recall_memory); находка также попадает в сводку следующих ходов.
@@ -362,38 +368,19 @@ class CogneeMemoryBackend:
             self._pending.pop(dialog.id, None)
         if self._client is None or dialog.memory_mode != "on" or not self._effective_enabled(dialog.user_id):
             return
-        if sum(1 for message in dialog.messages if message.role == "user") < MIN_USER_MESSAGES:
-            return
-        self._spawn(self._ingest(dialog))
+        if not self._chat_search_cache.get(dialog.user_id, True):
+            return  # «Опираться на прошлые разговоры» выключено: в индекс разговор не идёт (включат — пересоберём из журнала)
+        self._spawn(self.outbox.add(dialog.user_id, "index_dialog", {"dialog_id": dialog.id}, INDEX_DELAY_SECONDS))
 
     async def _final_extract(self, dialog: Dialog) -> None:
         await self._extract_pending(dialog)
         self._pending.pop(dialog.id, None)
 
-    async def _ingest(self, dialog: Dialog) -> None:
-        assert self._client is not None
-        lines = ["Транскрипт разговора человека с агентом поддержки:"]
-        for message in dialog.messages:
-            speaker = "Человек" if message.role == "user" else "Агент"
-            lines.append(f"{speaker}: {message.text}")
-        try:
-            await self._client.remember("\n".join(lines), dataset_name(dialog.user_id))
-        except Exception:  # noqa: BLE001 - запись памяти не должна ронять завершение разговора
-            logger.exception("cognee memory ingest failed dialog=%s", dialog.id)
-            return
-
     def user_erased(self, user_id: str) -> None:
-        """Человек стёрт: датасет удаляется в фоне, кэши сбрасываются сразу."""
+        """Человек стёрт: кэши сбрасываются. Датасет в Cognee удалён раньше, синхронно (`erase_user_data`)."""
         self._drop(user_id)
-        if self._client is not None:
-            self._spawn(self._forget(user_id))
-
-    async def _forget(self, user_id: str) -> None:
-        assert self._client is not None
-        try:
-            await self._client.forget_dataset(dataset_name(user_id))
-        except Exception:  # noqa: BLE001
-            logger.exception("cognee memory forget failed user=%s", user_id)
+        self._notes_cache.pop(user_id, None)
+        self._chat_search_cache.pop(user_id, None)
 
     # ─── чтение ───────────────────────────────────────────────────────────────
 
@@ -472,7 +459,18 @@ class CogneeMemoryBackend:
         """Настройки памяти: «Память» (с согласием) и переключатели «Запоминать чувствительное», «Опираться на прошлые
         разговоры». Любое поле можно не передавать. Выключение «чувствительного» удаляет такие заметки."""
         if sensitive_enabled is not None or chat_search_enabled is not None:
-            await self.notes.set_flags(user_id, sensitive_enabled, chat_search_enabled)
+            _, before = await self.notes.flags(user_id)
+            _, after = await self.notes.set_flags(user_id, sensitive_enabled, chat_search_enabled)
+            self._chat_search_cache[user_id] = after
+            if before and not after:
+                # «Опираться на прошлые разговоры» выключили: индекс удаляется целиком, пока включён — ничего не догоняется
+                await self.outbox.drop(user_id, ("index_dialog", "rebuild", "delete_document"))
+                await self.outbox.add(user_id, "delete_dataset")
+                self._turn_recalls.pop(user_id, None)
+                self._spawn(self.outbox.tick())
+            elif after and not before:
+                await self.outbox.add(user_id, "rebuild")  # включили: индекс пересобирается в фоне из журнала
+                self._spawn(self.outbox.tick())
         if enabled is None:
             current = await self.get_memory(user_id)
             return {
@@ -487,20 +485,17 @@ class CogneeMemoryBackend:
         return {**result, "sensitiveEnabled": sensitive, "chatSearchEnabled": chat_search}
 
     async def _update_enabled(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
-        """Включение — документ-зерно согласия (создаёт датасет); выключение — только флаг, данные не трогаем.
-
-        Выключенная память не делает вызовов в Cognee (все пути режутся `_effective_enabled`),
-        но датасет человека остаётся нетронутым — физическое удаление делает отдельная джоба.
-        """
-        client = self._require_client()
+        """Включение — запись согласия в настройки памяти (база агента), Cognee для этого не нужен; пауза — только флаг, заметки и
+        индекс остаются. На паузе вызовов в Cognee нет (все пути режутся `_effective_enabled`)."""
         if enabled:
+            if self._database() is None:
+                raise MemoryUnavailable()  # настройки и заметки хранятся в базе агента: без неё включать нечего
             if not consent_version:
                 raise MemoryValidation("consentVersion обязателен при включении")
             allowed = self._cfg.allowed_users
             if allowed and user_id.lower() not in allowed:
                 raise MemoryNotAllowed()
             at = iso(datetime.now(UTC))
-            await client.remember(f"CONSENT memory v{consent_version} {at}", dataset_name(user_id))
             await self._write_settings(user_id, True, consent_version, at)
             self._datasets[user_id] = True
             self._consents[user_id] = (consent_version, at)
@@ -554,14 +549,57 @@ class CogneeMemoryBackend:
             raise FactNotFound() from error
 
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
-        """«Забыть всё»: данные человека в Cognee удаляются, а настройки не меняются — память остаётся включённой (или на паузе) и
-        согласие остаётся. Если память включена, датасет тут же создаётся заново с зерном согласия: так выглядит «включено, но пусто»."""
-        client = self._require_client()
-        version, at = await self._consent_of(user_id)
+        """«Удалить всю память»: заметки удаляются сразу, индекс прошлых разговоров в Cognee — через очередь (повтор, если Cognee
+        недоступен). Настройки и согласие не меняются: память остаётся включённой (или на паузе)."""
         await self.notes.delete_all(user_id)
-        await client.forget_dataset(dataset_name(user_id))
         self._turn_recalls.pop(user_id, None)
         self._turn_tasks.pop(user_id, None)
-        if self._effective_enabled(user_id) and version:
-            await client.remember(f"CONSENT memory v{version} {at or iso(datetime.now(UTC))}", dataset_name(user_id))
-        logger.info("cognee memory forgotten user=%s", user_id)
+        if self._client is not None:
+            await self.outbox.drop(user_id, ("index_dialog", "rebuild", "delete_document"))
+            await self.outbox.add(user_id, "delete_dataset")
+            self._spawn(self.outbox.tick())
+        logger.info("memory forgotten user=%s", user_id)
+
+    async def dialog_deleting(self, user_id: str, dialog_id: str) -> None:
+        """Разговор удаляется (вручную или по сроку): его документ в Cognee удаляется жёстко через очередь. Вызывается до удаления
+        строки из базы, пока известен `cognee_data_id`. Заметки из разговора остаются."""
+        if self._client is None:
+            return
+        db = self._database()
+        data_id = await asyncio.to_thread(db.get_cognee_data_id, dialog_id) if db is not None else None
+        await self.outbox.add(user_id, "delete_document", {"dialog_id": dialog_id, "data_id": data_id})
+        self._spawn(self.outbox.tick())
+
+    async def erase_user_data(self, user_id: str) -> None:
+        """Стирание аккаунта: датасет в Cognee удаляется синхронно, до ответа `204` (`CON-DATA-04`). Cognee недоступен — `MemoryUnavailable`
+        (агент ответит 503, аккаунт не трогается). Без настроенного Cognee удалять нечего."""
+        if self._client is None:
+            return
+        try:
+            await self._client.forget_dataset(dataset_name(user_id))
+        except Exception as error:  # noqa: BLE001
+            logger.exception("cognee erase failed user=%s", user_id)
+            raise MemoryUnavailable() from error
+        await self.outbox.drop(user_id, ("index_dialog", "rebuild", "delete_document", "delete_dataset"))
+        self._drop(user_id)
+
+    def start_outbox(self, interval_seconds: float = 10.0) -> None:
+        """Фоновый проход очереди Cognee раз в `interval_seconds`."""
+        if self._outbox_task is not None or self._client is None:
+            return
+
+        async def loop() -> None:
+            while True:
+                try:
+                    await self.outbox.tick()
+                except Exception:  # noqa: BLE001
+                    logger.exception("cognee outbox tick failed")
+                await asyncio.sleep(interval_seconds)
+
+        self._outbox_task = asyncio.get_running_loop().create_task(loop(), name="memory-outbox")
+
+    async def stop_outbox(self) -> None:
+        if self._outbox_task is not None:
+            self._outbox_task.cancel()
+            await asyncio.gather(self._outbox_task, return_exceptions=True)
+            self._outbox_task = None

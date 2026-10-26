@@ -6,6 +6,7 @@ Cognee API мокается двумя способами: клиент (`Cognee
 
 import asyncio
 import json
+import time
 import uuid
 from typing import Any
 
@@ -57,6 +58,8 @@ class FakeCognee:
         self.recalls: list[tuple[str, str]] = []
         self.deleted: list[str] = []
         self.recall_text = recall_text
+        self.documents: dict[str, dict[str, tuple[str, str]]] = {}  # dataset -> data_id -> (name, text)
+        self.down = False  # Cognee недоступен: add/delete бросают ошибку
         self.recall_gate: asyncio.Event | None = None  # если задан, recall ждёт его (управление моментом prefetch)
 
     async def connect(self) -> None:
@@ -72,13 +75,29 @@ class FakeCognee:
         self.recalls.append((query, dataset))
         if self.recall_gate is not None:
             await self.recall_gate.wait()
-        return self.recall_text if dataset in self.datasets else ""
+        return self.recall_text
 
     async def recall_chunks(self, query: str, dataset: str) -> str:
         self.recalls.append((query, dataset))
         if self.recall_gate is not None:
             await self.recall_gate.wait()
-        return self.recall_text if dataset in self.datasets else ""
+        return self.recall_text
+
+    async def add_document(self, text: str, dataset: str, name: str) -> str | None:
+        if self.down:
+            raise RuntimeError("cognee down")
+        data_id = str(uuid.uuid4())
+        self.documents.setdefault(dataset, {})[data_id] = (name, text)
+        self.datasets.add(dataset)
+        return data_id
+
+    async def delete_document(self, dataset: str, data_id: str | None = None, name: str | None = None) -> bool:
+        if self.down:
+            raise RuntimeError("cognee down")
+        docs = self.documents.get(dataset, {})
+        if data_id is None and name is not None:
+            data_id = next((key for key, (doc_name, _) in docs.items() if doc_name == name), None)
+        return docs.pop(data_id, None) is not None if data_id else False
 
     async def read_consent(self, dataset: str) -> str:
         return self.consents.get(dataset, "")
@@ -87,7 +106,10 @@ class FakeCognee:
         return dataset in self.datasets
 
     async def forget_dataset(self, dataset: str) -> bool:
+        if self.down:
+            raise RuntimeError("cognee down")
         self.deleted.append(dataset)
+        self.documents.pop(dataset, None)
         self.datasets.discard(dataset)
         self.consents.pop(dataset, None)
         return True
@@ -97,7 +119,11 @@ class FakeCognee:
 
 
 def backend(fake: FakeCognee | None) -> CogneeMemoryBackend:
-    return CogneeMemoryBackend(fake, memory_settings())  # type: ignore[arg-type]
+    """Бэкенд с двойником базы диалогов: настройки и заметки живут в базе (как в проде)."""
+    FakeDialogDatabase.reset()
+    db = FakeDialogDatabase("tests-backend")
+    db.open()
+    return CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]
 
 
 # ─── клиент (MockTransport) ───────────────────────────────────────────────────
@@ -220,19 +246,16 @@ def test_client_forget_dataset() -> None:
 # ─── бэкенд (фейк вместо клиента) ─────────────────────────────────────────────
 
 
-async def test_update_settings_on_creates_seed() -> None:
-    """Включение памяти — документ-зерно CONSENT, оно же создаёт датасет человека."""
+async def test_update_settings_on_records_consent_without_cognee() -> None:
+    """Включение памяти пишет согласие в настройки (база агента). Cognee для этого не нужен: заметки работают и без него."""
     fake = FakeCognee()
     service = backend(fake)
     user = uid()
     result = await service.update_settings(user, True, CONSENT)
     await service.drain()
     assert result["enabled"] is True and result["consentVersion"] == CONSENT
-    seed, dataset = fake.remembered[0]
-    assert dataset == dataset_name(user)
-    assert seed.startswith(f"CONSENT memory v{CONSENT} ")
+    assert fake.remembered == [] and fake.documents == {} and fake.deleted == []  # ни одного вызова в Cognee
     assert service.enabled(user) is True
-    await service.drain()  # prefetch после включения
     memory = await service.get_memory(user)
     assert memory["enabled"] is True and memory["consentVersion"] == CONSENT
     assert memory["rulesVersion"] == "notes-1" and memory["facts"] == []
@@ -260,34 +283,70 @@ async def test_update_settings_off_keeps_dataset() -> None:
     assert service.enabled(user) is False
 
 
-async def test_dialog_ended_remembers_transcript() -> None:
-    """Конец разговора у включившего память: транскрипт «Человек/Агент» уходит в его датасет, """
-    fake = FakeCognee()
-    service = backend(fake)
-    user = uid()
-    await service.update_settings(user, True, CONSENT)
-    await service.drain()
-    fake.remembered.clear()
-    service.dialog_ended(dialog(user))
-    await service.drain()
-    transcript, dataset = fake.remembered[0]
-    assert dataset == dataset_name(user)
-    assert transcript.startswith("Транскрипт разговора человека с агентом поддержки:")
-    assert transcript.count("Человек: реплика") == 4 and "Агент: Понимаю." in transcript
+def stored_dialog(db: FakeDialogDatabase, user: str, lines: list[tuple[str, str]], mode: str = "on", ended: bool = True) -> str:
+    """Разговор в двойнике базы: (id, user, started, ended, ..., memory_mode), сообщения по порядку."""
+    dialog_id = str(uuid.uuid4())
+    state = db._state()
+    state.dialogs[dialog_id] = (dialog_id, user, "2026-10-20T10:00:00Z", "2026-10-20T10:05:00Z" if ended else None, None, None, "male", 0, mode, 0)
+    for position, (role, text) in enumerate(lines):
+        state.messages[(dialog_id, str(position))] = (str(position), dialog_id, position, role, text, "2026-10-20T10:00:00Z", None)
+    return dialog_id
 
 
-async def test_dialog_ended_without_consent_writes_nothing() -> None:
+async def test_dialog_ended_indexes_only_human_lines_without_pii_and_crisis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Один документ на разговор: реплики человека без реплик агента, ПДн замаскированы, кризисные реплики не попадают."""
+    monkeypatch.setattr("app.memory.cognee_backend.INDEX_DELAY_SECONDS", 0)
     fake = FakeCognee()
     service = backend(fake)
+    db = service._database()
     user = uid()
-    service.dialog_ended(dialog(user))
-    service.dialog_ended(dialog(user, user_messages=2))  # и короткий разговор у включившего — тоже мимо
     await service.update_settings(user, True, CONSENT)
+    dialog_id = stored_dialog(
+        db,
+        user,
+        [
+            ("assistant", "Расскажи, что случилось"),
+            ("user", "Я работаю в продажах, мой телефон +7 999 123 45 67"),
+            ("assistant", "Понимаю"),
+            ("user", "Иногда мне кажется, что я не хочу жить"),
+            ("user", "Сестра Маша меня поддерживает"),
+        ],
+    )
+    current = dialog(user, 0)
+    current.id = dialog_id
+    service.dialog_ended(current)
     await service.drain()
-    fake.remembered.clear()
-    service.dialog_ended(dialog(user, user_messages=3))
+    assert await service.outbox.tick() == 1
+    (name, text), = fake.documents[dataset_name(user)].values()
+    assert name == f"dialog-{dialog_id}"
+    assert "работаю в продажах" in text and "Сестра Маша" in text
+    assert "123" not in text and "[телефон]" in text  # ПДн замаскированы
+    assert "не хочу жить" not in text  # кризисная реплика не в индексе
+    assert "Расскажи" not in text and "Понимаю" not in text  # реплик агента нет
+    assert db.get_cognee_data_id(dialog_id) is not None
+    assert await service.outbox.tick() == 0 and db.outbox_pending() == 0
+
+
+async def test_dialog_ended_without_memory_or_search_or_for_unsaved_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.memory.cognee_backend.INDEX_DELAY_SECONDS", 0)
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    service.dialog_ended(dialog(user))  # память не включена
+    await service.update_settings(user, True, CONSENT)
+    service.dialog_ended(dialog(user))  # включена: индекс идёт (проверяет соседний тест)
     await service.drain()
-    assert fake.remembered == []
+    db.outbox_drop_user(user, ("index_dialog",))
+
+    await service.update_settings(user, None, None, chat_search_enabled=False)
+    await service.outbox.tick()
+    service.dialog_ended(dialog(user))  # «Опираться на прошлые разговоры» выключено
+    silent = dialog(user)
+    silent.memory_mode = "off"
+    service.dialog_ended(silent)  # «Не сохранять»
+    await service.drain()
+    assert [row for row in db.outbox_due("9999", 50) if row[2] == "index_dialog"] == []
 
 
 async def test_brief_is_a_sync_block_of_notes() -> None:
@@ -372,34 +431,39 @@ async def test_forget_all_deletes_data_keeps_settings() -> None:
     service = backend(fake)
     user = uid()
     await service.update_settings(user, True, CONSENT)
-    await service.drain()
+    await service.notes.add(user, "situation", "Работает в продажах")
     await service.forget_all(user)
     await service.drain()
+    await service.outbox.tick()
     assert fake.deleted == [dataset_name(user)]
-    # «Забыть всё» не выключает память и не сбрасывает согласие: данные стёрты, настройки прежние
+    # «Удалить всю память» не выключает память и не сбрасывает согласие: данные стёрты, настройки прежние
     assert service.enabled(user) is True
     assert (await service.get_memory(user))["consentVersion"] == CONSENT
+    assert (await service.get_memory(user))["notes"] == []
     assert service.brief(dialog(user)) == ""
 
 
-async def test_user_erased_forgets_dataset() -> None:
+async def test_erase_user_data_deletes_the_dataset_before_answering() -> None:
     fake = FakeCognee()
     service = backend(fake)
     user = uid()
     await service.update_settings(user, True, CONSENT)
-    await service.drain()
-    service.user_erased(user)
-    await service.drain()
+    await service.erase_user_data(user)
     assert fake.deleted == [dataset_name(user)]
+    fake.down = True
+    with pytest.raises(MemoryServiceError) as caught:
+        await service.erase_user_data(user)
+    assert caught.value.code == "MEMORY_UNAVAILABLE"  # агент ответит 503, аккаунт не трогается
 
 
-async def test_unavailable_without_client() -> None:
+async def test_unavailable_without_client_and_without_database() -> None:
     service = backend(None)
     assert service.status() == "unavailable" and service.available is False
+    assert service.brief(dialog(uid())) == ""  # без клиента разговор идёт без индекса
+    no_db = CogneeMemoryBackend(FakeCognee(), memory_settings())  # type: ignore[arg-type]
     with pytest.raises(MemoryServiceError) as caught:
-        await service.update_settings(uid(), True, CONSENT)
-    assert caught.value.code == "MEMORY_UNAVAILABLE"
-    assert service.brief(dialog(uid())) == ""  # без клиента разговор идёт без памяти
+        await no_db.update_settings(uid(), True, CONSENT)
+    assert caught.value.code == "MEMORY_UNAVAILABLE"  # без базы агента заметки и согласие хранить негде
 
 
 async def test_changes_and_export_shapes() -> None:
@@ -433,11 +497,13 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
         COGNEE_SERVICE_EMAIL="agent-service@cognee.dev",
         COGNEE_SERVICE_PASSWORD="test-password",
     )
-    with TestClient(create_app(lambda: None, lambda: (None, None), memory_settings=settings)) as client:
+    FakeDialogDatabase.reset()
+    app = create_app(lambda: None, lambda: (None, None), memory_settings=settings, database_factory=lambda: FakeDialogDatabase("app-cognee"))
+    with TestClient(app) as client:
         assert fake.connected is True  # логин при старте
         ready = client.get("/health/ready").json()
         assert ready["memory"] == "on"
-        assert ready["dialogs"] == "memory"  # диск не подключается
+        assert ready["dialogs"] == "fake"  # база диалогов подключена (двойник)
         user = uid()
         response = client.put(
             f"/v1/users/{user}/memory/settings", json={"enabled": True, "consentVersion": CONSENT}, headers=AUTH
@@ -447,6 +513,10 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
         memory = client.get(f"/v1/users/{user}/memory", headers=AUTH).json()
         assert memory["enabled"] is True and memory["rulesVersion"] == "notes-1"
         client.delete(f"/v1/users/{user}/memory", headers=AUTH)
+        for _ in range(100):  # индекс в Cognee удаляется через очередь, в фоне
+            if fake.deleted:
+                break
+            time.sleep(0.05)
         assert fake.deleted == [dataset_name(user)]
         pinned = client.patch(f"/v1/users/{user}/memory/facts/f-1", json={"status": "pinned"}, headers=AUTH)
         assert pinned.status_code == 422
@@ -540,7 +610,7 @@ async def test_pause_survives_restart() -> None:
     service, db = with_db(fake)
     await service.update_settings(user, True, CONSENT)
     await service.update_settings(user, False, None)
-    assert dataset_name(user) in fake.datasets  # данные на месте, пауза не стирает
+    assert fake.deleted == []  # данные на месте, пауза ничего не стирает
 
     restarted = CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]
     assert (await restarted.get_memory(user))["enabled"] is False
@@ -569,6 +639,7 @@ async def test_forget_all_keeps_pause_and_consent_in_db() -> None:
     await service.update_settings(user, True, CONSENT)
     await service.update_settings(user, False, None)
     await service.forget_all(user)
+    await service.outbox.tick()
     assert fake.deleted == [dataset_name(user)]
 
     restarted = CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]

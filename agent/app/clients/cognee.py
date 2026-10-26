@@ -70,6 +70,48 @@ class CogneeClient:
         response = await self._send("POST", "/cognify", json={"datasets": [dataset]})
         response.raise_for_status()
 
+    async def add_document(self, text: str, dataset: str, name: str) -> str | None:
+        """Один документ в датасет человека (по документу на разговор), затем cognify. Возвращает id документа в Cognee: по нему
+        разговор удаляется жёстко (`delete_document`). `name` — имя файла, по нему документ находится, если id потерян."""
+        response = await self._send(
+            "POST",
+            "/add",
+            files={"data": (f"{name}.txt", text.encode(), "text/plain")},
+            data={"datasetName": dataset},
+        )
+        response.raise_for_status()
+        data_id: str | None = None
+        try:
+            info = response.json().get("data_ingestion_info") or []
+            if info and isinstance(info[0], dict) and info[0].get("data_id"):
+                data_id = str(info[0]["data_id"])
+        except (ValueError, AttributeError):
+            pass
+        cognify = await self._send("POST", "/cognify", json={"datasets": [dataset]})
+        cognify.raise_for_status()
+        return data_id
+
+    async def delete_document(self, dataset: str, data_id: str | None = None, name: str | None = None) -> bool:
+        """Жёстко удалить один документ: Cognee убирает вместе с ним куски, эмбеддинги и узлы графа (проверено спайком
+        `scripts/cognee_spike.py`). Нет ни датасета, ни документа — уже удалено (False). Документ ищется по `data_id`, иначе по `name`."""
+        dataset_id = await self._dataset_id(dataset)
+        if dataset_id is None:
+            return False
+        if data_id is None and name is not None:
+            listing = await self._send("GET", f"/datasets/{dataset_id}/data")
+            listing.raise_for_status()
+            for item in listing.json():
+                if isinstance(item, dict) and item.get("name") == name:
+                    data_id = str(item.get("id"))
+                    break
+        if data_id is None:
+            return False
+        response = await self._send("DELETE", f"/datasets/{dataset_id}/data/{data_id}")
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
+
     @staticmethod
     def _texts(payload: Any) -> list[str]:
         """Ответ /search — JSON-список; элементы-словари с полем search_result (список строк) распаковываются."""

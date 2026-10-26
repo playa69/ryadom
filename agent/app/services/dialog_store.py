@@ -157,6 +157,14 @@ class MemoryLink(Protocol):
         """Человек стёрт: забыть его сводку и настройки в кэше."""
         ...
 
+    async def dialog_deleting(self, user_id: str, dialog_id: str) -> None:
+        """Разговор удаляется (вручную или по сроку): убрать его документ из индекса прошлых разговоров. Вызывается до удаления с диска."""
+        ...
+
+    async def erase_user_data(self, user_id: str) -> None:
+        """Стирание аккаунта: данные человека во внешнем индексе удаляются синхронно; исключение — удалить не удалось."""
+        ...
+
     def user_message(self, dialog: Dialog, text: str) -> None:
         """Реплика человека сохранена: бэкенд может в фоне поискать по ней в памяти (к следующему ходу сводка точнее)."""
         ...
@@ -473,6 +481,12 @@ class DialogStore:
         `forget_derived` — убрать и факты памяти, у которых этот диалог единственный источник (см. `DialogDatabase.delete_dialog`).
         Исключение — диск не ответил; из памяти процесса диалог к этому моменту уже убран.
         """
+        memory = self.memory
+        if memory is not None:
+            try:
+                await memory.dialog_deleting(user_id, dialog_id)  # документ в индексе уходит в очередь, пока известен его id
+            except Exception:  # noqa: BLE001 - память не должна мешать удалению разговора
+                logger.exception("memory dialog_deleting failed dialog=%s", dialog_id)
         async with self._load_lock:  # догрузка выгруженного человека иначе могла прочитать диалог до удаления и вернуть его в память
             self._forget(user_id, dialog_id)
             await self._delete_on_disk(user_id, dialog_id, forget_derived)

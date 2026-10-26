@@ -110,10 +110,37 @@ async def end_dialog(user_id: str, dialog_id: str, store: Store, body: EndBody |
     return {"summary": store.end(dialog, body.takeaway, body.tension_after)}
 
 
+@router.delete("/dialogs/{dialog_id}", status_code=204)
+async def delete_dialog(user_id: str, dialog_id: str, store: Store) -> Response:
+    """Удалить разговор: сообщения, документ в индексе прошлых разговоров (жёстко, через очередь) и итог (каскадом).
+    Заметки, сделанные в разговоре, остаются. Открытый разговор перед удалением завершается. Чужой и несуществующий — `404`."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog = store.get(user, dialog_id)
+    if dialog is None:
+        raise dialog_not_found()
+    if dialog.ended_at is None:
+        store.end(dialog, None, None)  # завершение отдаёт сокету `ended` и ставит финальные задачи памяти
+    try:
+        await store.delete_dialog(user, dialog_id, forget_derived=False)
+    except Exception as error:
+        logger.error("delete dialog failed: %s", type(error).__name__)
+        raise AgentError(503, "AGENT_INTERNAL", "Не удалось удалить разговор, повторите позже") from error
+    return Response(status_code=204)
+
+
 @router.delete("", status_code=204)
 async def erase_user(user_id: str, store: Store) -> Response:
+    user = _user(user_id)
+    memory = store.memory
+    if memory is not None:
+        try:
+            await memory.erase_user_data(user)  # индекс в Cognee удаляется до 204; недоступен — 503, аккаунт не трогается
+        except Exception as error:
+            logger.error("erase user memory failed: %s", type(error).__name__)
+            raise AgentError(503, "AGENT_INTERNAL", "Не удалось стереть данные, повторите позже") from error
     try:
-        await store.erase_user_durable(_user(user_id))
+        await store.erase_user_durable(user)
     except Exception as error:
         # 204 означает «стёрто». Диск недоступен или сбойнул: приложение не должно удалять аккаунт, оно повторит позже.
         logger.error("erase user failed: %s", type(error).__name__)

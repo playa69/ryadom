@@ -26,6 +26,9 @@ class _File:
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
         self.memory_settings: dict[str, tuple[bool, str | None, str | None]] = {}  # user_id -> (enabled, version, at)
+        self.outbox: list[dict] = []  # очередь операций Cognee
+        self.data_ids: dict[str, str] = {}  # dialog_id -> cognee_data_id
+        self.next_outbox_id = 1
         self.cursors: dict[str, int] = {}  # dialog_id -> сколько реплик человека разобрано извлекателем
         self.flags: dict[str, tuple[bool, bool]] = {}  # user_id -> (sensitive, chat_search)
         self.notes: dict[str, tuple] = {}  # id -> (id, user_id, kind, text, sensitive, event_date, dialog_id, created, updated)
@@ -155,6 +158,7 @@ class FakeDialogDatabase:
             state.prefs.pop(user_id, None)
             state.memory_settings.pop(user_id, None)
             state.flags.pop(user_id, None)
+            state.outbox = [o for o in state.outbox if o["user_id"] != user_id]
             state.notes = {k: v for k, v in state.notes.items() if v[1] != user_id}
 
     def list_notes(self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None) -> list[tuple]:
@@ -199,6 +203,69 @@ class FakeDialogDatabase:
             for key in gone:
                 del state.notes[key]
             return len(gone)
+
+    def outbox_add(self, user_id: str, op: str, payload: dict, next_at: str, created_at: str) -> None:
+        with self._lock:
+            state = self._state()
+            state.outbox.append({"id": state.next_outbox_id, "user_id": user_id, "op": op, "payload": payload, "attempts": 0, "next_at": next_at})
+            state.next_outbox_id += 1
+
+    def outbox_due(self, now: str, limit: int = 20) -> list[tuple]:
+        with self._lock:
+            rows = [o for o in self._state().outbox if o["next_at"] <= now]
+        return [(o["id"], o["user_id"], o["op"], o["payload"], o["attempts"]) for o in sorted(rows, key=lambda o: o["id"])[:limit]]
+
+    def outbox_done(self, outbox_id: int) -> None:
+        with self._lock:
+            state = self._state()
+            state.outbox = [o for o in state.outbox if o["id"] != outbox_id]
+
+    def outbox_retry(self, outbox_id: int, attempts: int, next_at: str) -> None:
+        with self._lock:
+            for o in self._state().outbox:
+                if o["id"] == outbox_id:
+                    o["attempts"], o["next_at"] = attempts, next_at
+
+    def outbox_pending(self) -> int:
+        with self._lock:
+            return len(self._state().outbox)
+
+    def outbox_drop_user(self, user_id: str, ops: tuple[str, ...]) -> None:
+        with self._lock:
+            state = self._state()
+            state.outbox = [o for o in state.outbox if not (o["user_id"] == user_id and o["op"] in ops)]
+
+    def get_cognee_data_id(self, dialog_id: str) -> str | None:
+        with self._lock:
+            return self._state().data_ids.get(dialog_id)
+
+    def set_cognee_data_id(self, dialog_id: str, data_id: str | None) -> None:
+        with self._lock:
+            if data_id is None:
+                self._state().data_ids.pop(dialog_id, None)
+            else:
+                self._state().data_ids[dialog_id] = data_id
+
+    def clear_cognee_data_ids(self, user_id: str) -> None:
+        with self._lock:
+            state = self._state()
+            for dialog_id, row in state.dialogs.items():
+                if row[1] == user_id:
+                    state.data_ids.pop(dialog_id, None)
+
+    def dialog_for_index(self, dialog_id: str):
+        with self._lock:
+            state = self._state()
+            row = state.dialogs.get(dialog_id)
+            if row is None:
+                return None
+            messages = sorted((m for (d, _), m in state.messages.items() if d == dialog_id), key=lambda m: m[2])
+            return row[1], row[2], row[8], [(m[3], m[4]) for m in messages]
+
+    def indexable_dialog_ids(self, user_id: str) -> list[str]:
+        with self._lock:
+            rows = [(r[2], r[0]) for r in self._state().dialogs.values() if r[1] == user_id and r[3] is not None and r[8] == "on"]
+        return [dialog_id for _, dialog_id in sorted(rows)]
 
     def get_notes_cursor(self, dialog_id: str) -> int:
         with self._lock:

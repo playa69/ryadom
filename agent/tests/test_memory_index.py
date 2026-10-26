@@ -1,0 +1,167 @@
+"""Индекс прошлых разговоров в Cognee (PROTEUS-242, задачи 3.1–3.5, 4.5): переключатель поиска, удаление разговора, очередь с
+повторами, недоступность Cognee, стирание аккаунта. Cognee — фейк; жёсткое удаление проверено на настоящем Cognee спайком."""
+
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from tests.conftest import AUTH, start_dialog
+from tests.fake_db import FakeDialogDatabase
+from tests.test_memory_cognee_backend import CONSENT, FakeCognee, backend, dataset_name, dialog, memory_settings, stored_dialog, uid
+
+HUMAN = [("user", "Я работаю в продажах и люблю гулять у воды"), ("assistant", "Понимаю"), ("user", "Сестра Маша меня поддерживает")]
+
+
+@pytest.fixture(autouse=True)
+def no_index_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.memory.cognee_backend.INDEX_DELAY_SECONDS", 0)
+
+
+async def indexed(service, db, user: str) -> str:
+    dialog_id = stored_dialog(db, user, HUMAN)
+    current = dialog(user, 0)
+    current.id = dialog_id
+    service.dialog_ended(current)
+    await service.drain()
+    await service.outbox.tick()
+    return dialog_id
+
+
+async def test_turning_search_off_deletes_the_index_and_on_rebuilds_it_from_the_journal() -> None:
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    first = await indexed(service, db, user)
+    second = await indexed(service, db, user)
+    assert len(fake.documents[dataset_name(user)]) == 2
+
+    await service.update_settings(user, None, None, chat_search_enabled=False)
+    await service.drain()
+    await service.outbox.tick()
+    assert fake.deleted == [dataset_name(user)] and dataset_name(user) not in fake.documents
+    assert db.get_cognee_data_id(first) is None and db.get_cognee_data_id(second) is None  # у разговоров документов больше нет
+    assert (await service.get_memory(user))["notes"] == [] and (await service.get_memory(user))["chatSearchEnabled"] is False
+
+    # разговор «Не сохранять» в пересборку не идёт
+    stored_dialog(db, user, HUMAN, mode="off")
+    await service.update_settings(user, None, None, chat_search_enabled=True)
+    await service.drain()
+    while await service.outbox.tick():  # rebuild → index_dialog по каждому разговору
+        pass
+    assert len(fake.documents[dataset_name(user)]) == 2
+    assert db.get_cognee_data_id(first) is not None
+
+
+async def test_deleting_a_dialog_removes_its_document_and_keeps_the_notes() -> None:
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    await service.notes.add(user, "person", "Есть сестра Маша")
+    gone = await indexed(service, db, user)
+    kept = await indexed(service, db, user)
+
+    await service.dialog_deleting(user, gone)
+    await service.drain()
+    await service.outbox.tick()
+    remaining = [name for name, _ in fake.documents[dataset_name(user)].values()]
+    assert remaining == [f"dialog-{kept}"]
+    assert [n["text"] for n in await service.notes.list(user)] == ["Есть сестра Маша"]  # заметки остаются
+
+
+async def test_cognee_down_notes_work_and_index_catches_up_with_backoff() -> None:
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    fake.down = True
+    dialog_id = stored_dialog(db, user, HUMAN)
+    current = dialog(user, 0)
+    current.id = dialog_id
+    service.dialog_ended(current)
+    await service.drain()
+    assert await service.outbox.tick() == 0  # Cognee недоступен: операция осталась с повтором
+    assert db.outbox_pending() == 1
+    await service.notes.add(user, "interest", "Любит гулять у воды")  # заметки работают без Cognee
+    assert len(await service.notes.list(user)) == 1
+
+    fake.down = False
+    for o in db._state().outbox:  # время повтора пришло
+        o["next_at"] = "2000-01-01T00:00:00Z"
+    assert await service.outbox.tick() == 1 and db.outbox_pending() == 0
+    assert len(fake.documents[dataset_name(user)]) == 1
+
+
+async def test_dialog_deleted_while_waiting_is_not_resurrected() -> None:
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    dialog_id = stored_dialog(db, user, HUMAN)
+    current = dialog(user, 0)
+    current.id = dialog_id
+    service.dialog_ended(current)
+    await service.drain()
+    db._state().dialogs.pop(dialog_id)  # разговор удалили, пока операция ждала
+    await service.outbox.tick()
+    assert fake.documents == {}
+
+
+async def test_short_or_crisis_only_dialog_makes_no_document() -> None:
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    dialog_id = stored_dialog(db, user, [("user", "Привет"), ("assistant", "Привет!")])
+    current = dialog(user, 0)
+    current.id = dialog_id
+    service.dialog_ended(current)
+    await service.drain()
+    await service.outbox.tick()
+    assert fake.documents == {} and db.get_cognee_data_id(dialog_id) is None
+
+
+def make_app(monkeypatch: pytest.MonkeyPatch, fake: FakeCognee):
+    FakeDialogDatabase.reset()
+    monkeypatch.setattr("app.main.build_cognee_client", lambda cfg: fake)
+    settings = memory_settings(COGNEE_BASE_URL="http://cognee.test", COGNEE_SERVICE_EMAIL="a@b.c", COGNEE_SERVICE_PASSWORD="x")
+    return create_app(lambda: None, lambda: (None, None), memory_settings=settings, database_factory=lambda: FakeDialogDatabase("index-app"))
+
+
+def test_delete_dialog_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeCognee()
+    app = make_app(monkeypatch, fake)
+    user = str(uuid.uuid4())
+    with TestClient(app) as client:
+        client.put(f"/v1/users/{user}/memory/settings", json={"enabled": True, "consentVersion": CONSENT}, headers=AUTH)
+        started = client.post(f"/v1/users/{user}/dialogs", headers=AUTH).json()
+        dialog_id = started["dialogId"]
+        assert client.delete(f"/v1/users/{user}/dialogs/{dialog_id}", headers=AUTH).status_code == 204  # открытый тоже
+        assert client.get(f"/v1/users/{user}/dialogs/{dialog_id}", headers=AUTH).status_code == 404
+        assert client.delete(f"/v1/users/{user}/dialogs/{dialog_id}", headers=AUTH).status_code == 404
+        stranger = client.post(f"/v1/users/{str(uuid.uuid4())}/dialogs", headers=AUTH).json()["dialogId"]
+        assert client.delete(f"/v1/users/{user}/dialogs/{stranger}", headers=AUTH).status_code == 404  # чужой
+
+
+def test_erase_user_waits_for_cognee_and_answers_503_when_it_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeCognee()
+    app = make_app(monkeypatch, fake)
+    user = str(uuid.uuid4())
+    with TestClient(app) as client:
+        client.put(f"/v1/users/{user}/memory/settings", json={"enabled": True, "consentVersion": CONSENT}, headers=AUTH)
+        client.post(f"/v1/users/{user}/dialogs", headers=AUTH)
+        fake.down = True
+        refused = client.delete(f"/v1/users/{user}", headers=AUTH)
+        assert refused.status_code == 503  # данные не объявлены удалёнными
+        assert client.get(f"/v1/users/{user}/dialogs", headers=AUTH).json()  # диалоги на месте
+        fake.down = False
+        assert client.delete(f"/v1/users/{user}", headers=AUTH).status_code == 204
+        assert fake.deleted == [dataset_name(user)]
