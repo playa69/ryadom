@@ -693,3 +693,30 @@ describe('заметки в листе «Что помнит Рядом»', () =
     expect(replaceNote(list, 'a', null).map((n) => n.id)).toEqual(['b'])
   })
 })
+
+describe('«Запомнил: … · Убрать» и лист «Рядом теперь запоминает важное»', () => {
+  it('новые чувствительные заметки — только новые и только чувствительные', async () => {
+    const { newSensitiveNotes, noteIds } = await import('../src/memory')
+    const start = [note({ id: 'old', sensitive: true, kind: MemoryNoteKind.Wellbeing })]
+    const known = noteIds(start)
+    const later = [
+      ...start,
+      note({ id: 'plain', text: 'Работает в продажах' }),
+      note({ id: 'fresh', sensitive: true, kind: MemoryNoteKind.Wellbeing, text: 'Плохо спит' }),
+    ]
+    expect(newSensitiveNotes(known, later).map((n) => n.id)).toEqual(['fresh'])
+    known.add('fresh')
+    expect(newSensitiveNotes(known, later)).toEqual([])
+  })
+
+  it('лист-приглашение: один раз, тому, кто ещё не решал; согласие и «Не сейчас» его снимают', async () => {
+    const { shouldInviteToMemory } = await import('../src/memory')
+    const fresh = { available: true, enabled: false, consentVersion: null }
+    expect(shouldInviteToMemory(fresh, false)).toBe(true)
+    expect(shouldInviteToMemory(fresh, true)).toBe(false) // «Не сейчас»
+    expect(shouldInviteToMemory({ ...fresh, consentVersion: '2026-10-12' }, false)).toBe(false) // уже давал согласие (и выключил)
+    expect(shouldInviteToMemory({ ...fresh, enabled: true }, false)).toBe(false)
+    expect(shouldInviteToMemory({ ...fresh, available: false }, false)).toBe(false)
+    expect(shouldInviteToMemory(null, false)).toBe(false)
+  })
+})

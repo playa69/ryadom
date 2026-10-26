@@ -986,3 +986,44 @@ export function replaceNote(
 ): MemoryNoteApiResponse[] {
   return next === null ? notes.filter((note) => note.id !== id) : notes.map((note) => (note.id === id ? next : note))
 }
+
+// ─── "Запомнил: … · Убрать": the notice about a sensitive note (6.4) ──────────
+
+/**
+ * While "Запоминать чувствительное" is on, the conversation shows a line for every new sensitive note, like Claude's notice:
+ * "Запомнил: <text> · Убрать". The notes are asked for every `MEMORY_NOTICE_POLL_MS` during a conversation; "Убрать" deletes the note
+ * at once (the same call as "×", without the seconds for "Вернуть").
+ */
+export const MEMORY_NOTICE = { prefix: 'Запомнил: ', undo: 'Убрать' } as const
+export const MEMORY_NOTICE_POLL_MS = 10_000
+
+/** The sensitive notes the conversation has not told about yet: `known` holds the ids already seen (including those present at the start). */
+export function newSensitiveNotes(known: ReadonlySet<string>, notes: readonly MemoryNoteApiResponse[]): MemoryNoteApiResponse[] {
+  return notes.filter((note) => note.sensitive && !known.has(note.id))
+}
+
+/** The ids to remember as seen at the start of a conversation, so that old notes do not show up as new. */
+export function noteIds(notes: readonly MemoryNoteApiResponse[]): Set<string> {
+  return new Set(notes.map((note) => note.id))
+}
+
+// ─── the sheet "Рядом теперь запоминает важное" (6.7) ─────────────────────────
+
+/** Shown once to a person who has never decided about memory; nothing is on by default, the person chooses. */
+export const MEMORY_INVITE = {
+  title: 'Рядом теперь запоминает важное',
+  paragraphs: [
+    'Рядом может запоминать важное о тебе по ходу разговоров, чтобы не начинать каждый раз с нуля.',
+    'Всё, что запомнено, ты видишь в «Профиль → Память»: каждую заметку можно исправить или удалить. Включить или выключить память можно в любой момент.',
+  ],
+  accept: 'Включить',
+  decline: 'Не сейчас',
+} as const
+
+/** Whether to show the sheet: the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
+export function shouldInviteToMemory(
+  memory: Pick<MemoryApiResponse, 'available' | 'enabled' | 'consentVersion'> | null,
+  dismissed: boolean,
+): boolean {
+  return memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
+}

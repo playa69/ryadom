@@ -10,15 +10,19 @@ import { defineConfig, devices } from '@playwright/test'
  * them via `webServer`, so `pnpm test:e2e` works locally and in CI with one command.
  */
 
-export const WEB_URL = process.env.E2E_WEB_URL ?? 'http://127.0.0.1:3100'
+/** Сдвиг портов стека (см. `scripts/stack.mjs`): несколько стеков на одной машине. */
+const OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0)
+const at = (base: number) => `http://127.0.0.1:${base + OFFSET}`
+
+export const WEB_URL = process.env.E2E_WEB_URL ?? at(3100)
 /** The API. It serves no client any more: the PWA below is a separate server. */
-export const APP_URL = process.env.E2E_APP_URL ?? 'http://127.0.0.1:3102'
+export const APP_URL = process.env.E2E_APP_URL ?? at(3102)
 /** The signed-in web app (apps/web). `baseURL` above is the landing site, not this one. */
-export const WEBAPP_URL = process.env.E2E_WEBAPP_URL ?? 'http://127.0.0.1:3103'
+export const WEBAPP_URL = process.env.E2E_WEBAPP_URL ?? at(3103)
 /** The PWA (apps/mobile web build), on its own origin with `/api` proxied to the API. */
-export const PWA_URL = process.env.E2E_PWA_URL ?? 'http://127.0.0.1:3104'
+export const PWA_URL = process.env.E2E_PWA_URL ?? at(3104)
 /** Mailpit web UI: this is where the tests read the codes from the emails. */
-export const MAIL_URL = process.env.E2E_MAIL_URL ?? 'http://127.0.0.1:8027'
+export const MAIL_URL = process.env.E2E_MAIL_URL ?? at(8027)
 
 /** A headless browser has no microphone of its own: the fake device plays a tone, and the fake prompt grants it. */
 const FAKE_MICROPHONE = { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] }

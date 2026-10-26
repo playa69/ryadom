@@ -20,14 +20,24 @@ const e2eRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = join(e2eRoot, '..')
 const isWindows = process.platform === 'win32'
 
-const DB_URL = 'postgres://ryadom:ryadom@127.0.0.1:55434/ryadom'
-const AGENT_URL = 'http://127.0.0.1:8081'
+// E2E_PORT_OFFSET: сдвиг всех портов стека. Нужен там, где на одной машине гоняют несколько стеков (по одному на рабочую копию):
+// порты фиксированные, и второй стек иначе упирается в первый. Те же значения в `playwright.config.ts`.
+const OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0)
+const port = (base) => String(base + OFFSET)
+process.env.E2E_PG_PORT = port(55434)
+process.env.E2E_MAIL_SMTP_PORT = port(1027)
+process.env.E2E_MAIL_UI_PORT = port(8027)
+process.env.E2E_AGENT_MOCK_PORT = process.env.E2E_AGENT_MOCK_PORT ?? port(8081)
+
+const DB_URL = `postgres://ryadom:ryadom@127.0.0.1:${port(55434)}/ryadom`
+// E2E_REAL_AGENT_URL: пройти сценарии на настоящем агенте (локально поднятом, с настоящей моделью), а не на заглушке.
+const AGENT_URL = process.env.E2E_REAL_AGENT_URL ?? `http://127.0.0.1:${port(8081)}`
 // 3100 is the landing site (its env var is still called WEB_*: the legal pages live there), 3102
 // is the API, 3103 is the signed-in web app and 3104 is the PWA.
-const WEB_PORT = '3100'
-const APP_PORT = '3102'
-const WEBAPP_PORT = '3103'
-const PWA_PORT = '3104'
+const WEB_PORT = port(3100)
+const APP_PORT = port(3102)
+const WEBAPP_PORT = port(3103)
+const PWA_PORT = port(3104)
 
 const children = []
 let shuttingDown = false
@@ -137,7 +147,7 @@ const apiEnv = {
   EMAIL_TRANSPORT: 'smtp',
   EMAIL_FROM: 'Рядом <noreply@ryadom.local>',
   SMTP_HOST: '127.0.0.1',
-  SMTP_PORT: '1027',
+  SMTP_PORT: port(1027),
   AGENT_API_URL: AGENT_URL,
   AGENT_TIMEOUT_MS: '10000',
   DIALOG_IDLE_TIMEOUT_SEC: '900',
