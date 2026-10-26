@@ -89,6 +89,7 @@ export const RATE_LIMITS = {
   memoryWrite: { perUser: { limit: 60, windowMs: 60_000 } },
   /** The mood diary: screens read often, notes are taps. */
   diaryRead: { perUser: { limit: 120, windowMs: 60_000 } },
+  diarySummary: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
   diaryWrite: { perUser: { limit: 60, windowMs: 60_000 } },
   /** The Android widget with its own token: a few taps a day, plus reads when it redraws. */
   widget: { perIp: { limit: 120, windowMs: 60_000 } },

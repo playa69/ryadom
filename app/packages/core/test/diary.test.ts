@@ -14,6 +14,8 @@ import {
   PutMoodCheckinOperation,
   RunWeeklyDigestsOperation,
   recomputeSummariesAfterDialogDeleted,
+  CreateWeekSummaryOperation,
+  CreateWeekSummaryOperationErrorCode,
 } from '../src/processes/diary'
 import { getDb } from '../src/shared'
 import { json, mockFetch, registerConfirmedUser } from './helpers'
@@ -147,6 +149,7 @@ describe('итоги текущей недели: пишутся в фоне', (
   const tick = (now: Date) => diaryProcess.execute(new RunWeeklyDigestsOperation({ now }))
   const weekRows = (userId: string) => getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, userId))
   const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000)
+  const hours = (n: number) => minutes(n * 60)
   const view = async (userId: string) => {
     const result = await diaryProcess.execute(new GetDiaryOperation({ userId, now: NOW }))
     if (!result.success) throw new Error('no diary')
@@ -208,7 +211,9 @@ describe('итоги текущей недели: пишутся в фоне', (
     })
     // Less than a minute after the tap: nothing yet.
     expect(await tick(minutes(5.5))).toMatchObject({ weekly: 0 })
-    const running = tick(minutes(7))
+    // A minute has passed, but a text exists: the next rewrite waits for the six-hour gap.
+    expect(await tick(minutes(7))).toMatchObject({ weekly: 0 })
+    const running = tick(hours(7))
     await new Promise((r) => setTimeout(r, 300))
     expect(await weekRows(user.id)).toMatchObject([{ status: 'pending', text: 'Первый текст.' }])
     expect((await view(user.id)).week.summary?.text).toBe('Первый текст.')
@@ -217,7 +222,7 @@ describe('итоги текущей недели: пишутся в фоне', (
     expect((await view(user.id)).week.summary?.text).toBe('Второй текст.')
     expect((await weekRows(user.id))[0]?.stats).toMatchObject({ hardDays: 1, final: false })
     expect(calls).toHaveLength(1)
-    expect(await tick(minutes(8))).toMatchObject({ weekly: 0 })
+    expect(await tick(hours(8))).toMatchObject({ weekly: 0 })
   })
 
   it('агент недоступен: прежний текст остаётся, следующий тик пробует снова', async () => {
@@ -231,12 +236,50 @@ describe('итоги текущей недели: пишутся в фоне', (
     expect(await tick(minutes(1))).toMatchObject({ weekly: 1 })
     await remark(user.id, '2026-10-20', 5, minutes(2))
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({}, 502) })
-    expect(await tick(minutes(4))).toMatchObject({ weekly: 0 })
+    expect(await tick(hours(7))).toMatchObject({ weekly: 0 })
     expect(await weekRows(user.id)).toMatchObject([{ status: 'ready', text: 'Первый текст.' }])
 
+    // The failed try did not use up the gap: the next tick writes the text.
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Новый текст.', stats: {} }) })
-    expect(await tick(minutes(5))).toMatchObject({ weekly: 1 })
+    expect(await tick(hours(7.1))).toMatchObject({ weekly: 1 })
     expect((await view(user.id)).week.summary?.text).toBe('Новый текст.')
+  })
+
+  it('кнопка «Обновить итоги»: сразу, без шестичасовой паузы; раз в десять минут; только с тремя днями', async () => {
+    const user = await registerConfirmedUser()
+    const refresh = (now: Date) => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now }))
+    for (const day of ['19', '20']) await mark(user.id, `2026-10-${day}`)
+    expect(await refresh(NOW)).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS })
+    await mark(user.id, '2026-10-21')
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Первый текст.', stats: {} }) })
+    await tick(NOW)
+
+    await remark(user.id, '2026-10-21', 1, minutes(5))
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Вручную.', stats: {} }) })
+    expect(await refresh(minutes(6))).toMatchObject({ success: true, summary: { text: 'Вручную.' } })
+    expect((await weekRows(user.id))[0]?.stats).toMatchObject({ final: false, hardDays: 1 })
+    // Ten minutes between two presses; the background pass sees nothing stale any more.
+    expect(await refresh(minutes(10))).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.TOO_SOON })
+    expect(await tick(hours(8))).toMatchObject({ weekly: 0 })
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Ещё раз.', stats: {} }) })
+    expect(await refresh(minutes(17))).toMatchObject({ success: true, summary: { text: 'Ещё раз.' } })
+    // Another week is not the button's business.
+    expect(
+      await diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-12', now: NOW })),
+    ).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE })
+  })
+
+  it('агент недоступен на кнопке: прежний текст остаётся, пауза в десять минут не потрачена', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Первый текст.', stats: {} }) })
+    await tick(NOW)
+    const refresh = (now: Date) => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now }))
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({}, 502) })
+    expect(await refresh(minutes(1))).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE })
+    expect(await weekRows(user.id)).toMatchObject([{ status: 'ready', text: 'Первый текст.' }])
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Второй.', stats: {} }) })
+    expect(await refresh(minutes(2))).toMatchObject({ success: true })
   })
 
   it('текст недели без отметок-источников удалён вместе с разговором: следующий тик пишет его заново сам', async () => {

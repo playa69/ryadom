@@ -50,6 +50,7 @@ export enum ApiPath {
   Diary = '/api/diary',
   DiaryCheckinToday = '/api/diary/checkins/today',
   DiarySummaries = '/api/diary/summaries',
+  DiaryWeekSummary = '/api/diary/summaries/week',
   /** Creates (`POST`) and revokes (`DELETE`) the token of the Android widget. */
   DiaryWidgetToken = '/api/diary/widget-token',
   /** Widget token only (`Authorization: Widget <token>`). */

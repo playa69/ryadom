@@ -28,3 +28,19 @@ export async function seedMarks(userId: string, marks: SeedMark[]): Promise<void
     await sql.end()
   }
 }
+
+/**
+ * Makes the week text look written seven hours ago, so the six-hour gap of the background pass is over
+ * (the text itself and the marks stay as they are).
+ */
+export async function ageWeekSummary(userId: string): Promise<void> {
+  const sql = postgres(DB_URL, { max: 1 })
+  try {
+    await sql`
+      update diary_summaries
+      set stats = coalesce(stats, '{}'::jsonb) - 'writtenAt' - 'manualAt', generated_at = now() - interval '7 hours'
+      where user_id = ${userId} and kind = 'week'`
+  } finally {
+    await sql.end()
+  }
+}

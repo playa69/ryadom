@@ -59,6 +59,15 @@ describe('аналитика дневника', () => {
     expectNoPersonalData()
   })
 
+  it('кнопка «Обновить итоги»: одно событие с триггером button', async () => {
+    const { token, userId } = await signedIn()
+    for (const n of [0, 1, 2]) await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(n), mood: 3, source: 'app', updatedAt: new Date('2026-01-01T00:00:00Z') })
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Готово.', stats: {} }) })
+    ok(await call(app, 'POST', '/api/diary/summaries/week', { weekStart: dayOfThisWeek(0) }, token))
+    expect(diaryEvents()).toEqual([{ userId, event: 'week_summary_generated', properties: { trigger: 'button' } }])
+    expectNoPersonalData()
+  })
+
   it('фоновый проход: событие auto для каждого, кому написали или закрыли неделю', async () => {
     const { userId } = await signedIn()
     const lastMonday = new Date(Date.parse(`${dayOfThisWeek(0)}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10)

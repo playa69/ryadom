@@ -19,12 +19,20 @@ export type MoodSource = (typeof MOOD_SOURCES)[number]
 
 /** Marked days a week needs before "Week summary" can be made. */
 export const WEEK_SUMMARY_MIN_DAYS = 3
+/** Minutes between two manual re-runs of the week text. */
+export const MANUAL_REFRESH_COOLDOWN_MIN = 10
 /** Days back a note without network may be written for (the offline queue). */
 export const MOOD_BACKFILL_MAX_DAYS = 7
 /** After 3 days of "hard" in a row the bridge to the conversation says more. */
 export const MOOD_HARD_STREAK_DAYS = 3
 
 export enum DiaryApiErrorCode {
+  /** Fewer marked days in the week than `WEEK_SUMMARY_MIN_DAYS`. */
+  NOT_ENOUGH_DAYS = 'NOT_ENOUGH_DAYS',
+  /** The text of this week was re-run by hand less than `MANUAL_REFRESH_COOLDOWN_MIN` minutes ago (or is being written). */
+  TOO_SOON = 'TOO_SOON',
+  /** The agent could not write the text; try again later. */
+  SUMMARY_UNAVAILABLE = 'SUMMARY_UNAVAILABLE',
   /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
   DATE_OUT_OF_RANGE = 'DATE_OUT_OF_RANGE',
 }
@@ -78,6 +86,12 @@ export interface PutMoodCheckinApiResponse {
   changed: boolean
   /** Days of "hard" in a row ending with this one, for the bridge to the conversation. */
   hardStreak: number
+}
+
+/** `POST /api/diary/summaries/week`: re-run the text of the current week now («Обновить итоги»). */
+export interface CreateWeekSummaryApiRequest {
+  /** `YYYY-MM-DD`, Monday of the current week. */
+  weekStart: string
 }
 
 /** `GET /api/diary/summaries?kind=week&before=<periodStart>`, newest first. */

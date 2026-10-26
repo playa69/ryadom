@@ -5,7 +5,7 @@ import { button, openApp, openTab, startAnonymously } from '../support/app'
 import { expect, test } from '../support/fixtures'
 import { trackSession } from '../support/session'
 // Written by the server side of the change (a direct write to the table: the API takes only today and yesterday).
-import { seedMarks } from '../support/diary'
+import { ageWeekSummary, seedMarks } from '../support/diary'
 
 /**
  * The mood diary in the app (PWA), `REQ-WELL-01`…`03`: the card in two taps, a change of mind, the chart,
@@ -138,8 +138,8 @@ test('три вкладки помещаются на ширине 320px без 
   await shot(page, 'diary-tabs-320')
 })
 
-test('итоги недели пишутся сами в фоне и переписываются, когда меняется настроение; «Люди рядом» после тяжёлой недели', async ({ page, request, shot }) => {
-  test.setTimeout(420_000)
+test('первый текст недели пишется сам, потом — «Обновить итоги» и автоматическая перезапись после паузы; «Люди рядом» после тяжёлой недели', async ({ page, request, shot }) => {
+  test.setTimeout(900_000)
   const session = trackSession(page)
   await openApp(page)
   await startAnonymously(page)
@@ -159,7 +159,7 @@ test('итоги недели пишутся сами в фоне и переп�
   await openTab(page, 'Дневник')
   // Four days: no button, the text is being written in the background (a minute after the last tap, then the minute tick).
   await expect(diary.getByTestId('diary-week-busy')).toBeVisible({ timeout: 15_000 })
-  await expect(diary.getByTestId('diary-week-collect')).toHaveCount(0)
+  await expect(diary.getByTestId('diary-week-refresh')).toHaveCount(0)
   await expect(diary.getByTestId('diary-week-waiting')).toHaveCount(0)
   await shot(page, 'diary-week-building')
   await expect
@@ -172,17 +172,29 @@ test('итоги недели пишутся сами в фоне и переп�
   await expect(diary.getByTestId('diary-week-people')).toBeVisible()
   await shot(page, 'diary-week-summary')
 
-  // A change of mood rewrites the text by itself; the old one stays on the card until the new one is there.
+  // The first text is written; «Обновить итоги» is there now. A change of mood does NOT rewrite it by itself within the six hours.
+  await expect(diary.getByTestId('diary-week-refresh')).toBeVisible()
   await diary.getByTestId('diary-mood-4').click()
   await expect.poll(async () => (await serverDiary(request, session.accessToken())).today?.mood).toBe(4)
-  await expect(diary.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 4')
+  await page.waitForTimeout(150_000)
+  expect((await serverDiary(request, session.accessToken())).week.summary?.text).toContain('Тяжёлых дней было 4')
+
+  // The button rewrites it at once; the old text stays under «Собираю итоги…» until the new one is there.
+  await diary.getByTestId('diary-week-refresh').click()
+  await expect(diary.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 3', { timeout: 30_000 })
+  await expect(diary.getByTestId('diary-week-busy')).toHaveCount(0)
+  await shot(page, 'diary-week-rewritten')
+  // And once more within ten minutes: the friendly refusal.
+  await diary.getByTestId('diary-week-refresh').click()
+  await expect(diary.getByTestId('diary-week-error')).toContainText('Подожди немного')
+
+  // After the six-hour gap (aged in the table) a changed mood is rewritten by the background pass alone.
+  await diary.getByTestId('diary-mood-2').click()
+  await expect.poll(async () => (await serverDiary(request, session.accessToken())).today?.mood).toBe(2)
+  await ageWeekSummary(session.userId())
   await expect
     .poll(async () => (await serverDiary(request, session.accessToken())).week.summary?.text ?? '', { timeout: 180_000, intervals: [5_000] })
-    .toContain('Тяжёлых дней было 3')
-  await openTab(page, 'Главная')
-  await openTab(page, 'Дневник')
-  await expect(diary.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 3')
-  await shot(page, 'diary-week-rewritten')
+    .toContain('лёгких — 0')
 })
 
 test('итоги прошлой недели: карточка появляется, когда планировщик закрыл неделю', async ({ page, request, shot }) => {

@@ -2,6 +2,7 @@
 import './get-diary/get-diary.handler'
 import './put-mood-checkin/put-mood-checkin.handler'
 import './list-week-summaries/list-week-summaries.handler'
+import './create-week-summary/create-week-summary.handler'
 import './run-weekly-digests/run-weekly-digests.handler'
 import './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.handler'
 import './create-widget-token/create-widget-token.handler'
@@ -18,6 +19,8 @@ export { PutMoodCheckinOperation } from './put-mood-checkin/put-mood-checkin.ope
 export type { PutMoodCheckinOperationData } from './put-mood-checkin/put-mood-checkin.operation'
 export { ListWeekSummariesOperation } from './list-week-summaries/list-week-summaries.operation'
 export type { ListWeekSummariesOperationData } from './list-week-summaries/list-week-summaries.operation'
+export { CreateWeekSummaryOperation } from './create-week-summary/create-week-summary.operation'
+export type { CreateWeekSummaryOperationData } from './create-week-summary/create-week-summary.operation'
 export { RunWeeklyDigestsOperation } from './run-weekly-digests/run-weekly-digests.operation'
 export type { RunWeeklyDigestsOperationData } from './run-weekly-digests/run-weekly-digests.operation'
 export { RecomputeSummariesAfterDialogDeletedOperation } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.operation'
@@ -36,6 +39,8 @@ export type { PutMoodCheckinResult } from './put-mood-checkin/put-mood-checkin.t
 export { PutMoodCheckinOperationErrorCode } from './put-mood-checkin/put-mood-checkin.types'
 export type { ListWeekSummariesResult } from './list-week-summaries/list-week-summaries.types'
 export { ListWeekSummariesOperationErrorCode } from './list-week-summaries/list-week-summaries.types'
+export type { CreateWeekSummaryResult } from './create-week-summary/create-week-summary.types'
+export { CreateWeekSummaryOperationErrorCode } from './create-week-summary/create-week-summary.types'
 export type { RunWeeklyDigestsResult } from './run-weekly-digests/run-weekly-digests.types'
 export type { DiaryView } from './get-diary/get-diary.types'
 export type { RecomputeSummariesAfterDialogDeletedResult } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.types'
@@ -50,6 +55,7 @@ export type { DiarySummaryDTO, MoodCheckinDTO } from '../../managers/diary-manag
 import type { GetDiaryOperation } from './get-diary/get-diary.operation'
 import type { PutMoodCheckinOperation } from './put-mood-checkin/put-mood-checkin.operation'
 import type { ListWeekSummariesOperation } from './list-week-summaries/list-week-summaries.operation'
+import type { CreateWeekSummaryOperation } from './create-week-summary/create-week-summary.operation'
 import type { RunWeeklyDigestsOperation } from './run-weekly-digests/run-weekly-digests.operation'
 import type { RecomputeSummariesAfterDialogDeletedOperation } from './recompute-summaries-after-dialog-deleted/recompute-summaries-after-dialog-deleted.operation'
 import type { CreateWidgetTokenOperation } from './create-widget-token/create-widget-token.operation'
@@ -60,6 +66,7 @@ export type DiaryOperations =
   | GetDiaryOperation
   | PutMoodCheckinOperation
   | ListWeekSummariesOperation
+  | CreateWeekSummaryOperation
   | RunWeeklyDigestsOperation
   | RecomputeSummariesAfterDialogDeletedOperation
   | CreateWidgetTokenOperation

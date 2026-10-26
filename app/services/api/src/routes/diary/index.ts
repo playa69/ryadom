@@ -1,4 +1,6 @@
 import {
+  CreateWeekSummaryOperation,
+  CreateWeekSummaryOperationErrorCode,
   CreateWidgetTokenOperation,
   CreateWidgetTokenOperationErrorCode,
   diaryProcess,
@@ -18,6 +20,7 @@ import assertNever from 'assert-never'
 import type { Context, Hono, MiddlewareHandler } from 'hono'
 import { z } from 'zod'
 import {
+  DiaryApiErrorCode,
   MOOD_FACTORS,
   type DiaryApiResponse,
   type DiarySummariesApiResponse,
@@ -30,7 +33,7 @@ import {
 } from '@ryadom/contracts/api/diary'
 import { AppHeader } from '@ryadom/contracts/api/headers'
 import { ApiPath } from '@ryadom/contracts/api/paths'
-import { apiError, apiOk } from '../../lib/api-response'
+import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { clientIp, RATE_LIMITS, type RateLimiter, type RateLimitRule } from '../../lib/rate-limit'
@@ -59,6 +62,7 @@ const widgetCheckinBody = z.object({
   factor: factorSchema.nullable().optional(),
   date: dateSchema.optional(),
 })
+const weekBody = z.object({ weekStart: dateSchema })
 const summariesQuery = z.object({ kind: z.literal('week').optional(), before: dateSchema.optional() })
 
 function perUser(limiter: RateLimiter, name: string, rule: RateLimitRule): MiddlewareHandler<AppEnv> {
@@ -82,16 +86,25 @@ type Refusal =
   | GetDiaryOperationErrorCode
   | PutMoodCheckinOperationErrorCode
   | ListWeekSummariesOperationErrorCode
+  | CreateWeekSummaryOperationErrorCode
 
 function refuse(c: Context, error: Refusal): Response {
   switch (error) {
     case GetDiaryOperationErrorCode.USER_NOT_FOUND:
     case PutMoodCheckinOperationErrorCode.USER_NOT_FOUND:
     case ListWeekSummariesOperationErrorCode.USER_NOT_FOUND:
+    case CreateWeekSummaryOperationErrorCode.USER_NOT_FOUND:
       return apiError(c, 401, 'Unauthorised')
     case PutMoodCheckinOperationErrorCode.DATE_OUT_OF_RANGE:
+    case CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE:
       // A date from the client that is not today or yesterday of the person: the spec's 422 (REQ-WELL-01).
       return apiError(c, 422, 'The date must be today or yesterday in your time zone')
+    case CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS:
+      return apiRefused(c, DiaryApiErrorCode.NOT_ENOUGH_DAYS, 'Not enough marked days')
+    case CreateWeekSummaryOperationErrorCode.TOO_SOON:
+      return apiRefused(c, DiaryApiErrorCode.TOO_SOON, 'The summary was re-run less than ten minutes ago')
+    case CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE:
+      return apiRefused(c, DiaryApiErrorCode.SUMMARY_UNAVAILABLE, 'The agent could not write the summary')
     default:
       return assertNever(error)
   }
@@ -99,6 +112,7 @@ function refuse(c: Context, error: Refusal): Response {
 
 export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, analytics }: RouteDeps): void {
   const read = perUser(rateLimiter, 'diary-read', RATE_LIMITS.diaryRead.perUser)
+  const summary = perUser(rateLimiter, 'diary-summary', RATE_LIMITS.diarySummary.perUser)
   const write = perUser(rateLimiter, 'diary-write', RATE_LIMITS.diaryWrite.perUser)
 
   app.get(ApiPath.Diary, requireAuth(jwt), requireActiveSession(sessions), read, async (c) => {
@@ -154,6 +168,15 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
     if (!result.success) return refuse(c, result.error)
     const body: DiarySummariesApiResponse = { items: result.summaries.map(toSummary), nextBefore: result.nextBefore }
     return apiOk(c, body)
+  })
+
+  // «Обновить итоги»: the text of the current week again, now. The first text and the usual rewrites are the scheduler's.
+  app.post(ApiPath.DiaryWeekSummary, requireAuth(jwt), requireActiveSession(sessions), summary, jsonBody(weekBody), async (c) => {
+    const { userId } = authUser(c)
+    const result = await diaryProcess.execute(new CreateWeekSummaryOperation({ userId, weekStart: c.req.valid('json').weekStart }))
+    if (!result.success) return refuse(c, result.error)
+    analytics.capture(userId, AnalyticsEvent.WeekSummaryGenerated, { trigger: 'button' })
+    return apiOk(c, toSummary(result.summary))
   })
 
   // ─── the Android widget ────────────────────────────────────────────────────

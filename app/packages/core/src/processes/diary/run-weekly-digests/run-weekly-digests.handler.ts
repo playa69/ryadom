@@ -12,7 +12,7 @@ import {
 } from '../../../managers/diary-manager'
 import { addDaysToDate, createLogger, localMoment, weekStart } from '../../../shared'
 import { PROCESSES_CONFIG } from '../../config'
-import { checkinsBetween, inputsVersion, isStale, makeWeekSummary } from '../shared/digests'
+import { checkinsBetween, inputsVersion, isStale, makeWeekSummary, writtenAt } from '../shared/digests'
 
 const log = createLogger('diary')
 import { RunWeeklyDigestsOperation } from './run-weekly-digests.operation'
@@ -62,6 +62,9 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
       await diaryManager.execute(new ListDiarySummariesQuery({ userId, kind: 'week', from: periodStart, to: periodStart, limit: 1 }))
     ).summaries[0]
     if (existing && !isStale(existing, days) && (!final || existing.stats?.final === true)) return false
+    // A text of the week in progress is rewritten after a change at most once in AUTO_MIN_GAP_MS (the button «Обновить итоги»
+    // does not wait); the first text and the Monday close do not wait either.
+    if (existing && !final && now.getTime() - writtenAt(existing).getTime() < config.AUTO_MIN_GAP_MS) return false
     const staleBefore = new Date(now.getTime() - config.PENDING_STALE_MS)
     if (!(await this.claim(userId, 'week', periodStart, now, staleBefore, final))) return false
     let written = false

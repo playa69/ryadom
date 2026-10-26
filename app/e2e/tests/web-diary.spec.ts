@@ -107,7 +107,7 @@ test('дневник: отметка в два касания, график, м�
   await expect(page).toHaveURL(/\/diary\/journal$/)
 })
 
-test('дневник: итоги недели пишутся сами в фоне и переписываются при смене настроения', async ({ page, request, shot }) => {
+test('дневник: первый текст недели пишется сам, «Обновить итоги» переписывает сразу', async ({ page, request, shot }) => {
   test.setTimeout(420_000)
   await clearMailbox()
   const session = trackSession(page)
@@ -129,7 +129,7 @@ test('дневник: итоги недели пишутся сами в фон�
 
   await openWebApp(page, '/diary')
   await expect(page.getByTestId('diary-week-busy')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByTestId('diary-week-collect')).toHaveCount(0)
+  await expect(page.getByTestId('diary-week-refresh')).toHaveCount(0)
   await shot(page, 'web-diary-week-building')
   await expect
     .poll(async () => (await read()).week.summary?.text ?? '', { timeout: 180_000, intervals: [5_000] })
@@ -139,11 +139,14 @@ test('дневник: итоги недели пишутся сами в фон�
   await expect(page.getByTestId('diary-week-people')).toBeVisible()
   await shot(page, 'web-diary-week-summary')
 
+  // «Обновить итоги» is there once a text exists; a change of mood is rewritten by the button at once (not by the six-hour pass).
+  await expect(page.getByTestId('diary-week-refresh')).toBeVisible()
   await page.getByTestId('diary-mood-4').click()
   await expect(page.getByTestId('diary-today-title')).toHaveText('Сегодня: хорошо')
-  await expect
-    .poll(async () => (await read()).week.summary?.text ?? '', { timeout: 180_000, intervals: [5_000] })
-    .toContain('Тяжёлых дней было 3')
-  await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 3')
+  await expect.poll(async () => (await read()).today?.mood).toBe(4)
+  await page.getByTestId('diary-week-refresh').click()
+  await expect(page.getByTestId('diary-week-text')).toContainText('Тяжёлых дней было 3', { timeout: 30_000 })
+  await shot(page, 'web-diary-week-rewritten')
+  await page.getByTestId('diary-week-refresh').click()
+  await expect(page.getByTestId('diary-week-error')).toContainText('Подожди немного')
 })

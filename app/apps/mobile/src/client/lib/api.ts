@@ -58,6 +58,7 @@ export const {
   forgetAllMemory,
   getMemoryChanges,
   exportMemory,
+  createWeekSummary,
   getDiary,
   putMoodCheckin,
   listDiarySummaries,

@@ -117,7 +117,7 @@ export enum AnalyticsEvent {
   // ── Mood diary (REQ-WELL-01…04). Only that an action happened: never a mood, a factor or a text. ──
   /** Server. A note of the day was saved or replaced. */
   MoodCheckedIn = 'mood_checked_in',
-  /** Server. A week summary was written or rewritten by the background pass (mood changed, the week closed). */
+  /** Server. A week summary was written by the background pass or re-run by hand («Обновить итоги»). */
   WeekSummaryGenerated = 'week_summary_generated',
   /** Client. A diary segment was opened. */
   DiaryOpened = 'diary_opened',
@@ -325,7 +325,7 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
   [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
   [AnalyticsEvent.MoodCheckedIn]: { source: MoodSourceName; with_factor: boolean; changed: boolean }
-  [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'auto' }
+  [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'button' | 'auto' }
   [AnalyticsEvent.DiaryOpened]: { tab: DiaryTab }
   [AnalyticsEvent.MoodBridgeClicked]: { target: 'dialog' | 'people' }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
