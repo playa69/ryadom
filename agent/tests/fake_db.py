@@ -26,6 +26,7 @@ class _File:
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
         self.memory_settings: dict[str, tuple[bool, str | None, str | None]] = {}  # user_id -> (enabled, version, at)
+        self.notes: dict[str, tuple] = {}  # id -> (id, user_id, kind, text, sensitive, event_date, dialog_id, created, updated)
         self.usage: list[tuple] = []
 
 
@@ -151,6 +152,50 @@ class FakeDialogDatabase:
             state.usage = [row for row in state.usage if row[0] not in gone]
             state.prefs.pop(user_id, None)
             state.memory_settings.pop(user_id, None)
+            state.notes = {k: v for k, v in state.notes.items() if v[1] != user_id}
+
+    def list_notes(self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None) -> list[tuple]:
+        with self._lock:
+            rows = [n for n in self._state().notes.values() if n[1] == user_id]
+        if since:
+            rows = [n for n in rows if n[7] >= since]
+        if kinds:
+            rows = [n for n in rows if n[2] in kinds]
+        rows.sort(key=lambda n: (n[7], n[0]), reverse=False)
+        rows.sort(key=lambda n: n[7], reverse=True)
+        return [(n[0], n[2], n[3], n[4], n[5], n[6], n[7], n[8]) for n in rows]
+
+    def count_notes(self, user_id: str) -> int:
+        with self._lock:
+            return sum(1 for n in self._state().notes.values() if n[1] == user_id)
+
+    def add_note(self, note: tuple) -> None:
+        with self._lock:
+            self._state().notes[note[0]] = note
+
+    def update_note(self, user_id: str, note_id: str, text: str, updated_at: str) -> bool:
+        with self._lock:
+            note = self._state().notes.get(note_id)
+            if note is None or note[1] != user_id:
+                return False
+            self._state().notes[note_id] = (*note[:3], text, *note[4:8], updated_at)
+            return True
+
+    def delete_note(self, user_id: str, note_id: str) -> bool:
+        with self._lock:
+            note = self._state().notes.get(note_id)
+            if note is None or note[1] != user_id:
+                return False
+            del self._state().notes[note_id]
+            return True
+
+    def delete_notes(self, user_id: str, only_sensitive: bool = False) -> int:
+        with self._lock:
+            state = self._state()
+            gone = [k for k, n in state.notes.items() if n[1] == user_id and (n[4] or not only_sensitive)]
+            for key in gone:
+                del state.notes[key]
+            return len(gone)
 
     def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         with self._lock:

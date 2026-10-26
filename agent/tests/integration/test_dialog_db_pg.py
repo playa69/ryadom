@@ -14,7 +14,7 @@ import pytest
 from app.services.dialog_db import DialogDatabase as PostgresDialogDatabase
 from app.services.dialog_db import encode_summary
 
-TABLES = ("model_usage", "client_ids", "messages", "voice_prefs", "memory_settings", "dialogs")
+TABLES = ("model_usage", "client_ids", "messages", "voice_prefs", "memory_settings", "memory_notes", "memory_outbox", "dialogs")
 
 
 def _write(dialog_id: str, user_id: str, text: str = "привет") -> "object":
@@ -133,3 +133,30 @@ def test_memory_settings_roundtrip_and_erase(db: PostgresDialogDatabase) -> None
     assert db.get_memory_settings("u1") is not None
     db.erase_user("u1")
     assert db.get_memory_settings("u1") is None
+
+
+def test_notes_crud_search_index_and_cascade_of_erase(db: PostgresDialogDatabase) -> None:
+    """Заметки: запись, список по давности и видам, правка, удаление; полнотекстовый индекс на месте; стирание человека убирает их."""
+    import uuid
+
+    def note(user: str, kind: str, text: str, at: str, sensitive: bool = False) -> tuple:
+        return (str(uuid.uuid4()), user, kind, text, sensitive, None, None, at, at)
+
+    first = note("u1", "situation", "Работает в продажах", "2026-10-24T10:00:00+00:00")
+    second = note("u1", "wellbeing", "Последние недели плохо спит", "2026-10-25T10:00:00+00:00", sensitive=True)
+    other = note("u2", "name", "Зовут Алекс", "2026-10-25T10:00:00+00:00")
+    for item in (first, second, other):
+        db.add_note(item)
+    assert db.count_notes("u1") == 2
+    assert [row[2] for row in db.list_notes("u1")] == ["Последние недели плохо спит", "Работает в продажах"]
+    assert [row[1] for row in db.list_notes("u1", kinds=("situation",))] == ["situation"]
+    assert [row[1] for row in db.list_notes("u1", since="2026-10-25T00:00:00+00:00")] == ["wellbeing"]
+
+    assert db.update_note("u1", first[0], "Работает в продажах уже год", "2026-10-26T10:00:00+00:00")
+    assert not db.update_note("u2", first[0], "чужая", "2026-10-26T10:00:00+00:00")  # чужая заметка не правится
+    assert db.delete_notes("u1", only_sensitive=True) == 1  # выключили «чувствительное»
+    assert db.delete_note("u1", first[0]) and not db.delete_note("u1", first[0])
+    db.add_note(note("u1", "style", "Говорит на ты", "2026-10-26T10:00:00+00:00"))
+    db.erase_user("u1")
+    assert db.count_notes("u1") == 0 and db.count_notes("u2") == 1
+    db.open()  # повторное открытие: DDL идемпотентен и для новых таблиц

@@ -93,6 +93,34 @@ DDL = (
     consent_at          TEXT,
     updated_at          TEXT NOT NULL
 )""",
+    # Заметки о человеке (слой 1 памяти, PROTEUS-242): текст до 200 знаков, полнотекстовый поиск по-русски.
+    """CREATE TABLE IF NOT EXISTS memory_notes (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    text       VARCHAR(200) NOT NULL,
+    sensitive  BOOLEAN NOT NULL DEFAULT FALSE,
+    event_date DATE,
+    dialog_id  TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    search     TSVECTOR GENERATED ALWAYS AS (to_tsvector('russian', text)) STORED
+)""",
+    "CREATE INDEX IF NOT EXISTS memory_notes_user_created ON memory_notes (user_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS memory_notes_search ON memory_notes USING GIN (search)",
+    # Очередь операций Cognee с повторами (индекс прошлых разговоров, слой 2).
+    """CREATE TABLE IF NOT EXISTS memory_outbox (
+    id         BIGSERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    op         TEXT NOT NULL,
+    payload    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    next_at    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)""",
+    "CREATE INDEX IF NOT EXISTS memory_outbox_next ON memory_outbox (next_at)",
+    "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS memory_notes_cursor TEXT",
+    "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS cognee_data_id TEXT",
 )
 
 
@@ -327,6 +355,8 @@ class DialogDatabase:
             conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
             conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
             conn.execute("DELETE FROM memory_settings WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_notes WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_outbox WHERE user_id = %s", (user_id,))
 
     def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         """Настройки памяти человека: (включена, версия согласия, когда). None — человек их ещё не задавал."""
@@ -335,6 +365,56 @@ class DialogDatabase:
                 "SELECT enabled, consent_version, consent_at FROM memory_settings WHERE user_id = %s", (user_id,)
             ).fetchone()
         return None if row is None else (bool(row[0]), row[1], row[2])
+
+    # ─── заметки о человеке ───────────────────────────────────────────────────
+
+    _NOTE_COLUMNS = "id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at"
+
+    def list_notes(
+        self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None
+    ) -> list[tuple[Any, ...]]:
+        """Заметки человека, новые сверху: (id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at)."""
+        sql = f"SELECT {self._NOTE_COLUMNS} FROM memory_notes WHERE user_id = %s"
+        args: list[Any] = [user_id]
+        if since:
+            sql += " AND created_at >= %s"
+            args.append(since)
+        if kinds:
+            sql += " AND kind = ANY(%s)"
+            args.append(list(kinds))
+        with self._lock, self._connection() as conn:
+            return [tuple(row) for row in conn.execute(sql + " ORDER BY created_at DESC, id", args).fetchall()]
+
+    def count_notes(self, user_id: str) -> int:
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT count(*) FROM memory_notes WHERE user_id = %s", (user_id,)).fetchone()
+        return int(row[0]) if row else 0
+
+    def add_note(self, note: tuple[Any, ...]) -> None:
+        """(id, user_id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at)."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_notes (id, user_id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                tuple(clean(item) for item in note),
+            )
+
+    def update_note(self, user_id: str, note_id: str, text: str, updated_at: str) -> bool:
+        with self._lock, self._connection() as conn, conn.transaction():
+            cursor = conn.execute(
+                "UPDATE memory_notes SET text = %s, updated_at = %s WHERE id = %s AND user_id = %s",
+                (clean(text), updated_at, note_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+    def delete_note(self, user_id: str, note_id: str) -> bool:
+        with self._lock, self._connection() as conn, conn.transaction():
+            return conn.execute("DELETE FROM memory_notes WHERE id = %s AND user_id = %s", (note_id, user_id)).rowcount > 0
+
+    def delete_notes(self, user_id: str, only_sensitive: bool = False) -> int:
+        sql = "DELETE FROM memory_notes WHERE user_id = %s" + (" AND sensitive" if only_sensitive else "")
+        with self._lock, self._connection() as conn, conn.transaction():
+            return conn.execute(sql, (user_id,)).rowcount
 
     def put_memory_settings(
         self, user_id: str, enabled: bool, consent_version: str | None, consent_at: str | None, updated_at: str
