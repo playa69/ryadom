@@ -2941,11 +2941,3 @@ input:-webkit-autofill:focus {
   line-height: 1.55;
   color: var(--ryadom-text);
 }
-
-.rd-events-day ul {
-  margin: 0 0 var(--ryadom-s-3);
-  padding-left: 18px;
-  font-size: 15px;
-  line-height: 1.5;
-  color: var(--ryadom-text);
-}

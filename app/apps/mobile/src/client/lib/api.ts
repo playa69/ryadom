@@ -61,7 +61,5 @@ export const {
   getDiary,
   putMoodCheckin,
   listDiarySummaries,
-  createWeekSummary,
-  getDiaryEvents,
   createWidgetToken,
 } = client

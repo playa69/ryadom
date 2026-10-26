@@ -25,10 +25,10 @@ export const PROCESSES_CONFIG = {
     WRITE_INTERVAL_MINUTES: 60,
   },
   DIARY: {
-    /** Marked days of a week before «Collect the week summary» is offered (`REQ-WELL-01`). */
+    /** Marked days of a week before its summary is written (`REQ-WELL-01`). */
     WEEK_SUMMARY_MIN_DAYS: 3,
-    /** A summary of the same period is made at most once in this long. */
-    SUMMARY_COOLDOWN_MS: 24 * 60 * 60 * 1000,
+    /** A week text is written (or rewritten) once the last mark of the week has not changed for this long: taps coalesce. */
+    AUTO_QUIET_MS: 60 * 1000,
     /** The finished week is closed after this local time on Monday. */
     WEEKLY_CLOSE_MINUTES: 6 * 60,
     /** The diary asks the agent for this many people at most per scheduler pass. */

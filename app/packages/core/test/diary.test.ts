@@ -2,16 +2,13 @@
  * The mood diary on the real core and database (`REQ-WELL-01`, `openspec/changes/add-mood-diary`):
  * the local day, one note a day, the week summaries the agent writes and the app keeps.
  */
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import {
-  CreateWeekSummaryOperation,
   CreateWidgetTokenOperation,
-  CreateWeekSummaryOperationErrorCode,
   PutMoodCheckinOperationErrorCode,
   diaryProcess,
-  GetDiaryEventsOperation,
   GetDiaryOperation,
   ListWeekSummariesOperation,
   PutMoodCheckinOperation,
@@ -27,8 +24,16 @@ const NOW = new Date('2026-10-24T09:00:00Z')
 const digestRoute = () =>
   json({ text: 'Спасибо, что ты рядом с собой на этой неделе.', stats: { markedDays: 3 } })
 
-async function mark(userId: string, localDate: string, mood = 3, factor: 'work' | null = null) {
-  await getDb().insert(moodCheckins).values({ userId, localDate, mood, factor, source: 'app' })
+/** A mark written long ago: the quiet minute after the last tap is over, so the background pass may use it. */
+const LONG_AGO = new Date('2026-01-01T00:00:00Z')
+
+async function mark(userId: string, localDate: string, mood = 3, factor: 'work' | null = null, updatedAt = LONG_AGO) {
+  await getDb().insert(moodCheckins).values({ userId, localDate, mood, factor, source: 'app', updatedAt })
+}
+
+/** Changes a mark the way a tap does, at `at`. */
+async function remark(userId: string, localDate: string, mood: number, at: Date) {
+  await getDb().update(moodCheckins).set({ mood, updatedAt: at }).where(and(eq(moodCheckins.userId, userId), eq(moodCheckins.localDate, localDate)))
 }
 
 const put = (userId: string, over: Partial<ConstructorParameters<typeof PutMoodCheckinOperation>[0]> = {}) =>
@@ -136,72 +141,113 @@ describe('экран дневника', () => {
     const diary = await view(user.id)
     expect(diary.recent.map((d) => d.date)).toEqual(['2026-09-27', '2026-10-01', '2026-10-24'])
   })
-
-  it('«События этой недели»: память включена — пустой список; агент недоступен — не ошибка', async () => {
-    const user = await registerConfirmedUser()
-    mockFetch({
-      'GET http://agent.test/v1/users/*/memory': () => json({ available: true, mode: 'on', enabled: false, consentVersion: null, consentAt: null, rulesVersion: '1', limits: { maxFacts: 50 }, facts: [] }),
-    })
-    expect(await diaryProcess.execute(new GetDiaryEventsOperation({ userId: user.id }))).toEqual({
-      success: true,
-      memoryEnabled: false,
-      events: [],
-    })
-  })
 })
 
-describe('итоги недели', () => {
-  it('меньше трёх дней — отказ; с трёх дней текст пишет агент, а хранит приложение', async () => {
+describe('итоги текущей недели: пишутся в фоне', () => {
+  const tick = (now: Date) => diaryProcess.execute(new RunWeeklyDigestsOperation({ now }))
+  const weekRows = (userId: string) => getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, userId))
+  const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000)
+  const view = async (userId: string) => {
+    const result = await diaryProcess.execute(new GetDiaryOperation({ userId, now: NOW }))
+    if (!result.success) throw new Error('no diary')
+    return result.diary
+  }
+
+  it('меньше трёх дней текста нет; с третьего дня тик пишет его сам, а хранит приложение', async () => {
     const user = await registerConfirmedUser()
     const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
     await mark(user.id, '2026-10-19')
     await mark(user.id, '2026-10-20')
-    const request = () => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now: NOW }))
-    expect(await request()).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS })
+    expect(await tick(NOW)).toMatchObject({ weekly: 0 })
+    expect(calls).toHaveLength(0)
 
     await mark(user.id, '2026-10-21', 1, 'work')
-    const made = await request()
-    expect(made).toMatchObject({ success: true, summary: { kind: 'week', periodStart: '2026-10-19' } })
+    expect(await tick(NOW)).toMatchObject({ weekly: 1, weeklyUserIds: [user.id] })
     // The agent got the marks and the period, nothing about the person.
     const sent = JSON.parse(calls[0]!.body as string)
     expect(sent).toMatchObject({ kind: 'week', periodStart: '2026-10-19' })
     expect(sent.marks).toHaveLength(3)
     expect(JSON.stringify(sent)).not.toContain(user.email)
 
-    const rows = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    const rows = await weekRows(user.id)
     expect(rows).toHaveLength(1)
-    expect(rows[0]?.stats).toMatchObject({ markedDays: 3, final: false })
+    expect(rows[0]?.stats).toMatchObject({ markedDays: 3, hardDays: 1, final: false })
+    // Nothing changed since: the next ticks write nothing and ask nobody.
+    expect(await tick(minutes(1))).toMatchObject({ weekly: 0 })
+    expect(calls).toHaveLength(1)
+    expect((await view(user.id)).week.summary?.text).toContain('Спасибо')
   })
 
-  it('не чаще раза в сутки; через сутки новая версия заменяет прежнюю', async () => {
+  it('отметки, которым нет минуты, ждут: несколько касаний подряд — один текст', async () => {
     const user = await registerConfirmedUser()
-    mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
-    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
-    const make = (now: Date) => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now }))
-    expect((await make(NOW)).success).toBe(true)
-    expect(await make(new Date(NOW.getTime() + 60 * 60_000))).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.TOO_SOON })
-    expect((await make(new Date(NOW.getTime() + 25 * 60 * 60_000))).success).toBe(true)
-    expect(await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))).toHaveLength(1)
+    const { calls } = mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
+    await mark(user.id, '2026-10-19')
+    await mark(user.id, '2026-10-20')
+    await mark(user.id, '2026-10-21', 3, null, new Date(NOW.getTime() - 20_000))
+    expect(await tick(NOW)).toMatchObject({ weekly: 0 })
+    expect(calls).toHaveLength(0)
+    expect(await tick(minutes(1))).toMatchObject({ weekly: 1 })
+    expect(calls).toHaveLength(1)
   })
 
-  it('агент недоступен: ничего не сохранено, лимит «раз в сутки» не потрачен', async () => {
+  it('настроение изменили после текста — тик пишет новый; прежний виден, пока пишется', async () => {
     const user = await registerConfirmedUser()
     for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
-    const make = () => diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-19', now: NOW }))
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Первый текст.', stats: {} }) })
+    await tick(NOW)
+    expect((await view(user.id)).week.summary?.text).toBe('Первый текст.')
+
+    await remark(user.id, '2026-10-21', 1, minutes(5))
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const { calls } = mockFetch({
+      'POST http://agent.test/v1/users/*/digests': async () => {
+        await gate
+        return json({ text: 'Второй текст.', stats: {} })
+      },
+    })
+    // Less than a minute after the tap: nothing yet.
+    expect(await tick(minutes(5.5))).toMatchObject({ weekly: 0 })
+    const running = tick(minutes(7))
+    await new Promise((r) => setTimeout(r, 300))
+    expect(await weekRows(user.id)).toMatchObject([{ status: 'pending', text: 'Первый текст.' }])
+    expect((await view(user.id)).week.summary?.text).toBe('Первый текст.')
+    release()
+    expect(await running).toMatchObject({ weekly: 1 })
+    expect((await view(user.id)).week.summary?.text).toBe('Второй текст.')
+    expect((await weekRows(user.id))[0]?.stats).toMatchObject({ hardDays: 1, final: false })
+    expect(calls).toHaveLength(1)
+    expect(await tick(minutes(8))).toMatchObject({ weekly: 0 })
+  })
+
+  it('агент недоступен: прежний текст остаётся, следующий тик пробует снова', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ error: { code: 'DIGEST_UNAVAILABLE' } }, 502) })
-    expect(await make()).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE })
-    expect(await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))).toHaveLength(0)
+    expect(await tick(NOW)).toMatchObject({ weekly: 0 })
+    expect(await weekRows(user.id)).toEqual([])
 
-    mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
-    expect((await make()).success).toBe(true)
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Первый текст.', stats: {} }) })
+    expect(await tick(minutes(1))).toMatchObject({ weekly: 1 })
+    await remark(user.id, '2026-10-20', 5, minutes(2))
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({}, 502) })
+    expect(await tick(minutes(4))).toMatchObject({ weekly: 0 })
+    expect(await weekRows(user.id)).toMatchObject([{ status: 'ready', text: 'Первый текст.' }])
+
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Новый текст.', stats: {} }) })
+    expect(await tick(minutes(5))).toMatchObject({ weekly: 1 })
+    expect((await view(user.id)).week.summary?.text).toBe('Новый текст.')
   })
 
-  it('только текущая неделя собирается по кнопке', async () => {
+  it('текст недели без отметок-источников удалён вместе с разговором: следующий тик пишет его заново сам', async () => {
     const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': digestRoute })
-    expect(
-      await diaryProcess.execute(new CreateWeekSummaryOperation({ userId: user.id, weekStart: '2026-10-12', now: NOW })),
-    ).toEqual({ success: false, error: CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE })
+    await tick(NOW)
+    await recomputeSummariesAfterDialogDeleted({ userId: user.id, dialogAt: new Date('2026-10-21T08:00:00Z'), now: minutes(1) })
+    expect((await view(user.id)).week.summary).toBeNull()
+    expect(await tick(minutes(2))).toMatchObject({ weekly: 1 })
+    expect((await view(user.id)).week.summary).not.toBeNull()
   })
 })
 
@@ -309,7 +355,20 @@ describe('тик итогов недели: период занимает одн
     expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: later }))).toMatchObject({ weekly: 1 })
   })
 
-  it('итог, собранный кнопкой на неделе, закрывается окончательным в понедельник', async () => {
+  it('окончательный итог уже есть, а отметку недели изменили позже (вчера из очереди) — он пишется заново, тоже окончательным', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Закрыто.', stats: {} }) })
+    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: MONDAY_0630 }))).toMatchObject({ weekly: 1 })
+    await getDb().update(moodCheckins).set({ mood: 1, updatedAt: new Date(MONDAY_0630.getTime() + 60_000) }).where(eq(moodCheckins.userId, user.id))
+    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Закрыто заново.', stats: {} }) })
+    const later = new Date(MONDAY_0630.getTime() + 5 * 60_000)
+    expect(await diaryProcess.execute(new RunWeeklyDigestsOperation({ now: later }))).toMatchObject({ weekly: 1 })
+    const [row] = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    expect(row).toMatchObject({ status: 'ready', text: 'Закрыто заново.', stats: { final: true, hardDays: 3 } })
+  })
+
+  it('итог, написанный в фоне на неделе, закрывается окончательным в понедельник', async () => {
     const user = await registerConfirmedUser()
     for (const day of ['19', '20', '21']) await mark(user.id, `2026-10-${day}`)
     await getDb().insert(diarySummaries).values({
@@ -393,7 +452,7 @@ describe('удаление разговора: итоги недели пере�
   it('неделя вне окна и текущая неделя: текст убран, пересборки по маркеру нет', async () => {
     const user = await registerConfirmedUser()
     await finalWeek(user.id, '2026-08-03')
-    // Current week: the person's own button makes the text again.
+    // Current week: no marker; the background pass writes the text again by itself.
     await getDb().insert(diarySummaries).values({
       userId: user.id, kind: 'week', periodStart: '2026-10-19', text: 'черновик', stats: { final: false }, generatedAt: NOW,
     })

@@ -25,14 +25,8 @@ export const MOOD_BACKFILL_MAX_DAYS = 7
 export const MOOD_HARD_STREAK_DAYS = 3
 
 export enum DiaryApiErrorCode {
-  /** Fewer marked days in the week than `WEEK_SUMMARY_MIN_DAYS`. */
-  NOT_ENOUGH_DAYS = 'NOT_ENOUGH_DAYS',
-  /** The summary of this period was made less than a day ago. */
-  TOO_SOON = 'TOO_SOON',
   /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
   DATE_OUT_OF_RANGE = 'DATE_OUT_OF_RANGE',
-  /** The agent could not write the text; try again later. */
-  SUMMARY_UNAVAILABLE = 'SUMMARY_UNAVAILABLE',
 }
 
 export interface MoodCheckinApi {
@@ -90,19 +84,6 @@ export interface PutMoodCheckinApiResponse {
 export interface DiarySummariesApiResponse {
   items: DiarySummaryApi[]
   nextBefore: string | null
-}
-
-/** `POST /api/diary/summaries/week`. */
-export interface CreateWeekSummaryApiRequest {
-  /** `YYYY-MM-DD`, Monday. */
-  weekStart: string
-}
-
-/** `GET /api/diary/events?week=<weekStart>`: notes of the week from the agent's memory. */
-export interface DiaryEventsApiResponse {
-  /** Memory is off or has no notes: the client shows the empty state. */
-  memoryEnabled: boolean
-  items: { id: string; text: string; date: string }[]
 }
 
 /** `POST /api/diary/widget-token` (the token is shown once) and `DELETE` to revoke. */

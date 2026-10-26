@@ -117,10 +117,8 @@ export enum AnalyticsEvent {
   // ── Mood diary (REQ-WELL-01…04). Only that an action happened: never a mood, a factor or a text. ──
   /** Server. A note of the day was saved or replaced. */
   MoodCheckedIn = 'mood_checked_in',
-  /** Server. A week summary was made, on the button or by the Monday pass. */
+  /** Server. A week summary was written or rewritten by the background pass (mood changed, the week closed). */
   WeekSummaryGenerated = 'week_summary_generated',
-  /** Server. A summary was refused: too few days or weeks, asked again within a day, or the agent did not answer. */
-  DiarySummaryRefused = 'diary_summary_refused',
   /** Client. A diary segment was opened. */
   DiaryOpened = 'diary_opened',
   /** Client. A tap on the bridge after a heavy day: «Поговорить» or «Люди рядом». */
@@ -232,8 +230,6 @@ export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confir
 export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
 
 export type DiaryTab = 'diary' | 'journal'
-export type DiarySummaryKind = 'week'
-export type DiarySummaryRefusal = 'not_enough' | 'too_soon' | 'agent_unavailable'
 export type MoodSourceName = 'app' | 'widget' | 'reminder' | 'telegram'
 
 export type PasswordChangeKind = 'change' | 'reset'
@@ -329,10 +325,9 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
   [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
   [AnalyticsEvent.MoodCheckedIn]: { source: MoodSourceName; with_factor: boolean; changed: boolean }
-  [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'button' | 'auto' }
+  [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'auto' }
   [AnalyticsEvent.DiaryOpened]: { tab: DiaryTab }
   [AnalyticsEvent.MoodBridgeClicked]: { target: 'dialog' | 'people' }
-  [AnalyticsEvent.DiarySummaryRefused]: { kind: DiarySummaryKind; reason: DiarySummaryRefusal }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties

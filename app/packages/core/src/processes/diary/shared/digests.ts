@@ -64,6 +64,20 @@ async function writeDigest(
   }
 }
 
+/** The moment of the latest change among the marks of the week: the version of the input a text is written from. */
+export function inputsVersion(days: readonly MoodCheckinDTO[]): Date {
+  return new Date(Math.max(...days.map((d) => d.updatedAt.getTime())))
+}
+
+/**
+ * A text needs rewriting when a mark was added or changed after the marks it was written from (design D9).
+ * Texts without the version fall back to the time they were written.
+ */
+export function isStale(summary: DiarySummaryDTO, days: readonly MoodCheckinDTO[]): boolean {
+  const written = typeof summary.stats?.inputsAt === 'string' ? Date.parse(summary.stats.inputsAt) : summary.generatedAt.getTime()
+  return inputsVersion(days).getTime() > written
+}
+
 /** The text of the week starting `start`; `final` is true when the scheduler closes a finished week. */
 export async function makeWeekSummary(userId: string, start: string, final: boolean, now: Date): Promise<DigestResult> {
   const days = await checkinsBetween(userId, start, addDaysToDate(start, 6))
@@ -77,7 +91,7 @@ export async function makeWeekSummary(userId: string, start: string, final: bool
       kind: 'week',
       periodStart: start,
       text: digest.text,
-      stats: { ...(digest.stats ?? {}), markedDays: days.length, hardDays, final },
+      stats: { ...(digest.stats ?? {}), markedDays: days.length, hardDays, final, inputsAt: inputsVersion(days).toISOString() },
       generatedAt: now,
     }),
   )

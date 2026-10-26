@@ -7,12 +7,12 @@ import { describe, expect, it } from 'vitest'
 import { diarySummaries, moodCheckins, users } from '@ryadom/db/schema'
 import { getDb } from '@ryadom/core/shared'
 import {
-  DiaryApiErrorCode,
   type DiaryApiResponse,
   type PutMoodCheckinApiResponse,
   type WidgetTokenApiResponse,
 } from '@ryadom/contracts/api/diary'
-import { call, json, makeApp, mockFetch, ok, refusedWith, signUpAndIn } from './helpers'
+import { runDiaryPass } from '../src/lib/diary-scheduler'
+import { call, json, makeApp, mockFetch, ok, signUpAndIn } from './helpers'
 
 const { app, resetLimits } = makeApp()
 
@@ -91,25 +91,28 @@ describe('отметка в два касания', () => {
 })
 
 describe('итоги недели', () => {
-  it('с двух дней — отказ с кодом; с трёх — текст агента, повтор в тот же день — отказ', async () => {
+  const quiet = { capture: () => undefined }
+  /** A mark long since written: the quiet minute after the last tap is over. */
+  const seed = (userId: string, n: number, mood: number) =>
+    getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(n), mood, source: 'app', updatedAt: new Date('2026-01-01T00:00:00Z') })
+
+  it('кнопки и маршрута событий больше нет; текст недели пишется сам: с двух дней его нет, с трёх тик пишет его в фоне', async () => {
     const { token, userId } = await signedIn()
     const agent = mockFetch({
       'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Спасибо, что ты рядом с собой.', stats: {} }),
     })
-    for (const n of [0, 1]) {
-      await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(n), mood: 3, source: 'app' })
-    }
-    const body = { weekStart: dayOfThisWeek(0) }
-    refusedWith(await call(app, 'POST', '/api/diary/summaries/week', body, token), DiaryApiErrorCode.NOT_ENOUGH_DAYS)
-    await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(2), mood: 1, source: 'app' })
-    const made = ok<{ text: string; kind: string }>(await call(app, 'POST', '/api/diary/summaries/week', body, token))
-    // The week had one «Тяжело» day (seeded below): the count rides with the summary, not the mood values.
-    expect(made).toMatchObject({ kind: 'week', text: 'Спасибо, что ты рядом с собой.', hardDays: 1 })
-    refusedWith(await call(app, 'POST', '/api/diary/summaries/week', body, token), DiaryApiErrorCode.TOO_SOON)
-    expect(agent.calls).toHaveLength(1)
+    expect((await call(app, 'POST', '/api/diary/summaries/week', { weekStart: dayOfThisWeek(0) }, token)).status).toBe(404)
+    expect((await call(app, 'GET', '/api/diary/events', undefined, token)).status).toBe(404)
 
+    for (const n of [0, 1]) await seed(userId, n, 3)
+    await runDiaryPass(quiet)
+    expect(ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token)).week.summary).toBeNull()
+    await seed(userId, 2, 1)
+    await runDiaryPass(quiet)
+    // The week had one «Тяжело» day: the count rides with the summary, not the mood values.
     const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
-    expect(diary.week.summary?.text).toBe('Спасибо, что ты рядом с собой.')
+    expect(diary.week.summary).toMatchObject({ kind: 'week', text: 'Спасибо, что ты рядом с собой.', hardDays: 1 })
+    expect(agent.calls).toHaveLength(1)
   })
 
   it('число тяжёлых дней едет вместе с итогом прошлой недели (для кнопки «Люди рядом»)', async () => {
@@ -124,29 +127,6 @@ describe('итоги недели', () => {
     })
     const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
     expect(diary.previousWeek).toMatchObject({ text: 'Неделя была непростой.', hardDays: 3 })
-  })
-
-  it('агент не ответил — код SUMMARY_UNAVAILABLE, повторить можно сразу', async () => {
-    const { token, userId } = await signedIn()
-    for (const n of [0, 1, 2]) {
-      await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(n), mood: 3, source: 'app' })
-    }
-    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({}, 502) })
-    refusedWith(
-      await call(app, 'POST', '/api/diary/summaries/week', { weekStart: dayOfThisWeek(0) }, token),
-      DiaryApiErrorCode.SUMMARY_UNAVAILABLE,
-    )
-    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Готово.', stats: {} }) })
-    ok(await call(app, 'POST', '/api/diary/summaries/week', { weekStart: dayOfThisWeek(0) }, token))
-  })
-
-  it('события недели: пустой список и признак «память включена»', async () => {
-    const { token } = await signedIn()
-    mockFetch({
-      'GET http://agent.test/v1/users/*/memory': () =>
-        json({ available: true, mode: 'on', enabled: true, consentVersion: 'v', consentAt: null, rulesVersion: '1', limits: { maxFacts: 50 }, facts: [] }),
-    })
-    expect(ok(await call(app, 'GET', '/api/diary/events', undefined, token))).toEqual({ memoryEnabled: true, items: [] })
   })
 })
 

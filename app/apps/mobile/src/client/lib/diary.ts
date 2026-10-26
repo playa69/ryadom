@@ -2,13 +2,11 @@ import { Preferences } from '@capacitor/preferences'
 import { useSyncExternalStore } from 'react'
 import type {
   DiaryApiResponse,
-  DiaryEventsApiResponse,
   MoodCheckinApi,
   MoodFactor,
   MoodLevel,
 } from '@ryadom/contracts/api/diary'
-import { weekStartOf } from '@ryadom/client-core/diary'
-import { ApiError, NETWORK_ERROR_STATUS, apiErrorText, getDiary, getDiaryEvents, putMoodCheckin } from './api'
+import { ApiError, NETWORK_ERROR_STATUS, apiErrorText, getDiary, putMoodCheckin } from './api'
 import {
   deviceDate,
   enqueueMark,
@@ -200,13 +198,6 @@ export const diary = {
 
 export function useDiary(): DiaryState {
   return useSyncExternalStore(subscribe, () => state)
-}
-
-/** The week of the diary as `YYYY-MM-DD` of its Monday (the week the card shows). */
-export const currentWeekStart = (): string => weekStartOf(deviceDate())
-
-export function loadDiaryEvents(week: string): Promise<DiaryEventsApiResponse> {
-  return getDiaryEvents(week)
 }
 
 if (typeof window !== 'undefined') {

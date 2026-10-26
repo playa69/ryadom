@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import Link from 'next/link'
-import { moodInsight, parseDate, weekStartOf } from '@ryadom/client-core/diary'
+import { moodInsight, parseDate } from '@ryadom/client-core/diary'
 import type { DiaryApiResponse } from '@ryadom/contracts/api/diary'
 import { Button } from '@ryadom/ui/components/button'
 import { Card } from '@ryadom/ui/components/card'
@@ -10,13 +10,12 @@ import { Skeleton } from '@ryadom/ui/components/skeleton'
 import { useClient } from '@/lib/auth'
 import { deviceToday, useLoaded } from '@/lib/diary'
 import { RetryButton, StatePanel } from '../JournalParts'
-import EventsCard from './EventsCard'
 import MoodCard from './MoodCard'
 import { BUTTON } from '../controls'
 import RollingChart from './RollingChart'
 import WeekCard from './WeekCard'
 
-/** Segment «Дневник»: the mood card, the 28-day chart, the week summary and the week's events, top to bottom. */
+/** Segment «Дневник»: the mood card, the 28-day chart, the week summary and last week's summary, top to bottom. */
 export default function DiaryHome() {
   const client = useClient()
   const today = deviceToday()
@@ -57,10 +56,7 @@ export default function DiaryHome() {
     <>
       <MoodCard today={data.today} streak={data.streak} onChange={setToday} />
       <RollingChart recent={data.recent} today={today} insight={insight} />
-      <WeekCard
-        week={data.week}
-        onSummary={(summary) => set((d) => ({ ...d, week: { ...d.week, summary } }))}
-      />
+      <WeekCard week={data.week} onPoll={reload} />
       {data.previousWeek && (
         <Card className="gap-3 rounded-lg px-5 py-5 shadow-none" data-testid="diary-previous-week">
           <h2 className="text-lg font-semibold text-foreground">Итоги прошлой недели</h2>
@@ -76,7 +72,6 @@ export default function DiaryHome() {
           )}
         </Card>
       )}
-      <EventsCard weekStart={data.week.start || weekStartOf(today)} />
     </>
   )
 }

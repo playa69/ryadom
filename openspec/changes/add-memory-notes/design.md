@@ -369,7 +369,7 @@ dialogs + memory_notes_cursor text null, cognee_data_id text null
 | `DELETE /notes/{id}` | `204`; чужая — `404 NOTE_NOT_FOUND` |
 | `POST /notes/instruction` `{text}` | применить «скажи, что поправить или убрать»; ответ — список изменений |
 | `DELETE /notes` и `DELETE ""` | удалить всю память; настройки не меняются |
-| `GET /notes?since=&kinds=` | заметки за период (для «Событий недели» дневника) |
+| `GET /notes?since=&kinds=` | заметки за период (для экрана «Память»; блока «События этой недели» в дневнике нет) |
 | `GET /export` | `{exportedAt, settings, notes, recaps}` |
 
 **Диалоги:**

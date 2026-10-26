@@ -3,7 +3,8 @@ import postgres from 'postgres'
 /**
  * Marked days of the mood diary, written straight to the table: the API takes only today and yesterday
  * (design D2), so a marked week for the summary scenario has to be made another way. The database is the
- * one `scripts/stack.mjs` starts.
+ * one `scripts/stack.mjs` starts. The notes look written ten minutes ago, so the quiet minute that the
+ * background pass waits after the last change is over for them.
  */
 
 const DB_URL = process.env.E2E_DATABASE_URL ?? 'postgres://ryadom:ryadom@127.0.0.1:55434/ryadom'
@@ -19,9 +20,9 @@ export async function seedMarks(userId: string, marks: SeedMark[]): Promise<void
   try {
     for (const { date, mood, factor = null } of marks) {
       await sql`
-        insert into mood_checkins (user_id, local_date, mood, factor, source)
-        values (${userId}, ${date}, ${mood}, ${factor}, 'app')
-        on conflict (user_id, local_date) do update set mood = excluded.mood, factor = excluded.factor, updated_at = now()`
+        insert into mood_checkins (user_id, local_date, mood, factor, source, updated_at)
+        values (${userId}, ${date}, ${mood}, ${factor}, 'app', now() - interval '10 minutes')
+        on conflict (user_id, local_date) do update set mood = excluded.mood, factor = excluded.factor, updated_at = excluded.updated_at`
     }
   } finally {
     await sql.end()

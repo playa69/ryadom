@@ -90,9 +90,7 @@ import {
 } from '@ryadom/contracts/api/dialog-shares'
 import {
   DiaryApiErrorCode,
-  type CreateWeekSummaryApiRequest,
   type DiaryApiResponse,
-  type DiaryEventsApiResponse,
   type DiarySummariesApiResponse,
   type DiarySummaryApi,
   type PutMoodCheckinApiRequest,
@@ -791,14 +789,6 @@ export function createClient(config: ClientConfig) {
       apiFetch<DiarySummariesApiResponse>(
         `${ApiPath.DiarySummaries}?kind=week${before ? `&before=${encodeURIComponent(before)}` : ''}`,
       ),
-
-    createWeekSummary: (
-      data: CreateWeekSummaryApiRequest,
-    ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
-      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
-
-    getDiaryEvents: (week?: string): Promise<DiaryEventsApiResponse> =>
-      apiFetch<DiaryEventsApiResponse>(`${ApiPath.DiaryEvents}${week ? `?week=${encodeURIComponent(week)}` : ''}`),
 
     /** The token of the Android widget; shown once. */
     createWidgetToken: (): Promise<WidgetTokenApiResponse> =>

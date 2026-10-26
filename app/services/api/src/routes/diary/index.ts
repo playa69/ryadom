@@ -1,11 +1,7 @@
 import {
-  CreateWeekSummaryOperation,
   CreateWidgetTokenOperation,
   CreateWidgetTokenOperationErrorCode,
-  CreateWeekSummaryOperationErrorCode,
   diaryProcess,
-  GetDiaryEventsOperation,
-  GetDiaryEventsOperationErrorCode,
   GetDiaryOperation,
   GetDiaryOperationErrorCode,
   ListWeekSummariesOperation,
@@ -17,15 +13,13 @@ import {
   type DiarySummaryDTO,
   type MoodCheckinDTO,
 } from '@ryadom/core/processes/diary'
-import { AnalyticsEvent, type DiarySummaryKind, type DiarySummaryRefusal } from '@ryadom/analytics/events'
+import { AnalyticsEvent } from '@ryadom/analytics/events'
 import assertNever from 'assert-never'
 import type { Context, Hono, MiddlewareHandler } from 'hono'
 import { z } from 'zod'
 import {
-  DiaryApiErrorCode,
   MOOD_FACTORS,
   type DiaryApiResponse,
-  type DiaryEventsApiResponse,
   type DiarySummariesApiResponse,
   type DiarySummaryApi,
   type MoodCheckinApi,
@@ -36,7 +30,7 @@ import {
 } from '@ryadom/contracts/api/diary'
 import { AppHeader } from '@ryadom/contracts/api/headers'
 import { ApiPath } from '@ryadom/contracts/api/paths'
-import { apiError, apiOk, apiRefused } from '../../lib/api-response'
+import { apiError, apiOk } from '../../lib/api-response'
 import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { clientIp, RATE_LIMITS, type RateLimiter, type RateLimitRule } from '../../lib/rate-limit'
@@ -66,8 +60,6 @@ const widgetCheckinBody = z.object({
   date: dateSchema.optional(),
 })
 const summariesQuery = z.object({ kind: z.literal('week').optional(), before: dateSchema.optional() })
-const eventsQuery = z.object({ week: dateSchema.optional() })
-const weekBody = z.object({ weekStart: dateSchema })
 
 function perUser(limiter: RateLimiter, name: string, rule: RateLimitRule): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
@@ -90,58 +82,24 @@ type Refusal =
   | GetDiaryOperationErrorCode
   | PutMoodCheckinOperationErrorCode
   | ListWeekSummariesOperationErrorCode
-  | CreateWeekSummaryOperationErrorCode
-  | GetDiaryEventsOperationErrorCode
 
 function refuse(c: Context, error: Refusal): Response {
   switch (error) {
     case GetDiaryOperationErrorCode.USER_NOT_FOUND:
     case PutMoodCheckinOperationErrorCode.USER_NOT_FOUND:
     case ListWeekSummariesOperationErrorCode.USER_NOT_FOUND:
-    case CreateWeekSummaryOperationErrorCode.USER_NOT_FOUND:
-    case GetDiaryEventsOperationErrorCode.USER_NOT_FOUND:
       return apiError(c, 401, 'Unauthorised')
     case PutMoodCheckinOperationErrorCode.DATE_OUT_OF_RANGE:
-    case CreateWeekSummaryOperationErrorCode.DATE_OUT_OF_RANGE:
       // A date from the client that is not today or yesterday of the person: the spec's 422 (REQ-WELL-01).
       return apiError(c, 422, 'The date must be today or yesterday in your time zone')
-    case CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS:
-      return apiRefused(c, DiaryApiErrorCode.NOT_ENOUGH_DAYS, 'Not enough marked days')
-    case CreateWeekSummaryOperationErrorCode.TOO_SOON:
-      return apiRefused(c, DiaryApiErrorCode.TOO_SOON, 'The summary was made less than a day ago')
-    case CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE:
-      return apiRefused(c, DiaryApiErrorCode.SUMMARY_UNAVAILABLE, 'The agent could not write the summary')
     default:
       return assertNever(error)
-  }
-}
-
-/** The reason a summary was refused, as the fixed word analytics keeps; null for errors that are not a refusal of the ask. */
-function refusalReason(
-  error: CreateWeekSummaryOperationErrorCode,
-): DiarySummaryRefusal | null {
-  switch (error) {
-    case CreateWeekSummaryOperationErrorCode.NOT_ENOUGH_DAYS:
-      return 'not_enough'
-    case CreateWeekSummaryOperationErrorCode.TOO_SOON:
-      return 'too_soon'
-    case CreateWeekSummaryOperationErrorCode.SUMMARY_UNAVAILABLE:
-      return 'agent_unavailable'
-    default:
-      return null
   }
 }
 
 export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, analytics }: RouteDeps): void {
   const read = perUser(rateLimiter, 'diary-read', RATE_LIMITS.diaryRead.perUser)
   const write = perUser(rateLimiter, 'diary-write', RATE_LIMITS.diaryWrite.perUser)
-  const summary = perUser(rateLimiter, 'diary-summary', RATE_LIMITS.diarySummary.perUser)
-
-  // The funnel of failures: that a summary was refused and why, never what it was about.
-  const reportRefusal = (userId: string, kind: DiarySummaryKind, error: CreateWeekSummaryOperationErrorCode): void => {
-    const reason = refusalReason(error)
-    if (reason) analytics.capture(userId, AnalyticsEvent.DiarySummaryRefused, { kind, reason })
-  }
 
   app.get(ApiPath.Diary, requireAuth(jwt), requireActiveSession(sessions), read, async (c) => {
     const result = await diaryProcess.execute(new GetDiaryOperation({ userId: authUser(c).userId }))
@@ -195,28 +153,6 @@ export function diaryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, ana
     )
     if (!result.success) return refuse(c, result.error)
     const body: DiarySummariesApiResponse = { items: result.summaries.map(toSummary), nextBefore: result.nextBefore }
-    return apiOk(c, body)
-  })
-
-  app.post(ApiPath.DiaryWeekSummary, requireAuth(jwt), requireActiveSession(sessions), summary, jsonBody(weekBody), async (c) => {
-    const { userId } = authUser(c)
-    const result = await diaryProcess.execute(
-      new CreateWeekSummaryOperation({ userId, weekStart: c.req.valid('json').weekStart }),
-    )
-    if (!result.success) {
-      reportRefusal(userId, 'week', result.error)
-      return refuse(c, result.error)
-    }
-    analytics.capture(userId, AnalyticsEvent.WeekSummaryGenerated, { trigger: 'button' })
-    return apiOk(c, toSummary(result.summary))
-  })
-
-  app.get(ApiPath.DiaryEvents, requireAuth(jwt), requireActiveSession(sessions), read, queryParams(eventsQuery), async (c) => {
-    const result = await diaryProcess.execute(
-      new GetDiaryEventsOperation({ userId: authUser(c).userId, weekStart: c.req.valid('query').week }),
-    )
-    if (!result.success) return refuse(c, result.error)
-    const body: DiaryEventsApiResponse = { memoryEnabled: result.memoryEnabled, items: result.events }
     return apiOk(c, body)
   })
 

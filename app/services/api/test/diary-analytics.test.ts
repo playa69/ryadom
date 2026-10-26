@@ -29,12 +29,11 @@ function dayOfThisWeek(n: number): string {
 const DIARY_EVENTS: string[] = [
   AnalyticsEvent.MoodCheckedIn,
   AnalyticsEvent.WeekSummaryGenerated,
-  AnalyticsEvent.DiarySummaryRefused,
 ]
 const diaryEvents = () => analytics.events.filter((e) => DIARY_EVENTS.includes(e.event))
 
 /** The only properties a diary event may have: fixed words and flags. */
-const ALLOWED_KEYS = ['source', 'with_factor', 'changed', 'trigger', 'kind', 'reason']
+const ALLOWED_KEYS = ['source', 'with_factor', 'changed', 'trigger']
 
 /** Whatever the diary reports, nothing in it may carry the person's data. */
 function expectNoPersonalData() {
@@ -60,37 +59,12 @@ describe('аналитика дневника', () => {
     expectNoPersonalData()
   })
 
-  it('отказ в итогах: вид и причина, без чисел и дат', async () => {
-    const { token, userId } = await signedIn()
-    await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(0), mood: 3, source: 'app' })
-    ok(await call(app, 'PUT', '/api/diary/checkins/today', { mood: 3 }, token))
-    const week = { weekStart: dayOfThisWeek(0) }
-    await call(app, 'POST', '/api/diary/summaries/week', week, token)
-    // Three marked days and a dead agent: the third kind of refusal.
-    for (const n of [1, 2]) await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(n), mood: 2, source: 'app' }).onConflictDoNothing()
-    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({}, 502) })
-    await call(app, 'POST', '/api/diary/summaries/week', week, token)
-    expect(diaryEvents().filter((e) => e.event === AnalyticsEvent.DiarySummaryRefused).map((e) => e.properties)).toEqual([
-      { kind: 'week', reason: 'not_enough' },
-      { kind: 'week', reason: 'agent_unavailable' },
-    ])
-    expectNoPersonalData()
-  })
-
-  it('кнопка итогов: одно событие с триггером button', async () => {
-    const { token, userId } = await signedIn()
-    for (const n of [0, 1, 2]) await getDb().insert(moodCheckins).values({ userId, localDate: dayOfThisWeek(n), mood: 3, source: 'app' })
-    mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Готово.', stats: {} }) })
-    ok(await call(app, 'POST', '/api/diary/summaries/week', { weekStart: dayOfThisWeek(0) }, token))
-    expect(diaryEvents()).toEqual([{ userId, event: 'week_summary_generated', properties: { trigger: 'button' } }])
-  })
-
-  it('понедельничный проход: событие auto для каждого, кому закрыли неделю', async () => {
+  it('фоновый проход: событие auto для каждого, кому написали или закрыли неделю', async () => {
     const { userId } = await signedIn()
     const lastMonday = new Date(Date.parse(`${dayOfThisWeek(0)}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10)
     for (const n of [0, 1, 2]) {
       const day = new Date(Date.parse(`${lastMonday}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
-      await getDb().insert(moodCheckins).values({ userId, localDate: day, mood: 3, source: 'app' })
+      await getDb().insert(moodCheckins).values({ userId, localDate: day, mood: 3, source: 'app', updatedAt: new Date('2026-01-01T00:00:00Z') })
     }
     mockFetch({ 'POST http://agent.test/v1/users/*/digests': () => json({ text: 'Итог.', stats: {} }) })
     // Wednesday noon in Moscow of the current week: past Monday 06:00, the week before is closed.
