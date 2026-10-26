@@ -227,6 +227,8 @@ export enum UpdateMemoryFactApiErrorCode {
 export enum ForgetMemoryApiErrorCode {
   USER_NOT_FOUND = 'USER_NOT_FOUND',
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
+  /** `DELETE /api/memory/facts/:id` only: the agent cannot forget a single fact; "Forget everything" works. */
+  FACT_UNSUPPORTED = 'FACT_UNSUPPORTED',
 }
 
 // ─── GET /api/memory/changes?dialogId= ────────────────────────────────────────

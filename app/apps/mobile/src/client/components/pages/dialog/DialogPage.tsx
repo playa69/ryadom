@@ -46,6 +46,7 @@ import { openSos } from '../../SosSheet'
 import Breathing from '../../Breathing'
 import VoiceOrb, { type OrbState } from '../../VoiceOrb'
 import DialogEndSheet from './DialogEndSheet'
+import ShareSheet, { ShareNavButton } from '../journal/ShareSheet'
 
 /**
  * Conversation screen. Voice is the main way to talk: the sphere is the interface. Hands-free (the
@@ -119,6 +120,21 @@ export default function DialogPage({
       cancelled = true
     }
   }, [dialogId, startedMemoryMode])
+  // A resumed conversation starts with an empty feed here (the screen is voice first and does not replay it), but its
+  // earlier lines are stored and can be shared: ask the server once whether the person said anything.
+  const [saidBefore, setSaidBefore] = useState(false)
+  useEffect(() => {
+    if (resumed !== true) return
+    let cancelled = false
+    getDialog(dialogId)
+      .then((result) => {
+        if (!cancelled && result.ok) setSaidBefore(result.data.messages.some((message) => message.role === 'user'))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [dialogId, resumed])
   const [messages, setMessages] = useState<DialogMessageView[]>([])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
@@ -136,6 +152,7 @@ export default function DialogPage({
   /** The agent's voice is audible: the text can already be complete while the audio still plays. */
   const [voiceOut, setVoiceOut] = useState(false)
   const [endOpened, setEndOpened] = useState(false)
+  const [shareOpened, setShareOpened] = useState(false)
   const [summary, setSummary] = useState<DialogSummaryApiResponse | null | undefined>(undefined)
 
   const socket = useRef<DialogSocket | null>(null)
@@ -667,6 +684,8 @@ export default function DialogPage({
   return (
     <Page name="dialog" className="rd-dialog-page rd-no-tabbar ph-no-capture">
       <Navbar backLink="Назад" title="Разговор">
+        {/* The link shows the stored messages, and the greeting is not one of them: it needs something said. */}
+        {(saidBefore || messages.some((message) => message.role === 'user')) && <ShareNavButton onClick={() => setShareOpened(true)} />}
         <button
           slot="right"
           type="button"
@@ -676,6 +695,8 @@ export default function DialogPage({
           SOS
         </button>
       </Navbar>
+
+      <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
 
       {memoryMode === DialogMemoryMode.Off && (
         <div className="rd-incognito-mark" role="note" data-testid="dialog-incognito">

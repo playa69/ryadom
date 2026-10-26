@@ -31,6 +31,8 @@ export class ForgetMemoryFactOperationHandler implements RequestHandler<
       switch (forgotten.error) {
         case DeleteAgentMemoryFactRequestErrorCode.MEMORY_UNAVAILABLE:
           return { success: false, error: ForgetMemoryFactOperationErrorCode.MEMORY_UNAVAILABLE }
+        case DeleteAgentMemoryFactRequestErrorCode.UNSUPPORTED:
+          return { success: false, error: ForgetMemoryFactOperationErrorCode.UNSUPPORTED }
         default:
           return assertNever(forgotten.error)
       }

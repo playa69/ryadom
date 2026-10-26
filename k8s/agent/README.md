@@ -200,9 +200,11 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live 
 ## Хранилище диалогов (PostgreSQL, база `agent` в CNPG ryadom-db)
 
 Диалоги дублируются в PostgreSQL (`DIALOG_DATABASE_URL` из Secret `agent-db`, схему создаёт сам агент при старте —
-идемпотентный DDL в `agent/app/services/dialog_db_pg.py`). Проверка: `GET /health/ready` должен вернуть
+идемпотентный DDL в `agent/app/services/dialog_db.py`). Проверка: `GET /health/ready` должен вернуть
 `"dialogs": "postgres"` (если `"memory"`, БД не открылась, причина в журнале как `dialog db is NOT available`).
-Бэкапы — общие CNPG (WAL + base backups в Object Storage, `k8s/postgres/`).
+Агент использует пул с health-check перед выдачей соединения: разорванное соединение заменяется автоматически,
+без перезапуска пода. DSN указывает на `ryadom-db-rw`, поэтому после failover новое соединение открывается к актуальному
+primary; отдельный read slave не используется. Бэкапы — общие CNPG (WAL + base backups в Object Storage, `k8s/postgres/`).
 
 Первичная подготовка (один раз, admin-kubeconfig):
 

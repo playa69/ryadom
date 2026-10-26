@@ -1391,6 +1391,20 @@ input:-webkit-autofill:focus {
   color: var(--ryadom-danger);
 }
 
+.rd-navbar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* The platform minimum for a touch target: 44 pt on iOS, 48 dp on Android (the bar is 44 high, the hit area is not smaller). */
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
 .rd-share-ok {
   margin: 0;
   font-weight: 700;

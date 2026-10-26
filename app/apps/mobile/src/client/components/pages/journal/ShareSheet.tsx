@@ -1,4 +1,4 @@
-import { Button, f7, Preloader, Sheet } from 'framework7-react'
+import { Button, f7, Icon, Preloader, Sheet } from 'framework7-react'
 import { useCallback, useEffect, useState } from 'react'
 import { DialogApiErrorCode } from '@ryadom/contracts/api/dialogs'
 import {
@@ -9,6 +9,7 @@ import {
   type DialogShareTtlHours,
 } from '@ryadom/contracts/api/dialog-shares'
 import { apiErrorText, codeText, createDialogShare, getDialogShare, revokeDialogShare } from '../../../lib/api'
+import { isIos } from '../../../lib/platform'
 import { shareExpiryText, shareViewsText } from './format'
 
 const TTL_LABEL: Record<DialogShareTtlHours, string> = { 24: '24 ч', 72: '3 дня', 168: '7 дней' }
@@ -210,5 +211,35 @@ export default function ShareSheet({
         )}
       </div>
     </Sheet>
+  )
+}
+
+/** Material's "share" (three linked dots): the glyph Android and the PWA in its browsers use. */
+function MaterialShareIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+    </svg>
+  )
+}
+
+/**
+ * The share control of a screen's navigation bar, at the right before SOS. Icon only: the name is for
+ * screen readers. The glyph is the platform's own: on iOS (the app, and Safari or the installed PWA there)
+ * the arrow out of a box, everywhere else (Android, other browsers) Material's "share". The layout is one
+ * for all platforms (the `md` theme); the icon is what tells the person where they are.
+ */
+export function ShareNavButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      slot="right"
+      type="button"
+      className="rd-navbar-icon ph-no-capture"
+      aria-label="Поделиться разговором"
+      data-testid="share-nav"
+      onClick={onClick}
+    >
+      {isIos() ? <Icon f7="square_arrow_up" size={22} /> : <MaterialShareIcon />}
+    </button>
   )
 }

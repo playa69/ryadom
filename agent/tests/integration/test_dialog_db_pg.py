@@ -11,9 +11,10 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
-from app.services.dialog_db import DDL, DialogDatabase as PostgresDialogDatabase, encode_summary
+from app.services.dialog_db import DialogDatabase as PostgresDialogDatabase
+from app.services.dialog_db import encode_summary
 
-TABLES = ("model_usage", "client_ids", "messages", "voice_prefs", "dialogs")
+TABLES = ("model_usage", "client_ids", "messages", "voice_prefs", "memory_settings", "dialogs")
 
 
 def _write(dialog_id: str, user_id: str, text: str = "привет") -> "object":
@@ -98,9 +99,37 @@ def test_erase_user_cascades_and_keeps_others(db: PostgresDialogDatabase) -> Non
     db.erase_user("u1")  # идемпотентно
 
 
+def test_closed_connection_is_replaced_without_reopen(db: PostgresDialogDatabase) -> None:
+    """Разорванное PostgreSQL соединение заменяется новым при следующей операции."""
+    db.apply([_write("d1", "u1")])
+    with db._connection() as conn:
+        old_pid = conn.execute("SELECT pg_backend_pid()").fetchone()[0]
+    with psycopg.connect(db.dsn, autocommit=True) as terminator:
+        assert terminator.execute("SELECT pg_terminate_backend(%s)", (old_pid,)).fetchone()[0] is True
+
+    assert db.counts() == (1, 1)
+    assert db.load_user("u1")[0][0].id == "d1"
+    with db._connection() as conn:
+        new_pid = conn.execute("SELECT pg_backend_pid()").fetchone()[0]
+    assert new_pid != old_pid
+
+
 def test_ddl_is_idempotent(db: PostgresDialogDatabase) -> None:
     db.apply([_write("d1", "u1")])
     other = PostgresDialogDatabase(db.dsn)
     other.open()  # повторный CREATE TABLE IF NOT EXISTS на той же схеме
     other.close()
     assert db.counts() == (1, 1)
+
+
+def test_memory_settings_roundtrip_and_erase(db: PostgresDialogDatabase) -> None:
+    """Настройки памяти: нет строки — None; запись заменяет; схема создаётся повторно без ошибок; стирание человека их убирает."""
+    assert db.get_memory_settings("u1") is None
+    db.put_memory_settings("u1", True, "2026-10-21", "2026-10-24T10:00:00+00:00", "2026-10-24T10:00:00+00:00")
+    assert db.get_memory_settings("u1") == (True, "2026-10-21", "2026-10-24T10:00:00+00:00")
+    db.put_memory_settings("u1", False, "2026-10-21", "2026-10-24T10:00:00+00:00", "2026-10-25T10:00:00+00:00")
+    assert db.get_memory_settings("u1") == (False, "2026-10-21", "2026-10-24T10:00:00+00:00")
+    db.open()  # повторное открытие: идемпотентный DDL
+    assert db.get_memory_settings("u1") is not None
+    db.erase_user("u1")
+    assert db.get_memory_settings("u1") is None

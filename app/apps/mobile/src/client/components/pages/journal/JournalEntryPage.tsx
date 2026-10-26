@@ -6,7 +6,7 @@ import { apiErrorText, getDialog } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
 import { matchesQuery, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import { formatJournalDate, nbspDash } from './format'
-import ShareSheet from './ShareSheet'
+import ShareSheet, { ShareNavButton } from './ShareSheet'
 
 /**
  * One conversation from the journal: the summary and the messages, if the agent returns them.
@@ -15,10 +15,31 @@ import ShareSheet from './ShareSheet'
  * right pane of the journal on a wide screen. `heading` is on in the pane, where there is no
  * navbar to carry the title.
  */
-export function JournalEntryBody({ dialogId, heading = false }: { dialogId: string; heading?: boolean }) {
+export function JournalEntryBody({
+  dialogId,
+  heading = false,
+  sharing: sharingFromPage,
+  onShareClose,
+  onShareable,
+}: {
+  dialogId: string
+  heading?: boolean
+  /** The route's own navbar carries the share button: the sheet is opened from there, and none is drawn in the text. */
+  sharing?: boolean
+  onShareClose?: () => void
+  onShareable?: (shareable: boolean) => void
+}) {
   const [dialog, setDialog] = useState<DialogApiResponse | null>(null)
   const [error, setError] = useState('')
-  const [sharing, setSharing] = useState(false)
+  const [sharingHere, setSharingHere] = useState(false)
+  const navbarShare = onShareable !== undefined
+  const sharing = navbarShare ? Boolean(sharingFromPage) : sharingHere
+  const closeShare = navbarShare ? (onShareClose ?? (() => {})) : () => setSharingHere(false)
+  const shareable = dialog !== null && dialog.messages.length > 0
+  useEffect(() => {
+    onShareable?.(shareable)
+    return () => onShareable?.(false)
+  }, [shareable, onShareable])
 
   useEffect(() => {
     let cancelled = false
@@ -85,12 +106,14 @@ export function JournalEntryBody({ dialogId, heading = false }: { dialogId: stri
         </Messages>
       )}
 
-      {dialog && dialog.messages.length > 0 && (
+      {shareable && (
         <>
-          <Button small outline onClick={() => setSharing(true)} data-testid="journal-share" className="rd-share-button">
-            Поделиться разговором
-          </Button>
-          <ShareSheet dialogId={dialogId} opened={sharing} onClose={() => setSharing(false)} />
+          {!navbarShare && (
+            <Button small outline onClick={() => setSharingHere(true)} data-testid="journal-share" className="rd-share-button">
+              Поделиться разговором
+            </Button>
+          )}
+          <ShareSheet dialogId={dialogId} opened={sharing} onClose={closeShare} />
         </>
       )}
 
@@ -125,6 +148,8 @@ export default function JournalEntryPage({ dialogId, f7router }: { dialogId: str
     if (isWide) handOff()
   }, [isWide, handOff])
 
+  const [sharing, setSharing] = useState(false)
+  const [shareable, setShareable] = useState(false)
   const [title, setTitle] = useState('Разговор')
   useEffect(() => {
     // The navbar title comes from the list the person just tapped, so it does not flash "Разговор".
@@ -134,8 +159,15 @@ export default function JournalEntryPage({ dialogId, f7router }: { dialogId: str
 
   return (
     <Page name="journal-entry" className="ph-no-capture" onPageAfterIn={handOff}>
-      <Navbar backLink="Журнал" title={title} onClickBack={() => journal.open(null)} />
-      <JournalEntryBody dialogId={dialogId} />
+      <Navbar backLink="Журнал" title={title} onClickBack={() => journal.open(null)}>
+        {shareable && <ShareNavButton onClick={() => setSharing(true)} />}
+      </Navbar>
+      <JournalEntryBody
+        dialogId={dialogId}
+        sharing={sharing}
+        onShareClose={() => setSharing(false)}
+        onShareable={setShareable}
+      />
     </Page>
   )
 }

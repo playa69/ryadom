@@ -5,9 +5,11 @@
 `ryadom-db` (k8s/agent/README.md «Хранилище диалогов»).
 
 `DialogStore` зовёт базу синхронно, через `asyncio.to_thread`, по одному обращению под замком. Драйвер psycopg3
-синхронный: асинхронный здесь ничего не дал бы, а зависимостей и кода было бы больше. Соединение в
-`autocommit=True`: `conn.transaction()` тогда сам делает BEGIN/COMMIT на записях, а чтения не оставляют за собой
-висячую неявную транзакцию (иначе она держала бы блокировки, а записи через savepoint никогда не коммитились).
+синхронный: асинхронный здесь ничего не дал бы, а зависимостей и кода было бы больше. Каждая операция берёт соединение
+из `ConnectionPool`; перед выдачей пул проверяет его и заменяет разорванное, поэтому после сбоя сети или смены primary
+агент восстанавливается без перезапуска. Соединение в `autocommit=True`: `conn.transaction()` тогда сам делает
+BEGIN/COMMIT на записях, а чтения не оставляют висячую неявную транзакцию (иначе она держала бы блокировки, а записи
+через savepoint никогда не коммитились).
 
 Схема — только диалоговые таблицы (`dialogs`, `messages`, `client_ids`, `voice_prefs`, `model_usage`). Таблиц памяти
 здесь нет: память агента — Cognee (`app/memory/cognee_backend.py`), стирание человека в памяти делает она. DDL
@@ -23,10 +25,13 @@
 import json
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import psycopg
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 logger = logging.getLogger("agent.db")
 
@@ -78,6 +83,16 @@ DDL = (
     amount     DOUBLE PRECISION NOT NULL
 )""",
     "CREATE INDEX IF NOT EXISTS model_usage_dialog ON model_usage (dialog_id, message_id)",
+    # Настройки памяти человека: «Память» включена или на паузе и согласие. Переживают перезапуск и выгрузку (PROTEUS-242).
+    """CREATE TABLE IF NOT EXISTS memory_settings (
+    user_id             TEXT PRIMARY KEY,
+    enabled             BOOLEAN NOT NULL DEFAULT FALSE,
+    sensitive_enabled   BOOLEAN NOT NULL DEFAULT FALSE,
+    chat_search_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    consent_version     TEXT,
+    consent_at          TEXT,
+    updated_at          TEXT NOT NULL
+)""",
 )
 
 
@@ -140,41 +155,82 @@ class DialogDatabase:
 
     label = "postgres"
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        min_size: int = 1,
+        max_size: int = 4,
+        max_idle: float = 300,
+        max_lifetime: float = 3600,
+    ) -> None:
+        """Сохраняет параметры пула PostgreSQL."""
         self.dsn = dsn
-        self._conn: psycopg.Connection | None = None
+        self._min_size = min_size
+        self._max_size = max_size
+        self._max_idle = max_idle
+        self._max_lifetime = max_lifetime
+        self._pool: ConnectionPool | None = None
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _configure(conn: psycopg.Connection) -> None:
+        """Настраивает новое соединение пула."""
+        conn.autocommit = True
+        conn.prepare_threshold = None
+
     def open(self) -> None:
-        """Подключиться и гарантировать схему. Исключение — `DialogDbError`."""
+        """Открывает пул и гарантирует схему. Исключение — `DialogDbError`."""
+        pool: ConnectionPool | None = None
         try:
-            conn = psycopg.connect(self.dsn, connect_timeout=10, application_name="agent", autocommit=True)
-            with conn.transaction():
+            pool = ConnectionPool(
+                self.dsn,
+                min_size=self._min_size,
+                max_size=self._max_size,
+                max_idle=self._max_idle,
+                max_lifetime=self._max_lifetime,
+                timeout=10,
+                kwargs={"connect_timeout": 10, "application_name": "agent"},
+                configure=self._configure,
+                check=ConnectionPool.check_connection,
+                open=False,
+            )
+            pool.open(wait=True)
+            with pool.connection() as conn, conn.transaction():
                 for statement in DDL:
                     conn.execute(statement)
-            self._conn = conn
+            self._pool = pool
         except DialogDbError:
             raise
-        except (psycopg.Error, OSError) as error:
+        except (psycopg.Error, PoolTimeout, OSError) as error:
+            if pool is not None:
+                pool.close()
             raise DialogDbError(f"{type(error).__name__}: {error}") from error
         dialogs, messages = self.counts()
         logger.info("dialog db opened postgres dialogs=%d messages=%d", dialogs, messages)
 
     def close(self) -> None:
+        """Закрывает пул и все его соединения."""
         with self._lock:
-            if self._conn is None:
+            if self._pool is None:
                 return
-            self._conn.close()
-            self._conn = None
+            self._pool.close()
+            self._pool = None
 
-    def _connection(self) -> psycopg.Connection:
-        if self._conn is None:
+    @contextmanager
+    def _connection(self) -> Iterator[psycopg.Connection]:
+        """Выдаёт проверенное соединение из пула на одну операцию."""
+        if self._pool is None:
             raise DialogDbError("база диалогов не открыта")
-        return self._conn
+        try:
+            with self._pool.connection() as conn:
+                yield conn
+        except (psycopg.Error, PoolTimeout, OSError) as error:
+            raise DialogDbError(f"{type(error).__name__}: {error}") from error
 
     def counts(self) -> tuple[int, int]:
-        with self._lock:
-            conn = self._connection()
+        """Возвращает число диалогов и сообщений."""
+        with self._lock, self._connection() as conn:
             return (
                 conn.execute("SELECT COUNT(*) FROM dialogs").fetchone()[0],
                 conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0],
@@ -182,8 +238,7 @@ class DialogDatabase:
 
     def load_user(self, user_id: str) -> tuple[list[StoredDialog], str | None]:
         """Все диалоги человека (от старых к новым) с сообщениями и выбранный им голос."""
-        with self._lock:
-            conn = self._connection()
+        with self._lock, self._connection() as conn:
             dialogs = {
                 row[0]: StoredDialog(
                     id=row[0],
@@ -221,7 +276,12 @@ class DialogDatabase:
 
     def apply(self, writes: list[DialogWrite]) -> None:
         """Записать пачку одной транзакцией: либо всё, либо ничего."""
-        with self._lock, self._connection().cursor() as cur, cur.connection.transaction():
+        with (
+            self._lock,
+            self._connection() as conn,
+            conn.cursor() as cur,
+            conn.transaction(),
+        ):
             for write in writes:
                 # memory_mode неизменяем после создания, crisis_seen только растёт, memory_extracted_at писатель
                 # диалогов не трогает (это отметка бэкенда памяти о забранном диалоге).
@@ -261,13 +321,33 @@ class DialogDatabase:
         """Нет-оп: метод нужен контракту `DialogStore`; журнал транзакций ведёт кластер PostgreSQL."""
 
     def erase_user(self, user_id: str) -> None:
-        """Стереть всё о человеке (диалоги с сообщениями, расходом и идентификаторами — каскадом, выбор голоса) одной
-        транзакцией. Идемпотентно. Память человека стирает бэкенд памяти (Cognee), здесь её таблиц нет."""
-        with self._lock:
-            conn = self._connection()
-            with conn.transaction():
-                conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
-                conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
+        """Стереть всё о человеке (диалоги с сообщениями, расходом и идентификаторами — каскадом, выбор голоса, настройки
+        памяти) одной транзакцией. Идемпотентно. Данные памяти в Cognee стирает бэкенд памяти."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_settings WHERE user_id = %s", (user_id,))
+
+    def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
+        """Настройки памяти человека: (включена, версия согласия, когда). None — человек их ещё не задавал."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                "SELECT enabled, consent_version, consent_at FROM memory_settings WHERE user_id = %s", (user_id,)
+            ).fetchone()
+        return None if row is None else (bool(row[0]), row[1], row[2])
+
+    def put_memory_settings(
+        self, user_id: str, enabled: bool, consent_version: str | None, consent_at: str | None, updated_at: str
+    ) -> None:
+        """Записать настройки памяти человека (создаёт строку или заменяет). Остальные переключатели не меняются."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_settings (user_id, enabled, consent_version, consent_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET enabled = EXCLUDED.enabled, "
+                "consent_version = EXCLUDED.consent_version, consent_at = EXCLUDED.consent_at, "
+                "updated_at = EXCLUDED.updated_at",
+                (user_id, enabled, clean(consent_version), clean(consent_at), updated_at),
+            )
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         """Удалить один диалог человека целиком (сообщения и расход уходят каскадом).
@@ -275,7 +355,5 @@ class DialogDatabase:
         `forget_derived` принимается ради контракта: фактами, выведенными из удалённого диалога, управляет бэкенд
         памяти (Cognee), а не хранилище диалогов.
         """
-        with self._lock:
-            conn = self._connection()
-            with conn.transaction():
-                conn.execute("DELETE FROM dialogs WHERE id = %s AND user_id = %s", (dialog_id, user_id))
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM dialogs WHERE id = %s AND user_id = %s", (dialog_id, user_id))

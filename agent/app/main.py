@@ -128,7 +128,13 @@ def create_app(
     def make_configured_database() -> DialogDatabase | None:
         # DIALOG_DATABASE_URL задан — диалоги в PostgreSQL; пусто — только в памяти процесса (разработка).
         if APP_CONFIG.dialog.database_url:
-            return DialogDatabase(APP_CONFIG.dialog.database_url)
+            return DialogDatabase(
+                APP_CONFIG.dialog.database_url,
+                min_size=APP_CONFIG.dialog.db_pool_min_size,
+                max_size=APP_CONFIG.dialog.db_pool_max_size,
+                max_idle=APP_CONFIG.dialog.db_pool_max_idle_seconds,
+                max_lifetime=APP_CONFIG.dialog.db_pool_max_lifetime_seconds,
+            )
         return None
 
     make_database = database_factory or make_configured_database
@@ -156,7 +162,7 @@ def create_app(
                 await cognee_client.connect()
             except Exception:  # noqa: BLE001 - память недоступна до первого удачного перелогина, агент работает
                 logger.exception("cognee login failed at startup")
-        memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg)
+        memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg, lambda: store.database)
         store.memory = memory_service
         app.state.memory = memory_service
         if memory_service.status() == "unavailable":
