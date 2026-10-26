@@ -88,8 +88,50 @@ const REPLIES = [
 const CRISIS_WORDS = ['не хочу жить', 'покончить', 'убить себя', 'умереть', 'нет смысла жить']
 
 function userState(userId) {
-  if (!users.has(userId)) users.set(userId, { dialogs: new Map(), memory: newMemory() })
+  if (!users.has(userId)) users.set(userId, { dialogs: new Map(), memory: newMemory(), recapEnabled: true })
   return users.get(userId)
+}
+
+// ─── Recaps of conversations (add-mood-diary D13) ─────────────────────────────
+// A recap is three texts in the second person. The mock follows the real agent's rules: none for a conversation where the
+// person said under 40 characters, for one with a crisis, or one held «without memory»; a recap the person wrote is kept
+// as it is and the automatic one never replaces it; the automatic one is ready after MOCK_RECAP_DELAY_MS (pending until then).
+const RECAP_DELAY_MS = Number(process.env.MOCK_RECAP_DELAY_MS ?? 3000)
+const RECAP_MIN_USER_CHARS = 40
+
+function userChars(dialog) {
+  return dialog.messages.filter((m) => m.role === 'user').reduce((sum, m) => sum + m.text.trim().length, 0)
+}
+
+function recapEligible(dialog) {
+  return dialog.memoryMode !== 'off' && !dialog.crisisSeen && userChars(dialog) >= RECAP_MIN_USER_CHARS
+}
+
+function templateRecap(dialog) {
+  const said = dialog.messages.filter((m) => m.role === 'user').map((m) => m.text.trim())
+  const words = (said[0] ?? '').split(/\s+/).slice(0, 4).join(' ')
+  const agreement = said.map((t) => /давай так:?\s*(.+)/i.exec(t)?.[1]).find(Boolean)
+  return {
+    about: `Ты рассказал, что у тебя на душе${words ? `, начав с «${words}»` : ''}.`,
+    main: 'Тебе важно, чтобы тебя услышали, и сегодня это получилось.',
+    agreements: agreement ? [agreement.slice(0, 120)] : [],
+  }
+}
+
+function cleanRecap(value) {
+  if (!value || typeof value !== 'object') return null
+  const about = typeof value.about === 'string' ? value.about.trim() : ''
+  const main = typeof value.main === 'string' ? value.main.trim() : ''
+  const agreements = Array.isArray(value.agreements) ? value.agreements.filter((a) => typeof a === 'string' && a.trim()) : []
+  if (!about || !main || about.length > 600 || main.length > 600 || agreements.length > 3) return null
+  return { about, main, agreements: agreements.map((a) => a.trim()) }
+}
+
+function storeRecap(dialog, recap, source) {
+  dialog.summary.recap = recap
+  dialog.summary.recapStatus = 'ready'
+  dialog.summary.recapSource = source
+  dialog.summary.recapAt = new Date().toISOString()
 }
 
 function openDialogOf(userId) {
@@ -116,9 +158,20 @@ function createDialog(userId, memory = 'on') {
 }
 
 /** Ends the dialog and, when it was held with memory, starts the "extraction" (see `extractMemory`). */
-function endDialog(dialog, takeaway, tensionAfter) {
+function endDialog(dialog, takeaway, tensionAfter, recap = null, recapSource = 'manual') {
   dialog.endedAt = new Date().toISOString()
-  dialog.summary = buildSummary(dialog, takeaway, tensionAfter)
+  dialog.summary = { ...buildSummary(dialog, takeaway, tensionAfter), recap: null, recapStatus: 'none', recapSource: null }
+  const written = cleanRecap(recap)
+  if (recapEligible(dialog)) {
+    if (written) storeRecap(dialog, written, recapSource === 'draft' ? 'draft' : 'manual')
+    else if (userState(dialog.userId).recapEnabled) {
+      dialog.summary.recapStatus = 'pending'
+      setTimeout(() => {
+        // The person may have written one meanwhile, or deleted the conversation.
+        if (dialog.summary?.recapStatus === 'pending') storeRecap(dialog, templateRecap(dialog), 'auto')
+      }, RECAP_DELAY_MS)
+    }
+  }
   extractMemory(dialog)
 }
 
@@ -708,9 +761,16 @@ const server = createServer(async (req, res) => {
         'Рядом с тобой всегда можно поговорить, когда захочется.'
       return json(res, 200, { text, stats: { markedDays: marks.length } })
     }
+    const recaps = Array.isArray(body.recaps) ? body.recaps : []
+    const agreed = recaps.reduce((sum, r) => sum + (Array.isArray(r?.agreements) ? r.agreements.length : 0), 0)
+    // The recaps of the week's conversations are the second input: the text says how many there were.
+    const recapLine = recaps.length
+      ? `Разговоров с итогом на неделе: ${recaps.length}, договорённостей в них: ${agreed}. Главное из них ты сохранил в журнале. `
+      : ''
     const text =
       `На этой неделе ты отметил настроение ${marks.length} раз. Чаще всего было «${levels[top]}». ` +
       `Тяжёлых дней было ${hard}, лёгких — ${counts[3] + counts[4]}. ` +
+      recapLine +
       'Заметно, что ты находишь минутку, чтобы остановиться и прислушаться к себе. ' +
       (hard >= 3
         ? 'Неделя выдалась непростой. Рядом могут быть люди, с которыми можно поговорить, и я тоже здесь.'
@@ -780,6 +840,36 @@ const server = createServer(async (req, res) => {
 
   if (parts[3] === 'memory') return handleMemory(req, res, url, userId, parts, method)
 
+  // GET /v1/users/{userId}/recaps - conversations with a ready recap, newest first
+  if (parts.length === 4 && parts[3] === 'recaps' && method === 'GET') {
+    const limit = Number(url.searchParams.get('limit') ?? 20)
+    const items = [...userState(userId).dialogs.values()]
+      .filter((d) => d.summary?.recapStatus === 'ready')
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+      .slice(0, limit)
+      .map((d) => ({
+        dialogId: d.dialogId,
+        startedAt: d.startedAt,
+        endedAt: d.endedAt,
+        title: d.summary.title,
+        recap: d.summary.recap,
+        recapSource: d.summary.recapSource,
+        recapAt: d.summary.recapAt ?? null,
+      }))
+    return json(res, 200, { items, next: null })
+  }
+
+  // GET/PUT /v1/users/{userId}/dialog-settings - «Подводить итог автоматически», apart from the memory settings
+  if (parts.length === 4 && parts[3] === 'dialog-settings') {
+    const state = userState(userId)
+    if (method === 'PUT') {
+      const body = await readBody(req)
+      if (typeof body.recapEnabled !== 'boolean') return agentError(res, 400, 'AGENT_VALIDATION', 'recapEnabled must be a boolean')
+      state.recapEnabled = body.recapEnabled
+    }
+    return json(res, 200, { recapEnabled: state.recapEnabled })
+  }
+
   if (parts[3] !== 'dialogs') return json(res, 404, { error: 'not_found' })
 
   // POST /v1/users/{userId}/dialogs - start a dialog or return the open one. A plain start changes
@@ -843,8 +933,35 @@ const server = createServer(async (req, res) => {
   if (parts.length === 6 && parts[5] === 'end' && method === 'POST') {
     if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
     const body = await readBody(req)
-    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null)
+    if (dialog.summary) return json(res, 200, { summary: dialog.summary })
+    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null, body.recap ?? null, body.recapSource)
     return json(res, 200, { summary: dialog.summary })
+  }
+
+  // PUT /v1/users/{userId}/dialogs/{dialogId}/recap - the recap the person wrote in the journal
+  if (parts.length === 6 && parts[5] === 'recap' && method === 'PUT') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    const body = await readBody(req)
+    const written = cleanRecap(body)
+    if (!dialog.summary || !written || !recapEligible(dialog)) return agentError(res, 409, 'RECAP_NOT_AVAILABLE', 'Для этого разговора итога нет')
+    storeRecap(dialog, written, body.source === 'draft' ? 'draft' : 'manual')
+    return json(res, 200, { summary: dialog.summary })
+  }
+
+  // POST /v1/users/{userId}/dialogs/{dialogId}/recap/draft - a draft; nothing is stored
+  if (parts.length === 7 && parts[5] === 'recap' && parts[6] === 'draft' && method === 'POST') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    if (!recapEligible(dialog)) return agentError(res, 409, 'RECAP_NOT_AVAILABLE', 'Для этого разговора итога нет')
+    return json(res, 200, { recap: templateRecap(dialog) })
+  }
+
+  // DELETE /v1/users/{userId}/dialogs/{dialogId} - the conversation with its recap; the facts of memory stay
+  if (parts.length === 5 && method === 'DELETE') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    userState(userId).dialogs.delete(dialog.dialogId)
+    console.log(`[agent-mock] диалог удалён человеком ${dialog.dialogId}`)
+    res.writeHead(204)
+    return res.end()
   }
 
   return json(res, 404, { error: 'not_found' })
@@ -1024,6 +1141,7 @@ wss.on('connection', (socket, request, context) => {
         }
         const text = String(frame.text ?? '')
         const crisis = isCrisis(text)
+        if (crisis) dialog.crisisSeen = true
         const message = addMessage(dialog, 'user', text)
         if (frame.id) dialog.clientIds.set(frame.id, message.id)
         send(socket, { type: 'ack', id: frame.id ?? message.id, messageId: message.id })
@@ -1043,7 +1161,7 @@ wss.on('connection', (socket, request, context) => {
         if (typeof frame.messageId === 'string') socket.cancelledSpeech.add(frame.messageId)
         return
       case 'end': {
-        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null)
+        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null, frame.recap ?? null, frame.recapSource)
         send(socket, { type: 'ended', summary: dialog.summary })
         socket.close(1000, 'dialog ended')
         return

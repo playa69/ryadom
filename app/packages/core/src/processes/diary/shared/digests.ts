@@ -11,10 +11,19 @@ import {
   agentApiIntegration,
   CreateAgentDigestRequest,
   CreateAgentDigestRequestErrorCode,
+  ListAgentRecapsRequest,
   type AgentDigestMark,
+  type AgentDigestRecap,
 } from '../../../integrations/agent-api'
-import { addDaysToDate, AgentUnavailableError } from '../../../shared'
+import { addDaysToDate, AgentUnavailableError, localMoment } from '../../../shared'
 import { PROCESSES_CONFIG } from '../../config'
+import { userZone } from './user-zone'
+
+/** A conversation of the week with the recap it ended in: the second input of the week text. */
+export interface WeekRecap extends AgentDigestRecap {
+  /** When the recap was stored: the text of the week is stale if a recap is newer than it. */
+  at: Date
+}
 
 /**
  * What the week summary shares between the two scenarios that make it: the button and the scheduler's
@@ -44,10 +53,11 @@ async function writeDigest(
   userId: string,
   periodStart: string,
   marks: AgentDigestMark[],
+  recaps: AgentDigestRecap[],
 ): Promise<{ text: string; stats: Record<string, unknown> | null } | null> {
   try {
     const result = await agentApiIntegration.execute(
-      new CreateAgentDigestRequest({ userId, kind: 'week', periodStart, marks }),
+      new CreateAgentDigestRequest({ userId, kind: 'week', periodStart, marks, recaps }),
     )
     if (!result.success) {
       switch (result.error) {
@@ -70,18 +80,46 @@ export function writtenAt(summary: DiarySummaryDTO): Date {
   return Number.isNaN(at) ? summary.generatedAt : new Date(at)
 }
 
-/** The moment of the latest change among the marks of the week: the version of the input a text is written from. */
-export function inputsVersion(days: readonly MoodCheckinDTO[]): Date {
-  return new Date(Math.max(...days.map((d) => d.updatedAt.getTime())))
+/**
+ * The recaps of the conversations that began in the week `start` (in the person's zone): the second input of the week text.
+ * Newest first at the agent, one page is enough for a week. A down agent throws `AgentUnavailableError`: the caller must not
+ * write a text without recaps it could not read, or a recap that arrives later would never make the text stale.
+ */
+export async function weekRecaps(userId: string, start: string): Promise<WeekRecap[]> {
+  const zone = await userZone(userId)
+  if (!zone) return []
+  const listed = await agentApiIntegration.execute(new ListAgentRecapsRequest({ userId, limit: 50, before: null }))
+  const end = addDaysToDate(start, 6)
+  const result: WeekRecap[] = []
+  for (const item of listed.items) {
+    const startedAt = new Date(item.startedAt)
+    if (Number.isNaN(startedAt.getTime())) continue
+    const date = localMoment(startedAt, zone).date
+    if (date < start || date > end) continue
+    const at = item.recapAt ? new Date(item.recapAt) : startedAt
+    result.push({
+      date,
+      about: item.recap.about,
+      main: item.recap.main,
+      agreements: item.recap.agreements,
+      at: Number.isNaN(at.getTime()) ? startedAt : at,
+    })
+  }
+  return result
+}
+
+/** The moment of the latest change among the marks and recaps of the week: the version of the input a text is written from. */
+export function inputsVersion(days: readonly MoodCheckinDTO[], recaps: readonly WeekRecap[] = []): Date {
+  return new Date(Math.max(...days.map((d) => d.updatedAt.getTime()), ...recaps.map((r) => r.at.getTime())))
 }
 
 /**
  * A text needs rewriting when a mark was added or changed after the marks it was written from (design D9).
  * Texts without the version fall back to the time they were written.
  */
-export function isStale(summary: DiarySummaryDTO, days: readonly MoodCheckinDTO[]): boolean {
+export function isStale(summary: DiarySummaryDTO, days: readonly MoodCheckinDTO[], recaps: readonly WeekRecap[] = []): boolean {
   const written = typeof summary.stats?.inputsAt === 'string' ? Date.parse(summary.stats.inputsAt) : summary.generatedAt.getTime()
-  return inputsVersion(days).getTime() > written
+  return inputsVersion(days, recaps).getTime() > written
 }
 
 /** The text of the week starting `start`; `final` is true when the scheduler closes a finished week. */
@@ -91,10 +129,23 @@ export async function makeWeekSummary(
   final: boolean,
   now: Date,
   manual = false,
+  known?: readonly WeekRecap[],
 ): Promise<DigestResult> {
   const days = await checkinsBetween(userId, start, addDaysToDate(start, 6))
   if (days.length < WEEK_SUMMARY_MIN_DAYS) return { success: false, error: DigestFailureCode.NOT_ENOUGH_DAYS }
-  const digest = await writeDigest(userId, start, toMarks(days))
+  let recaps: readonly WeekRecap[]
+  try {
+    recaps = known ?? (await weekRecaps(userId, start))
+  } catch (error) {
+    if (error instanceof AgentUnavailableError) return { success: false, error: DigestFailureCode.SUMMARY_UNAVAILABLE }
+    throw error
+  }
+  const digest = await writeDigest(
+    userId,
+    start,
+    toMarks(days),
+    recaps.map(({ date, about, main, agreements }) => ({ date, about, main, agreements })),
+  )
   if (!digest) return { success: false, error: DigestFailureCode.SUMMARY_UNAVAILABLE }
   const hardDays = days.filter((d) => d.mood === 1).length
   await diaryManager.execute(
@@ -103,7 +154,7 @@ export async function makeWeekSummary(
       kind: 'week',
       periodStart: start,
       text: digest.text,
-      stats: { ...(digest.stats ?? {}), markedDays: days.length, hardDays, final, inputsAt: inputsVersion(days).toISOString(), writtenAt: now.toISOString(), ...(manual ? { manualAt: now.toISOString() } : {}) },
+      stats: { ...(digest.stats ?? {}), markedDays: days.length, hardDays, final, inputsAt: inputsVersion(days, recaps).toISOString(), recapsCount: recaps.length, writtenAt: now.toISOString(), ...(manual ? { manualAt: now.toISOString() } : {}) },
       generatedAt: now,
     }),
   )

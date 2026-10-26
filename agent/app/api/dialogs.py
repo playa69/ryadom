@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import AgentError, dialog_not_found, validation_error
+from app.services import recaps
 from app.services.dialog_store import InvalidCursor
 
 logger = logging.getLogger("agent.dialogs")
@@ -22,11 +23,34 @@ def _user(user_id: str) -> str:
     return canonical
 
 
+class RecapBody(BaseModel):
+    """Итог разговора: «о чём говорили», «главное», «договорились» (0–3 пункта), от второго лица."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    about: str = Field(max_length=recaps.FIELD_MAX)
+    main: str = Field(max_length=recaps.FIELD_MAX)
+    agreements: list[str] = Field(default_factory=list, max_length=recaps.MAX_AGREEMENTS)
+
+
 class EndBody(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     takeaway: str | None = Field(default=None, max_length=1000)
     tension_after: int | None = Field(default=None, ge=1, le=10, alias="tensionAfter")
+    # Итог, написанный человеком (вручную или из черновика «Предзаполнить»): сохраняется сразу и не заменяется автоматическим.
+    recap: RecapBody | None = None
+    recap_source: Literal["manual", "draft"] = Field(default="manual", alias="recapSource")
+
+
+class RecapPutBody(RecapBody):
+    source: Literal["manual", "draft"] = "manual"
+
+
+class DialogSettingsBody(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    recap_enabled: bool = Field(alias="recapEnabled")
 
 
 class StartBody(BaseModel):
@@ -107,7 +131,109 @@ async def end_dialog(user_id: str, dialog_id: str, store: Store, body: EndBody |
     if dialog is None:
         raise dialog_not_found()
     body = body or EndBody()
-    return {"summary": store.end(dialog, body.takeaway, body.tension_after)}
+    given = body.recap.model_dump() if body.recap is not None else None
+    return {"summary": store.end(dialog, body.takeaway, body.tension_after, given, body.recap_source)}
+
+
+def _recap_unavailable() -> AgentError:
+    return AgentError(409, "RECAP_NOT_AVAILABLE", "Для этого разговора итога нет")
+
+
+def _ended_dialog(store: Store, user_id: str, dialog_id: str):  # type: ignore[no-untyped-def]
+    dialog = store.get(user_id, dialog_id)
+    if dialog is None:
+        raise dialog_not_found()
+    return dialog
+
+
+@router.post("/dialogs/{dialog_id}/recap/draft")
+async def draft_recap(user_id: str, dialog_id: str, store: Store) -> dict[str, Any]:
+    """Черновик итога для «Предзаполнить»: ничего не сохраняется, итог разговора и его статус не меняются."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog = _ended_dialog(store, user, dialog_id)
+    if not store.can_recap(dialog):
+        raise _recap_unavailable()
+    draft = await store.draft_recap(dialog)
+    if draft is None:
+        raise AgentError(502, "RECAP_UNAVAILABLE", "Модель не составила черновик")
+    return {"recap": draft}
+
+
+@router.put("/dialogs/{dialog_id}/recap")
+async def put_recap(user_id: str, dialog_id: str, body: RecapPutBody, store: Store) -> dict[str, Any]:
+    """Итог завершённого разговора, написанный человеком в журнале («Написать итог», «Предзаполнить» → «Сохранить»)."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog = _ended_dialog(store, user, dialog_id)
+    if dialog.summary is None:
+        raise AgentError(409, "DIALOG_NOT_ENDED", "Разговор ещё не завершён")
+    summary = store.set_recap(dialog, body.model_dump(include={"about", "main", "agreements"}), body.source)
+    if summary is None:
+        raise _recap_unavailable()
+    return {"summary": summary}
+
+
+@router.delete("/dialogs/{dialog_id}", status_code=204)
+async def delete_dialog(user_id: str, dialog_id: str, store: Store) -> Response:
+    """«Удалить разговор» в журнале: сообщения и итог стираются. Заметки памяти и итоги недели агент не трогает."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    dialog = _ended_dialog(store, user, dialog_id)
+    try:
+        await store.delete_by_person(dialog)
+    except Exception as error:
+        logger.error("delete dialog failed: %s", type(error).__name__)
+        raise AgentError(503, "AGENT_INTERNAL", "Не удалось удалить разговор, повторите позже") from error
+    logger.info("dialog deleted by the person dialog=%s", dialog_id)
+    return Response(status_code=204)
+
+
+@router.get("/recaps")
+async def list_recaps(
+    user_id: str,
+    store: Store,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    before: str | None = None,
+) -> dict[str, Any]:
+    """Разговоры с готовым итогом, новые сверху (записи журнала и вход итогов недели)."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    try:
+        items, next_cursor = store.list_recaps(user, limit, before)
+    except InvalidCursor as error:
+        raise validation_error("before принимает только значение из прошлого next") from error
+    return {
+        "items": [
+            {
+                "dialogId": d.id,
+                "startedAt": d.started_at,
+                "endedAt": d.ended_at,
+                "title": (d.summary or {}).get("title"),
+                "recap": (d.summary or {}).get("recap"),
+                "recapSource": (d.summary or {}).get("recapSource"),
+                "recapAt": (d.summary or {}).get("recapAt"),
+            }
+            for d in items
+        ],
+        "next": next_cursor,
+    }
+
+
+@router.get("/dialog-settings")
+async def get_dialog_settings(user_id: str, store: Store) -> dict[str, Any]:
+    user = _user(user_id)
+    await store.ensure_user(user)
+    return {"recapEnabled": store.recap_enabled(user)}
+
+
+@router.put("/dialog-settings")
+async def put_dialog_settings(user_id: str, body: DialogSettingsBody, store: Store) -> dict[str, Any]:
+    """«Подводить итог автоматически»: отдельно от настроек памяти, согласия на память не требует."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    store.set_recap_enabled(user, body.recap_enabled)
+    return {"recapEnabled": store.recap_enabled(user)}
 
 
 @router.delete("", status_code=204)

@@ -78,6 +78,10 @@ export const RATE_LIMITS = {
   dialogShareCreate: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
   /** Opening a link without signing in: per address, a household or a carrier NAT included, and still no use for guessing tokens. */
   sharedView: { perIp: { limit: 60, windowMs: 60_000 } },
+  /** Deleting a conversation and saving a recap: taps in the journal. */
+  dialogRecap: { perUser: { limit: 60, windowMs: 60_000 } },
+  /** «Предзаполнить»: each draft is a model call. */
+  dialogRecapDraft: { perUser: { limit: 20, windowMs: 10 * 60_000 } },
   /** Starting a dialog: protection against an accidental loop in the client. */
   dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
   /**

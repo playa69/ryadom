@@ -123,3 +123,11 @@ data:
   DIALOG_IDLE_EVICT_SECONDS: "1800"
   DIALOG_MAX_USERS_IN_MEMORY: "500"
   DIALOG_EVICT_INTERVAL_SECONDS: "60"
+  # Срок хранения разговоров (add-mood-diary, D14; agent/README.md): разговор с итогом удаляется через столько дней после последнего
+  # сообщения, проход раз в час. На проде диалоги лежат бессрочно, поэтому первый выкат идёт в сухом прогоне: проход только считает
+  # (метрика agent_dialogs_retention_would_delete) и ничего не удаляет. Боевое включение — по задаче 7.4: предупреждение в приложении
+  # за неделю, бэкап баз agent и Cognee, затем DIALOG_RETENTION_DRY_RUN: "false". Откат: DIALOG_RETENTION_DAYS: "0".
+  DIALOG_RETENTION_DAYS: "21"
+  DIALOG_RETENTION_DRY_RUN: "true"
+  # Итог разговора (D13): сколько ждать модель, секунды.
+  RECAP_TIMEOUT_SECONDS: "20"

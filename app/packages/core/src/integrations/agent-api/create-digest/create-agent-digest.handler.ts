@@ -15,6 +15,7 @@ export class CreateAgentDigestRequestHandler implements RequestHandler<CreateAge
           kind: request.kind,
           periodStart: request.periodStart,
           marks: request.marks,
+          recaps: request.recaps,
         },
       },
     )

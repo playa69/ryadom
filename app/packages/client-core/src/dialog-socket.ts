@@ -1,6 +1,7 @@
 import {
   DIALOG_PROTOCOL_VERSION,
   DialogClientFrame,
+  type DialogRecapApi,
   DialogCloseCode,
   DialogServerFrame,
   type DialogServerMessage,
@@ -238,11 +239,16 @@ export class DialogSocket {
     if (this.isConnected()) this.sendPending()
   }
 
-  end(takeaway: string | null, tensionAfter: number | null): void {
+  end(
+    takeaway: string | null,
+    tensionAfter: number | null,
+    recap?: { recap: DialogRecapApi; source: 'manual' | 'draft' } | null,
+  ): void {
     this.send({
       type: DialogClientFrame.End,
       ...(takeaway ? { takeaway } : {}),
       ...(tensionAfter !== null ? { tensionAfter } : {}),
+      ...(recap ? { recap: recap.recap, recapSource: recap.source } : {}),
     })
   }
 

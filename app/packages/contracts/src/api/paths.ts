@@ -29,6 +29,10 @@ export enum ApiPath {
   ResetPassword = '/api/auth/reset-password',
 
   Dialogs = '/api/dialogs',
+  /** Conversations with their recaps (`GET`), for the journal. */
+  DialogRecaps = '/api/recaps',
+  /** "Write the recap automatically" (`GET`, `PUT`). */
+  DialogSettings = '/api/dialog-settings',
   /** WebSocket: the stream of a single dialog. */
   DialogsWs = '/api/dialogs/ws',
 
@@ -83,6 +87,11 @@ export function sharedDialogPath(token: string): string {
 
 export function dialogEndPath(dialogId: string): string {
   return `${dialogPath(dialogId)}/end`
+}
+
+/** `/api/dialogs/:id/recap`: the recap of an ended conversation (`PUT`); `…/recap/draft` is the «Pre-fill» draft (`POST`). */
+export function dialogRecapPath(dialogId: string): string {
+  return `${dialogPath(dialogId)}/recap`
 }
 
 /** `/api/memory/facts/:id`: one remembered fact of the person. */

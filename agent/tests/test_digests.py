@@ -155,3 +155,19 @@ def test_clean_digest_rejects_a_verbatim_piece_of_the_source():
     said = ["начальник постоянно меняет приоритеты и я не успеваю"]
     assert digests.clean_digest("week", reply, marks(3, 3, 4), said) is None
     assert digests.clean_digest("week", reply, marks(3, 3, 4), []) is not None
+
+
+def test_week_recaps_reach_the_model_but_are_not_quoted_back(user_id):
+    recap = {"date": "2026-10-20", "about": "Ты не можешь больше терпеть начальника каждый день", "main": "Тебе важно, чтобы тебя услышали", "agreements": []}
+    quoted = (
+        "Эта неделя была непростой, и ты не можешь больше терпеть начальника каждый день. "
+        "Ты отмечал настроение и находил время для себя. Чаще всего было нормально. "
+        "Заметно, что тебе важны люди рядом. Я рад быть рядом."
+    )
+    chat = ScriptedChat(quoted)
+    with make_client(None, chat=chat) as client:
+        body = {**WEEK, "marks": marks(3, 3, 4), "recaps": [recap]}
+        text = post(client, user_id, body).json()["text"]
+    assert "Итоги разговоров недели" in chat.seen[0][1]["content"] and "начальника" in chat.seen[0][1]["content"]
+    assert "терпеть начальника каждый день" not in text  # дословные шесть слов из итога отбракованы, подставлен шаблон
+    assert "договорённостей в них: 0" in text

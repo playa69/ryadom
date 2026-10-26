@@ -112,7 +112,7 @@ describe('итоги недели', () => {
     // The week had one «Тяжело» day: the count rides with the summary, not the mood values.
     const diary = ok<DiaryApiResponse>(await call(app, 'GET', '/api/diary', undefined, token))
     expect(diary.week.summary).toMatchObject({ kind: 'week', text: 'Спасибо, что ты рядом с собой.', hardDays: 1 })
-    expect(agent.calls).toHaveLength(1)
+    expect(agent.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
   })
 
   it('«Обновить итоги»: с трёх дней, сразу (минуя шестичасовую паузу), раз в десять минут', async () => {

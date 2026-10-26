@@ -37,6 +37,8 @@ export class EndDialogOperationHandler implements RequestHandler<EndDialogOperat
         dialogId: operation.dialogId,
         takeaway: operation.takeaway,
         tensionAfter: operation.tensionAfter,
+        recap: operation.recap,
+        recapSource: operation.recapSource,
       }),
     )
     if (!result.success) {

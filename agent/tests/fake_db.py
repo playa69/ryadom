@@ -25,6 +25,7 @@ class _File:
         self.messages: dict[tuple[str, str], tuple] = {}  # (dialog_id, id) -> row
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
+        self.settings: dict[str, bool] = {}  # user_id -> recap_enabled
         self.usage: list[tuple] = []
 
 
@@ -113,6 +114,24 @@ class FakeDialogDatabase:
                 )
             return dialogs, state.prefs.get(user_id)
 
+    def load_settings(self, user_id: str) -> bool | None:
+        with self._lock:
+            return self._state().settings.get(user_id)
+
+    def save_settings(self, user_id: str, recap_enabled: bool) -> None:
+        with self._lock:
+            self._state().settings[user_id] = recap_enabled
+
+    def expired_dialogs(self, cutoff: str) -> list[tuple[str, str]]:
+        with self._lock:
+            state = self._state()
+            result = []
+            for dialog_id, row in state.dialogs.items():
+                stamps = [m[5] for m in state.messages.values() if m[1] == dialog_id]
+                if (max(stamps) if stamps else row[2]) < cutoff:
+                    result.append((row[1], dialog_id))
+            return result
+
     def apply(self, writes: list[DialogWrite]) -> None:
         with self._lock:
             state = self._state()
@@ -149,6 +168,7 @@ class FakeDialogDatabase:
             state.client_ids = {k: v for k, v in state.client_ids.items() if k[0] not in gone}
             state.usage = [row for row in state.usage if row[0] not in gone]
             state.prefs.pop(user_id, None)
+            state.settings.pop(user_id, None)
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         with self._lock:

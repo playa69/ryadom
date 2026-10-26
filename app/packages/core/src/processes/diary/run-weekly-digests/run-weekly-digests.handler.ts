@@ -12,7 +12,8 @@ import {
 } from '../../../managers/diary-manager'
 import { addDaysToDate, createLogger, localMoment, weekStart } from '../../../shared'
 import { PROCESSES_CONFIG } from '../../config'
-import { checkinsBetween, inputsVersion, isStale, makeWeekSummary, writtenAt } from '../shared/digests'
+import { checkinsBetween, inputsVersion, isStale, makeWeekSummary, weekRecaps, writtenAt, type WeekRecap } from '../shared/digests'
+import { AgentUnavailableError } from '../../../shared'
 
 const log = createLogger('diary')
 import { RunWeeklyDigestsOperation } from './run-weekly-digests.operation'
@@ -57,11 +58,20 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
     const days = await checkinsBetween(userId, periodStart, addDaysToDate(periodStart, 6))
     // Fewer than 3 marked days: nothing to write, and nothing worth claiming every minute.
     if (days.length < config.WEEK_SUMMARY_MIN_DAYS) return false
-    if (now.getTime() - inputsVersion(days).getTime() < config.AUTO_QUIET_MS) return false
+    // The recaps of the week's conversations are read with the marks: a new one makes the text stale like a changed mark. A down
+    // agent ends the attempt (a text written without recaps it could not read would never learn of them later).
+    let recaps: WeekRecap[]
+    try {
+      recaps = await weekRecaps(userId, periodStart)
+    } catch (error) {
+      if (error instanceof AgentUnavailableError) return false
+      throw error
+    }
+    if (now.getTime() - inputsVersion(days, recaps).getTime() < config.AUTO_QUIET_MS) return false
     const existing = (
       await diaryManager.execute(new ListDiarySummariesQuery({ userId, kind: 'week', from: periodStart, to: periodStart, limit: 1 }))
     ).summaries[0]
-    if (existing && !isStale(existing, days) && (!final || existing.stats?.final === true)) return false
+    if (existing && !isStale(existing, days, recaps) && (!final || existing.stats?.final === true)) return false
     // A text of the week in progress is rewritten after a change at most once in AUTO_MIN_GAP_MS (the button «Обновить итоги»
     // does not wait); the first text and the Monday close do not wait either.
     if (existing && !final && now.getTime() - writtenAt(existing).getTime() < config.AUTO_MIN_GAP_MS) return false
@@ -69,7 +79,7 @@ export class RunWeeklyDigestsOperationHandler implements RequestHandler<RunWeekl
     if (!(await this.claim(userId, 'week', periodStart, now, staleBefore, final))) return false
     let written = false
     try {
-      written = (await makeWeekSummary(userId, periodStart, final, now)).success
+      written = (await makeWeekSummary(userId, periodStart, final, now, false, recaps)).success
     } catch (error) {
       log.error('Не удалось собрать итоги недели', error)
     } finally {
