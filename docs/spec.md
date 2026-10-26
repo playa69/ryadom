@@ -96,6 +96,7 @@
 | Takeaway | «Что забираешь с собой» — фраза человека при завершении |
 | Напряжение (tension) | Самооценка человека по шкале 1–10 |
 | Кадр `safety` | Сигнал «человеку нужна помощь сейчас»: клиент открывает лист с линиями помощи |
+| Кадр `mood` | Тон последней реплики человека (`tone`, `intensity`): клиент красит шарик ([REQ-VOICE-10](#66-голос)); к кризису отношения не имеет |
 | Режим | Промпт-пакет диалога: `vent`, `chat`, `gestalt_diary`, `recovery`, `rituals` (+ зарезервированный `warmth`) |
 | Память | Короткие факты о человеке между разговорами: кто важен, что происходит, что помогает, как говорить, о чём не говорить; человек видит и правит всё запомненное ([§6.8](#68-память)) |
 | Hands-free | Голосовой режим «без рук»: клиент сам находит начало и конец реплики, человек может перебить голосом |
@@ -509,6 +510,17 @@ Recall на валидационном наборе (собирается с к�
 - WHEN кадр короче 200 мс (конец предложения) THEN хвост короче 20 мс ждёт следующего кадра; последний хвост приходит отдельным кадром перед `tts_end`.
 - WHEN кодер Opus недоступен (упал worker) THEN остаток этой речи теряется (текст доходит), следующая речь кодируется заново; в журнале одно предупреждение на соединение.
 - WHEN декодер WebCodecs отказал на речи THEN речь продолжается на WASM, следующее соединение не называет WebCodecs-путь.
+
+**`REQ-VOICE-10`** — Цвет шарика по настроению. Статус: **реализовано** (`agent/app/clients/mood_classifier.py`, `agent/app/api/dialog_live.py`; кадр `mood` в шлюзе `services/api/src/dialogs/gateway.ts`; `client-core/src/voice/orb-mood.ts`, веб `packages/ui/src/components/voice-orb.tsx`, мобильный `apps/mobile/src/client/components/VoiceOrb.tsx`).
+Шарик голосового экрана окрашивается по тону последней реплики человека: сонный — фиолетовый, злой — красный, испуганный — зелёный. Включено по умолчанию, без настроек на клиенте. Агент в режиме `gemini_live` отправляет расшифровку реплики текстовой модели-классификатору (`GEMINI_MOOD_CLASSIFIER`, по умолчанию `gemini-3.5-flash-lite`; пустое имя отключает) отдельным запросом параллельно ответу и шлёт клиенту кадр `mood { tone, intensity, at }`, `tone` ∈ {`neutral`, `sleepy`, `angry`, `afraid`, `sad`, `calm`}, `intensity` 0..1. Кадр касается только цвета: кризисный протокол ([REQ-SAFE-01](#64-кризисный-протокол)) от него не зависит и не меняется.
+
+- WHEN расшифровка реплики перестала приходить на 300 мс THEN она уходит классификатору; новые слова отменяют незавершённый запрос.
+- WHEN классификатор не ответил за 2,5 с THEN один повтор; при повторной неудаче кадра нет, шарик остаётся в цвете своего состояния, ответ агента не задерживается.
+- WHEN `tone` ∈ {`sleepy`, `angry`, `afraid`} и `intensity` ≥ 0,4 THEN клиент показывает цвет настроения поверх цвета состояния шарика с плавным переходом (1,8 с); иначе (`neutral`, `calm`, `sad`, слабое настроение) цвет состояния.
+- WHEN прошло 15 с без нового `mood` THEN шарик плавно возвращается к цвету состояния.
+- WHEN в сессии нет `GEMINI_API_KEY`, режим не `gemini_live` или классификатор отключён THEN кадра `mood` нет, шарик как раньше.
+- Приватность: текст реплики уходит тому же провайдеру (Gemini), что и голос; классификатор ничего не хранит, `mood` не пишется в базу и в аналитику с id человека; в метриках только счётчик по `tone` без id (`agent_gemini_mood_total`, `agent_gemini_mood_delay_seconds`), расход токенов — `agent_model_usage_total{task="mood"}`.
+- Замеры на живом Gemini Live (PROTEUS-168): вызов функции внутри сессии модели подменял или задерживал ответ, поэтому не используется; отдельный классификатор ответ не задерживает, `mood` приходит в среднем через 1,8 с после конца реплики, рядом с началом ответа.
 
 ### 6.7. Режимы
 
@@ -939,6 +951,7 @@ sequenceDiagram
 | `REQ-GEN-02..05` | `agent/app/clients/llm.py`, `agent/app/services/replies.py` | `agent/tests/test_llm.py`, `agent/tests/test_models.py` |
 | `REQ-VOICE-01`, `REQ-VOICE-05` | `agent/app/api/dialog_ws.py` | `agent/tests/test_voice_turn.py`, `agent/tests/test_ws.py` |
 | `REQ-VOICE-03..04`, `REQ-VOICE-07` | `agent/app/clients/speech.py`, `agent/app/main.py` (прогрев) | `agent/tests/test_speech.py`, `agent/tests/test_warm_up.py` |
+| `REQ-VOICE-10` | `agent/app/clients/mood_classifier.py`, `agent/app/api/dialog_live.py`, `app/services/api/src/dialogs/gateway.ts`, `app/packages/client-core/src/voice/orb-mood.ts`, `app/packages/ui/src/components/voice-orb.tsx`, `app/apps/mobile/src/client/components/VoiceOrb.tsx` | `agent/tests/test_live_mood.py`, `app/packages/client-core/test/orb-mood.test.ts`, `app/services/api/test/dialogs.test.ts`, `app/e2e/tests/web-orb-mood.spec.ts`, `app/e2e/tests/app-orb-mood.spec.ts` |
 | `REQ-VOICE-06` | `app/packages/client-core/src/voice/*` | `app/packages/client-core/test/turn-detector.test.ts`, `app/e2e/tests/web-hands-free.spec.ts` |
 | `REQ-DATA-01` | `agent/app/clients/llm.py` (логирование без текстов) | — |
 | `REQ-DATA-02` | `agent/app/api/dialogs.py` (`erase_user`), `agent/app/services/dialog_db.py` (`erase_user`), `app/packages/core/src/processes/account-deletion` | `agent/tests/test_rest.py`, `agent/tests/test_memory_erase.py`, `app/packages/core/test/account-deletion.test.ts` |

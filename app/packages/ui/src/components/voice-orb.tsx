@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { cn } from 'cn'
 import { startOrbMotion, type OrbMotionState } from '@ryadom/client-core/voice/orb-motion'
+import type { OrbMood } from '@ryadom/client-core/voice/orb-mood'
 
 /**
  * The sphere of the voice screen. It is the interface itself: what it does tells the person who has
@@ -22,7 +23,6 @@ import { startOrbMotion, type OrbMotionState } from '@ryadom/client-core/voice/o
  * attribute: the CSP of the web app forbids those in markup.
  */
 export type OrbState = OrbMotionState
-export type OrbMood = 'sleepy' | 'angry' | 'afraid'
 
 function VoiceOrb({
   state,
@@ -65,4 +65,4 @@ function VoiceOrb({
   )
 }
 
-export { VoiceOrb }
+export { VoiceOrb, type OrbMood }

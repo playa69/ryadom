@@ -229,9 +229,10 @@ class GeminiSettings(BaseAppSettings):
     # (замер на gemini-3.8-live: первый звук на ~0,2 с быстрее, ответы короткие и тёплые, рассуждать нечем); >0 — предел.
     # Кризисы модель не решает: их ловит агент.
     thinking_budget: int = Field(validation_alias="GEMINI_THINKING_BUDGET", default=-1, ge=-1)
-    # Цвет шарика по тону человека (PROTEUS-168): отдельный запрос к текстовой модели по расшифровке реплики (имя модели;
-    # пусто — выключено). Параллельно ответу и ему не мешает; вызов функции внутри сессии Live замерен и отвергнут (ответ терялся).
-    mood_classifier: str = Field(validation_alias="GEMINI_MOOD_CLASSIFIER", default="")
+    # Цвет шарика по тону человека (REQ-VOICE-10): отдельный запрос к текстовой модели по расшифровке реплики (имя модели).
+    # Включён по умолчанию, работает только в режиме gemini_live с ключом Gemini; пустое имя отключает. Идёт параллельно ответу и
+    # ему не мешает; вызов функции внутри сессии Live замерен и отвергнут (ответ терялся).
+    mood_classifier: str = Field(validation_alias="GEMINI_MOOD_CLASSIFIER", default="gemini-3.5-flash-lite")
     mood_classifier_timeout_seconds: float = Field(validation_alias="GEMINI_MOOD_CLASSIFIER_TIMEOUT_SECONDS", default=2.5, gt=0)
     # Пауза без новых слов расшифровки, после которой реплика уходит на классификацию.
     mood_debounce_ms: int = Field(validation_alias="GEMINI_MOOD_DEBOUNCE_MS", default=300, ge=0)

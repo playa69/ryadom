@@ -9,6 +9,7 @@ import json
 import logging
 
 from app.core.config import GeminiSettings
+from app.services import usage as model_usage
 
 logger = logging.getLogger("agent.gemini")
 
@@ -67,6 +68,10 @@ class MoodClassifier:
                 response = await asyncio.wait_for(
                     self._client.aio.models.generate_content(model=self._model, contents=text, config=config), self._timeout
                 )
+                meta = response.usage_metadata
+                if meta is not None:  # расход считается там же, где и у остальных моделей (agent_model_usage_total)
+                    model_usage.record(self._model, "mood", "input", "text", "tokens", meta.prompt_token_count or 0)
+                    model_usage.record(self._model, "mood", "output", "text", "tokens", meta.candidates_token_count or 0)
                 return parse_mood(json.loads(response.text))
             except Exception as error:  # noqa: BLE001
                 logger.warning("классификатор тона (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
