@@ -43,6 +43,36 @@ async def make_store(
     return store, db
 
 
+class DiskGate:
+    """Вызов метода базы, который стоит на замке, пока тест его не отпустит.
+
+    Стирание и загрузка идут в потоке (`asyncio.to_thread`). Раньше порядок событий в тестах держался на `await asyncio.sleep(0)`:
+    поток двойника заканчивал работу за микросекунды, цикл мог продолжить стирание раньше теста, и проверка «посреди стирания»
+    иногда видела уже стёртое. С замком порядок задан тестом, а не гонкой потоков."""
+
+    def __init__(self, db: DialogDatabase, method: str) -> None:
+        self._entered = threading.Event()
+        self._open = threading.Event()
+        real = getattr(db, method)
+
+        def gated(*args: Any, **kwargs: Any) -> Any:
+            self._entered.set()
+            assert self._open.wait(10), "тест не отпустил замок базы"
+            return real(*args, **kwargs)
+
+        setattr(db, method, gated)
+
+    async def reached(self) -> None:
+        """Дождаться, пока вызов дошёл до базы и встал."""
+        deadline = time.monotonic() + 5
+        while not self._entered.is_set():
+            assert time.monotonic() < deadline, "вызов не дошёл до базы"
+            await asyncio.sleep(0.001)
+
+    def release(self) -> None:
+        self._open.set()
+
+
 def in_memory(store: DialogStore, user: str) -> bool:
     """Осталось ли о человеке в памяти хранилища хоть что-то."""
     return any(
@@ -421,9 +451,13 @@ async def test_erase_during_a_reload_does_not_bring_the_person_back(tmp_path: Pa
     assert await store.flush()
     assert store.evict_idle(later()) == 1
 
+    reading = DiskGate(db, "load_user")
     loading = asyncio.create_task(store.ensure_user(user))
-    await asyncio.sleep(0)  # загрузка уже читает диск
-    await store.erase_user_durable(user)
+    await reading.reached()  # загрузка уже читает диск
+    erasing = asyncio.create_task(store.erase_user_durable(user))  # ждёт замок загрузки
+    await asyncio.sleep(0.01)
+    reading.release()
+    await erasing
     await loading
     assert store.get(user, dialog.id) is None  # прочитанное с диска не вернулось в память после стирания
     assert db.load_user(user) == ([], None)
@@ -440,10 +474,12 @@ async def test_reload_of_an_evicted_user_waits_for_the_erase(tmp_path: Path) -> 
     assert await store.flush()
     assert store.evict_idle(later()) == 1
 
+    erase = DiskGate(db, "erase_user")
     erasing = asyncio.create_task(store.erase_user_durable(user))
-    await asyncio.sleep(0)  # стирание держит замок загрузки и стирает диск
+    await erase.reached()  # стирание держит замок загрузки и стирает диск
     loading = asyncio.create_task(store.ensure_user(user))  # загрузка ждёт конца стирания
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+    erase.release()
     await erasing
     await loading
     assert store.list(user, 10, None)[0] == [] and db.load_user(user) == ([], None)
@@ -460,10 +496,12 @@ async def test_eviction_pass_during_an_erase_leaves_the_person_to_the_erase(tmp_
     store.add_message(dialog, "user", "личное")
     assert await store.flush()
 
+    erase = DiskGate(db, "erase_user")
     erasing = asyncio.create_task(store.erase_user_durable(user))
-    await asyncio.sleep(0)  # стирание убрало человека из памяти и стирает диск, отметка загрузки ещё стоит
+    await erase.reached()  # стирание убрало человека из памяти и стирает диск, отметка загрузки ещё стоит
     assert user in store._loaded
     assert store.evict_idle(later()) == 0  # стираемого выгрузка не трогает
+    erase.release()
     await erasing
     assert not in_memory(store, user) and user not in store._evicted
     assert db.load_user(user) == ([], None)
@@ -472,16 +510,18 @@ async def test_eviction_pass_during_an_erase_leaves_the_person_to_the_erase(tmp_
 
 async def test_access_and_eviction_in_the_middle_of_an_erase_leave_nothing_behind(tmp_path: Path) -> None:
     user = str(uuid.uuid4())
-    store, _ = await make_store(tmp_path / "d.sqlite3")
+    store, db = await make_store(tmp_path / "d.sqlite3")
     await store.ensure_user(user)
     dialog, _, _ = store.start(user)
     store.add_message(dialog, "user", "личное")
     assert await store.flush()
 
+    erase = DiskGate(db, "erase_user")
     erasing = asyncio.create_task(store.erase_user_durable(user))
-    await asyncio.sleep(0)
+    await erase.reached()
     await store.ensure_user(user)  # запрос посреди стирания: человек ещё отмечен загруженным, отметка обращения ставится снова
     assert store.evict_idle(later()) == 1  # в памяти о нём уже ничего, выгрузка снимает отметки
+    erase.release()
     await erasing
     assert not in_memory(store, user) and user not in store._evicted  # id стёртого не запомнен ни для метрики, ни для выгрузки
 
@@ -489,9 +529,11 @@ async def test_access_and_eviction_in_the_middle_of_an_erase_leave_nothing_behin
     await store.ensure_user(other)
     store.start(other)
     assert await store.flush()
+    erase = DiskGate(db, "erase_user")
     erasing = asyncio.create_task(store.erase_user_durable(other))
-    await asyncio.sleep(0)
+    await erase.reached()
     await store.ensure_user(other)
+    erase.release()
     await erasing
     assert not in_memory(store, other)  # отметка обращения, поставленная посреди стирания, не осталась навсегда
     await store.detach()
