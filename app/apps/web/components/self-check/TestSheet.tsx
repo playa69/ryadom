@@ -123,7 +123,7 @@ export default function TestSheet({ test, from, onClose }: { test: SelfCheckTest
               ← Назад
             </button>
           )}
-          <p className="text-xs text-faint">Ответы остаются на устройстве, пока ты не нажмёшь «Сохранить».</p>
+          <p className="text-xs text-faint">Ответы остаются на этом устройстве.</p>
         </div>
       )}
 

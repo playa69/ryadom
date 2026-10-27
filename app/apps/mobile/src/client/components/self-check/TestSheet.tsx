@@ -130,7 +130,7 @@ export default function TestSheet() {
                   ← Назад
                 </button>
               )}
-              <p className="rd-muted rd-test-note">Ответы остаются на устройстве, пока ты не нажмёшь «Сохранить».</p>
+              <p className="rd-muted rd-test-note">Ответы остаются на этом устройстве.</p>
             </div>
           )}
 

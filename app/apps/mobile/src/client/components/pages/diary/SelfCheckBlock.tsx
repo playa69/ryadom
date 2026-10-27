@@ -2,7 +2,7 @@ import { Button } from 'framework7-react'
 import { openTest, shownWave1 } from '../../../lib/self-check'
 import { lengthLine } from '../../self-check/format'
 
-/** The block «Самопроверка» in the segment «Дневник»: the six scales of wave 1. Absent with the tests off. */
+/** The block «Самопроверка» in the segment «Дневник»: the six scales of wave 1. */
 export default function SelfCheckBlock() {
   const tests = shownWave1()
   if (tests.length === 0) return null

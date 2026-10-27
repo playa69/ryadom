@@ -92,3 +92,30 @@ describe('указание авторов', () => {
     }
   })
 })
+
+describe('подсчёт SWLS, K6, PHQ-2 и GAD-2', () => {
+  const allAnswers = (id: string, pick: 'lo' | 'hi') => {
+    const t = byId(id)!
+    const values = t.options.map((o) => o.value)
+    const v = pick === 'hi' ? Math.max(...values) : Math.min(...values)
+    return t.items.map(() => v)
+  }
+  it('минимум и максимум совпадают с описанием, а подписи покрывают весь диапазон', () => {
+    for (const [id, min, max] of [['swls', 5, 35], ['k6', 0, 24], ['phq2', 0, 6], ['gad2', 0, 6]] as const) {
+      const t = byId(id)!
+      expect(score(t, allAnswers(id, 'lo')).score, id).toBe(min)
+      expect(score(t, allAnswers(id, 'hi')).score, id).toBe(max)
+      expect(t.scoring.max, id).toBe(max)
+      for (let v = min; v <= max; v++) expect(band(t, v), `${id}: ${v}`).toBeDefined()
+    }
+  })
+  it('SWLS: 20 — нейтрально, K6: от 13 — высокий уровень, быстрые тесты — порог на 3', () => {
+    expect(band(byId('swls')!, 20)?.label).toBe('ориентир: нейтрально')
+    expect(isHigh(byId('k6')!, 13)).toBe(true)
+    expect(isHigh(byId('k6')!, 12)).toBe(false)
+    for (const id of ['phq2', 'gad2']) {
+      expect(band(byId(id)!, 2)?.label, id).toBe('ниже порога')
+      expect(band(byId(id)!, 3)?.label, id).toBe('от порога')
+    }
+  })
+})

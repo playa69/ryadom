@@ -25,7 +25,7 @@ import {
 const QUEUE_KEY = 'ryadom.diary.queue'
 const SEGMENT_KEY = 'ryadom.diary.segment'
 
-/** «Тесты» (PROTEUS-218) is the third one, and only with the tests switched on. */
+/** «Тесты» (PROTEUS-218) is the third segment. */
 export type DiarySegment = 'diary' | 'journal' | 'tests'
 export const SEGMENT_URLS: Record<DiarySegment, string> = {
   diary: '/diary/',

@@ -99,14 +99,14 @@ test('дневник: пустой → отметка в два касания �
     .toBe(3)
 })
 
-test('дневник: сегменты «Дневник» и «Журнал»; последний открытый помнится', async ({ page, shot }) => {
+test('дневник: сегменты «Дневник», «Журнал» и «Тесты»; последний открытый помнится', async ({ page, shot }) => {
   test.setTimeout(120_000)
   await openApp(page)
   await startAnonymously(page)
   await openTab(page, 'Дневник')
   await expect(page.getByTestId('diary-segment-diary')).toHaveAttribute('aria-checked', 'true')
-  // Two segments: the year and the recaps are not in the diary, the tests come later.
-  await expect(page.locator('.page-current [data-testid^="diary-segment-"]')).toHaveCount(2)
+  // Three segments: the diary, the journal and the tests; the year and the recaps are not in the diary.
+  await expect(page.locator('.page-current [data-testid^="diary-segment-"]')).toHaveCount(3)
   await expect(page.getByTestId('diary-year-card')).toHaveCount(0)
 
   await page.getByTestId('diary-segment-journal').click()
