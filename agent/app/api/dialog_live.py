@@ -102,6 +102,9 @@ logger = logging.getLogger("agent.live")
 PRE_ROLL_FRAMES = 5
 # Хвост ответа прерванной модели, которая ещё может прислать события, считается чужим столько секунд.
 STALE_SECONDS = 1.0
+# Сколько открытие сессии ждёт сводку памяти. Поиск в Cognee бывает дольше минуты, и человек всё это время говорил бы
+# в пустоту; сводка, не успевшая к открытию, догружается в фоне и попадает в сессию при её плановой смене.
+MEMORY_WAIT_SECONDS = 1.5
 
 LIVE_ADDENDUM = (
     "\n- Ты говоришь вслух живым голосом, как в разговоре: сказанное человеком не пересказывай."
@@ -165,6 +168,8 @@ class LiveTurn:
 
 
 _CLOSING: set["asyncio.Task[None]"] = set()  # фоновые закрытия соединений: ссылка нужна, чтобы задачу не собрал GC
+# Загрузки памяти, не успевшие к открытию сессии: идут до конца и после закрытия сокета (сводка ляжет в кэш к следующему разговору).
+_MEMORY_LOADS: set["asyncio.Task[None]"] = set()
 
 
 async def _close_link(reader: "asyncio.Task[None] | None", link: LiveLink | None) -> None:
@@ -324,9 +329,14 @@ class LiveDialogSession(DialogSession):
         self._speech_turns: dict[str, LiveTurn] = {}
         # Последний ход, отправленный модели целиком (конец реплики или текст): на его ответ пишется пришедший usage.
         self._usage_turn: LiveTurn | None = None
-        # Сводка памяти, с которой открыта текущая сессия: изменилась (человек что-то забыл, выключил память, извлечение
-        # добавило факт) — к следующему ходу сессия открывается заново с новой (MEM-8.4, MEM-13.3).
+        # Сводка памяти, с которой открыта текущая сессия. Новая или дополненная сводка (догрузилась, нашлось по реплике,
+        # извлечение добавило факт) сессию не переоткрывает: каждое переоткрытие — это пауза в разговоре и потеря звукового
+        # контекста, а сводку возьмёт плановая смена сессии. Пропала сводка целиком (человек выключил память, забыл всё,
+        # стёр аккаунт) — к следующему ходу сессия открывается заново без неё (MEM-13.3).
         self._brief_used = ""
+        self._memory_load: asyncio.Task[None] | None = None  # загрузка памяти к открытию сессии (`_await_memory`)
+        self._socket_at = time.monotonic()  # сессию создают сразу после accept сокета: от этого момента считаем ожидание
+        self._open_logged = False  # строка о задержке первой сессии уже в журнале
         # Ход, чья трасса ждёт расход токенов (usage_metadata приходит с turn_complete, после конца генерации).
         self._awaiting_usage: LiveTurn | None = None
         # Реплика человека, на которую модель не ответила, и таймер повторной просьбы (`_schedule_recovery`).
@@ -426,6 +436,7 @@ class LiveDialogSession(DialogSession):
                 if extra is not None:
                     tasks.append(extra)
             self._tasks, self._rotation, self._preparing = [], None, None
+            self._memory_load = None  # недошедшая загрузка памяти идёт дальше (её держит _MEMORY_LOADS), но без ссылки из сеанса
             for task in tasks:
                 task.cancel()
             try:
@@ -509,8 +520,8 @@ class LiveDialogSession(DialogSession):
                     logger.info("live context refresh deferred: level=%s dialog=%s", budget.level(), self._dialog.id)
                     return link
                 self._refresh = True
-            if self._store.memory_brief(self._dialog, count=False) != self._brief_used:
-                self._refresh = True  # память изменилась: новая сессия с новой сводкой (или без неё)
+            if self._brief_used and not self._store.memory_brief(self._dialog, count=False):
+                self._refresh = True  # сводку отозвали (см. `_brief_used`): следующий ход уже без неё
             alive = link is not None and not link.closed and link.voice == voice
             if alive and self._rotate_pending and not self._refresh and self._may_open():
                 self._refresh = True  # отложенная (или ленивая) смена сессии: теперь можно
@@ -558,10 +569,31 @@ class LiveDialogSession(DialogSession):
             self._reader = asyncio.create_task(self._read(new))
             return new
 
+    async def _await_memory(self) -> float:
+        """Загрузить сводку памяти к открытию сессии, но ждать её не дольше MEMORY_WAIT_SECONDS. Загрузка не отменяется:
+        не успела — сессия откроется со сводкой, что есть сейчас. Повторное открытие ждёт ту же загрузку, а не начинает вторую
+        (иначе состояние человека и сводка грузились бы параллельно). Возвращает, сколько секунд ждали."""
+        load = self._memory_load
+        if load is None or load.done():
+            load = asyncio.create_task(self._store.memory_prepare(self._dialog))
+            _MEMORY_LOADS.add(load)
+            load.add_done_callback(_MEMORY_LOADS.discard)
+            self._memory_load = load
+        began = time.monotonic()
+        await asyncio.wait({load}, timeout=MEMORY_WAIT_SECONDS)
+        waited = time.monotonic() - began
+        if load.done():
+            # Задача держит контекст сокета, а в нём обработчик кадров `component` — метод сеанса: сеанс и законченная
+            # задача, ссылаясь друг на друга, освобождались бы только полной сборкой мусора.
+            self._memory_load = None
+        else:
+            logger.info("memory not ready for gemini open dialog=%s waited_ms=%.0f", self._dialog.id, waited * 1000)
+        return waited
+
     async def _open(self, voice: Voice, handle: str | None, purpose: str = "start") -> LiveLink | None:
         budget = self._budget
         history: LiveHistory | None = self._history() if self._cfg.text_context and handle is None else None
-        await self._store.memory_prepare(self._dialog)
+        memory_wait = await self._await_memory()
         instructions = self._instructions(resumed=handle is not None)
         cost = budget.open_estimate([instructions, *(text for _, text in history or ())])
         if not self._may_open(cost):
@@ -590,6 +622,16 @@ class LiveDialogSession(DialogSession):
         )
         rid = budget.opening(cost)  # Google считает открытие сразу, по размеру контекста
         began = time.monotonic()
+        if not self._open_logged:
+            # Задержка до первой сессии в журнале: в проде её не видно иначе (первая реплика тонула в ожидании памяти).
+            self._open_logged = True
+            logger.info(
+                "gemini live first open dialog=%s purpose=%s since_socket_ms=%.0f memory_wait_ms=%.0f",
+                self._dialog.id,
+                purpose,
+                (began - self._socket_at) * 1000,
+                memory_wait * 1000,
+            )
         try:
             link = await self._connector.open(voice, instructions, handle, history or None)
         except BaseException as error:

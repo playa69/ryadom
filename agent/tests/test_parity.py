@@ -71,7 +71,7 @@ from starlette.testclient import WebSocketDenialResponse
 
 from app.api.dialog_live import PRE_ROLL_FRAMES
 from app.api.dialog_ws import MAX_AUDIO_BYTES, MAX_REPLY_CHARS
-from app.clients.gemini_live import LiveError, LiveEvent, LiveHistory
+from app.clients.gemini_live import VERBATIM_INSTRUCTIONS, LiveError, LiveEvent, LiveHistory
 from app.clients.llm import ModelError
 from app.core.config import APP_CONFIG
 from app.main import create_app
@@ -221,6 +221,10 @@ class ScriptedLink(FakeLink):
             if self.cfg.audio:
                 events += [LiveEvent("audio", data=FAKE_PCM), LiveEvent("audio", data=FAKE_PCM)]
         events += [LiveEvent("generation_complete"), LiveEvent("resumption", text=self.handle_to_issue)]
+        if self.instructions == VERBATIM_INSTRUCTIONS:
+            # Сессия озвучки фразы: Google присылает turn_complete после звука, и прогрев закрывает её, прежде чем открыть
+            # следующую (иначе каждая фраза ждала бы дочитывания расхода до таймаута).
+            events.append(LiveEvent("turn_complete"))
         return events
 
     def _interrupt(self) -> None:

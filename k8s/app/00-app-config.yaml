@@ -15,7 +15,7 @@
 # Схема адресов: ОДИН хост xn----htbtgjker8b3a2c.xn--p1ai, сервисы по путям
 # (k8s/README.md, «Сервисы из app/»):
 #   /          landing (маркетинг, документы)
-#   /api       api: REST, WebSocket, OTA     (/api/v1 — Python backend, длиннее и побеждает)
+#   /api       api: REST, WebSocket, OTA
 #   /app       apps/web (клиент после входа)
 #   /pwa       PWA (apps/mobile в браузере, nginx; ставится на домашний экран)
 #   /admin     admin
@@ -26,8 +26,8 @@
 # установки на странице /download).
 #
 # Redis (общий ryadom-db, Sentinel) используется только api и только для
-# счётчиков лимитов запросов: ключи ryadom:rl:* (префикс по умолчанию, с Python
-# backend не пересекаются), каждый с TTL окна. Пароль — REDIS_PASSWORD из
+# счётчиков лимитов запросов: ключи ryadom:rl:* (префикс по умолчанию), каждый
+# с TTL окна. Пароль — REDIS_PASSWORD из
 # Secret app-secrets (копия redis-credentials). Если
 # Redis недоступен, api сам переходит на счёт в памяти (lib/redis-rate-limiter.ts).
 #
@@ -57,8 +57,8 @@ data:
   # --- Общие ---
   APP_ENV: "prod"
   LOG_LEVEL: "info"
-  # --- PostgreSQL: тот же сервер CNPG, что у Python backend (ryadom-db-rw), но
-  # своя база и своя роль (изоляция от баз backend/agent/langfuse). Пароль — DB_PASSWORD
+  # --- PostgreSQL: общий сервер CNPG ryadom-db (ryadom-db-rw), но своя база и
+  # своя роль (изоляция от баз agent/langfuse). Пароль — DB_PASSWORD
   # из Secret app-secrets. БД и роль создаёт Job db/01-job-create-db.yaml.
   DB_HOST: "ryadom-db-rw.ryadom-db.svc.cluster.local"
   DB_PORT: "5432"

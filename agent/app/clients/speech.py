@@ -400,18 +400,29 @@ class CachedTts:
             yield piece
         self._remember(key, b"".join(parts))
 
-    async def warm_up(self, texts: Iterable[str]) -> None:
-        """Озвучить заранее; отказ провайдера не страшен: фраза озвучится при первом обращении."""
-        done = failed = 0
-        for text in texts:
-            for voice in VOICES:
+    async def warm_up(self, texts: Iterable[str], parallel: int = 1) -> None:
+        """Озвучить заранее; отказ провайдера не страшен: фраза озвучится при первом обращении, а прогрев идёт дальше.
+
+        `parallel` — сколько фраз озвучивается одновременно. У Gemini Live каждая фраза — своя сессия, и закрывается она не
+        сразу, а после дочитывания расхода (`drained`): место освобождается только тогда, иначе открытые сессии копились бы.
+        """
+        slots = asyncio.Semaphore(parallel)
+        drained = getattr(self._inner, "drained", None)
+        counts = {"done": 0, "failed": 0}
+
+        async def one(text: str, voice: Voice) -> None:
+            async with slots:
                 try:
                     await self.synthesize(text, voice)
-                    done += 1
-                except TtsError as error:
-                    failed += 1
+                    counts["done"] += 1
+                except Exception as error:  # noqa: BLE001 - сбой одной фразы не останавливает прогрев остальных
+                    counts["failed"] += 1
                     logger.warning("прогрев озвучки не удался voice=%s: %s", voice, error)
-        logger.info("прогрев озвучки закончен: озвучено %d, не удалось %d", done, failed)
+                if drained is not None:
+                    await drained()
+
+        await asyncio.gather(*(one(text, voice) for text in texts for voice in VOICES))
+        logger.info("прогрев озвучки закончен: озвучено %d, не удалось %d", counts["done"], counts["failed"])
 
     async def aclose(self) -> None:
         await self._inner.aclose()

@@ -1,5 +1,7 @@
 # Design: add-agent-service
 
+> Примечание (PROTEUS-250): Python-сервис `backend/` (namespace `backend`), `docs/openapi.yaml` и change'ы `add-backend-*` удалены из репозитория. Агента вызывает `app/services/api`; функции, которые планировались для backend, развиваются там же (`docs/spec.md`, Q-02). Упоминания backend ниже — исторический контекст.
+
 ## Context
 
 Backend «Слышу Рядом» распланирован (5 change'ов в openspec/changes/), но конвейер реплики в add-backend-sessions-streaming пока вписан внутрь backend с GigaChat. Фактические вводные изменились: получен OpenAI-совместимый ключ, модели крутятся в Cloud.ru (Evolution Foundation Models, endpoint `https://foundation-models.api.cloud.ru/v1`, данные в РФ), а в k8s выделен namespace `agent`. Требования — см. specs `agent-core`, `speech-pipeline`, `agent-api` этого change'а.
