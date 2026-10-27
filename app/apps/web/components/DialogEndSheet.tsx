@@ -1,7 +1,10 @@
 'use client'
 
+import { Loader2, Sparkles } from 'lucide-react'
 import { useId, useState } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
+import { RECAP_AUTO_LABEL } from '@ryadom/client-core/recaps'
+import { NativeCheckbox } from '@ryadom/ui/components/native-checkbox'
 import { Button } from '@ryadom/ui/components/button'
 import { FieldError } from '@ryadom/ui/components/field'
 import { Textarea } from '@ryadom/ui/components/textarea'
@@ -10,8 +13,11 @@ import Modal from './Modal'
 import { BUSY } from './busy'
 import { BUTTON } from './controls'
 
+/** Where the recap came from: written by the person, or pre-filled with «Предзаполнить» (and maybe edited). */
+export type EndRecapSource = 'manual' | 'draft'
+
 /**
- * Closing a conversation: the takeaway and the tension afterwards.
+ * Closing a conversation: the takeaway, which is also the recap of the conversation (add-mood-diary, D13), and the tension afterwards.
  *
  * Tension is not a survey for the sake of statistics: the product's headline metric is the
  * difference between before and after. So the scale is there, but it can be skipped.
@@ -19,7 +25,12 @@ import { BUTTON } from './controls'
 export interface DialogEndSheetProps {
   open: boolean
   onClose(): void
-  onSubmit(takeaway: string | null, tensionAfter: number | null): void
+  onSubmit(takeaway: string | null, tensionAfter: number | null, recapSource: EndRecapSource): void
+  /** «Подводить итог автоматически»: null until the setting is read; absent hides the row (an agent without recaps). */
+  recapEnabled?: boolean | null
+  onRecapEnabledChange?(next: boolean): void
+  /** «Предзаполнить»: the draft, or the reason it could not be written. */
+  onDraft?(): Promise<{ recap: string } | { error: string }>
   /** The end request is in flight: one press is enough, and the sheet must not vanish under it. */
   busy: boolean
   error: string
@@ -32,12 +43,40 @@ const SCALE = Array.from({ length: 10 }, (_, index) => index + 1)
 // conversation without scrolling.
 const SHORT_BUTTON = '[@media(max-height:520px)]:h-11 [@media(max-height:520px)]:flex-1'
 
-export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }: DialogEndSheetProps) {
+export default function DialogEndSheet({
+  open,
+  onClose,
+  onSubmit,
+  busy,
+  error,
+  recapEnabled = null,
+  onRecapEnabledChange,
+  onDraft,
+}: DialogEndSheetProps) {
   // Held here, not in the modal body (which unmounts on close): going back to the conversation
   // must not throw away what the person had already written.
   const [takeaway, setTakeaway] = useState('')
   const [tension, setTension] = useState<number | null>(null)
   const scaleLabelId = useId()
+  const [drafted, setDrafted] = useState(false)
+  const [drafting, setDrafting] = useState(false)
+  const [recapError, setRecapError] = useState('')
+
+  async function draft() {
+    if (!onDraft || drafting) return
+    setDrafting(true)
+    setRecapError('')
+    const result = await onDraft()
+    setDrafting(false)
+    if ('error' in result) return setRecapError(result.error)
+    setTakeaway(result.recap.slice(0, InputLimit.TakeawayMax))
+    setDrafted(true)
+  }
+
+  function submit() {
+    if (busy) return
+    onSubmit(takeaway.trim() || null, tension, drafted ? 'draft' : 'manual')
+  }
 
   return (
     <Modal
@@ -48,7 +87,7 @@ export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }:
       className="tab:w-[min(92vw,600px)]"
     >
       <div className="flex flex-col gap-3 [@media(max-height:520px)]:gap-2">
-        <p className="text-base leading-[1.55] text-dim">Одна фраза, если захочется. Её увидишь только ты.</p>
+        <p className="text-base leading-[1.55] text-dim">Это и есть итог разговора, его увидишь только ты. Оставь пустым: подведу итог сам.</p>
         <Textarea
           // A box of its own height, as before: it stays resizable and does not grow with the text.
           className="field-sizing-fixed resize-y [@media(max-height:520px)]:min-h-14"
@@ -59,6 +98,26 @@ export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }:
           value={takeaway}
           onChange={(event) => setTakeaway(event.target.value)}
         />
+        {onDraft && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(BUTTON, 'h-auto min-h-11 self-start px-4')}
+            aria-busy={drafting}
+            disabled={drafting || busy}
+            onClick={() => void draft()}
+            data-testid="recap-draft"
+          >
+            {drafting ? <Loader2 aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Sparkles aria-hidden="true" />}
+            Предзаполнить
+          </Button>
+        )}
+        {recapError && (
+          <FieldError className="leading-[1.4]" data-testid="recap-error">
+            {recapError}
+          </FieldError>
+        )}
 
         <p id={scaleLabelId} className="text-sm leading-snug text-faint">
           Насколько тяжело сейчас? 1 — легко, 10 — очень тяжело.
@@ -94,6 +153,16 @@ export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }:
           })}
         </div>
 
+        {onRecapEnabledChange && (
+          <label className="flex cursor-pointer items-center gap-3 py-1" data-testid="recap-auto">
+            <NativeCheckbox
+              checked={recapEnabled === true}
+              disabled={recapEnabled === null || busy}
+              onChange={(event) => onRecapEnabledChange(event.target.checked)}
+            />
+            <span className="text-base leading-snug text-foreground">{RECAP_AUTO_LABEL}</span>
+          </label>
+        )}
         {error && (
           <FieldError className="text-center leading-[1.4]" data-testid="form-error">
             {error}
@@ -107,9 +176,7 @@ export default function DialogEndSheet({ open, onClose, onSubmit, busy, error }:
           type="button"
           className={cn(BUTTON, BUSY, 'w-full bg-clip-border focus-visible:border-transparent tab:w-auto tab:flex-1', SHORT_BUTTON)}
           aria-busy={busy}
-          onClick={() => {
-            if (!busy) onSubmit(takeaway.trim() || null, tension)
-          }}
+          onClick={submit}
           data-testid="dialog-end-submit"
         >
           Завершить

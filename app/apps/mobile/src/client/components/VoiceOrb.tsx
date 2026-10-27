@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { startOrbMotion, type OrbMotionState } from '@ryadom/client-core/voice/orb-motion'
+import type { OrbMood } from '@ryadom/client-core/voice/orb-mood'
 
 /**
  * The sphere of the voice screen. It is the interface itself: what it does tells the person who has
@@ -11,18 +12,21 @@ import { startOrbMotion, type OrbMotionState } from '@ryadom/client-core/voice/o
  *  - thinking: violet, the lit edge travels slowly around while the agent prepares an answer
  *  - speaking: warm, swells with the agent's voice
  *
- * The tone follows the state only. Colour by the person's mood or intent needs a field from the
- * agent that the contract does not have yet; it would plug in here as another `data-orb` value.
+ * The tone follows the state, and over it the mood: `data-mood` recolours the sphere (sleepy: violet,
+ * angry: red, afraid: green) when the agent reports one (REQ-VOICE-10).
  */
 export type OrbState = OrbMotionState
 
 export default function VoiceOrb({
   state,
   level,
+  mood,
 }: {
   state: OrbState
   /** Loudness 0..1 of whoever is making sound now, read on every animation frame. */
   level: () => number
+  /** Mood to show over the state's colours; none for the plain look. */
+  mood?: OrbMood | null
 }) {
   const swell = useRef<HTMLDivElement>(null)
   // The loop must outlive re-renders: restarting it on a new state or a new closure would drop the
@@ -42,7 +46,7 @@ export default function VoiceOrb({
   }, [])
 
   return (
-    <div className="rd-orb" data-orb={state} aria-hidden="true">
+    <div className="rd-orb" data-orb={state} data-mood={mood ?? undefined} aria-hidden="true">
       <div ref={swell} className="rd-orb-swell">
         <div className="rd-breathing">
           <span className="rd-breathing-core" />

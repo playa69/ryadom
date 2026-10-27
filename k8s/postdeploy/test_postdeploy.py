@@ -25,7 +25,7 @@ from common import (
     opus_packets,
 )
 
-EXPECT_MEMORY_MODE = os.environ.get("EXPECT_MEMORY_MODE", "off")
+EXPECT_MEMORY_MODE = os.environ.get("EXPECT_MEMORY_MODE", "on")
 
 
 def instant(value: str) -> datetime:

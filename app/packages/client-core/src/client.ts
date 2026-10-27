@@ -56,7 +56,14 @@ import type {
   DialogApiErrorCode,
   DialogApiResponse,
   DialogMode,
+  DeleteDialogApiResponse,
+  DialogRecapApiErrorCode,
+  DialogSettingsApiResponse,
+  DraftDialogRecapApiResponse,
   EndDialogApiRequest,
+  ListDialogRecapsApiResponse,
+  PutDialogRecapApiRequest,
+  PutDialogRecapApiResponse,
   EndDialogApiResponse,
   ListDialogsApiResponse,
   StartDialogApiErrorCode,
@@ -71,6 +78,8 @@ import {
   type CreateMemoryFactApiErrorCode,
   type CreateMemoryFactApiRequest,
   type ForgetMemoryApiErrorCode,
+  type MemoryInstructionApiErrorCode,
+  type MemoryInstructionApiResponse,
   type MemoryApiResponse,
   type MemoryChangesApiErrorCode,
   type MemoryChangesApiResponse,
@@ -89,9 +98,20 @@ import {
   type SharedDialogApiResponse,
 } from '@ryadom/contracts/api/dialog-shares'
 import {
+  DiaryApiErrorCode,
+  type CreateWeekSummaryApiRequest,
+  type DiaryApiResponse,
+  type DiarySummariesApiResponse,
+  type DiarySummaryApi,
+  type PutMoodCheckinApiRequest,
+  type PutMoodCheckinApiResponse,
+  type WidgetTokenApiResponse,
+} from '@ryadom/contracts/api/diary'
+import {
   ApiPath,
   dialogEndPath,
   dialogPath,
+  dialogRecapPath,
   dialogSharePath,
   memoryFactPath,
   sessionPath,
@@ -732,6 +752,40 @@ export function createClient(config: ClientConfig) {
         body: data,
       }),
 
+    /** «Удалить разговор»: the conversation, its recap and the share link go; the facts of memory stay. */
+    deleteDialog: (dialogId: string): Promise<ApiOutcome<DeleteDialogApiResponse, DialogApiErrorCode>> =>
+      apiOutcome<DeleteDialogApiResponse, DialogApiErrorCode>(dialogPath(dialogId), { method: 'DELETE' }),
+
+    /** The recap of an ended conversation, written by the person in the journal. */
+    putDialogRecap: (
+      dialogId: string,
+      data: PutDialogRecapApiRequest,
+    ): Promise<ApiOutcome<PutDialogRecapApiResponse, DialogRecapApiErrorCode>> =>
+      apiOutcome<PutDialogRecapApiResponse, DialogRecapApiErrorCode>(dialogRecapPath(dialogId), {
+        method: 'PUT',
+        body: data,
+      }),
+
+    /** «Предзаполнить»: a draft the person edits; nothing is saved. */
+    draftDialogRecap: (
+      dialogId: string,
+    ): Promise<ApiOutcome<DraftDialogRecapApiResponse, DialogRecapApiErrorCode>> =>
+      apiOutcome<DraftDialogRecapApiResponse, DialogRecapApiErrorCode>(`${dialogRecapPath(dialogId)}/draft`, {
+        method: 'POST',
+      }),
+
+    listDialogRecaps: (before?: string): Promise<ListDialogRecapsApiResponse> =>
+      apiFetch<ListDialogRecapsApiResponse>(
+        `${ApiPath.DialogRecaps}${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    /** «Подводить итог автоматически». */
+    getDialogSettings: (): Promise<DialogSettingsApiResponse> =>
+      apiFetch<DialogSettingsApiResponse>(ApiPath.DialogSettings),
+
+    putDialogSettings: (recapEnabled: boolean): Promise<DialogSettingsApiResponse> =>
+      apiFetch<DialogSettingsApiResponse>(ApiPath.DialogSettings, { method: 'PUT', body: { recapEnabled } }),
+
     /** A live dialog connection bound to this client's session and address. */
     createDialogSocket: (
       dialogId: string,
@@ -760,6 +814,37 @@ export function createClient(config: ClientConfig) {
     getAppStatus: (query: string): Promise<AppStatusApiResponse> =>
       apiFetch<AppStatusApiResponse>(`${ApiPath.AppStatus}?${query}`),
 
+    // ─── mood diary ───────────────────────────────────────────────────────────
+    // Moods and summaries are the person's own: the screens show them and keep them in memory only,
+    // never in logs or analytics.
+
+    /** Today's note, the last 28 days, the streak and the week. */
+    getDiary: (): Promise<DiaryApiResponse> => apiFetch<DiaryApiResponse>(ApiPath.Diary),
+
+    /** Saves or replaces the note of today (`date` is for the offline queue: today or yesterday). */
+    putMoodCheckin: (
+      data: PutMoodCheckinApiRequest,
+    ): Promise<ApiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>> =>
+      apiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>(ApiPath.DiaryCheckinToday, {
+        method: 'PUT',
+        body: data,
+      }),
+
+    listDiarySummaries: (before?: string): Promise<DiarySummariesApiResponse> =>
+      apiFetch<DiarySummariesApiResponse>(
+        `${ApiPath.DiarySummaries}?kind=week${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    /** «Обновить итоги»: writes the text of the current week again now (once in ten minutes). */
+    createWeekSummary: (
+      data: CreateWeekSummaryApiRequest,
+    ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
+      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
+
+    /** The token of the Android widget; shown once. */
+    createWidgetToken: (): Promise<WidgetTokenApiResponse> =>
+      apiFetch<WidgetTokenApiResponse>(ApiPath.DiaryWidgetToken, { method: 'POST' }),
+
     // ─── memory ───────────────────────────────────────────────────────────────
     // What comes back holds the person's own words: the screens show it and keep it in memory only,
     // never in logs, analytics or storage.
@@ -785,6 +870,15 @@ export function createClient(config: ClientConfig) {
         },
       )
     },
+
+    /** The switches "Запоминать чувствительное" and "Опираться на прошлые разговоры": without `enabled`, so no consent is involved. */
+    updateMemorySettings: (
+      change: Pick<UpdateMemorySettingsApiRequest, 'sensitiveEnabled' | 'chatSearchEnabled'>,
+    ): Promise<ApiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>> =>
+      apiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>(ApiPath.MemorySettings, {
+        method: 'PUT',
+        body: change,
+      }),
 
     /** A fact the person writes themselves: it is theirs and pinned. */
     createMemoryFact: (
@@ -822,6 +916,15 @@ export function createClient(config: ClientConfig) {
       apiOutcome<MemoryChangesApiResponse, MemoryChangesApiErrorCode>(
         `${ApiPath.MemoryChanges}?dialogId=${encodeURIComponent(dialogId)}`,
       ),
+
+    /** "Скажи, что поправить или убрать": a request in the person's words, carried out on the notes. */
+    memoryInstruction: (
+      text: string,
+    ): Promise<ApiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>> =>
+      apiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>(ApiPath.MemoryInstruction, {
+        method: 'POST',
+        body: { text },
+      }),
 
     /** "Скачать мою память": everything, guesses and proposed facts included. */
     exportMemory: (): Promise<MemoryExportApiResponse> =>

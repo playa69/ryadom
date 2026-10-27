@@ -36,6 +36,22 @@ class FactRejected(MemoryServiceError):
         self.reason = reason
 
 
+class NoteNotFound(MemoryServiceError):
+    status, code, message = 404, "NOTE_NOT_FOUND", "Заметка не найдена"
+
+
+class NoteRejected(MemoryServiceError):
+    status, code, message = 422, "NOTE_REJECTED", "Это нельзя запомнить"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class MemoryActionUnsupported(MemoryServiceError):
+    status, code, message = 422, "MEMORY_ACTION_UNSUPPORTED", "Это действие с памятью больше не поддерживается"
+
+
 class MemoryValidation(MemoryServiceError):
     status, code = 422, "AGENT_VALIDATION"
 

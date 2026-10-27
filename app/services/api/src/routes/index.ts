@@ -18,6 +18,7 @@ import { resetPasswordRoutes } from './auth/reset-password'
 import { sessionsRoutes } from './auth/sessions'
 import { telegramRoutes } from './auth/telegram'
 import { dialogSharesRoutes } from './dialog-shares'
+import { diaryRoutes } from './diary'
 import { dialogsRoutes } from './dialogs'
 import { healthRoutes } from './health'
 import { memoryRoutes } from './memory'
@@ -49,4 +50,5 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   dialogsRoutes(app, deps)
   dialogSharesRoutes(app, deps)
   memoryRoutes(app, deps)
+  diaryRoutes(app, deps)
 }

@@ -39,10 +39,13 @@ from app.core.metrics import (
     DIALOG_LOADS_TOTAL,
     DIALOG_MESSAGES_IN_MEMORY,
     DIALOG_USERS_IN_MEMORY,
+    DIALOG_RETENTION_DELETED_TOTAL,
+    DIALOG_RETENTION_WOULD_DELETE,
     DIALOGS_TOTAL,
     SPEECH_SECONDS_TOTAL,
 )
 from app.services.dialog_db import DialogDatabase, DialogDbError, DialogWrite, StoredDialog, encode_summary
+from app.services import recaps
 from app.services.usage import Usage
 
 logger = logging.getLogger("agent.dialogs")
@@ -94,6 +97,15 @@ class Dialog:
     reply_index: int = 0
     # Голос озвучки этого диалога (род): задаётся при старте или кадром set_voice.
     voice: Voice = "male"
+    # Конкретный голос Gemini (выбор в профиле), если человек его выбрал; иначе озвучивает голос рода. Только в памяти: приложение
+    # присылает его при каждом старте диалога, поэтому после перезапуска агента возобновлённый диалог получает его заново.
+    voice_name: str | None = None
+
+    @property
+    def voice_key(self) -> str:
+        """Ключ голоса для Gemini Live: имя выбранного голоса или род (его имя берёт коннектор из GEMINI_LIVE_VOICE_*)."""
+        return self.voice_name or self.voice
+
     # Один живой сокет на диалог (specs/agent-api «Обрыв и переподключение»).
     has_live_socket: bool = False
     # Зовёт хранилище, когда диалог завершён снаружи сокета (человек начал новый разговор с другого экрана): сокет сообщает
@@ -140,7 +152,7 @@ class MemoryLink(Protocol):
         ...
 
     async def prepare(self, dialog: Dialog) -> None:
-        """Загрузить доступную сводку перед открытием модельной сессии."""
+        """Загрузить состояние памяти и блок памяти перед открытием модельной сессии."""
         ...
 
     def enabled(self, user_id: str) -> bool:
@@ -160,8 +172,15 @@ class MemoryLink(Protocol):
         ...
 
     def user_erased(self, user_id: str) -> None:
-        """Человек стёрт: забыть его сводку и настройки в кэше и не включать память обратно. Зовётся также при
-        холодной загрузке человека с меткой `memory_deletions`: оставшийся до джобы датасет не должен воскресать."""
+        """Человек стёрт: забыть его заметки и настройки в кэше. Внешний индекс к этому моменту удалён (`erase_user_data`)."""
+        ...
+
+    async def dialog_deleting(self, user_id: str, dialog_id: str) -> None:
+        """Разговор удаляется (вручную или по сроку): убрать его документ из индекса прошлых разговоров. Вызывается до удаления с диска."""
+        ...
+
+    async def erase_user_data(self, user_id: str) -> None:
+        """Стирание аккаунта: данные человека во внешнем индексе удаляются синхронно; исключение — удалить не удалось."""
         ...
 
     def user_message(self, dialog: Dialog, text: str) -> None:
@@ -210,6 +229,8 @@ class DialogStore:
         self._default_voice = default_voice
         # Последний выбор голоса человека: следующий диалог без явного голоса получит его.
         self._voice_prefs: dict[str, Voice] = {}
+        # Конкретный голос Gemini из профиля; задаётся вместе с родом при старте и сбрасывается выбором рода (`set_voice`).
+        self._voice_name_prefs: dict[str, str] = {}
         self._last_started: datetime | None = None
         # Диск. Всё ниже, кроме _db, нужно только при подключённой базе.
         self._db: DialogDatabase | None = None
@@ -234,6 +255,18 @@ class DialogStore:
         self._background: set[asyncio.Task[Any]] = set()
         # Память агента; None — память не подключена (нет диска или тесты без неё).
         self.memory: MemoryLink | None = None
+        # Модель для итогов разговоров (add-mood-diary, D13): ставит приложение; None — шаблонные итоги (`LLM_MODE=template`).
+        self.recap_chat: Any = None
+        self.recap_template = False  # без модели допустим шаблонный итог (`LLM_MODE=template`, разработка и тесты)
+        self.recap_timeout_seconds = 20.0
+        # Настройка «Подводить итог автоматически» (`dialog_settings`): человек → включено; нет записи — включено.
+        self._recap_enabled: dict[str, bool] = {}
+        self._persisted_settings: dict[str, bool] = {}
+        # Срок хранения разговоров (D14): сколько дней после последнего сообщения; 0 — бессрочно. Сухой прогон только считает.
+        self.retention_days = 0
+        self.retention_dry_run = True
+        self.retention_interval_seconds = 3600.0
+        self._last_retention = 0.0
 
     # ─── время ────────────────────────────────────────────────────────────────
 
@@ -260,7 +293,12 @@ class DialogStore:
         return next((d for d in self._dialogs(user_id).values() if d.ended_at is None), None)
 
     def start(
-        self, user_id: str, voice: Voice | None = None, new: bool = False, memory_mode: MemoryMode = "on"
+        self,
+        user_id: str,
+        voice: Voice | None = None,
+        new: bool = False,
+        memory_mode: MemoryMode = "on",
+        voice_name: str | None = None,
     ) -> tuple[Dialog, bool, int | None]:
         """Начать или возобновить диалог. Возвращает (диалог, resumed, часов с прошлого разговора).
 
@@ -292,7 +330,13 @@ class DialogStore:
         self._dialogs(user_id)[dialog.id] = dialog
         if voice is not None:
             self._voice_prefs[user_id] = voice
+            # Приложение присылает голос целиком: без имени человек остановился на голосе рода.
+            if voice_name is None:
+                self._voice_name_prefs.pop(user_id, None)
+            else:
+                self._voice_name_prefs[user_id] = voice_name
         dialog.voice = voice or self._voice_prefs.get(user_id) or self._default_voice
+        dialog.voice_name = self._voice_name_prefs.get(user_id)
         dialog.greeting = GREETING_RESUMED if resumed else GREETING_NEW
         dialog.greeting_pending = True
         self._touch(dialog)
@@ -320,7 +364,9 @@ class DialogStore:
     def set_voice(self, dialog: Dialog, voice: Voice) -> None:
         """Сменить голос идущего диалога; запоминается и как предпочтение человека."""
         dialog.voice = voice
+        dialog.voice_name = None  # род выбран прямо: голос рода, а не прежний выбранный по имени
         self._voice_prefs[dialog.user_id] = voice
+        self._voice_name_prefs.pop(dialog.user_id, None)
         self._touch(dialog)
 
     def add_message(
@@ -377,8 +423,23 @@ class DialogStore:
             dialog.usage.extend(rows)
             self._touch(dialog)
 
-    def end(self, dialog: Dialog, takeaway: str | None, tension_after: int | None) -> dict[str, Any]:
-        """Завершить диалог. Повторный вызов отдаёт ту же сводку."""
+    def end(
+        self,
+        dialog: Dialog,
+        takeaway: str | None,
+        tension_after: int | None,
+        recap_source: Literal["manual", "draft"] = "manual",
+        deleting: bool = False,
+    ) -> dict[str, Any]:
+        """Завершить диалог. Повторный вызов отдаёт ту же сводку (с актуальным итогом).
+
+        `deleting` — разговор завершается, чтобы тут же быть удалённым («Удалить разговор»): ни автоитог, ни извлечение памяти
+        для него не запускаются.
+
+        Поле «Что забираешь с собой» (`takeaway`) и есть итог: если человек его заполнил, оно сохраняется сразу как итог
+        и автоматическим не заменяется (`recap_source` — `draft`, если поле предзаполнил черновик).
+        Без него и при включённой настройке итог подводится в фоне (`recapStatus: pending`), если разговор для этого годится.
+        """
         if dialog.summary is not None:
             return dialog.summary
         first_user = next((m for m in dialog.messages if m.role == "user"), None)
@@ -394,15 +455,105 @@ class DialogStore:
             # аналитике шлюза: он видит лишь своё соединение. В контракт приложения эти поля не входят.
             "userMessages": sum(1 for m in dialog.messages if m.role == "user"),
             "assistantMessages": sum(1 for m in dialog.messages if m.role == "assistant"),
+            "recap": None,
+            "recapStatus": "none",
+            "recapSource": None,
+            # Можно ли у этого разговора завести итог (мало сказано, кризис, не сохранённый разговор — нельзя): журнал предлагает «Написать итог» только если можно.
+            "recapAvailable": recaps.eligible(dialog),
         }
+        given = recaps.clean_recap(takeaway)
+        if given is not None and recaps.eligible(dialog):
+            self._store_recap(dialog, given, recap_source)
+        elif not deleting and recaps.eligible(dialog) and self.recap_enabled(dialog.user_id):
+            dialog.summary["recapStatus"] = "pending"
+            self._spawn_recap(dialog)
         self._touch(dialog)
         memory = self.memory
-        if memory is not None and self._owns(dialog):
+        if memory is not None and not deleting and self._owns(dialog):
             try:
                 memory.dialog_ended(dialog)
             except Exception:  # noqa: BLE001 - память не должна мешать завершению разговора (I3)
                 logger.exception("memory dialog_ended failed dialog=%s", dialog.id)
         return dialog.summary
+
+    # ─── итоги разговоров (add-mood-diary, D13) ───────────────────────────────
+
+    def _store_recap(self, dialog: Dialog, recap: str, source: str) -> None:
+        summary = dialog.summary
+        if summary is None:
+            return
+        summary["recap"] = recap
+        summary["recapStatus"] = "ready"
+        summary["recapSource"] = source
+        summary["recapAt"] = now_iso()
+        self._touch(dialog)
+
+    def _spawn_recap(self, dialog: Dialog) -> None:
+        try:
+            self._spawn(self._auto_recap(dialog))
+        except RuntimeError:  # нет цикла событий (синхронный вызов в тесте): итог подведёт следующий `end` или человек вручную
+            logger.warning("auto recap not started: no event loop dialog=%s", dialog.id)
+
+    async def _auto_recap(self, dialog: Dialog) -> None:
+        """Автоматический итог в фоне: не заменяет ручной и не пишет текст итога в журнал."""
+        recap = await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds, self.recap_template)
+        summary = dialog.summary
+        if summary is None or summary.get("recapStatus") != "pending":
+            return  # пока считалось, человек написал итог сам или разговор удалили
+        if recap is None:
+            summary["recapStatus"] = "none"  # модель не ответила: итог можно завести вручную или через «Предзаполнить»
+            self._touch(dialog)
+            return
+        self._store_recap(dialog, recap, "auto")
+
+    def set_recap(self, dialog: Dialog, recap: str, source: Literal["manual", "draft"]) -> dict[str, Any] | None:
+        """Сохранить итог завершённого разговора, написанный человеком (журнал: «Написать итог»). None — итога у разговора быть не может."""
+        if dialog.summary is None or not recaps.eligible(dialog):
+            return None
+        cleaned = recaps.clean_recap(recap)
+        if cleaned is None:
+            return None
+        self._store_recap(dialog, cleaned, source)
+        return dialog.summary
+
+    async def draft_recap(self, dialog: Dialog) -> str | None:
+        """Черновик итога для «Предзаполнить»: ничего не сохраняется. None — модель не ответила."""
+        return await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds, self.recap_template)
+
+    def can_recap(self, dialog: Dialog) -> bool:
+        return recaps.eligible(dialog)
+
+    def list_recaps(self, user_id: str, limit: int, before: str | None) -> "tuple[list[Dialog], str | None]":
+        """Разговоры с готовым итогом, новые сверху (записи журнала). Курсор тот же, что у журнала."""
+        ordered = sorted(
+            (d for d in self._dialogs(user_id).values() if d.summary and d.summary.get("recapStatus") == "ready"),
+            key=lambda d: (d.started_at, d.id),
+            reverse=True,
+        )
+        if before is not None:
+            bound = _decode_cursor(before)
+            ordered = [d for d in ordered if (d.started_at, d.id) < bound]
+        page = ordered[:limit]
+        return page, (_encode_cursor(page[-1]) if len(ordered) > limit and page else None)
+
+    def recap_enabled(self, user_id: str) -> bool:
+        return self._recap_enabled.get(user_id, True)
+
+    def set_recap_enabled(self, user_id: str, enabled: bool) -> None:
+        self._recap_enabled[user_id] = enabled
+        if self._db is not None:
+            self._spawn(self._save_settings(user_id, enabled))
+
+    async def _save_settings(self, user_id: str, enabled: bool) -> None:
+        db = self._db
+        if db is None:
+            return
+        try:
+            await asyncio.to_thread(db.save_settings, user_id, enabled)
+            self._persisted_settings[user_id] = enabled
+        except Exception:  # noqa: BLE001 - настройка остаётся в памяти пода до следующей записи
+            DIALOG_DB_ERRORS_TOTAL.labels("write").inc()
+            logger.exception("dialog settings write failed user=%s", user_id)
 
     def mark_crisis(self, dialog: Dialog) -> None:
         """В разговоре был кризис (ушёл кадр safety): автоматическое извлечение памяти из него пропускается (I13)."""
@@ -485,15 +636,32 @@ class DialogStore:
 
     async def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         """Удалить один диалог из памяти процесса и пометить `deleted_at` на диске. Сообщения, идентификаторы клиента
-        и расход остаются в базе до отдельной джобы физической очистки. Маршрута в API нет: так воркер памяти удаляет
-        разговоры «Без памяти» (MEM-9, MEM-13.4).
+        и расход остаются в базе до отдельной джобы физической очистки (PROTEUS-255). Вызывают маршрут
+        `DELETE /v1/users/{id}/dialogs/{dialogId}` (через `delete_by_person`) и проход срока хранения; перед удалением
+        вызывается `memory.dialog_deleting`: документ разговора в Cognee уходит в очередь на жёсткое удаление.
 
         `forget_derived` — убрать и факты памяти, у которых этот диалог единственный источник (см. `DialogDatabase.delete_dialog`).
         Исключение — диск не ответил; из памяти процесса диалог к этому моменту уже убран.
         """
+        memory = self.memory
+        if memory is not None:
+            try:
+                await memory.dialog_deleting(user_id, dialog_id)  # документ в индексе уходит в очередь, пока известен его id
+            except Exception:  # noqa: BLE001 - память не должна мешать удалению разговора
+                logger.exception("memory dialog_deleting failed dialog=%s", dialog_id)
         async with self._load_lock:  # догрузка выгруженного человека иначе могла прочитать диалог до удаления и вернуть его в память
             self._forget(user_id, dialog_id)
             await self._delete_on_disk(user_id, dialog_id, forget_derived)
+
+    async def delete_by_person(self, dialog: Dialog) -> None:
+        """«Удалить разговор» в журнале: диалог, его итог и сообщения стираются. Сокет открытого диалога получает `ended`.
+        Заметки и итоги недели здесь не трогаются: заметки живут в памяти, итог недели сбрасывает шлюз."""
+        if dialog.summary is None:
+            # Сначала завершаем (сокет получит `ended`, разговор получает сводку), потом удаляем; итог и память для него не запускаются.
+            self.end(dialog, None, None, deleting=True)
+        if dialog.on_replaced is not None:
+            dialog.on_replaced(None)
+        await self.delete_dialog(dialog.user_id, dialog.id, False)
 
     async def _delete_on_disk(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         db = self._db
@@ -516,7 +684,10 @@ class DialogStore:
             self._watch.pop(dialog_id, None)
             self._persisted.pop(dialog_id, None)
         self._voice_prefs.pop(user_id, None)
+        self._voice_name_prefs.pop(user_id, None)
         self._persisted_prefs.pop(user_id, None)
+        self._recap_enabled.pop(user_id, None)
+        self._persisted_settings.pop(user_id, None)
         memory = self.memory
         if memory is not None:
             memory.user_erased(user_id)
@@ -589,7 +760,7 @@ class DialogStore:
                 return
             started = time.monotonic()
             try:
-                stored, pref, memory_deleted = await asyncio.to_thread(self._load_from_disk, db, user_id)
+                stored, pref, recap_setting = await asyncio.to_thread(self._load_from_disk, db, user_id)
             except Exception:
                 DIALOG_DB_ERRORS_TOTAL.labels("load").inc()
                 logger.exception("dialog db load failed user=%s", user_id)
@@ -600,6 +771,9 @@ class DialogStore:
                     continue
                 dialogs[item.id] = self._from_stored(item)
                 self._persisted[item.id] = self._snapshot_of(dialogs[item.id])
+            if recap_setting is not None and user_id not in self._recap_enabled:
+                self._recap_enabled[user_id] = recap_setting
+                self._persisted_settings[user_id] = recap_setting
             if pref in ("male", "female") and user_id not in self._voice_prefs:
                 self._voice_prefs[user_id] = pref  # type: ignore[assignment]
             if pref:
@@ -615,20 +789,17 @@ class DialogStore:
             memory = self.memory
             if memory is not None:
                 try:
-                    if memory_deleted:
-                        # Метка memory_deletions: память человека стёрта. Датасет Cognee мог остаться до джобы —
-                        # не даём ему воскреснуть после рестарта или выгрузки (user_loaded включил бы его обратно).
-                        memory.user_erased(user_id)
-                    else:
-                        await memory.user_loaded(user_id)
+                    # Метки memory_deletions агента 0.8.8 здесь не читаются: при открытии базы они перенесены в очередь
+                    # memory_outbox, а выключенная ими память записана в memory_settings (DialogDatabase.open).
+                    await memory.user_loaded(user_id)
                 except Exception:  # noqa: BLE001 - без памяти разговор идёт, без диалогов — нет (I3)
                     logger.exception("memory load failed user=%s", user_id)
 
     @staticmethod
-    def _load_from_disk(db: DialogDatabase, user_id: str) -> tuple[list[StoredDialog], str | None, bool]:
-        """Диалоги человека, его голос и метка стёртой памяти — одним обращением к диску (выполняется в потоке)."""
+    def _load_from_disk(db: DialogDatabase, user_id: str) -> tuple[list[StoredDialog], str | None, bool | None]:
+        """Диалоги человека, его голос и настройка итогов — одним обращением к диску (выполняется в потоке)."""
         stored, pref = db.load_user(user_id)
-        return stored, pref, db.is_memory_deleted(user_id)
+        return stored, pref, db.load_settings(user_id)
 
     @staticmethod
     def _from_stored(item: StoredDialog) -> Dialog:
@@ -802,9 +973,10 @@ class DialogStore:
 
     async def erase_user_durable(self, user_id: str) -> None:
         """Стереть всё о человеке в памяти и на диске. Идемпотентно. Стирание мягкое: строки диалогов и выбор голоса
-        получают `deleted_at` и остаются в базе (чтения их не видят, физически уберёт отдельная джоба), а в
-        `memory_deletions` встаёт метка для удаления датасета Cognee. Исключение при сбое диска или если диск задан,
-        но не подключён: вызывающий (приложение) не должен считать данные стёртыми и может повторить."""
+        получают `deleted_at` и остаются в базе (чтения их не видят, физически уберёт отдельная джоба), заметки и очередь
+        Cognee человека удаляются; датасет Cognee маршрут стирания удаляет раньше (`memory.erase_user_data`). Исключение
+        при сбое диска или если диск задан, но не подключён: вызывающий (приложение) не должен считать данные стёртыми и
+        может повторить."""
         async with self._load_lock:  # не стирать посреди загрузки того же человека: прочитанное с диска иначе вернулось бы в память
             self.erase_user(user_id)
             db = self._db
@@ -824,44 +996,6 @@ class DialogStore:
             # Обращение посреди стирания могло снова поставить отметку, а выгрузка — запомнить человека: стёртого не помним.
             self._last_access.pop(user_id, None)
             self._evicted.discard(user_id)
-
-    async def mark_memory_deleted(self, user_id: str) -> None:
-        """Записать на диск метку «память человека удалена» (`memory_deletions`): по ней отдельная джоба физически
-        удалит датасет Cognee. Зовёт REST «забыть всё» (DELETE …/memory) до выключения памяти в бэкенде.
-
-        Идемпотентно. Без диска (разработка, тесты без базы) — нет-оп, как раньше; но если диск задан в настройках
-        и не подключён или запись сбоила — исключение: вызывающий не должен отвечать «забыто», метка обязательна."""
-        db = self._db
-        if db is None:
-            if self._disk_required:
-                DIALOG_DB_ERRORS_TOTAL.labels("mark").inc()
-                raise DialogDbError("хранилище диалогов недоступно: метку об удалении памяти записать нельзя")
-            return
-        try:
-            await asyncio.to_thread(db.mark_memory_deleted, user_id)
-        except Exception:
-            DIALOG_DB_ERRORS_TOTAL.labels("mark").inc()
-            logger.exception("dialog db memory deletion mark failed user=%s", user_id)
-            raise
-
-    async def clear_memory_deleted(self, user_id: str) -> None:
-        """Снять метку удаления памяти после повторного согласия, не трогая пользовательские данные.
-
-        Без необязательного диска — нет-оп. Если обязательный диск недоступен или запись не удалась, вызывающий
-        обязан выключить память и не подтверждать включение: иначе старая метка снова отключит её после рестарта.
-        """
-        db = self._db
-        if db is None:
-            if self._disk_required:
-                DIALOG_DB_ERRORS_TOTAL.labels("clear").inc()
-                raise DialogDbError("хранилище диалогов недоступно: метку удаления памяти снять нельзя")
-            return
-        try:
-            await asyncio.to_thread(db.clear_memory_deleted, user_id)
-        except Exception as error:
-            DIALOG_DB_ERRORS_TOTAL.labels("clear").inc()
-            logger.exception("dialog db memory deletion clear failed user=%s", user_id)
-            raise DialogDbError("не удалось снять метку удаления памяти") from error
 
     # ─── выгрузка неактивных ──────────────────────────────────────────────────
 
@@ -940,7 +1074,10 @@ class DialogStore:
             self._watch.pop(dialog_id, None)
             self._persisted.pop(dialog_id, None)
         self._voice_prefs.pop(user_id, None)
+        self._voice_name_prefs.pop(user_id, None)
         self._persisted_prefs.pop(user_id, None)
+        self._recap_enabled.pop(user_id, None)
+        self._persisted_settings.pop(user_id, None)
         self._loaded.discard(user_id)
         self._last_access.pop(user_id, None)
         memory = self.memory
@@ -986,6 +1123,47 @@ class DialogStore:
             logger.info("stale dialogs ended count=%d", ended)
         return ended
 
+    async def retention_pass(self, now: datetime) -> tuple[int, int]:
+        """Срок хранения разговоров (D14): разговор, чьё последнее сообщение старше `retention_days` дней, удаляется вместе с итогом.
+        Возвращает (сколько просрочено, сколько удалено). В сухом прогоне только считает (`agent_dialogs_retention_would_delete`).
+        Заметки, отметки и итоги недели не затрагиваются, итоги недели из-за чистки не пересчитываются."""
+        if self.retention_days <= 0:
+            return 0, 0
+        cutoff = (now - timedelta(days=self.retention_days)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        expired: dict[str, str] = {}  # dialog_id -> user_id
+        for user_id, dialogs in self._users.items():
+            for dialog in dialogs.values():
+                if dialog.has_live_socket or dialog.on_replaced is not None:
+                    continue
+                stamp = dialog.messages[-1].created_at if dialog.messages else dialog.started_at
+                if stamp < cutoff:
+                    expired[dialog.id] = user_id
+        db = self._db
+        if db is not None:
+            try:
+                for user_id, dialog_id in await asyncio.to_thread(db.expired_dialogs, cutoff):
+                    expired.setdefault(dialog_id, user_id)
+            except Exception:  # noqa: BLE001 - чистка подождёт следующего прохода
+                DIALOG_DB_ERRORS_TOTAL.labels("load").inc()
+                logger.exception("dialog retention scan failed")
+        DIALOG_RETENTION_WOULD_DELETE.set(len(expired))
+        if self.retention_dry_run:
+            if expired:
+                logger.info("dialog retention dry run would_delete=%d", len(expired))
+            return len(expired), 0
+        deleted = 0
+        for dialog_id, user_id in expired.items():
+            try:
+                # Свежий диалог (человек только что вернулся) в списке прошлого прохода не удаляется заново: проверка по памяти.
+                await self.delete_dialog(user_id, dialog_id, False)
+                deleted += 1
+            except Exception:  # noqa: BLE001 - сбой одного разговора не останавливает проход
+                logger.exception("dialog retention delete failed dialog=%s", dialog_id)
+        if deleted:
+            DIALOG_RETENTION_DELETED_TOTAL.inc(deleted)
+            logger.info("dialog retention deleted=%d", deleted)
+        return len(expired), deleted
+
     async def evict_loop(self, interval: float) -> None:
         """Фон: раз в `interval` секунд автозавершение брошенных диалогов (`end_stale`) и выгрузка неактивных
         (`evict_idle`). Запускает и останавливает приложение (lifespan)."""
@@ -996,3 +1174,9 @@ class DialogStore:
                 self.evict_idle(time.monotonic())
             except Exception:  # noqa: BLE001 - проход не должен останавливать выгрузку: без неё память пода только растёт
                 logger.exception("dialog eviction pass failed")
+            if self.retention_days > 0 and time.monotonic() - self._last_retention >= self.retention_interval_seconds:
+                self._last_retention = time.monotonic()
+                try:
+                    await self.retention_pass(datetime.now(UTC))
+                except Exception:  # noqa: BLE001 - чистка не должна останавливать выгрузку
+                    logger.exception("dialog retention pass failed")

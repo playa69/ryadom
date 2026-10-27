@@ -165,6 +165,61 @@ describe('регистрация и вход', () => {
     ).toBe(422)
     expect(await read()).toMatchObject({ name: 'Анна', voice: 'male' })
   })
+
+  it('часовой пояс (REQ-WELL-01): по умолчанию Москва, меняется на известное имя IANA, чужое — 422', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    expect((await read()).timezone).toBe('Europe/Moscow')
+
+    const changed = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { timezone: 'Asia/Yekaterinburg' }, tokens.accessToken),
+    )
+    expect(changed.timezone).toBe('Asia/Yekaterinburg')
+
+    for (const bad of ['Mars/Olympus', '+03:00', '']) {
+      expect((await call(app, 'PATCH', '/api/auth/me', { timezone: bad }, tokens.accessToken)).status).toBe(422)
+    }
+    // A refused zone next to a good name changes nothing.
+    expect(
+      (await call(app, 'PATCH', '/api/auth/me', { name: 'Анна', timezone: 'Mars/Olympus' }, tokens.accessToken))
+        .status,
+    ).toBe(422)
+    expect((await read()).timezone).toBe('Asia/Yekaterinburg')
+  })
+
+  it('конкретный голос: по умолчанию голос рода, выбор задаёт и род, несовпадение и чужое имя — 400', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    const patch = (body: object) =>
+      call<MeApiResponse>(app, 'PATCH', '/api/auth/me', body, tokens.accessToken)
+    expect(await read()).toMatchObject({ voice: 'male', voiceName: 'Charon' })
+
+    // The voice fixes the gender with it, without the client saying it twice.
+    expect(ok<MeApiResponse>(await patch({ voiceName: 'Aoede' }))).toMatchObject({
+      voice: 'female',
+      voiceName: 'Aoede',
+    })
+    expect(await read()).toMatchObject({ voice: 'female', voiceName: 'Aoede' })
+    expect(ok<MeApiResponse>(await patch({ voice: 'male', voiceName: 'Puck' }))).toMatchObject({
+      voice: 'male',
+      voiceName: 'Puck',
+    })
+
+    // The gender alone goes back to the default voice of that gender.
+    expect(ok<MeApiResponse>(await patch({ voice: 'female' }))).toMatchObject({
+      voice: 'female',
+      voiceName: 'Kore',
+    })
+
+    // A name outside the catalog and a gender that disagrees with the name change nothing.
+    expect((await patch({ voiceName: 'Robot' })).status).toBe(400)
+    expect((await patch({ voice: 'male', voiceName: 'Aoede' })).status).toBe(400)
+    expect(await read()).toMatchObject({ voice: 'female', voiceName: 'Kore' })
+  })
 })
 
 describe('пароль', () => {

@@ -14,7 +14,19 @@ import pytest
 from app.services.dialog_db import DialogDatabase as PostgresDialogDatabase
 from app.services.dialog_db import encode_summary
 
-TABLES = ("model_usage", "client_ids", "messages", "voice_prefs", "memory_settings", "dialogs")
+TABLES = (
+    "model_usage",
+    "client_ids",
+    "messages",
+    "voice_prefs",
+    "dialog_settings",
+    "memory_settings",
+    "memory_notes",
+    "memory_outbox",
+    "memory_sources",
+    "memory_deletions",
+    "dialogs",
+)
 
 
 def _write(dialog_id: str, user_id: str, text: str = "привет") -> "object":
@@ -80,22 +92,26 @@ def test_apply_is_idempotent(db: PostgresDialogDatabase) -> None:
     assert db.counts() == (1, 1)
 
 
-def test_delete_dialog_cascades(db: PostgresDialogDatabase) -> None:
+def test_delete_dialog_is_soft_and_hidden_from_reads(db: PostgresDialogDatabase) -> None:
     db.apply([_write("d1", "u1"), _write("d2", "u1")])
     db.delete_dialog("u1", "d1", forget_derived=True)
     dialogs, pref = db.load_user("u1")
     assert [d.id for d in dialogs] == ["d2"]
     assert pref == "male"
-    assert db.counts() == (1, 1)
+    assert db.counts() == (2, 2)  # мягко: строки с пометкой ждут физической очистки
+    db.apply([_write("d1", "u1")])  # отложенная запись удалённый разговор не воскрешает
+    assert [d.id for d in db.load_user("u1")[0]] == ["d2"]
 
 
-def test_erase_user_cascades_and_keeps_others(db: PostgresDialogDatabase) -> None:
+def test_erase_user_is_soft_and_keeps_others(db: PostgresDialogDatabase) -> None:
     db.apply([_write("d1", "u1"), _write("d2", "u2")])
+    db.outbox_add("u1", "index_dialog", {"dialog_id": "d1"}, "2026-10-24T10:00:00.000Z", "2026-10-24T10:00:00.000Z")
     db.erase_user("u1")
     assert db.load_user("u1") == ([], None)
     dialogs, _ = db.load_user("u2")
     assert [d.id for d in dialogs] == ["d2"]
-    assert db.counts() == (1, 1)
+    assert db.counts() == (2, 2)  # мягко
+    assert db.outbox_pending() == 0  # очередь человека стёрта вместе с ним
     db.erase_user("u1")  # идемпотентно
 
 
@@ -133,3 +149,61 @@ def test_memory_settings_roundtrip_and_erase(db: PostgresDialogDatabase) -> None
     assert db.get_memory_settings("u1") is not None
     db.erase_user("u1")
     assert db.get_memory_settings("u1") is None
+
+
+def test_notes_crud_search_index_and_cascade_of_erase(db: PostgresDialogDatabase) -> None:
+    """Заметки: запись, список по давности и видам, правка, удаление; полнотекстовый индекс на месте; стирание человека убирает их."""
+    import uuid
+
+    def note(user: str, kind: str, text: str, at: str, sensitive: bool = False) -> tuple:
+        return (str(uuid.uuid4()), user, kind, text, sensitive, None, None, at, at)
+
+    first = note("u1", "situation", "Работает в продажах", "2026-10-24T10:00:00+00:00")
+    second = note("u1", "wellbeing", "Последние недели плохо спит", "2026-10-25T10:00:00+00:00", sensitive=True)
+    other = note("u2", "name", "Зовут Алекс", "2026-10-25T10:00:00+00:00")
+    for item in (first, second, other):
+        db.add_note(item)
+    assert db.count_notes("u1") == 2
+    assert [row[2] for row in db.list_notes("u1")] == ["Последние недели плохо спит", "Работает в продажах"]
+
+    assert db.update_note("u1", first[0], "Работает в продажах уже год", "2026-10-26T10:00:00+00:00")
+    assert not db.update_note("u2", first[0], "чужая", "2026-10-26T10:00:00+00:00")  # чужая заметка не правится
+    assert db.delete_notes("u1", only_sensitive=True) == 1  # выключили «чувствительное»
+    assert db.delete_note("u1", first[0]) and not db.delete_note("u1", first[0])
+    db.add_note(note("u1", "style", "Говорит на ты", "2026-10-26T10:00:00+00:00"))
+    db.erase_user("u1")
+    assert db.count_notes("u1") == 0 and db.count_notes("u2") == 1
+    db.open()  # повторное открытие: DDL идемпотентен и для новых таблиц
+
+
+def test_soft_deleted_dialogs_are_neither_indexed_nor_expired(db: PostgresDialogDatabase) -> None:
+    """Индекс прошлых разговоров и срок хранения не видят мягко удалённый разговор."""
+    ended = _write("d1", "u1")
+    ended.row = (*ended.row[:3], "2026-10-24T10:30:00+00:00", *ended.row[4:])
+    db.apply([ended, _write("d2", "u1")])
+    assert db.dialog_for_index("d1") is not None and db.indexable_dialog_ids("u1") == ["d1"]
+    assert {row[1] for row in db.expired_dialogs("2027-01-01T00:00:00.000Z")} == {"d1", "d2"}
+    db.delete_dialog("u1", "d1", forget_derived=False)
+    assert db.dialog_for_index("d1") is None and db.indexable_dialog_ids("u1") == []
+    assert {row[1] for row in db.expired_dialogs("2027-01-01T00:00:00.000Z")} == {"d2"}
+
+
+def test_memory_deletion_marks_of_0_8_8_move_to_the_outbox_once(db: PostgresDialogDatabase) -> None:
+    """Метки `memory_deletions` агента 0.8.8 при открытии базы уходят в очередь (`delete_dataset`), а память этих людей
+    записывается выключенной, не трогая уже сохранённое решение. Повторное открытие ничего не добавляет."""
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        conn.execute("CREATE TABLE memory_deletions (user_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)")
+        conn.execute(
+            "INSERT INTO memory_deletions VALUES ('forgot', '2026-10-25T10:00:00.000Z'), ('kept', '2026-10-26T10:00:00.000Z')"
+        )
+    db.put_memory_settings("kept", True, "2026-10-21", "2026-10-26T11:00:00.000Z", "2026-10-26T11:00:00.000Z")
+    for _ in range(2):
+        again = PostgresDialogDatabase(db.dsn)
+        again.open()
+        again.close()
+    due = db.outbox_due("2100-01-01T00:00:00.000Z")
+    assert sorted((row[1], row[2]) for row in due) == [("forgot", "delete_dataset"), ("kept", "delete_dataset")]
+    assert db.get_memory_settings("forgot") == (False, None, None)
+    assert db.get_memory_settings("kept") == (True, "2026-10-21", "2026-10-26T11:00:00.000Z")
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        assert conn.execute("SELECT count(*) FROM memory_deletions").fetchone()[0] == 0

@@ -43,14 +43,17 @@ test('путь аккаунта: регистрация, вход, смена п
   await shot(page, 'app-profile')
 
   // The agent's voice: a man's until the person picks another one; the choice is saved on the account.
-  const male = page.getByTestId('voice-male')
-  const female = page.getByTestId('voice-female')
-  await expect(male).toHaveClass(/button-active/)
-  await expect(female).not.toHaveClass(/button-active/)
-  await female.click()
+  await expect(page.getByTestId('voice-name')).toContainText('Дмитрий')
+  await page.getByTestId('voice-name').click()
+  // The voice page opens on the tab of the current gender; a tap on a voice's ▶ plays it and does not choose it.
+  await page.locator('.segmented .button', { hasText: 'Женские' }).click()
+  await page.getByLabel('Прослушать: Алиса').click()
+  await expect(page.locator('input[name=voice]:checked')).toHaveCount(0) // the chosen one is on the other tab
+  await page.locator('.item-title', { hasText: 'Алиса' }).click()
   await expect(page.getByText('Голос сохранён')).toBeVisible()
-  await expect(female).toHaveClass(/button-active/)
-  await expect(male).not.toHaveClass(/button-active/)
+  await expect(page.locator('input[name=voice]:checked')).toHaveValue('Zephyr')
+  await page.locator('.navbar a.back').click()
+  await expect(page.getByTestId('voice-name')).toContainText('Алиса')
 
   await page.getByText('Изменить пароль', { exact: true }).click()
 

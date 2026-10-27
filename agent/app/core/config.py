@@ -1,6 +1,6 @@
 """Типизированная конфигурация сервиса agent из переменных окружения.
 
-Единственное место чтения env в приложении (.agents/skills/env-config-rules):
+Единственное место чтения env в приложении (agent/AGENTS.md, «Конфигурация»):
 доменные Settings с validation_alias, SecretStr для секретов, fail-fast
 валидация, неизменяемый синглтон APP_CONFIG.
 
@@ -84,6 +84,13 @@ class DialogSettings(BaseAppSettings):
     # Автозавершение брошенных диалогов: открытый диалог без живого сокета и без активности столько секунд считается
     # конченным — ставится сводка и диалог уходит в память (извлечение/cognify). 0 — не завершать автоматически.
     idle_end_seconds: int = Field(validation_alias="DIALOG_IDLE_END_SECONDS", default=300, ge=0)
+    # Срок хранения разговоров (add-mood-diary, D14): разговор, итог (и документ в Cognee через память) удаляются через столько
+    # дней после последнего сообщения. Проход раз в час. 0 — хранить бессрочно (так на проде сейчас).
+    retention_days: int = Field(validation_alias="DIALOG_RETENTION_DAYS", default=21, ge=0)
+    # Сухой прогон: проход только считает (agent_dialogs_retention_would_delete) и ничего не удаляет. В первом выкате включён.
+    retention_dry_run: bool = Field(validation_alias="DIALOG_RETENTION_DRY_RUN", default=True)
+    # Сколько ждать модель при подведении итога разговора, секунды (add-mood-diary, D13).
+    recap_timeout_seconds: float = Field(validation_alias="RECAP_TIMEOUT_SECONDS", default=20, gt=0, le=120)
 
     @model_validator(mode="after")
     def _pool_sizes_in_order(self) -> "DialogSettings":
@@ -229,6 +236,13 @@ class GeminiSettings(BaseAppSettings):
     # (замер на gemini-3.8-live: первый звук на ~0,2 с быстрее, ответы короткие и тёплые, рассуждать нечем); >0 — предел.
     # Кризисы модель не решает: их ловит агент.
     thinking_budget: int = Field(validation_alias="GEMINI_THINKING_BUDGET", default=-1, ge=-1)
+    # Цвет шарика по тону человека (REQ-VOICE-10): отдельный запрос к текстовой модели по расшифровке реплики (имя модели).
+    # Включён по умолчанию, работает только в режиме gemini_live с ключом Gemini; пустое имя отключает. Идёт параллельно ответу и
+    # ему не мешает; вызов функции внутри сессии Live замерен и отвергнут (ответ терялся).
+    mood_classifier: str = Field(validation_alias="GEMINI_MOOD_CLASSIFIER", default="gemini-3.5-flash-lite")
+    mood_classifier_timeout_seconds: float = Field(validation_alias="GEMINI_MOOD_CLASSIFIER_TIMEOUT_SECONDS", default=2.5, gt=0)
+    # Пауза без новых слов расшифровки, после которой реплика уходит на классификацию.
+    mood_debounce_ms: int = Field(validation_alias="GEMINI_MOOD_DEBOUNCE_MS", default=300, ge=0)
     # Длинный разговор: когда контекст сессии подходит к пределу, Google сам сжимает его скользящим окном (самое старое
     # уходит, начало разговора и промпт остаются), и сессия не обрывается. Без сжатия голосовая сессия живёт ~15 минут.
     compression: bool = Field(validation_alias="GEMINI_COMPRESSION", default=True)
@@ -279,34 +293,27 @@ class GeminiSettings(BaseAppSettings):
 
 
 class MemorySettings(BaseAppSettings):
-    """Долговременная память агента — Cognee (`app/memory/cognee_backend.py`): факты о человеке между разговорами.
+    """Память агента о человеке (`app/memory/`): заметки в PostgreSQL (слой 1) и поиск по прошлым разговорам в Cognee (слой 2).
 
-    `MEMORY_MODE`:
-      off     память не пишется и не подмешивается (по умолчанию). Чтение, экспорт и стирание памяти работают всегда
-      shadow  транскрипты уходят в Cognee у людей, включивших память, но сводка в разговор не попадает (проверка)
-      on      запись и сводка в разговоре
-
-    Согласие и данные человека — его датасет `ryadom_user_<user_id>` в Cognee; вызовы — REST с Bearer сервисного
-    пользователя. Извлечение фактов делает сам Cognee (cognify), своей модели извлечения у агента нет.
+    Включена ли память у человека и согласие хранятся в базе агента (`memory_settings`), а не в окружении: пауза переживает
+    перезапуск. Флаг выката — `MEMORY_NOTES_ENABLED` (извлечение заметок по ходу разговора). Вызовы Cognee — REST с Bearer
+    сервисного пользователя.
     """
 
-    mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
     # Адрес Cognee API и сервисный пользователь (multi-user access control — вызовы с Bearer).
     cognee_base_url: str | None = Field(validation_alias="COGNEE_BASE_URL", default=None)
     cognee_email: str | None = Field(validation_alias="COGNEE_SERVICE_EMAIL", default=None)
     cognee_password: SecretStr | None = Field(validation_alias="COGNEE_SERVICE_PASSWORD", default=None)
-    # Только для стендов: память включена всем по умолчанию (opt-out вместо opt-in).
-    # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
-    default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
-    # Пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
-    # (POST /cognify = поставить в очередь), граф готов через десятки секунд — без паузы закэшируем «нет информации».
-    cognify_settle_seconds: int = Field(validation_alias="MEMORY_COGNIFY_SETTLE_SECONDS", default=90, ge=0)
     # Инструмент recall_memory в голосовом контуре: синхронный поиск в Cognee — 10–30 с паузы посреди хода.
     # По умолчанию выключен: память подтягивается фоном (реплика → поиск к следующему ходу), без пауз в разговоре.
     recall_tool: bool = Field(validation_alias="MEMORY_RECALL_TOOL", default=False)
-    # Сколько памяти уходит в голосовую модель: minimal — только как говорить и о чём не говорить (и мягкий тон после тяжёлого
-    # разговора); standard — плюс близкие (без имён), что помогает, планы, обстоятельства, прошлый разговор; full — с именами.
-    brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")
+    # Заметки о человеке (слой 1, PROTEUS-242): лимит живых заметок на человека. Срока давности у заметок нет.
+    notes_max: int = Field(validation_alias="MEMORY_NOTES_MAX", default=200, ge=1)
+    # Сколько токенов блока памяти уходит в голосовую модель.
+    brief_max_tokens: int = Field(validation_alias="MEMORY_BRIEF_MAX_TOKENS", default=1200, ge=100)
+    # Извлечение заметок по ходу разговора (флаг выката) и модель извлечения (по умолчанию чат-модель прокси).
+    notes_enabled: bool = Field(validation_alias="MEMORY_NOTES_ENABLED", default=False)
+    notes_model: str | None = Field(validation_alias="MEMORY_NOTES_MODEL", default=None)
     # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
     allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
 

@@ -30,9 +30,9 @@ test('ссылка на разговор: создать, открыть чуж�
   await endConversation(page, 'Про тяжёлый день')
 
   // The finished conversation, read-only in the journal, carries the button.
-  await openWebApp(page, '/journal')
+  await openWebApp(page, '/diary/journal')
   await page.getByTestId('journal-item').first().click()
-  await expect(page).toHaveURL(/\/journal\/[^/]+$/)
+  await expect(page).toHaveURL(/\/diary\/journal\/[^/]+$/)
   await page.getByTestId('journal-share').click()
 
   // ── no link yet: the term (24 hours by default) and the warning ──────────

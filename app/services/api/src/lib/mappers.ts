@@ -1,23 +1,32 @@
 import type { SessionDTO } from '@ryadom/core/managers/refresh-tokens-manager'
 import type { UserDTO } from '@ryadom/core/processes/authentication'
 import type { ConsentStatusDTO } from '@ryadom/core/processes/consents'
-import type { DialogDTO, DialogListItemDTO, DialogSummaryDTO } from '@ryadom/core/processes/dialogs'
+import type {
+  DialogDTO,
+  DialogListItemDTO,
+  DialogRecapItemDTO,
+  DialogSummaryDTO,
+} from '@ryadom/core/processes/dialogs'
 import type {
   MemoryChangesDTO,
   MemoryDTO,
   MemoryExportDTO,
   MemoryFactDTO,
   MemoryFactSlotsDTO,
+  MemoryInstructionChangesDTO,
+  MemoryNoteDTO,
   MemorySettingsDTO,
 } from '@ryadom/core/processes/memory'
 import { describeUserAgent } from '@ryadom/core/shared'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
+import { DEFAULT_VOICE_ID } from '@ryadom/contracts/voices'
 import { SessionClient, type SessionApiResponse } from '@ryadom/contracts/api/auth/sessions'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
 import {
   DialogMode,
   type DialogApiResponse,
   type DialogListItemApiResponse,
+  type DialogRecapItemApiResponse,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import {
@@ -25,6 +34,8 @@ import {
   MemoryChangeOp,
   MemoryChangesStatus,
   MemoryFactCategory,
+  MemoryNoteApiResponse,
+  MemoryNoteKind,
   MemoryFactOrigin,
   MemoryFactSensitivity,
   MemoryFactStatus,
@@ -34,6 +45,7 @@ import {
   type MemoryExportApiResponse,
   type MemoryFactApiResponse,
   type MemoryFactSlots,
+  type MemoryInstructionApiResponse,
   type UpdateMemorySettingsApiResponse,
 } from '@ryadom/contracts/api/memory'
 
@@ -57,7 +69,9 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     consentsCompleted: consent.completed,
     consentVersion: consent.offerVersion,
     voice: user.agentVoice,
+    voiceName: user.agentVoiceName ?? DEFAULT_VOICE_ID[user.agentVoice],
     analyticsOptOut: user.analyticsOptOut,
+    timezone: user.timezone,
   }
 }
 
@@ -94,6 +108,20 @@ export function toDialogSummary(summary: DialogSummaryDTO | null): DialogSummary
     themes: summary.themes,
     tensionBefore: summary.tensionBefore,
     tensionAfter: summary.tensionAfter,
+    recap: summary.recap,
+    recapStatus: summary.recapStatus,
+    recapSource: summary.recapSource,
+    ...(summary.recapAvailable === null ? {} : { recapAvailable: summary.recapAvailable }),
+  }
+}
+
+export function toRecapItem(item: DialogRecapItemDTO): DialogRecapItemApiResponse {
+  return {
+    dialogId: item.dialogId,
+    startedAt: item.startedAt.toISOString(),
+    title: item.title,
+    recap: item.recap,
+    recapSource: item.recapSource,
   }
 }
 
@@ -106,6 +134,7 @@ export function toDialogListItem(item: DialogListItemDTO): DialogListItemApiResp
     endedAt: item.endedAt?.toISOString() ?? null,
     summary: toDialogSummary(item.summary),
     memoryMode: toDialogMemoryMode(item.memoryMode),
+    saved: item.saved,
   }
 }
 
@@ -159,6 +188,10 @@ const MEMORY_FACT_STATUSES: Record<MemoryFactDTO['status'], MemoryFactStatus> = 
   pinned: MemoryFactStatus.Pinned,
   expired: MemoryFactStatus.Expired,
 }
+
+const MEMORY_NOTE_KINDS: Record<string, MemoryNoteKind> = Object.fromEntries(
+  Object.values(MemoryNoteKind).map((kind) => [kind, kind]),
+)
 
 const MEMORY_FACT_ORIGINS: Record<MemoryFactDTO['origin'], MemoryFactOrigin> = {
   auto: MemoryFactOrigin.Auto,
@@ -258,14 +291,42 @@ export function toMemory(memory: MemoryDTO): MemoryApiResponse {
     consentVersion: memory.consentVersion,
     consentAt: memory.consentAt?.toISOString() ?? null,
     rulesVersion: memory.rulesVersion,
-    limits: { maxFacts: memory.maxFacts },
+    limits: { maxFacts: memory.maxFacts, maxNotes: memory.maxNotes },
+    paused: memory.paused,
+    sensitiveEnabled: memory.sensitiveEnabled,
+    chatSearchEnabled: memory.chatSearchEnabled,
+    notes: memory.notes.map(toMemoryNote),
     facts: memory.facts.map(toMemoryFact),
+  }
+}
+
+export function toMemoryNote(note: MemoryNoteDTO): MemoryNoteApiResponse {
+  return {
+    id: note.id,
+    kind: MEMORY_NOTE_KINDS[note.kind] ?? MemoryNoteKind.Situation,
+    text: note.text,
+    sensitive: note.sensitive,
+    eventDate: note.eventDate,
+    createdAt: note.createdAt.toISOString(),
+    updatedAt: note.updatedAt.toISOString(),
+    dialogId: note.dialogId,
+  }
+}
+
+export function toMemoryInstruction(changes: MemoryInstructionChangesDTO): MemoryInstructionApiResponse {
+  return {
+    added: changes.added.map(toMemoryNote),
+    updated: changes.updated.map(toMemoryNote),
+    deleted: changes.deleted,
+    blocked: changes.blocked,
   }
 }
 
 export function toMemorySettings(settings: MemorySettingsDTO): UpdateMemorySettingsApiResponse {
   return {
     enabled: settings.enabled,
+    sensitiveEnabled: settings.sensitiveEnabled,
+    chatSearchEnabled: settings.chatSearchEnabled,
     consentVersion: settings.consentVersion,
     consentAt: settings.consentAt?.toISOString() ?? null,
   }
@@ -290,6 +351,7 @@ export function toMemoryExport(exported: MemoryExportDTO): MemoryExportApiRespon
       epochAt: exported.settings.epochAt?.toISOString() ?? null,
       updatedAt: exported.settings.updatedAt?.toISOString() ?? null,
     },
+    notes: exported.notes.map(toMemoryNote),
     facts: exported.facts.map(toMemoryFact),
     events: exported.events.map((event) => ({
       factId: event.factId,

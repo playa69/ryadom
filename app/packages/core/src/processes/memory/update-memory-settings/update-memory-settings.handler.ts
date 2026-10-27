@@ -50,12 +50,12 @@ export class UpdateMemorySettingsOperationHandler implements RequestHandler<
     if (!(await isLiveUser(userId))) {
       return { success: false, error: UpdateMemorySettingsOperationErrorCode.USER_NOT_FOUND }
     }
-    if (operation.enabled && (!operation.consentAccepted || input.consentVersion === null)) {
+    if (operation.enabled === true && (!operation.consentAccepted || input.consentVersion === null)) {
       return { success: false, error: UpdateMemorySettingsOperationErrorCode.CONSENT_REQUIRED }
     }
 
     const at = new Date()
-    if (operation.enabled && input.consentVersion !== null) {
+    if (operation.enabled === true && input.consentVersion !== null) {
       const version = input.consentVersion
       await inTransaction(async () => {
         const recorded = await userConsentsManager.execute(
@@ -92,7 +92,7 @@ export class UpdateMemorySettingsOperationHandler implements RequestHandler<
           )
         }
       })
-    } else if (!operation.enabled) {
+    } else if (operation.enabled === false) {
       await inTransaction(async () => {
         const { event } = await memoryConsentEventsManager.execute(
           new GetLatestMemoryConsentEventQuery({ userId }),
@@ -116,7 +116,9 @@ export class UpdateMemorySettingsOperationHandler implements RequestHandler<
       new UpdateAgentMemorySettingsRequest({
         userId,
         enabled: operation.enabled,
-        consentVersion: operation.enabled ? input.consentVersion : null,
+        consentVersion: operation.enabled === true ? input.consentVersion : null,
+        sensitiveEnabled: operation.sensitiveEnabled,
+        chatSearchEnabled: operation.chatSearchEnabled,
       }),
     )
     if (!updated.success) {

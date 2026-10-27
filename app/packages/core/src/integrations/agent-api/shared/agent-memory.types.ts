@@ -78,6 +78,18 @@ export interface AgentMemoryFactResponse {
   seenByUser: boolean
 }
 
+/** One note as the agent returns it (`design.md` D3). */
+export interface AgentMemoryNoteResponse {
+  id: string
+  kind: string
+  text: string
+  sensitive: boolean
+  eventDate: string | null
+  createdAt: string
+  updatedAt: string
+  dialogId: string | null
+}
+
 /** `GET /memory`. */
 export interface AgentMemoryResponse {
   available: boolean
@@ -86,13 +98,19 @@ export interface AgentMemoryResponse {
   consentVersion: string | null
   consentAt: string | null
   rulesVersion: string
-  limits: { maxFacts: number | null }
+  limits: { maxFacts: number | null; maxNotes: number | null }
+  paused: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
+  notes: AgentMemoryNoteResponse[]
   facts: AgentMemoryFactResponse[]
 }
 
 /** `PUT /memory/settings`. */
 export interface AgentMemorySettingsResponse {
   enabled: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
   consentVersion: string | null
   consentAt: string | null
 }
@@ -125,6 +143,7 @@ export interface AgentMemoryExportResponse {
     epochAt: string | null
     updatedAt: string | null
   }
+  notes: AgentMemoryNoteResponse[]
   facts: AgentMemoryFactResponse[]
   events: AgentMemoryEventResponse[]
 }

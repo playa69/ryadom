@@ -703,6 +703,16 @@ async def test_connector_always_names_the_voice_to_google(stub_connector: Gemini
         await link.aclose()
 
 
+@pytest.mark.parametrize(("voice", "name"), [("Aoede", "Aoede"), ("Puck", "Puck")])
+async def test_connector_takes_the_voice_the_person_picked_by_name(stub_connector: GeminiLiveConnector, voice: str, name: str) -> None:
+    """Выбранное в профиле имя из списка идёт в Google как есть, а ключ голоса сессии — это имя (смена голоса откроет новую сессию)."""
+    StubClient.connections.clear()
+    link = await stub_connector.open(voice, "промпт")  # type: ignore[arg-type]
+    assert StubClient.connections[0][0].speech_config.voice_config.prebuilt_voice_config.voice_name == name
+    assert link.voice == voice and link.voice_name == name
+    await link.aclose()
+
+
 async def test_connector_refuses_an_unknown_voice_instead_of_picking_one(stub_connector: GeminiLiveConnector) -> None:
     with pytest.raises(KeyError):
         await stub_connector.open("child", "промпт")  # type: ignore[arg-type]

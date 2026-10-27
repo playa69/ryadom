@@ -18,7 +18,7 @@ export function conversationHref({
   endedAt,
 }: Pick<DialogListItemApiResponse, 'dialogId' | 'endedAt'>): string {
   const id = encodeURIComponent(dialogId)
-  return endedAt ? `/journal/${id}` : `/dialog/${id}`
+  return endedAt ? `/diary/journal/${id}` : `/dialog/${id}`
 }
 
 /** A flat glass pane with a short message and, maybe, one action: empty states and load errors. */

@@ -11,11 +11,12 @@
 BEGIN/COMMIT на записях, а чтения не оставляют висячую неявную транзакцию (иначе она держала бы блокировки, а записи
 через savepoint никогда не коммитились).
 
-Схема — диалоговые таблицы (`dialogs`, `messages`, `client_ids`, `voice_prefs`, `model_usage`) и `memory_deletions`:
-метка «память человека удалена», по которой отдельная джоба физически удалит датасет Cognee (самой памяти — графа и
-документов — здесь нет: память агента — Cognee, `app/memory/cognee_backend.py`). Стирание человека мягкое: диалоги и
-выбор голоса не удаляются, а получают `deleted_at`; чтения их не видят, запись стёртое не воскрешает, дочерние строки
-(сообщения, идентификаторы, расход) остаются. DDL идемпотентен (`CREATE TABLE IF NOT EXISTS`,
+Схема — диалоговые таблицы (`dialogs`, `messages`, `client_ids`, `voice_prefs`, `model_usage`, `dialog_settings`) и таблицы
+памяти (`app/memory/`): настройки `memory_settings`, заметки `memory_notes`, отпечатки их реплик-источников `memory_sources` и очередь
+операций Cognee `memory_outbox` (сам индекс прошлых разговоров живёт в Cognee). Стирание человека и удаление разговора мягкие:
+диалоги и выбор голоса не удаляются, а получают `deleted_at`; чтения их не видят, запись стёртое не воскрешает, дочерние строки
+(сообщения, идентификаторы, расход) остаются до отдельной джобы физической очистки. Производное от разговоров (заметки, отпечатки,
+очередь человека, настройки) при стирании удаляется сразу. DDL идемпотентен (`CREATE TABLE IF NOT EXISTS`,
 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) и выполняется при каждом `open`: своих миграций у агента нет, изменения
 схемы — только добавочные. Timestamps хранятся TEXT в ISO: формат задан писателем (`DialogStore`), переносимость
 важнее типовой строгости.
@@ -80,6 +81,11 @@ DDL = (
     user_id TEXT PRIMARY KEY,
     voice   TEXT NOT NULL
 )""",
+    """CREATE TABLE IF NOT EXISTS dialog_settings (
+    user_id        TEXT PRIMARY KEY,
+    recap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at     TEXT NOT NULL
+)""",
     """CREATE TABLE IF NOT EXISTS model_usage (
     dialog_id  TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
     message_id TEXT,
@@ -102,17 +108,67 @@ DDL = (
     consent_at          TEXT,
     updated_at          TEXT NOT NULL
 )""",
-    # Мягкое стирание: добавочные колонки (идемпотентно) и метка удаления памяти для будущей джобы-чистильщика.
+    # Мягкое стирание: добавочные колонки (идемпотентно); физически строки уберёт отдельная джоба (PROTEUS-255).
     "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS deleted_at TEXT",
     "ALTER TABLE voice_prefs ADD COLUMN IF NOT EXISTS deleted_at TEXT",
-    """CREATE TABLE IF NOT EXISTS memory_deletions (
-    user_id    TEXT PRIMARY KEY,
-    deleted_at TEXT NOT NULL
-)""",
     "CREATE INDEX IF NOT EXISTS dialogs_deleted_at ON dialogs (deleted_at)",
     "CREATE INDEX IF NOT EXISTS voice_prefs_deleted_at ON voice_prefs (deleted_at)",
-    "CREATE INDEX IF NOT EXISTS memory_deletions_deleted_at ON memory_deletions (deleted_at)",
+    # Заметки о человеке (слой 1 памяти, PROTEUS-242): текст до 200 знаков, полнотекстовый поиск по-русски.
+    """CREATE TABLE IF NOT EXISTS memory_notes (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    text       VARCHAR(200) NOT NULL,
+    sensitive  BOOLEAN NOT NULL DEFAULT FALSE,
+    event_date DATE,
+    dialog_id  TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    search     TSVECTOR GENERATED ALWAYS AS (to_tsvector('russian', text)) STORED
+)""",
+    "CREATE INDEX IF NOT EXISTS memory_notes_user_created ON memory_notes (user_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS memory_notes_search ON memory_notes USING GIN (search)",
+    # Очередь операций Cognee с повторами (индекс прошлых разговоров, слой 2).
+    """CREATE TABLE IF NOT EXISTS memory_outbox (
+    id         BIGSERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    op         TEXT NOT NULL,
+    payload    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    next_at    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)""",
+    "CREATE INDEX IF NOT EXISTS memory_outbox_next ON memory_outbox (next_at)",
+    # Реплика-источник заметки (отпечаток, без текста). Удалённая заметка подавляет свою реплику в поиске по прошлым разговорам.
+    """CREATE TABLE IF NOT EXISTS memory_sources (
+    note_id    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    dialog_id  TEXT NOT NULL,
+    hash       TEXT NOT NULL,
+    suppressed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (note_id, hash)
+)""",
+    "CREATE INDEX IF NOT EXISTS memory_sources_user ON memory_sources (user_id, suppressed)",
+    "CREATE INDEX IF NOT EXISTS memory_sources_dialog ON memory_sources (dialog_id)",
+    "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS memory_notes_cursor TEXT",
+    "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS cognee_data_id TEXT",
 )
+
+# Метки `memory_deletions` агента 0.8.8: «забыть всё» и стирание человека ставили метку, а датасет Cognee не удаляли, и память
+# человека с меткой была выключена. При открытии базы метки один раз переносятся в очередь `memory_outbox` (`delete_dataset`), а
+# выключенная память записывается строкой `memory_settings`, если строки ещё нет. Перенос идемпотентен: метки удаляются в той же
+# транзакции, повторный запуск ничего не находит. Новых меток агент не ставит, при холодной загрузке на них не смотрит.
+MEMORY_DELETIONS_TO_OUTBOX = """
+WITH moved AS (DELETE FROM memory_deletions RETURNING user_id, deleted_at),
+queued AS (
+    INSERT INTO memory_outbox (user_id, op, payload, attempts, next_at, created_at)
+    SELECT user_id, 'delete_dataset', '{}'::jsonb, 0, %(now)s, deleted_at FROM moved
+)
+INSERT INTO memory_settings (user_id, enabled, updated_at)
+SELECT user_id, FALSE, %(now)s FROM moved
+ON CONFLICT (user_id) DO NOTHING
+"""
 
 
 class DialogDbError(Exception):
@@ -170,7 +226,7 @@ def clean_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
 
 class DialogDatabase:
     """Хранилище диалогов в PostgreSQL. Интерфейс: `open`, `close`, `load_user`, `apply`, `erase_user`,
-    `mark_memory_deleted`, `clear_memory_deleted`, `is_memory_deleted`, `delete_dialog`, `counts`, `checkpoint`
+    `delete_dialog`, настройки и заметки памяти, очередь Cognee, `counts`, `checkpoint`
     (нет-оп, нужен `DialogStore`)."""
 
     label = "postgres"
@@ -219,6 +275,7 @@ class DialogDatabase:
             with pool.connection() as conn, conn.transaction():
                 for statement in DDL:
                     conn.execute(statement)
+                moved = self._move_memory_deletions(conn)
             self._pool = pool
         except DialogDbError:
             raise
@@ -228,6 +285,19 @@ class DialogDatabase:
             raise DialogDbError(f"{type(error).__name__}: {error}") from error
         dialogs, messages = self.counts()
         logger.info("dialog db opened postgres dialogs=%d messages=%d", dialogs, messages)
+        if moved:
+            logger.info("memory deletion marks moved to the cognee outbox count=%d", moved)
+
+    @staticmethod
+    def _move_memory_deletions(conn: psycopg.Connection) -> int:
+        """Перенос меток `memory_deletions` агента 0.8.8 в очередь (`MEMORY_DELETIONS_TO_OUTBOX`). Таблицы нет (база заведена
+        уже без неё) — переносить нечего. Возвращает, сколько меток перенесено."""
+        if conn.execute("SELECT to_regclass('memory_deletions')").fetchone()[0] is None:
+            return 0
+        count = conn.execute("SELECT count(*) FROM memory_deletions").fetchone()[0]
+        if count:
+            conn.execute(MEMORY_DELETIONS_TO_OUTBOX, {"now": _now_iso()})
+        return int(count)
 
     def close(self) -> None:
         """Закрывает пул и все его соединения."""
@@ -298,6 +368,31 @@ class DialogDatabase:
             ).fetchone()
         return list(dialogs.values()), (pref[0] if pref else None)
 
+    def load_settings(self, user_id: str) -> bool | None:
+        """«Подводить итог автоматически» человека; None, если он ещё ничего не выбирал (по умолчанию включено)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT recap_enabled FROM dialog_settings WHERE user_id = %s", (user_id,)).fetchone()
+        return None if row is None else bool(row[0])
+
+    def save_settings(self, user_id: str, recap_enabled: bool) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO dialog_settings (user_id, recap_enabled, updated_at) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET recap_enabled = EXCLUDED.recap_enabled, updated_at = EXCLUDED.updated_at",
+                (user_id, recap_enabled, datetime.now(UTC).isoformat(timespec="milliseconds")),
+            )
+
+    def expired_dialogs(self, cutoff: str) -> list[tuple[str, str]]:
+        """(user_id, dialog_id) разговоров, чьё последнее сообщение (без сообщений — старт) старше `cutoff` (ISO, как в базе).
+        Мягко удалённые (`deleted_at`) не возвращаются: иначе каждый проход «удалял» бы их заново."""
+        with self._lock, self._connection() as conn:
+            rows = conn.execute(
+                "SELECT d.user_id, d.id FROM dialogs d WHERE d.deleted_at IS NULL AND COALESCE("
+                "(SELECT MAX(m.created_at) FROM messages m WHERE m.dialog_id = d.id), d.started_at) < %s",
+                (cutoff,),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
     def apply(self, writes: list[DialogWrite]) -> None:
         """Записать пачку одной транзакцией: либо всё, либо ничего."""
         with (
@@ -349,9 +444,10 @@ class DialogDatabase:
 
     def erase_user(self, user_id: str) -> None:
         """Мягко стереть всё о человеке одной транзакцией: диалоги и выбор голоса получают `deleted_at` (дочерние
-        строки — сообщения, расход, идентификаторы — остаются вместе с ними), настройки памяти удаляются, в
-        `memory_deletions` вставляется метка для джобы, которая физически удалит датасет Cognee. Идемпотентно: повтор
-        не переписывает первые отметки. Для чтений человека больше нет (см. `load_user`)."""
+        строки — сообщения, расход, идентификаторы — остаются вместе с ними), настройки памяти и разговоров, заметки, их
+        отпечатки и операции очереди Cognee удаляются. Датасет Cognee к этому моменту уже удалён синхронно
+        (`CogneeMemoryBackend.erase_user_data`, до ответа `204`). Идемпотентно: повтор не переписывает первые отметки. Для
+        чтений человека больше нет (см. `load_user`)."""
         at = _now_iso()
         with self._lock, self._connection() as conn, conn.transaction():
             conn.execute(
@@ -361,35 +457,10 @@ class DialogDatabase:
                 "UPDATE voice_prefs SET deleted_at = %s WHERE user_id = %s AND deleted_at IS NULL", (at, user_id)
             )
             conn.execute("DELETE FROM memory_settings WHERE user_id = %s", (user_id,))
-            conn.execute(
-                "INSERT INTO memory_deletions (user_id, deleted_at) VALUES (%s, %s) "
-                "ON CONFLICT (user_id) DO NOTHING",
-                (user_id, at),
-            )
-
-    def mark_memory_deleted(self, user_id: str) -> None:
-        """Поставить метку «память человека удалена» (`memory_deletions`), не трогая диалоги: «забыть всё» в памяти
-        (DELETE …/memory) стирает только память. По метке отдельная джоба физически удалит датасет Cognee.
-        Идемпотентно: повтор оставляет первую отметку."""
-        with self._lock, self._connection() as conn, conn.transaction():
-            conn.execute(
-                "INSERT INTO memory_deletions (user_id, deleted_at) VALUES (%s, %s) "
-                "ON CONFLICT (user_id) DO NOTHING",
-                (user_id, _now_iso()),
-            )
-
-    def clear_memory_deleted(self, user_id: str) -> None:
-        """Снять техническую метку после повторного согласия на память, не трогая пользовательские данные."""
-        with self._lock, self._connection() as conn, conn.transaction():
-            conn.execute("DELETE FROM memory_deletions WHERE user_id = %s", (user_id,))
-
-    def is_memory_deleted(self, user_id: str) -> bool:
-        """Есть ли метка «память человека удалена». По ней хранилище при холодной загрузке человека сообщает бэкенду
-        памяти, что тот стёрт: оставшийся до джобы датасет Cognee не должен воскресать после рестарта/выгрузки."""
-        with self._lock, self._connection() as conn:
-            return conn.execute(
-                "SELECT 1 FROM memory_deletions WHERE user_id = %s", (user_id,)
-            ).fetchone() is not None
+            conn.execute("DELETE FROM dialog_settings WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_notes WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_outbox WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_sources WHERE user_id = %s", (user_id,))
 
     def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         """Настройки памяти человека: (включена, версия согласия, когда). None — человек их ещё не задавал."""
@@ -398,6 +469,196 @@ class DialogDatabase:
                 "SELECT enabled, consent_version, consent_at FROM memory_settings WHERE user_id = %s", (user_id,)
             ).fetchone()
         return None if row is None else (bool(row[0]), row[1], row[2])
+
+    # ─── заметки о человеке ───────────────────────────────────────────────────
+
+    _NOTE_COLUMNS = "id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at"
+
+    def list_notes(self, user_id: str) -> list[tuple[Any, ...]]:
+        """Заметки человека, новые сверху: (id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at)."""
+        sql = f"SELECT {self._NOTE_COLUMNS} FROM memory_notes WHERE user_id = %s ORDER BY created_at DESC, id"
+        with self._lock, self._connection() as conn:
+            return [tuple(row) for row in conn.execute(sql, (user_id,)).fetchall()]
+
+    def count_notes(self, user_id: str) -> int:
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT count(*) FROM memory_notes WHERE user_id = %s", (user_id,)).fetchone()
+        return int(row[0]) if row else 0
+
+    def add_note(self, note: tuple[Any, ...]) -> None:
+        """(id, user_id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at)."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_notes (id, user_id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                tuple(clean(item) for item in note),
+            )
+
+    def update_note(self, user_id: str, note_id: str, text: str, updated_at: str) -> bool:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "UPDATE memory_sources SET suppressed = TRUE WHERE user_id = %s AND note_id = %s", (user_id, note_id)
+            )  # старая формулировка поправлена: её реплика больше не источник правды
+            cursor = conn.execute(
+                "UPDATE memory_notes SET text = %s, updated_at = %s WHERE id = %s AND user_id = %s",
+                (clean(text), updated_at, note_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+    def delete_note(self, user_id: str, note_id: str) -> bool:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE memory_sources SET suppressed = TRUE WHERE user_id = %s AND note_id = %s", (user_id, note_id))
+            return conn.execute("DELETE FROM memory_notes WHERE id = %s AND user_id = %s", (note_id, user_id)).rowcount > 0
+
+    def delete_notes(self, user_id: str, only_sensitive: bool = False) -> int:
+        sql = "DELETE FROM memory_notes WHERE user_id = %s" + (" AND sensitive" if only_sensitive else "")
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "UPDATE memory_sources SET suppressed = TRUE WHERE user_id = %s AND note_id IN "
+                "(SELECT id FROM memory_notes WHERE user_id = %s" + (" AND sensitive" if only_sensitive else "") + ")",
+                (user_id, user_id),
+            )
+            return conn.execute(sql, (user_id,)).rowcount
+
+    def add_note_source(self, user_id: str, note_id: str, dialog_id: str, source_hash: str, created_at: str) -> None:
+        """Запомнить отпечаток реплики, на которой выросла заметка."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_sources (note_id, user_id, dialog_id, hash, created_at) VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (note_id, user_id, dialog_id, source_hash, created_at),
+            )
+
+    def source_dialogs(self, user_id: str, note_id: str | None = None, only_sensitive: bool = False) -> list[str]:
+        """Разговоры-источники заметок: одной (`note_id`), чувствительных или всех заметок человека. Зовётся до удаления."""
+        sql = (
+            "SELECT DISTINCT s.dialog_id FROM memory_sources s JOIN memory_notes n ON n.id = s.note_id "
+            "WHERE s.user_id = %s AND NOT s.suppressed"
+        )
+        args: list[Any] = [user_id]
+        if note_id is not None:
+            sql += " AND s.note_id = %s"
+            args.append(note_id)
+        elif only_sensitive:
+            sql += " AND n.sensitive"
+        with self._lock, self._connection() as conn:
+            return [r[0] for r in conn.execute(sql, args).fetchall()]
+
+    def suppressed_hashes(self, user_id: str, dialog_id: str | None = None) -> set[str]:
+        """Отпечатки подавленных реплик человека (или одного разговора)."""
+        sql = "SELECT hash FROM memory_sources WHERE user_id = %s AND suppressed"
+        args: list[Any] = [user_id]
+        if dialog_id is not None:
+            sql += " AND dialog_id = %s"
+            args.append(dialog_id)
+        with self._lock, self._connection() as conn:
+            return {r[0] for r in conn.execute(sql, args).fetchall()}
+
+    def get_memory_flags(self, user_id: str) -> tuple[bool, bool]:
+        """(запоминать чувствительное, опираться на прошлые разговоры); без строки — значения по умолчанию (False, True)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                "SELECT sensitive_enabled, chat_search_enabled FROM memory_settings WHERE user_id = %s", (user_id,)
+            ).fetchone()
+        return (False, True) if row is None else (bool(row[0]), bool(row[1]))
+
+    # ─── очередь операций Cognee (слой 2 памяти) ──────────────────────────────
+
+    def outbox_add(self, user_id: str, op: str, payload: dict[str, Any], next_at: str, created_at: str) -> None:
+        """Поставить операцию Cognee в очередь: `index_dialog`, `delete_document`, `delete_dataset`, `rebuild`."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_outbox (user_id, op, payload, attempts, next_at, created_at) VALUES (%s, %s, %s::jsonb, 0, %s, %s)",
+                (user_id, op, json.dumps(payload, ensure_ascii=False), next_at, created_at),
+            )
+
+    def outbox_due(self, now: str, limit: int = 20) -> list[tuple[int, str, str, dict[str, Any], int]]:
+        """Операции, которым пора: (id, user_id, op, payload, attempts), старые первыми."""
+        with self._lock, self._connection() as conn:
+            rows = conn.execute(
+                "SELECT id, user_id, op, payload, attempts FROM memory_outbox WHERE next_at <= %s ORDER BY id LIMIT %s",
+                (now, limit),
+            ).fetchall()
+        return [(int(r[0]), r[1], r[2], r[3] if isinstance(r[3], dict) else json.loads(r[3]), int(r[4])) for r in rows]
+
+    def outbox_done(self, outbox_id: int) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM memory_outbox WHERE id = %s", (outbox_id,))
+
+    def outbox_retry(self, outbox_id: int, attempts: int, next_at: str) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE memory_outbox SET attempts = %s, next_at = %s WHERE id = %s", (attempts, next_at, outbox_id))
+
+    def outbox_pending(self) -> int:
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT count(*) FROM memory_outbox").fetchone()
+        return int(row[0]) if row else 0
+
+    def outbox_drop_user(self, user_id: str, ops: tuple[str, ...]) -> None:
+        """Убрать из очереди операции человека (например, индексацию, когда индекс уже решили удалить целиком)."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM memory_outbox WHERE user_id = %s AND op = ANY(%s)", (user_id, list(ops)))
+
+    def get_cognee_data_id(self, dialog_id: str) -> str | None:
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT cognee_data_id FROM dialogs WHERE id = %s", (dialog_id,)).fetchone()
+        return row[0] if row and row[0] else None
+
+    def set_cognee_data_id(self, dialog_id: str, data_id: str | None) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE dialogs SET cognee_data_id = %s WHERE id = %s", (data_id, dialog_id))
+
+    def clear_cognee_data_ids(self, user_id: str) -> None:
+        """Индекс человека в Cognee удалён целиком: ни у одного его разговора больше нет документа."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE dialogs SET cognee_data_id = NULL WHERE user_id = %s", (user_id,))
+
+    def dialog_for_index(self, dialog_id: str) -> tuple[str, str, str, list[tuple[str, str]]] | None:
+        """Разговор для индексации: (user_id, started_at, memory_mode, [(role, text)]) или None, если его уже нет или он мягко
+        удалён: удалённое в индекс не возвращается."""
+        with self._lock, self._connection() as conn:
+            head = conn.execute(
+                "SELECT user_id, started_at, memory_mode FROM dialogs WHERE id = %s AND deleted_at IS NULL", (dialog_id,)
+            ).fetchone()
+            if head is None:
+                return None
+            rows = conn.execute("SELECT role, text FROM messages WHERE dialog_id = %s ORDER BY position", (dialog_id,)).fetchall()
+        return head[0], head[1], head[2], [(r[0], r[1]) for r in rows]
+
+    def indexable_dialog_ids(self, user_id: str) -> list[str]:
+        """Завершённые разговоры человека, которые идут в индекс: не «не сохранять», по порядку (для пересборки индекса)."""
+        with self._lock, self._connection() as conn:
+            rows = conn.execute(
+                "SELECT id FROM dialogs WHERE user_id = %s AND ended_at IS NOT NULL AND memory_mode = 'on' AND deleted_at IS NULL "
+                "ORDER BY started_at",
+                (user_id,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_notes_cursor(self, dialog_id: str) -> int:
+        """Сколько реплик человека в разговоре уже отдано извлекателю заметок (0 — ни одной или разговора нет в базе)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT memory_notes_cursor FROM dialogs WHERE id = %s", (dialog_id,)).fetchone()
+        try:
+            return int(row[0]) if row and row[0] is not None else 0
+        except ValueError:
+            return 0
+
+    def set_notes_cursor(self, dialog_id: str, cursor: int) -> None:
+        """Запомнить, сколько реплик человека уже разобрано: после перезапуска агента разбор продолжится с этого места."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("UPDATE dialogs SET memory_notes_cursor = %s WHERE id = %s", (str(cursor), dialog_id))
+
+    def put_memory_flags(self, user_id: str, sensitive: bool, chat_search: bool, updated_at: str) -> None:
+        """Записать переключатели «Запоминать чувствительное» и «Опираться на прошлые разговоры», не трогая паузу и согласие."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_settings (user_id, enabled, sensitive_enabled, chat_search_enabled, updated_at) "
+                "VALUES (%s, FALSE, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
+                "sensitive_enabled = EXCLUDED.sensitive_enabled, chat_search_enabled = EXCLUDED.chat_search_enabled, "
+                "updated_at = EXCLUDED.updated_at",
+                (user_id, sensitive, chat_search, updated_at),
+            )
 
     def put_memory_settings(
         self, user_id: str, enabled: bool, consent_version: str | None, consent_at: str | None, updated_at: str
@@ -413,12 +674,14 @@ class DialogDatabase:
             )
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
-        """Мягко удалить один диалог человека: сообщения, расход и идентификаторы остаются вместе с ним.
+        """Мягко удалить один диалог человека: сообщения, расход и идентификаторы остаются вместе с ним, отпечатки его реплик
+        (`memory_sources`) удаляются. Документ разговора в Cognee к этому моменту поставлен в очередь (`dialog_deleting`).
 
-        `forget_derived` принимается ради контракта: фактами, выведенными из удалённого диалога, управляет бэкенд
-        памяти (Cognee), а не хранилище диалогов. Идемпотентно: повтор не переписывает первую отметку.
+        `forget_derived` принимается ради контракта: заметки из разговора остаются (`add-memory-notes`, D10). Идемпотентно:
+        повтор не переписывает первую отметку.
         """
         with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM memory_sources WHERE dialog_id = %s AND user_id = %s", (dialog_id, user_id))
             conn.execute(
                 "UPDATE dialogs SET deleted_at = %s "
                 "WHERE id = %s AND user_id = %s AND deleted_at IS NULL",

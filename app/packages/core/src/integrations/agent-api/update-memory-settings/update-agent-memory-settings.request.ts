@@ -3,7 +3,10 @@ import type { UpdateAgentMemorySettingsResult } from './update-agent-memory-sett
 
 export interface UpdateAgentMemorySettingsRequestData {
   userId: string
-  enabled: boolean
+  /** Undefined changes only the switches below. */
+  enabled?: boolean
+  sensitiveEnabled?: boolean
+  chatSearchEnabled?: boolean
   /** The version of the consent sheet the person accepted: required to turn memory on, null to turn it off. */
   consentVersion: string | null
 }
@@ -14,13 +17,17 @@ export class UpdateAgentMemorySettingsRequest extends RequestData<UpdateAgentMem
   static readonly requestName = 'UpdateAgentMemorySettingsRequest'
 
   public readonly userId: string
-  public readonly enabled: boolean
+  public readonly enabled: boolean | undefined
+  public readonly sensitiveEnabled: boolean | undefined
+  public readonly chatSearchEnabled: boolean | undefined
   public readonly consentVersion: string | null
 
   constructor(data: UpdateAgentMemorySettingsRequestData) {
     super()
     this.userId = data.userId
     this.enabled = data.enabled
+    this.sensitiveEnabled = data.sensitiveEnabled
+    this.chatSearchEnabled = data.chatSearchEnabled
     this.consentVersion = data.consentVersion
   }
 }

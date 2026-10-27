@@ -130,3 +130,23 @@ def test_stale_end_disabled_at_zero() -> None:
     dialog.messages[0].created_at = _old(dialog.messages[0].created_at, 10_000)
     assert store.end_stale(datetime.now(UTC)) == 0
     assert dialog.ended_at is None
+
+
+def test_voice_name_follows_the_gender_choice():
+    """Конкретный голос Gemini (профиль): задаётся вместе с родом, сбрасывается стартом без имени и кадром set_voice."""
+    store = DialogStore()
+    dialog, _, _ = store.start("u1", "female", False, "on", "Aoede")
+    assert (dialog.voice, dialog.voice_name, dialog.voice_key) == ("female", "Aoede", "Aoede")
+
+    # Старт без голоса (кадр пропущен) держит прошлый выбор целиком.
+    again, _, _ = store.start("u1")
+    assert again.voice_key == "Aoede"
+
+    # Род без имени: человек вернулся к голосу рода.
+    dialog, _, _ = store.start("u1", "female")
+    assert (dialog.voice_name, dialog.voice_key) == (None, "female")
+
+    store.start("u1", "male", False, "on", "Puck")
+    dialog = store.open_dialog("u1")
+    store.set_voice(dialog, "female")  # выбор рода прямо в диалоге
+    assert (dialog.voice, dialog.voice_name, dialog.voice_key) == ("female", None, "female")

@@ -1,4 +1,5 @@
 import { expect, type BrowserContext, type Page } from '@playwright/test'
+import { AGENT_URL } from '../playwright.config'
 
 /**
  * The sphere's own voice (client-core/voice/speech) uses the browser's speech synthesis. A headless
@@ -51,8 +52,7 @@ export function playedBy(page: Page): Promise<number> {
  * speech is down behaves. Dev control of the mock, not part of the agent contract.
  */
 export async function setAgentSpeech(mode: 'auto' | 'none'): Promise<void> {
-  const base = process.env.E2E_AGENT_URL ?? 'http://127.0.0.1:8081'
-  const response = await fetch(`${base}/dev/tts`, {
+  const response = await fetch(`${AGENT_URL}/dev/tts`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mode }),

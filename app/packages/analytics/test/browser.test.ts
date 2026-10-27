@@ -176,12 +176,23 @@ describe('отправка', () => {
     await started
     track(AnalyticsEvent.MemoryEnabled, { enabled: true })
     track(AnalyticsEvent.MemoryIncognitoToggled, { on: true })
-    track(AnalyticsEvent.MemoryFactAction, { action: 'pin', text: 'Сестра Аня' } as never)
-    track(AnalyticsEvent.MemoryCardAction, { action: 'dismiss_item', note: 'поддерживает' } as never)
+    track(AnalyticsEvent.MemoryNoteDeleted, { undone: false, text: 'Сестра Аня' } as never)
+    track(AnalyticsEvent.MemorySettingChanged, { setting: 'sensitive', enabled: true, note: 'поддерживает' } as never)
     expect(posthog.capture).toHaveBeenCalledWith('memory_enabled', { enabled: true })
     expect(posthog.capture).toHaveBeenCalledWith('memory_incognito_toggled', { on: true })
-    expect(posthog.capture).toHaveBeenCalledWith('memory_fact_action', { action: 'pin' })
-    expect(posthog.capture).toHaveBeenCalledWith('memory_card_action', { action: 'dismiss_item' })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_note_deleted', { undone: false })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_setting_changed', { setting: 'sensitive', enabled: true })
+  })
+
+  it('события тестов несут test_id, а баллы, уровни и ответы отбрасываются', async () => {
+    const { posthog, started } = start(CONFIG)
+    await started
+    track(AnalyticsEvent.SelfCheckCompleted, { test_id: 'phq9', score: 20, band: 'high', answers: [3, 3] } as never)
+    track(AnalyticsEvent.SelfCheckStarted, { test_id: 'gad7', from: 'diary' })
+    track(AnalyticsEvent.SelfCheckResultDeleted, { scope: 'all' })
+    expect(posthog.capture).toHaveBeenCalledWith('self_check_completed', { test_id: 'phq9' })
+    expect(posthog.capture).toHaveBeenCalledWith('self_check_started', { test_id: 'gad7', from: 'diary' })
+    expect(posthog.capture).toHaveBeenCalledWith('self_check_result_deleted', { scope: 'all' })
   })
 
   it('просмотр экрана отправляется по маршруту, без идентификаторов и запроса', async () => {

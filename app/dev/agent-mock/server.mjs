@@ -15,6 +15,7 @@
  */
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { handleMemory as handleNotesMemory, newMemory, onUserMessage, seedMemory } from './memory-notes.mjs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { WebSocketServer } from 'ws'
@@ -59,16 +60,14 @@ function effectiveTts() {
  * Texts of facts and messages never reach the log here either: ids and counts only.
  */
 const MEMORY_MODES = ['on', 'shadow', 'off']
+/** `POST /dev/digests {"fail": true}` makes `/digests` answer 502, as an agent whose model is down. */
+let digestsFail = false
 let memoryMode = MEMORY_MODES.includes(process.env.MOCK_MEMORY_MODE) ? process.env.MOCK_MEMORY_MODE : 'on'
 const MEMORY_ALLOWLIST = (process.env.MOCK_MEMORY_ALLOWLIST ?? '')
   .split(',')
   .map((id) => id.trim())
   .filter(Boolean)
 const MEMORY_DELAY_MS = Number(process.env.MOCK_MEMORY_DELAY_MS ?? 1500)
-const MEMORY_MAX_FACTS = 60
-const MEMORY_RULES_VERSION = 'mock-2026-10-12'
-/** The order facts come in: as the profile screen groups them. */
-const MEMORY_CATEGORIES = ['style', 'boundary', 'person', 'situation', 'goal', 'works', 'interest', 'recap']
 /** A conversation "without memory" is deleted this long after its last message. */
 const INCOGNITO_TTL_MS = 24 * 60 * 60 * 1000
 
@@ -86,8 +85,46 @@ const REPLIES = [
 const CRISIS_WORDS = ['не хочу жить', 'покончить', 'убить себя', 'умереть', 'нет смысла жить']
 
 function userState(userId) {
-  if (!users.has(userId)) users.set(userId, { dialogs: new Map(), memory: newMemory() })
+  if (!users.has(userId)) users.set(userId, { dialogs: new Map(), memory: newMemory(), recapEnabled: true })
   return users.get(userId)
+}
+
+// ─── Recaps of conversations (add-mood-diary D13) ─────────────────────────────
+// A recap is one free-form text in the second person (the «Что забираешь с собой» field is the recap). The mock follows the real agent's rules: none for a conversation where the
+// person said under 40 characters, for one with a crisis, or one held «without memory»; a recap the person wrote is kept
+// as it is and the automatic one never replaces it; the automatic one is ready after MOCK_RECAP_DELAY_MS (pending until then).
+const RECAP_DELAY_MS = Number(process.env.MOCK_RECAP_DELAY_MS ?? 3000)
+const RECAP_MIN_USER_CHARS = 40
+
+function userChars(dialog) {
+  return dialog.messages.filter((m) => m.role === 'user').reduce((sum, m) => sum + m.text.trim().length, 0)
+}
+
+function recapEligible(dialog) {
+  return dialog.memoryMode !== 'off' && !dialog.crisisSeen && userChars(dialog) >= RECAP_MIN_USER_CHARS
+}
+
+function templateRecap(dialog) {
+  const said = dialog.messages.filter((m) => m.role === 'user').map((m) => m.text.trim())
+  const snippet = (said[0] ?? '').replace(/[.!?…]+$/, '').slice(0, 120)
+  const agreement = said.map((t) => /давай так:?\s*(.+)/i.exec(t)?.[1]).find(Boolean)
+  return (
+    `Ты рассказал, что у тебя на душе${snippet ? `: ${snippet}` : ''}. Тебе важно, чтобы тебя услышали.` +
+    (agreement ? ` Ты решил: ${agreement.replace(/[.!?…]+$/, '').slice(0, 120)}.` : '')
+  )
+}
+
+function cleanRecap(value) {
+  if (typeof value !== 'string') return null
+  const text = value.trim().replace(/\s+/g, ' ')
+  return text && text.length <= 500 ? text : null
+}
+
+function storeRecap(dialog, recap, source) {
+  dialog.summary.recap = recap
+  dialog.summary.recapStatus = 'ready'
+  dialog.summary.recapSource = source
+  dialog.summary.recapAt = new Date().toISOString()
 }
 
 function openDialogOf(userId) {
@@ -113,11 +150,27 @@ function createDialog(userId, memory = 'on') {
   return dialog
 }
 
-/** Ends the dialog and, when it was held with memory, starts the "extraction" (see `extractMemory`). */
-function endDialog(dialog, takeaway, tensionAfter) {
+/** Ends the dialog and starts its recap: written by the person, or the automatic one after `RECAP_DELAY_MS`. */
+function endDialog(dialog, takeaway, tensionAfter, recapSource = 'manual') {
   dialog.endedAt = new Date().toISOString()
-  dialog.summary = buildSummary(dialog, takeaway, tensionAfter)
-  extractMemory(dialog)
+  dialog.summary = {
+    ...buildSummary(dialog, takeaway, tensionAfter),
+    recap: null,
+    recapStatus: 'none',
+    recapSource: null,
+    recapAvailable: recapEligible(dialog),
+  }
+  const written = cleanRecap(takeaway)
+  if (recapEligible(dialog)) {
+    if (written) storeRecap(dialog, written, recapSource === 'draft' ? 'draft' : 'manual')
+    else if (userState(dialog.userId).recapEnabled) {
+      dialog.summary.recapStatus = 'pending'
+      setTimeout(() => {
+        // The person may have written one meanwhile, or deleted the conversation.
+        if (dialog.summary?.recapStatus === 'pending') storeRecap(dialog, templateRecap(dialog), 'auto')
+      }, RECAP_DELAY_MS)
+    }
+  }
 }
 
 /** Conversations "without memory" are deleted 24 hours after their last message, as the agent does. */
@@ -148,6 +201,8 @@ function listItem(dialog) {
     endedAt: dialog.endedAt,
     summary: dialog.summary,
     memoryMode: dialog.memoryMode ?? 'on',
+    // `saved: false` marks a conversation the person asked not to keep: only the mark is listed (add-unsaved-dialog).
+    saved: dialog.saved !== false,
   }
 }
 
@@ -170,6 +225,7 @@ function addMessage(dialog, role, text) {
     createdAt: new Date().toISOString(),
   }
   dialog.messages.push(message)
+  if (role === 'user') onUserMessage(userState(dialog.userId).memory, dialog, text, memoryAvailable())
   return message
 }
 
@@ -182,248 +238,6 @@ function nextReply(dialog) {
   const reply = REPLIES[dialog.replyIndex % REPLIES.length]
   dialog.replyIndex += 1
   return reply
-}
-
-// ─── Memory ───────────────────────────────────────────────────────────────────
-
-function newMemory() {
-  return {
-    enabled: false,
-    consentVersion: null,
-    consentAt: null,
-    /** Every switch on or off, and "forget everything", moves it: older conversations are not read any more. */
-    epochAt: null,
-    updatedAt: null,
-    /** factId → fact, in the shape of the API. */
-    facts: new Map(),
-    /** The history of changes, without texts. */
-    events: [],
-    /** dialogId → { readyAt, items: [{ op, factId }], reason }: one "extraction" per conversation. */
-    jobs: new Map(),
-  }
-}
-
-function memoryAvailable() {
-  return memoryMode !== 'off'
-}
-
-function memoryEvent(memory, op, actor, factId, dialogId = null) {
-  memory.events.push({ factId, op, actor, dialogId, at: new Date().toISOString() })
-}
-
-/** What a fact must never hold, a few rules of the real list, so that `FACT_REJECTED` can be seen too. */
-const MEMORY_BLOCKLIST = [
-  [/\d[\d\s()-]{5,}\d/u, 'contact_pii'],
-  [/@|https?:\/\/|www\./iu, 'contact_pii'],
-  [/диагноз|депресси|биполяр|шизофрени/iu, 'diagnosis'],
-  [/таблетк|антидепрессант|препарат|\bмг\b/iu, 'medication'],
-  [/не хочу жить|покончить|убить себя/iu, 'crisis'],
-  [/ты (всегда |теперь )?должен|игнорируй|забудь (все |свои )?(инструкции|правила)/iu, 'instruction'],
-]
-
-function rejectionOf(text) {
-  for (const [pattern, reason] of MEMORY_BLOCKLIST) {
-    if (pattern.test(text)) return reason
-  }
-  return null
-}
-
-const STYLE_SLOTS = {
-  form: { ty: 'на «ты»', vy: 'на «вы»' },
-  length: { short: 'отвечать коротко', normal: 'можно подробно' },
-  advice: { ask_first: 'сначала спросить, нужен ли совет', ok: 'советовать можно сразу' },
-  tone: { soft: 'мягко', direct: 'прямо' },
-}
-
-/** `style` text is built from its slots, as the real agent does; null when the slots do not hold up. */
-function styleText(slots) {
-  if (!slots || typeof slots !== 'object') return null
-  const parts = []
-  if (slots.address !== undefined) {
-    if (typeof slots.address !== 'string' || !slots.address.trim() || slots.address.length > 30 || /\d|\//u.test(slots.address)) {
-      return null
-    }
-    parts.push(`называть «${slots.address.trim()}»`)
-  }
-  for (const [key, labels] of Object.entries(STYLE_SLOTS)) {
-    if (slots[key] === undefined) continue
-    if (!Object.hasOwn(labels, slots[key])) return null
-    parts.push(labels[slots[key]])
-  }
-  if (parts.length === 0) return null
-  const text = parts.join(', ')
-  return text.charAt(0).toUpperCase() + text.slice(1)
-}
-
-function personText(slots) {
-  if (!slots || typeof slots !== 'object' || typeof slots.role !== 'string' || !slots.role.trim() || slots.role.length > 30) {
-    return null
-  }
-  if (slots.name !== undefined && (typeof slots.name !== 'string' || slots.name.length > 20)) return null
-  if (slots.note !== undefined && (typeof slots.note !== 'string' || slots.note.length > 60)) return null
-  const role = slots.role.trim()
-  let text = role.charAt(0).toUpperCase() + role.slice(1)
-  if (slots.name) text += ` ${slots.name.trim()}`
-  if (slots.note) text += `: ${slots.note.trim()}`
-  return text
-}
-
-/**
- * The text and slots of a fact the person writes or corrects, as the real agent judges them:
- * `{ text, slots }`, `{ invalid }` (a request of the wrong shape: 422 AGENT_VALIDATION) or
- * `{ rejected }` (the rules refuse it: 422 FACT_REJECTED with the reason). `style` and `person` take
- * only slots, and their text is built from them («Сестра Аня: поддерживает»); the other categories
- * take only a text, and slots sent with it are ignored.
- */
-function factContent(category, text, slots) {
-  if (!MEMORY_CATEGORIES.includes(category)) return { invalid: 'неизвестная категория' }
-  let content
-  if (category === 'style' || category === 'person') {
-    if (text !== undefined && text !== null && text !== '') return { invalid: 'у этой категории правятся слоты, а не текст' }
-    const built = category === 'style' ? styleText(slots) : personText(slots)
-    if (built === null) return { rejected: 'bad_slots' }
-    content = { text: built, slots }
-  } else {
-    if (typeof text !== 'string') return { invalid: 'нужен текст' }
-    content = { text: text.trim(), slots: null }
-  }
-  // The agent's minimum for a text the person writes: 8 characters (`MIN_TEXT`). Texts built from slots
-  // are not held to it here: «Мама» or «На «ты»» is a whole fact.
-  if (content.text.length < (content.slots ? 1 : 8)) return { rejected: 'too_short' }
-  if (content.text.length > 200) return { rejected: 'too_long' }
-  const reason = rejectionOf(`${content.text} ${JSON.stringify(content.slots ?? {})}`)
-  return reason ? { rejected: reason } : content
-}
-
-/** Answers as the agent does to a fact it does not take; false when the content is fine. */
-function refuseContent(res, content) {
-  if (content.invalid) {
-    agentError(res, 422, 'AGENT_VALIDATION', content.invalid)
-    return true
-  }
-  if (content.rejected) {
-    agentError(res, 422, 'FACT_REJECTED', 'Это нельзя запомнить', { reason: content.rejected })
-    return true
-  }
-  return false
-}
-
-function newFact(memory, fields) {
-  const now = new Date().toISOString()
-  const fact = {
-    id: randomUUID(),
-    category: fields.category,
-    text: fields.text,
-    slots: fields.slots ?? null,
-    importance: fields.importance ?? 3,
-    confidence: fields.confidence ?? 1,
-    status: fields.status ?? 'active',
-    origin: fields.origin ?? 'auto',
-    sensitivity: 'normal',
-    sources: fields.sources ?? [],
-    createdAt: now,
-    updatedAt: now,
-    lastConfirmedAt: null,
-    expiresAt: null,
-    confirmCount: 0,
-    seenByUser: fields.seenByUser ?? false,
-  }
-  memory.facts.set(fact.id, fact)
-  return fact
-}
-
-function liveFacts(memory) {
-  return [...memory.facts.values()].filter((fact) => fact.status !== 'expired')
-}
-
-function sortedFacts(facts) {
-  return [...facts].sort(
-    (a, b) =>
-      MEMORY_CATEGORIES.indexOf(a.category) - MEMORY_CATEGORIES.indexOf(b.category) ||
-      b.importance - a.importance ||
-      Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
-  )
-}
-
-const normalized = (text) => text.toLowerCase().replace(/ё/gu, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
-
-/**
- * The person's own requests "запомни, что ...", one per request: the rest of the sentence after it.
- * This is all the "extraction" the mock does.
- */
-function rememberRequests(text) {
-  const found = []
-  for (const chunk of text.split(/(?=запомни)/iu)) {
-    const match = chunk.match(/^запомни[\s,:;—-]*(?:пожалуйста[\s,]*)?(?:что[\s,]+)?([^.!?\n]+)/iu)
-    const said = match?.[1]?.trim().replace(/[\s,;:—-]+$/u, '')
-    if (said) found.push(said.charAt(0).toUpperCase() + said.slice(1))
-  }
-  return found
-}
-
-/**
- * The extraction at the end of a conversation: every "запомни, что ..." of the person becomes a fact
- * (`works` when it is about what helps, `interest` otherwise), or confirms the one already there.
- * Nothing happens for a conversation "without memory", with memory off for the person or on the server.
- */
-function extractMemory(dialog) {
-  const memory = userState(dialog.userId).memory
-  if (memory.jobs.has(dialog.dialogId)) return
-  const readyAt = Date.now() + MEMORY_DELAY_MS
-  const skip = (reason) => memory.jobs.set(dialog.dialogId, { readyAt, items: [], reason })
-  if (dialog.memoryMode === 'off') return skip('memory_off')
-  if (!memory.enabled || !memoryAvailable()) return skip('disabled')
-  if (memory.epochAt && Date.parse(dialog.startedAt) < Date.parse(memory.epochAt)) return skip('epoch')
-
-  const items = []
-  const date = dialog.startedAt.slice(0, 10)
-  for (const message of dialog.messages) {
-    if (message.role !== 'user') continue
-    for (const said of rememberRequests(message.text)) {
-      if (said.length > 200 || rejectionOf(said)) continue
-      const same = liveFacts(memory).find((fact) => normalized(fact.text) === normalized(said))
-      if (same) {
-        same.confirmCount += 1
-        same.lastConfirmedAt = new Date().toISOString()
-        same.updatedAt = same.lastConfirmedAt
-        if (!same.sources.some((source) => source.dialogId === dialog.dialogId)) {
-          same.sources.push({ dialogId: dialog.dialogId, date })
-        }
-        memoryEvent(memory, 'confirm', 'extractor', same.id, dialog.dialogId)
-        items.push({ op: 'confirm', factId: same.id })
-        continue
-      }
-      if (liveFacts(memory).length >= MEMORY_MAX_FACTS) continue
-      const fact = newFact(memory, {
-        category: /помога|помогл|успока/iu.test(said) ? 'works' : 'interest',
-        text: said,
-        importance: 4,
-        origin: 'user_said',
-        sources: [{ dialogId: dialog.dialogId, date }],
-      })
-      memoryEvent(memory, 'add', 'extractor', fact.id, dialog.dialogId)
-      items.push({ op: 'add', factId: fact.id })
-    }
-  }
-  memory.jobs.set(dialog.dialogId, { readyAt, items, reason: items.length === 0 ? 'too_short' : null })
-  console.log(`[agent-mock] память: диалог ${dialog.dialogId}, изменений ${items.length}`)
-}
-
-function memoryView(memory) {
-  return {
-    available: memoryAvailable(),
-    mode: memoryMode,
-    enabled: memory.enabled,
-    consentVersion: memory.consentVersion,
-    consentAt: memory.consentAt,
-    rulesVersion: MEMORY_RULES_VERSION,
-    limits: { maxFacts: MEMORY_MAX_FACTS },
-    facts: sortedFacts(liveFacts(memory)),
-  }
-}
-
-function memorySettings(memory) {
-  return { enabled: memory.enabled, consentVersion: memory.consentVersion, consentAt: memory.consentAt }
 }
 
 /** Errors in the agent's format: `{ error: { code, message, details } }`. */
@@ -455,196 +269,22 @@ function noContent(res) {
   return res.end()
 }
 
-/**
- * /v1/users/{userId}/memory... Reading, export and forgetting work in any mode and with the
- * person's memory off; turning it on and writing facts need the feature on the server.
- */
-async function handleMemory(req, res, url, userId, parts, method) {
-  const memory = userState(userId).memory
-  const resource = parts[4] ?? null
+/** /v1/users/{userId}/memory...: the notes model lives in `memory-notes.mjs`. */
+function handleMemoryRoute(req, res, url, userId, parts, method) {
+  return handleNotesMemory(
+    { json, noContent, readBody, agentError, available: memoryAvailable, mode: () => memoryMode, allowlist: MEMORY_ALLOWLIST },
+    req,
+    res,
+    url,
+    userId,
+    userState(userId).memory,
+    parts,
+    method,
+  )
+}
 
-  // GET /memory - everything remembered, except expired facts
-  if (!resource && method === 'GET') return json(res, 200, memoryView(memory))
-
-  // DELETE /memory - "forget everything": facts, history, extractions; the switch and the consent stay
-  if (!resource && method === 'DELETE') {
-    const count = memory.facts.size
-    memory.facts.clear()
-    memory.events = []
-    memory.jobs.clear()
-    memory.epochAt = new Date().toISOString()
-    memory.updatedAt = memory.epochAt
-    console.log(`[agent-mock] память пользователя ${userId} стёрта, фактов было ${count}`)
-    return noContent(res)
-  }
-
-  // PUT /memory/settings - the person's switch; turning it on needs the consent version
-  if (resource === 'settings' && parts.length === 5 && method === 'PUT') {
-    const body = await readBody(req)
-    if (typeof body.enabled !== 'boolean') {
-      return agentError(res, 400, 'AGENT_VALIDATION', 'Поле enabled обязательно')
-    }
-    const now = new Date().toISOString()
-    if (body.enabled) {
-      if (typeof body.consentVersion !== 'string' || !body.consentVersion) {
-        return agentError(res, 422, 'AGENT_VALIDATION', 'Для включения нужна версия согласия')
-      }
-      if (!memoryAvailable()) return agentError(res, 503, 'MEMORY_UNAVAILABLE', 'Память сейчас недоступна')
-      if (MEMORY_ALLOWLIST.length > 0 && !MEMORY_ALLOWLIST.includes(userId)) {
-        return agentError(res, 403, 'MEMORY_NOT_ALLOWED', 'Память пока доступна не всем')
-      }
-      if (!memory.enabled || memory.consentVersion !== body.consentVersion) {
-        if (!memory.enabled) memory.epochAt = now
-        memory.enabled = true
-        memory.consentVersion = body.consentVersion
-        memory.consentAt = now
-        memory.updatedAt = now
-      }
-    } else if (memory.enabled) {
-      memory.enabled = false
-      memory.epochAt = now
-      memory.updatedAt = now
-    }
-    console.log(`[agent-mock] память пользователя ${userId}: ${memory.enabled ? 'включена' : 'выключена'}`)
-    return json(res, 200, memorySettings(memory))
-  }
-
-  // POST /memory/facts - the person writes a fact themselves: theirs, pinned. The checks go in the
-  // agent's order: the feature, the content, the person's switch, the room.
-  if (resource === 'facts' && parts.length === 5 && method === 'POST') {
-    const body = await readBody(req)
-    if (!memoryAvailable()) return agentError(res, 503, 'MEMORY_UNAVAILABLE', 'Память сейчас недоступна')
-    const content = factContent(body.category, body.text, body.slots)
-    if (refuseContent(res, content)) return
-    if (!memory.enabled) return agentError(res, 409, 'MEMORY_DISABLED', 'Память выключена')
-    // The person has one style: writing it again replaces it.
-    const style = body.category === 'style' ? liveFacts(memory).find((fact) => fact.category === 'style') : null
-    if (style) {
-      Object.assign(style, {
-        text: content.text,
-        slots: content.slots,
-        origin: 'user_edit',
-        status: 'pinned',
-        importance: 5,
-        confidence: 1,
-        updatedAt: new Date().toISOString(),
-        seenByUser: true,
-      })
-      memoryEvent(memory, 'user_edit', 'user', style.id)
-      return json(res, 201, style)
-    }
-    if (liveFacts(memory).length >= MEMORY_MAX_FACTS) {
-      return agentError(res, 409, 'MEMORY_FULL', 'Память заполнена')
-    }
-    const fact = newFact(memory, {
-      category: body.category,
-      text: content.text,
-      slots: content.slots,
-      importance: 5,
-      status: 'pinned',
-      origin: 'user_edit',
-      seenByUser: true,
-    })
-    memoryEvent(memory, 'user_add', 'user', fact.id)
-    return json(res, 201, fact)
-  }
-
-  // PATCH /memory/facts/{factId} - correct, accept a proposed one, pin or unpin, "right"
-  // DELETE /memory/facts/{factId} - forget one; a repeat is fine
-  if (resource === 'facts' && parts.length === 6) {
-    const factId = decodeURIComponent(parts[5])
-    const fact = memory.facts.get(factId)
-    if (method === 'DELETE') {
-      if (fact) {
-        memory.facts.delete(factId)
-        memoryEvent(memory, 'user_delete', 'user', factId)
-      }
-      return noContent(res)
-    }
-    // The agent's order: the request itself, the feature, the switch, the fact, its new content.
-    // A correction, a status and "right" may come together and are applied in that order.
-    if (method === 'PATCH') {
-      const body = await readBody(req)
-      const editing = body.text !== undefined || body.slots !== undefined
-      if (!editing && body.status === undefined && body.confirm !== true) {
-        return agentError(res, 422, 'AGENT_VALIDATION', 'нечего менять')
-      }
-      if (body.status !== undefined && body.status !== 'active' && body.status !== 'pinned') {
-        return agentError(res, 422, 'AGENT_VALIDATION', 'status: active или pinned')
-      }
-      if (!memoryAvailable()) return agentError(res, 503, 'MEMORY_UNAVAILABLE', 'Память сейчас недоступна')
-      if (!memory.enabled) return agentError(res, 409, 'MEMORY_DISABLED', 'Память выключена')
-      if (!fact || fact.status === 'expired') return agentError(res, 404, 'FACT_NOT_FOUND', 'Факт не найден')
-      const now = new Date().toISOString()
-      if (editing) {
-        const content = factContent(fact.category, body.text, body.slots)
-        if (refuseContent(res, content)) return
-        Object.assign(fact, { text: content.text, slots: content.slots, origin: 'user_edit', status: 'pinned' })
-        Object.assign(fact, { importance: 5, confidence: 1, sensitivity: 'normal' })
-        memoryEvent(memory, 'user_edit', 'user', fact.id)
-      }
-      if (body.status !== undefined && body.status !== fact.status) {
-        const accepting = fact.status === 'proposed' || fact.status === 'candidate'
-        fact.status = body.status
-        memoryEvent(memory, accepting ? 'user_confirm' : 'user_edit', 'user', fact.id)
-      }
-      if (body.confirm === true) {
-        fact.confirmCount += 1
-        fact.lastConfirmedAt = now
-        if (fact.status === 'candidate') fact.status = 'active'
-        memoryEvent(memory, 'user_confirm', 'user', fact.id)
-      }
-      fact.updatedAt = now
-      fact.seenByUser = true
-      return json(res, 200, fact)
-    }
-  }
-
-  // GET /memory/changes?dialogId= - what one conversation added: the "I remembered" card
-  if (resource === 'changes' && parts.length === 5 && method === 'GET') {
-    const dialogId = url.searchParams.get('dialogId') ?? ''
-    const dialog = userState(userId).dialogs.get(dialogId)
-    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
-    const skipped = (reason) => json(res, 200, { status: 'skipped', reason, items: [] })
-    // The agent's order: the feature, the conversation's mode, then its extraction.
-    if (!memoryAvailable()) return skipped('unavailable')
-    if (dialog.memoryMode === 'off') return skipped('memory_off')
-    const job = memory.jobs.get(dialogId)
-    if (!job) {
-      // Still going (the extraction runs when it ends), unless memory is off for the person.
-      return memory.enabled ? json(res, 200, { status: 'pending', reason: null, items: [] }) : skipped('disabled')
-    }
-    if (Date.now() < job.readyAt) return json(res, 200, { status: 'pending', reason: null, items: [] })
-    if (job.reason) return skipped(job.reason)
-    // The facts as they are now, marked seen as they are given out; forgotten ones are left out.
-    const items = job.items
-      .map(({ op, factId }) => ({ op, fact: memory.facts.get(factId) }))
-      .filter((item) => item.fact && item.fact.status !== 'expired')
-      .map((item) => {
-        item.fact.seenByUser = true
-        return { op: item.op, fact: { ...item.fact } }
-      })
-    return json(res, 200, { status: 'ready', reason: null, items })
-  }
-
-  // GET /memory/export - "download my memory": everything, guesses included, the history without texts
-  if (resource === 'export' && parts.length === 5 && method === 'GET') {
-    return json(res, 200, {
-      exportedAt: new Date().toISOString(),
-      rulesVersion: MEMORY_RULES_VERSION,
-      settings: {
-        enabled: memory.enabled,
-        consentVersion: memory.consentVersion,
-        consentAt: memory.consentAt,
-        epochAt: memory.epochAt,
-        updatedAt: memory.updatedAt,
-      },
-      facts: sortedFacts(memory.facts.values()),
-      events: memory.events,
-    })
-  }
-
-  return json(res, 404, { error: 'not_found' })
+function memoryAvailable() {
+  return memoryMode !== 'off'
 }
 
 const server = createServer(async (req, res) => {
@@ -672,10 +312,63 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { mode: memoryMode, available: memoryAvailable(), delayMs: MEMORY_DELAY_MS })
   }
 
+  // Dev only: switch the digests route into failure and back.
+  if (path === '/dev/digests' && method === 'POST') {
+    const body = await readBody(req)
+    digestsFail = body.fail === true
+    return json(res, 200, { fail: digestsFail })
+  }
+
   // /v1/users/{userId}...
   const parts = path.split('/').filter(Boolean)
   if (parts[0] !== 'v1' || parts[1] !== 'users' || !parts[2]) return json(res, 404, { error: 'not_found' })
   const userId = decodeURIComponent(parts[2])
+
+  // POST /v1/users/{userId}/digests - the text of a week summary or a year story. The real agent asks the
+  // model; the mock writes a fixed text from the marks, in the shape the spec asks for (the person's own
+  // "ты", no scores, no "надо", no count of days in a row). It keeps nothing. `POST /dev/digests {fail: true}`
+  // makes it answer 502 once more, for the "agent is down" screen.
+  if (parts.length === 4 && parts[3] === 'digests' && method === 'POST') {
+    const body = await readBody(req)
+    if (digestsFail) return json(res, 502, { error: { code: 'DIGEST_UNAVAILABLE', message: 'mock: digests are down' } })
+    const marks = Array.isArray(body.marks) ? body.marks : []
+    const levels = ['тяжело', 'так себе', 'нормально', 'хорошо', 'отлично']
+    const counts = [0, 0, 0, 0, 0]
+    for (const mark of marks) if (mark?.mood >= 1 && mark.mood <= 5) counts[mark.mood - 1] += 1
+    let top = 2
+    counts.forEach((count, i) => { if (count > 0 && count >= counts[top]) top = i })
+    const hard = counts[0]
+    if (body.kind === 'year') {
+      const weekly = Array.isArray(body.weekly) ? body.weekly.length : 0
+      const text =
+        `Этот год ты отмечал настроение ${marks.length} раз, и чаще всего оно было «${levels[top]}». ` +
+        `За это время я собрал для тебя ${weekly} итогов недель. Были дни полегче и дни потяжелее, и это нормально. ` +
+        'Рядом с тобой всегда можно поговорить, когда захочется.'
+      return json(res, 200, { text, stats: { markedDays: marks.length } })
+    }
+    const recaps = Array.isArray(body.recaps) ? body.recaps : []
+    // A general overview, no quotes and no tie to a dialog: only the names of the themes the recaps touch (as in agent/app/services/digests.py).
+    const texts = recaps.map((r) => (typeof r?.text === 'string' ? r.text.trim() : '')).filter(Boolean)
+    const joined = texts.join(' ').toLowerCase()
+    const THEMES = [
+      ['работа и дела', /работ|руковод|начальн|коллег|офис|проект|дедлайн|карьер|увольн/],
+      ['близкие и отношения', /мам[аыуе]|пап|семь|друг|подруг|отношени|партн[её]р|муж|жена|девушк|парень|дет[иейям]/],
+      ['здоровье и сон', /здоровь|сон\b|сна\b|бессонн|усталост|болезн|врач|тревог|паник/],
+      ['деньги', /деньг|долг|зарплат|кредит|финанс/],
+    ]
+    const themes = THEMES.filter(([, re]) => re.test(joined)).map(([name]) => name).slice(0, 2)
+    const text =
+      (themes.length
+        ? `На этой неделе в твоих мыслях заметное место занимало: ${themes.join(' и ')}. `
+        : texts.length
+          ? 'На этой неделе ты не раз возвращался к тому, что у тебя на душе. '
+          : // Without recaps the mock states the counts, so that the e2e specs can tell a rewritten text from the old one.
+            `Тяжёлых дней было ${hard}, лёгких — ${marks.filter((m) => m.mood >= 3).length}. `) +
+      (hard >= 3
+        ? 'Неделя выдалась непростой. Рядом могут быть люди, с которыми можно поговорить, и я тоже здесь.'
+        : 'Спасибо, что делишься со мной тем, как ты.')
+    return json(res, 200, { text, stats: { markedDays: marks.length, hardDays: hard } })
+  }
 
   // DELETE /v1/users/{userId} - erase everything
   if (parts.length === 3 && method === 'DELETE') {
@@ -694,25 +387,7 @@ const server = createServer(async (req, res) => {
     const body = await readBody(req)
     const state = userState(userId)
     state.dialogs.clear()
-    if (body.memory) {
-      const now = new Date().toISOString()
-      state.memory = newMemory()
-      state.memory.enabled = body.memory.enabled === true
-      state.memory.consentVersion = state.memory.enabled ? (body.memory.consentVersion ?? '2026-10-12') : null
-      state.memory.consentAt = state.memory.enabled ? now : null
-      state.memory.updatedAt = now
-      for (const item of body.memory.facts ?? []) {
-        if (!MEMORY_CATEGORIES.includes(item.category) || typeof item.text !== 'string') continue
-        newFact(state.memory, {
-          category: item.category,
-          text: item.text,
-          slots: item.slots ?? null,
-          status: item.status ?? 'active',
-          origin: item.origin ?? 'auto',
-          seenByUser: true,
-        })
-      }
-    }
+    if (body.memory) state.memory = seedMemory(body.memory)
     for (const item of body.dialogs ?? []) {
       const started = Date.parse(item.startedAt)
       const dialog = {
@@ -729,15 +404,48 @@ const server = createServer(async (req, res) => {
         })),
         replyIndex: 0,
         memoryMode: item.memoryMode === 'off' ? 'off' : 'on',
+        // A conversation the person asked not to keep: only the mark exists, with no text and no recap.
+        saved: item.saved === false ? false : undefined,
       }
+      if (dialog.saved === false) dialog.messages = []
       state.dialogs.set(dialog.dialogId, dialog)
     }
-    return json(res, 200, { count: state.dialogs.size, facts: state.memory.facts.size })
+    return json(res, 200, { count: state.dialogs.size, notes: state.memory.notes.size })
   }
 
   purgeIncognito(userId)
 
-  if (parts[3] === 'memory') return handleMemory(req, res, url, userId, parts, method)
+  if (parts[3] === 'memory') return handleMemoryRoute(req, res, url, userId, parts, method)
+
+  // GET /v1/users/{userId}/recaps - conversations with a ready recap, newest first
+  if (parts.length === 4 && parts[3] === 'recaps' && method === 'GET') {
+    const limit = Number(url.searchParams.get('limit') ?? 20)
+    const items = [...userState(userId).dialogs.values()]
+      .filter((d) => d.summary?.recapStatus === 'ready')
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+      .slice(0, limit)
+      .map((d) => ({
+        dialogId: d.dialogId,
+        startedAt: d.startedAt,
+        endedAt: d.endedAt,
+        title: d.summary.title,
+        recap: d.summary.recap,
+        recapSource: d.summary.recapSource,
+        recapAt: d.summary.recapAt ?? null,
+      }))
+    return json(res, 200, { items, next: null })
+  }
+
+  // GET/PUT /v1/users/{userId}/dialog-settings - «Подводить итог автоматически», apart from the memory settings
+  if (parts.length === 4 && parts[3] === 'dialog-settings') {
+    const state = userState(userId)
+    if (method === 'PUT') {
+      const body = await readBody(req)
+      if (typeof body.recapEnabled !== 'boolean') return agentError(res, 400, 'AGENT_VALIDATION', 'recapEnabled must be a boolean')
+      state.recapEnabled = body.recapEnabled
+    }
+    return json(res, 200, { recapEnabled: state.recapEnabled })
+  }
 
   if (parts[3] !== 'dialogs') return json(res, 404, { error: 'not_found' })
 
@@ -802,8 +510,35 @@ const server = createServer(async (req, res) => {
   if (parts.length === 6 && parts[5] === 'end' && method === 'POST') {
     if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
     const body = await readBody(req)
-    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null)
+    if (dialog.summary) return json(res, 200, { summary: dialog.summary })
+    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null, body.recapSource)
     return json(res, 200, { summary: dialog.summary })
+  }
+
+  // PUT /v1/users/{userId}/dialogs/{dialogId}/recap - the recap the person wrote in the journal
+  if (parts.length === 6 && parts[5] === 'recap' && method === 'PUT') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    const body = await readBody(req)
+    const written = cleanRecap(body.recap)
+    if (!dialog.summary || !written || !recapEligible(dialog)) return agentError(res, 409, 'RECAP_NOT_AVAILABLE', 'Для этого разговора итога нет')
+    storeRecap(dialog, written, body.source === 'draft' ? 'draft' : 'manual')
+    return json(res, 200, { summary: dialog.summary })
+  }
+
+  // POST /v1/users/{userId}/dialogs/{dialogId}/recap/draft - a draft; nothing is stored
+  if (parts.length === 7 && parts[5] === 'recap' && parts[6] === 'draft' && method === 'POST') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    if (!recapEligible(dialog)) return agentError(res, 409, 'RECAP_NOT_AVAILABLE', 'Для этого разговора итога нет')
+    return json(res, 200, { recap: templateRecap(dialog) })
+  }
+
+  // DELETE /v1/users/{userId}/dialogs/{dialogId} - the conversation with its recap; the notes of memory stay
+  if (parts.length === 5 && method === 'DELETE') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    userState(userId).dialogs.delete(dialog.dialogId)
+    console.log(`[agent-mock] диалог удалён человеком ${dialog.dialogId}`)
+    res.writeHead(204)
+    return res.end()
   }
 
   return json(res, 404, { error: 'not_found' })
@@ -913,6 +648,14 @@ function send(socket, frame) {
 
 const STREAM_DELAY_MS = 60
 
+/** The tone the real agent's classifier would report for a line (REQ-VOICE-10): a few words are enough for the mock. */
+function moodOf(text) {
+  if (/бесит|злюсь|достало|ненавижу/iu.test(text)) return { tone: 'angry', intensity: 0.8 }
+  if (/спать|сонн|устал/iu.test(text)) return { tone: 'sleepy', intensity: 0.8 }
+  if (/страшно|боюсь|тревожно/iu.test(text)) return { tone: 'afraid', intensity: 0.9 }
+  return { tone: 'neutral', intensity: 0.1 }
+}
+
 async function streamAssistantReply(socket, dialog, crisis = false) {
   const text = crisis
     ? 'Я слышу, что тебе очень тяжело. Ты не один на один с этим. Давай посмотрим, кому можно позвонить прямо сейчас.'
@@ -983,9 +726,11 @@ wss.on('connection', (socket, request, context) => {
         }
         const text = String(frame.text ?? '')
         const crisis = isCrisis(text)
+        if (crisis) dialog.crisisSeen = true
         const message = addMessage(dialog, 'user', text)
         if (frame.id) dialog.clientIds.set(frame.id, message.id)
         send(socket, { type: 'ack', id: frame.id ?? message.id, messageId: message.id })
+        send(socket, { type: 'mood', ...moodOf(text), at: Date.now() })
         // Help is needed now: the app shows its own helplines under the agent's words.
         if (crisis) {
           send(socket, { type: 'safety', text: 'Если тебе сейчас опасно — позвони по одному из номеров ниже.' })
@@ -1002,7 +747,7 @@ wss.on('connection', (socket, request, context) => {
         if (typeof frame.messageId === 'string') socket.cancelledSpeech.add(frame.messageId)
         return
       case 'end': {
-        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null)
+        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null, frame.recapSource)
         send(socket, { type: 'ended', summary: dialog.summary })
         socket.close(1000, 'dialog ended')
         return

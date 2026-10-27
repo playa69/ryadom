@@ -14,7 +14,6 @@ from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import AgentError, validation_error
 from app.memory.backend import MemoryBackend
 from app.memory.errors import MemoryServiceError
-from app.services.dialog_db import DialogDbError
 
 logger = logging.getLogger("agent.memory")
 
@@ -39,6 +38,11 @@ def get_memory_service(request: Request) -> MemoryBackend:
 Memory = Annotated[MemoryBackend, Depends(get_memory_service)]
 
 
+def _notes(memory: MemoryBackend) -> Any:
+    """Сервис заметок бэкенда памяти (`NotesService`)."""
+    return memory.notes  # type: ignore[attr-defined]
+
+
 def _error(error: MemoryServiceError) -> AgentError:
     details = {"reason": error.reason} if error.reason else None
     return AgentError(error.status, error.code, error.message, details)
@@ -47,8 +51,10 @@ def _error(error: MemoryServiceError) -> AgentError:
 class SettingsBody(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    enabled: bool
+    enabled: bool | None = None
     consent_version: str | None = Field(default=None, alias="consentVersion", max_length=32)
+    sensitive_enabled: bool | None = Field(default=None, alias="sensitiveEnabled")
+    chat_search_enabled: bool | None = Field(default=None, alias="chatSearchEnabled")
 
 
 class FactBody(BaseModel):
@@ -57,6 +63,12 @@ class FactBody(BaseModel):
     category: str = Field(max_length=20)
     text: str | None = Field(default=None, max_length=1000)
     slots: dict[str, Any] | None = None
+
+
+class NoteBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class PatchBody(BaseModel):
@@ -83,18 +95,11 @@ async def put_settings(user_id: str, body: SettingsBody, store: Store, memory: M
     user = _user(user_id)
     await store.ensure_user(user)
     try:
-        result = await memory.update_settings(user, body.enabled, body.consent_version)
+        return await memory.update_settings(
+            user, body.enabled, body.consent_version, body.sensitive_enabled, body.chat_search_enabled
+        )
     except MemoryServiceError as error:
         raise _error(error) from error
-    if not body.enabled:
-        return result
-    try:
-        await store.clear_memory_deleted(user)
-    except DialogDbError as error:
-        memory.user_erased(user)
-        logger.error("memory enable failed: %s", type(error).__name__)
-        raise AgentError(503, "AGENT_INTERNAL", "Не удалось включить память, повторите позже") from error
-    return result
 
 
 @router.post("/facts", status_code=201)
@@ -129,13 +134,74 @@ async def delete_fact(user_id: str, fact_id: str, memory: Memory) -> Response:
 
 @router.delete("", status_code=204)
 async def forget_all(user_id: str, memory: Memory) -> Response:
-    # Датасет Cognee стирается сразу, а память остаётся включённой (PROTEUS-242, 0.4). Метку memory_deletions здесь не
-    # ставим: по ней холодная загрузка считает человека стёртым и выключила бы ему память.
+    # Память остаётся включённой (PROTEUS-242, 0.4): заметки удаляются сразу, датасет Cognee — через очередь memory_outbox.
     try:
         await memory.forget_all(_user(user_id))
     except MemoryServiceError as error:
         raise _error(error) from error
     return Response(status_code=204)
+
+
+@router.patch("/notes/{note_id}")
+async def patch_note(user_id: str, note_id: str, body: NoteBody, store: Store, memory: Memory) -> dict[str, Any]:
+    """Правка заметки: те же проверки, что у новой; отказ — `422 NOTE_REJECTED` с кодом правила."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    try:
+        return await _notes(memory).patch(user, note_id, body.text)
+    except MemoryServiceError as error:
+        raise _error(error) from error
+
+
+@router.post("/notes/instruction")
+async def notes_instruction(user_id: str, body: NoteBody, store: Store, memory: Memory) -> dict[str, Any]:
+    """«Скажи, что поправить или убрать»: просьба человека выполняется извлекателем; ответ — что изменено, удалено, добавлено."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    try:
+        outcome = await memory.instruct(user, body.text)  # type: ignore[attr-defined]
+    except MemoryServiceError as error:
+        raise _error(error) from error
+    if outcome.failed:
+        raise AgentError(503, "MEMORY_UNAVAILABLE", "Память сейчас недоступна")
+    return {
+        "changes": {
+            "added": outcome.added,
+            "updated": outcome.updated,
+            "deleted": outcome.deleted,
+            "blocked": outcome.blocked,
+        }
+    }
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+async def delete_note(user_id: str, note_id: str, memory: Memory) -> Response:
+    try:
+        await _notes(memory).delete(_user(user_id), note_id)
+    except MemoryServiceError as error:
+        raise _error(error) from error
+    return Response(status_code=204)
+
+
+@router.delete("/notes", status_code=204)
+async def delete_all_notes(user_id: str, memory: Memory) -> Response:
+    """«Удалить всю память»: заметки и данные в Cognee уходят, настройки и согласие остаются."""
+    try:
+        await memory.forget_all(_user(user_id))
+    except MemoryServiceError as error:
+        raise _error(error) from error
+    return Response(status_code=204)
+
+
+@router.get("/notes")
+async def list_notes(user_id: str, store: Store, memory: Memory) -> dict[str, Any]:
+    """Живые заметки человека, новые сверху."""
+    user = _user(user_id)
+    await store.ensure_user(user)
+    try:
+        return {"notes": await _notes(memory).list(user)}
+    except MemoryServiceError as error:
+        raise _error(error) from error
 
 
 @router.get("/changes")

@@ -7,6 +7,7 @@ import {
   type DialogSummaryApiResponse,
   type DialogWsErrorCode,
   type HotlineApiResponse,
+  type MoodTone,
   type SafetyLevel,
   type TtsCodec,
 } from '@ryadom/contracts/api/dialogs'
@@ -60,6 +61,8 @@ export interface DialogSocketHandlers {
   onState(state: DialogSocketState): void
   onMessages(messages: DialogMessageView[]): void
   onSafety(level: SafetyLevel, text: string | null, hotlines: HotlineApiResponse[]): void
+  /** The tone of the person's last turn; only sent with the agent's mood classifier on. */
+  onMood?(tone: MoodTone, intensity: number): void
   onEnded(summary: DialogSummaryApiResponse | null): void
   onError(code: DialogWsErrorCode, message: string): void
   /** What the recognition heard: partial text while talking, the final one at the end (it also joins the feed). */
@@ -238,11 +241,17 @@ export class DialogSocket {
     if (this.isConnected()) this.sendPending()
   }
 
-  end(takeaway: string | null, tensionAfter: number | null): void {
+  end(
+    takeaway: string | null,
+    tensionAfter: number | null,
+    /** `draft`: the takeaway (which is the recap) was pre-filled with «Предзаполнить». */
+    recapSource?: 'manual' | 'draft',
+  ): void {
     this.send({
       type: DialogClientFrame.End,
       ...(takeaway ? { takeaway } : {}),
       ...(tensionAfter !== null ? { tensionAfter } : {}),
+      ...(takeaway && recapSource === 'draft' ? { recapSource } : {}),
     })
   }
 
@@ -417,6 +426,9 @@ export class DialogSocket {
         return
       case DialogServerFrame.Safety:
         this.handlers.onSafety(frame.level, frame.text, frame.hotlines)
+        return
+      case DialogServerFrame.Mood:
+        this.handlers.onMood?.(frame.tone, frame.intensity)
         return
       case DialogServerFrame.Ended:
         this.closedByUs = true

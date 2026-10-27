@@ -123,6 +123,17 @@ DIALOG_EVICTIONS_SKIPPED_TOTAL = Counter(
     ["reason"],
 )
 
+# Срок хранения разговоров (D14, add-mood-diary): сухой прогон считает, боевой удаляет.
+DIALOG_RETENTION_WOULD_DELETE = Gauge(
+    "agent_dialogs_retention_would_delete",
+    "Разговоры старше срока хранения (DIALOG_RETENTION_DAYS) на последнем проходе: столько удалил бы проход, а в сухом прогоне не удалил.",
+)
+
+DIALOG_RETENTION_DELETED_TOTAL = Counter(
+    "agent_dialogs_retention_deleted_total",
+    "Разговоры, удалённые проходом по сроку хранения (DIALOG_RETENTION_DAYS).",
+)
+
 # kind: first — первая загрузка человека после старта пода; reload — загрузка после выгрузки.
 DIALOG_LOADS_TOTAL = Counter(
     "agent_dialog_loads_total",
@@ -196,6 +207,14 @@ GEMINI_OPENS_TOTAL = Counter(
     "agent_gemini_opens_total",
     "Открытия сессий Gemini Live: первая в разговоре, смена после ответа, переоткрытие, смена голоса, озвучка фразы.",
     ["purpose", "result"],
+)
+
+# Цвет шарика (GEMINI_MOOD_CLASSIFIER): сколько раз определён тон и через сколько после конца реплики.
+GEMINI_MOOD_TOTAL = Counter("agent_gemini_mood_total", "Определения тона реплики классификатором.", ["tone"])
+GEMINI_MOOD_DELAY_SECONDS = Histogram(
+    "agent_gemini_mood_delay_seconds",
+    "От конца реплики человека до кадра mood.",
+    buckets=(0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10),
 )
 
 # where: open | session | tts
@@ -304,6 +323,12 @@ MEMORY_JOBS = Gauge(
     "agent_memory_jobs",
     "Задания извлечения памяти в базе по статусам.",
     ["status"],
+)
+
+# Очередь операций Cognee (`memory_outbox`): сколько операций ждут выполнения или повтора.
+MEMORY_OUTBOX_PENDING = Gauge(
+    "agent_memory_outbox_pending",
+    "Операции Cognee (индекс разговоров, удаление) в очереди.",
 )
 
 # Возврат памяти процесса (app/core/reclaim.py, настройка MEMORY_RECLAIM_SECONDS). Сама память процесса и работа сборщика мусора видны в

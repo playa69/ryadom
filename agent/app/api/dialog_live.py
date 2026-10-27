@@ -53,12 +53,15 @@ from app.clients.gemini_live import (
     session_closed,
     session_opened,
 )
+from app.clients.mood_classifier import MoodClassifier
 from app.clients.speech import CachedTts, TextToSpeech, TtsError, Voice, pcm_stream
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
     GEMINI_ADMISSION_TOTAL,
     GEMINI_CONTEXT_REFRESH_SECONDS,
     GEMINI_CONTEXT_REFRESH_TOTAL,
+    GEMINI_MOOD_DELAY_SECONDS,
+    GEMINI_MOOD_TOTAL,
     GEMINI_OPENS_TOTAL,
     GEMINI_TURNS_DEGRADED_TOTAL,
     LIVE_FOREIGN_SCRIPT_TOTAL,
@@ -417,6 +420,8 @@ class LiveDialogSession(DialogSession):
             asyncio.create_task(self._send_loop()),
             asyncio.create_task(self._pump()),
         ]
+        if self._cfg.mood_classifier and self._cfg.api_key is not None:
+            self._tasks.append(asyncio.create_task(self._warm_mood_classifier()))  # первый запрос иначе ждёт TLS и релей
         if not self._cfg.lazy_open:  # соединение готово к первой реплике (лениво — откроется по audio_start или сообщению)
             self._tasks.append(asyncio.create_task(self._ensure_link()))
         try:
@@ -500,7 +505,7 @@ class LiveDialogSession(DialogSession):
         """
         async with self._link_lock:
             link = self._link
-            voice = self._dialog.voice
+            voice = self._dialog.voice_key
             budget = self._budget
             if rotate:
                 if self._turn is not None or self._voice_turn is not None:
@@ -788,7 +793,7 @@ class LiveDialogSession(DialogSession):
     def _needs_open(self) -> bool:
         """Ходу не обойтись без новой сессии: живой нет или голос сменился."""
         link = self._link
-        return link is None or link.closed or link.voice != self._dialog.voice
+        return link is None or link.closed or link.voice != self._dialog.voice_key
 
     def _will_open(self) -> bool:
         """Ход откроет новую сессию: без неё не обойтись или ждёт смена (GoAway, кризис, отложенная, ленивая), которую сейчас
@@ -824,6 +829,9 @@ class LiveDialogSession(DialogSession):
         if degraded or self._budget.enforcing:
             return FallbackTurn(started=started)
         return Turn(started=started)
+
+    def _main_voice(self) -> str:
+        return self._dialog.voice_key  # озвучка Gemini Live: выбранный человеком голос, иначе голос рода
 
     def _fallback_tts(self) -> TextToSpeech | None:
         main = self._tts_source()  # None, если озвучку выключили (dev-переключатель)
@@ -1244,6 +1252,7 @@ class LiveDialogSession(DialogSession):
             turn.heard += event.text
             if not turn.discarded:
                 self._count_safety(turn)
+                self._classify_mood_soon(turn)
             if not turn.discarded and is_crisis(turn.heard):
                 await self._crisis(turn)
             elif turn.held and not turn.opened and turn.heard.strip():
@@ -1268,6 +1277,43 @@ class LiveDialogSession(DialogSession):
                 await self._open_gate(turn, final=True)  # короткий ответ целиком: лекция или нет, решаем сейчас
             await self._finish(turn)
         # turn_complete приходит позже generation_complete (когда звук отыгран) и может попасть на следующий ход: не нужен.
+
+    def _classify_mood_soon(self, turn: LiveTurn) -> None:
+        """Прототип PROTEUS-168: когда слова расшифровки перестали приходить, реплика уходит на классификатор тона."""
+        if not self._cfg.mood_classifier or self._cfg.api_key is None:
+            return
+        previous = self._mood_task
+        if previous is not None:
+            previous.cancel()
+        heard = turn.heard.strip()
+        self._mood_task = asyncio.create_task(self._classify_mood(turn, heard))
+
+    _mood_task: "asyncio.Task[None] | None" = None
+    _mood_classifier: MoodClassifier | None = None
+
+    async def _warm_mood_classifier(self) -> None:
+        """Соединение классификатора открывается до первой реплики: холодный первый запрос укладывался не в срок."""
+        if self._mood_classifier is None:
+            self._mood_classifier = MoodClassifier(self._cfg)
+        await self._mood_classifier.classify("привет")
+
+    async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
+        await asyncio.sleep(self._cfg.mood_debounce_ms / 1000)
+        if self._mood_classifier is None:
+            self._mood_classifier = MoodClassifier(self._cfg)
+        mood = await self._mood_classifier.classify(heard)
+        if mood is not None and not self._closed:
+            await self._on_mood(mood, turn)
+
+    async def _on_mood(self, mood: dict, turn: LiveTurn) -> None:
+        """Тон человека клиенту кадром `mood`: только цвет шарика. Кризисный путь (SOS) от него не зависит и не меняется.
+
+        Метка `mood` в линейке хода (`live timeline`) даёт задержку от конца реплики до кадра, рядом с `out_first` (первый
+        звук ответа): по ним видно, не мешает ли классификатор ответу."""
+        turn.mark("mood")
+        GEMINI_MOOD_DELAY_SECONDS.observe(time.monotonic() - turn.started)
+        GEMINI_MOOD_TOTAL.labels(mood["tone"]).inc()
+        await self._send({"type": "mood", **mood, "at": int(time.time() * 1000)})
 
     # Агент только что сам попросил повторить (не модель своими словами): если и следующий ответ про язык, человек, видимо,
     # правда просит другой язык, и второй раз ответ не подменяется. Сбрасывается, как только ход прошёл обычным путём.

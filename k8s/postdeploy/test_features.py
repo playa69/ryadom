@@ -173,3 +173,23 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
 def test_the_account_is_not_a_person_for_analytics(account: dict) -> None:
     """Напоминание, а не проверка: пометку «тестовый» api ставит при создании по префиксу id устройства."""
     assert account["deviceId"].startswith("loadtest-")
+
+
+def test_voice_choice_is_saved_on_the_account(api: Api, token: str) -> None:
+    """Выбор голоса агента (PROTEUS-182, REQ-ACC-07, выкат 0.9.0): голос и род сохраняются в аккаунте; в конце аккаунт возвращается на голос рода."""
+    me = api.result("GET", "/api/auth/me", token=token)
+    assert me["voice"] in ("male", "female") and isinstance(me["voiceName"], str)
+
+    picked = api.result("PATCH", "/api/auth/me", token=token, body={"voiceName": "Aoede"})
+    assert (picked["voice"], picked["voiceName"]) == ("female", "Aoede")
+    assert api.result("GET", "/api/auth/me", token=token)["voiceName"] == "Aoede"
+
+    # Имя вне каталога и род, не совпадающий с голосом, отвергаются, выбор не меняется.
+    for bad in ({"voiceName": "Robot"}, {"voice": "male", "voiceName": "Aoede"}):
+        with pytest.raises(ApiError):
+            api.result("PATCH", "/api/auth/me", token=token, body=bad)
+    assert api.result("GET", "/api/auth/me", token=token)["voiceName"] == "Aoede"
+
+    # Только род сбрасывает конкретный голос на голос рода (мужской — Charon).
+    back = api.result("PATCH", "/api/auth/me", token=token, body={"voice": "male"})
+    assert (back["voice"], back["voiceName"]) == ("male", "Charon")

@@ -7,6 +7,8 @@ import {
   MemoryFactCategory,
   MemoryFactOrigin,
   MemoryFactStatus,
+  MemoryInstructionApiErrorCode,
+  MemoryNoteKind,
   MemoryServiceMode,
   UpdateMemoryFactApiErrorCode,
   UpdateMemorySettingsApiErrorCode,
@@ -14,6 +16,8 @@ import {
   type MemoryChangesApiResponse,
   type MemoryExportApiResponse,
   type MemoryFactApiResponse,
+  type MemoryInstructionApiResponse,
+  type MemoryNoteApiResponse,
   type MemoryPersonSlots,
   type MemoryStyleSlots,
   type UpdateMemoryFactApiRequest,
@@ -48,7 +52,7 @@ export const MEMORY_CONSENT = {
   paragraphs: [
     'Если включить память, я буду помнить важное из наших разговоров, чтобы не начинать каждый раз с нуля: кто тебе близок, что сейчас происходит, что тебе помогает и как с тобой лучше говорить.',
     'Я не запоминаю диагнозы и лекарства, подробности тяжёлых моментов, чужие телефоны и адреса.',
-    'Всё, что я запомнил, ты видишь в «Профиль → Память»: можно исправить, закрепить или забыть. Любой разговор можно провести «Без памяти». Выключить память или забыть всё можно в любой момент.',
+    'Всё, что я запомнил, ты видишь в «Профиль → Память»: каждую заметку можно исправить или удалить. Любой разговор можно не сохранять. Поставить память на паузу или удалить всё можно в любой момент.',
     'Запомненное хранится в России. Короткая выжимка передаётся модели, которая со мной разговаривает, чтобы я мог ею пользоваться.',
     'Память можно не включать: всё остальное в «Рядом» работает так же.',
     'Я ИИ, а не человек и не врач.',
@@ -60,9 +64,9 @@ export const MEMORY_CONSENT = {
 /** "Как это работает": the consent text and what the screen itself does with the facts. */
 export const MEMORY_HOW_IT_WORKS: readonly string[] = [
   ...MEMORY_CONSENT.paragraphs.slice(0, 4),
-  'После разговора я показываю, что запомнил: лишнее можно сразу убрать. Важное и личное я сначала спрашиваю — такие пункты ждут твоего «Запомнить».',
-  'Закреплённое и исправленное тобой я сам не меняю. Предположения я не использую, пока ты их не подтвердишь или они не повторятся в другом разговоре.',
-  'Разговор «Без памяти» я не запоминаю, а сам он удаляется через сутки после последнего сообщения.',
+  'Заметки появляются по ходу разговора, обычно в течение минуты. Заметки хранятся, пока ты их не удалишь. Удаляя разговор, ты не удаляешь заметки из него.',
+  'Самочувствие, веру и взгляды я запоминаю, только если ты включил «Запоминать чувствительное». Диагнозы, лекарства, документы и контакты не запоминаются никогда.',
+  'Если выключить «Память», заметки останутся, но я не буду ими пользоваться. Разговор с галочкой «Не сохранять этот разговор» не попадает ни в журнал, ни в память.',
 ]
 
 /** Turning memory on shows the sheet first unless the person has accepted this very text before. */
@@ -97,7 +101,7 @@ export function memoryInUse(memory: Pick<MemoryApiResponse, 'mode' | 'enabled' |
 /** The quiet word beside the section's row in the profile. */
 export function memorySectionStatus(memory: Pick<MemoryApiResponse, 'enabled' | 'available'>): string {
   if (!memory.available) return 'недоступна'
-  return memory.enabled ? 'включена' : 'выключена'
+  return memory.enabled ? 'включена' : 'на паузе'
 }
 
 /** The mark of a conversation held "without memory" in the journal; null for any other. */
@@ -857,4 +861,176 @@ export function memoryExportFileName(now: Date = new Date()): string {
 /** The file as the person gets it: the server's answer, readable. */
 export function memoryExportText(data: MemoryExportApiResponse): string {
   return `${JSON.stringify(data, null, 2)}\n`
+}
+
+
+// ─── notes: the sheet "Что помнит Рядом" (PROTEUS-242) ────────────────────────
+
+/** The groups of the sheet, in screen order (`design.md` D3): the kinds of notes each takes. */
+export interface MemoryNoteGroup {
+  id: string
+  title: string
+  notes: MemoryNoteApiResponse[]
+}
+
+const NOTE_GROUPS: ReadonlyArray<{ id: string; title: string; kinds: readonly string[] }> = [
+  { id: 'about', title: 'Обо мне и как со мной говорить', kinds: [MemoryNoteKind.Name, MemoryNoteKind.Style] },
+  { id: 'people', title: 'Близкие', kinds: [MemoryNoteKind.Person] },
+  { id: 'work', title: 'Работа и дела', kinds: [MemoryNoteKind.Situation] },
+  { id: 'events', title: 'События и планы', kinds: [MemoryNoteKind.Event] },
+  { id: 'agreements', title: 'Договорённости', kinds: [MemoryNoteKind.Agreement] },
+  { id: 'helps', title: 'Что помогает и радует', kinds: [MemoryNoteKind.Interest] },
+  { id: 'boundaries', title: 'О чём не говорить', kinds: [MemoryNoteKind.Boundary] },
+  { id: 'wellbeing', title: 'Самочувствие', kinds: [MemoryNoteKind.Wellbeing] },
+  { id: 'beliefs', title: 'Взгляды', kinds: [MemoryNoteKind.Beliefs] },
+]
+
+/**
+ * The notes grouped for the sheet: non-empty groups in screen order, newest first inside a group (the
+ * server's order is kept). A kind this client does not know yet (a newer server) still shows, under
+ * "Другое": a person must be able to see and delete everything that is remembered.
+ */
+export function groupNotes(notes: readonly MemoryNoteApiResponse[]): { groups: MemoryNoteGroup[]; count: number } {
+  const known = new Set<string>(NOTE_GROUPS.flatMap((group) => group.kinds))
+  const groups: MemoryNoteGroup[] = NOTE_GROUPS.map(({ id, title, kinds }) => ({
+    id,
+    title,
+    notes: notes.filter((note) => kinds.includes(note.kind)),
+  }))
+  groups.push({ id: 'other', title: 'Другое', notes: notes.filter((note) => !known.has(note.kind)) })
+  return { groups: groups.filter((group) => group.notes.length > 0), count: notes.length }
+}
+
+/** "12 окт." from a note's ISO time, in the person's calendar. */
+export function memoryNoteDay(note: Pick<MemoryNoteApiResponse, 'createdAt'>, now: Date = new Date()): string {
+  return memoryDay(note.createdAt.slice(0, 10), now)
+}
+
+/** A note with its date: "Работает в продажах · 12 окт." for the line of the sheet. */
+export function noteDateLabel(note: Pick<MemoryNoteApiResponse, 'createdAt' | 'eventDate'>, now: Date = new Date()): string {
+  const created = memoryNoteDay(note, now)
+  return note.eventDate ? `${created} · событие ${memoryDay(note.eventDate, now)}` : created
+}
+
+export const MEMORY_SWITCHES = {
+  memory: {
+    title: 'Память',
+    hint: 'Рядом запоминает важное о тебе по ходу разговоров',
+  },
+  sensitive: {
+    title: 'Запоминать чувствительное',
+    hint: 'Самочувствие, вера и взгляды, интимное. По умолчанию не запоминается',
+  },
+  chatSearch: {
+    title: 'Опираться на прошлые разговоры',
+    hint: 'Рядом может вспомнить, что ты говорил раньше, дословно',
+  },
+} as const
+
+export const MEMORY_SHEET = {
+  title: 'Что помнит Рядом',
+  open: 'Посмотреть, что помнит Рядом',
+  empty: 'Пока пусто — заметки появятся по мере разговоров',
+  paused: 'Память на паузе — Рядом не использует эти заметки',
+  instructionLabel: 'Скажи, что поправить или убрать',
+  instructionPlaceholder: 'Например: «у меня не кот, а кошка»',
+  instructionSend: 'Отправить',
+  undo: 'Вернуть',
+  forgetAll: 'Удалить всю память',
+  forgetAllConfirm:
+    'Удалить всю память? Рядом забудет всё, что успел узнать о тебе. Разговоры в журнале останутся',
+  download: 'Скачать мою память',
+  howItWorks: 'Как это работает',
+  deleteHint: 'Если хочешь, чтобы Рядом совсем забыл, удали и разговор в журнале',
+} as const
+
+/** How the answer to "Скажи, что поправить" reads on the sheet. */
+export function instructionResultText(changes: MemoryInstructionApiResponse): string {
+  const parts: string[] = []
+  if (changes.updated.length > 0) parts.push(`изменено: ${changes.updated.length}`)
+  if (changes.deleted.length > 0) parts.push(`удалено: ${changes.deleted.length}`)
+  if (changes.added.length > 0) parts.push(`запомнено: ${changes.added.length}`)
+  if (parts.length > 0) {
+    const text = parts.join(', ')
+    return text.charAt(0).toUpperCase() + text.slice(1)
+  }
+  // A refusal of a rule is told neutrally: the person is not told which class of words tripped it.
+  return changes.blocked.length > 0 ? 'Так запомнить не получится' : 'Ничего не нашлось'
+}
+
+export const MEMORY_INSTRUCTION_ERRORS: Record<MemoryInstructionApiErrorCode, string> = {
+  [MemoryInstructionApiErrorCode.USER_NOT_FOUND]: ACCOUNT_GONE,
+  [MemoryInstructionApiErrorCode.MEMORY_DISABLED]: 'Сначала включи память',
+  [MemoryInstructionApiErrorCode.MEMORY_UNAVAILABLE]: UNAVAILABLE,
+}
+
+/** The three switches of the section as the screen shows them. */
+export function memorySwitches(
+  memory: Pick<MemoryApiResponse, 'enabled' | 'sensitiveEnabled' | 'chatSearchEnabled' | 'available'>,
+): { memory: boolean; sensitive: boolean; chatSearch: boolean; sensitiveDisabled: boolean; chatSearchDisabled: boolean } {
+  // The two lower switches work only while memory is on: on pause they stay as they were, but are not changed.
+  return {
+    memory: memory.enabled,
+    sensitive: memory.sensitiveEnabled,
+    chatSearch: memory.chatSearchEnabled,
+    sensitiveDisabled: !memory.enabled || !memory.available,
+    chatSearchDisabled: !memory.enabled || !memory.available,
+  }
+}
+
+/** Replaces or removes a note in the list the screen holds, after a correction or "×" (the old fact helper `replaceMemoryFact` does the same for facts). */
+export function replaceNote(
+  notes: readonly MemoryNoteApiResponse[],
+  id: string,
+  next: MemoryNoteApiResponse | null,
+): MemoryNoteApiResponse[] {
+  return next === null ? notes.filter((note) => note.id !== id) : notes.map((note) => (note.id === id ? next : note))
+}
+
+// ─── "Запомнил: … · Убрать": the notice about a sensitive note (6.4) ──────────
+
+/**
+ * While "Запоминать чувствительное" is on, the conversation shows a line for every new sensitive note, like Claude's notice:
+ * "Запомнил: <text> · Убрать". The notes are asked for every `MEMORY_NOTICE_POLL_MS` during a conversation; "Убрать" deletes the note
+ * at once (the same call as "×", without the seconds for "Вернуть").
+ */
+export const MEMORY_NOTICE = { prefix: 'Запомнил: ', undo: 'Убрать' } as const
+export const MEMORY_NOTICE_POLL_MS = 10_000
+
+/** The sensitive notes the conversation has not told about yet: `known` holds the ids already seen (including those present at the start). */
+export function newSensitiveNotes(known: ReadonlySet<string>, notes: readonly MemoryNoteApiResponse[]): MemoryNoteApiResponse[] {
+  return notes.filter((note) => note.sensitive && !known.has(note.id))
+}
+
+/** The ids to remember as seen at the start of a conversation, so that old notes do not show up as new. */
+export function noteIds(notes: readonly MemoryNoteApiResponse[]): Set<string> {
+  return new Set(notes.map((note) => note.id))
+}
+
+// ─── the sheet "Рядом теперь запоминает важное" (6.7) ─────────────────────────
+
+/** Shown once to a person who has never decided about memory; nothing is on by default, the person chooses. */
+export const MEMORY_INVITE = {
+  title: 'Рядом теперь запоминает важное',
+  paragraphs: [
+    'Рядом может запоминать важное о тебе по ходу разговоров, чтобы не начинать каждый раз с нуля.',
+    'Всё, что запомнено, ты видишь в «Профиль → Память»: каждую заметку можно исправить или удалить. Включить или выключить память можно в любой момент.',
+  ],
+  accept: 'Включить',
+  decline: 'Не сейчас',
+} as const
+
+/**
+ * The sheet is off until the owner decides about memory by default (task 0.1, `design.md` D9): until then
+ * a person turns memory on in "Профиль → Память". Flip to `true` after the decision.
+ */
+export const MEMORY_INVITE_ENABLED = false
+
+/** Whether to show the sheet: it is enabled, the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
+export function shouldInviteToMemory(
+  memory: Pick<MemoryApiResponse, 'available' | 'enabled' | 'consentVersion'> | null,
+  dismissed: boolean,
+  enabled: boolean = MEMORY_INVITE_ENABLED,
+): boolean {
+  return enabled && memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
 }

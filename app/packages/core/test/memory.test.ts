@@ -226,6 +226,8 @@ describe('включение и выключение памяти', () => {
       success: true,
       settings: {
         enabled: true,
+        sensitiveEnabled: false,
+        chatSearchEnabled: true,
         consentVersion: MEMORY_VERSION,
         consentAt: new Date('2026-10-12T09:00:00.000Z'),
       },

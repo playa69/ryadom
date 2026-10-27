@@ -130,6 +130,41 @@ export interface MemoryFactApiResponse {
   seenByUser: boolean
 }
 
+/**
+ * A note: one short line about the person, written by the agent during a conversation or by the person themselves. The sheet "What
+ * Ryadom remembers" groups notes by `kind`; each can be corrected or deleted. `facts` in the same answers repeat the notes in the old
+ * form for cached apps (`PATCH` and `DELETE /api/memory/facts/:id` act on notes).
+ */
+export enum MemoryNoteKind {
+  Name = 'name',
+  Style = 'style',
+  Person = 'person',
+  Situation = 'situation',
+  Event = 'event',
+  Agreement = 'agreement',
+  Interest = 'interest',
+  Boundary = 'boundary',
+  /** Sensitive: stored only while "Remember sensitive" is on. */
+  Wellbeing = 'wellbeing',
+  /** Sensitive. */
+  Beliefs = 'beliefs',
+}
+
+export interface MemoryNoteApiResponse {
+  id: string
+  kind: MemoryNoteKind
+  /** Up to 200 characters. */
+  text: string
+  sensitive: boolean
+  /** `YYYY-MM-DD` for `event` notes with a date; null otherwise. */
+  eventDate: string | null
+  /** ISO 8601. */
+  createdAt: string
+  updatedAt: string
+  /** The conversation it came from, if it still exists. */
+  dialogId: string | null
+}
+
 // ─── GET /api/memory ──────────────────────────────────────────────────────────
 
 export interface MemoryApiResponse {
@@ -144,8 +179,16 @@ export interface MemoryApiResponse {
   consentAt: string | null
   /** The version of the server's rules of what may be remembered. */
   rulesVersion: string
-  limits: { maxFacts: number }
-  /** Every fact except expired ones, ordered by category and then by weight. */
+  limits: { maxFacts: number; maxNotes: number }
+  /** Memory is on pause: the person switched "Remember" off; notes stay but are not used. */
+  paused: boolean
+  /** The switch "Remember sensitive": wellbeing and beliefs, off by default. */
+  sensitiveEnabled: boolean
+  /** The switch "Rely on past conversations" (search in Cognee), on by default. */
+  chatSearchEnabled: boolean
+  /** The notes, newest first. */
+  notes: MemoryNoteApiResponse[]
+  /** The same notes in the old form of a fact, for cached apps. */
   facts: MemoryFactApiResponse[]
 }
 
@@ -156,7 +199,10 @@ export enum GetMemoryApiErrorCode {
 // ─── PUT /api/memory/settings ─────────────────────────────────────────────────
 
 export interface UpdateMemorySettingsApiRequest {
-  enabled: boolean
+  /** The switch "Remember"; leave it out to change only the other two switches. */
+  enabled?: boolean
+  sensitiveEnabled?: boolean
+  chatSearchEnabled?: boolean
   /** Required with `enabled: true`: the person accepted the consent sheet just now. */
   consentAccepted?: boolean
   /** Required with `enabled: true`: the version of the sheet on the screen (`MEMORY_CONSENT_VERSION`). */
@@ -165,6 +211,8 @@ export interface UpdateMemorySettingsApiRequest {
 
 export interface UpdateMemorySettingsApiResponse {
   enabled: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
   consentVersion: string | null
   /** ISO 8601. */
   consentAt: string | null
@@ -280,7 +328,31 @@ export interface MemoryExportApiResponse {
     epochAt: string | null
     updatedAt: string | null
   }
+  notes: MemoryNoteApiResponse[]
   facts: MemoryFactApiResponse[]
   /** The history of changes, without texts. */
   events: { factId: string | null; op: string; actor: string; dialogId: string | null; at: string }[]
+}
+
+// ─── POST /api/memory/notes/instruction ───────────────────────────────────────
+
+/** The field "Tell Ryadom what to correct or remove": a request in the person's own words, carried out by the agent. */
+export interface MemoryInstructionApiRequest {
+  /** 1 to 1000 characters. */
+  text: string
+}
+
+export interface MemoryInstructionApiResponse {
+  added: MemoryNoteApiResponse[]
+  updated: MemoryNoteApiResponse[]
+  /** The ids of the deleted notes. */
+  deleted: string[]
+  /** Codes of the rules that refused something (`medication`, `contact_pii`…); never a text. */
+  blocked: string[]
+}
+
+export enum MemoryInstructionApiErrorCode {
+  USER_NOT_FOUND = 'USER_NOT_FOUND',
+  MEMORY_DISABLED = 'MEMORY_DISABLED',
+  MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
 }

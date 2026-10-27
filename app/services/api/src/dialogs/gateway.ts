@@ -99,6 +99,8 @@ interface AgentTextFrame {
   [key: string]: unknown
 }
 
+const MOOD_TONES = ['neutral', 'sleepy', 'angry', 'afraid', 'sad', 'calm'] as const
+
 class DialogSession {
   private readonly logger = createLogger('dialog-gateway')
   private agent: AgentSocket | null = null
@@ -313,6 +315,8 @@ class DialogSession {
           type: 'end',
           takeaway: typeof frame.takeaway === 'string' ? frame.takeaway : undefined,
           tensionAfter: typeof frame.tensionAfter === 'number' ? frame.tensionAfter : undefined,
+          // The takeaway is the recap; `draft` marks one pre-filled by the model (add-mood-diary D13).
+          recapSource: frame.recapSource === 'draft' ? 'draft' : 'manual',
         })
         return
       case DialogClientFrame.AudioStart:
@@ -635,6 +639,18 @@ class DialogSession {
         })
         return
       }
+      case 'mood': {
+        // The tone of the person's last turn, from the agent's classifier (PROTEUS-168). Only known values pass.
+        const tone = MOOD_TONES.find((name) => name === frame.tone)
+        const intensity = num('intensity')
+        if (!tone || intensity === null) return
+        return this.toClient({
+          type: DialogServerFrame.Mood,
+          tone,
+          intensity: Math.min(1, Math.max(0, intensity)),
+          at: num('at') ?? Date.now(),
+        })
+      }
       case 'safety': {
         // The hotlines in this frame are always filled in: if the agent gave none, we substitute
         // ours. The SOS screen must never open empty.
@@ -652,7 +668,12 @@ class DialogSession {
         // (DialogSummary).
         const raw = (frame.summary ?? null) as (DialogSummaryApiResponse & AgentSummaryCounts) | null
         // The counts of the whole dialog are for analytics only: they are not part of the contract with clients.
-        const { userMessages: _user, assistantMessages: _assistant, ...publicSummary } = raw ?? {}
+        const {
+          userMessages: _user,
+          assistantMessages: _assistant,
+          recapAt: _recapAt,
+          ...publicSummary
+        } = (raw ?? {}) as DialogSummaryApiResponse & AgentSummaryCounts & { recapAt?: unknown }
         const summary = raw ? (publicSummary as DialogSummaryApiResponse) : null
         if (this.userId && !this.outcomeReported) {
           this.outcomeReported = true

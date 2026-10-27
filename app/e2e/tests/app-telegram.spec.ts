@@ -24,6 +24,8 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   const launch = telegramLaunchUrl(PWA_URL, { id: uniqueTelegramId(), first_name: 'Аня' })
 
   // ── first launch: the first screen, with the name from Telegram offered ─
+  // The sheet "Рядом теперь запоминает важное" is already answered, like for a person who has seen it (not this test's subject).
+  await page.addInitScript(() => window.localStorage.setItem('ryadom.memory-invite-dismissed', '1'))
   await page.goto(launch)
   await expect(button(page, 'Начать')).toBeVisible({ timeout: 30_000 })
   await expect(field(page, 'name')).toHaveValue('Аня')
@@ -56,7 +58,7 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await shot(page, 'app-telegram-profile')
 
   // ── a new launch with no session on the device: straight in, the same account ─
-  await page.evaluate(() => localStorage.clear())
+  await page.evaluate(() => localStorage.clear()) // the init script above sets the answer to the memory sheet again
   await page.goto('about:blank')
   await page.goto(launch)
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })

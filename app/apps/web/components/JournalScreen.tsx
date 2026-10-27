@@ -17,9 +17,11 @@ import { groupJournal } from '@/lib/journal-groups'
 import { BUSY } from './busy'
 import { BUTTON } from './controls'
 import { BADGE_COMPACT, conversationHref, RetryButton, StatePanel } from './JournalParts'
-import { Page, SECTION_HEADING } from './Page'
+import { SECTION_HEADING } from './Page'
+import RecapAutoSetting from './RecapAutoSetting'
 
 function entryTitle(item: DialogListItemApiResponse): string {
+  if (item.saved === false) return 'Разговор не сохранён'
   return item.summary?.title || 'Разговор'
 }
 
@@ -156,7 +158,7 @@ export default function JournalScreen() {
   const isEmpty = items !== null && items.length === 0
 
   return (
-    <Page title="Все разговоры" measure="reading" className="gap-8" data-testid="journal">
+    <div className="flex flex-col gap-8" data-testid="journal">
       {items === null && <ListSkeleton />}
 
       {isEmpty && (
@@ -223,6 +225,8 @@ export default function JournalScreen() {
             </Alert>
           )}
 
+          <RecapAutoSetting />
+
           <div className="flex flex-col gap-7" data-testid="journal-list">
             {groups.map((group) => (
               // Not a <section>: a named section is a landmark, and one per day would bury the real ones.
@@ -265,6 +269,6 @@ export default function JournalScreen() {
           </p>
         </>
       )}
-    </Page>
+    </div>
   )
 }

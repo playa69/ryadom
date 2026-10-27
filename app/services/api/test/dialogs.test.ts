@@ -15,11 +15,21 @@ import {
   DialogServerFrame,
   DialogWsErrorCode,
   SafetyLevel,
+  DialogRecapApiErrorCode,
+  type DeleteDialogApiResponse,
+  type DialogSettingsApiResponse,
+  type DraftDialogRecapApiResponse,
+  type EndDialogApiResponse,
+  type ListDialogRecapsApiResponse,
   type ListDialogsApiResponse,
+  type PutDialogRecapApiResponse,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { eq } from 'drizzle-orm'
+import { diarySummaries } from '@ryadom/db/schema'
+import { getDb } from '@ryadom/core/shared'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
@@ -289,6 +299,112 @@ describe('REST диалогов', () => {
   })
 })
 
+describe('итог разговора, удаление и настройка', () => {
+  const RECAP = 'Ты рассказал про работу и решил поговорить с руководителем до пятницы.'
+  const dialog = { dialogId: 'd-1', startedAt: '2026-10-20T10:00:00.000Z', endedAt: '2026-10-20T10:10:00.000Z', summary: null, messages: [] }
+
+  it('завершение несёт «Что забираешь» (оно же итог) агенту; в ответе итог и его статус, без служебного recapAt', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/end': () =>
+        json({ summary: { title: 'Разговор', themes: [], recap: RECAP, recapStatus: 'ready', recapSource: 'manual', recapAt: '2026-10-20T10:11:00Z' } }),
+    })
+    const result = ok<EndDialogApiResponse>(
+      await call(app, 'POST', '/api/dialogs/d-1/end', { takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' }, tokens.accessToken),
+    )
+    expect(result.summary).toMatchObject({ recap: RECAP, recapStatus: 'ready', recapSource: 'manual' })
+    expect(JSON.stringify(result)).not.toContain('recapAt')
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' })
+  })
+
+  it('итог длиннее правил или пустой — 400, агента не трогаем', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent()
+    for (const recap of ['', '   ', 'я'.repeat(501)]) {
+      expect((await call(app, 'PUT', '/api/dialogs/d-1/recap', { recap }, tokens.accessToken)).status).toBe(400)
+    }
+    expect((await call(app, 'POST', '/api/dialogs/d-1/end', { takeaway: 'я'.repeat(501) }, tokens.accessToken)).status).toBe(400)
+    expect(calls).toEqual([])
+  })
+
+  it('«Удалить разговор»: агент стирает его, ссылка гаснет, итог недели этого разговора пропадает сразу, остальные недели целы', async () => {
+    resetLimits()
+    const { user, tokens } = await signUpAndIn(app)
+    const week = (periodStart: string) => ({ userId: user.id, kind: 'week' as const, periodStart, text: 'Итог недели.', status: 'ready' as const })
+    // The conversation began on Tuesday 20 Oct 2026 (the week of the 19th); the week before has its text too.
+    await getDb().insert(diarySummaries).values([week('2026-10-19'), week('2026-10-12')])
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+      'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
+    })
+    const deleted = ok<DeleteDialogApiResponse>(await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken))
+    expect(deleted).toEqual({ deleted: true })
+    expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([`GET /v1/users/${user.id}/dialogs/d-1`, `DELETE /v1/users/${user.id}/dialogs/d-1`])
+    const rows = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    // The week of the conversation lost its text at once and waits for the tick as an empty marker; the other week is whole.
+    const byWeek = Object.fromEntries(rows.map((r) => [r.periodStart, r]))
+    expect(byWeek['2026-10-19']).toMatchObject({ status: 'pending', text: '' })
+    expect(byWeek['2026-10-12']).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+  })
+
+  it('чужого и несуществующего разговора нет; без сессии — 401; агент лёг — 503', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404) })
+    refusedWith(await call(app, 'DELETE', '/api/dialogs/d-x', undefined, tokens.accessToken), DialogApiErrorCode.DIALOG_NOT_FOUND)
+    expect((await call(app, 'DELETE', '/api/dialogs/d-x')).status).toBe(401)
+    mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'boom' }, 502) })
+    expect((await call(app, 'DELETE', '/api/dialogs/d-x', undefined, tokens.accessToken)).status).toBe(503)
+  })
+
+  it('список итогов, черновик, запись итога из журнала', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({
+      'GET http://agent.test/v1/users/*/recaps': () =>
+        json({ items: [{ dialogId: 'd-2', startedAt: '2026-10-24T09:00:00Z', title: 'Работа', recap: RECAP, recapSource: 'auto', recapAt: '2026-10-24T09:01:00Z' }], next: null }),
+      'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ recap: RECAP }),
+      'PUT http://agent.test/v1/users/*/dialogs/*/recap': () =>
+        json({ summary: { title: 'Работа', themes: [], recap: RECAP, recapStatus: 'ready', recapSource: 'draft' } }),
+    })
+    const list = ok<ListDialogRecapsApiResponse>(await call(app, 'GET', '/api/recaps', undefined, tokens.accessToken))
+    expect(list).toEqual({
+      items: [{ dialogId: 'd-2', startedAt: '2026-10-24T09:00:00.000Z', title: 'Работа', recap: RECAP, recapSource: 'auto' }],
+      next: null,
+    })
+    expect(ok<DraftDialogRecapApiResponse>(await call(app, 'POST', '/api/dialogs/d-2/recap/draft', undefined, tokens.accessToken))).toEqual({ recap: RECAP })
+    const saved = ok<PutDialogRecapApiResponse>(await call(app, 'PUT', '/api/dialogs/d-2/recap', { recap: RECAP, source: 'draft' }, tokens.accessToken))
+    expect(saved.summary).toMatchObject({ recap: RECAP, recapSource: 'draft' })
+  })
+
+  it('черновик: нет итога у разговора, модель не написала — отказы с кодами; запись для короткого — RECAP_NOT_AVAILABLE', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
+    refusedWith(await call(app, 'POST', '/api/dialogs/d-1/recap/draft', undefined, tokens.accessToken), DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE)
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'RECAP_UNAVAILABLE' } }, 502) })
+    refusedWith(await call(app, 'POST', '/api/dialogs/d-1/recap/draft', undefined, tokens.accessToken), DialogRecapApiErrorCode.RECAP_UNAVAILABLE)
+    mockAgent({ 'PUT http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
+    refusedWith(await call(app, 'PUT', '/api/dialogs/d-1/recap', { recap: RECAP }, tokens.accessToken), DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE)
+  })
+
+  it('«Подводить итог автоматически»: читается и сохраняется, отдельно от памяти; не булево — 400', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/dialog-settings': () => json({ recapEnabled: true }),
+      'PUT http://agent.test/v1/users/*/dialog-settings': () => json({ recapEnabled: false }),
+    })
+    expect(ok<DialogSettingsApiResponse>(await call(app, 'GET', '/api/dialog-settings', undefined, tokens.accessToken))).toEqual({ recapEnabled: true })
+    expect(ok<DialogSettingsApiResponse>(await call(app, 'PUT', '/api/dialog-settings', { recapEnabled: false }, tokens.accessToken))).toEqual({ recapEnabled: false })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ recapEnabled: false })
+    expect((await call(app, 'PUT', '/api/dialog-settings', { recapEnabled: 'нет' }, tokens.accessToken)).status).toBe(400)
+  })
+
+})
+
 // ─── WebSocket gateway ────────────────────────────────────────────────────────
 
 interface AgentConnection {
@@ -534,6 +650,20 @@ describe('WebSocket-шлюз', () => {
     // The SOS screen must not open empty even when the agent supplied no hotlines.
     expect((safety.hotlines as unknown[]).length).toBeGreaterThan(0)
 
+    client.close()
+  })
+
+  it('кадр mood от агента доходит до клиента, чужие значения отбрасываются (PROTEUS-168)', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-mood-1' }))
+    const agentSide = await agent.waitFor('d-mood-1')
+
+    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'furious', intensity: 1 }))
+    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'angry', intensity: 7, risk: 'self_harm', at: 5 }))
+    const mood = await nextFrame(client, DialogServerFrame.Mood)
+    expect(mood).toEqual({ v: 1, type: 'mood', tone: 'angry', intensity: 1, at: 5 })
     client.close()
   })
 
