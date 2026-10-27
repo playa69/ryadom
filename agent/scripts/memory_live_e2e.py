@@ -3,7 +3,7 @@
     python scripts/memory_live_e2e.py --url http://127.0.0.1:8071 --token <AGENT_INTERNAL_TOKEN> \
         --scenario <scenario.json> --audio-dir <каталог turn_NN_16k.pcm> --out result.json
 
-Агент уже запущен (скрипт его не запускает и ключей не знает): `VOICE_PIPELINE=gemini_live`, `MEMORY_MODE=on`, модель
+Агент уже запущен (скрипт его не запускает и ключей не знает): `VOICE_PIPELINE=gemini_live`, `MEMORY_NOTES_ENABLED=true`, модель
 извлечения через прокси. Шаги:
   1. включить память новому синтетическому человеку;
   2. разговор 1 голосом: реплики сценария (готовые PCM16 16 кГц), ответы Gemini, конец разговора;

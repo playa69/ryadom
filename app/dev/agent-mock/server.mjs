@@ -9,7 +9,7 @@
  *
  * What is not here and must not be: real models, classifiers. Crisis is detected from a word list
  * and speech "recognition" returns a stub with the duration; memory "extraction" only picks up the
- * person's own "запомни, что ..." (see `MOCK_MEMORY_MODE` below). Speech output is real: replies
+ * person's own "запомни, что ..." (see `memory-notes.mjs`). Speech output is real: replies
  * (and the greeting) are synthesized by espeak-ng and streamed as 24 kHz PCM16 frames, the way the
  * real agent will stream its TTS. See `MOCK_TTS` below.
  */
@@ -46,28 +46,20 @@ function effectiveTts() {
   return espeakAvailable ? 'espeak' : 'none'
 }
 
-/**
- * Memory, the agent's long-term notes about the person. `MOCK_MEMORY_MODE`:
- *   on (default)  the feature works: the person can turn it on, and "запомни, что ..." said in a
- *                 conversation becomes a fact when it ends
- *   shadow        the same here (the real agent would just not use the facts in its replies yet)
- *   off           switched off on the server: reading, export and forgetting still work, turning it
- *                 on and writing facts are refused with MEMORY_UNAVAILABLE
- * `MOCK_MEMORY_ALLOWLIST` (user ids, comma-separated) plays a closed beta: anyone else gets
- * MEMORY_NOT_ALLOWED when turning it on. `MOCK_MEMORY_DELAY_MS` (1500): how long `changes` stays
- * `pending` after a conversation ends, the way a real extraction takes a while.
- * Dev only: `POST /dev/memory {"mode": "..."}` changes the mode while the mock runs, `GET /dev/memory` shows it.
- * Texts of facts and messages never reach the log here either: ids and counts only.
- */
-const MEMORY_MODES = ['on', 'shadow', 'off']
 /** `POST /dev/digests {"fail": true}` makes `/digests` answer 502, as an agent whose model is down. */
 let digestsFail = false
-let memoryMode = MEMORY_MODES.includes(process.env.MOCK_MEMORY_MODE) ? process.env.MOCK_MEMORY_MODE : 'on'
+
+/**
+ * Memory, the agent's long-term notes about the person: the person can turn it on, and "запомни, что ..."
+ * said in a conversation becomes a note shortly after (`MOCK_NOTE_DELAY_MS`, see `memory-notes.mjs`).
+ * `MOCK_MEMORY_ALLOWLIST` (user ids, comma-separated) plays a closed beta: anyone else gets
+ * MEMORY_NOT_ALLOWED when turning it on.
+ * Texts of facts and messages never reach the log here either: ids and counts only.
+ */
 const MEMORY_ALLOWLIST = (process.env.MOCK_MEMORY_ALLOWLIST ?? '')
   .split(',')
   .map((id) => id.trim())
   .filter(Boolean)
-const MEMORY_DELAY_MS = Number(process.env.MOCK_MEMORY_DELAY_MS ?? 1500)
 /** A conversation "without memory" is deleted this long after its last message. */
 const INCOGNITO_TTL_MS = 24 * 60 * 60 * 1000
 
@@ -225,7 +217,7 @@ function addMessage(dialog, role, text) {
     createdAt: new Date().toISOString(),
   }
   dialog.messages.push(message)
-  if (role === 'user') onUserMessage(userState(dialog.userId).memory, dialog, text, memoryAvailable())
+  if (role === 'user') onUserMessage(userState(dialog.userId).memory, dialog, text)
   return message
 }
 
@@ -272,7 +264,7 @@ function noContent(res) {
 /** /v1/users/{userId}/memory...: the notes model lives in `memory-notes.mjs`. */
 function handleMemoryRoute(req, res, url, userId, parts, method) {
   return handleNotesMemory(
-    { json, noContent, readBody, agentError, available: memoryAvailable, mode: () => memoryMode, allowlist: MEMORY_ALLOWLIST },
+    { json, noContent, readBody, agentError, allowlist: MEMORY_ALLOWLIST },
     req,
     res,
     url,
@@ -281,10 +273,6 @@ function handleMemoryRoute(req, res, url, userId, parts, method) {
     parts,
     method,
   )
-}
-
-function memoryAvailable() {
-  return memoryMode !== 'off'
 }
 
 const server = createServer(async (req, res) => {
@@ -301,15 +289,6 @@ const server = createServer(async (req, res) => {
       if (['auto', 'beep', 'none'].includes(body.mode)) ttsMode = body.mode
     }
     return json(res, 200, { mode: ttsMode, effective: effectiveTts(), espeak: espeakAvailable })
-  }
-
-  // /dev/memory - dev only, not part of the agent contract: shows or changes the memory mode.
-  if (path === '/dev/memory') {
-    if (method === 'POST') {
-      const body = await readBody(req)
-      if (MEMORY_MODES.includes(body.mode)) memoryMode = body.mode
-    }
-    return json(res, 200, { mode: memoryMode, available: memoryAvailable(), delayMs: MEMORY_DELAY_MS })
   }
 
   // Dev only: switch the digests route into failure and back.
@@ -483,7 +462,7 @@ const server = createServer(async (req, res) => {
       messageCount: dialog.messages.length,
       lastActivityAt: dialog.messages.at(-1)?.createdAt ?? dialog.endedAt,
       memoryMode: dialog.memoryMode,
-      memoryEnabled: userState(userId).memory.enabled && memoryAvailable(),
+      memoryEnabled: userState(userId).memory.enabled,
     })
   }
 

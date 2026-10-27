@@ -5,8 +5,8 @@ import { GetAgentMemoryRequest } from './get-agent-memory.request'
 import type { GetAgentMemoryResponse } from './get-agent-memory.types'
 
 /**
- * `GET /v1/users/{userId}/memory`. It answers in any mode and with the person's memory off: reading
- * what is remembered is always allowed, `available: false` says the feature itself is off.
+ * `GET /v1/users/{userId}/memory`. It answers with the person's memory off: reading
+ * what is remembered is always allowed, `available: false` says the feature itself is unavailable.
  */
 @requestHandler(GetAgentMemoryRequest)
 export class GetAgentMemoryRequestHandler implements RequestHandler<

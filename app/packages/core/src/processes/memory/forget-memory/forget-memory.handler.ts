@@ -12,7 +12,7 @@ import { ForgetMemoryOperationErrorCode, type ForgetMemoryResult } from './forge
 
 /**
  * "Forget everything": the agent erases every fact and its history. Conversations stay, and so do
- * the switch and the consent: forgetting is not withdrawing. Works with memory off and in any mode.
+ * the switch and the consent: forgetting is not withdrawing. Works with memory off.
  */
 @requestHandler(ForgetMemoryOperation)
 export class ForgetMemoryOperationHandler implements RequestHandler<

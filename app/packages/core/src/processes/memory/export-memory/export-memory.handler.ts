@@ -6,7 +6,7 @@ import { toMemoryExportDTO } from '../shared/memory.dto'
 import { ExportMemoryOperation } from './export-memory.operation'
 import { ExportMemoryOperationErrorCode, type ExportMemoryResult } from './export-memory.types'
 
-/** "Download my memory": everything, guesses and proposed facts included. Works in any mode. */
+/** "Download my memory": everything, guesses and proposed facts included. Works with memory switched off. */
 @requestHandler(ExportMemoryOperation)
 export class ExportMemoryOperationHandler implements RequestHandler<
   ExportMemoryOperation,

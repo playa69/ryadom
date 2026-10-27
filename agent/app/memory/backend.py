@@ -14,7 +14,7 @@ class MemoryBackend(MemoryLink, Protocol):
     """Память людей: `MemoryLink` хранилища диалогов плюс REST-операции и готовность."""
 
     def status(self) -> str:
-        """Для /health/ready: off | shadow | on | unavailable."""
+        """Для /health/ready: on | unavailable."""
         ...
 
     @property

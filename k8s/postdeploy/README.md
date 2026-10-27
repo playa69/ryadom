@@ -36,7 +36,7 @@ POSTDEPLOY_BASELINE=<снимок> uv run --no-project --with requests --with we
 ```
 
 Переменные: `POSTDEPLOY_BASELINE` (путь к снимку, по умолчанию `baseline.json` в текущем каталоге), `PUBLIC_BASE_URL` (по умолчанию адрес из снимка),
-`EXPECT_MEMORY_MODE` (`off` по умолчанию; после включения памяти — `shadow` или `on`), `POSTDEPLOY_FULL=1` (добавить проверку μ-law: ещё одна реплика).
+`POSTDEPLOY_FULL=1` (добавить проверку μ-law: ещё одна реплика).
 Флаг `--expect pre|post` (или `POSTDEPLOY_EXPECT`).
 
 | Группа | Тест | Что доказывает |
@@ -53,7 +53,7 @@ POSTDEPLOY_BASELINE=<снимок> uv run --no-project --with requests --with we
 | Работа | `test_text_turn_with_voice_for_a_legacy_client` | диалог идёт: ответ текстом и озвучка pcm16 для клиента без `codecs`, обе реплики сохранились |
 | | `test_opus_is_negotiated_and_well_formed`* | клиент с `codecs` получает Opus: кодек в `tts_start`, пакеты разбираются, сжатие порядка 1/16 |
 | | `test_mulaw_is_negotiated`* (`POSTDEPLOY_FULL=1`) | μ-law согласуется |
-| | `test_memory_is_in_the_expected_mode`* | серверный режим памяти как ожидаем (`off` на шаге 1), у аккаунта память выключена, фактов нет |
+| | `test_memory_of_the_test_account_is_off_and_empty`* | поле `mode` ответа памяти равно `on` (оставлено для старых клиентов), у аккаунта память выключена, фактов нет |
 
 \* только в режиме `post`.
 

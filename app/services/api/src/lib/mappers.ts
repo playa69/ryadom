@@ -39,7 +39,6 @@ import {
   MemoryFactOrigin,
   MemoryFactSensitivity,
   MemoryFactStatus,
-  MemoryServiceMode,
   type MemoryApiResponse,
   type MemoryChangesApiResponse,
   type MemoryExportApiResponse,
@@ -164,12 +163,6 @@ const DIALOG_MEMORY_MODES: Record<DialogListItemDTO['memoryMode'], DialogMemoryM
   off: DialogMemoryMode.Off,
 }
 
-const MEMORY_SERVICE_MODES: Record<MemoryDTO['mode'], MemoryServiceMode> = {
-  off: MemoryServiceMode.Off,
-  shadow: MemoryServiceMode.Shadow,
-  on: MemoryServiceMode.On,
-}
-
 const MEMORY_FACT_CATEGORIES: Record<MemoryFactDTO['category'], MemoryFactCategory> = {
   style: MemoryFactCategory.Style,
   boundary: MemoryFactCategory.Boundary,
@@ -286,7 +279,7 @@ export function toMemoryFact(fact: MemoryFactDTO): MemoryFactApiResponse {
 export function toMemory(memory: MemoryDTO): MemoryApiResponse {
   return {
     available: memory.available,
-    mode: MEMORY_SERVICE_MODES[memory.mode],
+    mode: 'on', // kept for older clients, which read it
     enabled: memory.enabled,
     consentVersion: memory.consentVersion,
     consentAt: memory.consentAt?.toISOString() ?? null,

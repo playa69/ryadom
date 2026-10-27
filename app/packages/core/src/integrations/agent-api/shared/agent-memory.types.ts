@@ -5,10 +5,6 @@
  * log, an error message or analytics. Ids, codes and counts may.
  */
 
-/** Whether the feature works on the agent at all; not the person's own switch. */
-export const AGENT_MEMORY_MODES = ['off', 'shadow', 'on'] as const
-export type AgentMemoryMode = (typeof AGENT_MEMORY_MODES)[number]
-
 /** Memory for one dialog: `off` is a conversation "without memory". */
 export const AGENT_DIALOG_MEMORY_MODES = ['on', 'off'] as const
 export type AgentDialogMemoryMode = (typeof AGENT_DIALOG_MEMORY_MODES)[number]
@@ -93,7 +89,6 @@ export interface AgentMemoryNoteResponse {
 /** `GET /memory`. */
 export interface AgentMemoryResponse {
   available: boolean
-  mode: AgentMemoryMode
   enabled: boolean
   consentVersion: string | null
   consentAt: string | null

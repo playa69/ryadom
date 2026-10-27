@@ -12,7 +12,6 @@ import {
   memoryInUse,
   memorySwitches,
   needsMemoryConsent,
-  shouldShowMemorySection,
 } from '@ryadom/client-core/memory'
 import type { MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import {
@@ -210,9 +209,6 @@ export default function MemoryPage() {
     setRetrying(false)
   }
 
-  // The feature is off on the server and the person has nothing there (a link opened before it was
-  // switched on): a neutral word, no switches and no actions.
-  const hiddenSection = memory !== null && !shouldShowMemorySection(memory)
   const switches = memory ? memorySwitches(memory) : null
 
   return (
@@ -244,14 +240,7 @@ export default function MemoryPage() {
         </div>
       )}
 
-      {hiddenSection && (
-        <div className="rd-empty" data-testid="memory-not-yet">
-          <Icon f7="sparkles" size={32} />
-          <p className="rd-muted">Память пока недоступна.</p>
-        </div>
-      )}
-
-      {memory && switches && !hiddenSection && (
+      {memory && switches && (
         <>
           <List inset strong className="rd-menu">
             <ListItem title={MEMORY_SWITCHES.memory.title} footer={MEMORY_SWITCHES.memory.hint} data-testid="memory-switch">

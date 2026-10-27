@@ -469,7 +469,7 @@ class CogneeMemoryBackend:
         sensitive, chat_search = await self.notes.flags(user_id)
         return {
             "available": self.available,
-            "mode": "on",
+            "mode": "on",  # оставлено для старых клиентов: прежние сборки читают поле; режимов off/shadow больше нет
             "enabled": enabled,
             "paused": not enabled,
             "sensitiveEnabled": sensitive,

@@ -14,7 +14,6 @@ import {
   talkButton,
 } from '../support/web'
 import { expect, test } from '../support/fixtures'
-import { AGENT_URL } from '../playwright.config'
 
 /**
  * Memory in the web app, the notes model (PROTEUS-242, REQ-MEM-*): turning it on through its own consent
@@ -407,39 +406,4 @@ test('«Запомнил: … · Убрать» в разговоре: нова�
   await openMemory(page)
   await openSheet(page)
   await expect(sheet(page)).not.toContainText(SLEEP_NOTE)
-})
-
-/** Switches memory on the agent mock: `off` is the feature off on the server. Dev control of the mock. */
-async function setMemoryMode(mode: 'on' | 'off'): Promise<void> {
-  const response = await fetch(`${AGENT_URL}/dev/memory`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  })
-  if (!response.ok) throw new Error(`agent mock refused the memory mode: ${response.status}`)
-}
-
-test('функция выключена на сервере: раздела «Память» нет, по ссылке — «пока недоступна»', async ({
-  page,
-}) => {
-  await setMemoryMode('off')
-  try {
-    await openWebApp(page)
-    await startAnonymously(page)
-    await expect(page.getByTestId('incognito')).toHaveCount(0)
-
-    await openProfile(page)
-    // The rest of the profile is there; the section is not, not even as "unavailable".
-    await expect(page.getByTestId('voice-section')).toBeVisible()
-    await expect(page.getByTestId('memory-section')).toHaveCount(0)
-
-    await openWebApp(page, '/profile/memory')
-    await expect(page.getByTestId('memory-not-yet')).toContainText('Память пока недоступна', {
-      timeout: 20_000,
-    })
-    await expect(page.getByTestId('memory-switch')).toHaveCount(0)
-    await expect(page.getByTestId('memory-forget-all')).toHaveCount(0)
-  } finally {
-    await setMemoryMode('on')
-  }
 })

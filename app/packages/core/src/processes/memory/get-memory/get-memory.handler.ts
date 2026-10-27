@@ -7,8 +7,8 @@ import { GetMemoryOperationErrorCode, type GetMemoryResult } from './get-memory.
 
 /**
  * The "Memory" screen: everything the agent remembers about the person, their switch and whether
- * the feature works at all. Memory lives at the agent; it answers in any mode and with the person's
- * memory off, because seeing what is remembered is always the person's right.
+ * the feature works at all. Memory lives at the agent; it answers with the person's memory
+ * off, because seeing what is remembered is always the person's right.
  */
 @requestHandler(GetMemoryOperation)
 export class GetMemoryOperationHandler implements RequestHandler<GetMemoryOperation, GetMemoryResult> {

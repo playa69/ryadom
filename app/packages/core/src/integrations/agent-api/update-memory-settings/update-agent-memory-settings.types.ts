@@ -1,7 +1,7 @@
 import type { AgentMemorySettingsResponse } from '../shared/agent-memory.types'
 
 export enum UpdateAgentMemorySettingsRequestErrorCode {
-  /** `MEMORY_UNAVAILABLE` (503): the feature is off on the agent, memory cannot be turned on now. */
+  /** `MEMORY_UNAVAILABLE` (503): the memory storage of the agent is not ready, memory cannot be turned on now. */
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
   /** `MEMORY_NOT_ALLOWED` (403): a closed beta, and this person is not in it. */
   MEMORY_NOT_ALLOWED = 'MEMORY_NOT_ALLOWED',
