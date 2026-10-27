@@ -23,6 +23,7 @@ import { dialogsRoutes } from './dialogs'
 import { healthRoutes } from './health'
 import { memoryRoutes } from './memory'
 import { otaBundleRoutes } from './ota-bundle'
+import { selfCheckRoutes } from './self-check'
 
 /** Every route of the application. The contracts live in src/shared/api. */
 export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
@@ -51,4 +52,5 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   dialogSharesRoutes(app, deps)
   memoryRoutes(app, deps)
   diaryRoutes(app, deps)
+  selfCheckRoutes(app, deps)
 }

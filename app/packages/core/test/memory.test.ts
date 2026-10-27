@@ -132,7 +132,7 @@ const DELETED_OR_MISSING = '00000000-0000-4000-8000-000000000000'
 describe('согласие на память не обязательное (ловушка MEM-11.3)', () => {
   it('memory нет среди обязательных согласий первого экрана, наборы не пересекаются', () => {
     expect(USER_CONSENT_KINDS).not.toContain('memory')
-    expect(OPTIONAL_CONSENT_KINDS).toEqual(['memory'])
+    expect(OPTIONAL_CONSENT_KINDS).toEqual(['memory', 'self_check'])
     for (const kind of OPTIONAL_CONSENT_KINDS) expect(USER_CONSENT_KINDS).not.toContain(kind)
     expect(MEMORY_CONSENT_ACTIONS).toEqual(['granted', 'revoked'])
   })

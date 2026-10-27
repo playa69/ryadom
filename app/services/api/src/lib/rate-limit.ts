@@ -95,6 +95,9 @@ export const RATE_LIMITS = {
   diaryRead: { perUser: { limit: 120, windowMs: 60_000 } },
   diarySummary: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
   diaryWrite: { perUser: { limit: 60, windowMs: 60_000 } },
+  /** Tests inside the app: screens read often, saving is a tap after a pass. */
+  selfCheckRead: { perUser: { limit: 120, windowMs: 60_000 } },
+  selfCheckWrite: { perUser: { limit: 30, windowMs: 60_000 } },
   /** The Android widget with its own token: a few taps a day, plus reads when it redraws. */
   widget: { perIp: { limit: 120, windowMs: 60_000 } },
   /** "Download my memory": the whole of it at once, so a few times per ten minutes. */

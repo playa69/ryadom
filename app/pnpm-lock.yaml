@@ -604,6 +604,9 @@ importers:
       '@ryadom/design':
         specifier: workspace:*
         version: link:../design
+      '@ryadom/self-check':
+        specifier: workspace:*
+        version: link:../self-check
       assert-never:
         specifier: ^1.4.0
         version: 1.4.0
@@ -777,6 +780,9 @@ importers:
       '@ryadom/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@ryadom/self-check':
+        specifier: workspace:*
+        version: link:../../packages/self-check
       assert-never:
         specifier: ^1.4.0
         version: 1.4.0

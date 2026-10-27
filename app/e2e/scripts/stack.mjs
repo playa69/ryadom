@@ -165,6 +165,9 @@ runSync('pnpm', [
 })
 
 const apiEnv = {
+  // Tests inside the app on the server: the same switch as the clients' (`E2E_SELF_CHECK=0` turns both off).
+  SELF_CHECK_ENABLED: process.env.E2E_SELF_CHECK === '0' ? 'false' : 'true',
+  SELF_CHECK_PREVIEW: process.env.E2E_SELF_CHECK === '0' ? 'false' : 'true',
   ...process.env,
   NODE_ENV: 'production',
   APP_ENV: 'local',

@@ -181,6 +181,13 @@ const appShape = {
    * `REDIS_PASSWORD` serves the Sentinel nodes and the master alike.
    */
   REDIS_ENABLED: booleanFlag,
+  /**
+   * Tests inside the app (`add-self-check-tests`, D9): off, the results routes answer 404 as if they did not exist.
+   * `SELF_CHECK_PREVIEW` also accepts the tests that wait for the owner's sign-off (status `review`): for dev
+   * and staging, never production.
+   */
+  SELF_CHECK_ENABLED: booleanFlag,
+  SELF_CHECK_PREVIEW: booleanFlag,
   REDIS_URL: z.preprocess(
     emptyToUndefined,
     z.url({ protocol: /^rediss?$/, error: 'must be a redis:// URL' }).optional(),
