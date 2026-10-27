@@ -405,7 +405,7 @@ class PostgreSettings(BaseAppSettings):
     is_hard_health: bool = Field(validation_alias="PG_IS_HARD_HEALTH", default=True)
     user: None | str = Field(validation_alias="PG_USER", default="usecase_advisor_ai_agent_app")
     password: None | str = Field(validation_alias="PG_PASSWORD")
-    host: None | str = Field(validation_alias="PG_HOST", default="10.131.79.37")
+    host: None | str = Field(validation_alias="PG_HOST", default="postgres.internal")
     port: None | str = Field(validation_alias="PG_PORT", default="5433")
     database: None | str = Field(validation_alias="PG_NAME", default="upp_agents")
     schema_name: None | str = Field(validation_alias="PG_SCHEMA", default="usecase_advisor_ai_agent_context_db")
