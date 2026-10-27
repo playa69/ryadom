@@ -2,7 +2,8 @@
 
 Что настоящее: хранилище диалогов (PostgreSQL), бэкенд памяти, извлекатель заметок на модели прокси, Cognee 1.5.3 (индекс прошлых
 разговоров), блок памяти, который уходит в инструкцию модели, и ответ модели на вопрос с этим блоком. Ничего не мокается.
-Печатает отчёт в Markdown: что извлечено после каждого разговора, что лежит в Cognee и что получает модель на вопросы.
+Печатает отчёт в Markdown: что извлечено после каждого разговора; на вопросы — что даёт слой 1 (заметки) и слой 2 (Cognee), три ответа
+модели (только слой 1, только слой 2, оба) и откуда взято в ответе с обоими слоями.
 
 Нужно: DIALOG_DATABASE_URL (пустая база; таблицы создаются), COGNEE_URL/COGNEE_EMAIL/COGNEE_PASSWORD, ключ прокси в
 MEMORY_LLM_TOKEN_FILE (или AGENT_API_TOKEN). Запуск из agent/:
@@ -15,6 +16,7 @@ MEMORY_LLM_TOKEN_FILE (или AGENT_API_TOKEN). Запуск из agent/:
 import argparse
 import asyncio
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -28,12 +30,14 @@ from app.core.config import MemorySettings  # noqa: E402
 from app.memory.cognee_backend import CogneeMemoryBackend  # noqa: E402
 from app.memory.extractor import NotesExtractor  # noqa: E402
 from app.memory.indexer import dataset_name  # noqa: E402
+from app.memory.notes import build_notes_block  # noqa: E402
 from app.services.dialog_db import DialogDatabase  # noqa: E402
 from app.services.dialog_store import DialogStore  # noqa: E402
 from app.services.replies import memory_block, system_prompt  # noqa: E402
 from scripts.memory_harness_scenarios import SCENARIOS  # noqa: E402
 
 CONSENT = "2026-10-21"
+settings_tokens = 1200  # MEMORY_BRIEF_MAX_TOKENS по умолчанию
 
 
 def token() -> str:
@@ -53,6 +57,13 @@ class Report:
     def add(self, text: str = "") -> None:
         self.lines.append(text)
         print(text, flush=True)
+
+
+def overlaps(source: str, reply: str) -> bool:
+    """Ответ опирается на строку источника: общие слова от 5 знаков (по первым пяти буквам, чтобы падежи не мешали), не меньше двух."""
+    stems = {word[:5] for word in re.findall(r"[а-яёa-z]{5,}", source.lower())}
+    mine = {word[:5] for word in re.findall(r"[а-яёa-z]{5,}", reply.lower())}
+    return len(stems & mine) >= 2
 
 
 def quote(text: str) -> str:
@@ -116,23 +127,39 @@ async def run_scenario(scn: dict, memory: CogneeMemoryBackend, store: DialogStor
             found_any = True
             dialog, _, _ = store.start(user, new=True)
             found = await memory.recall_now(dialog, probe)
-            block = memory.brief(dialog)
+            notes = await memory.notes.list(user)
+            notes_block = build_notes_block(notes, settings_tokens)
+            found_block = "Из прошлых разговоров (слова человека, дословно):\n" + found if found.strip() else ""
             report.add(f"#### Вопрос: «{probe}»")
-            report.add("Что находит Cognee по вопросу (после фильтра подавленных реплик):")
-            report.add(quote(found))
-            report.add("Блок памяти, который получает модель:")
-            report.add(quote(block))
+            report.add("**Слой 1, заметки** (блок, который уходит в инструкцию модели):")
+            report.add(quote(notes_block))
+            report.add("**Слой 2, Cognee** (находки по вопросу после фильтра подавленных реплик):")
+            report.add(quote(found_block))
             if answers:
-                messages = [
-                    {"role": "system", "content": system_prompt("male") + memory_block(block)},
-                    {"role": "user", "content": probe},
-                ]
-                try:
-                    reply = await chat.complete(messages)
-                except Exception as error:  # noqa: BLE001
-                    reply = f"(модель не ответила: {type(error).__name__})"
-                report.add("Ответ модели:")
-                report.add(quote(reply.strip()))
+                variants = (
+                    ("только слой 1 (заметки)", notes_block),
+                    ("только слой 2 (Cognee)", found_block),
+                    ("оба слоя (как в проде)", "\n\n".join(part for part in (notes_block, found_block) if part)),
+                )
+                both_reply = ""
+                for label, block in variants:
+                    messages = [
+                        {"role": "system", "content": system_prompt("male") + memory_block(block)},
+                        {"role": "user", "content": probe},
+                    ]
+                    try:
+                        reply = (await chat.complete(messages)).strip()
+                    except Exception as error:  # noqa: BLE001
+                        reply = f"(модель не ответила: {type(error).__name__})"
+                    if label.startswith("оба"):
+                        both_reply = reply
+                    report.add(f"Ответ модели, {label}:")
+                    report.add(quote(reply))
+                used_notes = [n["text"] for n in notes if overlaps(n["text"], both_reply)]
+                used_found = [line[2:] for line in found.splitlines() if line.startswith("- ") and overlaps(line, both_reply)]
+                report.add("Откуда взято в ответе «оба слоя» (грубое совпадение по словам, не оценка модели):")
+                report.add("- из слоя 1: " + ("; ".join(used_notes) if used_notes else "ничего"))
+                report.add("- из слоя 2: " + ("; ".join(used_found) if used_found else "ничего"))
             report.add()
             store.end(dialog, None, None)
         if found_any:
