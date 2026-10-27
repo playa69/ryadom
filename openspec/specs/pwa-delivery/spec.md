@@ -22,8 +22,8 @@ PWA (браузерная сборка мобильного клиента) SHAL
 - **WHEN** PWA, открытая по `https://<хост>/pwa/`, выполняет fetch к `/api/dialogs`
 - **THEN** запрос уходит на `https://<хост>/api/dialogs` — тот же origin, без CORS — и его обслуживает API
 
-#### Scenario: Диалог по WebSocket
-- **WHEN** PWA открывает диалог на странице `https://<хост>/pwa/`
+#### Scenario: Разговор по WebSocket
+- **WHEN** PWA открывает разговор на странице `https://<хост>/pwa/`
 - **THEN** WebSocket подключается к `wss://<хост>/api/dialogs/ws`: схема и хост берутся из адреса страницы
 
 ### Requirement: Префикс адреса задаётся при сборке образа
@@ -165,7 +165,7 @@ PWA (браузерная сборка мобильного клиента) SHAL
 - **THEN** ответ приходит с `Content-Encoding: gzip`
 
 ### Requirement: Заголовки безопасности ответов PWA
-Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `worker-src 'self' blob:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors https://web.telegram.org`. Диалог идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`. Встраивание приложения во фрейм MUST быть разрешено только Telegram Web (`https://web.telegram.org`), который показывает Mini App во фрейме; приложения Telegram для телефона и компьютера открывают его в собственном WebView без фрейма (см. `telegram-mini-app`). `'wasm-unsafe-eval'` разрешает лишь компиляцию WebAssembly для декодера озвучки там, где у браузера нет своего декодера Opus.
+Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `worker-src 'self' blob:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors https://web.telegram.org`. Разговор идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`. Встраивание приложения во фрейм MUST быть разрешено только Telegram Web (`https://web.telegram.org`), который показывает Mini App во фрейме; приложения Telegram для телефона и компьютера открывают его в собственном WebView без фрейма (см. `telegram-mini-app`). `'wasm-unsafe-eval'` разрешает лишь компиляцию WebAssembly для декодера озвучки там, где у браузера нет своего декодера Opus.
 
 Поверхности: pwa · tg
 
