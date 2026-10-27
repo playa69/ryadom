@@ -5,6 +5,7 @@
  * stop every instance they start and clear the jobs and schedules afterwards, so one test leaves nothing to the next.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { eq, sql } from 'drizzle-orm'
@@ -13,7 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { testDatabase } from '@ryadom/db/test-db'
 import { getDb, getRootLogger, inTransaction } from '@ryadom/core/shared'
 import { resetEnvCache } from '@ryadom/core/config'
-import { accountDeletionProcess, DeleteAccountOperation } from '@ryadom/core/processes/account-deletion'
+import {
+  accountDeletionProcess,
+  DeleteAccountOperation,
+  DeleteUserAccountOperation,
+} from '@ryadom/core/processes/account-deletion'
 import {
   agentApiIntegration,
   DeleteAgentDialogRequest,
@@ -27,11 +32,12 @@ import {
   jobQueueService,
   type JobQueueName,
 } from '@ryadom/core/services/job-queue-service'
-import { QUEUE_CATALOG, type QueueDefinition } from '../src/jobs/catalog'
+import { QUEUE_CATALOG, ensureQueues, queueDrift, type QueueDefinition } from '@ryadom/db/jobs'
 import { erasePersonJob } from '../src/jobs/erase-person'
 import { watchdogJob } from '../src/jobs/watchdog'
 import type { JobDeps } from '../src/jobs/handlers'
-import { ensureQueues, queueDrift, registerSchedules, type JobHandlers } from '../src/jobs/registry'
+import { registerSchedules, type JobHandlers } from '../src/jobs/registry'
+import { purgeInactiveAnonymous } from '../src/lib/anonymous-retention'
 import { startJobs, type Jobs, type JobsConfig } from '../src/lib/jobs'
 import { call, json, makeApp, mockAgent, ok, PASSWORD, signUpAndIn } from './helpers'
 
@@ -693,6 +699,65 @@ describe('удаление аккаунта и настоящая очередь
     // The repeated request queues nothing more.
     expect(ok(await call(app, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
     expect(await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson)).toHaveLength(1)
+  })
+})
+
+describe('стирание администратором и чисткой гостей через настоящую очередь', () => {
+  // Every way an account goes erases the person in analytics the same way: the job is queued in the transaction of the
+  // deletion (product-analytics «Стирание при удалении аккаунта», account-deletion «(API) Удаление человеком»).
+  const { app } = makeApp()
+
+  it('удаление администратором ставит ту же задачу в базу, а откат внешней транзакции уносит и аккаунт, и задачу', async () => {
+    const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+    const { user } = await signUpAndIn(app)
+    mockAgent()
+    const erase = () =>
+      accountDeletionProcess.execute(
+        new DeleteUserAccountOperation({ adminEmail: 'admin@example.com', userId: user.id }),
+      )
+
+    await expect(
+      inTransaction(async () => {
+        await erase()
+        throw new Error('the scenario failed after the deletion')
+      }),
+    ).rejects.toThrow('scenario failed')
+    expect(await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson)).toEqual([])
+    ok(await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD }))
+
+    expect(await erase()).toEqual({ success: true })
+
+    const [job] = await jobs.boss.findJobs<{ userId: string }>(JobQueue.AnalyticsErasePerson)
+    expect(job).toMatchObject({ state: 'created', singletonKey: user.id, data: { userId: user.id } })
+    const waits = (job!.startAfter.getTime() - Date.now()) / 1000
+    expect(waits).toBeGreaterThan(20)
+    expect(waits).toBeLessThanOrEqual(31)
+  })
+
+  it('чистка гостей ставит по задаче на каждый стёртый аккаунт, а гость, который вернулся, остаётся без задачи', async () => {
+    const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+    mockAgent()
+    const deviceLogin = async () => {
+      const response = ok<{ user: { id: string } }>(
+        await call(app, 'POST', '/api/auth/device', {
+          deviceId: randomUUID(),
+          deviceKey: randomBytes(32).toString('base64url'),
+        }),
+      )
+      return response.user.id
+    }
+    const old = await deviceLogin()
+    const returned = await deviceLogin()
+    const idle = new Date(Date.now() - 100 * 24 * 3600 * 1000)
+    await getDb().execute(
+      sql`update users set last_active_at = ${idle.toISOString()}::timestamptz where id = ${old}::uuid`,
+    )
+
+    expect(await purgeInactiveAnonymous()).toEqual({ purged: 1, failed: 0 })
+
+    const queued = await jobs.boss.findJobs<{ userId: string }>(JobQueue.AnalyticsErasePerson)
+    expect(queued.map((job) => job.data.userId)).toEqual([old])
+    expect(queued.some((job) => job.data.userId === returned)).toBe(false)
   })
 })
 

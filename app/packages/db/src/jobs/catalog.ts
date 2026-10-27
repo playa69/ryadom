@@ -1,5 +1,5 @@
 import type { Queue } from 'pg-boss'
-import { JobQueue, type JobQueueName } from '@ryadom/core/services/job-queue-service'
+import { JobQueue, type JobQueueName } from './queues'
 
 /**
  * The catalog of the queues (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4): how each is created in the database,

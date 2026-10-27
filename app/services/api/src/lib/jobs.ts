@@ -1,15 +1,9 @@
-import { sql } from 'drizzle-orm'
-import { PgBoss, fromDrizzle, type ConstructorOptions } from 'pg-boss'
+import { PgBoss, type ConstructorOptions } from 'pg-boss'
 import { createLogger, getDb } from '@ryadom/core/shared'
-import {
-  registerJobQueueTransport,
-  type JobQueueName,
-  type JobQueueTransport,
-} from '@ryadom/core/services/job-queue-service'
-import { QUEUE_CATALOG, type QueueDefinition } from '../jobs/catalog'
+import { registerJobQueueTransport, type JobQueueName } from '@ryadom/core/services/job-queue-service'
+import { QUEUE_CATALOG, createQueueTransport, ensureQueues, type QueueDefinition } from '@ryadom/db/jobs'
 import { createHandlers, type JobDeps } from '../jobs/handlers'
 import {
-  ensureQueues,
   registerSchedules,
   registerWorkers,
   stopTakingJobs,
@@ -59,21 +53,6 @@ export interface Jobs {
   stop(): Promise<void>
 }
 
-/** Queues a job in the transaction of the current async context, or in the queue's own pool when there is none. */
-export function createTransport(boss: PgBoss): JobQueueTransport {
-  return {
-    send: (job) =>
-      boss.send(job.queue, job.data, {
-        db: fromDrizzle(getDb(), sql),
-        ...(job.startAfterSeconds !== undefined ? { startAfter: job.startAfterSeconds } : {}),
-        ...(job.singletonKey !== undefined ? { singletonKey: job.singletonKey } : {}),
-      }),
-    cancel: async (queue, jobId) => {
-      await boss.cancel(queue, jobId, { db: fromDrizzle(getDb(), sql) })
-    },
-  }
-}
-
 export async function startJobs(options: StartJobsOptions): Promise<Jobs> {
   const { config, deps, testing = {} } = options
   const catalog = testing.catalog ?? QUEUE_CATALOG
@@ -100,8 +79,10 @@ export async function startJobs(options: StartJobsOptions): Promise<Jobs> {
   await boss.start()
   logger.info('Очередь задач запущена', { workers: workersEnabled, poolMax: config.JOBS_POOL_MAX })
   // Posting works whether or not this process works the queue off, so the queues exist either way.
-  await ensureQueues(boss, catalog)
-  if (!testing.skipTransport) registerJobQueueTransport(createTransport(boss))
+  await ensureQueues(boss, catalog, {
+    onUpdated: (queue, changed) => logger.info('Параметры очереди приведены к каталогу', { queue, changed }),
+  })
+  if (!testing.skipTransport) registerJobQueueTransport(createQueueTransport(boss, getDb))
 
   let workers: readonly JobQueueName[] = []
   if (workersEnabled) {

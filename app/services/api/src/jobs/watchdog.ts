@@ -1,7 +1,7 @@
 import type { PgBoss } from 'pg-boss'
 import { createLogger } from '@ryadom/core/shared'
 import { JobQueue } from '@ryadom/core/services/job-queue-service'
-import { QUEUE_CATALOG } from './catalog'
+import { QUEUE_CATALOG } from '@ryadom/db/jobs'
 import type { JobHandler } from './registry'
 
 const logger = createLogger('jobs')
