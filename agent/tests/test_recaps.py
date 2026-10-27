@@ -317,7 +317,7 @@ def retention(client: TestClient) -> tuple[int, int]:
 
 def test_retention_deletes_a_dialog_older_than_the_term_with_its_recap(client, user_id):
     store = store_of(client)
-    store.retention_days, store.retention_dry_run = 21, False
+    store.retention_days = 21
     old, fresh = talk(client, user_id), talk(client, user_id)
     end(client, user_id, old, takeaway=RECAP)
     end(client, user_id, fresh, takeaway=RECAP)
@@ -325,27 +325,6 @@ def test_retention_deletes_a_dialog_older_than_the_term_with_its_recap(client, u
     assert retention(client) == (1, 1)
     assert client.get(url(user_id, f"/dialogs/{old}"), headers=AUTH).status_code == 404
     assert client.get(url(user_id, f"/dialogs/{fresh}"), headers=AUTH).status_code == 200
-
-
-def test_retention_off_keeps_everything(client, user_id):
-    store = store_of(client)
-    store.retention_days, store.retention_dry_run = 0, False
-    dialog_id = talk(client, user_id)
-    age(client, user_id, dialog_id, 400)
-    assert retention(client) == (0, 0)
-    assert client.get(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 200
-
-
-def test_the_dry_run_only_counts(client, user_id):
-    from prometheus_client import REGISTRY
-
-    store = store_of(client)
-    store.retention_days, store.retention_dry_run = 21, True
-    dialog_id = talk(client, user_id)
-    age(client, user_id, dialog_id, 30)
-    assert retention(client) == (1, 0)
-    assert client.get(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 200
-    assert REGISTRY.get_sample_value("agent_dialogs_retention_would_delete") == 1.0
 
 
 def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
@@ -363,7 +342,7 @@ def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
         time.sleep(0.3)
     with app() as second:  # новый под: человек в памяти не загружен, разговор лежит только на диске
         store = store_of(second)
-        store.retention_days, store.retention_dry_run = 21, False
+        store.retention_days = 21
         assert second.portal.call(store.retention_pass, datetime.now(UTC)) == (1, 1)  # type: ignore[union-attr]
         assert second.get(url(user, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 404
         # Удаление мягкое: строка осталась в базе с пометкой, следующий проход её уже не считает.

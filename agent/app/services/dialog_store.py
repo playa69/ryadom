@@ -40,7 +40,6 @@ from app.core.metrics import (
     DIALOG_MESSAGES_IN_MEMORY,
     DIALOG_USERS_IN_MEMORY,
     DIALOG_RETENTION_DELETED_TOTAL,
-    DIALOG_RETENTION_WOULD_DELETE,
     DIALOGS_TOTAL,
     SPEECH_SECONDS_TOTAL,
 )
@@ -254,9 +253,8 @@ class DialogStore:
         # Настройка «Подводить итог автоматически» (`dialog_settings`): человек → включено; нет записи — включено.
         self._recap_enabled: dict[str, bool] = {}
         self._persisted_settings: dict[str, bool] = {}
-        # Срок хранения разговоров (D14): сколько дней после последнего сообщения; 0 — бессрочно. Сухой прогон только считает.
-        self.retention_days = 0
-        self.retention_dry_run = True
+        # Срок хранения разговоров (D14): сколько дней после последнего сообщения разговор помечается удалённым.
+        self.retention_days = 21
         self.retention_interval_seconds = 3600.0
         self._last_retention = 0.0
 
@@ -1095,10 +1093,8 @@ class DialogStore:
 
     async def retention_pass(self, now: datetime) -> tuple[int, int]:
         """Срок хранения разговоров (D14): разговор, чьё последнее сообщение старше `retention_days` дней, удаляется вместе с итогом.
-        Возвращает (сколько просрочено, сколько удалено). В сухом прогоне только считает (`agent_dialogs_retention_would_delete`).
+        Возвращает (сколько просрочено, сколько удалено). Удаление мягкое: строки с пометкой убирает очистка.
         Заметки, отметки и итоги недели не затрагиваются, итоги недели из-за чистки не пересчитываются."""
-        if self.retention_days <= 0:
-            return 0, 0
         cutoff = (now - timedelta(days=self.retention_days)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         expired: dict[str, str] = {}  # dialog_id -> user_id
         for user_id, dialogs in self._users.items():
@@ -1116,11 +1112,6 @@ class DialogStore:
             except Exception:  # noqa: BLE001 - чистка подождёт следующего прохода
                 DIALOG_DB_ERRORS_TOTAL.labels("load").inc()
                 logger.exception("dialog retention scan failed")
-        DIALOG_RETENTION_WOULD_DELETE.set(len(expired))
-        if self.retention_dry_run:
-            if expired:
-                logger.info("dialog retention dry run would_delete=%d", len(expired))
-            return len(expired), 0
         deleted = 0
         for dialog_id, user_id in expired.items():
             try:
@@ -1144,7 +1135,7 @@ class DialogStore:
                 self.evict_idle(time.monotonic())
             except Exception:  # noqa: BLE001 - проход не должен останавливать выгрузку: без неё память пода только растёт
                 logger.exception("dialog eviction pass failed")
-            if self.retention_days > 0 and time.monotonic() - self._last_retention >= self.retention_interval_seconds:
+            if time.monotonic() - self._last_retention >= self.retention_interval_seconds:
                 self._last_retention = time.monotonic()
                 try:
                     await self.retention_pass(datetime.now(UTC))

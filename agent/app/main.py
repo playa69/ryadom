@@ -196,7 +196,6 @@ def create_app(
         store.recap_model = background
         store.recap_timeout_seconds = APP_CONFIG.dialog.recap_timeout_seconds
         store.retention_days = APP_CONFIG.dialog.retention_days
-        store.retention_dry_run = APP_CONFIG.dialog.retention_dry_run
         logger.info(
             "agent started: voice=%s tts=%s background=%s dialogs=%s memory=%s tracing=%s gemini budget limit=%d (measure only)",
             live.name,
