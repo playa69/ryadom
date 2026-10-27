@@ -38,7 +38,7 @@ k8s/
 ├── cert-manager/manifests/
 │   ├── 00-cluster-issuer.yaml      ← letsencrypt-prod, solver gatewayHTTPRoute
 │   └── 01-certificate-ryadom-tls.yaml   ← cert на корневой домен → istio-system
-├── agent/                          ← упрощённый агент (ns agent): 00-config, 01-service, 02-deployment, README
+├── agent/                          ← агент (ns agent): config, Service, Deployment, ServiceMonitor, Cognee, README
 ├── app/                            ← сервисы из app/ репозитория (ns prod): см. раздел ниже
 │   ├── 00-app-config.yaml          ← ConfigMap app-config (всё статическое и несекретное)
 │   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 05-job-migrate-0005 (drizzle)
@@ -171,15 +171,11 @@ TLS — cert-manager + Gateway API:
 
 ## Порядок применения
 
-### 0. Секреты (заполнить заранее, НЕ коммитить)
+### 0. Секреты (создать заранее, НЕ коммитить)
 
-```bash
-export KUBECONFIG=~/PycharmProjects/ryadom/k8s/twc-sber500-config.yaml
-```
-
-Секреты создаются напрямую командой `kubectl create secret generic ... --from-env-file=...`; значения хранятся
-локально у администратора, в git их нет. Шаблоны с плейсхолдерами лежат в `postgres/manifests/00-secrets.yaml`,
-`redis/manifests/00-secret.yaml`, `langfuse/manifests/00-secrets.yaml`.
+Секреты создаются напрямую командой `kubectl create secret generic ... --from-env-file=...` под админским
+kubeconfig; значения хранятся локально у администратора, в git их нет. Шаблоны с плейсхолдерами лежат в
+`postgres/manifests/00-secrets.yaml`, `redis/manifests/00-secret.yaml`, `langfuse/manifests/00-secrets.yaml`.
 
 | Секрет | Namespace | Ключи |
 |---|---|---|
@@ -624,34 +620,22 @@ generic ... --from-env-file=...` (именно `create`, а не `apply`, что
   `eu.i.posthog.com` с адреса кластера до выката не проверялся (см. раздел «Проверка после выката» в
   docs/analytics.md).
 
-### Что сознательно выключено на первом выкате
+### Агент и реплики
 
-- **Agent** (`AGENT_API_URL` — `http://agent.agent.svc.cluster.local:8001`): манифесты
-  упрощённого агента подготовлены в `k8s/agent/` (шаблонные ответы + озвучка Qwen TTS,
-  см. `k8s/agent/README.md`), но **в кластер ещё не выкатывались**. Пока агента нет, api
-  стартует, а диалоги и стирание данных у агента не работают; `ANONYMOUS_PURGE_DISABLED=true`.
+- **Agent** (`AGENT_API_URL` — `http://agent.agent.svc.cluster.local:8001`) выкачен в ns `agent`;
+  манифесты и порядок выката — `k8s/agent/README.md`.
 - 1 реплика на сервис: ресурсов в кластере впритык (см. «Доступные ресурсы»).
 
 ### DNS и почта: что сделать руками (Yandex Cloud, консоль)
 
 Почта включена: `EMAIL_TRANSPORT=smtp` (регистрация, подтверждение и сброс пароля, код
-входа в админку). **С 2026-10-11 письма идут через Unisender Go**: Postbox в этот день
-перестал отвечать на TCP (158.160.78.193 молчал и из кластера, и из другой сети).
-Настройка Postbox ниже описана как прежняя и пригодится для отката.
+входа в админку). Письма идут через Unisender Go (с 2026-10-11); прежний Yandex Postbox
+не используется.
 
 Все записи — в Cloud DNS, зона `slyshu-ryadom` (NS домена уже у Yandex Cloud,
 в reg.ru ничего заводить не нужно). Имена в зоне — относительные. Для самих сервисов
 записей не нужно (всё на корневом домене, который уже указывает на
-`185.207.64.68`); нужны только записи почты. Проверка DKIM у Postbox идёт до суток,
-так что начинать стоит с неё.
-
-| Имя | Тип | Значение | Зачем |
-|---|---|---|---|
-| 2 записи из консоли Postbox | CNAME | как покажет консоль | DKIM (Easy DKIM) |
-| `@` | TXT | `"v=spf1 include:spf.postbox.yandexcloud.net ~all"` | SPF; на домене он может быть только один — позже другие отправители дописываются в эту же запись |
-| `_dmarc` | TXT | `"v=DMARC1;p=none"` | DMARC (ужесточить позже) |
-
-TTL 300.
+`185.207.64.68`); нужны только записи почты. TTL 300.
 
 **Unisender Go** (кабинет `go2.unisender.ru`, SMTP `smtp.go2.unisender.ru:465`, TLS с
 первого байта; логин — идентификатор аккаунта, пароль — API-ключ, он в Secret `app-smtp`):
@@ -662,8 +646,9 @@ TTL 300.
 
    | Имя | Тип | Значение | Зачем |
    |---|---|---|---|
-   | `@` | TXT | `"v=spf1 include:spf.postbox.yandexcloud.net include:spf.unisender.ru ~all"` | SPF: он один на домен, поэтому оба отправителя в одной записи |
+   | `@` | TXT | `"v=spf1 include:spf.postbox.yandexcloud.net include:spf.unisender.ru ~all"` | SPF: он один на домен; `include` Postbox остался от прежней схемы |
    | `@` | TXT | `"unisender-go-validate-hash=…"` | подтверждение домена (вторая строка в том же наборе TXT) |
+   | `_dmarc` | TXT | `"v=DMARC1;p=none"` | DMARC (ужесточить позже) |
    | `gokey._domainkey` | TXT | `"v=DKIM1; k=rsa; p=…"` | DKIM; подпись нашим доменом включается примерно через час после проверки |
    | `email` | NS | `uns1/2/3.unisender.com.` | делегирование домена ссылок; без него API отвечает ошибкой 229 «tracking domain required», активация занимает около 15 минут |
 
@@ -671,40 +656,14 @@ TTL 300.
 3. Тариф «Стартовый 6К»: бесплатно до 2026-12-11, затем 800 ₽/мес. На бесплатном тарифе
    письма уходят только на адреса своего домена, поэтому для пользователей он не годится.
 4. Egress: политика `prod-allow-egress-smtp-postbox` разрешает `31.184.200.0/24:465`
-   (Unisender) и `158.160.0.0/16:465` (Postbox, для отката). Имя политики историческое.
+   (Unisender) и `158.160.0.0/16:465` (прежний Postbox, правило осталось в манифесте). Имя политики историческое.
 5. Что известно о доставке на 2026-10-11: Gmail принимает письма во «Входящие», подписанные
    нашим доменом; Яндекс отклоняет их (`554 5.7.1 Message rejected under suspicion of SPAM`)
    как письма нового домена с общих IP. Статусы каждого письма — в кабинете, «История событий».
    Отслеживание прочтений и переходов по умолчанию включено, «ссылка отписки» отключению не
    поддаётся; выключить отслеживание можно в «Конфигурация SMTP».
-6. Откат на Postbox: `SMTP_HOST: postbox.cloud.yandex.net` и `SMTP_USER` прежние (в
-   `00-app-config.yaml` из git-истории), `SMTP_PASSWORD` в Secret `app-smtp` из предыдущей
-   версии секрета в хранилище, затем `rollout restart` app-api и app-admin.
 
-Postbox ([документация](https://yandex.cloud/ru/docs/postbox/quickstart)):
-
-1. Сервисный аккаунт (напр. `ryadom-postbox`) с ролью `postbox.sender` в том же
-   каталоге, что и зона DNS.
-2. API-ключ этого аккаунта с областью `yc.postbox.send`. Секретная часть
-   показывается один раз: сразу в хранилище администратора как `SMTP_PASSWORD`, в чаты
-   и коммиты — нет. Идентификатор ключа — это `SMTP_USER` (несекретный).
-3. Адрес (identity) для домена `xn----htbtgjker8b3a2c.xn--p1ai` (punycode;
-   про кириллицу документация молчит), настройка DKIM — «Простая». Консоль
-   покажет две CNAME-записи — добавить в зону. Статус должен стать `Success`.
-   Отправлять можно с `noreply@<домен>`, но не с поддомена `x@mail.<домен>`.
-4. Проверить в консоли Postbox лимиты и ограничения на отправку (в
-   документации они не описаны).
-5. Секрет в кластер: `kubectl -n prod create secret generic app-smtp
-   --from-env-file=<файл с одной строкой SMTP_PASSWORD=...>` (нужен админский
-   kubeconfig). Затем в `00-app-config.yaml` задать `SMTP_USER`,
-   `EMAIL_TRANSPORT: "smtp"` и применить вместе с
-   `07-network-policy-prod-apps.yaml` (там egress на :465). Транспорт читается при
-   старте, поэтому после `apply` нужен `rollout restart` app-api и app-admin.
-6. До перезапуска app-admin убедиться, что письмо доходит на `ADMIN_EMAILS`
-   (проверить на app-api): вход в админку идёт по коду из письма. Если письмо не
-   доходит, вернуть прежние `SMTP_*` и перезапустить оба сервиса.
-
-Входящей почты у домена нет (Postbox только отправляет): `support@` и ответы на
+Входящей почты у домена нет (только отправка): `support@` и ответы на
 `noreply@` пока уходят в никуда — нужны MX (напр. Яндекс 360 для домена) и
 замена `PUBLIC_SUPPORT_EMAIL`.
 
@@ -770,20 +729,6 @@ kubectl -n prod get httproute                                        # Accepted/
 Собрать и отправить нужный образ (раздел ниже) → поправить тег в
 `k8s/app/<svc>/03-deployment.yaml` → `kubectl apply` → `rollout status`. Для
 миграций — новый Job `app-migrate-NNNN` (копия последнего файла в `k8s/app/db/`) с новым образом `app/migrate:<тег>`.
-
-**Перенос PWA на уже работающий стенд** (раньше его раздавал образ api, но наружу он не
-публиковался; теперь это `app-pwa`, а ключ `PUBLIC_PWA_URL` в `app-config` получил новый
-смысл, адрес веб-клиента переехал в `PUBLIC_WEBAPP_URL`). Порядок важен, иначе кнопки
-на landing поведут не туда:
-1. порт 3004 в сети: `kubectl apply -f k8s/namespaces/manifests/07-network-policy-prod-apps.yaml`;
-2. образ `pwa` собрать и отправить (раздел ниже);
-3. `kubectl apply -f k8s/app/pwa/01-service.yaml -f k8s/app/pwa/03-deployment.yaml`, дождаться
-   `rollout status deploy/app-pwa`, затем `kubectl apply -f k8s/app/pwa/02-httproute.yaml`;
-4. `kubectl apply -f k8s/app/00-app-config.yaml` (появляется `PUBLIC_WEBAPP_URL`, `PUBLIC_PWA_URL`
-   теперь `…/pwa/`; старый образ landing в этот момент ведёт «Открыть приложение» на `/pwa/`,
-   что работает);
-5. новый образ landing (читает `PUBLIC_WEBAPP_URL`): поправить тег, `kubectl apply`, `rollout status`;
-6. образ api без PWA — когда удобно, на работу PWA не влияет.
 
 ### Сборка и push образов
 
