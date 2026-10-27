@@ -23,7 +23,7 @@ export interface ShutdownSteps {
   closeSessions(spreadMs: number): void
   /** Stops accepting connections; `done` runs once the last one has ended. */
   closeServer(done: () => void): void
-  /** Closes the pool and the telemetry, then exits. */
+  /** Closes the pool, Redis and analytics, then exits. */
   finish(): void
   /** The deadline passed: leave now. */
   forceExit(): void

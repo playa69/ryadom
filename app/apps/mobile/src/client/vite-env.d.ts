@@ -9,8 +9,6 @@ interface ImportMetaEnv {
   readonly VITE_FLAVOR?: string
   readonly VITE_PROD_API_URL?: string
   readonly VITE_PROD_WEB_URL?: string
-  readonly VITE_STAGING_API_URL?: string
-  readonly VITE_STAGING_WEB_URL?: string
 }
 
 interface ImportMeta {

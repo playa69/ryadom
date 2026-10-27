@@ -11,13 +11,12 @@ describe('настройка PUBLIC_APP_URL', () => {
 })
 
 describe('настройка PostHog', () => {
-  it('без ключа аналитика выключена, хосты — EU cloud, чувствительное выключено', () => {
+  it('без ключа аналитика выключена, хосты — EU cloud', () => {
     const env = parseEnv({ ...process.env, POSTHOG_KEY: '' })
     expect(env.POSTHOG_KEY).toBeUndefined()
     expect(env.POSTHOG_HOST).toBe('https://eu.i.posthog.com')
     expect(env.POSTHOG_ASSETS_HOST).toBe('https://eu-assets.i.posthog.com')
     expect(env.POSTHOG_UI_HOST).toBe('https://eu.posthog.com')
-    expect([env.POSTHOG_SESSION_REPLAY, env.POSTHOG_CLICK_CAPTURE, env.POSTHOG_HEATMAP_CAPTURE]).toEqual([false, false, false])
   })
 
   it('стирание профилей нужно и ключу, и id проекта; если нет одного из них, под всё равно стартует', () => {

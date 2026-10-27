@@ -279,13 +279,13 @@ Integration = тонкая обёртка над внешним API: собра�
 
 ## Конфигурация
 
-- Ядро читает env только через `getEnv()` (`config/env.ts`, проверка схемой `coreEnvSchema` при первом обращении) и только из `config.ts` модулей и `processes/config.ts`. БД и логи — исключения: `getDb()` читает `DATABASE_URL`, логгер — `LOG_LEVEL`, `APP_ENV` и `OTEL_*` сами, чтобы тесты и миграции не требовали всего env.
+- Ядро читает env только через `getEnv()` (`config/env.ts`, проверка схемой `coreEnvSchema` при первом обращении) и только из `config.ts` модулей и `processes/config.ts`. БД и логи — исключения: `getDb()` читает `DATABASE_URL`, логгер — `LOG_LEVEL` и `APP_ENV` сами, чтобы тесты и миграции не требовали всего env.
 - Приложения вызывают `loadEnv(appEnvSchema)` / `loadEnv(adminEnvSchema)` при старте — падают сразу со списком всех проблем.
 - Новая переменная — в схему в `config/env.ts` и в `.env.example` приложений.
 
 ## Логи и ПДн
 
-- `createLogger('module-name')` из `shared`: `debug/info(message, data)`, `warn/error(message, error, data)`. JSON (pino) в stdout, уровень — `LOG_LEVEL`; при `OTEL_ENABLED=true` — ещё и по OTLP (`shared/telemetry.ts`).
+- `createLogger('module-name')` из `shared`: `debug/info(message, data)`, `warn/error(message, error, data)`. JSON (pino) в stdout, уровень — `LOG_LEVEL`; логи в кластере собираются из stdout.
 - В лог не пишем пароли, токены, коды OAuth, ссылки с токенами, тексты писем: поля контрактов помечены `@hasPII`, параметры запросов из ошибок drizzle ядро вырезает само. Какие ещё ключи вырезать (`password`, `token`, заголовки…), ядро не решает: список задаёт приложение при старте через `configureLogger`. Идентификаторы (userId) логировать можно.
 
 ## Тесты

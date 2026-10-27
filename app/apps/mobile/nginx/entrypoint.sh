@@ -1,14 +1,14 @@
 #!/bin/sh
 # Entry point of the PWA image: renders the shell, then starts nginx.
 #
-# One image serves staging and prod, so the site address and the environment are not baked into the
-# build. Every time the container starts, the two meta tags that the client reads are inserted before
+# One image serves the local stack and prod, so the site address and the environment are not baked
+# into the build. Every time the container starts, the two meta tags that the client reads are inserted before
 # </head> of the built index.html, and nginx serves the result for every shell response
 # (nginx.conf.template, pwa-shell.inc). The meta names are PwaMeta in packages/contracts/src/pwa.ts;
 # apps/mobile/src/client/lib/env.ts reads them.
 #
 #   PUBLIC_WEB_URL  origin of the website, where the legal documents are (https://example.com)
-#   APP_ENV         local | staging | prod
+#   APP_ENV         local | prod
 #
 # The root filesystem is read-only in k8s, so the result goes to /tmp (an emptyDir there).
 set -eu
@@ -19,11 +19,11 @@ fail() {
 }
 
 : "${PUBLIC_WEB_URL:?PUBLIC_WEB_URL is required, for example https://example.com}"
-: "${APP_ENV:?APP_ENV is required: local, staging or prod}"
+: "${APP_ENV:?APP_ENV is required: local or prod}"
 
 case "$APP_ENV" in
-  local | staging | prod) ;;
-  *) fail "APP_ENV must be local, staging or prod, got '$APP_ENV'" ;;
+  local | prod) ;;
+  *) fail "APP_ENV must be local or prod, got '$APP_ENV'" ;;
 esac
 
 case "$PUBLIC_WEB_URL" in

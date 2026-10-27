@@ -5,7 +5,7 @@
 #   node scripts/docker.mjs build -f apps/web/Dockerfile -t ryadom-web:local .
 #
 # No database, no core package and no secrets. The two addresses it needs are runtime config, read
-# on every request (apps/web/.env.example), so one image serves staging and prod:
+# on every request (apps/web/.env.example), so one image serves the local stack and prod:
 #   PUBLIC_API_URL  the API the browser connects to (also the only extra origin the CSP allows)
 #   PUBLIC_WEB_URL  the marketing site, where the terms and privacy documents live
 #

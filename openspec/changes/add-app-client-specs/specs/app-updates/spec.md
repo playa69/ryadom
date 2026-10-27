@@ -56,7 +56,7 @@
 
 ### Requirement: Откуда берётся политика релизов
 
-Нативная ось SHALL читаться из переменных окружения процесса API: `MOBILE_ANDROID_MIN_VERSION_CODE`, `MOBILE_ANDROID_LATEST_VERSION_CODE`, `MOBILE_ANDROID_STORE_URL`, `MOBILE_ANDROID_DOWNLOAD_URL`, `MOBILE_IOS_MIN_VERSION_CODE`, `MOBILE_IOS_LATEST_VERSION_CODE`, `MOBILE_IOS_STORE_URL`; пустая строка означает «не задано», номера — неотрицательные целые (по умолчанию 0), адреса — корректные URL. Ось JS SHALL браться из манифеста OTA-пакетов, запечённого в образ: при `APP_ENV=staging` действует пакет варианта `dev`, при `APP_ENV=prod` — варианта `prod`, при `APP_ENV=local` пакета нет. Политика MUST вычисляться один раз при старте процесса, поэтому изменение значений вступает в силу только после перезапуска; некорректное значение MUST останавливать запуск API, а отсутствующий или повреждённый манифест — только отключать ось JS, не мешая запуску.
+Нативная ось SHALL читаться из переменных окружения процесса API: `MOBILE_ANDROID_MIN_VERSION_CODE`, `MOBILE_ANDROID_LATEST_VERSION_CODE`, `MOBILE_ANDROID_STORE_URL`, `MOBILE_ANDROID_DOWNLOAD_URL`, `MOBILE_IOS_MIN_VERSION_CODE`, `MOBILE_IOS_LATEST_VERSION_CODE`, `MOBILE_IOS_STORE_URL`; пустая строка означает «не задано», номера — неотрицательные целые (по умолчанию 0), адреса — корректные URL. Ось JS SHALL браться из манифеста OTA-пакетов, запечённого в образ: при `APP_ENV=prod` действует пакет варианта `prod`, при `APP_ENV=local` пакета нет. Политика MUST вычисляться один раз при старте процесса, поэтому изменение значений вступает в силу только после перезапуска; некорректное значение MUST останавливать запуск API, а отсутствующий или повреждённый манифест — только отключать ось JS, не мешая запуску.
 
 #### Scenario: Правка номеров после релиза в магазине
 
@@ -75,8 +75,8 @@
 
 #### Scenario: Пакет по окружению
 
-- **WHEN** `APP_ENV=staging`
-- **THEN** статус указывает на пакет варианта `dev`, а при `APP_ENV=prod` — на пакет варианта `prod`
+- **WHEN** `APP_ENV=prod`
+- **THEN** статус указывает на пакет варианта `prod`
 
 ### Requirement: Ворота версий отвечают 426
 
@@ -162,12 +162,12 @@ HTTP-запрос с допустимым `X-Platform` (`android` или `ios`) 
 
 ### Requirement: Сборка OTA-пакетов и манифест
 
-Сборка образа API SHALL выполнять `build:ota` (`scripts/build-ota-bundle.mjs`): для вариантов `prod` и `dev` собрать JS (`vite build --mode <вариант>`), упаковать содержимое `dist/client` в zip так, чтобы `index.html` лежал в корне архива, назвать его `ryadom-<вариант>-<версия>.zip`, посчитать SHA-256 архива и записать `ota/manifest.json` вида `{ "prod": { version, file, checksum }, "dev": { … } }`. Версия пакета SHALL быть `<version из app/apps/mobile/package.json>.<OTA_BUILD_NUMBER>` (без номера — `0`). Адреса `VITE_PROD_API_URL`, `VITE_PROD_WEB_URL`, `VITE_STAGING_API_URL`, `VITE_STAGING_WEB_URL` MUST передаваться в сборку образа аргументами и вшиваться в пакеты; каталог `ota` MUST копироваться в образ API рядом с серверным бандлом. Веб-сборки PWA в образе API нет: PWA — отдельный образ с собственным деплоем (см. `pwa-delivery`). Пакет уезжает тем же деплоем, что и сервер, отдельного шага публикации нет.
+Сборка образа API SHALL выполнять `build:ota` (`scripts/build-ota-bundle.mjs`): для варианта `prod` собрать JS (`vite build --mode prod`), упаковать содержимое `dist/client` в zip так, чтобы `index.html` лежал в корне архива, назвать его `ryadom-prod-<версия>.zip`, посчитать SHA-256 архива и записать `ota/manifest.json` вида `{ "prod": { version, file, checksum } }`. Версия пакета SHALL быть `<version из app/apps/mobile/package.json>.<OTA_BUILD_NUMBER>` (без номера — `0`). Адреса `VITE_PROD_API_URL` и `VITE_PROD_WEB_URL` MUST передаваться в сборку образа аргументами и вшиваться в пакет; каталог `ota` MUST копироваться в образ API рядом с серверным бандлом. Веб-сборки PWA в образе API нет: PWA — отдельный образ с собственным деплоем (см. `pwa-delivery`). Пакет уезжает тем же деплоем, что и сервер, отдельного шага публикации нет.
 
 #### Scenario: Сборка с номером
 
 - **WHEN** образ собирается при `version` `0.1.0` и `OTA_BUILD_NUMBER=42`
-- **THEN** создаются `ryadom-prod-0.1.0.42.zip` и `ryadom-dev-0.1.0.42.zip`, а в манифесте у обоих `version` равна `0.1.0.42`
+- **THEN** создаётся `ryadom-prod-0.1.0.42.zip`, а в манифесте у него `version` равна `0.1.0.42`
 
 #### Scenario: Сборка без номера
 
@@ -200,12 +200,7 @@ HTTP-запрос с допустимым `X-Platform` (`android` или `ios`) 
 
 ### Requirement: Канал OTA зависит от среды сборки
 
-Нативная сборка SHALL участвовать в OTA (отправлять `X-Js-Version` и параметр `js_version`) только если это вариант `prod` или среда выбрана `staging`: пакеты собираются по вариантам, `prod` получает пакет `prod`, `staging` — пакет `dev`. Вариант `dev`, направленный на `prod` или `local`, MUST NOT отправлять версию JS и получать чужой пакет, иначе чужой минимум мог бы его заблокировать.
-
-#### Scenario: Dev-сборка на staging
-
-- **WHEN** сборка варианта `dev` работает со средой `staging`
-- **THEN** она отправляет версию JS и получает пакет варианта `dev`
+Нативная сборка SHALL участвовать в OTA (отправлять `X-Js-Version` и параметр `js_version`) только если это вариант `prod`: пакет собирается только для него. Вариант `dev`, направленный на `prod` или `local`, MUST NOT отправлять версию JS и получать чужой пакет, иначе чужой минимум мог бы его заблокировать.
 
 #### Scenario: Dev-сборка на prod
 

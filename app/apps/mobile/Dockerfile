@@ -9,9 +9,10 @@
 # The client calls the API on its own origin (apiBase is empty, the WebSocket URL comes from
 # window.location), so whatever publishes this image has to route `/api` of the same host to the API.
 #
-# Runtime config, read on every container start (nginx/entrypoint.sh), so one image serves staging and prod:
+# Runtime config, read on every container start (nginx/entrypoint.sh), so one image serves the local
+# stack and prod:
 #   PUBLIC_WEB_URL  the marketing site, where the legal documents live
-#   APP_ENV         local | staging | prod
+#   APP_ENV         local | prod
 #
 # The one thing that is NOT runtime config is the URL prefix: Vite writes it into every asset URL, the
 # manifest scope and the service worker scope, so the image is built for the place it is published at:

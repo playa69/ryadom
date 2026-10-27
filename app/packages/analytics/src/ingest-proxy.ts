@@ -18,7 +18,7 @@ export interface IngestProxyOptions {
   assetsHost: string
   /** The mount point, e.g. `/api/ingest`: what comes before the SDK's own path. */
   basePath: string
-  /** The largest request body accepted. A session-recording chunk is the big one. */
+  /** The largest request body accepted. */
   maxBodyBytes?: number
   /** How long to wait for PostHog before answering 502. */
   timeoutMs?: number

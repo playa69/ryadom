@@ -6,7 +6,7 @@ import { useAuth } from './store'
  * Seven taps open the environment picker, dev build only. The
  * `import.meta.env.VITE_FLAVOR === 'dev'` check is spelled out inline as a
  * literal: in a production build it folds to `false`, so the minifier drops both
- * the handler and the switcher's dynamic import along with the staging URLs.
+ * the handler and the switcher's dynamic import along with the local URLs.
  */
 export function useEnvSwitcherTaps(): () => void {
   const taps = useRef(0)

@@ -23,8 +23,8 @@ import { registerAllRoutes } from './routes'
  * 3. CORS, before the gate: the app calls from `https://localhost` (WebView), and without CORS
  *    headers even a 426 looks to it like a dropped connection;
  * 4. the analytics proxy (`/api/ingest/*`), only when analytics are on. It sits above the body limit
- *    and the version gate on purpose: a session-recording chunk is far over 64 KB, and PostHog's SDK
- *    sends none of the app's headers, so it must not be judged by them;
+ *    and the version gate on purpose: it has a body limit of its own, and PostHog's SDK sends none
+ *    of the app's headers, so it must not be judged by them;
  * 5. body size limit;
  * 6. version gate, before the routes: an outdated client gets 426 before its body is parsed;
  * 7. `/api/*` routes; anything without a matching route gets a JSON 404.
@@ -99,7 +99,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       ingestHost: deps.env.POSTHOG_HOST,
       assetsHost: deps.env.POSTHOG_ASSETS_HOST,
       basePath: ApiPath.Ingest,
-      // A session-recording chunk is the largest thing the SDK sends.
+      // Room for a large batch of events.
       maxBodyBytes: 4 * 1024 * 1024,
     })
     app.all(

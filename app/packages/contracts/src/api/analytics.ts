@@ -2,9 +2,9 @@
  * Product analytics: what a client has to know before it starts reporting.
  *
  * `GET /api/analytics/config` is open and carries no personal data. The clients (web, the PWA, the
- * store builds, the landing) read it once at startup and only then load the PostHog SDK, so the
- * switches below are flipped in the server's ConfigMap and need neither a rebuild of the clients nor
- * an OTA bundle.
+ * store builds, the landing) read it once at startup and only then load the PostHog SDK, so analytics
+ * are switched off on the server (an empty `POSTHOG_KEY`) without a rebuild of the clients or an OTA
+ * bundle. What a client collects once analytics are on is fixed in its code (`buildSdkConfig`).
  *
  * Events never go to PostHog directly. The SDK is pointed at `/api/ingest` (`ApiPath.Ingest`), our own
  * reverse proxy in services/api: ad blockers and regional blocks do not see a third-party host, and
@@ -13,52 +13,21 @@
  * The files in src/api end up in the client bundles, so this one holds only types.
  */
 
-/** Optional PostHog capabilities. Each can be switched off on the server on its own. */
+/**
+ * Kept for older clients: builds shipped before the PostHog capabilities were fixed in client code read
+ * here what to turn on. The current clients ignore it. The values are the ones the current clients have
+ * built in, so an old client collects the same and nothing more.
+ */
 export interface AnalyticsFeatures {
+  sessionReplay: false
+  clickCapture: true
+  heatmapCapture: false
+  errorTracking: true
+  webVitals: true
+  featureFlags: false
   /**
-   * Session replay. Off unless the server turns it on, and when it is on every input and every piece
-   * of text is masked: a replay shows the layout and the taps, never the conversation.
-   * Legal risk (Russia), HIGH: a recording of behaviour on screen; even masked it may show the person's
-   * state (152-FZ art. 10, written consent). Only with a separate consent and an updated policy.
-   */
-  sessionReplay: boolean
-  /**
-   * Clicks and dead clicks as the structure of the page (which element, where in the markup), never
-   * the text or the attributes of the element: the client strips them before anything is sent.
-   * Legal risk (Russia), MEDIUM: events tied to the account id describe behaviour in detail (art. 5
-   * parts 1-2); if the scrubbing ever lets text through it is page content or data about the person
-   * (art. 10). Crisis paths and screens with content carry `ph-no-capture`.
-   */
-  clickCapture: boolean
-  /**
-   * Heatmaps: where on a screen people tap. Coordinates and the route, no text. Keep OFF for now.
-   * Legal risk (Russia), MEDIUM until reworked: the SDK knows nothing of `ph-no-capture`, so a tap on SOS
-   * or a hotline becomes a point under the account id and defeats the anonymous crisis counting; the
-   * event also takes the same cross-border path as every other (art. 12, art. 18 part 5).
-   */
-  heatmapCapture: boolean
-  /**
-   * Unhandled errors and rejections of the client, reported as exceptions.
-   * Legal risk (Russia), LOW-MEDIUM: an error's text and stack could hold page data (art. 5 part 5); the
-   * client makes the text impersonal and scrubs the frames' addresses.
-   */
-  errorTracking: boolean
-  /**
-   * Core Web Vitals and page load timings.
-   * Legal risk (Russia), LOW: timings and device data; attribution is off.
-   */
-  webVitals: boolean
-  /**
-   * Feature flags evaluated for the person.
-   * Legal risk (Russia), MEDIUM: the request for flags goes around the scrubbing of events and carries the
-   * stored initial properties of the person (full entry address with its query, referrer, account id, device
-   * id, time zone). Off in the ConfigMap; not sent after an opt-out or with "do not track".
-   */
-  featureFlags: boolean
-  /**
-   * Read by clients shipped before the capabilities above existed (their `autocapture` and `heatmaps`
-   * could not strip element text and page addresses). The server
-   * sends `false` always, so a switch flipped in the ConfigMap never turns those on in an old client.
+   * Read by clients older still, whose `autocapture` and `heatmaps` could not strip element text and page
+   * addresses: `false` keeps those off.
    */
   autocapture: false
   heatmaps: false
@@ -75,9 +44,10 @@ export interface AnalyticsConfigApiResponse {
   /** The PostHog web app, used by the SDK for links such as the toolbar. */
   uiHost: string
   /**
-   * `APP_ENV` of the server. The staging and prod stacks share one PostHog project, so every event
-   * carries this and the dashboards filter on it.
+   * `APP_ENV` of the server. Every event carries it as `app_env`, so a local run with a key never mixes
+   * with prod in the dashboards.
    */
   environment: string
+  /** Kept for older clients (see `AnalyticsFeatures`). */
   features: AnalyticsFeatures
 }

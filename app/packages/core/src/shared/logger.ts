@@ -1,19 +1,10 @@
-import {
-  destination,
-  multistream,
-  pino,
-  stdSerializers,
-  stdTimeFunctions,
-  type DestinationStream,
-  type Logger as PinoLogger,
-} from 'pino'
+import { pino, stdSerializers, stdTimeFunctions, type Logger as PinoLogger } from 'pino'
 import { requestContextLogFields } from './request-context'
-import { isTelemetryEnabled, otelLogStream } from './telemetry'
 
 /**
- * Core logger: JSON to stdout (pino), plus OTLP to VictoriaLogs when `OTEL_ENABLED=true`
- * (telemetry.ts). In this interface `warn`/`error` take the error as the second argument and the
- * data last. The application decides which fields to strip, through `configureLogger` at startup.
+ * Core logger: JSON to stdout (pino); the cluster collects logs from stdout. In this interface
+ * `warn`/`error` take the error as the second argument and the data last. The application decides
+ * which fields to strip, through `configureLogger` at startup.
  */
 export type LogData = Record<string, unknown>
 
@@ -86,33 +77,18 @@ function levelFromEnv(): (typeof LOG_LEVELS)[number] {
     : 'info'
 }
 
-/**
- * Without OTLP, pino's default stream (stdout). With OTLP, both stdout and OTel; the logger itself
- * filters by level, so the streams accept everything.
- */
-function logDestination(): DestinationStream | undefined {
-  if (!isTelemetryEnabled()) return undefined
-  return multistream([
-    { level: 'trace', stream: destination(1) },
-    { level: 'trace', stream: otelLogStream },
-  ])
-}
-
 /** Root pino logger, for applications that need pino directly, pino-http for example. */
 export function getRootLogger(): PinoLogger {
-  root ??= pino(
-    {
-      level: levelFromEnv(),
-      base: { service: 'ryadom', env: process.env.APP_ENV },
-      timestamp: stdTimeFunctions.isoTime,
-      formatters: { level: (label) => ({ level: label }) },
-      redact: { paths: redactPaths(), censor: '[redacted]' },
-      serializers: { err: serializeError },
-      // Every record written while a request is handled carries its tracing fields; call sites do not pass them.
-      mixin: requestContextLogFields,
-    },
-    logDestination(),
-  )
+  root ??= pino({
+    level: levelFromEnv(),
+    base: { service: 'ryadom', env: process.env.APP_ENV },
+    timestamp: stdTimeFunctions.isoTime,
+    formatters: { level: (label) => ({ level: label }) },
+    redact: { paths: redactPaths(), censor: '[redacted]' },
+    serializers: { err: serializeError },
+    // Every record written while a request is handled carries its tracing fields; call sites do not pass them.
+    mixin: requestContextLogFields,
+  })
   return root
 }
 

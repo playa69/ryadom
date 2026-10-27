@@ -9,8 +9,8 @@ import { isNative } from './platform'
  * The module is imported dynamically and only under the
  * `import.meta.env.VITE_FLAVOR === 'dev'` check (env.ts, the logo on the sign-in screen and the
  * version on the profile screen): a prod bundle holds neither its code nor the
- * staging and local URLs. A prod build cannot be pointed at someone else's
- * server to capture a session.
+ * local URLs. A prod build cannot be pointed at someone else's server to
+ * capture a session.
  *
  * The choice is kept in Preferences and survives a restart. Switching signs the
  * person out, because the tokens were issued by another server, and reloads the
@@ -32,31 +32,18 @@ function localEndpoints(customApi: string | null): Endpoints {
   return { apiBase: 'http://10.0.2.2:3002', webUrl }
 }
 
-function stagingEndpoints(): Endpoints | null {
-  const apiBase = trimSlash(import.meta.env.VITE_STAGING_API_URL ?? '')
-  const webUrl = trimSlash(import.meta.env.VITE_STAGING_WEB_URL ?? '')
-  return apiBase ? { apiBase, webUrl } : null
-}
-
 function prodIfConfigured(): Endpoints | null {
   const endpoints = prodEndpoints()
   return endpoints.apiBase ? endpoints : null
 }
 
-const TITLES: Record<EnvId, string> = { local: 'Local', staging: 'Staging', prod: 'Prod' }
+const TITLES: Record<EnvId, string> = { local: 'Local', prod: 'Prod' }
 
 let customLocalApi: string | null = null
 
 function resolve(id: EnvId): Endpoints | null {
   if (id === 'local') return localEndpoints(customLocalApi)
-  if (id === 'staging') return stagingEndpoints()
   return prodIfConfigured()
-}
-
-/** Default environment: local on the dev server, staging in a built dev bundle if a URL is set. */
-function defaultEnv(): EnvId {
-  if (import.meta.env.DEV) return 'local'
-  return stagingEndpoints() ? 'staging' : 'local'
 }
 
 export async function restoreEnv(): Promise<void> {
@@ -71,7 +58,8 @@ export async function restoreEnv(): Promise<void> {
   } catch {
     // Storage is unavailable, so start with the default environment.
   }
-  const id: EnvId = saved === 'local' || saved === 'staging' || saved === 'prod' ? saved : defaultEnv()
+  // Anything else, `staging` saved by an older dev build included, starts on local.
+  const id: EnvId = saved === 'prod' ? 'prod' : 'local'
   const endpoints = resolve(id)
   if (endpoints) applyEnv(id, endpoints)
   else applyEnv('local', localEndpoints(customLocalApi))
@@ -136,7 +124,6 @@ export function openEnvSwitcher(beforeSwitch: () => Promise<void>): void {
         [
           { text: `Среда: ${current.title}`, label: true },
           option('local'),
-          option('staging'),
           option('prod'),
         ],
         [{ text: 'Отмена', color: 'red' }],

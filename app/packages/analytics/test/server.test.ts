@@ -6,7 +6,6 @@ function fakeClient(overrides: Partial<ServerAnalyticsClient> = {}) {
   const client = {
     capture: vi.fn<ServerAnalyticsClient['capture']>(),
     identify: vi.fn<ServerAnalyticsClient['identify']>(),
-    isFeatureEnabled: vi.fn<ServerAnalyticsClient['isFeatureEnabled']>(async () => true),
     captureException: vi.fn<ServerAnalyticsClient['captureException']>(),
     shutdown: vi.fn<ServerAnalyticsClient['shutdown']>(async () => {}),
     on: vi.fn(),
@@ -15,14 +14,13 @@ function fakeClient(overrides: Partial<ServerAnalyticsClient> = {}) {
   return Object.assign(client, overrides) as typeof client
 }
 
-const base = { host: 'https://eu.i.posthog.com', appEnv: 'staging', service: 'api' }
+const base = { host: 'https://eu.i.posthog.com', appEnv: 'prod', service: 'api' }
 
 describe('createServerAnalytics', () => {
   it('без ключа всё выключено и ничего не делает', async () => {
     const analytics = createServerAnalytics({ ...base, key: '' })
     expect(analytics.enabled).toBe(false)
     expect(() => analytics.capture('u1', AnalyticsEvent.EmailConfirmed)).not.toThrow()
-    expect(await analytics.isFeatureEnabled('x', 'u1')).toBe(false)
     await expect(analytics.shutdown()).resolves.toBeUndefined()
   })
 
@@ -33,7 +31,7 @@ describe('createServerAnalytics', () => {
     expect(client.capture).toHaveBeenCalledWith({
       distinctId: 'user-1',
       event: 'account_created',
-      properties: { kind: 'email', app_env: 'staging', service: 'api', traffic_type: 'real' },
+      properties: { kind: 'email', app_env: 'prod', service: 'api', traffic_type: 'real' },
       disableGeoip: true,
     })
   })
@@ -47,7 +45,7 @@ describe('createServerAnalytics', () => {
       takeaway: 'тяжело',
     } as never)
     const { properties } = client.capture.mock.calls[0]![0]
-    expect(properties).toEqual({ fields: ['name'], app_env: 'staging', service: 'api', traffic_type: 'real' })
+    expect(properties).toEqual({ fields: ['name'], app_env: 'prod', service: 'api', traffic_type: 'real' })
   })
 
   it('анонимное событие не привязано к человеку и не создаёт профиль', () => {
@@ -107,20 +105,6 @@ describe('createServerAnalytics', () => {
     const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, onError })
     expect(() => analytics.capture('u', AnalyticsEvent.LoggedOut, { all_devices: false })).not.toThrow()
     expect(onError).toHaveBeenCalledTimes(1)
-  })
-
-  it('флаг: при ошибке PostHog — false, а не исключение', async () => {
-    const onError = vi.fn()
-    const client = fakeClient({ isFeatureEnabled: vi.fn(async () => Promise.reject(new Error('timeout'))) })
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, onError })
-    expect(await analytics.isFeatureEnabled('beta', 'u1')).toBe(false)
-    expect(onError).toHaveBeenCalled()
-  })
-
-  it('флаг: undefined от PostHog означает «не включён»', async () => {
-    const client = fakeClient({ isFeatureEnabled: vi.fn(async () => undefined) })
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
-    expect(await analytics.isFeatureEnabled('beta', 'u1')).toBe(false)
   })
 
   it('стирание человека: сначала отправляется очередь, потом PostHog просят удалить профиль', async () => {
@@ -274,8 +258,6 @@ describe('createServerAnalytics', () => {
       expect(client.capture.mock.calls[0]![0]).toMatchObject({ distinctId: 'talker' })
       expect(client.identify).not.toHaveBeenCalled()
       expect(client.captureException).not.toHaveBeenCalled()
-      expect(await analytics.isFeatureEnabled('beta', 'quiet')).toBe(false)
-      expect(client.isFeatureEnabled).not.toHaveBeenCalled()
     })
 
     it('спрашивает один раз на пачку событий и помнит ответ', async () => {

@@ -5,7 +5,7 @@ import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { reportAppUpdate } from './analytics'
 import { getVersionInfo } from './device'
-import { getApiBase, getEnvId } from './env'
+import { getApiBase } from './env'
 import { onNetworkChange } from './native'
 import { isIosNative, isNative, isWebBuild } from './platform'
 import { initServiceWorker } from './service-worker'
@@ -57,13 +57,13 @@ function currentPlatform(): AppPlatform {
 }
 
 /**
- * Whether this build is on its own OTA channel. Bundles are built per flavour: prod serves prod
- * bundles, staging serves dev bundles. A dev build pointed at prod must not pick up a foreign
- * bundle, and must not send its JS version there either, or a foreign minimum could lock it out.
+ * Whether this build takes OTA bundles: only the prod flavour, the only one prod serves. A dev build
+ * pointed at prod must not pick up a foreign bundle, and must not send its JS version there either, or
+ * a foreign minimum could lock it out.
  */
 function otaEnabled(): boolean {
   if (!isNative()) return false
-  return import.meta.env.VITE_FLAVOR === 'prod' || getEnvId() === 'staging'
+  return import.meta.env.VITE_FLAVOR === 'prod'
 }
 
 /**

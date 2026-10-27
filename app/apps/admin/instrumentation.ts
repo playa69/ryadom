@@ -24,11 +24,10 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
   // Image builds run without the container's env, so there is nothing to validate.
   if (process.env.NEXT_PHASE === 'phase-production-build') return
-  const { configureLogger, startTelemetry } = await import('@ryadom/core/shared')
+  const { configureLogger } = await import('@ryadom/core/shared')
   configureLogger({ redact: LOG_REDACT })
   const { loadEnv, adminEnvSchema } = await import('@ryadom/core/config')
   loadEnv(adminEnvSchema)
-  startTelemetry()
 }
 
 /** Render and route errors go to the core logger with the digest shown on the error page. */

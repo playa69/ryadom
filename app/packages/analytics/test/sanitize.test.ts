@@ -298,27 +298,6 @@ describe('клики: структура страницы без текста', 
   })
 })
 
-describe('тепловые карты', () => {
-  it('ключи (адреса страниц) очищаются, точки остаются числами', () => {
-    const event = {
-      properties: {
-        $heatmap_data: {
-          'https://example.com/app/dialog/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f?token=abc#x': [
-            { x: 10, y: 20, target_fixed: false, type: 'click' },
-          ],
-          'https://example.com/app/dialog/aaaaaaaa-5b7d-4e1a-9c3d-0a1b2c3d4e5f': [{ x: 1, y: 2, type: 'click', note: 'a@b.co' }],
-        },
-      },
-    }
-    expect(scrubEvent(event)!.properties.$heatmap_data).toEqual({
-      'https://example.com/app/dialog/:id': [
-        { x: 10, y: 20, target_fixed: false, type: 'click' },
-        { x: 1, y: 2, type: 'click' },
-      ],
-    })
-  })
-})
-
 describe('веб-метрики', () => {
   it('остаются число и вердикт, без атрибуции (элемент и ресурс страницы)', () => {
     const event = {

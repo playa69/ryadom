@@ -40,7 +40,6 @@ export function isDisposableEmailDomain(email: string): boolean {
 
 export type EmailTransportConfig =
   | { kind: 'smtp'; host: string; port: number; secure: boolean; auth?: { user: string; pass: string } }
-  | { kind: 'console' }
   | { kind: 'memory' }
 
 /** Email transport settings from env (the schema already guaranteed the required fields). */
@@ -58,8 +57,6 @@ export function emailTransportConfig(
         auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASSWORD ?? '' } : undefined,
       }
     }
-    case 'console':
-      return { kind: 'console' }
     case 'memory':
       return { kind: 'memory' }
   }
