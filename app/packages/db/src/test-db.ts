@@ -16,8 +16,8 @@ import { defaultMigrationsFolder, runMigrations } from './migrate.ts'
  * advisory lock, so a run costs a `CREATE DATABASE ... TEMPLATE` (a second) instead of a migration of its own.
  *
  * Which server: TEST_DB_ADMIN_URL, else the stand pinned in app/.stand.json (scripts/stand.mjs; `pnpm test` sets
- * the variable), else the old development server on 55433. A URL given as DATABASE_URL_TEST / DATABASE_URL_TEST_API
- * is the old contract and is used as it is: the tables in it are dropped and the migrations applied again.
+ * the variable), else the old development server on 55433. There is no way to name the test database itself: a
+ * fixed name would bring back the shared database the runs used to wipe.
  */
 
 const APP_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -29,8 +29,8 @@ const KEEP_TEMPLATES = 5
 export interface TestDatabase {
   /** What the tests connect to. */
   url: string
-  /** The database created for this run; null when the URL was given explicitly and is not ours to create or drop. */
-  name: string | null
+  /** The database created for this run. */
+  name: string
   /** The maintenance database of the same server, where databases are created from. */
   adminUrl: string
 }
@@ -70,9 +70,8 @@ function withDatabase(url: string, name: string): string {
 }
 
 /** Where this process's tests run. Deterministic per process, so the vitest config and its global setup agree on it. */
-export function testDatabase(options: { explicitUrl?: string } = {}): TestDatabase {
+export function testDatabase(): TestDatabase {
   const admin = adminUrl()
-  if (options.explicitUrl) return { url: options.explicitUrl, name: null, adminUrl: admin }
   const name = `ryadom_test_${standSlug()}_${process.pid}`
   return { url: withDatabase(admin, name), name, adminUrl: admin }
 }
@@ -165,28 +164,8 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** The old way, for a database given by URL: empty it and migrate it again. */
-async function resetDatabase(url: string): Promise<void> {
-  const sql = postgres(url, { max: 1, onnotice: () => {} })
-  try {
-    await sql.unsafe('drop schema if exists drizzle cascade')
-    const tables = await sql<
-      { tablename: string }[]
-    >`select tablename from pg_tables where schemaname = 'public'`
-    for (const { tablename } of tables)
-      await sql.unsafe(`drop table if exists "public"."${tablename}" cascade`)
-  } finally {
-    await sql.end({ timeout: 5 })
-  }
-  await runMigrations({ url })
-}
-
 /** Creates the database of this run. Returns the function that drops it, for vitest's globalSetup to hand back as teardown. */
 export async function prepareTestDatabase(database: TestDatabase): Promise<() => Promise<void>> {
-  if (!database.name) {
-    await resetDatabase(database.url)
-    return async () => {}
-  }
   const admin = postgres(database.adminUrl, {
     max: 1,
     onnotice: () => {},
@@ -207,7 +186,6 @@ export async function prepareTestDatabase(database: TestDatabase): Promise<() =>
 }
 
 export async function dropTestDatabase(database: TestDatabase): Promise<void> {
-  if (!database.name) return
   const admin = postgres(database.adminUrl, { max: 1, onnotice: () => {} })
   try {
     await admin.unsafe(`drop database if exists ${quote(database.name)} with (force)`)
