@@ -1,21 +1,22 @@
 /** Pure parts of the web diary (`REQ-WELL-01`): segments and the storage key of the last segment. */
-import { describe, expect, it, vi } from 'vitest'
-import { DIARY_SEGMENTS, deviceToday, segmentHref } from './diary'
+import { describe, expect, it } from 'vitest'
+import { DIARY_SEGMENTS, deviceToday, diarySegments, segmentHref } from './diary'
 import { WEB_DIARY_SEGMENT_KEY, WEB_STORAGE_PREFIX } from './storage-keys'
 
 describe('дневник в вебе', () => {
-  it('без тестов сегменты — «Дневник · Журнал», «Тесты» нет (add-self-check-tests, D9)', () => {
-    expect(DIARY_SEGMENTS.map((s) => s.label)).toEqual(['Дневник', 'Журнал'])
-    expect(DIARY_SEGMENTS.map((s) => segmentHref(s.key))).toEqual(['/diary', '/diary/journal'])
+  it('пока нет готового теста, сегменты — «Дневник · Журнал», «Тесты» нет', () => {
+    expect(diarySegments(false).map((s) => s.label)).toEqual(['Дневник', 'Журнал'])
+    expect(diarySegments(false).map((s) => s.href)).toEqual(['/diary', '/diary/journal'])
   })
 
-  it('с включёнными тестами третий сегмент — «Тесты» по адресу /diary/tests', async () => {
-    vi.stubEnv('NEXT_PUBLIC_SELF_CHECK_ENABLED', '1')
-    vi.resetModules()
-    const on = await import('./diary')
-    expect(on.DIARY_SEGMENTS.map((s) => s.label)).toEqual(['Дневник', 'Журнал', 'Тесты'])
-    expect(on.segmentHref('tests')).toBe('/diary/tests')
-    vi.unstubAllEnvs()
+  it('с готовым тестом третий сегмент — «Тесты» по адресу /diary/tests', () => {
+    expect(diarySegments(true).map((s) => s.label)).toEqual(['Дневник', 'Журнал', 'Тесты'])
+    expect(diarySegments(true).at(-1)?.href).toBe('/diary/tests')
+  })
+
+  it('адрес сегмента берётся из списка, а «Дневник» — запасной', () => {
+    expect(segmentHref('journal')).toBe('/diary/journal')
+    expect(DIARY_SEGMENTS[0]?.href).toBe('/diary')
   })
 
   it('сегодня на устройстве — местная дата, а не UTC', () => {

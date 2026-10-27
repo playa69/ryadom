@@ -748,10 +748,3 @@ export function closeAllDialogSessions(spreadMs = 0): void {
     else session.shutdown()
   }
 }
-
-/** For metrics and tests: how many dialogs are open right now. */
-export function openDialogCount(): number {
-  let total = 0
-  for (const sessions of sessionsByUser.values()) total += sessions.size
-  return total
-}

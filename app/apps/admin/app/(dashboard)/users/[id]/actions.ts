@@ -15,7 +15,7 @@ import { AgentUnavailableError, createLogger } from '@ryadom/core/shared'
 import assertNever from 'assert-never'
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/session'
-import { INITIAL_USER_ACTION_STATE, type UserActionState } from './shared'
+import type { UserActionState } from './shared'
 
 const logger = createLogger('admin.users')
 
@@ -140,8 +140,4 @@ export async function deleteAccount(_prev: UserActionState, formData: FormData):
 
   refresh(userId)
   return { ok: 'Аккаунт удалён, разговоры стёрты.', error: null }
-}
-
-export async function noopState(): Promise<UserActionState> {
-  return INITIAL_USER_ACTION_STATE
 }

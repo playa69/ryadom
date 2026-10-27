@@ -12,9 +12,10 @@
 
 import json
 import threading
+from datetime import UTC, datetime
 from typing import Any
 
-from app.services.dialog_db import DialogDbError, DialogWrite, StoredDialog
+from app.services.dialog_db import DialogDbError, DialogWrite, PurgeStats, StoredDialog, iso_utc
 
 
 class _File:
@@ -36,8 +37,9 @@ class _File:
         self.sources: list[dict] = []  # отпечатки реплик-источников заметок
         self.usage: list[tuple] = []
         # Мягкое стирание, как deleted_at в PostgreSQL: строки остаются, чтения их не видят, запись не воскрешает.
-        self.deleted_dialogs: set[str] = set()
-        self.deleted_prefs: set[str] = set()
+        # Значение — отметка `deleted_at` (ISO, как в базе); физически помеченное убирают `purge_dialogs` и `purge_voice_prefs`.
+        self.deleted_dialogs: dict[str, str] = {}
+        self.deleted_prefs: dict[str, str] = {}
         # Метки агента 0.8.8 (user_id -> отметка): `open` переносит их в очередь, как `DialogDatabase._move_memory_deletions`.
         self.memory_deletions: dict[str, str] = {}
 
@@ -188,9 +190,12 @@ class FakeDialogDatabase:
     def erase_user(self, user_id: str) -> None:
         with self._lock:
             state = self._state()
-            state.deleted_dialogs |= {dialog_id for dialog_id, row in state.dialogs.items() if row[1] == user_id}
+            at = iso_utc(datetime.now(UTC))
+            for dialog_id, row in state.dialogs.items():
+                if row[1] == user_id:
+                    state.deleted_dialogs.setdefault(dialog_id, at)  # первая отметка не переписывается
             if user_id in state.prefs:
-                state.deleted_prefs.add(user_id)
+                state.deleted_prefs.setdefault(user_id, at)
             state.memory_settings.pop(user_id, None)
             state.settings.pop(user_id, None)
             state.flags.pop(user_id, None)
@@ -375,5 +380,53 @@ class FakeDialogDatabase:
             state = self._state()
             row = state.dialogs.get(dialog_id)
             if row is not None and row[1] == user_id:
-                state.deleted_dialogs.add(dialog_id)
+                state.deleted_dialogs.setdefault(dialog_id, iso_utc(datetime.now(UTC)))
                 state.sources = [x for x in state.sources if x["dialog_id"] != dialog_id]
+
+    def purge_dialogs(self, cutoff: str, limit: int) -> PurgeStats:
+        """Как `DialogDatabase.purge_dialogs`: убирает помеченное раньше `cutoff`, расход обезличивает."""
+        with self._lock:
+            state = self._state()
+            ids = [d for _, d in sorted((at, d) for d, at in state.deleted_dialogs.items() if at < cutoff)][:limit]
+            if not ids:
+                return PurgeStats()
+            gone = set(ids)
+            stats = PurgeStats()
+            for index, row in enumerate(state.usage):
+                if row[0] in gone:
+                    state.usage[index] = (None, None, *row[2:])
+                    stats.usage_anonymized += 1
+            stats.memory_sources = sum(1 for x in state.sources if x["dialog_id"] in gone)
+            state.sources = [x for x in state.sources if x["dialog_id"] not in gone]
+            doomed = [key for key in state.client_ids if key[0] in gone]
+            for key in doomed:
+                del state.client_ids[key]
+            stats.client_ids = len(doomed)
+            doomed_messages = [key for key in state.messages if key[0] in gone]
+            for key in doomed_messages:
+                del state.messages[key]
+            stats.messages = len(doomed_messages)
+            for dialog_id in ids:
+                state.dialogs.pop(dialog_id, None)
+                state.deleted_dialogs.pop(dialog_id, None)
+                state.data_ids.pop(dialog_id, None)  # колонки самого диалога в PostgreSQL
+                state.cursors.pop(dialog_id, None)
+            stats.dialogs = len(ids)
+            return stats
+
+    def purge_voice_prefs(self, cutoff: str, limit: int) -> int:
+        with self._lock:
+            state = self._state()
+            users = [u for _, u in sorted((at, u) for u, at in state.deleted_prefs.items() if at < cutoff)][:limit]
+            for user_id in users:
+                state.prefs.pop(user_id, None)
+                state.deleted_prefs.pop(user_id, None)
+            return len(users)
+
+    def marked_counts(self, cutoff: str) -> tuple[int, int]:
+        with self._lock:
+            state = self._state()
+            return (
+                sum(1 for at in state.deleted_dialogs.values() if at < cutoff),
+                sum(1 for at in state.deleted_prefs.values() if at < cutoff),
+            )

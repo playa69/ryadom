@@ -22,7 +22,7 @@ export interface AgentCallResult<T> {
   errorDetails: unknown
 }
 
-export type AgentMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+type AgentMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export interface AgentCallInit {
   method: AgentMethod

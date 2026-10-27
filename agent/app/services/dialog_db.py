@@ -15,15 +15,18 @@ BEGIN/COMMIT на записях, а чтения не оставляют вис
 памяти (`app/memory/`): настройки `memory_settings`, заметки `memory_notes`, отпечатки их реплик-источников `memory_sources` и очередь
 операций Cognee `memory_outbox` (сам индекс прошлых разговоров живёт в Cognee). Стирание человека и удаление разговора мягкие:
 диалоги и выбор голоса не удаляются, а получают `deleted_at`; чтения их не видят, запись стёртое не воскрешает, дочерние строки
-(сообщения, идентификаторы, расход) остаются до отдельной джобы физической очистки. Производное от разговоров (заметки, отпечатки,
-очередь человека, настройки) при стирании удаляется сразу. DDL идемпотентен (`CREATE TABLE IF NOT EXISTS`,
+(сообщения, идентификаторы) остаются до физической очистки: `purge_dialogs` и `purge_voice_prefs` убирают помеченное больше часа назад
+пачками (цикл — `app/services/dialog_purge.py`), расход при этом не удаляется, а обезличивается. Производное от разговоров (заметки,
+отпечатки, очередь человека, настройки) при стирании удаляется сразу. DDL идемпотентен (`CREATE TABLE IF NOT EXISTS`,
 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) и выполняется при каждом `open`: своих миграций у агента нет, изменения
 схемы — только добавочные. Timestamps хранятся TEXT в ISO: формат задан писателем (`DialogStore`), переносимость
 важнее типовой строгости.
 
 Расход моделей (`model_usage`) — строки «модель, задача, input/output, модальность, единица, количество» по сообщению, которое
 этот вызов модели произвёл, или по диалогу (`message_id` NULL), если сообщения нет: ответ выброшен, озвучена фиксированная фраза.
-Агент их только дописывает и никогда не читает; это данные для отчётов (agent/README.md, «Расход моделей»).
+Агент их только дописывает и никогда не читает; это данные для отчётов (agent/README.md, «Расход моделей»). Связи с `dialogs` на
+уровне базы нет (ни внешнего ключа, ни каскада): строка расхода переживает диалог, а при физической очистке разговора у неё
+остаются модель, количество и время, `dialog_id` и `message_id` становятся NULL.
 """
 
 import json
@@ -31,7 +34,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,9 +44,15 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 logger = logging.getLogger("agent.db")
 
 
+def iso_utc(moment: datetime) -> str:
+    """Отметка времени в формате базы (ISO, миллисекунды, Z): так пишет `deleted_at` и `DialogStore`, и только так её можно
+    сравнивать строкой."""
+    return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def _now_iso() -> str:
-    """Отметка времени для `deleted_at`: тот же формат, что пишет `DialogStore` (ISO, миллисекунды, Z)."""
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return iso_utc(datetime.now(UTC))
+
 
 DDL = (
     """CREATE TABLE IF NOT EXISTS dialogs (
@@ -87,7 +96,7 @@ DDL = (
     updated_at     TEXT NOT NULL
 )""",
     """CREATE TABLE IF NOT EXISTS model_usage (
-    dialog_id  TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
+    dialog_id  TEXT,
     message_id TEXT,
     created_at TEXT NOT NULL,
     model      TEXT NOT NULL,
@@ -98,6 +107,10 @@ DDL = (
     amount     DOUBLE PRECISION NOT NULL
 )""",
     "CREATE INDEX IF NOT EXISTS model_usage_dialog ON model_usage (dialog_id, message_id)",
+    # Расход переживает диалог (PROTEUS-255): раньше `dialog_id` был NOT NULL с каскадным внешним ключом, и физическое удаление
+    # диалога унесло бы с собой учёт расхода. Базы, созданные прежним DDL, переводятся на новую схему здесь (идемпотентно).
+    "ALTER TABLE model_usage DROP CONSTRAINT IF EXISTS model_usage_dialog_id_fkey",
+    "ALTER TABLE model_usage ALTER COLUMN dialog_id DROP NOT NULL",
     # Настройки памяти человека: «Память» включена или на паузе и согласие. Переживают перезапуск и выгрузку (PROTEUS-242).
     """CREATE TABLE IF NOT EXISTS memory_settings (
     user_id             TEXT PRIMARY KEY,
@@ -108,7 +121,7 @@ DDL = (
     consent_at          TEXT,
     updated_at          TEXT NOT NULL
 )""",
-    # Мягкое стирание: добавочные колонки (идемпотентно); физически строки уберёт отдельная джоба (PROTEUS-255).
+    # Мягкое стирание: добавочные колонки (идемпотентно); физически помеченные строки убирает `purge_dialogs` (PROTEUS-255).
     "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS deleted_at TEXT",
     "ALTER TABLE voice_prefs ADD COLUMN IF NOT EXISTS deleted_at TEXT",
     "CREATE INDEX IF NOT EXISTS dialogs_deleted_at ON dialogs (deleted_at)",
@@ -208,6 +221,26 @@ class DialogWrite:
     pref: tuple[str, str] | None = None  # (user_id, voice), если выбор голоса изменился
     # Новые строки расхода: (dialog_id, message_id, created_at, model, task, direction, modality, unit, amount)
     usage: list[tuple[Any, ...]] = field(default_factory=list)
+
+
+@dataclass
+class PurgeStats:
+    """Сколько строк убрала физическая очистка: удалено из таблиц и обезличено в `model_usage`."""
+
+    dialogs: int = 0
+    messages: int = 0
+    client_ids: int = 0
+    memory_sources: int = 0
+    voice_prefs: int = 0
+    usage_anonymized: int = 0
+
+    def add(self, other: "PurgeStats") -> None:
+        for item in fields(self):
+            setattr(self, item.name, getattr(self, item.name) + getattr(other, item.name))
+
+    @property
+    def total(self) -> int:
+        return sum(getattr(self, item.name) for item in fields(self))
 
 
 def encode_summary(summary: dict[str, Any] | None) -> str | None:
@@ -328,7 +361,7 @@ class DialogDatabase:
 
     def load_user(self, user_id: str) -> tuple[list[StoredDialog], str | None]:
         """Все диалоги человека (от старых к новым) с сообщениями и выбранный им голос. Мягко стёртое
-        (`deleted_at`) не читается: для агента стёртого человека данных нет, физически их уберёт отдельная джоба."""
+        (`deleted_at`) не читается: для агента стёртого человека данных нет, физически их убирает очистка (`purge_dialogs`)."""
         with self._lock, self._connection() as conn:
             dialogs = {
                 row[0]: StoredDialog(
@@ -444,7 +477,7 @@ class DialogDatabase:
 
     def erase_user(self, user_id: str) -> None:
         """Мягко стереть всё о человеке одной транзакцией: диалоги и выбор голоса получают `deleted_at` (дочерние
-        строки — сообщения, расход, идентификаторы — остаются вместе с ними), настройки памяти и разговоров, заметки, их
+        строки — сообщения, идентификаторы — остаются вместе с ними до очистки, расход обезличивается ею же), настройки памяти и разговоров, заметки, их
         отпечатки и операции очереди Cognee удаляются. Датасет Cognee к этому моменту уже удалён синхронно
         (`CogneeMemoryBackend.erase_user_data`, до ответа `204`). Идемпотентно: повтор не переписывает первые отметки. Для
         чтений человека больше нет (см. `load_user`)."""
@@ -674,7 +707,7 @@ class DialogDatabase:
             )
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
-        """Мягко удалить один диалог человека: сообщения, расход и идентификаторы остаются вместе с ним, отпечатки его реплик
+        """Мягко удалить один диалог человека: сообщения и идентификаторы остаются вместе с ним до очистки, отпечатки его реплик
         (`memory_sources`) удаляются. Документ разговора в Cognee к этому моменту поставлен в очередь (`dialog_deleting`).
 
         `forget_derived` принимается ради контракта: заметки из разговора остаются (`add-memory-notes`, D10). Идемпотентно:
@@ -687,3 +720,51 @@ class DialogDatabase:
                 "WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
                 (_now_iso(), dialog_id, user_id),
             )
+
+    # ─── физическая очистка мягко стёртого (PROTEUS-255) ──────────────────────
+
+    def purge_dialogs(self, cutoff: str, limit: int) -> PurgeStats:
+        """Физически убрать до `limit` диалогов, помеченных стёртыми раньше `cutoff` (ISO, как в базе), одной короткой транзакцией:
+        сообщения, идентификаторы клиента и отпечатки реплик удаляются вместе с диалогом, а строки расхода остаются без связи
+        с ним (`dialog_id` и `message_id` — NULL; модель, количество и время сохраняются).
+
+        `FOR UPDATE SKIP LOCKED` делает проход безопасным при нескольких исполнителях: каждый берёт свою пачку, чужую не ждёт и не
+        удаляет повторно, а счётчики считают только то, что удалила эта транзакция. Повторный вызов на том же наборе вернёт нули."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT id FROM dialogs WHERE deleted_at < %s ORDER BY deleted_at LIMIT %s FOR UPDATE SKIP LOCKED",
+                    (cutoff, limit),
+                ).fetchall()
+            ]
+            if not ids:
+                return PurgeStats()
+            stats = PurgeStats()
+            stats.usage_anonymized = conn.execute(
+                "UPDATE model_usage SET dialog_id = NULL, message_id = NULL WHERE dialog_id = ANY(%s)", (ids,)
+            ).rowcount
+            stats.memory_sources = conn.execute("DELETE FROM memory_sources WHERE dialog_id = ANY(%s)", (ids,)).rowcount
+            stats.client_ids = conn.execute("DELETE FROM client_ids WHERE dialog_id = ANY(%s)", (ids,)).rowcount
+            stats.messages = conn.execute("DELETE FROM messages WHERE dialog_id = ANY(%s)", (ids,)).rowcount
+            stats.dialogs = conn.execute("DELETE FROM dialogs WHERE id = ANY(%s)", (ids,)).rowcount
+            return stats
+
+    def purge_voice_prefs(self, cutoff: str, limit: int) -> int:
+        """Физически убрать до `limit` строк выбора голоса, помеченных стёртыми раньше `cutoff`. Возвращает, сколько убрано."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            return conn.execute(
+                "DELETE FROM voice_prefs WHERE user_id IN ("
+                "SELECT user_id FROM voice_prefs WHERE deleted_at < %s ORDER BY deleted_at LIMIT %s FOR UPDATE SKIP LOCKED)",
+                (cutoff, limit),
+            ).rowcount
+
+    def marked_counts(self, cutoff: str) -> tuple[int, int]:
+        """Сколько строк помечено стёртыми раньше `cutoff` и ещё лежит в базе: (диалоги, выбор голоса)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                "SELECT (SELECT count(*) FROM dialogs WHERE deleted_at < %(cutoff)s), "
+                "(SELECT count(*) FROM voice_prefs WHERE deleted_at < %(cutoff)s)",
+                {"cutoff": cutoff},
+            ).fetchone()
+        return int(row[0]), int(row[1])

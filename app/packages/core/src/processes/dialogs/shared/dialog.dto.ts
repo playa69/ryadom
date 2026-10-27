@@ -126,7 +126,7 @@ export function toDialogListItemDTO(item: AgentDialogListItemResponse): DialogLi
   }
 }
 
-export function toDialogMessageDTO(message: AgentMessageResponse): DialogMessageDTO {
+function toDialogMessageDTO(message: AgentMessageResponse): DialogMessageDTO {
   return {
     id: message.id,
     role: message.role,

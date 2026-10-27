@@ -11,7 +11,7 @@ import { ForgetMemoryFactOperation } from './forget-memory-fact.operation'
 import { ForgetMemoryFactOperationErrorCode, type ForgetMemoryFactResult } from './forget-memory-fact.types'
 
 /**
- * "Forget" one fact, or "Don't remember" a proposed one. It works with memory off and in any mode,
+ * "Forget" one fact, or "Don't remember" a proposed one. It works with memory off,
  * and a repeat succeeds: what was asked for, the fact gone, holds. The agent remembers that the
  * person forgot it, so the next extraction does not bring it back.
  */

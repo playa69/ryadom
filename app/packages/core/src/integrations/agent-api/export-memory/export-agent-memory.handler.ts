@@ -4,7 +4,7 @@ import { callAgent, userMemoryPath } from '../shared/request'
 import { ExportAgentMemoryRequest } from './export-agent-memory.request'
 import type { ExportAgentMemoryResponse } from './export-agent-memory.types'
 
-/** `GET /v1/users/{userId}/memory/export`: works in any mode and with the person's memory off. */
+/** `GET /v1/users/{userId}/memory/export`: works with the person's memory off. */
 @requestHandler(ExportAgentMemoryRequest)
 export class ExportAgentMemoryRequestHandler implements RequestHandler<
   ExportAgentMemoryRequest,

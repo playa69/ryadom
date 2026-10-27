@@ -10,7 +10,6 @@ import type {
   AgentMemoryFactSensitivity,
   AgentMemoryFactSlots,
   AgentMemoryFactStatus,
-  AgentMemoryMode,
   AgentMemoryResponse,
   AgentMemorySettingsResponse,
 } from '../../../integrations/agent-api'
@@ -73,7 +72,6 @@ export interface MemoryNoteDTO {
 
 export interface MemoryDTO {
   available: boolean
-  mode: AgentMemoryMode
   enabled: boolean
   consentVersion: string | null
   consentAt: Date | null
@@ -180,7 +178,6 @@ const DEFAULT_MAX_FACTS = 200
 export function toMemoryDTO(memory: AgentMemoryResponse): MemoryDTO {
   return {
     available: memory.available,
-    mode: memory.mode,
     enabled: memory.enabled,
     consentVersion: memory.consentVersion,
     consentAt: toDate(memory.consentAt),

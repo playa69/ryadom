@@ -6,7 +6,7 @@ import { openRoute } from './nav'
  */
 
 /** Reads the address the app started on. Returns true when it opened the diary. */
-export function handleLaunchUrl(search: string, pathname: string): boolean {
+function handleLaunchUrl(search: string, pathname: string): boolean {
   const checkin = new URLSearchParams(search).get('checkin') === '1'
   const onDiary = /\/diary\/?$/.test(pathname)
   if (!checkin && !onDiary) return false

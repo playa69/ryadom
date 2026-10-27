@@ -4,15 +4,16 @@ schema: spec-driven
 # This is shown to AI when creating artifacts.
 context: |
   Продукт: «Слышу Рядом» — голосовой ИИ-компаньон эмоциональной поддержки (Sber500xDisrupt).
-  Спека: docs/spec.md (v2.0, SDD; заменяет spec_slyshu_ryadom.pdf v1.1). Аудитория 18+, 152-ФЗ, данные только в РФ,
+  Спека: docs/spec.md (v2.0, SDD; заменяет spec_slyshu_ryadom.pdf v1.1). Аудитория 18+, 152-ФЗ,
   анонимный device-based вход, «стереть всё» одной кнопкой, кризисный протокол
   перекрывает любой режим и любую метрику.
 
   Источник правды сейчас — код в main: openspec/specs/ ещё нет (ни один change не архивирован),
   старые change'и разошлись с кодом. Спека противоречит коду — прав код, расхождение называется
-  в отчёте и PR. Когда базу снимут с кода и архивируют, источником правды по поведению станет
-  openspec/specs/, а изменения поведения пойдут только через change. Как работать — скилл
-  openspec-workflow (.agents/skills/openspec-workflow/SKILL.md).
+  в отчёте и PR. Старые спеки клиентов и агента (add-app-client-specs, add-agent-service)
+  устарели и требованиями не считаются. Когда базу снимут с кода и архивируют, источником правды
+  по поведению станет openspec/specs/, а изменения поведения пойдут только через change. Как
+  работать — скилл openspec (.agents/skills/openspec/SKILL.md).
 
   Сервисы: агент agent/ (Python 3.12, FastAPI: диалоги, голос, кризисный протокол) и
   приложение в app/ (см. ниже).
@@ -31,25 +32,22 @@ context: |
   Клиенты ходят только в app/services/api, он вызывает агента по agent-api (REST + WebSocket).
   Вход в приложение — анонимный по device_id с последующей привязкой почты либо по почте
   и паролю (app/services/api, маршруты /api/*).
-  Сквозная трассировка — те же пять заголовков, что принимает agent/ (x-trace-id,
-  x-request-time, x-client-id, x-session-id, x-user-id): клиенты шлют их на каждый запрос, API
-  пишет в логи и передаёт агенту.
-  Источник правды по поведению клиентов, публичных сайтов и админки и по доставке мобильного
-  клиента (PWA, сборки Android/iOS, обновления) — specs client-*, landing-site, admin-console,
-  pwa-delivery, native-app-build, app-updates (до архивации — в openspec/changes/); формат
-  публичного API приложения до появления отдельной спеки — типы в app/packages/contracts.
-  В коде app/ комментарии на английском и только о причинах; тексты интерфейса и документация —
-  на русском.
+  Сквозная трассировка — пять заголовков (x-trace-id, x-request-time, x-client-id, x-session-id,
+  x-user-id): клиенты шлют их на каждый запрос, API пишет в логи и передаёт агенту (агент их пока
+  не читает).
+  Формат публичного API приложения — типы в app/packages/contracts.
+  Правила кода по папкам — во вложенных AGENTS.md (agent/, app/, app/packages/core/).
 
-  Инфраструктура (готова): k8s Timeweb twc-sber500, namespaces prod (приложение) и agent
+  Инфраструктура: k8s Timeweb twc-sber500, namespaces prod (приложение) и agent
   (агент), PostgreSQL (CNPG) и Redis+Sentinel в ns ryadom-db, Langfuse в ns infra,
   образы только из cr.yandex/crpsqeamqpuvrkm5tpr9 (imagePullSecret registry-pull),
   ingress: корневой домен слышу-рядом.рф, API под path /api (без поддоменов),
   мониторинг Prometheus/Loki/Grafana в ns monitoring.
 
-  Соглашения: комментарии и документация на русском; коммиты — по одному логическому
-  изменению, без явной команды не коммитим; секреты — только через kubectl create
-  secret / ~/.config/ryadom/, в git только плейсхолдеры <CHANGE_ME_*>.
+  Соглашения: комментарии в коде app/ — на английском, в agent/ — на русском, только о причинах;
+  тексты интерфейса, документация и спеки — на русском; коммиты — по одному логическому
+  изменению, без явной команды не коммитим; секреты — только в Secret'ах кластера, хранятся
+  локально у администратора, в git только плейсхолдеры <CHANGE_ME_*>.
 
 # Per-artifact rules (optional)
 rules:

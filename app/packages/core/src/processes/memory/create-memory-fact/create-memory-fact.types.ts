@@ -8,7 +8,7 @@ export enum CreateMemoryFactOperationErrorCode {
   MEMORY_FULL = 'MEMORY_FULL',
   /** The rules of what may be remembered refuse it; `reason` is the code of the rule, never a text. */
   FACT_REJECTED = 'FACT_REJECTED',
-  /** Memory is switched off on the server. */
+  /** Memory is unavailable on the server. */
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
   /** The agent did not accept the fact as it was written (a field too long, a wrong shape for the category). */
   INVALID_FACT = 'INVALID_FACT',

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CircleAlert, Sparkles } from 'lucide-react'
+import { CircleAlert } from 'lucide-react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, type MemorySettingName } from '@ryadom/analytics/events'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
@@ -16,7 +16,6 @@ import {
   memorySwitches,
   needsMemoryConsent,
   readHideMemoryTexts,
-  shouldShowMemorySection,
   writeHideMemoryTexts,
 } from '@ryadom/client-core/memory'
 import type { MemoryApiResponse, MemoryNoteApiResponse } from '@ryadom/contracts/api/memory'
@@ -262,9 +261,6 @@ export default function ProfileMemory() {
     }
   }
 
-  // The feature is off on the server and the person has nothing there (a link opened before it was
-  // switched on): a neutral word, no switch and no actions.
-  const hiddenSection = memory !== null && !shouldShowMemorySection(memory)
   const switches = memory ? memorySwitches(memory) : null
 
   return (
@@ -280,14 +276,7 @@ export default function ProfileMemory() {
         </StatePanel>
       )}
 
-      {hiddenSection && (
-        <StatePanel data-testid="memory-not-yet">
-          <Sparkles aria-hidden="true" className="size-8 text-faint" strokeWidth={1.6} />
-          <p className="max-w-[46ch] text-[0.9375rem] leading-normal text-dim">Память пока недоступна.</p>
-        </StatePanel>
-      )}
-
-      {memory && switches && !hiddenSection && (
+      {memory && switches && (
         <>
           <SettingsSection title="Настройка" testId="memory-settings">
             <SwitchRow

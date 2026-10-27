@@ -14,7 +14,7 @@ import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 export const PASSWORD = 'correct-horse-battery'
 
 /** Version policy straight from an object: tests need no env and no OTA bundle on disk. */
-export function staticPolicy(policy: ReleasePolicy = EMPTY_POLICY): PolicySource {
+function staticPolicy(policy: ReleasePolicy = EMPTY_POLICY): PolicySource {
   return { get: () => policy }
 }
 
@@ -199,7 +199,7 @@ export function mockFetch(given: Record<string, Route>) {
  * `new: true` the open dialog is ended and a fresh one created (`resumed: false`), except that an empty
  * one is just reused. Ids go d-1, d-2, ...; `say` puts messages into the person's open dialog.
  */
-export function fakeAgentDialogs() {
+function fakeAgentDialogs() {
   let counter = 0
   const open = new Map<string, { id: string; messages: number; lastActivityAt: string | null }>()
   /** Dialogs a fresh start ended, in order. */
@@ -262,7 +262,7 @@ export function mockAgent(overrides: Record<string, Route> = {}) {
 }
 
 /** What the first screen of the app sends: all three agreements, in the version it showed. */
-export async function acceptConsents(app: Hono<AppEnv>, accessToken: string): Promise<void> {
+async function acceptConsents(app: Hono<AppEnv>, accessToken: string): Promise<void> {
   ok(
     await call(
       app,

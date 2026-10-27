@@ -27,6 +27,7 @@ from app.memory.backend import MemoryBackend
 from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.extractor import NotesExtractor
 from app.services.dialog_db import DialogDatabase
+from app.services.dialog_purge import purge_loop
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.gemini_budget import TokenBudget
 from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, split_sentences
@@ -215,6 +216,7 @@ def create_app(
             warm_up = asyncio.create_task(app.state.tts.warm_up(sentences, parallel=warm_up_parallel))
         # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
         evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
+        purger = asyncio.create_task(purge_loop(lambda: store.database), name="dialog-purger")  # физически убирает мягко стёртое
         # После прогрева стартовые объекты замораживаются для сборщика мусора, дальше память раз в MEMORY_RECLAIM_SECONDS
         # возвращается системе (app/core/reclaim.py).
         reclaimer = MemoryReclaimer(APP_CONFIG.memory_reclaim.seconds)
@@ -223,7 +225,8 @@ def create_app(
             yield
         finally:
             evictor.cancel()
-            await asyncio.gather(evictor, return_exceptions=True)
+            purger.cancel()
+            await asyncio.gather(evictor, purger, return_exceptions=True)
             await reclaimer.stop()
             if warm_up is not None:
                 warm_up.cancel()

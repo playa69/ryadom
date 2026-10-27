@@ -19,7 +19,6 @@ import {
   MemoryFactOrigin,
   MemoryFactStatus,
   MemoryInstructionApiErrorCode,
-  MemoryServiceMode,
   UpdateMemoryFactApiErrorCode,
   UpdateMemorySettingsApiErrorCode,
   type MemoryApiResponse,
@@ -144,7 +143,7 @@ describe('GET /api/memory', () => {
       [`GET ${AGENT}`]: () =>
         json({
           available: true,
-          mode: 'shadow',
+          mode: 'on',
           enabled: true,
           consentVersion: MEMORY_CONSENT_VERSION,
           consentAt: '2026-10-12T09:00:00Z',
@@ -164,7 +163,7 @@ describe('GET /api/memory', () => {
 
     expect(memory).toMatchObject({
       available: true,
-      mode: MemoryServiceMode.Shadow,
+      mode: 'on',
       enabled: true,
       consentVersion: MEMORY_CONSENT_VERSION,
       consentAt: '2026-10-12T09:00:00.000Z',

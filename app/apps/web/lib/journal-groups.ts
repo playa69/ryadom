@@ -1,6 +1,6 @@
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
 
-export type JournalGroupKey = 'today' | 'yesterday' | 'week' | 'earlier'
+type JournalGroupKey = 'today' | 'yesterday' | 'week' | 'earlier'
 
 export interface JournalGroup {
   key: JournalGroupKey

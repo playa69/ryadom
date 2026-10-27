@@ -21,9 +21,9 @@ import { SignJWT, jwtVerify } from 'jose'
 export const ACCESS_TTL_SECONDS = 15 * 60
 export const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60
 
-export type TokenType = 'access' | 'refresh'
+type TokenType = 'access' | 'refresh'
 
-export interface TokenPayload {
+interface TokenPayload {
   sub: string
   type: TokenType
   /** Only refresh tokens carry one. */
@@ -39,7 +39,7 @@ export interface TokenPair {
   expiresAt: number
 }
 
-export interface TokenIds {
+interface TokenIds {
   /** What the registry knows the refresh token by. */
   refreshTokenId?: string
   sessionId?: string

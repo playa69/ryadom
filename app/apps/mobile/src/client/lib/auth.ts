@@ -6,9 +6,8 @@ import { client } from './platform-adapter'
  * @ryadom/client-core.
  */
 
-export { isTokenValid, type User } from '@ryadom/client-core/index'
+export type { User } from '@ryadom/client-core/index'
 
-export const getAccessToken = client.getAccessToken
 export const restoreSession = client.restoreSession
 export const startSession = client.startSession
 export const endSession = client.endSession

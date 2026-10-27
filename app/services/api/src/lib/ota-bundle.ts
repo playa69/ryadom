@@ -59,8 +59,3 @@ export function otaBundleFor(appEnv: AppServerEnv['APP_ENV']): OtaBundle | null 
   if (appEnv === 'local') return null
   return load()?.manifest.prod ?? null
 }
-
-/** Test-only: force a fresh read on the next call instead of the cached manifest. */
-export function resetOtaBundleCache(): void {
-  cached = undefined
-}

@@ -8,7 +8,8 @@
  * Runs inside the page (page.evaluate), so it sees exactly what the browser laid out.
  */
 
-export const GLITCH_KINDS = ['overflow-x', 'offscreen', 'clipped-text', 'overlap', 'text-overlap', 'wide-button', 'edge-text', 'blank']
+// Kinds of findings, as `ignore` takes them: overflow-x, offscreen, clipped-text, overlap, text-overlap, wide-button,
+// edge-text, blank.
 
 /** @param {import('@playwright/test').Page} page */
 export async function findGlitches(page, { fullPage = false, ignore = [] } = {}) {

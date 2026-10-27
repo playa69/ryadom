@@ -66,7 +66,7 @@ description: Выкатить «Рядом» в кластер Timeweb twc-sber5
    `curl -sI https://xn----htbtgjker8b3a2c.xn--p1ai/api/health`, `/app`, `/pwa/`, `/admin/` (редирект на вход).
 9. **Пост-деплойные проверки** на тестовом аккаунте — `k8s/postdeploy` ([README](../../../k8s/postdeploy/README.md)):
    `POSTDEPLOY_BASELINE=<снимок> uv run --no-project --with requests --with websocket-client --with pytest python -m pytest -q -p no:cacheprovider --expect post`
-   (снимок с кредами тестового аккаунта хранится у администратора; `EXPECT_MEMORY_MODE=on` при включённой памяти).
+   (снимок с кредами тестового аккаунта хранится у администратора).
 10. **PR** с `git diff` манифестов, digest и результатами проверок; для крупного выката — `k8s/agent/RUNBOOK-x.y.z.md`.
 
 ## Конфиг и секреты

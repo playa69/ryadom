@@ -1,6 +1,8 @@
+import { standUrls } from './stand.mjs'
+
 /** apps/landing: public pages, shot as the whole page. */
 export function landingSpec(args) {
-  const base = String(args.base ?? 'http://localhost:3020').replace(/\/$/, '')
+  const base = String(args.base ?? standUrls(args).landing).replace(/\/$/, '')
   const pages = { home: '/', privacy: '/privacy', terms: '/terms', download: '/download', 'delete-account': '/delete-account' }
   const screens = Object.fromEntries(
     Object.entries(pages).map(([name, path]) => [

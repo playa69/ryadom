@@ -44,19 +44,6 @@ export const styles = {
   heading: { color: colors.ink, fontSize: '24px', fontWeight: 800, lineHeight: '1.25', margin: '0 0 16px' },
   paragraph: { color: colors.ink, fontSize: '16px', lineHeight: '1.6', margin: '0 0 16px' },
   muted: { color: colors.muted, fontSize: '14px', lineHeight: '1.6', margin: '0 0 12px' },
-  buttonWrap: { margin: '24px 0' },
-  button: {
-    // The darker shade keeps white text above 6:1.
-    backgroundColor: colors.brandDark,
-    borderRadius: '999px',
-    color: colors.white,
-    display: 'inline-block',
-    fontSize: '16px',
-    fontWeight: 700,
-    padding: '14px 28px',
-    textDecoration: 'none',
-  },
-  link: { color: colors.sage, textDecoration: 'underline', wordBreak: 'break-all' },
   code: {
     display: 'inline-block',
     color: colors.ink,
@@ -69,6 +56,5 @@ export const styles = {
     margin: 0,
     border: `1px solid ${colors.line}`,
   },
-  divider: { borderColor: colors.line, margin: '24px 0' },
   footer: { color: colors.muted, fontSize: '12px', lineHeight: '1.6', margin: '20px 8px 0' },
 } satisfies Record<string, CSSProperties>

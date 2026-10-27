@@ -93,9 +93,9 @@ def wait_changes(api: Api, token: str, dialog_id: str) -> dict:
 
 
 def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) -> None:
-    # 0. Сервер в нужном режиме; чистое начало (тест повторяем).
+    # 0. Память на сервере доступна; чистое начало (тест повторяем).
     memory = api.result("GET", "/api/memory", token=token)
-    assert memory["mode"] == os.environ.get("EXPECT_MEMORY_MODE", "on") and memory["available"] is True
+    assert memory["available"] is True
     api.result("DELETE", "/api/memory", token=token)
     api.result("PUT", "/api/memory/settings", token=token, body={"enabled": False})
 

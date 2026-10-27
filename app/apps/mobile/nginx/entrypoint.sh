@@ -1,14 +1,13 @@
 #!/bin/sh
 # Entry point of the PWA image: renders the shell, then starts nginx.
 #
-# One image serves the local stack and prod, so the site address and the environment are not baked
-# into the build. Every time the container starts, the two meta tags that the client reads are inserted before
-# </head> of the built index.html, and nginx serves the result for every shell response
-# (nginx.conf.template, pwa-shell.inc). The meta names are PwaMeta in packages/contracts/src/pwa.ts;
-# apps/mobile/src/client/lib/env.ts reads them.
+# One image serves the local stack and prod, so the site address is not baked into the build. Every
+# time the container starts, the meta tag that the client reads is inserted before </head> of the built
+# index.html, and nginx serves the result for every shell response (nginx.conf.template,
+# pwa-shell.inc). The meta name is PwaMeta in packages/contracts/src/pwa.ts;
+# apps/mobile/src/client/lib/env.ts reads it.
 #
 #   PUBLIC_WEB_URL  origin of the website, where the legal documents are (https://example.com)
-#   APP_ENV         local | prod
 #
 # The root filesystem is read-only in k8s, so the result goes to /tmp (an emptyDir there).
 set -eu
@@ -19,12 +18,6 @@ fail() {
 }
 
 : "${PUBLIC_WEB_URL:?PUBLIC_WEB_URL is required, for example https://example.com}"
-: "${APP_ENV:?APP_ENV is required: local or prod}"
-
-case "$APP_ENV" in
-  local | prod) ;;
-  *) fail "APP_ENV must be local or prod, got '$APP_ENV'" ;;
-esac
 
 case "$PUBLIC_WEB_URL" in
   http://* | https://*) ;;
@@ -34,15 +27,14 @@ case "$PUBLIC_WEB_URL" in
   *[[:space:]]*) fail "PUBLIC_WEB_URL must not contain whitespace" ;;
 esac
 
-# The values come from the deployment, but they land inside an HTML attribute, so escape them anyway.
+# The value comes from the deployment, but it lands inside an HTML attribute, so escape it anyway.
 escape_attribute() {
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/"/\&quot;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
 web_url=$(escape_attribute "$(printf '%s' "$PUBLIC_WEB_URL" | sed 's|/*$||')")
-app_env=$(escape_attribute "$APP_ENV")
 
-meta="<meta name=\"ryadom-web-url\" content=\"${web_url}\"><meta name=\"ryadom-app-env\" content=\"${app_env}\">"
+meta="<meta name=\"ryadom-web-url\" content=\"${web_url}\">"
 
 marker='</head>'
 html=$(cat /srv/pwa-index.html)

@@ -129,7 +129,6 @@ export type {
   AgentMemoryFactSlots,
   AgentMemoryFactSource,
   AgentMemoryFactStatus,
-  AgentMemoryMode,
   AgentMemoryResponse,
   AgentMemorySettingsResponse,
 } from './shared/agent-memory.types'

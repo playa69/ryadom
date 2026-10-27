@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
  * - nothing the person said ever reaches the log here: ids and counts only.
  */
 
-export const NOTE_KINDS = ['name', 'style', 'person', 'situation', 'event', 'agreement', 'interest', 'boundary', 'wellbeing', 'beliefs']
+const NOTE_KINDS = ['name', 'style', 'person', 'situation', 'event', 'agreement', 'interest', 'boundary', 'wellbeing', 'beliefs']
 const SENSITIVE_KINDS = new Set(['wellbeing', 'beliefs'])
 const NOTES_MAX = 200
 const NOTE_DELAY_MS = Number(process.env.MOCK_NOTE_DELAY_MS ?? 1500)
@@ -201,8 +201,8 @@ function apply(memory, sentence, dialogId = null, explicit = true) {
 // ─── the hooks of the conversation ────────────────────────────────────────────
 
 /** A person's line in a conversation: after a pause the "extraction" turns it into notes. */
-export function onUserMessage(memory, dialog, text, available) {
-  if (!available || !memory.enabled || dialog.memoryMode === 'off') return
+export function onUserMessage(memory, dialog, text) {
+  if (!memory.enabled || dialog.memoryMode === 'off') return
   setTimeout(() => {
     if (!memory.enabled) return
     const out = apply(memory, text, dialog.dialogId, /(?:забудь|убери|удали|не запоминай|не [\p{L}-]+,?\s+а)/iu.test(text))
@@ -233,11 +233,11 @@ export function seedMemory(body) {
 
 // ─── REST: /v1/users/{userId}/memory... ───────────────────────────────────────
 
-function view(memory, available, mode) {
+function view(memory) {
   const notes = liveNotes(memory)
   return {
-    available,
-    mode,
+    available: true,
+    mode: 'on', // kept for older clients, like the real agent
     enabled: memory.enabled,
     paused: !memory.enabled,
     sensitiveEnabled: memory.sensitiveEnabled,
@@ -252,15 +252,15 @@ function view(memory, available, mode) {
 }
 
 /**
- * `ctx`: `{ json, noContent, readBody, agentError, available(), mode(), allowlist }` of the mock server. Reading, export and deleting
- * work in any mode and with the memory off; turning on and writing need the feature on the server.
+ * `ctx`: `{ json, noContent, readBody, agentError, allowlist }` of the mock server. Reading, export and deleting
+ * work with the memory off; writing notes needs it on.
  */
 export async function handleMemory(ctx, req, res, url, userId, memory, parts, method) {
   const { json, noContent, readBody, agentError } = ctx
   const resource = parts[4] ?? null
   const id = parts[5] ?? null
 
-  if (!resource && method === 'GET') return json(res, 200, view(memory, ctx.available(), ctx.mode()))
+  if (!resource && method === 'GET') return json(res, 200, view(memory))
 
   // DELETE /memory and DELETE /memory/notes: "delete all memory": the notes go, the switches and the consent stay
   if ((!resource || (resource === 'notes' && !id)) && method === 'DELETE') {
@@ -280,7 +280,6 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
       if (typeof body.consentVersion !== 'string' || !body.consentVersion) {
         return agentError(res, 422, 'AGENT_VALIDATION', 'Для включения нужна версия согласия')
       }
-      if (!ctx.available()) return agentError(res, 503, 'MEMORY_UNAVAILABLE', 'Память сейчас недоступна')
       if (ctx.allowlist.length > 0 && !ctx.allowlist.includes(userId)) {
         return agentError(res, 403, 'MEMORY_NOT_ALLOWED', 'Память пока доступна не всем')
       }
@@ -312,7 +311,6 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
 
   if (resource === 'notes' && id === 'instruction' && method === 'POST') {
     const body = await readBody(req)
-    if (!ctx.available()) return agentError(res, 503, 'MEMORY_UNAVAILABLE', 'Память сейчас недоступна')
     if (!memory.enabled) return agentError(res, 409, 'MEMORY_DISABLED', 'Память выключена')
     if (typeof body.text !== 'string' || !body.text.trim()) return agentError(res, 422, 'AGENT_VALIDATION', 'Нужен текст')
     return json(res, 200, { changes: apply(memory, body.text, null, true) })
@@ -337,7 +335,6 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
   // The legacy routes of facts, on the notes (the cached PWA).
   if (resource === 'facts' && !id && method === 'POST') {
     const body = await readBody(req)
-    if (!ctx.available()) return agentError(res, 503, 'MEMORY_UNAVAILABLE', 'Память сейчас недоступна')
     const kind = KIND_OF_CATEGORY[body.category] ?? 'situation'
     const text = typeof body.text === 'string' ? body.text : Object.values(body.slots ?? {}).join(', ')
     const reason = verdict(text, kind, memory)

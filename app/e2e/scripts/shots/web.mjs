@@ -2,11 +2,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { seedJournal, ACCOUNT } from '../demo-data.mjs'
+import { standUrls } from './stand.mjs'
 
 /** apps/web: the signed-in product and its anonymous screens, on the demo account. */
 export function webSpec(args, repoRoot) {
-  const base = String(args.base ?? 'http://localhost:3023').replace(/\/$/, '')
-  const agent = String(args.agent ?? 'http://localhost:8080')
+  const urls = standUrls(args)
+  const base = String(args.base ?? urls.web).replace(/\/$/, '')
+  const agent = String(args.agent ?? urls.mock)
   const state = resolve(String(args.state ?? join(repoRoot, '.playwright-mcp', 'web-state.json')))
 
   const userId = () => {

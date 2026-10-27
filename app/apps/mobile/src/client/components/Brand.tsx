@@ -11,12 +11,3 @@ export function BrandMark({ size = 56, className }: { size?: number; className?:
     </svg>
   )
 }
-
-/** Wordmark with the blue dot. */
-export function Wordmark({ size = 26 }: { size?: number }) {
-  return (
-    <span style={{ fontSize: size, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ryadom-text)' }}>
-      Рядом<span style={{ color: 'var(--ryadom-brand)' }}>.</span>
-    </span>
-  )
-}

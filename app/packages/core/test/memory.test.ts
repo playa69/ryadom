@@ -379,7 +379,6 @@ describe('что помнит агент', () => {
     if (!result.success) return
     expect(result.memory).toMatchObject({
       available: true,
-      mode: 'on',
       enabled: true,
       consentVersion: MEMORY_VERSION,
       consentAt: new Date('2026-10-12T09:00:00.000Z'),

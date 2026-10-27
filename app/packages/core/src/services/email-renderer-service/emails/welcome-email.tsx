@@ -11,7 +11,7 @@ interface WelcomeEmailProps {
 }
 
 /** The first email after sign-up: a short greeting and the email confirmation code. */
-export function WelcomeEmail({ userName, code, expiresInMinutes }: WelcomeEmailProps) {
+function WelcomeEmail({ userName, code, expiresInMinutes }: WelcomeEmailProps) {
   return (
     <EmailLayout preview={`Код для подтверждения почты: ${code}`} heading={greeting(userName)}>
       <Paragraph>{`Рады, что ты рядом. Введи этот код в приложении${NBSP}— и можно начинать.`}</Paragraph>

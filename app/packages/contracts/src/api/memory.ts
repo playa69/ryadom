@@ -20,14 +20,6 @@
  */
 export const MEMORY_CONSENT_VERSION = '2026-10-12'
 
-/** Whether the memory feature works on the server at all (not the person's own switch). */
-export enum MemoryServiceMode {
-  Off = 'off',
-  /** Facts are extracted for people who turned memory on, but the agent does not use them yet. */
-  Shadow = 'shadow',
-  On = 'on',
-}
-
 /** Memory for one conversation: `off` is a conversation "without memory", deleted 24 hours after its last message. */
 export enum DialogMemoryMode {
   On = 'on',
@@ -170,7 +162,8 @@ export interface MemoryNoteApiResponse {
 export interface MemoryApiResponse {
   /** The feature works on the server right now. False: show "unavailable" and keep "forget all" and the download. */
   available: boolean
-  mode: MemoryServiceMode
+  /** Always `'on'`; kept for older clients, which read it. Newer ones ignore it. */
+  mode: 'on'
   /** The person's own switch "Remember". */
   enabled: boolean
   /** The consent version the person accepted last; null if never. */
@@ -222,7 +215,7 @@ export enum UpdateMemorySettingsApiErrorCode {
   USER_NOT_FOUND = 'USER_NOT_FOUND',
   /** Turning on without `consentAccepted: true` and a version. */
   CONSENT_REQUIRED = 'CONSENT_REQUIRED',
-  /** Memory is switched off on the server; the person cannot turn it on now. */
+  /** Memory is unavailable on the server (its storage is not ready); the person cannot turn it on now. */
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
   /** A closed beta, and this person is not in it. */
   MEMORY_NOT_ALLOWED = 'MEMORY_NOT_ALLOWED',

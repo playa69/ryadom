@@ -7,7 +7,7 @@ export enum UpdateAgentMemoryFactRequestErrorCode {
   MEMORY_DISABLED = 'MEMORY_DISABLED',
   /** `FACT_REJECTED` (422): the rules of what may be remembered refuse the correction; `reason` names the rule. */
   FACT_REJECTED = 'FACT_REJECTED',
-  /** `MEMORY_UNAVAILABLE` (503): the feature is off on the agent. */
+  /** `MEMORY_UNAVAILABLE` (503): the memory storage of the agent is not ready. */
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
   /** `AGENT_VALIDATION`: the agent did not accept the change as we sent it. */
   INVALID_REQUEST = 'INVALID_REQUEST',

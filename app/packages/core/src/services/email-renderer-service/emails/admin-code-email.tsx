@@ -12,7 +12,7 @@ interface AdminCodeEmailProps {
  * Admin panel sign-in code. There is no greeting by name: an admin is not a user and
  * has no name in the system. The tone is utilitarian: this is a tool's email, not the product's.
  */
-export function AdminCodeEmail({ code, expiresInMinutes }: AdminCodeEmailProps) {
+function AdminCodeEmail({ code, expiresInMinutes }: AdminCodeEmailProps) {
   return (
     <EmailLayout preview={`Код входа в админку: ${code}`} heading="Код входа в админку">
       <Paragraph>Введи этот код на странице входа.</Paragraph>
