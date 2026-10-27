@@ -1,12 +1,13 @@
-import type { JobWithMetadata, PgBoss, Queue, QueueResult, UpdateQueueOptions } from 'pg-boss'
+import type { JobWithMetadata, PgBoss } from 'pg-boss'
 import { AgentUnavailableError, createLogger } from '@ryadom/core/shared'
 import type { JobData, JobQueueName } from '@ryadom/core/services/job-queue-service'
-import { QUEUE_CATALOG, type QueueDefinition } from './catalog'
+import { QUEUE_CATALOG, type QueueDefinition } from '@ryadom/db/jobs'
 
 /**
- * Creates the queues of the catalog, hangs the schedules on them and registers the workers
- * (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4). Everything pg-boss-specific stays under `src/jobs` and
- * `lib/jobs.ts`: the core sees only the port of `job-queue-service`.
+ * Hangs the schedules of the catalog on their queues and registers the workers
+ * (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4). The catalog and the creation of the queues are shared with
+ * the admin app and live in `@ryadom/db/jobs`; everything that works a queue off is here and in `lib/jobs.ts`: the core
+ * sees only the port of `job-queue-service`.
  */
 
 const logger = createLogger('jobs')
@@ -19,78 +20,6 @@ export type JobHandler<Q extends JobQueueName> = (
 
 /** The work of each queue; the receiver of dead jobs has none. */
 export type JobHandlers = { [Q in JobQueueName]?: JobHandler<Q> }
-
-type Wanted = QueueDefinition['options']
-
-/**
- * The fields `ensureQueues` keeps equal to the database, as the database holds them. A field that comes back empty
- * counts as unset, which differs from any value the catalog states, so an update fills it in.
- */
-function heldBy(queue: QueueResult): { [K in keyof Omit<Wanted, 'policy'>]: unknown } {
-  return {
-    expireInSeconds: queue.expireInSeconds,
-    retentionSeconds: queue.retentionSeconds,
-    deleteAfterSeconds: queue.deleteAfterSeconds,
-    retryLimit: queue.retryLimit,
-    retryDelay: queue.retryDelay,
-    retryBackoff: queue.retryBackoff,
-    retryDelayMax: queue.retryDelayMax ?? null,
-    heartbeatSeconds: queue.heartbeatSeconds ?? null,
-    deadLetter: queue.deadLetter || null,
-  }
-}
-
-/** What differs between the database and the catalog, in the shape `updateQueue` takes; null when nothing does. */
-export function queueDrift(held: QueueResult, wanted: Wanted): UpdateQueueOptions | null {
-  if (held.policy !== wanted.policy) {
-    // pg-boss does not change a policy after creation (design D10): the queue is replaced by a new one under a new name.
-    throw new Error(`Queue ${held.name} has the policy ${held.policy}, the catalog wants ${wanted.policy}`)
-  }
-  const current = heldBy(held)
-  const { policy: _policy, ...target } = wanted
-  const changed = (Object.keys(target) as (keyof typeof target)[]).filter(
-    (key) => current[key] !== target[key],
-  )
-  if (changed.length === 0) return null
-  return Object.fromEntries(changed.map((key) => [key, target[key]])) as UpdateQueueOptions
-}
-
-/**
- * Creates every queue that is missing and brings the options of the rest to the catalog. `createQueue` leaves an
- * existing queue alone, so a changed option goes through `updateQueue`. Safe to run on every replica at once.
- */
-export async function ensureQueues(
-  boss: PgBoss,
-  catalog: readonly QueueDefinition[] = QUEUE_CATALOG,
-): Promise<void> {
-  for (const definition of catalog) {
-    const { policy, ...rest } = definition.options
-    // pg-boss reads `null` as "set to nothing" in an update and not as an option in a creation.
-    const creation: Omit<Queue, 'name'> = {
-      policy,
-      expireInSeconds: rest.expireInSeconds,
-      retentionSeconds: rest.retentionSeconds,
-      deleteAfterSeconds: rest.deleteAfterSeconds,
-      retryLimit: rest.retryLimit,
-      retryDelay: rest.retryDelay,
-      retryBackoff: rest.retryBackoff,
-      ...(rest.retryDelayMax !== null ? { retryDelayMax: rest.retryDelayMax } : {}),
-      ...(rest.heartbeatSeconds !== null ? { heartbeatSeconds: rest.heartbeatSeconds } : {}),
-      ...(rest.deadLetter !== null ? { deadLetter: rest.deadLetter } : {}),
-    }
-    await boss.createQueue(definition.name, creation)
-    const held = await boss.getQueue(definition.name)
-    if (!held) throw new Error(`Queue ${definition.name} was not created`)
-    const drift = queueDrift(held, definition.options)
-    if (drift) {
-      await boss.updateQueue(definition.name, drift)
-      logger.info('Параметры очереди приведены к каталогу', {
-        queue: definition.name,
-        changed: Object.keys(drift),
-      })
-    }
-  }
-}
 
 /**
  * Hangs the schedules of the catalog on their queues and removes the schedules that the code no longer has (a
@@ -124,7 +53,8 @@ export interface WorkerSettings {
 
 /**
  * One worker per queue that has a handler, one job at a time. A failure is logged and thrown back to pg-boss, which
- * retries by the queue's options or, when they ran out, copies the job to `jobs.dead-letter`.
+ * retries by the queue's options or, when they ran out, copies the job to `jobs.dead-letter` (a queue of an event
+ * names it; a schedule does not, its next firing does the work again).
  */
 export async function registerWorkers(
   boss: PgBoss,

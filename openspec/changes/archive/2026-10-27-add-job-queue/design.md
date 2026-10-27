@@ -142,7 +142,7 @@
 
 ### D9. Админка, конфигурация, журналы
 
-- Админка (`apps/admin`) не регистрирует транспорт и не запускает воркеры. Её процессы (`DeleteUserAccountOperation`, `ToggleUserActivationOperation`, `RevokeUserSessionsOperation`, `ConfirmUserEmailOperation`, операции входа) задач не ставят — проверяется тестом на транспорте `memory`. Удаление администратором и чистка гостевых аккаунтов, по спеке, профиль в аналитике не стирают.
+- Админка (`apps/admin`) не запускает воркеры. Задачи в ней ставит только удаление аккаунта администратором (`DeleteUserAccountOperation`): стирание профиля в аналитике, как и у удаления человеком и у чистки гостевых аккаунтов (решено владельцем 28.10.2026, ветка `cleanup/unify-erasure`). Для этого админка при старте регистрирует транспорт на производящем экземпляре pg-boss (`migrate: false`, `supervise: false`, `schedule: false`, пул из двух соединений, `packages/db/src/jobs`), сама создаёт очередь `analytics.erase-person` и пишет задачу в транзакции удаления; HTTP-вызова в api нет. Остальные процессы админки (`ToggleUserActivationOperation`, `RevokeUserSessionsOperation`, `ConfirmUserEmailOperation`, операции входа) задач не ставят. Раньше здесь говорилось, что админка транспорт не регистрирует, а удаление администратором и чистка гостей профиль в аналитике не стирают.
 - Новые переменные — в `appEnvSchema` (`packages/core/src/config/env.ts`), `services/api/.env.example` и `k8s/app/00-app-config.yaml`: `JOBS_WORKERS_ENABLED` (по умолчанию `true`), `JOBS_POOL_MAX` (4), `JOBS_STOP_TIMEOUT_MS` (10000). Прямых `process.env` нет.
 - Логгер — `createLogger('jobs')`; в журнал идут имя очереди, идентификатор задачи, число попыток, длительность; данные задач целиком не пишутся.
 

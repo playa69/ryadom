@@ -5,6 +5,7 @@
  * stop every instance they start and clear the jobs and schedules afterwards, so one test leaves nothing to the next.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { eq, sql } from 'drizzle-orm'
@@ -13,7 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { testDatabase } from '@ryadom/db/test-db'
 import { getDb, getRootLogger, inTransaction } from '@ryadom/core/shared'
 import { resetEnvCache } from '@ryadom/core/config'
-import { accountDeletionProcess, DeleteAccountOperation } from '@ryadom/core/processes/account-deletion'
+import {
+  accountDeletionProcess,
+  DeleteAccountOperation,
+  DeleteUserAccountOperation,
+} from '@ryadom/core/processes/account-deletion'
 import {
   agentApiIntegration,
   DeleteAgentDialogRequest,
@@ -27,11 +32,12 @@ import {
   jobQueueService,
   type JobQueueName,
 } from '@ryadom/core/services/job-queue-service'
-import { QUEUE_CATALOG, type QueueDefinition } from '../src/jobs/catalog'
+import { QUEUE_CATALOG, ensureQueues, queueDrift, type QueueDefinition } from '@ryadom/db/jobs'
 import { erasePersonJob } from '../src/jobs/erase-person'
 import { watchdogJob } from '../src/jobs/watchdog'
 import type { JobDeps } from '../src/jobs/handlers'
-import { ensureQueues, queueDrift, registerSchedules, type JobHandlers } from '../src/jobs/registry'
+import { registerSchedules, type JobHandlers } from '../src/jobs/registry'
+import { purgeInactiveAnonymous } from '../src/lib/anonymous-retention'
 import { startJobs, type Jobs, type JobsConfig } from '../src/lib/jobs'
 import { call, json, makeApp, mockAgent, ok, PASSWORD, signUpAndIn } from './helpers'
 
@@ -237,7 +243,10 @@ describe('реестр и каталог очередей', () => {
         ...options,
         deleteAfterSeconds: name === 'jobs.dead-letter' ? 30 * 86_400 : 86_400,
       })
-      if (name !== 'jobs.dead-letter') expect(queue?.deadLetter, name).toBe('jobs.dead-letter')
+      // Only the queues of events send their dead jobs to jobs.dead-letter: a lost schedule run is made up by the next
+      // run, a lost erasure is not.
+      const events = ['analytics.erase-person', 'dialogs.after-delete']
+      expect(queue?.deadLetter ?? null, name).toBe(events.includes(name) ? 'jobs.dead-letter' : null)
       expect(QUEUE_CATALOG.find((item) => item.name === name)?.cron, name).toBe(cron)
     }
     // Nothing in the catalog is missing from this table.
@@ -618,6 +627,20 @@ describe('стирание профиля в аналитике через оч�
       )
       expect(lines).toHaveLength(1)
       expect(lines[0]?.[1]).toContain('убрать вручную')
+
+      // And the watchdog says that the receiver holds a job, with the queue and the count, never with its data.
+      const warn = vi.spyOn(getRootLogger(), 'warn')
+      try {
+        await watchdogJob(jobs.boss)({}, {} as never)
+        const dead = warn.mock.calls.filter(
+          ([fields]) => (fields as { queue?: string }).queue === 'jobs.dead-letter',
+        )
+        expect(dead).toHaveLength(1)
+        expect(dead[0]?.[0]).toMatchObject({ queue: 'jobs.dead-letter', count: 1 })
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('user-gone')
+      } finally {
+        warn.mockRestore()
+      }
     } finally {
       errors.mockRestore()
     }
@@ -696,6 +719,65 @@ describe('удаление аккаунта и настоящая очередь
   })
 })
 
+describe('стирание администратором и чисткой гостей через настоящую очередь', () => {
+  // Every way an account goes erases the person in analytics the same way: the job is queued in the transaction of the
+  // deletion (product-analytics «Стирание при удалении аккаунта», account-deletion «(API) Удаление человеком»).
+  const { app } = makeApp()
+
+  it('удаление администратором ставит ту же задачу в базу, а откат внешней транзакции уносит и аккаунт, и задачу', async () => {
+    const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+    const { user } = await signUpAndIn(app)
+    mockAgent()
+    const erase = () =>
+      accountDeletionProcess.execute(
+        new DeleteUserAccountOperation({ adminEmail: 'admin@example.com', userId: user.id }),
+      )
+
+    await expect(
+      inTransaction(async () => {
+        await erase()
+        throw new Error('the scenario failed after the deletion')
+      }),
+    ).rejects.toThrow('scenario failed')
+    expect(await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson)).toEqual([])
+    ok(await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD }))
+
+    expect(await erase()).toEqual({ success: true })
+
+    const [job] = await jobs.boss.findJobs<{ userId: string }>(JobQueue.AnalyticsErasePerson)
+    expect(job).toMatchObject({ state: 'created', singletonKey: user.id, data: { userId: user.id } })
+    const waits = (job!.startAfter.getTime() - Date.now()) / 1000
+    expect(waits).toBeGreaterThan(20)
+    expect(waits).toBeLessThanOrEqual(31)
+  })
+
+  it('чистка гостей ставит по задаче на каждый стёртый аккаунт, а гость, который вернулся, остаётся без задачи', async () => {
+    const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+    mockAgent()
+    const deviceLogin = async () => {
+      const response = ok<{ user: { id: string } }>(
+        await call(app, 'POST', '/api/auth/device', {
+          deviceId: randomUUID(),
+          deviceKey: randomBytes(32).toString('base64url'),
+        }),
+      )
+      return response.user.id
+    }
+    const old = await deviceLogin()
+    const returned = await deviceLogin()
+    const idle = new Date(Date.now() - 100 * 24 * 3600 * 1000)
+    await getDb().execute(
+      sql`update users set last_active_at = ${idle.toISOString()}::timestamptz where id = ${old}::uuid`,
+    )
+
+    expect(await purgeInactiveAnonymous()).toEqual({ purged: 1, failed: 0 })
+
+    const queued = await jobs.boss.findJobs<{ userId: string }>(JobQueue.AnalyticsErasePerson)
+    expect(queued.map((job) => job.data.userId)).toEqual([old])
+    expect(queued.some((job) => job.data.userId === returned)).toBe(false)
+  })
+})
+
 describe('сброс недели после удаления разговора через настоящую очередь', () => {
   // `openspec/changes/archive/2026-10-27-add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался».
   const { app } = makeApp()
@@ -770,6 +852,52 @@ describe('сброс недели после удаления разговора
     )
     const [row] = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
     expect(row).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+  })
+})
+
+describe('расписание, которое не выполнилось, не попадает в очередь недоставленных', () => {
+  // The next firing does the same work from the state, so a failed run needs neither a retry nor a copy: a pod that was
+  // killed in the middle of a pass must not make the watchdog warn for 30 days. The queues of events keep theirs
+  // (test «Сбой стирания» above).
+  it('ошибка прохода — задача failed, jobs.dead-letter пуст, сторож молчит', async () => {
+    const warn = vi.spyOn(getRootLogger(), 'warn')
+    try {
+      const failing: JobHandlers = {
+        [JobQueue.DiaryWeeklyPass]: async () => {
+          throw new Error('the pass failed')
+        },
+      }
+      const jobs = await start({}, { handlers: failing, skipTransport: true })
+
+      await jobs.boss.send(JobQueue.DiaryWeeklyPass, {})
+
+      await vi.waitFor(
+        async () => expect((await jobs.boss.findJobs(JobQueue.DiaryWeeklyPass))[0]?.state).toBe('failed'),
+        { timeout: 15_000 },
+      )
+      expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toEqual([])
+      warn.mockClear()
+      await watchdogJob(jobs.boss)({}, {} as never)
+      expect(
+        warn.mock.calls.filter(([fields]) => (fields as { queue?: string }).queue === 'jobs.dead-letter'),
+      ).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('убитый под: задача, снятая с исполнителя методом fail (так её провалит надзор по heartbeat), тоже остаётся без копии', async () => {
+    const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+    const id = await jobs.boss.send(JobQueue.AccountsPurgeInactiveAnonymous, {})
+    const [taken] = await jobs.boss.fetch(JobQueue.AccountsPurgeInactiveAnonymous)
+    expect(taken?.id).toBe(id)
+
+    // What the supervision does to a job whose heartbeat stopped: it fails, and with no retries it stays failed.
+    await jobs.boss.fail(JobQueue.AccountsPurgeInactiveAnonymous, id!)
+
+    const [job] = await jobs.boss.findJobs(JobQueue.AccountsPurgeInactiveAnonymous)
+    expect(job?.state).toBe('failed')
+    expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toEqual([])
   })
 })
 

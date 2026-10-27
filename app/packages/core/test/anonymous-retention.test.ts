@@ -343,14 +343,28 @@ describe('подтверждённая почта и ключ устройств
   })
 })
 
-describe('чистка неактивных не стирает профиль в аналитике', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`: only the person's own request queues the erasure in analytics.
-  it('стёртый по сроку аккаунт не ставит задач в очередь', async () => {
+describe('чистка неактивных стирает профиль в аналитике так же, как самоудаление', () => {
+  // The same erasure as the person's own request (test/account-erasure.test.ts): one job in the queue for each erased account.
+  it('каждый стёртый по сроку аккаунт ставит свою задачу, оставшийся — нет', async () => {
     mockAgent()
-    await anonymousSeen(RETENTION_DAYS + 5)
+    const first = await anonymousSeen(RETENTION_DAYS + 5)
+    const second = await anonymousSeen(RETENTION_DAYS + 40)
+    const kept = await anonymousSeen(10)
 
-    expect(await purge()).toMatchObject({ purged: 1, failed: 0 })
+    expect(await purge()).toMatchObject({ purged: 2, failed: 0 })
 
-    expect(getEnqueuedJobs()).toEqual([])
+    expect(
+      getEnqueuedJobs()
+        .map((job) => [job.queue, (job.data as { userId: string }).userId])
+        .sort(),
+    ).toEqual(
+      [
+        ['analytics.erase-person', first.user.id],
+        ['analytics.erase-person', second.user.id],
+      ].sort(),
+    )
+    expect(getEnqueuedJobs().some((job) => (job.data as { userId: string }).userId === kept.user.id)).toBe(
+      false,
+    )
   })
 })

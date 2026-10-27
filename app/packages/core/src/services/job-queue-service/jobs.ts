@@ -1,29 +1,15 @@
+import { JobQueue } from '@ryadom/db/job-queues'
+
 /**
- * The queues of the background work and what a job in each carries (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4).
- * The names and the data types live next to the service so that a typo in a name fails the compilation, in the
- * core that enqueues and in the API that works the queue off.
+ * The queues of the background work and what a job in each carries (`openspec/changes/archive/2026-10-27-add-job-queue`,
+ * design D4). The names live in `@ryadom/db/job-queues` (names only, no pg-boss), where the catalog of the API and the
+ * admin app takes them from too, so a typo in a name fails the compilation in the core that enqueues and in every
+ * process that works the queue or posts to it.
  *
  * A job carries identifiers only, never a text, an email or a name (design D6): its data stays in the queue's
  * table until the retention ends and may reach a backup.
  */
-export const JobQueue = {
-  /** Hourly: removes the refresh tokens that expired long ago. */
-  SessionsPurgeExpired: 'sessions.purge-expired',
-  /** Hourly: erases the anonymous accounts nobody has opened for the retention period. */
-  AccountsPurgeInactiveAnonymous: 'accounts.purge-inactive-anonymous',
-  /** Every minute: writes the diary's week texts. */
-  DiaryWeeklyPass: 'diary.weekly-pass',
-  /** Erases a deleted account's person in product analytics. */
-  AnalyticsErasePerson: 'analytics.erase-person',
-  /** After a person deleted a conversation: makes sure the week text no longer retells it. */
-  DialogsAfterDelete: 'dialogs.after-delete',
-  /** Every five minutes: reports a queue in trouble to the log. */
-  JobsWatchdog: 'jobs.watchdog',
-  /** Receives a copy of the data of a job whose retries ran out; nobody works it off. */
-  JobsDeadLetter: 'jobs.dead-letter',
-} as const
-
-export type JobQueueName = (typeof JobQueue)[keyof typeof JobQueue]
+export { JobQueue, type JobQueueName } from '@ryadom/db/job-queues'
 
 /** The data of a job in each queue. A schedule fires with no data. */
 export interface JobData {

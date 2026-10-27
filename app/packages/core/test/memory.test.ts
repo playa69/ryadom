@@ -352,7 +352,8 @@ describe('включение и выключение памяти', () => {
       (await accountDeletionProcess.execute(new DeleteAccountOperation({ userId: user.id }))).success,
     ).toBe(true)
 
-    expect(await journal(user.id)).toHaveLength(2)
+    // The pause stays in force until the account ends, and the end is written down in the same journal.
+    expect((await journal(user.id)).map((row) => row.action)).toEqual(['granted', 'paused', 'revoked'])
     expect((await consentRows(user.id)).filter((row) => row.kind === 'memory')).toHaveLength(1)
   })
 })

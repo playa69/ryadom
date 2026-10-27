@@ -1,5 +1,5 @@
 import type { Queue } from 'pg-boss'
-import { JobQueue, type JobQueueName } from '@ryadom/core/services/job-queue-service'
+import { JobQueue, type JobQueueName } from './queues'
 
 /**
  * The catalog of the queues (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4): how each is created in the database,
@@ -46,7 +46,12 @@ const KEEP_FINISHED = DAY
 /** The erasure in analytics is tried 1 + 8 times, the pause growing from a minute to an hour. */
 export const ERASE_PERSON_RETRY_LIMIT = 8
 
-/** A job of a schedule: the next firing does the same work from the state, so a failure is not retried. */
+/**
+ * A job of a schedule: the next firing does the same work from the state, so a failure is not retried, and a job that
+ * failed (a pod killed in the middle of it, an error) is not copied to `jobs.dead-letter` either: nothing is lost, and
+ * a warning of the watchdog for 30 days about one lost run would only be noise. The queues of events, where a lost job
+ * is a lost erasure, keep their dead letter queue.
+ */
 const NO_RETRY = { retryLimit: 0, retryDelay: 0, retryBackoff: false, retryDelayMax: null } as const
 
 export const QUEUE_CATALOG: readonly QueueDefinition[] = [
@@ -74,7 +79,7 @@ export const QUEUE_CATALOG: readonly QueueDefinition[] = [
       deleteAfterSeconds: KEEP_FINISHED,
       ...NO_RETRY,
       heartbeatSeconds: null,
-      deadLetter: JobQueue.JobsDeadLetter,
+      deadLetter: null,
     },
   },
   {
@@ -87,7 +92,7 @@ export const QUEUE_CATALOG: readonly QueueDefinition[] = [
       deleteAfterSeconds: KEEP_FINISHED,
       ...NO_RETRY,
       heartbeatSeconds: 30,
-      deadLetter: JobQueue.JobsDeadLetter,
+      deadLetter: null,
     },
   },
   {
@@ -101,7 +106,7 @@ export const QUEUE_CATALOG: readonly QueueDefinition[] = [
       deleteAfterSeconds: KEEP_FINISHED,
       ...NO_RETRY,
       heartbeatSeconds: 30,
-      deadLetter: JobQueue.JobsDeadLetter,
+      deadLetter: null,
     },
   },
   {
@@ -146,7 +151,7 @@ export const QUEUE_CATALOG: readonly QueueDefinition[] = [
       deleteAfterSeconds: KEEP_FINISHED,
       ...NO_RETRY,
       heartbeatSeconds: null,
-      deadLetter: JobQueue.JobsDeadLetter,
+      deadLetter: null,
     },
   },
 ]

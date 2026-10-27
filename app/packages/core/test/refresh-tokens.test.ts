@@ -21,7 +21,11 @@ import {
   refreshTokensManager,
   type RefreshTokenDTO,
 } from '../src/managers/refresh-tokens-manager'
-import { DeleteAccountOperation, accountDeletionProcess } from '../src/processes/account-deletion'
+import {
+  DeleteAccountOperation,
+  DeleteUserAccountOperation,
+  accountDeletionProcess,
+} from '../src/processes/account-deletion'
 import { ChangePasswordOperation, changePasswordProcess } from '../src/processes/change-password'
 import {
   ForgotPasswordOperation,
@@ -29,7 +33,6 @@ import {
   forgotPasswordProcess,
 } from '../src/processes/forgot-password'
 import {
-  DeleteUserAccountOperation,
   RevokeUserSessionsOperation,
   RevokeUserSessionsOperationErrorCode,
   ToggleUserActivationOperation,
@@ -482,7 +485,7 @@ describe('сценарии, которые завершают сессии', () 
   it('завершить сессии несуществующего или удалённого аккаунта нельзя, в журнал ничего не пишется', async () => {
     mockAgent()
     const deleted = await registerConfirmedUser()
-    await userManagementProcess.execute(
+    await accountDeletionProcess.execute(
       new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: deleted.id }),
     )
     const before = (await auditRows()).length
@@ -510,7 +513,7 @@ describe('сценарии, которые завершают сессии', () 
 
     const byAdmin = await registerConfirmedUser()
     const adminSession = await store(byAdmin.id)
-    await userManagementProcess.execute(
+    await accountDeletionProcess.execute(
       new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: byAdmin.id }),
     )
     expect((await read(adminSession.tokenId)).revokedReason).toBe('revoked')

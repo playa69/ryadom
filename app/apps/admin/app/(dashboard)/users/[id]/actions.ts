@@ -1,10 +1,13 @@
 'use server'
 
 import {
-  ConfirmUserEmailOperation,
-  ConfirmUserEmailOperationErrorCode,
+  accountDeletionProcess,
   DeleteUserAccountOperation,
   DeleteUserAccountOperationErrorCode,
+} from '@ryadom/core/processes/account-deletion'
+import {
+  ConfirmUserEmailOperation,
+  ConfirmUserEmailOperationErrorCode,
   RevokeUserSessionsOperation,
   RevokeUserSessionsOperationErrorCode,
   ToggleUserActivationOperation,
@@ -116,7 +119,7 @@ export async function deleteAccount(_prev: UserActionState, formData: FormData):
   }
 
   try {
-    const result = await userManagementProcess.execute(
+    const result = await accountDeletionProcess.execute(
       new DeleteUserAccountOperation({ adminEmail: session.email, userId }),
     )
     if (!result.success) {
