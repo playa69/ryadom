@@ -270,3 +270,35 @@ spec:
       ports:
         - protocol: TCP
           port: 3100
+
+---
+# Alertmanager: доставка алертов наружу (values-prometheus.yaml, приёмник owner).
+# Канал ещё не выбран, поэтому открыты порты обоих вариантов: :443 — API
+# Telegram, :465/:587 — SMTP. Адреса частных сетей исключены: наружу и только
+# наружу. Prometheus → Alertmanager :9093 — внутри namespace, уже разрешено.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alertmanager-allow-egress-receivers
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 465
+        - protocol: TCP
+          port: 587

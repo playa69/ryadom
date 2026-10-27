@@ -64,14 +64,15 @@ k8s/
         ├── 01-job-create-db.yaml   ← Job: роль+база langfuse в CNPG
         └── 02-gateway.yaml         ← ШАБЛОН HTTPRoute /langfuse на будущее, НЕ применять
 └── monitoring/
-    ├── values-prometheus.yaml      ← kube-prometheus-stack 91.8.2 (Alertmanager off, retention 14d)
+    ├── values-prometheus.yaml      ← kube-prometheus-stack 91.8.2 (Alertmanager on, retention 14d)
     ├── values-loki.yaml            ← grafana/loki 7.3.0 (SingleBinary, filesystem PVC 5Gi)
     ├── values-alloy.yaml           ← grafana/alloy 1.13.0 (DaemonSet, сбор логов → Loki)
     ├── dashboards/
     │   └── cluster-resources.json  ← источник JSON дашборда «Ресурсы кластера»
     └── manifests/
         ├── 01-network-policy.yaml  ← default-deny + egress scrape/DNS/apiserver
-        └── 02-dashboard-cluster-resources.yaml  ← ConfigMap grafana_dashboard=1 (sidecar)
+        ├── 02-dashboard-cluster-resources.yaml  ← ConfigMap grafana_dashboard=1 (sidecar)
+        └── 03-prometheus-rules.yaml  ← PrometheusRule ryadom: алерты (см. «Алерты и Alertmanager»)
 ```
 
 ## Кластер twc-sber500
@@ -235,7 +236,8 @@ helm install langfuse langfuse/langfuse -n infra \
 # ns monitoring уже создан на шаге 1 (namespaces/manifests/00)
 # Секрет grafana-admin-credentials — заранее (kubectl create, пароль из
 # ~/.config/ryadom/k8s-secrets.env, ключ GRAFANA_ADMIN_PASSWORD)
-kubectl apply -f monitoring/manifests/   # NetworkPolicy + дашборд (ConfigMap)
+kubectl apply -f monitoring/manifests/01-network-policy.yaml \
+               -f monitoring/manifests/02-dashboard-cluster-resources.yaml   # NetworkPolicy + дашборд (ConfigMap)
 
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo add grafana https://grafana.github.io/helm-charts
@@ -246,6 +248,9 @@ helm install loki grafana/loki \
 helm install alloy grafana/alloy \
   -n monitoring -f monitoring/values-alloy.yaml --version 1.13.0
 ```
+
+Правила алертов (`monitoring/manifests/03-prometheus-rules.yaml`) применять ПОСЛЕ `helm install prometheus`: им нужны CRD оператора.
+Алерты и Alertmanager — раздел «Алерты и Alertmanager» ниже.
 
 ## Доступы: кластер и облако
 
@@ -446,11 +451,11 @@ subchart'ы; чарт 2.x = Langfuse v4 + valkey-io subchart с несовмес
 port-forward, наружу НЕ публикуется.
 
 - **kube-prometheus-stack 91.8.2** (`monitoring/values-prometheus.yaml`):
-  Prometheus (retention 14d / 3GB, PVC 5Gi NVMe; что раньше упрётся, то и
+  Prometheus (retention 14d / 8GB, PVC 10Gi NVMe; что раньше упрётся, то и
   действует), Grafana (PVC 2Gi),
   node-exporter (DaemonSet, hostNetwork :9100), kube-state-metrics.
-  **Alertmanager отключён** осознанно — алертам некуда доставляться;
-  включение = отдельный шаг. Managed control plane: scrape etcd/scheduler/
+  **Alertmanager** включён (PROTEUS-254), канал доставки пока не подключён —
+  см. «Алерты и Alertmanager» ниже. Managed control plane: scrape etcd/scheduler/
   controller-manager/kube-proxy отключён (их нет в кластере).
 - **Loki 7.3.0** (`monitoring/values-loki.yaml`): SingleBinary, filesystem
   PVC 5Gi NVMe, retention 7d. S3 — next step (комментарий в values):
@@ -483,6 +488,89 @@ manifests/02-dashboard-cluster-resources.yaml): CPU/RAM usage/requests/limits
 -n monitoring --from-file=cluster-resources.json=dashboards/cluster-resources.json
 --dry-run=client -o yaml > manifests/02-dashboard-cluster-resources.yaml`
 (не забыть вернуть labels в metadata).
+
+## Алерты и Alertmanager
+
+Alertmanager включён в том же чарте (`monitoring/values-prometheus.yaml`, блок `alertmanager`),
+один под, без PVC (тишины и журнал отправок живут в emptyDir). Правила алертов — один
+PrometheusRule `ryadom` (`monitoring/manifests/03-prometheus-rules.yaml`), у каждого метка
+`scope=ryadom`. Маршрут: всё с `scope=ryadom` и всё `severity=critical` из правил чарта уходит
+в приёмник `owner`, остальное (шумные warning/info чарта, Watchdog) — в `null`.
+
+**Канал доставки не выбран** (открытый вопрос владельца: Telegram-бот или почта). Приёмник `owner` —
+заглушка без адресов и токенов: пока канал не подключён, алерты видны только в UI
+(`kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-alertmanager 9093`, раздел Alerts;
+Prometheus UI — на 9090, раздел Alerts).
+
+| Алерт | Условие | Серьёзность |
+|---|---|---|
+| `RyadomContainerRestarted` | перезапуск контейнера в prod, agent, ryadom-db за 10 минут | warning |
+| `RyadomContainerOOMKilled` | контейнер убит по памяти (`OOMKilled`) | critical |
+| `RyadomPodNotReady` | под (кроме Job) не Ready или Pending больше 5 минут | warning |
+| `RyadomApiDown` | в Deployment `app-api` нет готовой реплики 2 минуты | critical |
+| `RyadomJobFailed` | Job в prod, agent, ryadom-db, infra завершился ошибкой | warning |
+| `RyadomPostgresDiskFilling` / `RyadomPostgresDiskAlmostFull` | том CNPG заполнен больше 75 % (15 минут) / 90 % (5 минут) | warning / critical |
+| `RyadomPostgresBackupTooOld` | последней успешной полной копии больше 26 часов (или метрики нет) | warning |
+| `RyadomPostgresBackupFailed` | последняя попытка полной копии неудачна | warning |
+| `RyadomPostgresWALArchivingFailing` | последняя архивация WAL в S3 неудачна | critical |
+| `RyadomPostgresDown` / `RyadomPostgresMetricsMissing` | экспортёр CNPG не отвечает / метрик CNPG нет | critical / warning |
+| `RyadomPostgresConnectionsHigh` | больше 80 % `max_connections` | warning |
+| `RyadomApi5xxHigh` | больше 5 % ответов api — 5xx за 10 минут (от 3 запросов в минуту), по метрикам ingressgateway | warning |
+| `RyadomAgentDown` | таргет `/metrics` агента не отвечает или его нет 3 минуты | critical |
+| `RyadomAgentDialogDbErrors` | рост `agent_dialog_db_errors_total` за 10 минут | warning |
+| `RyadomAgentFirstSoundSlow` | p95 `agent_voice_latency_seconds{stage="first_sound"}` больше 5 с (метрику пишет только каскадный конвейер) | warning |
+| `RyadomPrometheusRetentionShrinking` | блоки Prometheus заняли больше 95 % `retentionSize` — хранение короче 14 дней | warning |
+
+Очередь памяти Cognee в правилах нет: у агента нет метрики очереди (`agent_memory_jobs` объявлена,
+но не обновляется). Когда появится, правило добавляется в группу `ryadom.agent`.
+Пороги стартовые; после недели живых данных подстроить.
+
+### Применение (делает администратор, по шагам)
+
+1. Образ Alertmanager в зеркало (`cr.yandex/crpsqeamqpuvrkm5tpr9/prometheus/alertmanager:<тег>`):
+   тег — как у чарта (`helm show values prometheus-community/kube-prometheus-stack --version 91.8.2 | grep -A6 'repository: prometheus/alertmanager'`),
+   зеркалирование — по разделу «Реестр образов».
+2. NetworkPolicy (egress Alertmanager наружу на :443/:465/:587 и Prometheus → :15090 в ns agent):
+   `kubectl apply -f k8s/monitoring/manifests/01-network-policy.yaml`
+3. Обновить чарт — включится Alertmanager, Prometheus получит retention 14d / retentionSize 8GB и PVC 10Gi
+   (было 3GB и 5Gi). Prometheus перезапустится, метрики на томе останутся:
+   `helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring -f k8s/monitoring/values-prometheus.yaml --version 91.8.2`
+4. Правила (нужны CRD оператора, поэтому после шага 3; при первой установке чарта этот файл применять после `helm install`):
+   `kubectl apply -f k8s/monitoring/manifests/03-prometheus-rules.yaml`
+5. Проверка: в Prometheus UI Status → Rules группы `ryadom.*` без ошибок и Status → Targets `serviceMonitor/agent/agent/0` в UP;
+   в Alertmanager UI виден `Watchdog`. Правила про тома и бэкапы опираются на метрики kubelet и CNPG: если запрос
+   `ryadom:cnpg_pvc_usage:ratio` в Graph пуст, смотреть имена метрик в targets `cnpg` (:9187).
+
+**Расширение PVC Prometheus** (шаг 3 меняет `storage` в volumeClaimTemplate с 5Gi на 10Gi). Класс тома умеет расширение
+(`allowVolumeExpansion`), оператор сам расширит PVC и пересоздаст StatefulSet. Если после апгрейда
+`kubectl -n monitoring get pvc` показывает прежние 5Gi, расширить вручную и перезапустить под:
+
+```bash
+kubectl -n monitoring get pvc -l app.kubernetes.io/name=prometheus
+kubectl -n monitoring patch pvc <имя PVC> -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+kubectl -n monitoring delete pod prometheus-prometheus-kube-prometheus-prometheus-0
+```
+
+Хватает ли 10Gi на 14 дней — проверить через пару дней: `prometheus_tsdb_storage_blocks_bytes`, умноженный на 14/дни, должен
+быть меньше `retentionSize`. Алерт `RyadomPrometheusRetentionShrinking` скажет, если упёрлись.
+
+### Подключение канала доставки (одна правка)
+
+В `monitoring/values-prometheus.yaml`, блок `alertmanager.config.receivers`, приёмник `owner`: раскомментировать
+один из вариантов (Telegram или почта), подставить значения в `<…>`, создать Secret с ключом и сделать
+`helm upgrade` из шага 3. Secret монтируется в под необязательным томом (`optional: true`), поэтому его можно создать позже
+выкатки Alertmanager.
+
+```bash
+# Telegram: бот от @BotFather, добавлен в чат; токен кладётся в файл (в историю шелла не попадает)
+kubectl -n monitoring create secret generic alertmanager-receiver \
+  --from-file=telegram-bot-token=<файл с токеном> --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Для почты в тот же Secret кладётся ключ `smtp-password`. Egress Alertmanager уже открыт на :443 (Telegram API)
+и :465/:587 (SMTP) — за пределы частных сетей. Проверка: в Alertmanager UI → Status виден приёмник `owner` с
+выбранной интеграцией; тестовое сообщение — `kubectl -n monitoring exec` в под Alertmanager с `amtool alert add`
+(алерт с метками `scope=ryadom alertname=Test` придёт в канал через `group_wait` 30 с).
 
 ## Сервисы из app/ (ns prod)
 
@@ -849,7 +937,7 @@ for n in migrate landing web admin pwa api; do docker push $REG/$n:$TAG; done
 | PostgreSQL ryadom-db | 16.4 | 2/2 healthy, WAL→S3 (префикс ryadom-db-twc), initial backup OK, daily ScheduledBackup |
 | Redis + Sentinel | 8.10.2, chart 28.3.1 | 3/3 (redis-node-0/1/2 по нодам), failover проверен |
 | Langfuse | image 3.15, chart 1.5.41 | internal-only (port-forward 3000) |
-| Prometheus + Grafana | chart 91.8.2 (Prom v0.94.1, Grafana 13.2.3) | Running, все targets UP, Alertmanager off |
+| Prometheus + Grafana | chart 91.8.2 (Prom v0.94.1, Grafana 13.2.3) | Running, все targets UP, Alertmanager off (на 2026-10-01; в values включён с PROTEUS-254, не выкачен) |
 | Loki | 3.6.12, chart 7.3.0 | Running, SingleBinary, PVC 5Gi, retention 7d |
 | Alloy | v1.20.0, chart 1.13.0 | DaemonSet 3/3, логи всех ns текут в Loki |
 | DNS | Yandex Cloud DNS | корневая A → 185.207.64.68 (единая точка входа) |

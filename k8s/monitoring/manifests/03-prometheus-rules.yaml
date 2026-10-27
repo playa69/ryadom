@@ -1,0 +1,349 @@
+# =============================================================================
+# PrometheusRule ryadom — алерты «Слышу Рядом» (ns monitoring)
+# =============================================================================
+# Prometheus подбирает все PrometheusRule кластера (ruleSelectorNilUsesHelmValues:
+# false в values-prometheus.yaml). Применение:
+#   kubectl apply -f k8s/monitoring/manifests/03-prometheus-rules.yaml
+# Проверка: Prometheus UI → Alerts (группы ryadom.*) и Status → Rules (нет ошибок).
+#
+# Доставка: у каждого правила метка scope=ryadom — по ней Alertmanager
+# (values-prometheus.yaml, alertmanager.config) отправляет алерт владельцу.
+# Пока канал не подключён, алерты видны только в UI Prometheus и Alertmanager.
+#
+# Правила только на уже собираемых метриках:
+#   kube-state-metrics / kubelet (поды, Job'ы, тома), job cnpg (:9187, метрики
+#   CNPG ryadom-db), job istio-proxy (метрики ingressgateway), ServiceMonitor
+#   агента (agent_*). Пороги — стартовые, подстраивать по живым данным.
+#
+# Чего нет и почему: очереди памяти Cognee — у агента нет метрики (gauge
+# agent_memory_jobs объявлен, но не обновляется: с 0.8.0 память в Cognee).
+# p95 первого звука считается только в каскадном конвейере
+# (agent_voice_latency_seconds{stage="first_sound"} пишет dialog_ws.py).
+# =============================================================================
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ryadom
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  groups:
+    # ── Записи: заполнение томов CNPG ──────────────────────────────────────
+    - name: ryadom.records
+      rules:
+        # Доля занятого места на томах инстансов ryadom-db (PVC ryadom-db-N, и
+        # ryadom-db-N-wal, если WAL вынесут на свой том). Основной источник —
+        # статистика тома от kubelet. Если CSI Timeweb её не отдаёт, оценка:
+        # размеры баз + каталог WAL против запрошенного размера PVC (занижает:
+        # без служебных файлов и журналов PostgreSQL, поэтому пороги ниже с запасом).
+        - record: ryadom:cnpg_pvc_usage:ratio
+          expr: |
+            max by (persistentvolumeclaim) (
+              kubelet_volume_stats_used_bytes{namespace="ryadom-db", persistentvolumeclaim=~"ryadom-db-[0-9]+(-wal)?"}
+              /
+              kubelet_volume_stats_capacity_bytes{namespace="ryadom-db", persistentvolumeclaim=~"ryadom-db-[0-9]+(-wal)?"}
+            )
+            or
+            max by (persistentvolumeclaim) (
+              label_replace(
+                sum by (pod) (cnpg_pg_database_size_bytes{namespace="ryadom-db"})
+                + on (pod)
+                (
+                  max by (pod) (cnpg_collector_pg_wal{namespace="ryadom-db", value="size"})
+                  or
+                  0 * sum by (pod) (cnpg_pg_database_size_bytes{namespace="ryadom-db"})
+                ),
+                "persistentvolumeclaim", "$1", "pod", "(.+)"
+              )
+              / on (persistentvolumeclaim)
+              max by (persistentvolumeclaim) (
+                kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace="ryadom-db", persistentvolumeclaim=~"ryadom-db-[0-9]+"}
+              )
+            )
+
+    # ── Поды и Job'ы в prod / agent / ryadom-db ────────────────────────────
+    - name: ryadom.workloads
+      rules:
+        - alert: RyadomContainerRestarted
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace=~"prod|agent|ryadom-db"}[10m]) > 0
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Перезапуск контейнера {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }})"
+            description: >-
+              За 10 минут контейнер перезапускался (~{{ $value | humanize }} раз). Перезапуск api или agent обрывает
+              все разговоры пода. Причина: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+              (Last State) и kubectl logs --previous.
+
+        - alert: RyadomContainerOOMKilled
+          expr: |
+            (
+              max by (namespace, pod, container) (
+                kube_pod_container_status_last_terminated_reason{namespace=~"prod|agent|ryadom-db", reason="OOMKilled"}
+              ) == 1
+            )
+            and on (namespace, pod, container)
+            (increase(kube_pod_container_status_restarts_total{namespace=~"prod|agent|ryadom-db"}[30m]) > 0)
+          labels:
+            severity: critical
+            scope: ryadom
+          annotations:
+            summary: "OOMKilled: {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }})"
+            description: >-
+              Контейнер упёрся в лимит памяти и был убит. Сравнить пик памяти с limits в манифесте
+              (container_memory_working_set_bytes) и решить: поднять лимит или искать утечку.
+
+        - alert: RyadomPodNotReady
+          expr: |
+            (
+              max by (namespace, pod) (kube_pod_status_ready{namespace=~"prod|agent|ryadom-db", condition="false"}) == 1
+              or
+              max by (namespace, pod) (kube_pod_status_phase{namespace=~"prod|agent|ryadom-db", phase=~"Pending|Unknown"}) == 1
+            )
+            unless on (namespace, pod)
+            max by (namespace, pod) (kube_pod_owner{namespace=~"prod|agent|ryadom-db", owner_kind="Job"})
+          for: 5m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Под {{ $labels.namespace }}/{{ $labels.pod }} не готов больше 5 минут"
+            description: >-
+              Под не принимает трафик (readiness) или не может запуститься (Pending). У api readiness ходит в базу:
+              не готовы оба пода api — смотреть RyadomApiDown и состояние ryadom-db.
+
+        - alert: RyadomApiDown
+          expr: |
+            max(kube_deployment_status_replicas_available{namespace="prod", deployment="app-api"}) < 1
+            or
+            absent(kube_deployment_status_replicas_available{namespace="prod", deployment="app-api"})
+          for: 2m
+          labels:
+            severity: critical
+            scope: ryadom
+          annotations:
+            summary: "api недоступен: ни одной готовой реплики app-api"
+            description: >-
+              Приложение не открывается и не ведёт разговоры. Частая причина — недоступна база: readiness api
+              (/api/health) проверяет PostgreSQL.
+
+        - alert: RyadomJobFailed
+          expr: |
+            max by (namespace, job_name) (kube_job_failed{namespace=~"prod|agent|ryadom-db|infra", condition="true"}) == 1
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }} завершился ошибкой"
+            description: >-
+              Логи: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}. Алерт горит, пока упавший
+              Job существует: после разбора удалить его (kubectl delete job).
+
+    # ── PostgreSQL (CNPG ryadom-db) ────────────────────────────────────────
+    - name: ryadom.postgres
+      rules:
+        - alert: RyadomPostgresDiskFilling
+          expr: ryadom:cnpg_pvc_usage:ratio > 0.75
+          for: 15m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Том {{ $labels.persistentvolumeclaim }} заполнен на {{ $value | humanizePercentage }}"
+            description: >-
+              На томе PostgreSQL занято больше 75 %. Расширить том: spec.storage.size в
+              k8s/postgres/manifests/01-cnpg-cluster.yaml (порядок — в комментарии там же).
+
+        - alert: RyadomPostgresDiskAlmostFull
+          expr: ryadom:cnpg_pvc_usage:ratio > 0.9
+          for: 5m
+          labels:
+            severity: critical
+            scope: ryadom
+          annotations:
+            summary: "Том {{ $labels.persistentvolumeclaim }} заполнен на {{ $value | humanizePercentage }}"
+            description: >-
+              На томе PostgreSQL занято больше 90 %: при заполнении база встанет на запись, приложение и агент
+              перестанут сохранять. Расширить том немедленно (k8s/postgres/manifests/01-cnpg-cluster.yaml).
+
+        - alert: RyadomPostgresBackupTooOld
+          expr: |
+            (time() - max(cnpg_collector_last_available_backup_timestamp{namespace="ryadom-db"} > 0)) > 26 * 3600
+            or
+            absent(cnpg_collector_last_available_backup_timestamp{namespace="ryadom-db"} > 0)
+          for: 30m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Последней успешной полной копии ryadom-db больше 26 часов"
+            description: >-
+              Ежедневный base backup (ScheduledBackup ryadom-db-daily, 00:00 UTC) не прошёл.
+              kubectl -n ryadom-db get backups --sort-by=.metadata.creationTimestamp и describe последнего.
+
+        - alert: RyadomPostgresBackupFailed
+          expr: |
+            max(cnpg_collector_last_failed_backup_timestamp{namespace="ryadom-db"})
+            > max(cnpg_collector_last_available_backup_timestamp{namespace="ryadom-db"})
+          for: 5m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Последняя попытка полной копии ryadom-db неудачна"
+            description: >-
+              Последний base backup упал позже последнего успешного. kubectl -n ryadom-db get backups и describe
+              упавшего; частые причины — ключи S3 (Secret cnpg-backup-s3-credentials) и сеть до хранилища.
+
+        - alert: RyadomPostgresWALArchivingFailing
+          expr: |
+            max by (pod) (cnpg_pg_stat_archiver_last_failed_time{namespace="ryadom-db"})
+            > max by (pod) (cnpg_pg_stat_archiver_last_archived_time{namespace="ryadom-db"})
+          for: 5m
+          labels:
+            severity: critical
+            scope: ryadom
+          annotations:
+            summary: "Архивация WAL в S3 не проходит ({{ $labels.pod }})"
+            description: >-
+              Последняя попытка архивации WAL неудачна. Неотправленный WAL копится на томе базы (может его
+              заполнить), восстановление на момент времени не работает. Логи: kubectl -n ryadom-db logs
+              {{ $labels.pod }} | grep -i archive.
+
+        - alert: RyadomPostgresDown
+          expr: max by (pod) (cnpg_collector_up{namespace="ryadom-db"}) == 0
+          for: 2m
+          labels:
+            severity: critical
+            scope: ryadom
+          annotations:
+            summary: "PostgreSQL {{ $labels.pod }} не отвечает"
+            description: >-
+              Экспортёр CNPG не может выполнить запрос к своему инстансу. kubectl -n ryadom-db get cluster
+              ryadom-db и логи пода.
+
+        - alert: RyadomPostgresMetricsMissing
+          expr: |
+            max by (pod) (up{job="cnpg", namespace="ryadom-db"}) == 0
+            or
+            absent(up{job="cnpg", namespace="ryadom-db"})
+          for: 10m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Метрики CNPG ryadom-db не собираются"
+            description: >-
+              Без них не работают алерты про бэкапы, WAL и базу. Проверить таргеты job cnpg в Prometheus и
+              NetworkPolicy :9187 (postgres/manifests/03-network-policy.yaml).
+
+        - alert: RyadomPostgresConnectionsHigh
+          expr: |
+            sum by (pod) (cnpg_backends_total{namespace="ryadom-db"})
+            / on (pod)
+            max by (pod) (cnpg_pg_settings_setting{namespace="ryadom-db", name="max_connections"})
+            > 0.8
+          for: 10m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Соединений с {{ $labels.pod }} больше 80 % от max_connections"
+            description: >-
+              При исчерпании новые соединения api, агента, Cognee и Langfuse получают отказ. Кто держит:
+              sum by (datname, usename) (cnpg_backends_total).
+
+    # ── api: ошибки за ingressgateway ──────────────────────────────────────
+    - name: ryadom.api
+      rules:
+        # Считаем на istio-ingressgateway (job istio-proxy, ns istio-system): он видит и 503 «нет живого
+        # пода», которых сайдкар api не увидит. WebSocket'ы — код 101, в долю ошибок не входят.
+        - alert: RyadomApi5xxHigh
+          expr: |
+            (
+              sum(rate(istio_requests_total{namespace="istio-system", destination_service_namespace="prod", destination_service_name="app-api", response_code=~"5.."}[10m]))
+              /
+              sum(rate(istio_requests_total{namespace="istio-system", destination_service_namespace="prod", destination_service_name="app-api"}[10m]))
+            ) > 0.05
+            and
+            sum(rate(istio_requests_total{namespace="istio-system", destination_service_namespace="prod", destination_service_name="app-api"}[10m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Доля 5xx у api {{ $value | humanizePercentage }} за 10 минут"
+            description: >-
+              Больше 5 % ответов api — ошибки сервера (при трафике от 3 запросов в минуту). По кодам:
+              sum by (response_code, response_flags) (rate(istio_requests_total{namespace="istio-system",
+              destination_service_name="app-api"}[10m])); UH/NR во флагах — нет живого пода.
+
+    # ── Агент (ServiceMonitor k8s/agent/04-servicemonitor.yaml) ────────────
+    - name: ryadom.agent
+      rules:
+        - alert: RyadomAgentDown
+          expr: |
+            max(up{namespace="agent", job="agent"}) == 0
+            or
+            absent(up{namespace="agent", job="agent"})
+          for: 3m
+          labels:
+            severity: critical
+            scope: ryadom
+          annotations:
+            summary: "Агент недоступен для Prometheus"
+            description: >-
+              /metrics агента не отвечает или таргета нет. Если под агента жив и Ready — проверить сбор
+              (k8s/agent/README.md, «Расход моделей: база и Prometheus»); если нет — разговоры не идут.
+
+        - alert: RyadomAgentDialogDbErrors
+          expr: |
+            sum by (op) (increase(agent_dialog_db_errors_total{namespace="agent"}[10m])) > 0
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Агент не может писать диалоги в PostgreSQL (op={{ $labels.op }})"
+            description: >-
+              Сбои базы диалогов агента за 10 минут. Агент повторяет запись, диалоги держатся в памяти пода:
+              перезапуск агента сейчас потеряет незаписанное. Проверить ryadom-db и /health/ready агента (dialogs).
+
+        - alert: RyadomAgentFirstSoundSlow
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(agent_voice_latency_seconds_bucket{namespace="agent", stage="first_sound"}[15m]))
+            ) > 5
+            and
+            sum(increase(agent_voice_latency_seconds_count{namespace="agent", stage="first_sound"}[15m])) > 10
+          for: 15m
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "p95 паузы до первого звука агента {{ $value | humanizeDuration }}"
+            description: >-
+              95 % ответов начинают звучать позже 5 секунд после конца реплики (при 10+ ответах за 15 минут).
+              Этапы: agent_voice_latency_seconds по stage (stt, first_sentence, tts_first).
+
+    # ── Сам мониторинг ─────────────────────────────────────────────────────
+    - name: ryadom.monitoring
+      rules:
+        # Prometheus упёрся в retentionSize (values-prometheus.yaml) и режет старые блоки раньше 14 дней.
+        - alert: RyadomPrometheusRetentionShrinking
+          expr: |
+            prometheus_tsdb_storage_blocks_bytes{namespace="monitoring"}
+            / prometheus_tsdb_retention_limit_bytes{namespace="monitoring"} > 0.95
+          for: 1h
+          labels:
+            severity: warning
+            scope: ryadom
+          annotations:
+            summary: "Блоки Prometheus заняли {{ $value | humanizePercentage }} от retentionSize"
+            description: >-
+              Метрики старше срока хранения (14 дней) уже удаляются по размеру. Расширить PVC и поднять retentionSize
+              (k8s/README.md, «Алерты и Alertmanager»).

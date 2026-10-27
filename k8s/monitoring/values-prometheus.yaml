@@ -6,9 +6,12 @@
 #   helm install prometheus prometheus-community/kube-prometheus-stack \
 #     -n monitoring -f k8s/monitoring/values-prometheus.yaml --version 91.8.2
 #
-# Alertmanager ОТКЛЮЧЁН осознанно (2026-10-01): алерты пока никуда не
-# доставляются, операторный overhead без пользы. Включение — отдельный шаг
-# (alertmanager.enabled: true + NP + канал доставки).
+# Alertmanager включён (PROTEUS-254; до этого был выключен осознанно, 2026-10-01).
+# Канал доставки пока не выбран: приёмник owner — заглушка, алерты видны только
+# в UI Alertmanager (port-forward svc/prometheus-kube-prometheus-alertmanager 9093).
+# Подключение канала — одна правка: блок «КАНАЛ ДОСТАВКИ» в alertmanager.config
+# ниже (плюс ключ в Secret alertmanager-receiver). Правила алертов —
+# monitoring/manifests/03-prometheus-rules.yaml.
 #
 # Образы — из зеркала cr.yandex/crpsqeamqpuvrkm5tpr9 (см. k8s/README.md
 # «Реестр образов»): все registry/repository переопределены ниже,
@@ -31,8 +34,102 @@ kubeScheduler:
 kubeProxy:
   enabled: false
 
+# Alertmanager. Перед первым helm upgrade с этим блоком (по шагам — k8s/README.md,
+# «Алерты и Alertmanager»):
+#   1. Образ в зеркале: тег по умолчанию у чарта —
+#        helm show values prometheus-community/kube-prometheus-stack --version 91.8.2 | grep -A6 'repository: prometheus/alertmanager'
+#      quay.io/prometheus/alertmanager:<тег> → cr.yandex/crpsqeamqpuvrkm5tpr9/prometheus/alertmanager:<тег>.
+#   2. NetworkPolicy alertmanager-allow-egress-receivers (monitoring/manifests/01-network-policy.yaml).
+#   3. Правила: monitoring/manifests/03-prometheus-rules.yaml.
 alertmanager:
-  enabled: false
+  enabled: true
+  alertmanagerSpec:
+    image:
+      registry: cr.yandex
+      repository: crpsqeamqpuvrkm5tpr9/prometheus/alertmanager
+    imagePullSecrets:
+      - name: registry-pull
+    replicas: 1
+    # Без PVC: состояние (тишины, журнал отправок) живёт в emptyDir и теряется при
+    # перезапуске пода — после рестарта открытые алерты могут прийти повторно.
+    # Ключи канала доставки лежат в Secret alertmanager-receiver (ns monitoring) и появляются
+    # файлами в /etc/alertmanager/receiver/<ключ>. Secret необязателен (optional): пока канал
+    # не выбран, его нет, и под стартует без него.
+    volumes:
+      - name: receiver-secret
+        secret:
+          secretName: alertmanager-receiver
+          optional: true
+    volumeMounts:
+      - name: receiver-secret
+        mountPath: /etc/alertmanager/receiver
+        readOnly: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      # По умолчанию — в никуда: правила чарта (defaultRules) уровня warning/info
+      # шумят на маленьком кластере. Владельцу уходят наши правила (scope=ryadom)
+      # и всё critical из правил чарта (API кластера, kubelet, переполнение дисков).
+      receiver: "null"
+      group_by: [alertname, namespace]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      routes:
+        # Watchdog горит всегда (проверка конвейера), InfoInhibitor — служебный.
+        - receiver: "null"
+          matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
+        - receiver: owner
+          matchers: ['scope = "ryadom"']
+        - receiver: owner
+          matchers: ['severity = "critical"']
+    inhibit_rules:
+      # critical гасит warning/info того же алерта (как в чарте по умолчанию).
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity =~ "warning|info"']
+        equal: [namespace, alertname]
+      - source_matchers: ['alertname = "InfoInhibitor"']
+        target_matchers: ['severity = "info"']
+        equal: [namespace]
+      # OOMKilled уже говорит о перезапуске того же контейнера.
+      - source_matchers: ['alertname = "RyadomContainerOOMKilled"']
+        target_matchers: ['alertname = "RyadomContainerRestarted"']
+        equal: [namespace, pod, container]
+      - source_matchers: ['alertname = "RyadomPostgresDiskAlmostFull"']
+        target_matchers: ['alertname = "RyadomPostgresDiskFilling"']
+        equal: [persistentvolumeclaim]
+    receivers:
+      - name: "null"
+      - name: owner
+        # ── КАНАЛ ДОСТАВКИ ─────────────────────────────────────────────────
+        # Заглушка: без *_configs алерты только в UI Alertmanager. Канал (Telegram или почта) —
+        # открытый вопрос владельца. Подключение: положить ключ в Secret alertmanager-receiver,
+        # раскомментировать ОДИН из блоков ниже, подставить значения в <> и сделать helm upgrade.
+        #
+        # Telegram (бот от @BotFather, бот добавлен в чат; id чата — число, у групп со знаком минус):
+        #   kubectl -n monitoring create secret generic alertmanager-receiver \
+        #     --from-file=telegram-bot-token=<файл с токеном> --dry-run=client -o yaml | kubectl apply -f -
+        # telegram_configs:
+        #   - bot_token_file: /etc/alertmanager/receiver/telegram-bot-token
+        #     chat_id: <id чата>
+        #     send_resolved: true
+        #
+        # Почта (SMTP; пароль — ключ smtp-password в том же Secret):
+        # email_configs:
+        #   - to: <адрес получателя>
+        #     from: <адрес отправителя>
+        #     smarthost: <хост SMTP>:<порт>
+        #     auth_username: <логин SMTP>
+        #     auth_password_file: /etc/alertmanager/receiver/smtp-password
+        #     send_resolved: true
 
 prometheus:
   prometheusSpec:
@@ -44,12 +141,15 @@ prometheus:
     # 14 дней (было 3d): расход моделей агента (agent_model_usage_total) и
     # знаменатели (диалоги, секунды речи) нужны за две недели.
     retention: 14d
-    # 3GB из PVC 5Gi: headroom под wal/compaction. Потеря метрик при переполнении
-    # недопустима — Prometheus останавливает ingestion при упоре в диск.
-    # Срабатывает раньше retention: если 14 дней не помещаются в 3GB, старые
-    # блоки удаляются раньше срока (проверять prometheus_tsdb_storage_blocks_bytes;
-    # не хватает — сначала увеличить PVC, потом retentionSize).
-    retentionSize: 3GB
+    # 8GB из PVC 10Gi (было 3GB из 5Gi): остаток тома — под WAL и уплотнение блоков.
+    # Потеря метрик при переполнении недопустима: упёршись в диск, Prometheus
+    # перестаёт принимать данные. retentionSize срабатывает раньше retention: если
+    # 14 дней не помещаются в 8GB, старые блоки удаляются раньше срока. Реальный
+    # размер замерить после выката: prometheus_tsdb_storage_blocks_bytes через пару
+    # дней, умноженный на 14/дни; если 14 дней не помещаются — сначала увеличить PVC
+    # (класс тома умеет расширение, k8s/README.md «Хранилище»), потом retentionSize.
+    # Правка размера PVC: k8s/README.md, «Алерты и Alertmanager».
+    retentionSize: 8GB
     # Подбирать ВСЕ ServiceMonitor/PodMonitor/PrometheusRule/Probe в кластере
     # (не только созданные этим чартом) — паттерн референса UnionApp.
     ruleSelectorNilUsesHelmValues: false
@@ -63,7 +163,7 @@ prometheus:
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: 5Gi
+              storage: 10Gi
     resources:
       requests:
         cpu: 150m
