@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { ToggleUserActivationOperation, userManagementProcess } from '@ryadom/core/processes/user-management'
 import { getSentEmails } from '@ryadom/core/services/email-sender-service'
+import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import { ChangePasswordApiErrorCode } from '@ryadom/contracts/api/auth/password'
@@ -18,6 +19,7 @@ import {
   mockAgent,
   ok,
   PASSWORD,
+  recordingAnalytics,
   refusedWith,
   signUpAndIn,
   uniqueEmail,
@@ -329,6 +331,33 @@ describe('состояние аккаунта проверяет только re
     ok(await call(app, 'POST', '/api/auth/register', { email: user.email, password: PASSWORD, name: 'Аня' }))
   })
 
+  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Профиль и события в аналитике»: сценарии «(API) Удаление человеком»
+  // и «(API) Удаление не состоялось».
+  it('удаление ставит задачу стирания профиля в аналитике с выдержкой 30 секунд, не дожидаясь её', async () => {
+    resetLimits()
+    const analytics = recordingAnalytics()
+    const { app: withAnalytics } = makeApp({ analytics })
+    const { user, tokens } = await signUpAndIn(withAnalytics)
+    mockAgent()
+
+    expect(ok(await call(withAnalytics, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
+
+    expect(getEnqueuedJobs()).toEqual([
+      expect.objectContaining({
+        queue: 'analytics.erase-person',
+        data: { userId: user.id },
+        startAfterSeconds: 30,
+        singletonKey: user.id,
+      }),
+    ])
+    // The answer did not wait for analytics, and the request itself no longer erases anything.
+    expect(analytics.erased).toEqual([])
+
+    // A repeated request is a success and queues nothing more.
+    expect(ok(await call(withAnalytics, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
+    expect(getEnqueuedJobs()).toHaveLength(1)
+  })
+
   it('агент не стёр данные — 503, аккаунт остаётся', async () => {
     resetLimits()
     const { user, tokens } = await signUpAndIn(app)
@@ -342,5 +371,7 @@ describe('состояние аккаунта проверяет только re
 
     // The account is still there: signing in keeps working.
     ok(await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD }))
+    // «Удаление не состоялось»: nothing was queued for analytics, the person stays.
+    expect(getEnqueuedJobs()).toEqual([])
   })
 })

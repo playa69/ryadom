@@ -3,6 +3,7 @@
  * PostHog, and the events the routes report. Nothing here talks to PostHog: `fetch` is stubbed for the
  * proxy and the reports are recorded by a stand-in.
  */
+import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { describe, expect, it, vi } from 'vitest'
 import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics'
 import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
@@ -343,8 +344,12 @@ describe('события сервера', () => {
     expect(only(analytics, AnalyticsEvent.AccountDeleted)).toEqual([
       { userId: null, event: 'account_deleted', properties: {} },
     ])
-    // The promise is "erase everything": the pseudonymous profile in PostHog goes with the account.
-    await vi.waitFor(() => expect(analytics.erased).toEqual([user.id]))
+    // The promise is "erase everything": the pseudonymous profile in PostHog goes with the account. The request does
+    // not erase it; the erasure is queued with the deletion and a worker does it (test/jobs.test.ts).
+    expect(getEnqueuedJobs()).toEqual([
+      expect.objectContaining({ queue: 'analytics.erase-person', data: { userId: user.id } }),
+    ])
+    expect(analytics.erased).toEqual([])
   })
 
   it('диалог: старт и завершение по REST, с изменением напряжения без текста', async () => {
@@ -438,7 +443,7 @@ describe('отказ человека от аналитики (сервер ег
       on: vi.fn(),
     }
     const env = parseEnv({ ...process.env, ...POSTHOG })
-    const analytics = createAnalytics(env, createLogger('silent'), { client, erasureDelayMs: 0 })
+    const analytics = createAnalytics(env, createLogger('silent'), { client })
     return { client, analytics }
   }
 
@@ -535,7 +540,7 @@ describe('тип трафика аккаунта (сервер помечает 
       on: vi.fn(),
     }
     const env = parseEnv({ ...process.env, ...POSTHOG, RELEASE: '9.9.9' })
-    return { client, analytics: createAnalytics(env, createLogger('silent'), { client, erasureDelayMs: 0 }) }
+    return { client, analytics: createAnalytics(env, createLogger('silent'), { client }) }
   }
 
   const propertiesOf = (client: { capture: ReturnType<typeof vi.fn> }, event: string) =>

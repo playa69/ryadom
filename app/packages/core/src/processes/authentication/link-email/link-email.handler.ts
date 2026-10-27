@@ -35,13 +35,16 @@ import { linkEmailSchema } from './link-email.validator'
 
 /**
  * An anonymous account gets an address and a password, and with them an ordinary way to sign in on
- * another device. The address is only a claim until the code from the email is entered (the same
- * `confirm-email` that follows registration); until then the account keeps working as it was and
+ * another device. The address is only a claim until the code from the email is entered, from this
+ * account's own session (the same `confirm-email` that follows registration, which refuses anyone else:
+ * the mailbox may be a stranger's after a typo); until then the account keeps working as it was and
  * email sign-in stays closed, because the address is not confirmed.
  *
  * An address that belongs to another account is EMAIL_TAKEN, whether that account is confirmed or
- * not. Registration lets the real owner reclaim an address parked by someone else, but here that
- * would mean taking over an account that may hold data, so the person registers normally instead.
+ * not. Registration can take an unconfirmed address off this account when somebody else registers it,
+ * but only the address: this account stays as it is, a guest without an address. Taking over another
+ * account's address here would be taking over an account that may hold data, so the person registers
+ * normally instead.
  * An account whose address is still unconfirmed may ask again with another (a typo), which
  * replaces it; a confirmed address is final here.
  *

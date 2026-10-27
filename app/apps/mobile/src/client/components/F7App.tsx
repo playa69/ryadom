@@ -18,6 +18,7 @@ import InstallBanner from './InstallBanner'
 import OfflineBar from './OfflineBar'
 import { routes } from './routes'
 import SosSheet, { openSos } from './SosSheet'
+import HistorySheet from './self-check/HistorySheet'
 import TestSheet from './self-check/TestSheet'
 
 /**
@@ -268,6 +269,7 @@ export default function F7App() {
         <AppUpdateGate />
         <OfflineBar />
         {/* The test sheet first: the help sheet opened from its crisis screen must be above it (later in the DOM). */}
+        <HistorySheet />
         <TestSheet />
         <SosSheet />
         {/* Inside Telegram the app is already where the person keeps it: nothing to install. */}

@@ -1,4 +1,5 @@
 import { recomputeSummariesAfterDialogDeleted } from '@ryadom/core/processes/diary'
+import { CancelJobRequest, JobQueue, jobQueueService } from '@ryadom/core/services/job-queue-service'
 import {
   DeleteDialogOperation,
   DeleteDialogOperationErrorCode,
@@ -252,11 +253,18 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
           return assertNever(result.error)
       }
     }
-    // The conversation is gone for good: a failure of the diary must not undo that, the tick catches the week up by the text.
+    // The conversation is gone for good: a failure of the diary must not undo that. The job queued before the agent was
+    // asked (`dialogs.after-delete`) resets the week text in a couple of minutes if this does not; once it is done here
+    // the job is cancelled, and if the cancel fails the job repeats the reset, which is harmless.
     try {
-      await recomputeSummariesAfterDialogDeleted({ userId, dialogAt: result.startedAt })
+      const reset = await recomputeSummariesAfterDialogDeleted({ userId, dialogAt: result.startedAt })
+      if (reset.success && result.afterDeleteJobId) {
+        await jobQueueService.execute(
+          new CancelJobRequest({ queue: JobQueue.DialogsAfterDelete, jobId: result.afterDeleteJobId }),
+        )
+      }
     } catch (error) {
-      createLogger('dialogs').error('Week summary reset after a deleted dialog failed', error)
+      createLogger('dialogs').error('Week summary reset after a deleted dialog failed; the queued job repeats it', error)
     }
     const response: DeleteDialogApiResponse = { deleted: true }
     return apiOk(c, response)

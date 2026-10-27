@@ -1,0 +1,30 @@
+# =============================================================================
+# ServiceMonitor app-api — scrape /metrics API Prometheus'ом (ns prod)
+# =============================================================================
+# /metrics отдаёт только счётчики без id и текстов: сейчас self_check_crisis_total{test}
+# (openspec/changes/add-self-check-tests, D4). Наружу не публикуется: HTTPRoute app-api пропускает только
+# PathPrefix /api (02-httproute.yaml), а /metrics лежит вне /api.
+#
+# Применяет admin. Перед этим нужно правило сети: ingress monitoring → app-api:3002 в
+# namespaces/manifests/01-network-policy-prod.yaml (сейчас там разрешён только :15090) и egress prometheus →
+# prod:3002 в monitoring/manifests/01-network-policy.yaml (по образцу agent/04-servicemonitor.yaml).
+# =============================================================================
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: app-api
+  namespace: prod
+  labels:
+    app: app-api
+    app.kubernetes.io/part-of: ryadom
+spec:
+  selector:
+    matchLabels:
+      app: app-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

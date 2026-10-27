@@ -5,5 +5,9 @@ export enum DeleteDialogOperationErrorCode {
 }
 
 export type DeleteDialogResult =
-  | { success: true; startedAt: Date }
+  /**
+   * `afterDeleteJobId`: the job `dialogs.after-delete` queued before the agent was asked (null when one for this
+   * conversation was already waiting). The caller cancels it once it has reset the week itself.
+   */
+  | { success: true; startedAt: Date; afterDeleteJobId: string | null }
   | { success: false; error: DeleteDialogOperationErrorCode }

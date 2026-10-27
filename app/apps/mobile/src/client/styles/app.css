@@ -3202,4 +3202,44 @@ p.rd-recap-text {
 .rd-dialog-gone .button {
   align-self: center;
   width: min(100%, 320px);
+
+.rd-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.rd-test-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rd-test-chart {
+  width: 100%;
+}
+
+.rd-test-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ryadom-s-4);
+}
+
+.rd-link-button--dim {
+  color: var(--ryadom-text-dim);
+}
+
+/* The toast after saving a result: green on success, the same toast in red on failure. */
+.toast.rd-toast--success {
+  border: 1px solid #2f8f67;
+  background: #143d2e;
+  color: var(--ryadom-text);
+}
+
+.toast.rd-toast--error {
+  border: 1px solid #e5484d;
+  background: #3d1418;
+  color: var(--ryadom-text);
 }

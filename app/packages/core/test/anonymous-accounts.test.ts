@@ -175,7 +175,7 @@ describe('привязка почты', () => {
     expect((await countRows(user.id, email)).credentials).toBe(1)
     expect(await login(email)).toEqual({ success: false, error: LoginOperationErrorCode.EMAIL_NOT_CONFIRMED })
 
-    await confirmWithCode(email)
+    await confirmWithCode(email, user.id)
     const signedInByEmail = await login(email)
     expect(signedInByEmail.success && signedInByEmail.user.id).toBe(user.id)
   })
@@ -190,7 +190,7 @@ describe('привязка почты', () => {
     expect(pending.user).toMatchObject({ id: user.id, email, isEmailConfirmed: false })
     expect(pending.isNewAccount).toBe(false)
 
-    await confirmWithCode(email)
+    await confirmWithCode(email, user.id)
     // With a password the account needs no device, and a key left on a shared phone must not open it.
     const after = await signedIn(device)
     expect(after.isNewAccount).toBe(true)
@@ -221,7 +221,7 @@ describe('привязка почты', () => {
     const { user } = await signedIn(newDevice())
     const email = uniqueEmail()
     await link(user.id, email)
-    await confirmWithCode(email)
+    await confirmWithCode(email, user.id)
 
     expect(await link(user.id, uniqueEmail())).toEqual({
       success: false,
@@ -240,7 +240,7 @@ describe('привязка почты', () => {
 
     expect((await getUserRow(user.id))?.email).toBe(right)
     expect(await codeRows(typo)).toHaveLength(0)
-    await confirmWithCode(right)
+    await confirmWithCode(right, user.id)
     // The password of the second request is the one that counts.
     expect((await login(right, 'another-long-password')).success).toBe(true)
     expect((await login(right, PASSWORD)).success).toBe(false)

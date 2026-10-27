@@ -113,3 +113,89 @@ test('тесты в PWA: самопроверка, каталог, прохож�
   await page.getByTestId('result-close').click()
   await page.context().setOffline(false)
 })
+
+/** One pass of a test: a tap per question. */
+async function answerAll(page: import('@playwright/test').Page, values: number[]) {
+  for (const v of values) await page.getByTestId(`test-option-${v}`).click()
+}
+
+/** The confirmation of Framework7 («ОК»). */
+const confirmOk = (page: import('@playwright/test').Page) => page.locator('.dialog.modal-in .dialog-button', { hasText: 'ОК' }).click()
+
+test('тесты в PWA: согласие, сохранение, история с графиком, удаление, ошибка красным тостом, профиль', async ({ page, shot }) => {
+  test.setTimeout(240_000)
+  await openApp(page)
+  await startAnonymously(page)
+  await openTab(page, 'Дневник')
+  const diary = page.locator('.page-current[data-name="diary"]')
+  const toast = page.locator('.toast.modal-in')
+
+  // ── первое сохранение: согласие, «Не сохранять» возвращает к результату ──
+  await diary.getByTestId('self-check-start-gad7').click()
+  await answerAll(page, [1, 2, 1, 1, 1, 1, 1])
+  await expect(page.getByTestId('result-score')).toContainText('8')
+  await page.getByTestId('result-save').click()
+  const consent = page.getByTestId('test-consent')
+  await expect(consent).toContainText('Сохранить результат?')
+  await expect(consent).toContainText('Агент их не читает')
+  await shot(page, 'app-self-check-consent')
+  await page.getByTestId('consent-decline').click()
+  await expect(page.getByTestId('test-result')).toBeVisible()
+
+  // ── согласился: зелёный тост и строка в «Самопроверке» ────────────────
+  await page.getByTestId('result-save').click()
+  await page.getByTestId('consent-accept').click()
+  await expect(toast.filter({ hasText: 'Результат сохранён' })).toHaveClass(/rd-toast--success/)
+  await expect(page.getByTestId('test-result')).toBeHidden()
+  await expect(diary.getByTestId('saved-line-gad7')).toContainText('8/21 — лёгкая выраженность')
+  await shot(page, 'app-self-check-saved')
+
+  // ── второй результат без листа согласия; экран теста: история и график ──
+  await diary.getByTestId('self-check-start-gad7').click()
+  await answerAll(page, [0, 0, 0, 0, 0, 0, 0])
+  await page.getByTestId('result-save').click()
+  await expect(diary.getByTestId('saved-line-gad7')).toContainText('0/21 — минимальная выраженность')
+  await diary.getByTestId('self-check-history-gad7').click()
+  await expect(page.getByTestId('history-row')).toHaveCount(2)
+  await expect(page.getByTestId('history-chart-point')).toHaveCount(2)
+  await shot(page, 'app-self-check-history')
+  await page.getByTestId('history-delete').first().click()
+  await expect(page.locator('.dialog.modal-in')).toContainText('исчезнет с сервера')
+  await shot(page, 'app-self-check-delete-one')
+  await confirmOk(page)
+  await expect(page.getByTestId('history-row')).toHaveCount(1)
+  await expect(page.getByTestId('history-chart-empty')).toBeVisible()
+  await shot(page, 'app-self-check-history-one')
+  await page.getByTestId('history-delete-test').click()
+  await confirmOk(page)
+  await expect(page.getByTestId('test-history')).toBeHidden()
+  await expect(diary.getByTestId('saved-line-gad7')).toHaveCount(0)
+
+  // ── ошибка сохранения — тот же тост, красный; результат остаётся ─────────
+  await page.route('**/api/self-check/results', (route) => (route.request().method() === 'POST' ? route.abort() : route.continue()))
+  await diary.getByTestId('self-check-start-gad7').click()
+  await answerAll(page, [1, 1, 1, 1, 1, 1, 1])
+  await page.getByTestId('result-save').click()
+  await expect(toast.filter({ hasText: 'Не получилось сохранить' })).toHaveClass(/rd-toast--error/)
+  await expect(page.getByTestId('test-result')).toBeVisible()
+  await shot(page, 'app-self-check-save-error')
+  await page.unroute('**/api/self-check/results')
+  await page.getByTestId('result-save').click()
+  await expect(diary.getByTestId('saved-line-gad7')).toContainText('7/21')
+
+  // ── профиль → «Данные» ───────────────────────────────────────────────
+  await openTab(page, 'Профиль')
+  const profile = page.locator('.page-current[data-name="profile"]')
+  await expect(profile.getByTestId('profile-data')).toBeVisible()
+  await profile.getByTestId('profile-data').scrollIntoViewIfNeeded()
+  await shot(page, 'app-self-check-profile-data')
+  await profile.getByTestId('row-delete-self-check').click()
+  await expect(page.locator('.dialog.modal-in')).toContainText('Исчезнут результаты всех тестов')
+  await confirmOk(page)
+  await expect(toast.filter({ hasText: 'Все результаты тестов удалены' })).toBeVisible()
+  await profile.getByTestId('row-revoke-self-check').click()
+  await expect(page.locator('.dialog.modal-in')).toContainText('больше не будем их хранить')
+  await shot(page, 'app-self-check-revoke')
+  await confirmOk(page)
+  await expect(profile.getByTestId('row-revoke-self-check')).toHaveCount(0)
+})

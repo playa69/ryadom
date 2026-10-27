@@ -72,7 +72,7 @@ export type RequiredUserConsentKind = (typeof USER_CONSENT_KINDS)[number]
  *
  * These values are stored in the column, so they must not be changed.
  */
-export const OPTIONAL_CONSENT_KINDS = ['memory'] as const
+export const OPTIONAL_CONSENT_KINDS = ['memory', 'self_check'] as const
 export type OptionalUserConsentKind = (typeof OPTIONAL_CONSENT_KINDS)[number]
 
 export type UserConsentKind = RequiredUserConsentKind | OptionalUserConsentKind

@@ -1,6 +1,6 @@
 # Tasks: add-mood-diary
 
-Контракт — `specs/{mood-widget,mood-diary,data-retention}/spec.md`. Решения — `design.md` (D10, D14 и «Open Questions»). Требования продукта — `REQ-WELL-05`, `REQ-WELL-10` в `docs/spec.md`. Подробности каждой задачи — `tasks-details.md`.
+Контракт — `specs/{mood-widget,mood-diary}/spec.md`. Решения — `design.md` (D10, D14 и «Open Questions»). Требования продукта — `REQ-WELL-05`, `REQ-WELL-10` в `docs/spec.md`. Подробности каждой задачи — `tasks-details.md`.
 
 Выполнено — см. capability `mood-diary`, `dialog-recaps`, `dialog-history`, `data-retention`, `app-shell`, `pwa-delivery` в `openspec/specs/` (миграция `0010_mood_diary`, отметки и очередь без сети, график, итоги недели, фоновый проход, итоги разговоров и лист завершения, журнал внутри «Дневника», вкладки и сайдбар, ярлык PWA, токен виджета в API, срок хранения 90 дней и строки о сроках для людей, аналитика дневника, e2e и мок агента). Напоминание о настроении — `add-notifications`, поиск по итогам — `add-recap-search`, тесты и сегмент «Тесты» в мобильном клиенте — capability `self-check`, серверная часть тестов — `add-self-check-tests`.
 
@@ -20,7 +20,6 @@
 - [ ] 4.2 Android: плагин Capacitor «закрепить виджет» (`AppWidgetManager.requestPinAppWidget`), получение токена `POST /api/diary/widget-token`, хранение токена в зашифрованных настройках, инструкция для лаунчера без закрепления, событие `widget_pin_requested {result}` в `app/packages/analytics/src/events.ts` (без значений настроения). Приёмка: сценарии «(Android) Закрепление» и «(Android) Лаунчер без закрепления»; тест `sanitize` в `app/packages/analytics/test`
 - [ ] 4.3 Мобильный клиент: строка «Виджет на главный экран» (Android) и «Быстрая отметка: удерживай значок Рядом» (установленная PWA) в сегменте «Дневник» (`app/apps/mobile/src/client/components/pages/diary/DiaryPage.tsx`); без плагина (старый APK) и в вебе, Mini App, iOS строки нет. Приёмка: сценарии «(PWA) Подсказка про ярлык» и «(Android) Старая сборка» из `specs/mood-widget/spec.md`
 - [ ] 4.4 Мобильный клиент (Android): выход из аккаунта отзывает токен виджета до выхода и стирает его на устройстве (без сети — только на устройстве). Приёмка: сценарии «(Android) Выход» и «(Android) Выход без сети» из `specs/mood-widget/spec.md`, «(Android) Выход из приложения» из `specs/mood-diary/spec.md`
-- [ ] 4.5 Веб: строка «Разговоры хранятся 90 дней после последнего сообщения.» над непустым списком журнала у аккаунта с подтверждённой почтой (`app/apps/web/components/JournalScreen.tsx`): тот же `DIALOG_KEEP_NOTE` из `@ryadom/client-core/retention`, что в мобильном `JournalPage.tsx`; у гостя блок со сроками остаётся как есть. Приёмка: сценарии «Журнал, аккаунт с почтой» и «Журнал без разговоров» из `specs/data-retention/spec.md`
 
 ## 5. Проверка
 
@@ -28,7 +27,6 @@
 
 - [ ] 5.1 Токен виджета в API. Тест: `app/services/api/test/diary.test.ts` («Выход на всех устройствах», «Смена пароля», «Блокировка», плюс прежние «Токен не открывает остального», «Новый токен») с комментарием `openspec/changes/add-mood-diary`, «Токен виджета в API»; `app/packages/core/test/diary.test.ts` для отзыва командой. Проверка после выката: `k8s/postdeploy/test_features.py`, тест `test_widget_token_is_revoked_by_logout_all` на тестовом аккаунте. Приёмка: тесты зелёные, проверка `--expect post` проходит
 - [ ] 5.2 Виджет и подсказка. e2e: `app/e2e/tests/app-diary.spec.ts`, проект mobile — «(PWA) Подсказка про ярлык» (режим `standalone` подменяется init-скриптом) и «(Android) Старая сборка» (нет плагина — нет строки), шаги `step(...)` и снимки 390 и 1280. Ручные проверки Android (эмулятор, Android 13+ и лаунчер без закрепления): все сценарии `specs/mood-widget/spec.md`, снимки `adb screencap` по шагам. Приёмка: e2e зелёный на mobile, Android-снимки приложены к задаче
-- [ ] 5.3 Строка о сроке. e2e: `app/e2e/tests/web-history.spec.ts` (desktop) и `app/e2e/tests/app-recaps.spec.ts` (mobile) — «Журнал, аккаунт с почтой», «Журнал без разговоров»; `app/e2e/tests/web-anonymous.spec.ts` и `app/e2e/tests/app-anonymous.spec.ts` — «Гость» (оба срока в тексте; сейчас e2e это не проверяют); снимки 390 и 1280. Приёмка: весь e2e-набор зелёный на desktop и mobile
 
 ## 6. Выкат
 
@@ -40,4 +38,4 @@
 ## 7. Архив
 
 - [ ] 7.1 Статусы `REQ-WELL-01`…`REQ-WELL-05` и `REQ-WELL-10` в `docs/spec.md` по коду; индекс требований (§5). Приёмка: `docs/spec.md` соответствует коду
-- [ ] 7.2 `openspec archive add-mood-diary` после выката: MODIFIED вливает «Токен виджета в API» и «Человек знает о сроке хранения разговоров» в базу целиком. Приёмка: `openspec validate --specs --strict` зелёный, `git diff openspec/specs` ничего нужного не теряет
+- [ ] 7.2 `openspec archive add-mood-diary` после выката: MODIFIED вливает «Токен виджета в API» в базу целиком. Приёмка: `openspec validate --specs --strict` зелёный, `git diff openspec/specs` ничего нужного не теряет

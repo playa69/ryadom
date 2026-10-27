@@ -41,7 +41,7 @@ k8s/
 ├── agent/                          ← агент (ns agent): config, Service, Deployment, ServiceMonitor, Cognee, README
 ├── app/                            ← сервисы из app/ репозитория (ns prod): см. раздел ниже
 │   ├── 00-app-config.yaml          ← ConfigMap app-config (всё статическое и несекретное)
-│   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 05-job-migrate-0005 (drizzle)
+│   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 05-job-migrate-0005 (drizzle и схема очереди задач pgboss)
 │   └── api/ admin/ web/ landing/ pwa/   ← 01-service, 02-httproute, 03-deployment (admin/ ещё 00-config: ADMIN_EMAILS)
 ├── tls/                            ← РЕЗЕРВ: lego DNS-01 runbook (не используется,
 │                                     рабочая схема — cert-manager HTTP-01)
@@ -495,7 +495,7 @@ Node-приложения «Рядом» из каталога `app/` репоз
 | `/pwa/*` | `app-pwa` | 3004 | PWA: браузерная сборка `apps/mobile` за nginx (Vite `base=/pwa/`), ставится на домашний экран; ссылка с инструкцией — на `/download` |
 | `/admin/*` | `app-admin` | 3001 | админка (Next `basePath=/admin`; вход по `ADMIN_EMAILS`) |
 | `/` | `app-landing` | 3000 | маркетинг и документы (всё, что не совпало выше) |
-| — | `app-migrate` | — | Job drizzle-миграций БД `app` |
+| — | `app-migrate` | — | Job миграций БД `app`: drizzle и схема очереди задач `pgboss` |
 
 `<домен>` = `xn----htbtgjker8b3a2c.xn--p1ai`. Общий ConfigMap `app-config`
 (+ `app-admin-config` для админки), секреты `app-secrets`/`app-smtp`
@@ -726,6 +726,20 @@ kubectl -n prod get httproute                                        # Accepted/
 проверка IP-лимитов (раздел выше). Откат:
 `kubectl delete -f k8s/app/<svc>/02-httproute.yaml` (снимает публикацию сервиса);
 БД `app` удалять только осознанно (есть daily-бэкап CNPG).
+
+### Очередь задач api
+
+Фоновая работа api (чистка реестра сессий и неактивных гостевых аккаунтов, итоги недели дневника, стирание профиля в
+PostHog после удаления аккаунта, сброс недели после удаления разговора, сторож очередей) идёт задачами pg-boss в той же
+базе `app`, схема `pgboss`, роль та же. Расписания выполняются одним запуском на все реплики, задача — одной репликой;
+сбой повторяется с нарастающей паузой, исчерпанные повторы остаются в очереди `jobs.dead-letter` (30 дней) и
+попадают в журнал `warn` от сторожа раз в 5 минут. Схему ставит Job `app-migrate-*` (образ `migrate`), api её не меняет и
+без неё не стартует (под остаётся в `CrashLoopBackOff`, старые поды продолжают работать), поэтому порядок выката
+прежний: migrate → api. Откат api (`rollout undo`) безопасен: схему и поставленные задачи он не трогает, а задачи ждут в
+очереди возврата новой версии. Удалять схему (`DROP SCHEMA pgboss CASCADE`) — отдельная прод-операция, только по явному
+«да». Настройки в `app-config`: `JOBS_WORKERS_ENABLED` (воркеры в этом поде, по умолчанию `true`), `JOBS_POOL_MAX` (4
+соединения очереди на под, пул ядра ещё 10; перед ростом числа реплик пересчитать с `max_connections` CNPG),
+`JOBS_STOP_TIMEOUT_MS` (10000). Остановка пода: до 30 с (`HARD_EXIT_MS`), в пределах `terminationGracePeriodSeconds` 60.
 
 ### Новая версия
 

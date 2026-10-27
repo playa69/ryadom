@@ -29,7 +29,10 @@ import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { eq } from 'drizzle-orm'
 import { diarySummaries } from '@ryadom/db/schema'
+import { diaryProcess } from '@ryadom/core/processes/diary'
+import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { getDb } from '@ryadom/core/shared'
+import { afterDeleteJob } from '../src/jobs/after-delete'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
@@ -420,6 +423,94 @@ describe('итог разговора, удаление и настройка', 
     const byWeek = Object.fromEntries(rows.map((r) => [r.periodStart, r]))
     expect(byWeek['2026-10-19']).toMatchObject({ status: 'pending', text: '' })
     expect(byWeek['2026-10-12']).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+  })
+
+  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Когда пересчитываются итоги недели»: сценарии «Сброс после удаления не удался»
+  // и «Удаление разговора не состоялось».
+  describe('сброс недели после удаления разговора идёт через очередь', () => {
+    const week = (userId: string) => ({
+      userId,
+      kind: 'week' as const,
+      periodStart: '2026-10-19',
+      text: 'Итог недели.',
+      status: 'ready' as const,
+    })
+    const weekRow = async (userId: string) =>
+      (await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, userId)))[0]
+    /** The follow-up job as the worker runs it, on the job that stands in the queue. */
+    const runQueuedJob = async () => {
+      const [queued] = getEnqueuedJobs()
+      expect(queued?.queue).toBe('dialogs.after-delete')
+      await afterDeleteJob()(queued!.data as never, {} as never)
+    }
+
+    it('после успешного сброса в запросе задача отменена: ждать нечего', async () => {
+      resetLimits()
+      const { user, tokens } = await signUpAndIn(app)
+      await getDb().insert(diarySummaries).values(week(user.id))
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+        'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
+      })
+
+      ok<DeleteDialogApiResponse>(await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken))
+
+      expect(await weekRow(user.id)).toMatchObject({ status: 'pending', text: '' })
+      expect(getEnqueuedJobs()).toEqual([])
+    })
+
+    it('Сброс после удаления не удался: запрос ответил, неделя не сброшена, задача лежит и сбрасывает её сама', async () => {
+      resetLimits()
+      const { user, tokens } = await signUpAndIn(app)
+      await getDb().insert(diarySummaries).values(week(user.id))
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+        'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
+      })
+      // The pod restarted or the database did not answer between the agent's answer and the reset.
+      const failing = vi.spyOn(diaryProcess, 'execute').mockRejectedValueOnce(new Error('the database did not answer'))
+
+      const deleted = ok<DeleteDialogApiResponse>(
+        await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken),
+      )
+      failing.mockRestore()
+
+      expect(deleted).toEqual({ deleted: true })
+      // The text still retells the deleted conversation, and the job that will reset it is waiting.
+      expect(await weekRow(user.id)).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+      expect(getEnqueuedJobs()).toEqual([
+        expect.objectContaining({
+          queue: 'dialogs.after-delete',
+          data: { userId: user.id, dialogId: 'd-1', dialogAt: '2026-10-20T10:00:00.000Z' },
+          startAfterSeconds: 120,
+        }),
+      ])
+
+      // Two minutes later the agent confirms that the conversation is gone, and the job resets the week.
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404),
+      })
+      await runQueuedJob()
+      expect(await weekRow(user.id)).toMatchObject({ status: 'pending', text: '' })
+    })
+
+    it('Удаление разговора не состоялось: агент отказал — 503, разговор на месте, а задача ничего не сбрасывает', async () => {
+      resetLimits()
+      const { user, tokens } = await signUpAndIn(app)
+      await getDb().insert(diarySummaries).values(week(user.id))
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+        'DELETE http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'boom' }, 502),
+      })
+
+      expect((await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken)).status).toBe(503)
+      expect(getEnqueuedJobs()).toHaveLength(1)
+
+      // The conversation is still at the agent, so the job leaves the week text as it is.
+      mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog) })
+      await runQueuedJob()
+      expect(await weekRow(user.id)).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+    })
   })
 
   it('чужого и несуществующего разговора нет; без сессии — 401; агент лёг — 503', async () => {

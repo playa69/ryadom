@@ -8,6 +8,12 @@ import {
   GetAgentDialogRequest,
   GetAgentDialogRequestErrorCode,
 } from '../../../integrations/agent-api'
+import {
+  AFTER_DELETE_DELAY_SECONDS,
+  EnqueueJobRequest,
+  JobQueue,
+  jobQueueService,
+} from '../../../services/job-queue-service'
 import { createLogger } from '../../../shared'
 import { toDialogListItemDTO } from '../shared/dialog.dto'
 import { DialogAccessRefusal, ensureActiveUser } from '../shared/ensure-active-user'
@@ -42,6 +48,17 @@ export class DeleteDialogOperationHandler implements RequestHandler<DeleteDialog
       }
     }
     const startedAt = toDialogListItemDTO(found.dialog).startedAt
+    // Before the agent is asked: if this pod dies right after the agent deleted the conversation, the week text that
+    // retells it is still reset, by the job, two minutes later. If the deletion did not happen the job finds the
+    // conversation in place and does nothing.
+    const { jobId: afterDeleteJobId } = await jobQueueService.execute(
+      new EnqueueJobRequest({
+        queue: JobQueue.DialogsAfterDelete,
+        data: { userId: operation.userId, dialogId: operation.dialogId, dialogAt: startedAt.toISOString() },
+        startAfterSeconds: AFTER_DELETE_DELAY_SECONDS,
+        singletonKey: `${operation.userId}:${operation.dialogId}`,
+      }),
+    )
     const deleted = await agentApiIntegration.execute(
       new DeleteAgentDialogRequest({ userId: operation.userId, dialogId: operation.dialogId }),
     )
@@ -58,6 +75,6 @@ export class DeleteDialogOperationHandler implements RequestHandler<DeleteDialog
       new RevokeDialogShareCommand({ userId: operation.userId, dialogId: operation.dialogId, now: new Date() }),
     )
     createLogger('dialogs').info('Dialog deleted by the person', { userId: operation.userId, dialogId: operation.dialogId })
-    return { success: true, startedAt }
+    return { success: true, startedAt, afterDeleteJobId }
   }
 }
