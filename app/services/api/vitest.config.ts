@@ -1,11 +1,10 @@
+import { testDatabase } from '@ryadom/db/test-db'
 import { defineConfig } from 'vitest/config'
 
-// The API runs for real against the real core and its own test database (ryadom_test_api from
-// dev/postgres-init.sql), so that a parallel turbo run does not disturb the core's tests. The agent
-// is stubbed through fetch and a WebSocket server started inside the test; email uses the memory
-// transport.
-const testDatabaseUrl =
-  process.env.DATABASE_URL_TEST_API ?? 'postgres://ryadom:ryadom@localhost:55433/ryadom_test_api'
+// The API runs for real against the real core and a test database of its own, created for this run (see
+// @ryadom/db/test-db), so that a parallel turbo run does not disturb the core's tests. The agent is stubbed
+// through fetch and a WebSocket server started inside the test; email uses the memory transport.
+const testDatabaseUrl = testDatabase({ explicitUrl: process.env.DATABASE_URL_TEST_API }).url
 
 export default defineConfig({
   test: {
@@ -13,7 +12,7 @@ export default defineConfig({
     environment: 'node',
     globalSetup: ['./test/global-setup.ts'],
     setupFiles: ['./test/setup.ts'],
-    // All files share one database and clear it between tests, so they must run sequentially.
+    // All files of the run share its database and clear it between tests, so they must run sequentially.
     fileParallelism: false,
     testTimeout: 30_000,
     hookTimeout: 60_000,

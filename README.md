@@ -331,6 +331,20 @@ pnpm dev               # api + landing + web + admin + mobile
 Отдельные части: `pnpm dev:api`, `pnpm dev:web`, `pnpm dev:app` (PWA), `pnpm dev:landing`, `pnpm dev:admin`.
 Переменные окружения — в `.env.example` каждого приложения.
 
+Так запускает стенд человек: порты фиксированные (3000–3003, 5174, 55433, …), второй такой стенд рядом не встанет.
+Агенты и параллельные задачи работают в своих git worktree, и у каждого worktree **свой стенд**: слот, а с ним свои
+порты (`20000 + 100·слот + k`), compose-проекты и база для юнит-тестов.
+
+```bash
+cd app
+pnpm stand:up [--only api,web] [--infra-only]   # контейнеры + миграции + dev-серверы на портах слота
+pnpm stand:env                                  # адреса и переменные стенда
+pnpm stand:down                                 # снять всё своё (--release — вернуть и слот)
+pnpm stand:ls                                   # стенды всей машины;  pnpm stand:gc — убрать брошенные
+```
+
+Карта портов и подробности — в скилле [`local-dev`](.agents/skills/local-dev/SKILL.md).
+
 ### Агент
 
 Без ключей моделей — шаблонные ответы и локальная озвучка espeak-ng:
@@ -348,8 +362,10 @@ AGENT_INTERNAL_TOKEN=<токен> TTS_MODE=espeak LLM_MODE=template uv run uvico
 ```bash
 # приложение
 cd app
-pnpm typecheck && pnpm lint && pnpm test
-pnpm test:e2e
+pnpm typecheck && pnpm lint
+pnpm test                      # юнит-тесты: каждый прогон в своей базе PostgreSQL, одновременные прогоны не мешают друг другу
+pnpm e2e                       # сквозные тесты (Playwright) на стенде worktree; в pnpm test не входят
+pnpm evidence <TASK> [спеки]   # то же + по скриншоту на каждый шаг сценария (e2e/evidence/<TASK>/)
 
 # агент
 cd agent

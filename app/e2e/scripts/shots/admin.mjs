@@ -1,13 +1,15 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { newestCode, newestId } from './mail.mjs'
+import { standUrls } from './stand.mjs'
 
 const ADMIN_EMAIL = 'admin@ryadom.local'
 
 /** apps/admin: an internal desktop tool; signs in with a one-time code from Mailpit, once. */
 export function adminSpec(args, repoRoot) {
-  const base = String(args.base ?? 'http://localhost:3021').replace(/\/$/, '')
-  const mail = String(args.mail ?? 'http://localhost:8026')
+  const urls = standUrls(args)
+  const base = String(args.base ?? urls.admin).replace(/\/$/, '')
+  const mail = String(args.mail ?? urls.mail)
   const state = resolve(String(args.state ?? join(repoRoot, '.playwright-mcp', 'admin-state.json')))
 
   const go = (path) => async (page) => {

@@ -16,6 +16,7 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
     "noEmit": true
   }
 }

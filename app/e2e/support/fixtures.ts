@@ -1,13 +1,15 @@
 import { test as base, type BrowserContext, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installMicrophone, installSpeechStub } from './speech'
 
 /**
- * Screenshots go to `e2e/screenshots/` (not in git): the test run's own pictures, kept apart from the
- * curated set of every app's current screens in the repository's `screenshots/`.
+ * Screenshots go to `e2e/screenshots/<project>/` (not in git): the test run's own pictures, kept apart from the
+ * curated set of every app's current screens in the repository's `screenshots/`. A name is unique to the test
+ * that took it (spec file and a hash of its title in the file name): two tests that call a shot `home` used to
+ * overwrite each other. The step-by-step proof of a scenario is support/evidence.ts.
  */
 const e2eRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const SCREENSHOT_DIR = join(e2eRoot, 'screenshots')
@@ -72,13 +74,20 @@ export const test = base.extend<{
     await Promise.all(contexts.map((context) => context.close()))
   },
   shot: async ({}, use, testInfo) => {
-    await mkdir(SCREENSHOT_DIR, { recursive: true })
+    const dir = join(SCREENSHOT_DIR, testInfo.project.name)
+    await mkdir(dir, { recursive: true })
+    const titleHash = createHash('sha1').update(testInfo.titlePath.join('/')).digest('hex').slice(0, 6)
+    const owner = `${basename(testInfo.file).replace(/\.spec\.ts$/, '')}__${titleHash}`
+    const taken = new Map<string, number>()
     const shot: Shot = async (page, name, options = {}) => {
+      // The same name twice in one test is two pictures, not one overwritten.
+      const count = (taken.get(name) ?? 0) + 1
+      taken.set(name, count)
       // Otherwise the breathing circle and Framework7 transitions give a different frame each run.
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await page.waitForTimeout(400)
       await page.screenshot({
-        path: join(SCREENSHOT_DIR, `${testInfo.project.name}-${name}.png`),
+        path: join(dir, `${owner}__${name}${count > 1 ? `-${count}` : ''}.png`),
         fullPage: options.fullPage ?? false,
       })
     }

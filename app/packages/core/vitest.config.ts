@@ -1,16 +1,16 @@
+import { testDatabase } from '@ryadom/db/test-db'
 import { defineConfig } from 'vitest/config'
 
-// Tests talk to a real Postgres (ryadom_test from dev/compose.yaml); outbound HTTP goes through
-// vi.stubGlobal('fetch') and emails use the memory transport.
-const testDatabaseUrl =
-  process.env.DATABASE_URL_TEST ?? 'postgres://ryadom:ryadom@localhost:55433/ryadom_test'
+// Tests talk to a real Postgres, in a database created for this run (see @ryadom/db/test-db); outbound HTTP goes
+// through vi.stubGlobal('fetch') and emails use the memory transport.
+const testDatabaseUrl = testDatabase({ explicitUrl: process.env.DATABASE_URL_TEST }).url
 
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     globalSetup: ['./test/global-setup.ts'],
     setupFiles: ['./test/setup.ts'],
-    // All files share one database and clean it between tests, so they must run sequentially.
+    // All files of the run share its database and clean it between tests, so they must run sequentially.
     fileParallelism: false,
     testTimeout: 30_000,
     hookTimeout: 60_000,

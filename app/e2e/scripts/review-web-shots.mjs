@@ -15,12 +15,15 @@ import { chromium } from '@playwright/test'
 import { mkdir, readdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveStand } from '../../scripts/stand-ports.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const OUT = join(repoRoot, 'review')
 
-const WEBAPP = process.env.E2E_WEBAPP_URL ?? 'http://127.0.0.1:3103'
-const MAIL = process.env.E2E_MAIL_URL ?? 'http://127.0.0.1:8027'
+// The addresses of this worktree's e2e stack (app/.stand.json; the old fixed ports without a slot).
+const STACK = resolveStand().urls.e2e
+const WEBAPP = process.env.E2E_WEBAPP_URL ?? STACK.web
+const MAIL = process.env.E2E_MAIL_URL ?? STACK.mail
 
 const DEFAULT_WIDTHS = [
   { name: '360', width: 360, height: 780 },
