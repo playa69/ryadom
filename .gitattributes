@@ -4,3 +4,10 @@
 
 # cloud-init релея Gemini читается на Linux-сервере: CRLF ломает cloud-config, фиксируем LF.
 agent/relay/*.yaml text eol=lf
+
+# Скиллы и инструкции агентов: с CRLF Claude Code не разбирает YAML-шапку скилла и грузит его без описания
+# (скилл не срабатывает сам), а строка `@AGENTS.md` в CLAUDE.md получила бы на конце \r. Фиксируем LF.
+.agents/skills/** text eol=lf
+.claude/skills/** text eol=lf
+AGENTS.md text eol=lf
+CLAUDE.md text eol=lf
