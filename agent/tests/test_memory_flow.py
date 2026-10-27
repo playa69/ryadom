@@ -196,3 +196,11 @@ async def test_a_note_differing_only_in_punctuation_and_yo_is_the_same_note() ->
     await service.notes.add(user, "situation", "Работает менеджером, последнее время очень устаёт.")
     again = await service.notes.add(user, "situation", "Работает менеджером последнее время очень устает")
     assert len(db.list_notes(user)) == 1 and again["text"].startswith("Работает")
+
+
+def test_memory_rules_forbid_inventing_the_person() -> None:
+    """Живой прогон (scripts/memory_rules_check.py) показал: по памяти модель выдумывала вкусы и характер человека."""
+    from app.services.replies import MEMORY_RULES
+
+    assert "Ничего не додумывай" in MEMORY_RULES and "Оценок и черт характера не давай" in MEMORY_RULES
+    assert "Если заметок нет" in MEMORY_RULES
