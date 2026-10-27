@@ -124,6 +124,13 @@ describe('начать разговор', () => {
     await usersManager.execute(new UpdateUserVoiceCommand({ userId: user.id, voice: 'female' }))
     await start(user.id)
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
+
+    // A concrete voice the person picked goes to the agent next to the gender.
+    await usersManager.execute(
+      new UpdateUserVoiceCommand({ userId: user.id, voice: 'female', voiceName: 'Aoede' }),
+    )
+    await start(user.id)
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female', voiceName: 'Aoede' })
   })
 
   it('startNew: агенту уходит new: true вместе с голосом', async () => {

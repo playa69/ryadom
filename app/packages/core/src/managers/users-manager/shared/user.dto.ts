@@ -10,6 +10,8 @@ export interface UserDTO {
   name: string | null
   /** The voice the agent speaks with, by gender. */
   agentVoice: AgentVoice
+  /** The concrete voice the person picked; null while the agent's default for the gender applies. */
+  agentVoiceName: string | null
   /** IANA time zone of the person. */
   timezone: string
   /** false means the account was blocked by an admin, or deleted. */
@@ -59,6 +61,7 @@ export function toUserDTO(row: UserRow): UserDTO {
     telegramId: row.telegramId,
     name: row.name,
     agentVoice: row.agentVoice,
+    agentVoiceName: row.agentVoiceName,
     timezone: row.timezone,
     isActive: row.isActive,
     isEmailConfirmed: row.isEmailConfirmed,

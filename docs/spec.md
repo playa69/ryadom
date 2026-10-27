@@ -243,7 +243,7 @@ flowchart LR
 
 | Сущность | Ключевые поля | Заметки |
 |---|---|---|
-| `users` | `id` (UUID — он же `userId` у агента), `email` (citext, null у анонимного), `name`, `agent_voice` (`male`/`female`), `is_active`, `is_email_confirmed`, `is_deleted`, `last_active_at` | Удаление мягкое: строка анонимизируется, архив ПДн — в `properties.deletion` |
+| `users` | `id` (UUID — он же `userId` у агента), `email` (citext, null у анонимного), `name`, `agent_voice` (`male`/`female`), `agent_voice_name` (голос Gemini, nullable), `is_active`, `is_email_confirmed`, `is_deleted`, `last_active_at` | Удаление мягкое: строка анонимизируется, архив ПДн — в `properties.deletion` |
 | `user_credentials` | хэш пароля | |
 | `user_devices` | удостоверение устройства для анонимного входа | |
 | `refresh_tokens` | сессии устройства, ротация | |
@@ -312,6 +312,7 @@ stateDiagram-v2
 - WHEN передан `new: true` и в открытом диалоге есть сообщения THEN он завершается (остаётся в журнале завершённым) и создаётся новый, `resumed=false`, `messageCount=0`.
 - WHEN передан `new: true`, а открытый диалог пуст (сообщений нет) THEN завершать нечего: он переиспользуется, `resumed=false`, `messageCount=0`.
 - WHEN передан `voice` THEN он запоминается как предпочтение человека и применяется к диалогу; без `voice` — прошлый выбор, иначе `TTS_DEFAULT_VOICE`.
+- WHEN в режиме `gemini_live` передан `voiceName` (голос из списка `agent/app/core/voices.py`) THEN он задаёт голос сессии и озвучки фраз, ответ содержит `voiceName`; имя вне списка — `400`; в каскаде поле игнорируется (`REQ-ACC-07`).
 
 **`REQ-DLG-02`** — Время с прошлого разговора. Статус: **частично** — число считается и отдаётся клиенту, но не влияет на приветствие и генерацию.
 `sinceLastDialogHours` — целое число часов с `ended_at` последнего завершённого диалога, `null` для первого. Целевое поведение — см. `REQ-MEM-04`.
@@ -644,6 +645,7 @@ Recall на валидационном наборе (собирается с к�
 - `REQ-ACC-03`: JWT access + refresh с ротацией; список сессий устройства и выход со всех.
 - `REQ-ACC-04`: удаление аккаунта человеком и администратором (подтверждение вводом почты или id) → `REQ-DATA-02`.
 - `REQ-ACC-05`: голос агента (`male`/`female`) — настройка профиля (`users.agent_voice`), передаётся агенту при старте диалога.
+- `REQ-ACC-07`: выбор конкретного голоса агента из 30 голосов Gemini Live (веб — модалка, PWA — страница профиля, табы «Женские / Мужские», прослушивание сэмпла до выбора). Статус: **реализовано**, не проверено на устройствах iOS и Android и на слух по роду голосов. Голос хранится в `users.agent_voice_name`, `PATCH /api/auth/me` принимает `voiceName` (вместе с ним задаётся и род), агент получает `voiceName` при старте диалога (`openspec/changes/add-voice-selector`). Действует только в режиме `gemini_live`.
 - `REQ-ACC-06`: заблокированный аккаунт (`is_active=false`) не может начать диалог; сессия в сокете перепроверяется периодически.
 
 ### 6.13. Дневник настроения и тесты
@@ -959,6 +961,7 @@ sequenceDiagram
 | `REQ-MEM-01..05`, `REQ-MEM-11`, `REQ-DATA-03` | `agent/app/memory/*`, `agent/app/api/memory.py`, `agent/app/services/dialog_store.py`, `app/services/api/src/routes/{memory,dialogs}`, `app/packages/core/src/processes/{memory,diary}` | `agent/tests/test_memory_*.py`, `agent/tests/test_retention.py`, `app/services/api/test/{memory,dialogs,diary}.test.ts` |
 | `REQ-ACC-*` | `app/services/api/src/routes/auth`, `app/packages/core/src/processes` | `app/services/api/test`, `app/packages/core/test`, `app/e2e/tests` |
 | `REQ-DATA-05` | `app/packages/db/src/schema/dialog-shares.ts`, `app/packages/core/src/processes/dialog-shares`, `app/services/api/src/routes/dialog-shares`, `app/apps/web/components/ShareDialogModal.tsx`, `SharedDialogScreen.tsx`, `app/apps/mobile/src/client/components/pages/journal/ShareSheet.tsx` | `app/services/api/test/dialog-shares.test.ts`, `app/e2e/tests/web-share.spec.ts` |
+| `REQ-ACC-07` | `app/packages/contracts/src/voices.ts`, `app/services/api/src/routes/auth/me.ts`, `app/packages/core/src/managers/users-manager`, `app/apps/web/components/ProfileVoice.tsx`, `app/apps/mobile/src/client/components/pages/profile/VoicePage.tsx`, `agent/app/api/dialogs.py`, `agent/app/core/voices.py` | `app/packages/core/test/user-voice.test.ts`, `app/services/api/test/account.test.ts`, `agent/tests/test_rest.py`, `agent/tests/test_dialog_store.py`, `app/e2e/tests/web-account.spec.ts`, `app/e2e/tests/app-account.spec.ts` |
 | `REQ-MEM-07..09` | план: `openspec/changes/add-memory-notes/tasks.md` | — |
 | `REQ-WELL-01..03`, `REQ-WELL-05` | план: `openspec/changes/add-mood-diary/tasks.md` | — |
 | `REQ-WELL-04` | план: `openspec/changes/add-notifications/tasks.md` | — |

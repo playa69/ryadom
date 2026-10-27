@@ -1,5 +1,5 @@
 /**
- * Schema of the mood diary (`REQ-WELL-01`, migration `0009_mood_diary`): one note per local day,
+ * Schema of the mood diary (`REQ-WELL-01`, migration `0010_mood_diary`): one note per local day,
  * values limited by the database itself, rows go with the account.
  */
 import { eq } from 'drizzle-orm'

@@ -3,10 +3,11 @@
 import logging
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import Store, canonical_user_id, require_token
+from app.core.voices import GEMINI_VOICE_NAMES
 from app.core.errors import AgentError, dialog_not_found, validation_error
 from app.services import recaps
 from app.services.dialog_store import InvalidCursor
@@ -53,9 +54,11 @@ class StartBody(BaseModel):
     диалога, повтор возвращает его с `resumed: true`; клиент по `messageCount` решает, спросить ли «продолжить или завершить».
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     voice: Literal["male", "female"] | None = None
+    # Конкретный голос Gemini (профиль): действует только в режиме gemini_live и только вместе с `voice` (его родом).
+    voice_name: str | None = Field(default=None, alias="voiceName", max_length=32)
     new: bool = False
     # `off` — разговор «Без памяти»: без заметок и индекса (срок хранения и пометка в журнале — `add-unsaved-dialog`).
     # Только для нового диалога: возвращённый открытый остаётся со своей памятью.
@@ -63,11 +66,15 @@ class StartBody(BaseModel):
 
 
 @router.post("/dialogs")
-async def start_dialog(user_id: str, store: Store, body: StartBody | None = None) -> dict[str, Any]:
+async def start_dialog(user_id: str, store: Store, request: Request, body: StartBody | None = None) -> dict[str, Any]:
     start = body or StartBody()
+    if start.voice_name is not None and start.voice_name not in GEMINI_VOICE_NAMES:
+        raise validation_error("voiceName: неизвестный голос")
+    # Без Gemini Live (каскад) выбранное имя голоса ничего не значит: озвучку делает движок рода.
+    voice_name = start.voice_name if request.app.state.live is not None else None
     user = _user(user_id)
     await store.ensure_user(user)
-    dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory)
+    dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory, voice_name)
     logger.info(
         "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s",
         dialog.id,
@@ -82,6 +89,7 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
         "greeting": dialog.greeting,
         "sinceLastDialogHours": hours,
         "voice": dialog.voice,
+        "voiceName": dialog.voice_name,
         "messageCount": len(dialog.messages),
         "lastActivityAt": dialog.last_activity_at,
         "memoryMode": dialog.memory_mode,
