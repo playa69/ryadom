@@ -12,7 +12,12 @@
 # namespaces/manifests/05-network-policy-agent.yaml
 # (agent-allow-ingress-monitoring-scrape) и egress prometheus→agent:8001
 # в monitoring/manifests/01-network-policy.yaml
-# (prometheus-allow-egress-scrape).
+# (prometheus-allow-egress-scrape). Prometheus без сайдкара ходит открытым
+# HTTP: при mTLS STRICT в mesh :8001 держит в PERMISSIVE 05-peerauthentication.yaml.
+#
+# Таргет в Prometheus — serviceMonitor/agent/agent/0, job="agent" (имя Service).
+# На нём держится алерт RyadomAgentDown (monitoring/manifests/03-prometheus-rules.yaml):
+# таргета нет или up=0 — алерт.
 # =============================================================================
 
 ---

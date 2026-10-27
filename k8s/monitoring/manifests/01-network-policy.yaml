@@ -7,7 +7,7 @@
 #
 # Обратная сторона scrape-правил (ingress от monitoring на scrape-порты):
 #   prod      :15090  — namespaces/manifests/01-network-policy-prod.yaml
-#   agent     :8001   — namespaces/manifests/05-network-policy-agent.yaml
+#   agent     :8001, :15090 — namespaces/manifests/05-network-policy-agent.yaml
 #   infra     :3000/9091 — namespaces/manifests/02-network-policy-infra.yaml
 #   ryadom-db :9187   — postgres/manifests/03-network-policy.yaml
 # kube-system (coredns :9153) и ноды (:10250/:9100) своих NP не имеют —
@@ -174,11 +174,17 @@ spec:
         - protocol: UDP
           port: 9153
     # Istio sidecar/proxy metrics (:15090, job istio-proxy): сайдкары
-    # приложений в prod + сам ingressgateway в istio-system
+    # приложений в prod и agent + сам ingressgateway в istio-system.
+    # Без ns agent здесь цели istio-proxy подов agent и cognee висели в
+    # up=0 (таймаут соединения): ingress на :15090 в ns agent был открыт,
+    # а egress отсюда — нет.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: prod
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: istio-system

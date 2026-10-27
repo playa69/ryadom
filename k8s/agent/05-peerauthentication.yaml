@@ -1,0 +1,35 @@
+# =============================================================================
+# PeerAuthentication agent-metrics — порт /metrics агента принимает открытый HTTP (ns agent)
+# =============================================================================
+# Prometheus живёт в ns monitoring без сайдкара и ходит на :8001 открытым HTTP
+# (ServiceMonitor 04-servicemonitor.yaml). Пока mTLS в mesh в режиме PERMISSIVE
+# (так по умолчанию: других PeerAuthentication в репозитории нет), это и так
+# работает, и манифест ничего не меняет. Если mesh или ns agent переведут в
+# STRICT, сайдкар начнёт рвать такие соединения (у таргета serviceMonitor/agent/agent/0
+# ошибка «connection reset by peer», up=0) — этот манифест оставляет :8001 в
+# PERMISSIVE, остальные порты пода наследуют режим mesh.
+#
+# Кто может прийти на :8001 открытым текстом, решают NetworkPolicy:
+# monitoring (05-network-policy-agent.yaml) и api/admin из prod
+# (08-network-policy-agent-service.yaml; они сами в mesh и ходят по mTLS).
+#
+# Применяет админ (у developer нет прав на ресурсы Istio):
+#   kubectl apply -f k8s/agent/05-peerauthentication.yaml
+# Проверка режима mesh: kubectl get peerauthentication -A
+# =============================================================================
+
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: agent-metrics
+  namespace: agent
+  labels:
+    app.kubernetes.io/part-of: ryadom
+spec:
+  selector:
+    matchLabels:
+      app: agent
+  portLevelMtls:
+    8001:
+      mode: PERMISSIVE

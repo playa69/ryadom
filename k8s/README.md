@@ -373,7 +373,7 @@ istio-ingressgateway, pod-to-pod внутри namespace, DNS (kube-system :53),
 HTTPS наружу (:443 — LLM API, S3), egress на kube-apiserver
 (04-network-policy-kube-apiserver.yaml), для meshed ns — сайдкары → istiod
 (:15012/:15010). Меж-namespace только явные prod/infra → ryadom-db:5432/6379/26379
-и scrape от ns monitoring → :15090 (prod), :3000/9091 (infra), :9187
+и scrape от ns monitoring → :15090 (prod, agent), :8001 (agent), :3000/9091 (infra), :9187
 (ryadom-db, в postgres/manifests/03). В самом monitoring — свои политики
 (monitoring/manifests/01-network-policy.yaml), включая ingress с IP нод
 (kubelet-пробы, kubectl port-forward) и на webhook оператора :9443 от

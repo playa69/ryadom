@@ -9,6 +9,7 @@
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
 | `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`; диалоги — в PostgreSQL (Secret `agent-db`) |
 | `04-servicemonitor.yaml` | ServiceMonitor: Prometheus собирает `/metrics` агента (расход моделей, задержки голоса, база диалогов). Применяет admin |
+| `05-peerauthentication.yaml` | PeerAuthentication: порт `:8001` принимает открытый HTTP от Prometheus и при mTLS STRICT в mesh (сейчас mesh в PERMISSIVE, манифест ничего не меняет). Применяет admin |
 | `db/01-job-create-role.yaml` | Job: роль `agent` в CNPG ryadom-db + владелец базы `agent` (хранилище диалогов с 0.8.0). Один раз, до выката 0.8.0 |
 | `10-cognee-config.yaml` | ConfigMap `cognee-config`: Cognee API (память агента) — БД cognee_db в CNPG, модели LiteLLM-прокси, multi-user access control (Bearer) |
 | `11-cognee-pvc.yaml` | PVC `cognee-storage` (10 ГБ, сетевой диск Timeweb): граф Kuzu и сырые документы Cognee. Применять до Deployment'а |
@@ -386,15 +387,18 @@ unset SVC_PASS
 NetworkPolicy и ns `monitoring`), каждый шаг отдельным решением администратора:
 
 ```bash
-kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml        # ingress monitoring → agent:8001
-kubectl apply -f k8s/monitoring/manifests/01-network-policy.yaml              # egress prometheus → agent:8001
+kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml        # ingress monitoring → agent:8001 и :15090
+kubectl apply -f k8s/monitoring/manifests/01-network-policy.yaml              # egress prometheus → agent:8001 и :15090
 kubectl apply -f k8s/agent/04-servicemonitor.yaml
+kubectl apply -f k8s/agent/05-peerauthentication.yaml                         # :8001 открытым HTTP и при mTLS STRICT
 # Срок хранения 14 дней (values-prometheus.yaml): Prometheus перезапустится, метрики на PVC останутся
 helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring -f k8s/monitoring/values-prometheus.yaml --version 91.8.2
 ```
 
 Проверка: в Prometheus UI (port-forward, см. `k8s/README.md`) таргет `serviceMonitor/agent/agent/0` в состоянии UP, запрос
-`agent_model_usage_total` отдаёт ряды после первого диалога. Хватает ли диска на 14 дней: `prometheus_tsdb_storage_blocks_bytes`
+`agent_model_usage_total` отдаёт ряды после первого диалога. Цели job `istio-proxy` подов `agent` и `cognee` тоже UP: до
+PROTEUS-254 egress Prometheus на `:15090` в ns agent был закрыт, и они висели в `up=0`. Таргета `serviceMonitor/agent/agent/0`
+нет совсем — не применён ServiceMonitor; есть, но `connection reset by peer` — mesh в STRICT и не применён `05-peerauthentication.yaml`. Хватает ли диска на 14 дней: `prometheus_tsdb_storage_blocks_bytes`
 через пару дней, умноженный на 14/дни, должен быть меньше `retentionSize` (3GB), иначе старые блоки уйдут раньше срока.
 
 Тот же расход может уходить в Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, трейс `model-usage`, без текстов).
