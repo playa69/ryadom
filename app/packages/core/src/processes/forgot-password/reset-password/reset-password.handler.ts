@@ -69,7 +69,11 @@ export class ResetPasswordOperationHandler implements RequestHandler<ResetPasswo
       }
     }
     const userId = userResult.user.id
-    if (userResult.user.isDeleted) return { success: false, error: ResetPasswordOperationErrorCode.CODE_INVALID }
+    // Only a confirmed address gets reset codes. One that is not confirmed now belongs to a different
+    // claim than the code did (the account that had it is gone), so the code is not for this account.
+    if (userResult.user.isDeleted || !userResult.user.isEmailConfirmed) {
+      return { success: false, error: ResetPasswordOperationErrorCode.CODE_INVALID }
+    }
     if (!userResult.user.isActive) return { success: false, error: ResetPasswordOperationErrorCode.USER_INACTIVE }
 
     const { passwordHash } = await passwordService.execute(new HashPasswordRequest({ password: input.newPassword }))

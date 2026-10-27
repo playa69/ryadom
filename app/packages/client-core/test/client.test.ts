@@ -209,6 +209,44 @@ describe('сессия: несколько вкладок на одном хра
   })
 })
 
+describe('подтверждение почты', () => {
+  it('после перезапуска сначала обновляет токен: адрес гостя подтверждается только из его сессии', async () => {
+    stubFetch()
+    const storage = memoryStorage()
+    storage.refreshToken = makeToken('a')
+    storage.user = userOf('a')
+    const { client } = setup(storage)
+    await client.restoreSession()
+    expect(client.getAccessToken()).toBeNull()
+
+    fetchMock
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'access-2', refreshToken: storage.refreshToken, expiresAt: 0 }),
+      )
+      .mockResolvedValueOnce(envelope(null))
+    expect(await client.confirmEmail('a@example.com', '123456')).toEqual({ ok: true, data: undefined })
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'http://api.test/api/auth/refresh',
+      'http://api.test/api/auth/confirm-email',
+    ])
+    const confirmHeaders = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>
+    expect(confirmHeaders.Authorization).toBe('Bearer access-2')
+  })
+
+  it('без сессии (регистрация) токена не ищет и сразу отправляет код', async () => {
+    stubFetch()
+    const { client } = setup()
+    fetchMock.mockResolvedValueOnce(envelope(null))
+
+    expect(await client.confirmEmail('a@example.com', '123456')).toEqual({ ok: true, data: undefined })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>
+    expect(headers.Authorization).toBeUndefined()
+  })
+})
+
 describe('трассировка', () => {
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 

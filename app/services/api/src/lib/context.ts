@@ -10,7 +10,7 @@ import type { Sessions } from './sessions'
 /** Hono context types for the whole application. */
 export interface AppEnv {
   Variables: {
-    /** Present only behind `requireAuth`. */
+    /** Present only behind `requireAuth`, or behind `optionalAuth` when the request carries a good token. */
     auth: AuthUser | undefined
     /** The client address behind the trusted proxies, set once per request by `createApp`. */
     clientIp: string

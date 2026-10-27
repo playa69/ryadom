@@ -310,7 +310,7 @@ describe('подтверждённая почта и ключ устройств
     )
     expect(await getDb().select().from(userDevices).where(eq(userDevices.userId, user.id))).toHaveLength(1)
 
-    await confirmWithCode(email)
+    await confirmWithCode(email, user.id)
 
     expect(await getDb().select().from(userDevices).where(eq(userDevices.userId, user.id))).toHaveLength(0)
     // The same key now makes a stranger's account, not this one.
@@ -335,7 +335,7 @@ describe('подтверждённая почта и ключ устройств
     await authenticationProcess.execute(
       new LinkEmailOperation({ userId: user.id, email, password: PASSWORD }),
     )
-    await confirmWithCode(email)
+    await confirmWithCode(email, user.id)
 
     const result = await dialogsProcess.execute(new StartDialogOperation({ userId: user.id }))
     expect(result.success).toBe(true)

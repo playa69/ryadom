@@ -30,10 +30,15 @@ export async function registerUser(opts: { email?: string; password?: string; na
   return { ...result.user, email: result.user.email }
 }
 
-/** Confirms the address the way a person does, with the code from the letter. */
-export async function confirmWithCode(email: string): Promise<void> {
+/**
+ * Confirms the address the way a person does, with the code from the letter. `callerUserId` is the
+ * account the request is made from: an address held by a guest account only confirms from its own session.
+ */
+export async function confirmWithCode(email: string, callerUserId: string | null = null): Promise<void> {
   const code = codeFromEmail(lastEmailTo(email))
-  const result = await emailConfirmationProcess.execute(new ConfirmEmailOperation({ email, code }))
+  const result = await emailConfirmationProcess.execute(
+    new ConfirmEmailOperation({ email, code, callerUserId }),
+  )
   if (!result.success) throw new Error(`confirm failed: ${result.error}`)
 }
 

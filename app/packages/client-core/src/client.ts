@@ -609,6 +609,10 @@ export function createClient(config: ClientConfig) {
       code: string,
     ): Promise<ApiOutcome<void, ConfirmEmailApiErrorCode>> => {
       const body: ConfirmEmailApiRequest = { email, code }
+      // An address a guest account linked is confirmed only from that account's session. This route is
+      // public, so unlike the others it does not answer 401 to a cold start (the access token lives in
+      // memory only): the token has to be there before the request, not after a refusal.
+      if (sessionToken && !accessToken) await refreshSession()
       return voidOutcome(
         await apiOutcome<null, ConfirmEmailApiErrorCode>(ApiPath.ConfirmEmail, { method: 'POST', body }),
       )
