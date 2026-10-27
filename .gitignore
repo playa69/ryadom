@@ -243,3 +243,6 @@ loadtest/pool.tmp
 .idea/
 agent/local_data/
 .mcp.json
+
+# pnpm, запущенный в корне репозитория, а не в app/, оставляет здесь своё состояние.
+/node_modules/
