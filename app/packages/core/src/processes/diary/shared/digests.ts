@@ -14,6 +14,7 @@ import {
   ListAgentRecapsRequest,
   type AgentDigestMark,
   type AgentDigestRecap,
+  type ListAgentRecapsResult,
 } from '../../../integrations/agent-api'
 import { addDaysToDate, AgentUnavailableError, localMoment } from '../../../shared'
 import { PROCESSES_CONFIG } from '../../config'
@@ -80,30 +81,44 @@ export function writtenAt(summary: DiarySummaryDTO): Date {
   return Number.isNaN(at) ? summary.generatedAt : new Date(at)
 }
 
+/** The agent answers at most this many recaps in one page; a week is read page by page. */
+const RECAPS_PAGE = 50
+/** A guard against a runaway cursor; the agent accepts as many recaps in one digest request (`MAX_RECAPS`). */
+const RECAPS_WEEK_MAX = 100
+
 /**
  * The recaps of the conversations that began in the week `start` (in the person's zone): the second input of the week text.
- * Newest first at the agent, one page is enough for a week. A down agent throws `AgentUnavailableError`: the caller must not
- * write a text without recaps it could not read, or a recap that arrives later would never make the text stale.
+ * Newest first at the agent, so the pages are read until one reaches back before the week (a week can hold more than one page).
+ * A down agent throws `AgentUnavailableError`: the caller must not write a text without recaps it could not read, or a recap that
+ * arrives later would never make the text stale.
  */
 export async function weekRecaps(userId: string, start: string): Promise<WeekRecap[]> {
   const zone = await userZone(userId)
   if (!zone) return []
-  const listed = await agentApiIntegration.execute(new ListAgentRecapsRequest({ userId, limit: 50, before: null }))
   const end = addDaysToDate(start, 6)
   const result: WeekRecap[] = []
-  for (const item of listed.items) {
-    const startedAt = new Date(item.startedAt)
-    if (Number.isNaN(startedAt.getTime())) continue
-    const date = localMoment(startedAt, zone).date
-    if (date < start || date > end) continue
-    const at = item.recapAt ? new Date(item.recapAt) : startedAt
-    result.push({
-      date,
-      text: item.recap,
-      at: Number.isNaN(at.getTime()) ? startedAt : at,
-    })
+  let before: string | null = null
+  for (;;) {
+    const listed: ListAgentRecapsResult = await agentApiIntegration.execute(
+      new ListAgentRecapsRequest({ userId, limit: RECAPS_PAGE, before }),
+    )
+    let reachedBack = false
+    for (const item of listed.items) {
+      const startedAt = new Date(item.startedAt)
+      if (Number.isNaN(startedAt.getTime())) continue
+      const date = localMoment(startedAt, zone).date
+      if (date < start) {
+        reachedBack = true
+        continue
+      }
+      if (date > end) continue
+      const at = item.recapAt ? new Date(item.recapAt) : startedAt
+      result.push({ date, text: item.recap, at: Number.isNaN(at.getTime()) ? startedAt : at })
+    }
+    if (reachedBack || !listed.next || result.length >= RECAPS_WEEK_MAX) break
+    before = listed.next
   }
-  return result
+  return result.slice(0, RECAPS_WEEK_MAX)
 }
 
 /** The moment of the latest change among the marks and recaps of the week: the version of the input a text is written from. */

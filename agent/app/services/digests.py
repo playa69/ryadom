@@ -106,9 +106,6 @@ def template_digest(kind: Literal["week"], marks: list[dict[str, Any]], recaps: 
         parts = ["На этой неделе ты не раз возвращался к тому, что у тебя на душе."]
     else:
         parts = ["На этой неделе ты находил минутку, чтобы прислушаться к себе."]
-    factor = _top_factor(marks)
-    if factor:
-        parts.append(f"Сильнее всего на настроение влияло: {factor}.")
     trend = _trend(marks)
     if trend:
         parts.append(trend)

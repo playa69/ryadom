@@ -44,8 +44,8 @@ export interface StartDialogApiRequest {
    */
   startNew?: boolean
   /**
-   * `off` holds this conversation "without memory": the agent neither uses nor adds to what it remembers, and the
-   * conversation is deleted 24 hours after its last message. Only a new dialog takes it; a returned open one keeps
+   * `off` holds this conversation unsaved ("Не сохранять этот разговор"): nothing of it is written to the database or to memory.
+   * Only a new dialog takes it; a returned open one keeps
    * its own (send `startNew` with it). Default `on`.
    */
   memory?: DialogMemoryMode
@@ -87,7 +87,7 @@ export interface DialogSummaryApiResponse {
   recap?: string | null
   recapStatus?: DialogRecapStatus
   recapSource?: DialogRecapSource | null
-  /** `false`: no recap can be made for this conversation (little said, a crisis, held without memory): the journal does not offer one. */
+  /** `false`: no recap can be made for this conversation (little said, a crisis, an unsaved conversation): the journal does not offer one. */
   recapAvailable?: boolean
 }
 
@@ -98,7 +98,7 @@ export interface DialogListItemApiResponse {
   startedAt: string
   endedAt: string | null
   summary: DialogSummaryApiResponse | null
-  /** `off`: a conversation "without memory", deleted 24 hours after its last message. */
+  /** `off`: an unsaved conversation ("Не сохранять этот разговор"): the journal keeps a mark without text. */
   memoryMode: DialogMemoryMode
   /**
    * `false`: a conversation the person asked not to keep (`add-unsaved-dialog`): the journal shows a mark without text,

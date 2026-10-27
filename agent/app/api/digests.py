@@ -20,7 +20,7 @@ logger = logging.getLogger("agent.digests")
 router = APIRouter(prefix="/v1/users/{user_id}/digests", dependencies=[Depends(require_token)])
 
 MAX_MARKS = 7
-MAX_RECAPS = 20
+MAX_RECAPS = 100
 
 
 def _date(value: str) -> str:

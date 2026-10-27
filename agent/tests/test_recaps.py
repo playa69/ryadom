@@ -250,6 +250,16 @@ def test_delete_removes_the_conversation_with_its_recap(client, user_id):
     assert client.delete(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 404
 
 
+def test_delete_of_an_open_dialog_ends_it_first_and_starts_no_recap(client, user_id):
+    store = client.app.state.store
+    dialog_id = talk(client, user_id)  # открытый разговор: end не вызывался
+    spawned: list[str] = []
+    store._spawn_recap = lambda dialog: spawned.append(dialog.id)  # noqa: SLF001
+    assert client.delete(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 204
+    assert spawned == []  # автоитог для удаляемого разговора не запускается
+    assert client.get(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 404
+
+
 def test_delete_leaves_the_notes_of_memory(client, user_id):
     client.put(url(user_id, "/memory/settings"), json={"enabled": True}, headers=AUTH)
     dialog_id = talk(client, user_id)

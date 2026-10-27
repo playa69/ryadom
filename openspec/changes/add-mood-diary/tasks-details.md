@@ -102,10 +102,10 @@
 #### Что сделать
 Типы публичного API приложения:
 - **`app/packages/contracts/src/api/diary.ts`:**
-  - `DiaryApiResponse` (today, month, week);
-  - `CheckinApiRequest` (mood, factor?, date?);
-  - `DiarySummaryApiResponse`, `DiaryEventsApiResponse`;
-  - коды ошибок `NOT_ENOUGH_DAYS`, `NOT_ENOUGH_WEEKS`, `CHECKIN_DATE_INVALID`.
+  - `DiaryApiResponse` (today, month, week, `previousWeek`);
+  - `PutMoodCheckinApiRequest` (mood, factor?, date?, source?) и `PutMoodCheckinApiResponse`;
+  - `DiarySummaryApi`, `CreateWeekSummaryApiRequest`, `DiarySummariesApiResponse`;
+  - коды ошибок `DiaryApiErrorCode`: `NOT_ENOUGH_DAYS`, `TOO_SOON`, `SUMMARY_UNAVAILABLE`, `DATE_OUT_OF_RANGE`.
 - **`app/packages/contracts/src/api/auth/me.ts`:** поле `timezone` в ответе и в `PATCH`.
 - Пути — в `paths.ts`.
 
@@ -136,7 +136,7 @@
 #### Что сделать
 По правилам `app/packages/core/rules.md`: менеджер таблицы `mood_checkins` и процессы.
 - **Отметка дня:** upsert по `(user_id, local_date)`. Новый уровень или фактор заменяет прежний. Местная дата считается по `users.timezone`.
-- **Очередь без сети:** клиент может прислать `date`. Принимается только сегодня или вчера по местному времени, иначе `422 CHECKIN_DATE_INVALID`. При конфликте побеждает отметка с более поздним временем.
+- **Очередь без сети:** клиент может прислать `date`. Принимается только сегодня или вчера по местному времени, иначе `422 DATE_OUT_OF_RANGE`. При конфликте побеждает отметка с более поздним временем.
 - **Выборки:** отметки последних 28 дней, число отмеченных дней недели, самый частый уровень (при равенстве — более высокий).
 - Источник отметки (`source`): app, widget, reminder, telegram.
 

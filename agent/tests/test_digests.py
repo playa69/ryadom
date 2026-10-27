@@ -42,7 +42,7 @@ def test_week_template_text_is_deterministic_and_clean(client, user_id):
     assert post(client, user_id, body).json() == first
     assert first["stats"] == {"markedDays": 4, "hardDays": 0, "mostFrequent": 4}
     assert 2 <= len(re.findall(r"[.!?]", first["text"])) <= 6
-    assert "работа" in first["text"] and "чаще всего" not in first["text"].lower()
+    assert "влияло" not in first["text"] and "чаще всего" not in first["text"].lower()  # обзор, а не перечень статистики
     assert not FORBIDDEN.search(first["text"])
     assert "людей" not in first["text"] and "люди" not in first["text"]
 

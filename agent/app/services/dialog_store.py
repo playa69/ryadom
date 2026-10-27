@@ -391,8 +391,12 @@ class DialogStore:
         takeaway: str | None,
         tension_after: int | None,
         recap_source: Literal["manual", "draft"] = "manual",
+        deleting: bool = False,
     ) -> dict[str, Any]:
         """Завершить диалог. Повторный вызов отдаёт ту же сводку (с актуальным итогом).
+
+        `deleting` — разговор завершается, чтобы тут же быть удалённым («Удалить разговор»): ни автоитог, ни извлечение памяти
+        для него не запускаются.
 
         Поле «Что забираешь с собой» (`takeaway`) и есть итог: если человек его заполнил, оно сохраняется сразу как итог
         и автоматическим не заменяется (`recap_source` — `draft`, если поле предзаполнил черновик).
@@ -416,18 +420,18 @@ class DialogStore:
             "recap": None,
             "recapStatus": "none",
             "recapSource": None,
-            # Можно ли у этого разговора завести итог (мало сказано, кризис, «Без памяти» — нельзя): журнал предлагает «Написать итог» только если можно.
+            # Можно ли у этого разговора завести итог (мало сказано, кризис, не сохранённый разговор — нельзя): журнал предлагает «Написать итог» только если можно.
             "recapAvailable": recaps.eligible(dialog),
         }
         given = recaps.clean_recap(takeaway)
         if given is not None and recaps.eligible(dialog):
             self._store_recap(dialog, given, recap_source)
-        elif recaps.eligible(dialog) and self.recap_enabled(dialog.user_id):
+        elif not deleting and recaps.eligible(dialog) and self.recap_enabled(dialog.user_id):
             dialog.summary["recapStatus"] = "pending"
             self._spawn_recap(dialog)
         self._touch(dialog)
         memory = self.memory
-        if memory is not None and self._owns(dialog):
+        if memory is not None and not deleting and self._owns(dialog):
             try:
                 memory.dialog_ended(dialog)
             except Exception:  # noqa: BLE001 - память не должна мешать завершению разговора (I3)
@@ -596,6 +600,9 @@ class DialogStore:
     async def delete_by_person(self, dialog: Dialog) -> None:
         """«Удалить разговор» в журнале: диалог, его итог и сообщения стираются. Сокет открытого диалога получает `ended`.
         Заметки и итоги недели здесь не трогаются: заметки живут в памяти, итог недели сбрасывает шлюз."""
+        if dialog.summary is None:
+            # Сначала завершаем (сокет получит `ended`, разговор получает сводку), потом удаляем; итог и память для него не запускаются.
+            self.end(dialog, None, None, deleting=True)
         if dialog.on_replaced is not None:
             dialog.on_replaced(None)
         await self.delete_dialog(dialog.user_id, dialog.id, False)

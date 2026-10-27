@@ -579,6 +579,22 @@ describe('итоги недели читают итоги разговоров (
     for (const day of ['19', '20', '21']) await mark(userId, `2026-10-${day}`)
   }
 
+  it('неделя читает итоги страницами: разговоры недели за первой страницей тоже попадают в текст', async () => {
+    const user = await registerConfirmedUser()
+    await threeMarks(user.id)
+    const pages = [
+      { items: [recapItem('d-new', '2026-10-21T10:00:00Z', '2026-10-21T10:05:00Z', 'Первый итог.')], next: 'page-2' },
+      { items: [recapItem('d-old', '2026-10-20T10:00:00Z', '2026-10-20T10:05:00Z', 'Второй итог.'), recapItem('d-before', '2026-10-18T10:00:00Z', '2026-10-18T10:05:00Z')], next: 'page-3' },
+    ]
+    const { calls } = mockFetch({
+      'GET http://agent.test/v1/users/*/recaps': (req: { url: URL }) => json(req.url.searchParams.get('before') ? pages[1]! : pages[0]!),
+      'POST http://agent.test/v1/users/*/digests': digestRoute,
+    })
+    expect(await tick(NOW)).toMatchObject({ weekly: 1 })
+    const sent = JSON.parse(calls[0]!.body as string)
+    expect(sent.recaps.map((r: { text: string }) => r.text)).toEqual(['Первый итог.', 'Второй итог.'])
+  })
+
   it('итоги разговоров недели уходят агенту вторым входом; чужой недели и чужой день по поясу человека не берутся', async () => {
     const user = await registerConfirmedUser()
     await threeMarks(user.id)
