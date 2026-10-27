@@ -680,12 +680,11 @@ describe('«Запомнил: … · Убрать» и лист «Рядом т�
   it('лист-приглашение: один раз, тому, кто ещё не решал; согласие и «Не сейчас» его снимают', async () => {
     const { shouldInviteToMemory } = await import('../src/memory')
     const fresh = { available: true, enabled: false, consentVersion: null }
-    expect(shouldInviteToMemory(fresh, false, true)).toBe(true)
-    expect(shouldInviteToMemory(fresh, true, true)).toBe(false) // «Не сейчас»
-    expect(shouldInviteToMemory({ ...fresh, consentVersion: '2026-10-12' }, false, true)).toBe(false) // уже давал согласие (и выключил)
-    expect(shouldInviteToMemory({ ...fresh, enabled: true }, false, true)).toBe(false)
-    expect(shouldInviteToMemory({ ...fresh, available: false }, false, true)).toBe(false)
-    expect(shouldInviteToMemory(null, false, true)).toBe(false)
-    expect(shouldInviteToMemory(fresh, false)).toBe(false) // по умолчанию лист выключен до решения владельца (0.1)
+    expect(shouldInviteToMemory(fresh, false)).toBe(true)
+    expect(shouldInviteToMemory(fresh, true)).toBe(false) // «Не сейчас»
+    expect(shouldInviteToMemory({ ...fresh, consentVersion: '2026-10-12' }, false)).toBe(false) // уже давал согласие (и выключил)
+    expect(shouldInviteToMemory({ ...fresh, enabled: true }, false)).toBe(false)
+    expect(shouldInviteToMemory({ ...fresh, available: false }, false)).toBe(false)
+    expect(shouldInviteToMemory(null, false)).toBe(false)
   })
 })
