@@ -267,7 +267,7 @@ flowchart LR
 | `dialogs` | `id`, `user_id`, `mode`, `started_at`, `ended_at`, `voice`, `incognito`, `safety_max_level` | — |
 | `messages` | `id`, `dialog_id`, `user_id`, `role`, `text_enc`, `client_id`, `emo_tags[]`, `safety_level`, `embedding vector`, `created_at` | L0 |
 | `dialog_summaries` | `dialog_id`, `title`, `themes[]`, `emotions`, `tension_before`, `tension_after`, `takeaway`, `key_facts[]` | L1 |
-| `memory_facts` | `id`, `user_id`, `category` (`style`/`boundary`/`person`/`situation`/`goal`/`works`/`interest`/`recap`), `text`, `slots`, `importance`, `confidence`, `status`, `origin`, `sensitivity`, `expires_at` — уже есть в SQLite агента (схема v2), см. [agent-memory-spec.md](agent-memory-spec.md) §5 | Память |
+| `memory_facts` | `id`, `user_id`, `category` (`style`/`boundary`/`person`/`situation`/`goal`/`works`/`interest`/`recap`), `text`, `slots`, `importance`, `confidence`, `status`, `origin`, `sensitivity`, `expires_at` — уже есть в SQLite агента (схема v2), см. спецификацию памяти v1.0 (`docs/agent-memory-spec.md`, удалена из репозитория, есть в истории git) §5 | Память |
 | `usage_patterns` | `user_id`, типичные часы, паузы, суммарное время за сутки | Темпоральность |
 
 ### 5.3. Жизненный цикл диалога
@@ -530,7 +530,7 @@ Recall на валидационном наборе (собирается с к�
 
 ### 6.8. Память
 
-Подробная спецификация долговременной памяти — [agent-memory-spec.md](agent-memory-spec.md) (пункты `MEM-*`, инварианты `I1`–`I13`). Весь код памяти работает за флагом `MEMORY_MODE` (в коде `off` по умолчанию); в манифесте k8s память включена (`on`, решение владельца 2026-10-13). Пороги качества (agent-memory-spec.md §16.3) и согласования (юрист, психолог) на момент включения не пройдены.
+Подробная спецификация долговременной памяти на SQLite v1.0 (пункты `MEM-*`, инварианты `I1`–`I13`) удалена из репозитория вместе с реализацией и есть в истории git (`docs/agent-memory-spec.md`). Весь код памяти работает за флагом `MEMORY_MODE` (в коде `off` по умолчанию); в манифесте k8s память включена (`on`, решение владельца 2026-10-13). Пороги качества (спецификация памяти v1.0, §16.3) и согласования (юрист, психолог) на момент включения не пройдены.
 
 > **Расхождение с кодом (агент 0.8.x, #53, #54).** Память перенесена в Cognee. В Cognee при завершении разговора уходит весь транскрипт. Отдельных фактов, правки, закрепления и удаления по одному нет. `MEMORY_MODE` и `MEMORY_BRIEF_LEVEL` код не читает. Описания `REQ-MEM-02` и `REQ-MEM-03` ниже относятся к прежней реализации на SQLite.
 >
@@ -897,7 +897,7 @@ sequenceDiagram
 | 8 | Ступень 2 кризиса (LLM-классификатор) + `yellow` | `REQ-SAFE-01`, `REQ-SAFE-03` | 2 | Recall на наборе консультантов ≥ 0,9; `yellow` смягчает стиль без `safety` |
 | 9 | PII-маскирование | `REQ-DATA-03` | — | ФИО и телефон не уходят во внешний вызов; ответ восстанавливает подстановки |
 | 10 | Эмоции | `REQ-EMO-01` | 4 | У сообщений есть `emo_tags` из таксономии |
-| 11 | Память (факты и сводка) | `REQ-MEM-02`, `REQ-MEM-03`, `REQ-MEM-05` | 4, 9 | Код за флагом готов; включение — после порогов качества (agent-memory-spec.md §16.3) и согласований |
+| 11 | Память (факты и сводка) | `REQ-MEM-02`, `REQ-MEM-03`, `REQ-MEM-05` | 4, 9 | Код за флагом готов; включение — после порогов качества (спецификация памяти v1.0, §16.3) и согласований |
 | 12 | Антизависимый контур | `REQ-CARE-01`, `REQ-CARE-02` | 4 | Превышение порога → модификатор промпта и событие |
 | 13 | Режимы `chat`, `rituals`, `gestalt_diary`, `recovery` | `REQ-MODE-01` | 4; экран режима в клиенте | Каждый режим резолвится в промпт-пакет; `warmth` → `400` |
 | 14 | Langfuse и метрики конвейера | `REQ-OBS-02`, `REQ-OBS-05` | 9 | Трейс на реплику с этапами; лог обращений к компонентам |
