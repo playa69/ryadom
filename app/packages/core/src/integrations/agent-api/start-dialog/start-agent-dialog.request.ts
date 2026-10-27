@@ -20,6 +20,11 @@ export interface StartAgentDialogRequestData {
    * its own. Without it the agent's default (`on`) applies.
    */
   memory?: AgentDialogMemoryMode
+  /**
+   * `false` holds a new dialog unsaved ("Не сохранять этот разговор"): the agent keeps it in its memory only and leaves a mark
+   * without text when it ends. Independent of `memory`. Without it the agent's default (`true`) applies.
+   */
+  saved?: boolean
 }
 
 export class StartAgentDialogRequest extends RequestData<StartAgentDialogResponse> {
@@ -31,6 +36,7 @@ export class StartAgentDialogRequest extends RequestData<StartAgentDialogRespons
   public readonly voiceName: string | undefined
   public readonly startNew: boolean
   public readonly memory: AgentDialogMemoryMode | undefined
+  public readonly saved: boolean | undefined
 
   constructor(data: StartAgentDialogRequestData) {
     super()
@@ -39,5 +45,6 @@ export class StartAgentDialogRequest extends RequestData<StartAgentDialogRespons
     this.voiceName = data.voiceName
     this.startNew = data.startNew === true
     this.memory = data.memory
+    this.saved = data.saved
   }
 }

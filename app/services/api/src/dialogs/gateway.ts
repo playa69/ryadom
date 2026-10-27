@@ -72,6 +72,7 @@ function interruptReason(code: DialogCloseCode, reason: string): DialogInterrupt
   switch (code) {
     case DialogCloseCode.Restarting:
     case DialogCloseCode.Superseded:
+    case DialogCloseCode.DialogGone:
       return null
     case DialogCloseCode.Unauthorized:
       return 'unauthorized'
@@ -113,6 +114,11 @@ class DialogSession {
   private userMessages = 0
   private assistantMessages = 0
   private hasTakeaway = false
+  /**
+   * The agent said (`ready`) that this conversation is held unsaved ("Не сохранять этот разговор"): nothing about it goes to the
+   * product analytics, not even counts.
+   */
+  private unsaved = false
   private outcomeReported = false
   private plannedClose = false
   private closeReason: DialogInterruptReason | null = null
@@ -213,7 +219,7 @@ class DialogSession {
    * close, or nothing was said and the agent was fine (a reconnect that went nowhere is not news).
    */
   private reportInterruption(): void {
-    if (this.outcomeReported || this.plannedClose || !this.userId) return
+    if (this.outcomeReported || this.plannedClose || !this.userId || this.unsaved) return
     this.outcomeReported = true
     const reason = this.closeReason ?? 'client_closed'
     if (this.userMessages === 0 && reason !== 'agent_unavailable') return
@@ -409,7 +415,7 @@ class DialogSession {
 
   /** One accepted reply of the person: the target action of the product (see `AnalyticsEvent.DialogTurn`). Never its text. */
   private reportTurn(input: 'text' | 'voice'): void {
-    if (!this.userId) return
+    if (!this.userId || this.unsaved) return
     this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogTurn, { ...dialogIdProperty(this.dialogId), input })
   }
 
@@ -471,6 +477,19 @@ class DialogSession {
           // before closing (its `ended`, the last of its speech still in the encoder) goes out first.
           const closeCode = code === 1000 ? DialogCloseCode.Done : DialogCloseCode.AgentUnavailable
           this.toClientInOrder.push(null, () => this.close(closeCode, reason || 'agent closed'))
+        },
+        onRejected: (status) => {
+          if (status !== 404) {
+            this.logger.warn('Агент отказал в соединении', { userId, dialogId, status })
+            return this.fail(
+              DialogWsErrorCode.AGENT_UNAVAILABLE,
+              'agent is unavailable',
+              DialogCloseCode.AgentUnavailable,
+            )
+          }
+          // The agent has no such dialog: one held unsaved is lost when the agent restarts. Reconnecting cannot bring it back.
+          this.logger.info('У агента нет такого диалога', { userId, dialogId })
+          this.fail(DialogWsErrorCode.DIALOG_NOT_FOUND, 'dialog not found', DialogCloseCode.DialogGone)
         },
         onError: (error) => {
           this.logger.warn('Ошибка соединения с агентом', error, { userId, dialogId })
@@ -558,6 +577,7 @@ class DialogSession {
 
     switch (frame.type) {
       case 'ready':
+        this.unsaved = frame.saved === false
         return this.toClient({
           type: DialogServerFrame.Ready,
           dialogId: this.dialogId!,
@@ -630,7 +650,7 @@ class DialogSession {
         // One real call of one of the agent's parts for this dialog: a name, how it went, whether it was cached.
         // Nothing else of the frame is read, so a prompt or a vendor's error text cannot reach a report.
         const component = COMPONENT_NAMES.find((name) => name === frame.component) as ComponentName | undefined
-        if (!component || !this.userId) return
+        if (!component || !this.userId || this.unsaved) return
         this.deps.analytics.capture(this.userId, AnalyticsEvent.ComponentCalled, {
           ...dialogIdProperty(this.dialogId),
           component,
@@ -675,7 +695,7 @@ class DialogSession {
           ...publicSummary
         } = (raw ?? {}) as DialogSummaryApiResponse & AgentSummaryCounts & { recapAt?: unknown }
         const summary = raw ? (publicSummary as DialogSummaryApiResponse) : null
-        if (this.userId && !this.outcomeReported) {
+        if (this.userId && !this.outcomeReported && !this.unsaved) {
           this.outcomeReported = true
           this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogEnded, {
             ...dialogIdProperty(this.dialogId),

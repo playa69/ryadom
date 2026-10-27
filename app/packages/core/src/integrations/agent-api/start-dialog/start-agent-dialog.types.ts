@@ -13,6 +13,8 @@ export interface StartAgentDialogResponse {
   lastActivityAt: string | null
   /** The memory mode of the returned dialog; `on` from an agent that does not report it. */
   memoryMode: AgentDialogMemoryMode
+  /** `false`: the returned dialog is held unsaved; `true` from an agent that does not report it (it saves everything). */
+  saved: boolean
   /** Whether the person has memory turned on; false from an agent that does not report it. */
   memoryEnabled: boolean
 }

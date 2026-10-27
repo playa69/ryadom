@@ -49,6 +49,7 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
         voiceName,
         startNew: operation.startNew,
         memory: operation.memory,
+        saved: operation.saved,
       }),
     )
     createLogger('dialogs').info('Dialog started', {
@@ -57,6 +58,7 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
       resumed: started.resumed,
       startNew: operation.startNew,
       memoryMode: started.memoryMode,
+      saved: started.saved,
     })
     return { success: true, dialog: started }
   }

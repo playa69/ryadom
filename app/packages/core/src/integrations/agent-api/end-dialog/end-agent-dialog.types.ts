@@ -6,5 +6,5 @@ export enum EndAgentDialogRequestErrorCode {
 }
 
 export type EndAgentDialogResult =
-  | { success: true; summary: AgentDialogSummaryResponse | null }
+  | { success: true; summary: AgentDialogSummaryResponse | null; saved: boolean }
   | { success: false; error: EndAgentDialogRequestErrorCode }
