@@ -52,4 +52,13 @@ export const {
   createWeekSummary,
   getDiary,
   putMoodCheckin,
+  getSelfCheckConsent,
+  reportSelfCheckCrisis,
+  giveSelfCheckConsent,
+  revokeSelfCheckConsent,
+  saveSelfCheckResult,
+  latestSelfCheckResults,
+  listSelfCheckResults,
+  deleteSelfCheckResult,
+  deleteSelfCheckResults,
 } = client

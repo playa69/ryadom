@@ -52,6 +52,13 @@ export enum ApiPath {
   /** "Tell Ryadom what to correct or remove": a request in words, carried out on the notes. */
   MemoryInstruction = '/api/memory/notes/instruction',
 
+  /** Results of the tests inside the app (`add-self-check-tests`). */
+  SelfCheckResults = '/api/self-check/results',
+  SelfCheckLatest = '/api/self-check/latest',
+  SelfCheckConsent = '/api/self-check/consent',
+  /** A crisis answer was given: counted without a person (no sign-in, no body but the test id). */
+  SelfCheckCrisis = '/api/self-check/crisis',
+
   /** The mood diary (`REQ-WELL-01`): the rest are under it. */
   Diary = '/api/diary',
   DiaryCheckinToday = '/api/diary/checkins/today',
@@ -73,6 +80,11 @@ export enum ApiPath {
 }
 
 /** `/api/dialogs/:id` and `/api/dialogs/:id/end` are built from the dialog id. */
+/** One saved result of a test: `DELETE`. */
+export function selfCheckResultPath(resultId: string): string {
+  return `${ApiPath.SelfCheckResults}/${encodeURIComponent(resultId)}`
+}
+
 export function dialogPath(dialogId: string): string {
   return `${ApiPath.Dialogs}/${encodeURIComponent(dialogId)}`
 }
