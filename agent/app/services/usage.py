@@ -24,7 +24,7 @@ logger = logging.getLogger("agent.usage")
 
 @dataclass(frozen=True, slots=True)
 class Usage:
-    """Один кусок расхода: модель, задача (live | phrase | stt | chat | tts), input/output, модальность, единица, количество."""
+    """Один кусок расхода: модель, задача (live | phrase | mood | chat), input/output, модальность, единица, количество."""
 
     model: str
     task: str

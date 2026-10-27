@@ -784,7 +784,7 @@ class DialogSession:
         }
         for name, at in turn.marks.items():
             metadata[f"ms_{name}"] = round((at - turn.started) * 1000)
-        # Сами тексты в трассу не идут (LANGFUSE_TRACE_TEXT=false): остаются размеры реплик и длительность речи.
+        # Сами тексты в трассу не идут никогда: остаются размеры реплик и длительность речи.
         said = turn.heard.strip() or turn.input_text
         metadata.update(
             user_chars=len(said), user_words=len(said.split()), reply_chars=len(turn.sent_text), reply_words=len(turn.sent_text.split())
@@ -1187,7 +1187,7 @@ class DialogSession:
         return link is None or link.closed or link.voice != self._dialog.voice_key
 
     def _will_open(self) -> bool:
-        """Ход откроет новую сессию: без неё не обойтись или ждёт смена (GoAway, кризис, отложенная, ленивая), которую сейчас
+        """Ход откроет новую сессию: без неё не обойтись или ждёт смена (GoAway, кризис, отложенная), которую сейчас
         можно сделать (иначе ход пойдёт на прежней)."""
         return self._needs_open() or ((self._refresh or self._rotate_pending) and self._may_open())
 
