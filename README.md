@@ -414,7 +414,7 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 </tr>
 </table>
 
-**Что ещё не сделано.** Индекс требований — [docs/spec.md §5](docs/spec.md#5-индекс-требований), колонка «Статус». Работа, у которой есть описание, лежит в [openspec/changes/](openspec/changes/): блок «Я запомнил» и память по умолчанию (`add-memory-notes`), уведомления (`add-notifications`), поиск по итогам разговоров (`add-recap-search`), сохранение результатов тестов (`add-self-check-tests`), виджет дневника (`add-mood-diary`), подсказка «Люди рядом» в ссылке на разговор (`add-dialog-share-link`).
+**Что ещё не сделано.** Индекс требований — [docs/spec.md §5](docs/spec.md#5-индекс-требований), колонка «Статус». Описания ещё не сделанного лежат в ветках `pending/<change>` (OpenSpec change до реализации; в основную ветку попадает только применённое к спекам): блок «Я запомнил» и память по умолчанию (`pending/add-memory-notes`), уведомления (`pending/add-notifications`), поиск по итогам разговоров (`pending/add-recap-search`), хвост самопроверок (`pending/add-self-check-tests`), виджет дневника (`pending/add-mood-diary`), подсказка «Люди рядом» в ссылке на разговор (`pending/add-dialog-share-link`).
 
 ---
 
@@ -444,7 +444,7 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 | Документ | О чём |
 |---|---|
 | [docs/spec.md](docs/spec.md) | Продукт, принципы, ограничения, глоссарий, метрики и индекс требований `REQ-…` со статусами |
-| [openspec/specs/](openspec/specs/) | Поведение продукта по функциям (23 capability), снято с кода; изменения идут через [openspec/changes/](openspec/changes/) |
+| [openspec/specs/](openspec/specs/) | Поведение продукта по функциям (23 capability), снято с кода; изменения идут через OpenSpec change в ветке задачи и попадают сюда после реализации |
 | [agent/README.md](agent/README.md) | Агент: модели, метрики, запуск, проверка |
 | [k8s/README.md](k8s/README.md) | Кластер, доступы, порядок развёртывания |
 | [docs/analytics.md](docs/analytics.md) | Продуктовая аналитика (PostHog): каталог событий, приватность, что собирают клиенты, проверка после выката |

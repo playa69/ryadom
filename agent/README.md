@@ -849,7 +849,7 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 
 ## Память
 
-Память в два слоя, как у Claude (`openspec/changes/add-memory-notes`, `docs/spec.md` REQ-MEM-*):
+Память в два слоя, как у Claude (`openspec/specs/memory-notes`, `docs/spec.md` REQ-MEM-*):
 
 1. **Заметки о человеке** (`app/memory/notes.py`, таблица `memory_notes` в PostgreSQL агента). Короткие записи по категориям
    (`name`, `style`, `person`, `situation`, `event`, `agreement`, `interest`, `boundary`; чувствительные `wellbeing`,

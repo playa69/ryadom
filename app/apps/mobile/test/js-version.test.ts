@@ -1,7 +1,7 @@
 /**
  * The OTA archive and the JS inside it must agree on the version, or an applied bundle is offered again
  * forever and a rollback arrives as a background update.
- * `openspec/changes/add-required-js-update`, «Сборка OTA-пакета и манифест».
+ * `openspec/changes/archive/2026-10-28-add-required-js-update`, «Сборка OTA-пакета и манифест».
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
