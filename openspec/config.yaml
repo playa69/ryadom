@@ -3,72 +3,72 @@ schema: spec-driven
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 context: |
-  Product: "Slyshu Ryadom" (Слышу Рядом) — a voice AI companion for emotional support (Sber500xDisrupt).
-  Product spec: docs/spec.md (v2.0, SDD; replaces spec_slyshu_ryadom.pdf v1.1). Audience 18+, Russian personal data
-  law 152-FZ, anonymous device-based sign-in, "erase everything" with one button; the crisis protocol overrides any
-  mode and any metric.
+  Продукт: «Слышу Рядом» — голосовой ИИ-компаньон эмоциональной поддержки (Sber500xDisrupt).
+  Спека: docs/spec.md (v2.0, SDD; заменяет spec_slyshu_ryadom.pdf v1.1). Аудитория 18+, 152-ФЗ,
+  анонимный device-based вход, «стереть всё» одной кнопкой, кризисный протокол
+  перекрывает любой режим и любую метрику.
 
-  Language of artifacts: write proposal, design, specs and tasks in Russian, like the existing changes; keywords
-  (SHALL, MUST, WHEN, THEN), delta section headers and template headings stay in English.
+  Источник правды сейчас — код в main: openspec/specs/ ещё нет (ни один change не архивирован),
+  старые change'и разошлись с кодом. Спека противоречит коду — прав код, расхождение называется
+  в отчёте и PR. Старые спеки клиентов и агента (add-app-client-specs, add-agent-service)
+  устарели и требованиями не считаются. Когда базу снимут с кода и архивируют, источником правды
+  по поведению станет openspec/specs/, а изменения поведения пойдут только через change. Как
+  работать — скилл openspec (.agents/skills/openspec/SKILL.md).
 
-  Source of truth for now is the code in main: there is no openspec/specs/ yet (no change has been archived), and
-  the old changes have drifted from the code. Where a spec contradicts the code, the code wins; name the mismatch in
-  the report and the PR. The old client specs in add-app-client-specs and add-agent-service are outdated and are not
-  requirements. Once the baseline is captured from code and archived, openspec/specs/ becomes the source of truth for
-  behavior and behavior changes go only through a change. How to work — skill openspec
-  (.agents/skills/openspec/SKILL.md).
+  Сервисы: агент agent/ (Python 3.12, FastAPI: диалоги, голос, кризисный протокол) и
+  приложение в app/ (см. ниже).
 
-  Services: the agent in agent/ (Python 3.12, FastAPI: dialogs, voice, crisis protocol) and the application in app/
-  (below).
+  Приложение (каталог app/ — отдельный pnpm + Turborepo монорепозиторий на TypeScript, Node >= 24):
+  - apps/web — веб-приложение за логином (Next.js 16, React 19, Tailwind 4, shadcn/ui из packages/ui);
+  - apps/mobile — мобильный клиент (Framework7 + Capacitor 8 + Vite): PWA (отдельный образ nginx,
+    путь /pwa/ на том же хосте, что и API), Android, iOS;
+  - apps/landing — публичный сайт (Next.js): лендинг, /privacy, /terms, /download, /delete-account;
+  - apps/admin — админка (Next.js): пользователи, блокировки, удаление аккаунтов, журнал действий;
+  - services/api — API приложения (Hono): REST /api/*, WebSocket-шлюз к агенту /api/dialogs/ws,
+    раздача OTA-сборки мобильного клиента (клиентов API не раздаёт); PostgreSQL через Drizzle (packages/db);
+    Redis (необязателен) — общие для реплик счётчики лимитов запросов;
+  - packages/{contracts,client-core,core,db,design,ui}; dev/agent-mock — заглушка агента для
+    разработки; e2e — сквозные тесты Playwright.
+  Клиенты ходят только в app/services/api, он вызывает агента по agent-api (REST + WebSocket).
+  Вход в приложение — анонимный по device_id с последующей привязкой почты либо по почте
+  и паролю (app/services/api, маршруты /api/*).
+  Сквозная трассировка — пять заголовков (x-trace-id, x-request-time, x-client-id, x-session-id,
+  x-user-id): клиенты шлют их на каждый запрос, API пишет в логи и передаёт агенту (агент их пока
+  не читает).
+  Формат публичного API приложения — типы в app/packages/contracts.
+  Правила кода по папкам — во вложенных AGENTS.md (agent/, app/, app/packages/core/).
 
-  Application (app/ — a separate pnpm + Turborepo monorepo in TypeScript, Node >= 24):
-  - apps/web — the web app behind sign-in (Next.js 16, React 19, Tailwind 4, shadcn/ui from packages/ui);
-  - apps/mobile — the mobile client (Framework7 + Capacitor 8 + Vite): PWA (its own nginx image, path /pwa/ on the
-    same host as the API), Android, iOS;
-  - apps/landing — the public site (Next.js): landing, /privacy, /terms, /download, /delete-account;
-  - apps/admin — the admin panel (Next.js): users, blocking, account deletion, action log;
-  - services/api — the application API (Hono): REST /api/*, the WebSocket gateway to the agent /api/dialogs/ws,
-    serving the mobile client's OTA build (the API does not serve the clients); PostgreSQL via Drizzle
-    (packages/db); Redis (optional) — rate-limit counters shared by replicas;
-  - packages/{contracts,client-core,core,db,design,ui}; dev/agent-mock — agent mock for development; e2e —
-    Playwright end-to-end tests.
-  Clients talk only to app/services/api; it calls the agent over agent-api (REST + WebSocket).
-  Sign-in to the app — anonymous by device_id with an email linked later, or by email and password
-  (app/services/api, routes /api/*).
-  End-to-end tracing — five headers (x-trace-id, x-request-time, x-client-id, x-session-id, x-user-id): clients send
-  them with every request, the API logs them and passes them to the agent (the agent does not read them yet).
-  The public application API format is the types in app/packages/contracts.
-  Code rules per folder are in the nested AGENTS.md files (agent/, app/, app/packages/core/).
+  Инфраструктура: k8s Timeweb twc-sber500, namespaces prod (приложение) и agent
+  (агент), PostgreSQL (CNPG) и Redis+Sentinel в ns ryadom-db, Langfuse в ns infra,
+  образы только из cr.yandex/crpsqeamqpuvrkm5tpr9 (imagePullSecret registry-pull),
+  ingress: корневой домен слышу-рядом.рф, API под path /api (без поддоменов),
+  мониторинг Prometheus/Loki/Grafana в ns monitoring.
 
-  Infrastructure: k8s Timeweb twc-sber500, namespaces prod (application) and agent (agent), PostgreSQL (CNPG) and
-  Redis+Sentinel in ns ryadom-db, Langfuse in ns infra, images only from cr.yandex/crpsqeamqpuvrkm5tpr9
-  (imagePullSecret registry-pull), ingress: root domain слышу-рядом.рф, API under path /api (no subdomains),
-  monitoring Prometheus/Loki/Grafana in ns monitoring.
-
-  Conventions: code comments in app/ — English, in agent/ — Russian, only about reasons; UI texts and documentation —
-  Russian; one logical change per commit, no commits without an explicit request; secrets live only in Kubernetes
-  Secrets and are kept locally by the administrator, git holds only <CHANGE_ME_*> placeholders.
+  Соглашения: комментарии в коде app/ — на английском, в agent/ — на русском, только о причинах;
+  тексты интерфейса, документация и спеки — на русском; коммиты — по одному логическому
+  изменению, без явной команды не коммитим; секреты — только в Secret'ах кластера, хранятся
+  локально у администратора, в git только плейсхолдеры <CHANGE_ME_*>.
 
 # Per-artifact rules (optional)
 rules:
   proposal:
-    - "First line — «Задача: PROTEUS-NNN» when there is an issue"
-    - "Surfaces table: agent, api, web, pwa, android, ios, tg, admin, landing — yes, no or later"
-    - "Dependencies on other changes and migration numbers; what is out of scope"
-    - "For UI changes — mockups in mockups/ before code"
+    - "Первая строка — «Задача: PROTEUS-NNN», если задача есть"
+    - "Таблица поверхностей: agent, api, web, pwa, android, ios, tg, admin, landing — да, нет или позже"
+    - "Зависимости от других change'ей и номера миграций; что вне рамок"
+    - "Для изменений интерфейса — макеты в mockups/ до кода"
   specs:
-    - "Only behavior a person or a client sees and client ↔ API ↔ agent contracts; no file paths, classes or libraries"
-    - "Every requirement has a «Поверхности: …» line; a scenario for one surface starts with it in brackets: (PWA), (Android)"
-    - "Capability is named after the product domain, not a service; MODIFIED carries the whole requirement with every scenario that stays"
-    - "While there is no openspec/specs — ADDED only; do not write MODIFIED or REMOVED against requirements in another change's folder"
+    - "Только поведение, которое видит человек или клиент, и контракты клиент ↔ API ↔ агент; без путей к файлам, классов и библиотек"
+    - "У каждого требования строка «Поверхности: …»; сценарий одной поверхности начинается с неё в скобках: (PWA), (Android)"
+    - "Capability — по домену продукта, не по сервису; MODIFIED несёт требование целиком со всеми сохраняемыми сценариями"
+    - "Пока openspec/specs нет — только ADDED; MODIFIED и REMOVED на требования из папки другого change'а не писать"
   tasks:
-    - "Every task is atomic and verifiable, with real paths and a «Приёмка:» line"
-    - "Section order: 0 Решения → 1 Данные и контракты → 2 Агент → 3 Шлюз API → 4 Клиенты по поверхностям → 5 Проверка → 6 Выкат → 7 Архив"
-    - "The «Проверка» section covers every scenario: unit/integration test, e2e (file and project desktop or mobile), screenshots of the scenario steps (390 and 1280, no video), manual checks (Android, iOS, Telegram), post-rollout checks"
-    - "A task is ticked only in the commit that brings the task's code"
+    - "Каждая задача атомарная и проверяемая, с реальными путями и строкой «Приёмка:»"
+    - "Порядок разделов: 0 Решения → 1 Данные и контракты → 2 Агент → 3 Шлюз API → 4 Клиенты по поверхностям → 5 Проверка → 6 Выкат → 7 Архив"
+    - "Раздел «Проверка» по каждому сценарию: unit/integration-тест, e2e (файл и проект desktop или mobile), скриншоты шагов сценария (390 и 1280, без видео), ручные проверки (Android, iOS, Telegram), проверки после выката"
+    - "Галочка ставится только в коммите, который приносит код задачи"
 
 operations:
   archive:
     guidance:
-      - "Archive only when the code is in main and rolled out; an abandoned change is deleted, not archived"
-      - "Before archiving every task is [x] or marked «→ <other change>» or «снято» with a reason, open questions are closed, openspec validate --strict passes"
+      - "Архивировать, только когда код в main и выкачен; брошенный change удаляется, а не архивируется"
+      - "Перед архивацией все задачи [x] или помечены «→ <другой change>» либо «снято» с причиной, открытые вопросы закрыты, openspec validate --strict зелёный"

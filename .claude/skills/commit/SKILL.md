@@ -1,70 +1,61 @@
 ---
 name: commit
-description: Commit and open a pull request in the Ryadom repository — a branch in your own worktree, checks, what must not end up in the index, a diff check before pushing to the public repository, a message in the accepted style, a PR to main via gh. Use when asked to "commit", "push", "open a PR", "prepare the changes", and before any push.
+description: Закоммитить и оформить pull request в репозитории «Рядом» — ветка в своём worktree, проверки, что не должно попасть в индекс, проверка диффа перед push в публичный репозиторий, сообщение в принятом стиле, PR в main через gh. Использовать при просьбах «закоммить», «запушь», «открой PR», «оформи изменения» и перед любым push.
 ---
 
-# Commits and pull requests
+# Коммиты и pull request
 
-The repository `playa69/ryadom` is **public**: everything that lands in commits and PRs is visible to everyone. Changes
-go into `main` only through a PR; the user merges and rolls out.
+Репозиторий `playa69/ryadom` **публичный**: всё, что попадает в коммиты и PR, видят все. В `main` — только через PR,
+мёржит и выкатывает человек.
 
-## Branch
+## Ветка
 
-- Your own branch from a fresh `origin/main` in **your own worktree**:
-  `git worktree add -b <branch> ../ryadom-<topic> origin/main`. Other agents work in the shared directory: do not
-  switch branches there and do not commit anything there.
-- Names: `app/…`, `agent/…`, `deploy/…`, `fix/…`, `docs/…`; for a Multica issue, include its number
-  (`agent/PROTEUS-138-robovoice`).
-- Never push to `main`, never force-push, and never rewrite history (including your own commits that are already
-  pushed).
+- Своя ветка от свежего `origin/main` в **своём worktree**: `git worktree add -b <ветка> ../ryadom-<тема> origin/main`.
+  В общем каталоге работают и другие агенты: ветки там не переключай и ничего не коммить.
+- Имена: `app/…`, `agent/…`, `deploy/…`, `fix/…`, `docs/…`; задача Multica — с её номером (`agent/PROTEUS-138-robovoice`).
+- Никогда не пушь в `main`, не делай force-push и не переписывай историю (в том числе своих уже запушенных коммитов).
 
-## Before committing
+## Перед коммитом
 
-1. **Specification.** If behavior changes — an OpenSpec change (skill `openspec`); in tests and the PR — the OpenSpec
-   requirement and `REQ-…`, if there is one. While `openspec/specs/` does not exist, the source of truth is the code in
-   `main`: report a mismatch between the spec and the code in the PR, do not silently fix either one.
-2. **Checks** — skill `local-dev` (typecheck and tests of app, pytest of the agent, prettier on changed files).
-   If you changed `.agents/skills/` — run `node scripts/sync-agent-skills.mjs` and include the copies in
-   `.claude/skills/` in the same commit.
-3. **What goes into the commit** — read `git status` and `git diff --staged` in full. Never:
-   - `.playwright-mcp/`, `screenshots/` in the root, `.turbo/`, `app/e2e/report`, `test-results`, dumps of logs and
-     databases;
-   - files with secrets and keys (`.env*` except `.env.example`, kubeconfig, registry and cloud keys) — even if git
-     does not ignore them;
+1. **Спецификация.** Поведение меняется — OpenSpec change (скилл `openspec`); в тестах и PR — требование
+   OpenSpec и `REQ-…`, если есть. Пока нет `openspec/specs/`, источник правды — код в `main`: расхождение спеки с
+   кодом назови в PR, молча не правь ни то, ни другое.
+2. **Проверки** — скилл `local-dev` (typecheck и тесты app, pytest агента, prettier по изменённым файлам).
+   Правил `.agents/skills/` — `node scripts/sync-agent-skills.mjs` и копии в `.claude/skills/` в том же коммите.
+3. **Что попадает в коммит** — `git status` и `git diff --staged` целиком. Никогда:
+   - `.playwright-mcp/`, `screenshots/` в корне, `.turbo/`, `app/e2e/report`, `test-results`, выгрузки журналов и баз;
+   - файлы с секретами и ключами (`.env*` кроме `.env.example`, kubeconfig, ключи реестра и облака) — даже если git
+     их не игнорирует;
    - `docs/private/`;
-   - contents of people's conversations from production (work, places, close people, verbatim phrases): in tests and
-     examples use synthetic data.
-   Do not touch what someone else has in the index (another session): commit only your own paths,
-   `git commit -F <file> -- <paths>`.
-4. **Public diff.** Before `git push` and `gh pr create`:
+   - содержание разговоров людей из прода (работа, места, близкие, дословные фразы): в тестах и примерах — синтетика.
+   Чужое в индексе (другая сессия) не трогай: коммить только свои пути, `git commit -F <файл> -- <пути>`.
+4. **Публичный дифф.** Перед `git push` и `gh pr create`:
 
    ```bash
    git diff origin/main...HEAD | grep -nE '^\+.*(192\.168\.|10\.[0-9]+\.[0-9]+\.[0-9]+|@gmail\.|@yandex\.|phx_|sk-lf-|pk-lf-|PRIVATE KEY|password=)'
    ```
 
-   Remove what is found: internal node addresses, people's email addresses, keys, names of payment accounts. Do not
-   describe how secrets are stored in the repository: "kept locally by the administrator"; names of Secrets and their
-   keys are allowed.
+   Найденное убрать: внутренние адреса узлов, почта людей, ключи, названия платёжных аккаунтов. Способ хранения
+   секретов в репозитории не описывается: «хранятся локально у администратора»; имена Secret'ов и их ключей — можно.
 
-## Message
+## Сообщение
 
-`<type>(<scope>): <what was done>` — type `feat`, `fix`, `refactor`, `docs`, `deploy`, `chore`; scope `agent`, `app`,
-`api`, `web`, `ui`, `k8s`; write the description in Russian, one logical change per commit, in the body — why and how
-it was verified. Examples from history (in Russian): `feat(agent): зацепка в каждом ответе и длина по содержанию`,
+`<тип>(<область>): <что сделано>` — тип `feat`, `fix`, `refactor`, `docs`, `deploy`, `chore`; область `agent`, `app`,
+`api`, `web`, `ui`, `k8s`; описание по-русски, одно логическое изменение на коммит, в теле — зачем и как проверено.
+Примеры из истории: `feat(agent): зацепка в каждом ответе и длина по содержанию`,
 `deploy(agent): образ 0.7.0 — без шаблонов, переспрос модели, новый промпт (#45, #47); ранбук`.
 
-**No tool attribution lines**: no `Co-Authored-By: Claude …` and no "Generated with …" in commits and PRs.
+**Без строк авторства инструментов**: никаких `Co-Authored-By: Claude …` и «Generated with …» в коммитах и PR.
 
 ## Pull request
 
 ```bash
-git push -u origin <branch>
-gh pr create --repo playa69/ryadom --base main --head <branch> --title "<same as the commit>" --body-file <file>
+git push -u origin <ветка>
+gh pr create --repo playa69/ryadom --base main --head <ветка> --title "<как у коммита>" --body-file <файл>
 ```
 
-Pass the text as a file (Cyrillic in arguments breaks). In the description: what and why, `REQ-…`, how it was verified
-(commands and result), risks, database migrations, new environment variables (names only), whether changes in `k8s/`
-are needed, a link to the issue. Answer review comments in the same branch and the same PR. Screenshots — skill
-`screenshots`.
+Текст — файлом (кириллица в аргументах ломается). В описании: что и зачем, `REQ-…`, как проверено (команды и итог),
+риски, миграции БД, новые переменные окружения (только имена), нужны ли изменения в `k8s/`, ссылка на задачу. Ответ
+на ревью — в ту же ветку и тот же PR. Скриншоты — скилл `screenshots`.
 
-Related: [[local-dev]] — checks; [[deploy]] — `deploy/*` branches and rollout.
+Связано: [[local-dev]] — проверки; [[deploy]] — ветки `deploy/*` и выкат.

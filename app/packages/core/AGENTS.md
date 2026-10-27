@@ -1,35 +1,35 @@
-# Rules: packages/core (`@ryadom/core`)
+# Правила: packages/core (`@ryadom/core`)
 
-Rules for the core code: layers, imports, transactions, configuration. They are written down here once so that every new module does not have to be discussed again.
+Правила для кода ядра: слои, импорты, транзакции, конфигурация. Здесь они записаны один раз, чтобы каждый новый модуль не приходилось обсуждать заново.
 
-> **Principle:** do only what is described here. If a situation is not covered, do not improvise: ask, or add the rule first.
+> **Принцип:** делай только то, что описано здесь. Если ситуация не покрыта — не импровизируй: спроси или сначала допиши правило.
 
 ---
 
-## What core is
+## Что такое core
 
-`@ryadom/core` is all the business logic of the product: accounts, passwords, email codes, emails, conversations with the agent, admin actions with a journal, env schemas. The applications (`services/api`, `apps/admin`) are a thin layer: parse the request, call the core facade, translate the result into their own response.
+`@ryadom/core` — вся бизнес-логика продукта: аккаунты, пароли, коды из писем, письма, разговоры с агентом, действия админа с журналом, схемы env. Приложения (`services/api`, `apps/admin`) — тонкий слой: разобрать запрос, вызвать фасад ядра, перевести результат в свой ответ.
 
-- **No sessions in core.** Core does not know who calls it — the site, the admin panel or the app: it checks credentials and performs operations on an account. Sessions are the applications' concern: `app` issues its own JWTs (jose), `admin` issues a signed cookie. This way the lifetime and format of tokens can be changed without touching the domain.
-  One exception: `refresh-tokens-manager` keeps the registry of the application's refresh tokens (id, expiry, revocation) without knowing their format. The scenarios for password change and reset, blocking and deletion need it: revoking what was issued is part of their purpose, and the application cannot do it for them. Issuing, signature verification and rotation stay in `services/api`.
+- **Сессий в ядре нет.** Ядро не знает, кто его вызывает — сайт, админка или приложение: оно проверяет учётные данные и выполняет операции над аккаунтом. Сессии — забота приложений: `app` выдаёт свои JWT (jose), `admin` — подписанную cookie. Так срок жизни и формат токенов можно менять, не трогая домен.
+  Одно исключение: `refresh-tokens-manager` хранит реестр refresh-токенов приложения (id, срок, отзыв), не зная их формата. Он нужен сценариям смены и сброса пароля, блокировки и удаления: отозвать выданное — часть их смысла, и приложение сделать этого за них не может. Выдача, проверка подписи и ротация остаются в `services/api`.
 
-- Core does not import from `apps/*`. Core dependencies: npm packages and `@ryadom/db`.
-- From outside, core is accessed **only through module facades** (`index.ts`) and `@ryadom/core/config`.
-- The package is not built: `exports` points to the sources (`./shared`, `./config`, `./managers/*`, `./processes/*`, `./services/*`, `./integrations/*`).
+- Ядро не импортирует из `apps/*`. Зависимости ядра: npm-пакеты и `@ryadom/db`.
+- Снаружи к ядру обращаются **только через фасады** модулей (`index.ts`) и `@ryadom/core/config`.
+- Пакет не собирается: `exports` указывает на исходники (`./shared`, `./config`, `./managers/*`, `./processes/*`, `./services/*`, `./integrations/*`).
 
-## Layers
+## Слои
 
 ```
 src/
-├── managers/      # one entity: CRUD, domain validation, DB (Drizzle)
-├── processes/     # business scenarios: orchestration of managers / services / integrations
-├── services/      # technical capabilities: passwords, tokens, email rendering and sending, health
-├── integrations/  # external APIs: agent-api
-├── shared/        # the single mediatr, pipeline behaviors, logger, DB and transactions, errors, personal data
-└── config/        # env schemas, getEnv/loadEnv, derived helpers, input rules
+├── managers/      # одна сущность: CRUD, доменная валидация, БД (Drizzle)
+├── processes/     # бизнес-сценарии: оркестрация managers / services / integrations
+├── services/      # технические возможности: пароли, токены, рендер и отправка почты, health
+├── integrations/  # внешние API: agent-api
+├── shared/        # единый mediatr, pipeline behaviors, логгер, БД и транзакции, ошибки, ПДн
+└── config/        # схемы env, getEnv/loadEnv, производные хелперы, правила ввода
 ```
 
-### Dependency direction
+### Направление зависимостей
 
 ```
 processes  →  managers
@@ -37,30 +37,30 @@ processes  →  managers
            →  integrations
 ```
 
-- Managers, services and integrations **never call each other** — only through a process.
-- Processes **do not call other processes**. A step shared by two scenarios (for example, sending the confirmation email on registration and on resend) is repeated in both: that way a scenario reads as a whole in one file, and a change to one does not drag the other along.
-- Within a single process, shared functions live in its `shared/` (for example, building the dialog DTO in `dialogs/shared/dialog.dto.ts`). Importing another process's `shared/` is not allowed; importing _types_ from another module's facade is allowed.
-- Imports are relative and without extensions: `import { usersManager } from '../../../managers/users-manager'`.
+- Managers, services и integrations **никогда не вызывают друг друга** — только через process.
+- Processes **не вызывают другие processes**. Общий шаг двух сценариев (например, отправка письма подтверждения при регистрации и при повторной отправке) повторяется в обоих: так сценарий читается целиком в одном файле, а изменение одного не тянет за собой другой.
+- Внутри одного process общие функции лежат в его `shared/` (например, сборка DTO диалога в `dialogs/shared/dialog.dto.ts`). Импортировать `shared/` чужого process нельзя; импортировать _типы_ из фасада другого модуля можно.
+- Импорты относительные и без расширений: `import { usersManager } from '../../../managers/users-manager'`.
 
 ---
 
 ## MediatR
 
-- Use only `mediatr` from `src/shared`. Never create `new Mediator()` in modules.
-- A handler is registered by the `@requestHandler(Contract)` decorator when the file is imported. The first block of a module's `index.ts` is the imports of all its `*.handler.ts`. There is no separate registration in `shared/index.ts`: a facade imported by anyone registers its own handlers itself.
-- Pipeline (order set in `shared/mediator/index.ts`): `LoggingBehavior` (debug log with personal data masking, an error is logged once) → `ConcurrencyBehavior` (retry on `ConcurrencyError`).
+- Используй только `mediatr` из `src/shared`. Никогда не создавай `new Mediator()` в модулях.
+- Handler регистрируется декоратором `@requestHandler(Contract)` при импорте файла. Первый блок `index.ts` модуля — импорты всех его `*.handler.ts`. Отдельной регистрации в `shared/index.ts` нет: фасад, импортированный кем угодно, регистрирует свои handlers сам.
+- Pipeline (порядок задан в `shared/mediator/index.ts`): `LoggingBehavior` (debug-лог с маскированием ПДн, ошибка логируется один раз) → `ConcurrencyBehavior` (повтор при `ConcurrencyError`).
 
-### Decorators
+### Декораторы
 
-The package's `tsconfig.json` enables `experimentalDecorators`: `mediatr-ts` requires legacy semantics. `@requestHandler` and `@pipelineBehavior` are class decorators; `@hasPII` is written so that it works in both legacy and standard (TC39) semantics: core survives being built by a consumer without this flag.
+`tsconfig.json` пакета включает `experimentalDecorators`: `mediatr-ts` требует легаси-семантики. `@requestHandler` и `@pipelineBehavior` — декораторы класса, `@hasPII` написан так, что работает и в легаси-, и в стандартной (TC39) семантике: ядро переживёт сборку потребителем без этого флага.
 
 ---
 
-## Contracts and results
+## Контракты и результаты
 
-Every operation is a folder of files `{operation}.{command|query|operation|request}.ts` (the contract), `{operation}.handler.ts`, `{operation}.types.ts` and, if needed, `{operation}.validator.ts`.
+Каждая операция — папка из файлов `{operation}.{command|query|operation|request}.ts` (контракт), `{operation}.handler.ts`, `{operation}.types.ts` и при необходимости `{operation}.validator.ts`.
 
-A contract is a class extending `RequestData<Result>`, with a mandatory `*Data` interface (even for a single field; for an empty one — `Record<string, never>` and the constructor `(_data = {})`):
+Контракт — класс, наследник `RequestData<Result>`, с обязательным интерфейсом `*Data` (даже для одного поля; для пустого — `Record<string, never>` и конструктор `(_data = {})`):
 
 ```typescript
 export interface CreateUserCommandData {
@@ -71,7 +71,7 @@ export interface CreateUserCommandData {
 }
 
 export class CreateUserCommand extends RequestData<CreateUserCommandResult> {
-  /** Survives build minification — CreateUserCommand.name is not preserved in production. Used by LoggingBehavior. */
+  /** Переживает минификацию сборки — CreateUserCommand.name в проде не сохраняется. Используется LoggingBehavior. */
   static readonly requestName = 'CreateUserCommand'
 
   public readonly userId: string
@@ -92,10 +92,10 @@ export class CreateUserCommand extends RequestData<CreateUserCommandResult> {
 }
 ```
 
-- `static readonly requestName` — a string with the class name, the first line of the body. `LoggingBehavior` takes the request name from here, not from `constructor.name`: the production build of web (Turbopack) minifies class names, and the minifier does not touch a string literal. Without this field the logs would show a one-letter name instead of `CreateUserCommand started`.
-- `@hasPII()` — a partial mask (email), `@hasPII(true)` — a full mask (passwords, tokens, hashes, links with tokens, email texts). Mark everything that must not be visible in the debug log.
+- `static readonly requestName` — строка с именем класса, первая строка тела. `LoggingBehavior` берёт имя запроса отсюда, а не из `constructor.name`: продовая сборка web (Turbopack) минифицирует имена классов, а строковый литерал минификатор не трогает. Без этого поля в логах вместо `CreateUserCommand started` будет однобуквенное имя.
+- `@hasPII()` — частичная маска (почта), `@hasPII(true)` — полная (пароли, токены, хеши, ссылки с токенами, тексты писем). Помечай всё, что нельзя увидеть в debug-логе.
 
-A result is a union discriminated by `success` with a **named** payload:
+Результат — дискриминированное объединение по `success` с **именованным** полезным грузом:
 
 ```typescript
 export enum GetUserByIdQueryErrorCode {
@@ -106,23 +106,22 @@ export type GetUserByIdQueryResult =
   { success: true; user: UserDTO } | { success: false; error: GetUserByIdQueryErrorCode }
 ```
 
-- No domain failures — no enum: `{ success: true; … }` for managers and processes, a plain result interface for services, `*Response` for integrations.
-- There is no `errorMessage`: the human-readable text lives in the UI, core returns only the code.
+- Нет доменных отказов — нет enum: `{ success: true; … }` у managers и processes, простой интерфейс результата у services, `*Response` у integrations.
+- `errorMessage` не бывает: текст для человека живёт в интерфейсе, ядро отдаёт только код.
 
-### Manager commands do not return data
+### Команды менеджеров не возвращают данные
 
-A manager command changes state and answers only "it worked" or "no, and here is why": `{ success: true }` or `{ success: false, error }`. Data (DTOs, lists, counters) is returned **only by queries**. The identifier of a new entity is generated by the caller — the process — and passed into the command: it does not have to wait for the response to know the id, and a retry of the command with the same id hits the primary key instead of creating a duplicate.
+Команда менеджера меняет состояние и отвечает только «получилось» или «нет, и вот почему»: `{ success: true }` или `{ success: false, error }`. Данные (DTO, списки, счётчики) возвращают **только queries**. Идентификатор новой сущности генерирует вызывающий — process — и передаёт в команду: ему не нужно ждать ответа, чтобы знать id, а повтор команды с тем же id упирается в первичный ключ, а не создаёт дубль.
 
 ```typescript
-// command: only success or a failure code
+// command: только успех или код отказа
 export enum CreateUserCommandErrorCode {
   USER_ALREADY_EXISTS = 'USER_ALREADY_EXISTS',
 }
 
-export type CreateUserCommandResult =
-  { success: true } | { success: false; error: CreateUserCommandErrorCode }
+export type CreateUserCommandResult = { success: true } | { success: false; error: CreateUserCommandErrorCode }
 
-// process: the id is its own, the data comes from a separate query
+// process: id — свой, данные — отдельным query
 const userId = randomUUID()
 const created = await usersManager.execute(
   new CreateUserCommand({ userId, email, name, isEmailConfirmed: false }),
@@ -138,57 +137,57 @@ if (!created.success) {
 const userResult = await usersManager.execute(new GetUserByIdQuery({ userId }))
 ```
 
-Process operations return what the caller needs (the user after login, the settings after saving): this is the core boundary, not a manager command.
+Operations процессов возвращают то, что нужно вызывающему (пользователя после входа, настройки после сохранения): это граница ядра, а не команда менеджера.
 
-## Error handling
+## Обработка ошибок
 
-| Error type                                       | Handling                                                                                   |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| A domain failure the user can influence          | `{ success: false, error: XxxErrorCode.CODE }`                                             |
-| Invalid input to an operation                    | zod schema in `*.validator.ts` + `validateInput(schema, input)` → throws `ValidationError` |
-| A technical failure (DB, network, provider down) | `throw`                                                                                    |
-| An impossible state (a bug)                      | `throw new Error('…')`                                                                     |
+| Тип ошибки                                             | Обработка                                                                                 |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| Доменный отказ, на который пользователь может повлиять | `{ success: false, error: XxxErrorCode.CODE }`                                            |
+| Невалидный вход в операцию                             | zod-схема в `*.validator.ts` + `validateInput(schema, input)` → бросает `ValidationError` |
+| Технический сбой (БД, сеть, провайдер лёг)             | `throw`                                                                                   |
+| Невозможное состояние (баг)                            | `throw new Error('…')`                                                                    |
 
-- Codes exist only for what can be reacted to: no `UNKNOWN`, `INTERNAL_ERROR`, `NETWORK_ERROR`, `STORAGE_FAILED`.
-- Applications validate input themselves before core (422 in the API, form validation in the admin panel); the core validator is the second line.
-- **Every** `{ success: false }` of a dependency is handled by a `switch` on the code with `default: assertNever(result.error)` (`import assertNever from 'assert-never'`). The branch is determined by who can resolve the situation:
+- Коды — только то, на что можно отреагировать: без `UNKNOWN`, `INTERNAL_ERROR`, `NETWORK_ERROR`, `STORAGE_FAILED`.
+- Приложения проверяют ввод сами до ядра (422 в API, валидация формы в админке); валидатор ядра — вторая линия.
+- **Каждый** `{ success: false }` зависимости разбирается `switch` по коду с `default: assertNever(result.error)` (`import assertNever from 'assert-never'`). Ветка определяется тем, кто может разрешить ситуацию:
 
-| Situation                          | Branch                                                     |
-| ---------------------------------- | ---------------------------------------------------------- |
-| The user can fix it                | `return { success: false, error: OperationErrorCode.XYZ }` |
-| An expected edge case, idempotency | `break` (+ `logger.info`)                                  |
-| An impossible state                | `throw new Error('…')`                                     |
-| Exhaustive check                   | `default: assertNever(result.error)`                       |
+| Ситуация                             | Ветка                                                      |
+| ------------------------------------ | ---------------------------------------------------------- |
+| Пользователь может исправить         | `return { success: false, error: OperationErrorCode.XYZ }` |
+| Ожидаемый edge-case, идемпотентность | `break` (+ `logger.info`)                                  |
+| Невозможное состояние                | `throw new Error('…')`                                     |
+| Исчерпывающая проверка               | `default: assertNever(result.error)`                       |
 
-The shortcut `if (!result.success) return …` without a `switch` is not used: a new code in a dependency must break compilation in every place that does not handle it.
+Сокращение `if (!result.success) return …` без `switch` не используем: новый код в зависимости должен сломать компиляцию во всех местах, где его не обработали.
 
 ---
 
-## Naming
+## Именование
 
-| Element          | Rule                          | Example                                                                    |
-| ---------------- | ----------------------------- | -------------------------------------------------------------------------- |
-| Module directory | kebab-case + layer suffix     | `users-manager`, `token-service`, `admin-authentication`, `agent-api`      |
-| Facade class     | PascalCase + layer suffix     | `UsersManager`, `TokenService`, `AuthenticationProcess`, `VkIdIntegration` |
-| Facade interface | `I` + class                   | `IUsersManager`                                                            |
-| Singleton        | camelCase                     | `usersManager`, `authenticationProcess`                                    |
-| Handler          | `{FullContractName}Handler`   | `CreateUserCommandHandler`, `LoginOperationHandler`                        |
-| Data interface   | `{FullContractName}Data`      | `CreateUserCommandData`, `LoginOperationData`                              |
-| ErrorCode enum   | `{FullContractName}ErrorCode` | `CreateUserCommandErrorCode`, `LoginOperationErrorCode`                    |
+| Элемент           | Правило                       | Пример                                                                     |
+| ----------------- | ----------------------------- | -------------------------------------------------------------------------- |
+| Директория модуля | kebab-case + суффикс слоя     | `users-manager`, `token-service`, `admin-authentication`, `agent-api`      |
+| Класс фасада      | PascalCase + суффикс слоя     | `UsersManager`, `TokenService`, `AuthenticationProcess`, `VkIdIntegration` |
+| Интерфейс фасада  | `I` + класс                   | `IUsersManager`                                                            |
+| Singleton         | camelCase                     | `usersManager`, `authenticationProcess`                                    |
+| Handler           | `{FullContractName}Handler`   | `CreateUserCommandHandler`, `LoginOperationHandler`                        |
+| Data-интерфейс    | `{FullContractName}Data`      | `CreateUserCommandData`, `LoginOperationData`                              |
+| ErrorCode enum    | `{FullContractName}ErrorCode` | `CreateUserCommandErrorCode`, `LoginOperationErrorCode`                    |
 
-By layer:
+По слоям:
 
-|                | managers                                       | processes                               | services                                         | integrations                                              |
-| -------------- | ---------------------------------------------- | --------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| Contract       | `{Verb}{Entity}Command` / `…Query`             | `{OperationName}Operation`              | `{Verb}{Capability}Request`                      | `{Verb}{Resource}Request`                                 |
-| Contract file  | `.command.ts` / `.query.ts`                    | `.operation.ts`                         | `.request.ts`                                    | `.request.ts`                                             |
-| Result         | `{Contract}Result` (`CreateUserCommandResult`) | `{OperationName}Result` (`LoginResult`) | `{Contract}Result` (`HashPasswordRequestResult`) | `{Verb}{Resource}Response` (`ExchangeYandexCodeResponse`) |
-| Contract union | `{Entity}ManagerRequests`                      | `{ScenarioName}Operations`              | `{ServiceName}Requests`                          | `{ProviderName}IntegrationRequests`                       |
-| Operations     | `commands/{op}/`, `queries/{op}/`              | `{op}/`                                 | `{op}/`                                          | `{op}/`                                                   |
+|                  | managers                                       | processes                               | services                                         | integrations                                              |
+| ---------------- | ---------------------------------------------- | --------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
+| Контракт         | `{Verb}{Entity}Command` / `…Query`             | `{OperationName}Operation`              | `{Verb}{Capability}Request`                      | `{Verb}{Resource}Request`                                 |
+| Файл контракта   | `.command.ts` / `.query.ts`                    | `.operation.ts`                         | `.request.ts`                                    | `.request.ts`                                             |
+| Результат        | `{Contract}Result` (`CreateUserCommandResult`) | `{OperationName}Result` (`LoginResult`) | `{Contract}Result` (`HashPasswordRequestResult`) | `{Verb}{Resource}Response` (`ExchangeYandexCodeResponse`) |
+| Union контрактов | `{Entity}ManagerRequests`                      | `{ScenarioName}Operations`              | `{ServiceName}Requests`                          | `{ProviderName}IntegrationRequests`                       |
+| Операции         | `commands/{op}/`, `queries/{op}/`              | `{op}/`                                 | `{op}/`                                          | `{op}/`                                                   |
 
-Contract names are unique across the whole core: on a clash, add a qualifier (`BuildYandexAuthorizeUrlRequest` and `BuildVkIdAuthorizeUrlRequest`, `DeleteUserOperation` for the admin panel and `DeleteUserCommand` for the manager).
+Имена контрактов уникальны во всём ядре: при совпадении добавляй уточнение (`BuildYandexAuthorizeUrlRequest` и `BuildVkIdAuthorizeUrlRequest`, `DeleteUserOperation` у админки и `DeleteUserCommand` у менеджера).
 
-## Facade (`index.ts`)
+## Фасад (`index.ts`)
 
 ```typescript
 // 1. Handler imports
@@ -202,7 +201,7 @@ import { mediatr } from '../../shared'
 export { CreateUserCommand } from './commands/create-user/create-user.command'
 export type { CreateUserCommandData } from './commands/create-user/create-user.command'
 
-// 3. Type re-exports (enum — as a value, everything else — export type)
+// 3. Type re-exports (enum — значением, остальное — export type)
 export type { CreateUserCommandResult } from './commands/create-user/create-user.types'
 export { CreateUserCommandErrorCode } from './commands/create-user/create-user.types'
 export type { UserDTO } from './shared/user.dto'
@@ -229,75 +228,75 @@ export interface IUsersManager {
 export const usersManager: IUsersManager = new UsersManager()
 ```
 
-A process may add wrapper functions for frequent calls — wrappers only, no logic.
+Process может добавить функции-обёртки для частых вызовов — только обёртки, без логики.
 
 ---
 
 ## Managers
 
-A manager is the domain logic of **one entity** (table): CRUD, domain validation, reading and writing through Drizzle. Commands return only success or a failure code, queries return DTOs.
+Manager = доменная логика **одной сущности** (таблицы): CRUD, доменная валидация, чтение и запись через Drizzle. Commands возвращают только успех или код отказа, queries — DTO.
 
-- They do not orchestrate several entities and do not call other managers, services or integrations. The exception is an auxiliary **read** of a related table in the same query (the provider filter in `SearchUsersQuery` looks into `user_identity_providers`).
-- Structure: `commands/{op}/`, `queries/{op}/`, `shared/{entity}.dto.ts` with the DTO interface and the mapper `to{Entity}DTO(row)`.
-- DTOs are internal types of core. They may contain internal fields (the password hash in `UserCredentialsDTO`); a process does not hand such DTOs outside but builds its own.
-- Identifiers also come from URLs: a non-UUID is turned straight into `…_NOT_FOUND` (`isUuid` from shared), not into a Postgres error.
-- Uniqueness conflicts are handled via `ON CONFLICT DO NOTHING … RETURNING` and a check of the empty result, not by catching 23505: an exception inside a process transaction aborts the whole transaction. If an exception cannot be avoided (UPDATE of a unique field), wrap the query in `withSavepoint` and check `isUniqueViolation` / `isForeignKeyViolation`.
+- Не оркестрируют несколько сущностей, не вызывают другие managers, services и integrations. Исключение — вспомогательное **чтение** связанной таблицы в том же запросе (фильтр по провайдеру в `SearchUsersQuery` смотрит в `user_identity_providers`).
+- Структура: `commands/{op}/`, `queries/{op}/`, `shared/{entity}.dto.ts` с интерфейсом DTO и маппером `to{Entity}DTO(row)`.
+- DTO — внутренние типы ядра. В них могут быть служебные поля (хеш пароля у `UserCredentialsDTO`); process не отдаёт такие DTO наружу, а строит свой.
+- Идентификаторы приходят и из URL: не-UUID сразу превращается в `…_NOT_FOUND` (`isUuid` из shared), а не в ошибку Postgres.
+- Конфликты уникальности — через `ON CONFLICT DO NOTHING … RETURNING` и проверку пустого результата, а не перехватом 23505: исключение внутри транзакции процесса обрывает всю транзакцию. Если без исключения не обойтись (UPDATE уникального поля), оборачивай запрос в `withSavepoint` и проверяй `isUniqueViolation` / `isForeignKeyViolation`.
 
 ## Processes
 
-A process is a business scenario from start to finish and **the only** orchestrator.
+Process = бизнес-сценарий от начала до конца и **единственный** оркестратор.
 
-- They do not work with the DB directly (except the transaction boundary, see below), do not implement technical logic, do not call external APIs — everything goes through the facades of the layers.
-- Structure: `{op}/` per operation, `shared/` for DTOs and functions shared by the operations of this process, `src/processes/config.ts` (`PROCESSES_CONFIG`) — durations and constants of the scenarios.
-- Emails and external calls come **after** the transaction. A failure of an email that merely accompanies an action (welcome, "password changed", "account deleted") is logged and does not cancel the action; an email for the sake of which the operation is called (resending the confirmation, the email change link) throws on failure.
+- Не работают с БД напрямую (кроме границы транзакции, см. ниже), не реализуют техническую логику, не ходят во внешние API — всё через фасады слоёв.
+- Структура: `{op}/` на операцию, `shared/` для общих DTO и функций операций этого process, `src/processes/config.ts` (`PROCESSES_CONFIG`) — сроки и константы сценариев.
+- Письма и внешние вызовы — **после** транзакции. Сбой письма, которое лишь сопровождает действие (приветствие, «пароль изменён», «аккаунт удалён»), логируется и не отменяет действие; письмо, ради которого вызвана операция (повторное подтверждение, ссылка смены почты), при сбое бросает исключение.
 
 ## Services
 
-A service is a technical capability with no knowledge of domain entities: password hashing, tokens, email rendering and sending, health.
+Service = техническая возможность без знания о доменных сущностях: хеширование паролей, токены, рендер и отправка писем, health.
 
-- They do not call managers, processes or integrations and do not keep state.
-- Settings go in the module's `config.ts` (durations, keys from `getEnv()`), not in handlers.
-- Email sending lives in `email-sender-service`: the transport (SMTP, console, in-memory for tests) is a technical detail of the service, not of the scenario.
+- Не вызывают managers, processes, integrations и не хранят состояние.
+- Настройки — в `config.ts` модуля (сроки, ключи из `getEnv()`), не в handlers.
+- Отправка почты живёт в `email-sender-service`: транспорт (SMTP, консоль, память для тестов) — техническая деталь сервиса, а не сценария.
 
 ## Integrations
 
-An integration is a thin wrapper over an external API: build the request, call it, return the response in the provider's format (`shared/{provider}.types.ts`), without domain DTOs.
+Integration = тонкая обёртка над внешним API: собрать запрос, вызвать, вернуть ответ в формате провайдера (`shared/{provider}.types.ts`), без доменных DTO.
 
-- HTTP errors — `throw`. `ErrorCode` is only for statuses that the API explicitly returns and that the caller handles (`INVALID_GRANT` on code exchange, `UNREGISTERED` for FCM).
-- They call the global `fetch` at request time (tests replace it with `vi.stubGlobal`), with the `AbortSignal.timeout` timeout.
-- They keep no state between requests. The only exception is the cache of the provider's credentials (the access token of the FCM service account in `fcm/shared/access-token.ts`): it is a cache, and losing it costs one extra request.
+- HTTP-ошибки — `throw`. `ErrorCode` — только для статусов, которые API явно возвращает и которые вызывающий обрабатывает (`INVALID_GRANT` при обмене кода, `UNREGISTERED` у FCM).
+- Вызывают глобальный `fetch` в момент запроса (тесты подменяют его `vi.stubGlobal`), с таймаутом `AbortSignal.timeout`.
+- Состояния между запросами не хранят. Единственное исключение — кэш учётных данных провайдера (access-токен сервисного аккаунта FCM в `fcm/shared/access-token.ts`): это кэш, его потеря стоит лишний запрос.
 
 ---
 
-## DB and transactions
+## БД и транзакции
 
-- `getDb()` from `shared` is the query executor: the shared pool (a lazy singleton by `DATABASE_URL`) or the transaction of the current async context.
-- The transaction boundary is set by the **process**: `await inTransaction(async () => { …manager calls… })`. Managers inside a transaction get it through `getDb()` (AsyncLocalStorage) and know nothing about it. A nested `inTransaction` joins the outer one. Only the scenario knows the boundary: a manager cannot decide for it where atomicity ends.
-- An early exit with a domain error inside a transaction goes through the callback's return value (`return ErrorCode.X`), a rollback goes through `throw`.
-- `withSavepoint(fn)` — an isolated piece inside a transaction whose error does not abort it.
-- In raw ``sql`…` `` drizzle does not convert `Date` (the driver's date serializers are transparent): pass `date.toISOString()` with an explicit `::timestamptz`.
-- Time is compared in JS (`new Date()` is passed as a parameter), not with `now()` in SQL: tests move the clock through a fake `Date`.
+- `getDb()` из `shared` — исполнитель запросов: общий пул (ленивый синглтон по `DATABASE_URL`) или транзакция текущего async-контекста.
+- Границу транзакции задаёт **process**: `await inTransaction(async () => { …вызовы managers… })`. Managers внутри транзакции получают её через `getDb()` (AsyncLocalStorage) и ничего о ней не знают. Вложенный `inTransaction` присоединяется к внешнему. Границу знает только сценарий: manager не может решить за него, где заканчивается атомарность.
+- Ранний выход с доменной ошибкой внутри транзакции — через возвращаемое значение колбэка (`return ErrorCode.X`), откат — через `throw`.
+- `withSavepoint(fn)` — изолированный кусок внутри транзакции, ошибка которого не обрывает её.
+- В сыром ``sql`…` `` drizzle не преобразует `Date` (сериализаторы дат драйвера прозрачные): передавай `date.toISOString()` с явным `::timestamptz`.
+- Время сравнивается в JS (`new Date()` передаётся параметром), а не `now()` в SQL: тесты двигают часы через fake `Date`.
 
-## Configuration
+## Конфигурация
 
-- Core reads env only through `getEnv()` (`config/env.ts`, checked against the `coreEnvSchema` schema on first access) and only from the modules' `config.ts` and `processes/config.ts`. The DB and logs are exceptions: `getDb()` reads `DATABASE_URL`, the logger reads `LOG_LEVEL`, `APP_ENV` and `OTEL_*` itself, so that tests and migrations do not require the whole env.
-- Applications call `loadEnv(appEnvSchema)` / `loadEnv(adminEnvSchema)` at startup — they fail immediately with a list of all problems.
-- A new variable goes into the schema in `config/env.ts` and into the applications' `.env.example`.
+- Ядро читает env только через `getEnv()` (`config/env.ts`, проверка схемой `coreEnvSchema` при первом обращении) и только из `config.ts` модулей и `processes/config.ts`. БД и логи — исключения: `getDb()` читает `DATABASE_URL`, логгер — `LOG_LEVEL`, `APP_ENV` и `OTEL_*` сами, чтобы тесты и миграции не требовали всего env.
+- Приложения вызывают `loadEnv(appEnvSchema)` / `loadEnv(adminEnvSchema)` при старте — падают сразу со списком всех проблем.
+- Новая переменная — в схему в `config/env.ts` и в `.env.example` приложений.
 
-## Logs and personal data
+## Логи и ПДн
 
-- `createLogger('module-name')` from `shared`: `debug/info(message, data)`, `warn/error(message, error, data)`. JSON (pino) to stdout, level — `LOG_LEVEL`; with `OTEL_ENABLED=true` — also over OTLP (`shared/telemetry.ts`).
-- Do not write passwords, tokens, OAuth codes, links with tokens or email texts to the log: contract fields are marked `@hasPII`, and core strips query parameters from drizzle errors itself. Which other keys to strip (`password`, `token`, headers…) is not decided by core: the application sets the list at startup via `configureLogger`. Identifiers (userId) may be logged.
+- `createLogger('module-name')` из `shared`: `debug/info(message, data)`, `warn/error(message, error, data)`. JSON (pino) в stdout, уровень — `LOG_LEVEL`; при `OTEL_ENABLED=true` — ещё и по OTLP (`shared/telemetry.ts`).
+- В лог не пишем пароли, токены, коды OAuth, ссылки с токенами, тексты писем: поля контрактов помечены `@hasPII`, параметры запросов из ошибок drizzle ядро вырезает само. Какие ещё ключи вырезать (`password`, `token`, заголовки…), ядро не решает: список задаёт приложение при старте через `configureLogger`. Идентификаторы (userId) логировать можно.
 
-## Tests
+## Тесты
 
-- `test/*.test.ts`, vitest, a real Postgres (`DATABASE_URL_TEST`, `ryadom_test` by default): the global setup recreates the schema and applies migrations, `test/setup.ts` cleans the tables before each test. Files run sequentially.
-- External HTTP — `mockFetch` from `test/helpers.ts` (`vi.stubGlobal('fetch')`), emails — the `memory` transport (`getSentEmails()`), time — `travelTo`/`travelBy` (only `Date` is replaced).
-- A test calls the facades the same way the applications do and checks codes, data and DB state.
+- `test/*.test.ts`, vitest, настоящий Postgres (`DATABASE_URL_TEST`, по умолчанию `ryadom_test`): глобальная подготовка пересоздаёт схему и применяет миграции, `test/setup.ts` чистит таблицы перед каждым тестом. Файлы идут последовательно.
+- Внешние HTTP — `mockFetch` из `test/helpers.ts` (`vi.stubGlobal('fetch')`), письма — транспорт `memory` (`getSentEmails()`), время — `travelTo`/`travelBy` (подменяется только `Date`).
+- Тест вызывает фасады так же, как приложения, и проверяет коды, данные и состояние БД.
 
-## How to add an operation
+## Как добавить операцию
 
-1. The operation folder in the right layer; the contract with `*Data` and `static readonly requestName`, the types with the error code enum, the handler with `@requestHandler`, a validator if needed.
-2. The handler import and the re-exports in the module's `index.ts`, the contract goes into the union.
-3. All dependency failures — `switch` + `assertNever`.
-4. A test in `test/`, an entry in the README (for a process — a row in the API table).
+1. Папка операции в нужном слое; контракт с `*Data` и `static readonly requestName`, типы с enum кодов, handler с `@requestHandler`, при необходимости валидатор.
+2. Импорт handler-а и реэкспорты в `index.ts` модуля, контракт — в union.
+3. Все отказы зависимостей — `switch` + `assertNever`.
+4. Тест в `test/`, запись в README (для process — строка в таблице API).

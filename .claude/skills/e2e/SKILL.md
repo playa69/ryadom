@@ -1,74 +1,67 @@
 ---
 name: e2e
-description: End-to-end tests of Ryadom and manual browser checks — the Playwright suite app/e2e (its own environment built from production builds, projects desktop and mobile), how many tests to run during a task and before submitting, parallel runs on shifted ports, builds from the Turborepo cache, checks through Playwright MCP with a microphone. Use for requests like "run e2e", "check it in the browser", "click through it", "check that nothing broke".
+description: Сквозные тесты «Рядом» и ручная проверка в браузере — Playwright-набор app/e2e (свой стенд из прод-сборок, проекты desktop и mobile), сколько гонять по ходу задачи и перед сдачей, параллельные прогоны на сдвинутых портах, сборки из кэша Turborepo, проверка через Playwright MCP с микрофоном. Использовать при просьбах «прогони e2e», «проверь в браузере», «прокликай», «проверь, что не сломалось».
 ---
 
-# End-to-end tests and browser checks
+# Сквозные тесты и проверка в браузере
 
-The **local environment** is checked, not production: production is read-only (the `logs` skill). The suite is
-`app/e2e` (Playwright, over a hundred tests, projects `desktop` and `mobile` (Pixel 7 with a fake microphone), one
-worker; the whole suite takes about 10 minutes plus the build).
+Проверяется **локальный стенд**, не прод: прод — только чтение (скилл `logs`). Набор — `app/e2e` (Playwright, больше
+сотни тестов, проекты `desktop` и `mobile` (Pixel 7 с фейковым микрофоном), один воркер; весь набор — около 10 минут
+плюс сборка).
 
-## How many to run
+## Сколько гонять
 
-- **During a task** (every edit, every reply to a comment) — only the specs of the affected feature, on both projects:
-  `pnpm --filter @ryadom/e2e exec playwright test web-memory app-memory` (file names in `e2e/tests/`). Plus typecheck
-  and unit tests of the affected packages (the `local-dev` skill).
-- **Before submitting** (the user asks "is it done?", the PR goes to review or merge) — the whole suite
-  `pnpm test:e2e`, once.
-- A test of someone else's feature failed — rerun it alone: `web-shell` occasionally flakes; if it fails again,
-  investigate.
+- **По ходу задачи** (каждая правка, каждый ответ на комментарий) — только спеки затронутой функции, на обоих проектах:
+  `pnpm --filter @ryadom/e2e exec playwright test web-memory app-memory` (имена файлов в `e2e/tests/`). Плюс
+  typecheck и юнит-тесты затронутых пакетов (скилл `local-dev`).
+- **Перед сдачей** (человек спрашивает «готово?», PR идёт на ревью или слияние) — весь набор `pnpm test:e2e`, один раз.
+- Упал тест чужой функции — перезапусти его отдельно: `web-shell` изредка флакает; падает снова — разбирайся.
 
-## Running
+## Запуск
 
 ```bash
 cd app
-pnpm test:e2e                                                           # whole suite
-pnpm --filter @ryadom/e2e exec playwright test --project=mobile app-dialog   # part: project and files
-pnpm --filter @ryadom/e2e report                                        # HTML report from e2e/report
+pnpm test:e2e                                                           # весь набор
+pnpm --filter @ryadom/e2e exec playwright test --project=mobile app-dialog   # часть: проект и файлы
+pnpm --filter @ryadom/e2e report                                        # HTML-отчёт из e2e/report
 ```
 
-`webServer` in `playwright.config.ts` runs `e2e/scripts/stack.mjs`: compose `e2e/compose.yaml` (PostgreSQL in tmpfs
-:55434, Mailpit :1027/:8027, agent mock :8081, with `--build`), migrations, **production builds** of the apps and the
-servers: landing :3100, api :3102, web :3103, PWA :3104 (`vite preview`); there is no admin panel in this environment.
-Readiness — `http://127.0.0.1:3100/api/health`; at the end the environment is torn down together with its volumes.
+`webServer` в `playwright.config.ts` запускает `e2e/scripts/stack.mjs`: compose `e2e/compose.yaml` (PostgreSQL в tmpfs
+:55434, Mailpit :1027/:8027, мок агента :8081, с `--build`), миграции, **прод-сборки** приложений и серверы: landing
+:3100, api :3102, web :3103, PWA :3104 (`vite preview`); админки в этом стенде нет. Готовность —
+`http://127.0.0.1:3100/api/health`; в конце стенд снимается вместе с томами.
 
-- **Builds go through Turborepo with a cache:** an app whose sources (and the sources of its packages) have not changed
-  since the last build comes from the cache in seconds. `TURBO_CACHE_DIR` gives several checkouts one cache.
-- **Parallel runs go on shifted ports.** `E2E_PORT_OFFSET=100` shifts all the environment's ports (3200, 3202, …,
-  55534, 8127, 8181) and gives the compose project its own name, so runs from different worktrees do not wait for each
-  other.
-- **Someone else's environment on the same ports will be reused** (`reuseExistingServer` outside CI), and the tests
-  will pass against someone else's code. Before running, check that the ports are free (`ss -ltn`, on Windows
-  `netstat -ano`); if they are busy, take another offset and do not stop other people's processes.
-- It takes long: run it in the background with the log in a file and wait for completion rather than polling in a loop;
-  in the log, `grep -v '^\[WebServer\]'` removes the environment noise.
-- The Playwright browser for the suite is installed once: `pnpm --filter @ryadom/e2e exec playwright install chromium`.
+- **Сборки — через Turborepo с кэшем:** приложение, чьи исходники (и исходники его пакетов) не менялись с прошлой
+  сборки, приходит из кэша за секунды. `TURBO_CACHE_DIR` даёт один кэш нескольким checkout'ам.
+- **Параллельные прогоны — на сдвинутых портах.** `E2E_PORT_OFFSET=100` сдвигает все порты стенда (3200, 3202, …,
+  55534, 8127, 8181) и даёт compose-проекту своё имя, так что прогоны из разных worktree не ждут друг друга.
+- **Чужой стенд на тех же портах будет переиспользован** (`reuseExistingServer` вне CI), и тесты пройдут против чужого
+  кода. Перед прогоном проверь, что порты свободны (`ss -ltn`, в Windows `netstat -ano`); занято — возьми другой
+  сдвиг, чужое не останавливай.
+- Долго: запускай в фоне с логом в файл и жди завершения, а не опрашивай в цикле; в логе `grep -v '^\[WebServer\]'`
+  убирает шум стенда.
+- Браузер Playwright для набора — один раз: `pnpm --filter @ryadom/e2e exec playwright install chromium`.
 
-New tests go next to similar ones in `e2e/tests/`, shared steps (sign-in, codes from Mailpit, Telegram) go in
-`e2e/support/`, and environment addresses are constants from `playwright.config.ts` (`APP_URL`, `MAIL_URL`,
-`AGENT_URL`, …), not hardcoded ports. In the test and in the PR, cite the OpenSpec requirement and the `REQ-…` from
-docs/spec.md, if there is one.
+Новые тесты — рядом с похожими в `e2e/tests/`, общие шаги (вход, коды из Mailpit, Telegram) — в `e2e/support/`, адреса
+стенда — константы из `playwright.config.ts` (`APP_URL`, `MAIL_URL`, `AGENT_URL`, …), а не зашитые порты. В тесте и PR
+указывай требование OpenSpec и `REQ-…` из docs/spec.md, если есть.
 
-## Manual check (Playwright MCP)
+## Ручная проверка (Playwright MCP)
 
-The environment — the `local-dev` skill (`pnpm dev`). Surfaces: landing, web, PWA and admin panel; in dev each app is on
-its own port and at the root, without the production prefixes `/app`, `/pwa`, `/admin`. Sign-in — anonymous, with a
-code from Mailpit, or into the admin panel (the `local-dev` skill).
+Стенд — скилл `local-dev` (`pnpm dev`). Поверхности: landing, web, PWA и админка; в dev
+каждое приложение на своём порту и в корне, без прод-префиксов `/app`, `/pwa`, `/admin`. Вход — анонимно, по коду из
+Mailpit или в админку (скилл `local-dev`).
 
-- **Microphone:** on a new origin `getUserMedia` waits for an answer to the permission prompt, and the call hangs until
-  the MCP timeout. Grant the permission first: `page.context().grantPermissions(['microphone'], { origin })`
-  (`browser_run_code_unsafe`).
-- **Sound:** on the user's machine the browser plays the agent mock's voice into that machine's real output, i.e. into
-  the user's headphones: warn them or check without voice. Headless Chromium without a sound card (the agent's machine)
-  plays into nothing.
-- **Screenshots** — the `screenshots` skill (by script, only the needed screens), not by hand through MCP.
+- **Микрофон:** на новом origin `getUserMedia` ждёт ответа на запрос разрешения, и вызов висит до тайм-аута MCP. Сначала
+  выдай разрешение: `page.context().grantPermissions(['microphone'], { origin })` (`browser_run_code_unsafe`).
+- **Звук:** на машине человека браузер играет голос мока в её реальный выход, то есть в наушники человека: предупреди
+  или проверяй без голоса. Headless Chromium без звуковой карты (машина агента) играет в никуда.
+- **Скриншоты** — скилл `screenshots` (скриптом, только нужные экраны), а не руками через MCP.
 
-## What is not checked
+## Что не проверяется
 
-Sound by ear and voice quality, real models (the mock answers with templates; the real agent — `local-dev`), real
-devices (iOS before 26, Android WebView, Firefox), the Telegram Mini App inside the Telegram client, load. In the report
-list the unchecked items explicitly; do not present a partial check as a complete one.
+Звук на слух и качество голоса, настоящие модели (мок отвечает шаблонами; настоящий агент — `local-dev`), реальные
+устройства (iOS до 26, Android WebView, Firefox), Telegram Mini App внутри клиента Telegram, нагрузка. В отчёте
+перечисляй непроверенное прямо, не выдавай частичную проверку за полную.
 
-Related: [[local-dev]] — the development environment and sign-in; [[screenshots]] — screen captures; [[deploy]] —
-checks on production.
+Связано: [[local-dev]] — стенд разработки и вход; [[screenshots]] — снимки экранов; [[deploy]] — проверки на проде.

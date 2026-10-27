@@ -1,102 +1,97 @@
 ---
 name: analytics
-description: Product analytics for Ryadom in PostHog (EU, project 300786) — HogQL queries via the API for DAU, funnels, retention, dialogs and turns, platforms, UTM, crisis signals, reconciliation with the database. Use for questions like "how many people talked", "what is the DAU", "registration funnel", "retention", "where did they come from", "how many turns per day", "how many real users", when preparing metrics and when checking events after a rollout.
+description: Продуктовая аналитика «Рядом» в PostHog (EU, проект 300786) — запросы HogQL через API: DAU, воронки, удержание, диалоги и реплики, платформы, UTM, кризисные сигналы, сверка с базой. Использовать при вопросах «сколько людей поговорили», «какой DAU», «воронка регистрации», «удержание», «откуда пришли», «сколько реплик в день», «сколько реальных пользователей», при подготовке метрик и при проверке событий после выката.
 ---
 
-# Product analytics (PostHog)
+# Продуктовая аналитика (PostHog)
 
-The `Ryadom` project in PostHog Cloud EU, id `300786`. How collection works, what is sent and what is not, the event
-catalog — [docs/analytics.md](../../../docs/analytics.md); what counts as the target action and how the numbers are
-reconciled with the databases — [docs/analytics-proof.md](../../../docs/analytics-proof.md). Event and property types —
-`app/packages/analytics/src/events.ts`.
+Проект `Ryadom` в PostHog Cloud EU, id `300786`. Как устроен сбор, что отправляется и чего нет, каталог событий —
+[docs/analytics.md](../../../docs/analytics.md); что считается целевым действием и как цифры сверяются с базами —
+[docs/analytics-proof.md](../../../docs/analytics-proof.md). Типы событий и свойств — `app/packages/analytics/src/events.ts`.
 
-## Access
+## Доступ
 
 ```bash
 node .agents/skills/analytics/scripts/hogql.mjs "SELECT count() FROM events WHERE timestamp > now() - INTERVAL 1 DAY"
 node .agents/skills/analytics/scripts/hogql.mjs -f /tmp/dau.sql --json
 ```
 
-The script sends HogQL to `POST /api/environments/300786/query/` and prints a table (`--json` prints columns and rows
-as JSON). It needs a personal PostHog key with the `query:read` scope in `POSTHOG_PERSONAL_API_KEY`; the administrator
-issues it, and it never goes into chat or repository files. The public project token `phc_…` (`POSTHOG_KEY`) does not
-work for queries: it only accepts events.
+Скрипт шлёт HogQL в `POST /api/environments/300786/query/` и печатает таблицу (`--json` — колонки и строки как JSON).
+Нужен личный ключ PostHog с правом `query:read` в `POSTHOG_PERSONAL_API_KEY`; его выдаёт администратор, в чат и в
+файлы репозитория он не попадает. Публичный токен проекта `phc_…` (`POSTHOG_KEY`) для запросов не годится: он только
+принимает события.
 
-Without a key, from a browser where the user is signed in to `eu.posthog.com`, the same query is made by `fetch` from
-the project page (the session and the `X-CSRFToken` header taken from the `posthog_csrftoken` cookie); this works only
-while the tab is open on `eu.posthog.com`. The `app.posthog.com` web UI answers 403 "not available in your region" from
-some regions — use `eu.posthog.com`.
+Без ключа, из браузера, где человек вошёл в `eu.posthog.com`, тот же запрос делает `fetch` со страницы проекта
+(сессия и заголовок `X-CSRFToken` из cookie `posthog_csrftoken`); работает только пока вкладка открыта на
+`eu.posthog.com`. Веб-интерфейс `app.posthog.com` из части регионов отвечает 403 «not available in your region» —
+используй `eu.posthog.com`.
 
-**Change nothing in the project without a direct request:** dashboards, insights, cohorts, project settings, people.
-Queries are read-only.
+**Ничего не менять в проекте без прямой просьбы:** дашборды, инсайты, когорты, настройки проекта, люди. Запросы — только
+чтение.
 
-## People filter
+## Фильтр людей
 
-Any count of people starts by excluding test and team traffic:
+Любой подсчёт людей начинается с исключения тестового и командного трафика:
 
 ```sql
-WHERE person_id NOT IN COHORT 275976                                   -- load test of 13 Oct, 150 accounts
+WHERE person_id NOT IN COHORT 275976                                   -- нагрузочный тест 13.10, 150 аккаунтов
   AND coalesce(properties.app_env, '') NOT IN ('local', 'staging', 'development')
   AND coalesce(properties.traffic_type, 'real') NOT IN ('test', 'internal')
 ```
 
-`traffic_type` is set by the server per account (`users.properties.traffic_type`): `test` — devices with an id starting
-with `loadtest-`, `internal` — the team, marked manually. Accounts from new load-test runs must be appended to cohort
-275976 (the query is in docs/analytics.md, section «Дашборды и тестовые данные») — this changes the project, so only on request.
+`traffic_type` ставит сервер по аккаунту (`users.properties.traffic_type`): `test` — устройства с id на `loadtest-`,
+`internal` — команда, помеченная вручную. Аккаунты новых нагрузочных прогонов нужно дописывать в когорту 275976
+(запрос — в docs/analytics.md, «Дашборды и тестовые данные») — это изменение проекта, только по просьбе.
 
-## Cheat sheet
+## Шпаргалка
 
 ```sql
--- People who talked, and turns per day (Moscow)
+-- Люди, которые говорили, и реплики по дням (Москва)
 SELECT toDate(toTimeZone(timestamp, 'Europe/Moscow')) AS day,
        uniqIf(person_id, event = 'dialog_turn') AS people, countIf(event = 'dialog_turn') AS turns,
        countIf(event = 'component_called') AS calls
-FROM events WHERE timestamp > now() - INTERVAL 14 DAY AND <people filter>
+FROM events WHERE timestamp > now() - INTERVAL 14 DAY AND <фильтр людей>
 GROUP BY day ORDER BY day
 
--- Said anything at all: dialog_turn appeared on the evening of 13 Oct, before it there were counters at the end of a dialog
+-- Сказал хоть что-то: dialog_turn появился 13.10 вечером, до него — счётчики в конце диалога
 SELECT count(DISTINCT person_id) FROM events
 WHERE (event = 'dialog_turn' OR (event IN ('dialog_ended', 'dialog_interrupted') AND toInt(properties.user_messages) > 0))
-  AND <people filter>
+  AND <фильтр людей>
 
--- Platforms and sources
-SELECT properties.app_platform, count(DISTINCT person_id) FROM events WHERE event = 'app_opened' AND <filter> GROUP BY 1
+-- Платформы и источники
+SELECT properties.app_platform, count(DISTINCT person_id) FROM events WHERE event = 'app_opened' AND <фильтр> GROUP BY 1
 SELECT properties.$session_entry_utm_source AS source, count(DISTINCT person_id) FROM events
-WHERE event = 'account_created' AND <filter> GROUP BY source ORDER BY 2 DESC LIMIT 50
+WHERE event = 'account_created' AND <фильтр> GROUP BY source ORDER BY 2 DESC LIMIT 50
 
--- Retention: came back with a turn a day or more after the first one
+-- Удержание: вернулся с репликой через сутки и позже после первой
 SELECT count() FROM (
   SELECT person_id, minIf(timestamp, event = 'dialog_turn') AS first, maxIf(timestamp, event = 'dialog_turn') AS last
-  FROM events WHERE event = 'dialog_turn' AND <people filter> GROUP BY person_id)
+  FROM events WHERE event = 'dialog_turn' AND <фильтр людей> GROUP BY person_id)
 WHERE last >= first + INTERVAL 24 HOUR
 
--- Crisis signals and SOS: events without a person, time rounded to the hour
+-- Кризисные сигналы и SOS: события без человека, время округлено до часа
 SELECT event, properties.level, count() FROM events
 WHERE event IN ('safety_signal', 'sos_opened', 'hotline_called') AND timestamp > now() - INTERVAL 7 DAY GROUP BY 1, 2
 ```
 
-The target action (`dialog_turn`) and the DAU based on it are defined in docs/analytics-proof.md: count by those
-definitions, and if the task asks for something else (for example, "a dialog of three or more turns"), state it
-explicitly in the report. Ready-made cards are in the dashboards «Рядом — продукт»
-(`https://eu.posthog.com/project/300786/dashboard/1012431`) and «Рядом — воронка и удержание» (`…/dashboard/1020753`).
+Целевое действие (`dialog_turn`) и DAU по нему определены в docs/analytics-proof.md: считай по этим определениям, а
+если задача просит другое (например, «разговор от трёх реплик»), назови его в отчёте явно. Готовые карточки — дашборды «Рядом — продукт»
+(`https://eu.posthog.com/project/300786/dashboard/1012431`) и «Рядом — воронка и удержание» (`…/dashboard/1020753`).
 
-## Reconciliation with the database
+## Сверка с базой
 
-PostHog is reconciled with the databases (the `db` skill): the `dialog_id` of events = `dialogs.id` in the `agent`
-database, `person_id` = the account id (`users.id` in the `app` database). To intersect them, export both lists to files
-outside the repository and match them with a script; people who talked before 10 Oct 2026 are in the database but not in
-PostHog (there was no analytics yet).
+PostHog сверяется с базами (скилл `db`): `dialog_id` событий = `dialogs.id` в базе `agent`, `person_id` = id аккаунта
+(`users.id` в базе `app`). Для пересечения выгрузи оба списка в файлы вне репозитория и сопоставь скриптом; люди,
+которые говорили до 10.10.2026, есть в базе, но не в PostHog (аналитики ещё не было).
 
-## Pitfalls
+## Грабли
 
-- **100 rows by default.** HogQL silently truncates the response if the query has no `LIMIT`; the script warns.
-- **Time** in `timestamp` is UTC: for Moscow days use `toTimeZone(timestamp, 'Europe/Moscow')`.
-- **Types.** `greatest()` and comparisons between `Int64` and `UInt64` fail: cast explicitly or compute in a script.
-- **Events without a person** (`safety_signal`, `password_reset_requested`, `account_deleted`, SOS and helplines) carry
-  a random id and a time rounded to the hour: do not count people from them and do not match them with a person's
-  actions.
-- **`app_version`** is the image tag (`--build-arg RELEASE`); `0.1.0` means the image was built without it.
-- **Do not export the properties of people and events in full:** only aggregates go into reports and issues.
+- **100 строк по умолчанию.** HogQL молча режет ответ, если в запросе нет `LIMIT`; скрипт предупреждает.
+- **Время** в `timestamp` — UTC: для суток по Москве `toTimeZone(timestamp, 'Europe/Moscow')`.
+- **Типы.** `greatest()` и сравнения между `Int64` и `UInt64` падают: приводи явно или считай в скрипте.
+- **События без человека** (`safety_signal`, `password_reset_requested`, `account_deleted`, SOS и линии помощи) — с
+  случайным id и временем, округлённым до часа: людей по ним не считают и с действиями человека не сопоставляют.
+- **`app_version`** — тег образа (`--build-arg RELEASE`); `0.1.0` значит, что образ собран без него.
+- **Свойства людей и событий не выгружай целиком:** в отчёты и задачи — только агрегаты.
 
-Related: [[db]] — the same people and dialogs in the databases; [[logs]] — model spend and tokens (Prometheus,
-Langfuse).
+Связано: [[db]] — те же люди и диалоги в базах; [[logs]] — расход моделей и токены (Prometheus, Langfuse).

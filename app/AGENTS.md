@@ -9,43 +9,41 @@ Read `docs/README.md` inside that installed package first, then read the relevan
 This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
 <!-- END:turborepo-agent-rules -->
 
-# app/: code rules
+# app/: правила кода
 
-General repository rules are in the root `AGENTS.md`. This file is about how the `app/` code is built (pnpm +
-Turborepo, Node 24, TypeScript); running and checks — skills `local-dev` and `e2e`. The core package
-(`packages/core`: layers, managers, processes, transactions) has its own rules in `packages/core/AGENTS.md`.
+Общие правила репозитория — в корневом `AGENTS.md`. Здесь — как устроен код `app/` (pnpm + Turborepo, Node 24,
+TypeScript); запуск и проверки — скиллы `local-dev` и `e2e`. У ядра (`packages/core`: слои, менеджеры, процессы,
+транзакции) свои правила — `packages/core/AGENTS.md`.
 
-## Contracts
+## Контракты
 
-The public API format is the types in `packages/contracts`: both `services/api` and the clients use them. Changing a
-request or a response — first the contract, then both sides; old OTA and native client builds are still alive, so a
-field cannot simply be removed.
+Формат публичного API — типы в `packages/contracts`: их используют и `services/api`, и клиенты. Меняешь запрос или
+ответ — сначала контракт, потом обе стороны; старые OTA- и нативные сборки клиента ещё живут, поле нельзя просто убрать.
 
-## Server configuration
+## Конфигурация сервера
 
-- Server variables are described by zod schemas in `packages/core/src/config/env.ts`: `appEnvSchema` for
-  `services/api`, `adminEnvSchema` for the admin panel, the shared part in both. The server checks them at start
-  (`services/api/src/lib/env.ts`, `apps/admin/lib/env.ts`) and fails with the list of all errors. An empty string
-  means "not set".
-- A new variable — a field in the schema, a line in the app's `.env.example` and, if production needs it, a key in
-  `k8s/app/00-app-config.yaml` (a secret goes into a Secret; the repository holds only its name). Do not add direct
-  `process.env` reads to server code.
+- Переменные сервера описаны zod-схемами в `packages/core/src/config/env.ts`: `appEnvSchema` для `services/api`,
+  `adminEnvSchema` для админки, общая часть — в обеих. Сервер проверяет их при старте
+  (`services/api/src/lib/env.ts`, `apps/admin/lib/env.ts`) и падает со списком всех ошибок. Пустая строка — «не задано».
+- Новая переменная — поле в схеме, строка в `.env.example` приложения и, если нужна в проде, ключ в
+  `k8s/app/00-app-config.yaml` (секрет — в Secret, в репозитории только его имя). Прямых `process.env` в коде сервера
+  не добавлять.
 
-## Logs
+## Логи
 
-- Logger — `createLogger('<component>')` from `packages/core` (pino, JSON to stdout; in the cluster Loki collects it).
-- Fields with personal data in process requests are marked `@hasPII()` (`packages/core/src/shared/pii-protection.ts`):
-  `LoggingBehavior` masks them in logs. Conversation texts never go into the log.
+- Логгер — `createLogger('<компонент>')` из `packages/core` (pino, JSON в stdout; в кластере его собирает Loki).
+- Поля с личными данными в запросах процессов помечаются `@hasPII()` (`packages/core/src/shared/pii-protection.ts`):
+  `LoggingBehavior` маскирует их в логах. Тексты разговоров в лог не пишутся.
 
-## Tracing headers
+## Заголовки трассировки
 
-- Clients send five headers with every request — `TracingHeader` in `packages/contracts/src/api/headers.ts`:
+- Клиенты шлют на каждый запрос пять заголовков — `TracingHeader` в `packages/contracts/src/api/headers.ts`:
   `x-trace-id`, `x-request-time`, `x-client-id`, `x-session-id`, `x-user-id`.
-- The API reads them once at the entry (HTTP middleware, WebSocket upgrade) into `RequestContext`
-  (`packages/core/src/shared/request-context.ts`, AsyncLocalStorage): log records and outgoing calls to the agent
-  (`tracingHeaders()`) take them from there. The context is not passed through function arguments.
-- Behind a token, `x-user-id` is replaced by the verified account.
+- API читает их один раз на входе (HTTP-middleware, апгрейд WebSocket) в `RequestContext`
+  (`packages/core/src/shared/request-context.ts`, AsyncLocalStorage): оттуда их берут записи лога и исходящие вызовы
+  агента (`tracingHeaders()`). Через аргументы функций контекст не передают.
+- За токеном `x-user-id` заменяется проверенным аккаунтом.
 
-## Language
+## Язык
 
-Code comments — in English and only about reasons; UI texts and documentation — in Russian.
+Комментарии в коде — по-английски и только о причинах; тексты интерфейса и документация — по-русски.

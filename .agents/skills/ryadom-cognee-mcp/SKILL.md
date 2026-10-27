@@ -1,40 +1,42 @@
 ---
 name: ryadom-cognee-mcp
-description: "Connecting to the Ryadom team's Cognee MCP (twc-sber500) — shared team memory. The connection uses the env variables COGNEE_MCP_USER/COGNEE_MCP_PASS, with no secrets in configs. Rules: write project facts to the dataset ryadom, recall before starting work, never index secrets. Use when you need to connect the MCP, save or find team knowledge, or diagnose the connection."
-whenToUse: When connecting Cognee MCP in this repo, setting up mcp.json for a new team member, saving or searching team knowledge (remember/recall), or when recall/remember do not work
+description: "Подключение к командному Cognee MCP проекта Рядом (twc-sber500) — общая память команды. Подключение через env-переменные COGNEE_MCP_USER/COGNEE_MCP_PASS без секретов в конфигах. Правила: факты проекта писать в dataset ryadom, recall перед началом работы, секреты не индексировать. Используй когда нужно подключить MCP, сохранить/найти знание команды или продиагностировать подключение."
+whenToUse: Когда подключаешь Cognee MCP в этом репо, настраиваешь mcp.json у нового члена команды, сохраняешь/ищешь командные знания (remember/recall), или recall/remember не работают
 ---
 
-# Ryadom team memory — Cognee MCP
+# Командная память Рядом — Cognee MCP
 
-Cognee is the shared memory of the **Ryadom** project (cluster `twc-sber500`, see the `deploy` skill). The team works
-in **one context**: a shared Cognee MCP server and a shared dataset `ryadom`. Local docker and Cognee Cloud are not
-used.
+Cognee — общая память проекта **Рядом** (кластер `twc-sber500`, см. скилл
+`deploy`). Команда работает в **одном контексте**: общий
+Cognee MCP-сервер, общий датасет `ryadom`. Локальный docker и Cognee Cloud
+не используются.
 
-All MCP clients use one service account, so the data of all team members lands in the same datasets — that is the
-shared context.
+Все MCP-клиенты ходят под одним сервисным аккаунтом, поэтому данные всех
+членов команды ложатся в одни датасеты — это и есть общий контекст.
 
-## Connection (developer onboarding)
+## Подключение (онбординг разработчика)
 
-Principle: **configs hold only variable names, credentials live in the developer's environment.**
+Принцип: **в конфигах — только имена переменных, креды — в окружении разработчика.**
 
-1. Get basic-auth credentials from whoever deployed the MCP (the password has the format `XXXX-XXXX-XXXX`).
-2. Export them in `~/.zshrc` (or `.env` + direnv):
+1. Получить basic-auth креды у того, кто деплоил MCP (пароль формата `XXXX-XXXX-XXXX`).
+2. Экспортировать в `~/.zshrc` (или `.env` + direnv):
    ```bash
    export COGNEE_MCP_USER="mcp"
-   export COGNEE_MCP_PASS="XXXX-XXXX-XXXX"   # ask the team
+   export COGNEE_MCP_PASS="XXXX-XXXX-XXXX"   # спросить у команды
    ```
-3. The server is already declared in the repository's root `.mcp.json` (name `cognee`) — it is picked up
-   automatically. The stdio entry runs `npx mcp-remote` at session start: node/npx is required, the shell substitutes
-   the credentials from env.
-4. Restart the client session (`/new` or a restart) — the MCP loads only at start.
-5. Check: call `get_client_info_json` — it should return the agent dataset. A quick check without an IDE:
+3. Сервер уже прописан в корневом `.mcp.json` репозитория (имя `cognee`) —
+   подхватится автоматически. stdio-запись запускает `npx mcp-remote` при старте
+   сессии: нужен node/npx, shell подставит креды из env.
+4. Перезапустить сессию клиента (`/new` или рестарт) — MCP грузится только при старте.
+5. Проверить: вызвать `get_client_info_json` — должен вернуть агентский датасет.
+   Быстрая проверка без IDE:
    ```bash
    curl -N -u "$COGNEE_MCP_USER:$COGNEE_MCP_PASS" https://mcp.fantomas404.ru/sse
-   # expected: event: endpoint / data: /messages/?session_id=...
-   # 401 = wrong or missing COGNEE_MCP_USER/COGNEE_MCP_PASS
+   # ожидаем: event: endpoint / data: /messages/?session_id=...
+   # 401 = неверные или отсутствующие COGNEE_MCP_USER/COGNEE_MCP_PASS
    ```
 
-Contents of `.mcp.json` (the source of truth is the file in the repo root):
+Содержимое `.mcp.json` (источник истины — файл в корне репо):
 
 ```json
 {
@@ -49,61 +51,66 @@ Contents of `.mcp.json` (the source of truth is the file in the repo root):
 }
 ```
 
-Why not credentials in the URL (`https://user:pass@host/sse`): mcp-remote (Node fetch/undici) rejects such URLs —
-`TypeError: Request cannot be constructed from a URL that includes credentials`.
+Почему не креды в URL (`https://user:pass@host/sse`): mcp-remote (Node fetch/undici)
+отвергает такие URL — `TypeError: Request cannot be constructed from a URL that includes credentials`.
 
-Other clients:
-- **Claude Code** — the same root `.mcp.json`; it supports `${VAR}` and native SSE without mcp-remote:
-  `"url": "https://${COGNEE_MCP_USER}:${COGNEE_MCP_PASS}@mcp.fantomas404.ru/sse"`.
-- **Cursor** — the GUI does not inherit the shell env; credentials only in the user-level `~/.cursor/mcp.json`
-  (outside the repo).
+Другие клиенты:
+- **Claude Code** — тот же корневой `.mcp.json`; поддерживает `${VAR}` и native SSE
+  без mcp-remote: `"url": "https://${COGNEE_MCP_USER}:${COGNEE_MCP_PASS}@mcp.fantomas404.ru/sse"`.
+- **Cursor** — GUI не наследует shell env; креды только в user-level `~/.cursor/mcp.json` (вне репо).
 
-## Tools (prefix `mcp__cognee__*`)
+## Инструменты (префикс `mcp__cognee__*`)
 
-Deployed with `COGNEE_MCP_TOOL_MODE=all` — 10 tools:
+Деплой с `COGNEE_MCP_TOOL_MODE=all` — 10 инструментов:
 
-- `remember(data, dataset_name?, session_id?)` — save. Without `session_id` — the full add + cognify pipeline
-  (knowledge graph, slow). With `session_id` — a fast per-session cache, without entity extraction.
-- `recall(query, datasets?, search_type?, top_k?)` — memory search, the strategy is routed automatically.
-  `search_type`: `GRAPH_COMPLETION`, `RAG_COMPLETION`, `CHUNKS`, `SUMMARIES`, `TEMPORAL`, etc.
-- `forget(dataset?, everything?)` — destructive, confirm with the user.
-- Datasets: `list_datasets_json`, `list_dataset_data_json`, `create_dataset_json`,
-  `get_client_info_json` (client + default dataset — a liveness check).
+- `remember(data, dataset_name?, session_id?)` — сохранить. Без `session_id` —
+  полный пайплайн add + cognify (граф знаний, долго). С `session_id` — быстрый
+  session-кэш на сессию, без извлечения сущностей.
+- `recall(query, datasets?, search_type?, top_k?)` — поиск по памяти, авто-роутинг
+  стратегии. `search_type`: `GRAPH_COMPLETION`, `RAG_COMPLETION`, `CHUNKS`,
+  `SUMMARIES`, `TEMPORAL` и др.
+- `forget(dataset?, everything?)` — деструктивно, подтверждать у пользователя.
+- Датасеты: `list_datasets_json`, `list_dataset_data_json`, `create_dataset_json`,
+  `get_client_info_json` (клиент + датасет по умолчанию — проверка живости).
 - Workspace UI: `open_cognee_workspace`, `upload_file_ui`, `visualize_graph_ui`.
 
-## Rules for working in the shared context
+## Правила работы в общем контексте
 
-- **The project dataset is `ryadom`.** Write all facts, decisions and findings about the Ryadom project with
-  `dataset_name="ryadom"` (it is created on the fly). Personal drafts go to the default agent dataset or with
-  `session_id` (session cache).
-- **Recall before work:** for questions like "how is it built / what did we decide / where does it live" first run
-  `recall(query=..., datasets="ryadom")` — cheaper than walking the codebase. But recall returns a synthesis, not exact
-  code: always read the real files before editing.
-- **Remember after work:** non-trivial decisions, pitfalls, agreements — `remember(data=..., dataset_name="ryadom")`.
-  Write facts, with links to files/pods/dates.
-- The current set of datasets — only via `list_datasets_json`, not from notes.
-- Do not touch other datasets (not `ryadom`) without a request — other projects may live on the server too.
+- **Датасет проекта — `ryadom`.** Все факты, решения, находки по проекту Рядом
+  писать с `dataset_name="ryadom"` (создаётся на лету). Личные черновики —
+  в дефолтный агентский датасет или с `session_id` (session-кэш).
+- **Recall перед работой:** для вопросов «как устроено / что решили / где лежит»
+  сначала `recall(query=..., datasets="ryadom")` — дешевле обхода кодбазы.
+  Но recall отдаёт синтез, не точный код: для правок всегда читать реальные файлы.
+- **Remember после работы:** нетривиальные решения, грабли, договорённости —
+  `remember(data=..., dataset_name="ryadom")`. Писать фактами, со ссылками
+  на файлы/поды/даты.
+- Актуальный состав датасетов — только через `list_datasets_json`, не из заметок.
+- Чужие датасеты (не `ryadom`) не трогать без запроса — на сервере могут жить
+  и другие проекты.
 
-## Known traps
+## Известные ловушки
 
-- MCP `remember` may time out on the client (-32001), but the server still PROCESSES the request. Check the dataset
-  before retrying, otherwise you get duplicates.
-- `HTTP 404: Could not find session` — the mcp-remote SSE session went stale (pod/ingress restart). Fix: restart the
-  client session.
-- MCP recall forcibly routes to completion strategies, ignoring `search_type=CHUNKS`; for raw chunks use REST
-  `POST /api/v1/search`.
-- Dedup by content hash: re-uploading an unchanged file is skipped.
-- Code indexing: `.py` → CODE route (fast, but weak semantic search); a `.txt` suffix in the filename → TEXT route
-  (chunks + embeddings, slow, good quality).
+- MCP `remember` может таймаутить на клиенте (-32001), но сервер при этом
+  ОБРАБАТЫВАЕТ запрос. Прежде чем ретраить — проверить датасет, иначе дубли.
+- `HTTP 404: Could not find session` — протухла SSE-сессия mcp-remote
+  (рестарт пода/ingress). Лечится перезапуском сессии клиента.
+- MCP recall насильно роутит в completion-стратегии, игнорируя `search_type=CHUNKS`;
+  для сырых чанков — REST `POST /api/v1/search`.
+- Дедуп по хешу контента: повторная заливка неизменённого файла пропускается.
+- Индексация кода: `.py` → CODE-маршрут (быстро, но слабый семантический поиск);
+  суффикс `.txt` в filename → TEXT-маршрут (чанки + эмбеддинги, медленно, качественно).
 
-## Security rules
+## Правила безопасности
 
-- Never index `.env`, secrets, kubeconfigs or keys: the kubeconfig and registry keys the administrator keeps locally
-  are off limits for remember/add.
-- MCP credentials only through the env `COGNEE_MCP_USER`/`COGNEE_MCP_PASS`: do not hardcode, commit or index them.
+- Никогда не индексировать `.env`, секреты, kubeconfig'и и ключи: kubeconfig и ключи реестра хранятся локально у
+  администратора, для remember/add они табу.
+- Креды MCP — только env `COGNEE_MCP_USER`/`COGNEE_MCP_PASS`, не хардкодить,
+  не коммитить, не индексировать.
 
-## Diagnostics
+## Диагностика
 
-- 401 on SSE — the env credentials are missing or wrong in the environment the client is launched from.
-- 502/503 — the pod is warming up (3–4 min) or crashed; logs are checked by whoever administers the deployment.
-- The MCP responds but the tools fail with 401 — the MCP→API service token expired; escalate to the deployment admin.
+- 401 на SSE — нет/неверны env-креды в окружении, откуда запущен клиент.
+- 502/503 — под прогревается (3–4 мин) или упал; логи смотрит тот, кто админит деплой.
+- MCP отвечает, но инструменты падают с 401 — протух сервисный токен MCP→API;
+  эскалация к админу деплоя.

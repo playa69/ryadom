@@ -1,69 +1,66 @@
 ---
 name: backup
-description: Backups of the Ryadom production database — check the freshness of the continuous archive and the daily copies of CNPG ryadom-db, make an on-demand copy before a migration, take a dump of one database, restore plan. Use for questions like "is there a fresh backup", "make a backup before the migration", "take a dump", "download the database", "restore from a backup".
+description: Бэкапы базы прода «Рядом» — проверить свежесть непрерывного архива и ежедневных копий CNPG ryadom-db, сделать копию по требованию перед миграцией, снять дамп одной базы, план восстановления. Использовать при вопросах «есть ли свежий бэкап», «сделай бэкап перед миграцией», «сними дамп», «выкачай базу», «восстанови из бэкапа».
 ---
 
-# Backups and dumps
+# Бэкапы и дампы
 
-The production PostgreSQL (CNPG `ryadom-db`, databases `app`, `agent`, `cognee_db`, `langfuse`) is backed up by the
-CloudNativePG operator to Object Storage: a continuous WAL archive and a daily base backup at 03:00 Moscow time
-(`ScheduledBackup` `ryadom-db-daily`), retained for 30 days. The settings are in
-`k8s/postgres/manifests/01-cnpg-cluster.yaml` and `02-cnpg-backup.yaml`. Since 0.8.0 the agent's dialogs live in the same
-database and are covered by the same archive.
+PostgreSQL прода (CNPG `ryadom-db`, базы `app`, `agent`, `cognee_db`, `langfuse`) бэкапится оператором
+CloudNativePG в Object Storage: непрерывный архив WAL и ежедневная базовая копия в 03:00 по Москве
+(`ScheduledBackup` `ryadom-db-daily`), хранение 30 дней. Настройки — `k8s/postgres/manifests/01-cnpg-cluster.yaml` и
+`02-cnpg-backup.yaml`. С 0.8.0 диалоги агента лежат в той же базе и покрыты тем же архивом.
 
-Everything below is in ns `ryadom-db`, which means the admin kubeconfig: only after the user's explicit "yes"; an
-on-demand copy and a dump — at the user's request.
+Всё ниже — в ns `ryadom-db`, это admin-kubeconfig: только после «да» человека, а копия по требованию и дамп — по его
+просьбе.
 
-## Check
+## Проверить
 
 ```bash
-kubectl -n ryadom-db get backups.postgresql.cnpg.io --sort-by=.metadata.creationTimestamp | tail -5   # latest copies and their phase
+kubectl -n ryadom-db get backups.postgresql.cnpg.io --sort-by=.metadata.creationTimestamp | tail -5   # последние копии и их фаза
 kubectl -n ryadom-db get scheduledbackups.postgresql.cnpg.io
 kubectl -n ryadom-db get cluster ryadom-db \
   -o jsonpath='{.status.lastSuccessfulBackup}{"\n"}{.status.firstRecoverabilityPoint}{"\n"}{.status.conditions[?(@.type=="ContinuousArchiving")].status}{"\n"}'
 ```
 
-Normal: the latest copy is `completed` and younger than a day, `ContinuousArchiving` = `True`, the recovery point is
-within 30 days. The contents of the backup storage are checked by the administrator: only the administrator has the
-access key to it.
+Норма: последняя копия `completed` моложе суток, `ContinuousArchiving` = `True`, точка восстановления в пределах 30
+дней. Содержимое хранилища бэкапов смотрит администратор: ключ доступа к нему есть только у него.
 
-## On-demand copy
+## Копия по требованию
 
-Before a schema migration or a bulk data edit:
+Перед миграцией схемы или массовой правкой данных:
 
 ```bash
 kubectl create -f - <<'EOF'
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
-  name: ryadom-db-before-<what>-<YYYYMMDD>
+  name: ryadom-db-before-<что>-<ГГГГММДД>
   namespace: ryadom-db
 spec:
   cluster:
     name: ryadom-db
   target: primary
 EOF
-kubectl -n ryadom-db get backup ryadom-db-before-<what>-<YYYYMMDD> -w     # wait for phase completed
+kubectl -n ryadom-db get backup ryadom-db-before-<что>-<ГГГГММДД> -w     # ждать phase completed
 ```
 
-## Dump of one database
+## Дамп одной базы
 
 ```bash
 POD=$(kubectl -n ryadom-db get pod -l cnpg.io/cluster=ryadom-db,cnpg.io/instanceRole=primary -o name)
-kubectl -n ryadom-db exec "$POD" -c postgres -- pg_dump -U postgres -d app -Fc > app-<YYYYMMDD>.dump
+kubectl -n ryadom-db exec "$POD" -c postgres -- pg_dump -U postgres -d app -Fc > app-<ГГГГММДД>.dump
 ```
 
-The dump contains personal data and conversation texts: keep the file only outside the repository, not in chats or
-issues; delete it after the work. `kubectl cp` breaks off on large files (websocket 1006) — hence the stream through
-`exec`; compare the size or `sha256sum` with the source.
+В дампе персональные данные и тексты разговоров: файл — только вне репозитория, не в чатах и задачах; после работы
+удалить. `kubectl cp` на больших файлах обрывается (websocket 1006) — поэтому поток через `exec`; сверяй размер или
+`sha256sum` с исходником.
 
-## Restore
+## Восстановление
 
-Restore into a **new** CNPG cluster from the same archive (`bootstrap.recovery` with `barmanObjectStore` and, if needed,
-`recoveryTarget.targetTime`), not on top of the live one; do not delete the old cluster and its disks until the new one
-is verified. This is the user's decision: prepare a plan in the issue (the point in time, the name of the new cluster,
-how to switch the applications) and wait for the user's explicit "yes". For the order and the fields see the
-CloudNativePG documentation, section "Recovery". Locally a dump is restored like this:
-`pg_restore -d <local database> --no-owner app-<YYYYMMDD>.dump` (skill `local-dev`, role `ryadom`).
+Делается в **новый** кластер CNPG из того же архива (`bootstrap.recovery` с `barmanObjectStore` и при необходимости
+`recoveryTarget.targetTime`), а не поверх живого; старый кластер и его диски не удалять, пока новый не проверен.
+Это решение владельца: подготовь план в задаче (точка во времени, имя нового кластера, как переключить приложения) и
+жди его «да». Порядок и поля — документация CloudNativePG, раздел «Recovery». Локально дамп поднимается так:
+`pg_restore -d <локальная база> --no-owner app-<ГГГГММДД>.dump` (скилл `local-dev`, роль `ryadom`).
 
-Related: [[db]] — queries to the database and the data edit protocol; [[deploy]] — migrations during a rollout.
+Связано: [[db]] — запросы к базе и протокол правки данных; [[deploy]] — миграции при выкате.
