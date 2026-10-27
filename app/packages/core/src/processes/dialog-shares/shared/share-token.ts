@@ -20,7 +20,3 @@ export function shareUrl(token: string): string {
   const webClient = env.PUBLIC_WEBAPP_URL ?? `${env.PUBLIC_APP_URL}/app`
   return `${webClient}/s/${token}`
 }
-
-export function isShareDisabled(): boolean {
-  return getEnv().DIALOG_SHARE_DISABLED === true
-}

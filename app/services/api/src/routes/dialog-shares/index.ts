@@ -94,8 +94,6 @@ export function dialogSharesRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessio
             return apiRefused(c, DialogShareApiErrorCode.SHARE_EXISTS, 'The dialog already has an active link')
           case CreateDialogShareOperationErrorCode.LIMIT_REACHED:
             return apiRefused(c, DialogShareApiErrorCode.SHARE_LIMIT, 'Too many active links')
-          case CreateDialogShareOperationErrorCode.DISABLED:
-            return apiRefused(c, DialogShareApiErrorCode.SHARE_DISABLED, 'Links are switched off')
           case CreateDialogShareOperationErrorCode.INVALID_TTL:
             return apiError(c, 422, 'ttlHours must be 24, 72 or 168')
           default:

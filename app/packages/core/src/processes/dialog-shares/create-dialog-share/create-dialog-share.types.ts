@@ -9,7 +9,6 @@ export enum CreateDialogShareOperationErrorCode {
   LIMIT_REACHED = 'LIMIT_REACHED',
   /** `ttlHours` is not one of the allowed values. */
   INVALID_TTL = 'INVALID_TTL',
-  DISABLED = 'DISABLED',
 }
 
 export type CreateDialogShareResult =

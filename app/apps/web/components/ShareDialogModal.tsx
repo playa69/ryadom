@@ -28,7 +28,6 @@ const CREATE_ERROR_TEXT: Record<DialogApiErrorCode | DialogShareApiErrorCode, st
   [DialogApiErrorCode.USER_INACTIVE]: 'Аккаунт недоступен',
   [DialogShareApiErrorCode.SHARE_EXISTS]: 'У этого разговора уже есть ссылка',
   [DialogShareApiErrorCode.SHARE_LIMIT]: 'Активных ссылок уже пять. Отзови одну из них в другом разговоре',
-  [DialogShareApiErrorCode.SHARE_DISABLED]: 'Ссылки сейчас недоступны',
 }
 
 type State =

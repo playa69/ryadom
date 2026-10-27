@@ -11,7 +11,7 @@ import {
 import { PROCESSES_CONFIG } from '../../config'
 import { DialogAccessRefusal, ensureActiveUser } from '../../dialogs/shared/ensure-active-user'
 import { toOwnedDialogShareDTO } from '../shared/dialog-share.dto'
-import { isShareDisabled, shareToken, shareTokenHash } from '../shared/share-token'
+import { shareToken, shareTokenHash } from '../shared/share-token'
 import { CreateDialogShareOperation } from './create-dialog-share.operation'
 import { CreateDialogShareOperationErrorCode, type CreateDialogShareResult } from './create-dialog-share.types'
 
@@ -28,7 +28,6 @@ export class CreateDialogShareOperationHandler implements RequestHandler<
   CreateDialogShareResult
 > {
   async handle(operation: CreateDialogShareOperation): Promise<CreateDialogShareResult> {
-    if (isShareDisabled()) return { success: false, error: CreateDialogShareOperationErrorCode.DISABLED }
     const ttlHours = operation.ttlHours ?? PROCESSES_CONFIG.DIALOG_SHARE.DEFAULT_TTL_HOURS
     if (!(PROCESSES_CONFIG.DIALOG_SHARE.TTL_HOURS as readonly number[]).includes(ttlHours)) {
       return { success: false, error: CreateDialogShareOperationErrorCode.INVALID_TTL }
