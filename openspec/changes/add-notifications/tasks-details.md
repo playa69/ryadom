@@ -118,7 +118,7 @@
 
 #### Что сделать
 - Выход на устройстве (`POST /api/auth/logout`) удаляет подписку этого устройства (по `deviceLabel` или `endpoint`, который клиент передаёт при выходе).
-- Удаление аккаунта (`app/packages/core/src/processes/account-deletion`) и автоматическое стирание анонимных аккаунтов удаляют строки `notification_preferences`, `push_subscriptions` и `notification_deliveries` до анонимизации.
+- Общий состав стирания аккаунта (`app/packages/core/src/processes/account-deletion/shared/erase-account.ts`; его вызывают удаление человеком, удаление администратором и чистка анонимных аккаунтов) удаляет строки `notification_preferences`, `push_subscriptions` и `notification_deliveries` до анонимизации.
 
 #### Приёмка
 - `app/packages/core/test/account-deletion.test.ts` дополнен; сценарии «Выход», «(API) Удаление аккаунта».
