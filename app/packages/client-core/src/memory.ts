@@ -9,7 +9,6 @@ import {
   MemoryFactStatus,
   MemoryInstructionApiErrorCode,
   MemoryNoteKind,
-  MemoryServiceMode,
   UpdateMemoryFactApiErrorCode,
   UpdateMemorySettingsApiErrorCode,
   type MemoryApiResponse,
@@ -74,28 +73,14 @@ export function needsMemoryConsent(memory: Pick<MemoryApiResponse, 'consentVersi
   return memory?.consentVersion !== MEMORY_CONSENT_VERSION
 }
 
-// ─── whether to offer memory at all ───────────────────────────────────────────
+// ─── whether memory is at work ────────────────────────────────────────────────
 
 /**
- * Whether the profile has the section "Память" (and its screen shows more than "not yet"). The apps
- * ship before the feature is switched on: while the server keeps it off, a person who has nothing
- * there must not meet a section that only says "unavailable". Someone who has turned it on or has
- * facts keeps the section (with "Недоступно сейчас", "Забыть всё" and the download). Null (the
- * request failed) shows nothing.
+ * Whether memory is at work for the person right now: their switch is on and the server can use it.
+ * Home offers "Без памяти" only then; with the switch off or the service down there is nothing to hold back.
  */
-export function shouldShowMemorySection(
-  memory: Pick<MemoryApiResponse, 'mode' | 'enabled' | 'facts'> | null,
-): boolean {
-  if (!memory) return false
-  return memory.mode !== MemoryServiceMode.Off || memory.enabled || memory.facts.length > 0
-}
-
-/**
- * Whether memory is at work for the person right now: their switch is on and the server uses it.
- * Home offers "Без памяти" only then; with the feature off on the server there is nothing to hold back.
- */
-export function memoryInUse(memory: Pick<MemoryApiResponse, 'mode' | 'enabled' | 'available'>): boolean {
-  return memory.enabled && memory.available && memory.mode !== MemoryServiceMode.Off
+export function memoryInUse(memory: Pick<MemoryApiResponse, 'enabled' | 'available'>): boolean {
+  return memory.enabled && memory.available
 }
 
 /** The quiet word beside the section's row in the profile. */

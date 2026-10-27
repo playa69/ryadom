@@ -7,7 +7,6 @@ import {
   AGENT_MEMORY_FACT_ORIGINS,
   AGENT_MEMORY_FACT_SENSITIVITIES,
   AGENT_MEMORY_FACT_STATUSES,
-  AGENT_MEMORY_MODES,
   type AgentMemoryChangesResponse,
   type AgentMemoryExportResponse,
   type AgentMemoryFactResponse,
@@ -125,7 +124,6 @@ function parseNotes(raw: unknown[]): AgentMemoryNoteResponse[] {
 
 const memorySchema = z.object({
   available: z.boolean(),
-  mode: z.enum(AGENT_MEMORY_MODES),
   enabled: z.boolean(),
   consentVersion: nullableString,
   consentAt: nullableString,

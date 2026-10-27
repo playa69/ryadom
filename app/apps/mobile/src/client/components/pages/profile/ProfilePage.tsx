@@ -4,7 +4,7 @@ import { useAnalyticsOptOut } from '@ryadom/analytics/react'
 import { Block, BlockTitle, Button, Icon, List, ListItem, Navbar, Page, Toggle, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
-import { memoryInUse, memorySectionStatus, shouldShowMemorySection } from '@ryadom/client-core/memory'
+import { memoryInUse, memorySectionStatus } from '@ryadom/client-core/memory'
 import { apiErrorText, getCurrentUser, getMemory, updateProfile } from '../../../lib/api'
 import { getVersionInfo } from '../../../lib/device'
 import { DEFAULT_AGENT_VOICE, type AgentVoice } from '@ryadom/contracts/api/auth/me'
@@ -32,8 +32,8 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   const user = auth.user
   const userId = user?.id ?? null
   /**
-   * The section "Память": shown only when the feature works or the person has something there, and
-   * not at all when that cannot be learnt. Only the decision and a word are kept, never the facts.
+   * The section "Память": shown once the server has answered, not at all when that cannot be learnt.
+   * Only a word is kept, never the facts.
    * Read again whenever the profile comes into view: the memory screen above it changes the answer.
    */
   const [memorySection, setMemorySection] = useState<{ status: string } | null>(null)
@@ -41,7 +41,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
     if (!userId) return
     getMemory()
       .then((memory) => {
-        setMemorySection(shouldShowMemorySection(memory) ? { status: memorySectionStatus(memory) } : null)
+        setMemorySection({ status: memorySectionStatus(memory) })
         updateUser({ memoryEnabled: memoryInUse(memory) })
       })
       .catch(() => setMemorySection(null))

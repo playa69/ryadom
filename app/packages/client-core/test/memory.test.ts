@@ -11,7 +11,6 @@ import {
   MemoryFactOrigin,
   MemoryFactSensitivity,
   MemoryFactStatus,
-  MemoryServiceMode,
   type MemoryChangesApiResponse,
   type MemoryFactApiResponse,
 } from '@ryadom/contracts/api/memory'
@@ -41,7 +40,6 @@ import {
   personSlotsProblem,
   pollMemoryChanges,
   shouldShowMemoryCard,
-  shouldShowMemorySection,
   shouldWatchMemoryChanges,
   styleSlotsProblem,
 } from '../src/memory'
@@ -93,41 +91,11 @@ describe('лист согласия', () => {
   })
 })
 
-describe('показывать ли раздел «Память»', () => {
-  const memory = (patch: {
-    mode?: MemoryServiceMode
-    enabled?: boolean
-    facts?: MemoryFactApiResponse[]
-  }) => ({
-    mode: MemoryServiceMode.Off,
-    enabled: false,
-    facts: [] as MemoryFactApiResponse[],
-    ...patch,
-  })
-
-  it('функция выключена на сервере и у человека ничего нет — раздела нет', () => {
-    expect(shouldShowMemorySection(memory({}))).toBe(false)
-  })
-
-  it('функция работает (on или shadow) — раздел есть, даже пустой', () => {
-    expect(shouldShowMemorySection(memory({ mode: MemoryServiceMode.On }))).toBe(true)
-    expect(shouldShowMemorySection(memory({ mode: MemoryServiceMode.Shadow }))).toBe(true)
-  })
-
-  it('выключена на сервере, но человек её включал или что-то запомнено — раздел остаётся', () => {
-    expect(shouldShowMemorySection(memory({ enabled: true }))).toBe(true)
-    expect(shouldShowMemorySection(memory({ facts: [fact()] }))).toBe(true)
-  })
-
-  it('запрос не удался — раздела нет', () => {
-    expect(shouldShowMemorySection(null)).toBe(false)
-  })
-
+describe('память в работе', () => {
   it('«Без памяти» предлагается, только когда память правда работает', () => {
-    const on = { mode: MemoryServiceMode.On, enabled: true, available: true }
+    const on = { enabled: true, available: true }
     expect(memoryInUse(on)).toBe(true)
     expect(memoryInUse({ ...on, enabled: false })).toBe(false)
-    expect(memoryInUse({ ...on, mode: MemoryServiceMode.Off })).toBe(false)
     expect(memoryInUse({ ...on, available: false })).toBe(false)
   })
 
