@@ -20,8 +20,6 @@ services:
       POSTGRES_DB: ryadom
     ports:
       - '${E2E_PG_PORT:-55434}:5432'
-    volumes:
-      - ../dev/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     # tmpfs: the database lives only for the run, so every next run starts from a clean one.
     tmpfs:
       - /var/lib/postgresql/data

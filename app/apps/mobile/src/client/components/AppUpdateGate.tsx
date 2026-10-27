@@ -12,14 +12,13 @@ import { BrandMark } from './Brand'
  * - store-required: a gate over everything that cannot be closed (the API answers 426 anyway);
  * - store-banner: a banner about the new version, dismissible;
  * - js-updating: an overlay while a mandatory OTA bundle is being applied;
- * - pending: a mandatory bundle is waiting for a critical operation to finish;
  * - web-update: a new service worker in the web build is waiting for the button.
  */
 export default function AppUpdateGate() {
   const [state, setState] = useState<UpdateUiState>({ kind: 'none' })
-  // Unlike store-banner, `pending` and `web-update` do not remember a dismissal across restarts
-  // (there is no version number to key it on): closing one only hides it until the next real
-  // state change, which is enough to stop it parking over the navbar and SOS for good.
+  // Unlike store-banner, `web-update` does not remember a dismissal across restarts (there is no
+  // version number to key it on): closing it only hides it until the next real state change, which
+  // is enough to stop it parking over the navbar and SOS for good.
   const [dismissedKind, setDismissedKind] = useState<UpdateUiState['kind'] | null>(null)
 
   useEffect(() => {
@@ -89,26 +88,6 @@ export default function AppUpdateGate() {
         <BrandMark size={64} />
         <Preloader size={36} />
         <p className="rd-muted">Обновляемся&nbsp;— это пара секунд</p>
-      </div>
-    )
-  }
-
-  if (state.kind === 'pending' && dismissedKind !== 'pending') {
-    return (
-      <div className="rd-banner" role="status">
-        <Icon f7="arrow_down_circle_fill" size={22} />
-        <span className="rd-banner-text">Обновимся, когда закончится разговор</span>
-        {/* Unlike store-required, this update is not blocking anything right now, so hiding the
-            notice must be possible — otherwise it sits over the navbar and SOS for however long
-            the conversation runs (design review). */}
-        <button
-          type="button"
-          className="rd-banner-close"
-          aria-label="Скрыть"
-          onClick={() => setDismissedKind('pending')}
-        >
-          <Icon f7="xmark" size={16} />
-        </button>
       </div>
     )
   }

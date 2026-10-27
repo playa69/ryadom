@@ -41,7 +41,7 @@ export function prodEndpoints(): Endpoints {
  * website URL arrives in a meta tag that the PWA image inserts into index.html when its container
  * starts.
  */
-export function webEndpoints(): Endpoints {
+function webEndpoints(): Endpoints {
   const meta = document.querySelector(`meta[name="${PwaMeta.WebUrl}"]`)
   return { apiBase: '', webUrl: trimSlash(meta?.getAttribute('content') ?? '') }
 }
@@ -86,13 +86,4 @@ export function getWsBase(): string {
   const base = getApiBase()
   if (base) return base.replace(/^http/, 'ws')
   return `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
-}
-
-/**
- * The environment the server served the page from, web build only: one image serves both the local
- * stack and prod, so there is no other way to tell them apart.
- */
-export function getServerAppEnv(): EnvId | null {
-  const value = document.querySelector(`meta[name="${PwaMeta.AppEnv}"]`)?.getAttribute('content')
-  return value === 'local' || value === 'prod' ? value : null
 }

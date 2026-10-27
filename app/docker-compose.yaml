@@ -39,7 +39,6 @@ services:
       POSTGRES_DB: ryadom
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./dev/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ryadom -d ryadom']
       interval: 5s
@@ -186,7 +185,6 @@ services:
     labels: *stand-labels
     environment:
       PUBLIC_WEB_URL: http://localhost:${FULL_LANDING_PORT:-3000}
-      APP_ENV: local
     volumes:
       - ./dev/pwa-api-proxy.conf:/etc/nginx/dev.d/api.conf:ro
     ports:

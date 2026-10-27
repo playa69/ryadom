@@ -26,7 +26,7 @@ function getSecret(): Uint8Array {
   return new TextEncoder().encode(adminEnv().AUTH_SECRET)
 }
 
-export function isAdminEmail(email: string): boolean {
+function isAdminEmail(email: string): boolean {
   return isAdminEmailInEnv(adminEnv(), email)
 }
 

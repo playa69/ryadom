@@ -1,6 +1,8 @@
 # Правила: packages/core (`@ryadom/core`)
 
-Правила для кода ядра: слои, импорты, транзакции, конфигурация. Здесь они записаны один раз, чтобы каждый новый модуль не приходилось обсуждать заново.
+Правила для кода ядра: слои, импорты, транзакции, тесты. Здесь они записаны один раз, чтобы каждый новый модуль не приходилось обсуждать заново.
+
+Общее для всего `app/` — конфигурация сервера, логи, заголовки трассировки, язык комментариев — в [`app/AGENTS.md`](../../AGENTS.md), здесь не повторяется. Комментарии в примерах кода ниже — по-английски и только о причинах, как в самом коде.
 
 > **Принцип:** делай только то, что описано здесь. Если ситуация не покрыта — не импровизируй: спроси или сначала допиши правило.
 
@@ -65,19 +67,20 @@ processes  →  managers
 ```typescript
 export interface CreateUserCommandData {
   userId: string
-  email: string
+  /** Null makes an anonymous account. */
+  email: string | null
   name: string | null
   isEmailConfirmed: boolean
 }
 
 export class CreateUserCommand extends RequestData<CreateUserCommandResult> {
-  /** Переживает минификацию сборки — CreateUserCommand.name в проде не сохраняется. Используется LoggingBehavior. */
+  /** Survives minification: CreateUserCommand.name is lost in prod. Used by LoggingBehavior. */
   static readonly requestName = 'CreateUserCommand'
 
   public readonly userId: string
 
   @hasPII()
-  public readonly email: string
+  public readonly email: string | null
 
   public readonly name: string | null
   public readonly isEmailConfirmed: boolean
@@ -114,14 +117,14 @@ export type GetUserByIdQueryResult =
 Команда менеджера меняет состояние и отвечает только «получилось» или «нет, и вот почему»: `{ success: true }` или `{ success: false, error }`. Данные (DTO, списки, счётчики) возвращают **только queries**. Идентификатор новой сущности генерирует вызывающий — process — и передаёт в команду: ему не нужно ждать ответа, чтобы знать id, а повтор команды с тем же id упирается в первичный ключ, а не создаёт дубль.
 
 ```typescript
-// command: только успех или код отказа
+// command: only success or a refusal code
 export enum CreateUserCommandErrorCode {
   USER_ALREADY_EXISTS = 'USER_ALREADY_EXISTS',
 }
 
 export type CreateUserCommandResult = { success: true } | { success: false; error: CreateUserCommandErrorCode }
 
-// process: id — свой, данные — отдельным query
+// process: the id is its own, the data comes from a separate query
 const userId = randomUUID()
 const created = await usersManager.execute(
   new CreateUserCommand({ userId, email, name, isEmailConfirmed: false }),
@@ -168,7 +171,7 @@ Operations процессов возвращают то, что нужно вы�
 | Элемент           | Правило                       | Пример                                                                     |
 | ----------------- | ----------------------------- | -------------------------------------------------------------------------- |
 | Директория модуля | kebab-case + суффикс слоя     | `users-manager`, `token-service`, `admin-authentication`, `agent-api`      |
-| Класс фасада      | PascalCase + суффикс слоя     | `UsersManager`, `TokenService`, `AuthenticationProcess`, `VkIdIntegration` |
+| Класс фасада      | PascalCase + суффикс слоя     | `UsersManager`, `TokenService`, `AuthenticationProcess`, `AgentApiIntegration` |
 | Интерфейс фасада  | `I` + класс                   | `IUsersManager`                                                            |
 | Singleton         | camelCase                     | `usersManager`, `authenticationProcess`                                    |
 | Handler           | `{FullContractName}Handler`   | `CreateUserCommandHandler`, `LoginOperationHandler`                        |
@@ -181,11 +184,11 @@ Operations процессов возвращают то, что нужно вы�
 | ---------------- | ---------------------------------------------- | --------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
 | Контракт         | `{Verb}{Entity}Command` / `…Query`             | `{OperationName}Operation`              | `{Verb}{Capability}Request`                      | `{Verb}{Resource}Request`                                 |
 | Файл контракта   | `.command.ts` / `.query.ts`                    | `.operation.ts`                         | `.request.ts`                                    | `.request.ts`                                             |
-| Результат        | `{Contract}Result` (`CreateUserCommandResult`) | `{OperationName}Result` (`LoginResult`) | `{Contract}Result` (`HashPasswordRequestResult`) | `{Verb}{Resource}Response` (`ExchangeYandexCodeResponse`) |
+| Результат        | `{Contract}Result` (`CreateUserCommandResult`) | `{OperationName}Result` (`LoginResult`) | `{Contract}Result` (`HashPasswordRequestResult`) | `{Verb}{Resource}Response` (`StartAgentDialogResponse`) |
 | Union контрактов | `{Entity}ManagerRequests`                      | `{ScenarioName}Operations`              | `{ServiceName}Requests`                          | `{ProviderName}IntegrationRequests`                       |
 | Операции         | `commands/{op}/`, `queries/{op}/`              | `{op}/`                                 | `{op}/`                                          | `{op}/`                                                   |
 
-Имена контрактов уникальны во всём ядре: при совпадении добавляй уточнение (`BuildYandexAuthorizeUrlRequest` и `BuildVkIdAuthorizeUrlRequest`, `DeleteUserOperation` у админки и `DeleteUserCommand` у менеджера).
+Имена контрактов уникальны во всём ядре: при совпадении добавляй уточнение (`DeleteAccountOperation` — человек удаляет себя, `DeleteUserAccountOperation` — админ удаляет аккаунт).
 
 ## Фасад (`index.ts`)
 
@@ -201,7 +204,7 @@ import { mediatr } from '../../shared'
 export { CreateUserCommand } from './commands/create-user/create-user.command'
 export type { CreateUserCommandData } from './commands/create-user/create-user.command'
 
-// 3. Type re-exports (enum — значением, остальное — export type)
+// 3. Type re-exports (an enum as a value, everything else as `export type`)
 export type { CreateUserCommandResult } from './commands/create-user/create-user.types'
 export { CreateUserCommandErrorCode } from './commands/create-user/create-user.types'
 export type { UserDTO } from './shared/user.dto'
@@ -236,7 +239,7 @@ Process может добавить функции-обёртки для час�
 
 Manager = доменная логика **одной сущности** (таблицы): CRUD, доменная валидация, чтение и запись через Drizzle. Commands возвращают только успех или код отказа, queries — DTO.
 
-- Не оркестрируют несколько сущностей, не вызывают другие managers, services и integrations. Исключение — вспомогательное **чтение** связанной таблицы в том же запросе (фильтр по провайдеру в `SearchUsersQuery` смотрит в `user_identity_providers`).
+- Не оркестрируют несколько сущностей, не вызывают другие managers, services и integrations. Исключение — вспомогательное **чтение** связанной таблицы в том же запросе.
 - Структура: `commands/{op}/`, `queries/{op}/`, `shared/{entity}.dto.ts` с интерфейсом DTO и маппером `to{Entity}DTO(row)`.
 - DTO — внутренние типы ядра. В них могут быть служебные поля (хеш пароля у `UserCredentialsDTO`); process не отдаёт такие DTO наружу, а строит свой.
 - Идентификаторы приходят и из URL: не-UUID сразу превращается в `…_NOT_FOUND` (`isUuid` из shared), а не в ошибку Postgres.
@@ -252,19 +255,19 @@ Process = бизнес-сценарий от начала до конца и **�
 
 ## Services
 
-Service = техническая возможность без знания о доменных сущностях: хеширование паролей, токены, рендер и отправка писем, health.
+Service = техническая возможность без знания о доменных сущностях: хеширование паролей, токены, рендер и отправка писем, проверка подписи Telegram, health.
 
 - Не вызывают managers, processes, integrations и не хранят состояние.
-- Настройки — в `config.ts` модуля (сроки, ключи из `getEnv()`), не в handlers.
+- Настройки — в `config.ts` модуля (сроки, ключи из `getEnv()`). Handler читает `getEnv()` напрямую только ради одного секрета или флага, как `telegram-service`.
 - Отправка почты живёт в `email-sender-service`: транспорт (SMTP, консоль, память для тестов) — техническая деталь сервиса, а не сценария.
 
 ## Integrations
 
 Integration = тонкая обёртка над внешним API: собрать запрос, вызвать, вернуть ответ в формате провайдера (`shared/{provider}.types.ts`), без доменных DTO.
 
-- HTTP-ошибки — `throw`. `ErrorCode` — только для статусов, которые API явно возвращает и которые вызывающий обрабатывает (`INVALID_GRANT` при обмене кода, `UNREGISTERED` у FCM).
-- Вызывают глобальный `fetch` в момент запроса (тесты подменяют его `vi.stubGlobal`), с таймаутом `AbortSignal.timeout`.
-- Состояния между запросами не хранят. Единственное исключение — кэш учётных данных провайдера (access-токен сервисного аккаунта FCM в `fcm/shared/access-token.ts`): это кэш, его потеря стоит лишний запрос.
+- HTTP-ошибки — `throw`. `ErrorCode` — только для статусов, которые API явно возвращает и которые вызывающий обрабатывает (`DIALOG_NOT_FOUND` на 404 у `DeleteAgentDialogRequest`).
+- Вызывают глобальный `fetch` в момент запроса (тесты подменяют его `vi.stubGlobal`), с таймаутом `AbortSignal.timeout`. Вызовы к агенту идут через `callAgent` (`agent-api/shared/request.ts`): он добавляет токен и заголовки трассировки (`tracingHeaders()`, см. `app/AGENTS.md`), а сбой сети превращает в `AgentUnavailableError`.
+- Состояния между запросами не хранят.
 
 ---
 
@@ -279,19 +282,21 @@ Integration = тонкая обёртка над внешним API: собра�
 
 ## Конфигурация
 
-- Ядро читает env только через `getEnv()` (`config/env.ts`, проверка схемой `coreEnvSchema` при первом обращении) и только из `config.ts` модулей и `processes/config.ts`. БД и логи — исключения: `getDb()` читает `DATABASE_URL`, логгер — `LOG_LEVEL` и `APP_ENV` сами, чтобы тесты и миграции не требовали всего env.
-- Приложения вызывают `loadEnv(appEnvSchema)` / `loadEnv(adminEnvSchema)` при старте — падают сразу со списком всех проблем.
-- Новая переменная — в схему в `config/env.ts` и в `.env.example` приложений.
+Схемы env, проверка при старте и правило новой переменной — в `app/AGENTS.md`, «Конфигурация сервера». Для ядра:
+
+- Ядро читает env только через `getEnv()` (`config/env.ts`, проверка схемой `coreEnvSchema` при первом обращении): сроки и ключи — в `config.ts` модуля и `processes/config.ts`, одиночный секрет или флаг — `getEnv()` прямо в коде, которому он нужен (`dialog-shares/shared/share-token.ts`, вход в админку). БД и логи — исключения: `getDb()` читает `DATABASE_URL`, логгер — `LOG_LEVEL` и `APP_ENV` сами, чтобы тесты и миграции не требовали всего env.
 
 ## Логи и ПДн
 
-- `createLogger('module-name')` из `shared`: `debug/info(message, data)`, `warn/error(message, error, data)`. JSON (pino) в stdout, уровень — `LOG_LEVEL`; логи в кластере собираются из stdout.
-- В лог не пишем пароли, токены, коды OAuth, ссылки с токенами, тексты писем: поля контрактов помечены `@hasPII`, параметры запросов из ошибок drizzle ядро вырезает само. Какие ещё ключи вырезать (`password`, `token`, заголовки…), ядро не решает: список задаёт приложение при старте через `configureLogger`. Идентификаторы (userId) логировать можно.
+Логгер, маскирование и заголовки трассировки в целом — `app/AGENTS.md`, «Логи» и «Заголовки трассировки». Для ядра:
+
+- `createLogger('module-name')` из `shared`: `debug/info(message, data)`, `warn/error(message, error, data)`; уровень — `LOG_LEVEL`. Поля трассировки из `RequestContext` каждая запись внутри запроса получает сама: в вызове их не передают.
+- В лог не пишем пароли, токены, коды OAuth, ссылки с токенами, тексты писем: поля контрактов помечены `@hasPII` (маски — в «Контракты и результаты»), параметры запросов из ошибок drizzle ядро вырезает само. Какие ещё ключи вырезать (`password`, `token`, заголовки…), ядро не решает: список задаёт приложение при старте через `configureLogger`. Идентификаторы (userId) логировать можно.
 
 ## Тесты
 
-- `test/*.test.ts`, vitest, настоящий Postgres (`DATABASE_URL_TEST`, по умолчанию `ryadom_test`): глобальная подготовка пересоздаёт схему и применяет миграции, `test/setup.ts` чистит таблицы перед каждым тестом. Файлы идут последовательно.
-- Внешние HTTP — `mockFetch` из `test/helpers.ts` (`vi.stubGlobal('fetch')`), письма — транспорт `memory` (`getSentEmails()`), время — `travelTo`/`travelBy` (подменяется только `Date`).
+- `test/*.test.ts`, vitest, настоящий Postgres: у каждого прогона своя база из шаблона с применёнными миграциями (`packages/db/src/test-db.ts`; сервер и порядок запуска — скилл `local-dev`), `test/setup.ts` чистит таблицы перед каждым тестом. Файлы идут последовательно.
+- Внешние HTTP — `mockFetch` из `test/helpers.ts` (`vi.stubGlobal('fetch')`), письма — транспорт `memory` (`getSentEmails()`), время — `travelBy` (подменяется только `Date`).
 - Тест вызывает фасады так же, как приложения, и проверяет коды, данные и состояние БД.
 
 ## Как добавить операцию
@@ -299,4 +304,4 @@ Integration = тонкая обёртка над внешним API: собра�
 1. Папка операции в нужном слое; контракт с `*Data` и `static readonly requestName`, типы с enum кодов, handler с `@requestHandler`, при необходимости валидатор.
 2. Импорт handler-а и реэкспорты в `index.ts` модуля, контракт — в union.
 3. Все отказы зависимостей — `switch` + `assertNever`.
-4. Тест в `test/`, запись в README (для process — строка в таблице API).
+4. Тест в `test/`. Если меняется публичный API — сначала контракт в `packages/contracts` и обе стороны (`app/AGENTS.md`, «Контракты»); поведение — через change в OpenSpec (скилл `openspec`).

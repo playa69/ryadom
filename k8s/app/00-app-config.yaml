@@ -86,7 +86,7 @@ data:
   TRUSTED_PROXY_HOPS: "1"
   # --- Почта: Unisender Go (см. шапку и README, «Почта: Unisender Go») ---
   # Домен подтверждён, DKIM `gokey` и домен ссылок `email.` настроены; SMTP_PASSWORD в Secret
-  # app-smtp — ключ Unisender. Откат на Postbox описан в k8s/README.md.
+  # app-smtp — ключ Unisender.
   # Транспорт один: smtp (memory нужен только тестам и в кластере запрещён).
   EMAIL_TRANSPORT: "smtp"
   EMAIL_FROM: "Рядом <noreply@xn----htbtgjker8b3a2c.xn--p1ai>"

@@ -58,7 +58,3 @@ class MemoryValidation(MemoryServiceError):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
-
-
-class DialogMissing(MemoryServiceError):
-    status, code, message = 404, "AGENT_DIALOG_NOT_FOUND", "Диалог не найден"

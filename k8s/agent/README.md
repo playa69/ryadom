@@ -9,7 +9,6 @@
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
 | `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`; диалоги — в PostgreSQL (Secret `agent-db`) |
 | `04-servicemonitor.yaml` | ServiceMonitor: Prometheus собирает `/metrics` агента (расход моделей, задержки голоса, база диалогов). Применяет admin |
-| `db/01-job-create-role.yaml` | Job: роль `agent` в CNPG ryadom-db + владелец базы `agent` (хранилище диалогов с 0.8.0). Один раз, до выката 0.8.0 |
 | `10-cognee-config.yaml` | ConfigMap `cognee-config`: Cognee API (память агента) — БД cognee_db в CNPG, модели LiteLLM-прокси, multi-user access control (Bearer) |
 | `11-cognee-pvc.yaml` | PVC `cognee-storage` (10 ГБ, сетевой диск Timeweb): граф Kuzu и сырые документы Cognee. Применять до Deployment'а |
 | `12-cognee-deployment.yaml` | Deployment `cognee`: 1 реплика, `Recreate`, официальный образ `cognee/cognee`, проба `/health` |
@@ -28,7 +27,7 @@
 | `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY`, `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (ключи проекта в Langfuse, нужны при `LANGFUSE_ENABLED=true`) |
 | `agent-gemini` | `agent` | только для режима `gemini_live`: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`; Deployment читает их как необязательные |
 | `agent-db` | `agent` | `DIALOG_DATABASE_URL` — DSN PostgreSQL диалогов (пароль роли `agent` из `agent-db-credentials`, ns ryadom-db); создание — «Хранилище диалогов (PostgreSQL…)» |
-| `agent-db-credentials` | `ryadom-db` | `password` роли `agent`; читает Job `db/01-job-create-role.yaml` |
+| `agent-db-credentials` | `ryadom-db` | `password` роли `agent` |
 | `app-secrets` | `prod` | уже есть; ключ `AGENT_INTERNAL_TOKEN` с тем же значением, что у агента |
 
 Два разных секрета, не путать:
@@ -206,15 +205,12 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live 
 без перезапуска пода. DSN указывает на `ryadom-db-rw`, поэтому после failover новое соединение открывается к актуальному
 primary; отдельный read slave не используется. Бэкапы — общие CNPG (WAL + base backups в Object Storage, `k8s/postgres/`).
 
-Первичная подготовка (один раз, admin-kubeconfig):
+Первичная подготовка (один раз, admin-kubeconfig). Роль и база агента созданы один раз, манифест есть в истории git:
 
 ```bash
 # 1. Пароль роли agent (значение хранится локально у администратора, в git не коммитим)
 kubectl -n ryadom-db create secret generic agent-db-credentials --from-literal=password="$(openssl rand -hex 16)"
-# 2. Роль agent + владелец базы agent (Job, идемпотентно)
-kubectl apply -f k8s/agent/db/01-job-create-role.yaml
-kubectl -n ryadom-db wait --for=condition=complete job/create-agent-role --timeout=120s
-# 3. DSN для рантайма агента (пароль из шага 1)
+# 2. DSN для рантайма агента (пароль из шага 1)
 kubectl -n agent create secret generic agent-db \
   --from-literal=DIALOG_DATABASE_URL="postgresql://agent:<ПАРОЛЬ>@ryadom-db-rw.ryadom-db.svc.cluster.local:5432/agent"
 ```

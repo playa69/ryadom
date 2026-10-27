@@ -11,7 +11,7 @@ interface EmailConfirmationEmailProps {
 }
 
 /** A repeat email confirmation code: the message sent after sign-up may not have arrived. */
-export function EmailConfirmationEmail({ userName, code, expiresInMinutes }: EmailConfirmationEmailProps) {
+function EmailConfirmationEmail({ userName, code, expiresInMinutes }: EmailConfirmationEmailProps) {
   return (
     <EmailLayout preview={`Код для подтверждения почты: ${code}`} heading={greeting(userName)}>
       <Paragraph>Вот новый код для подтверждения почты.</Paragraph>

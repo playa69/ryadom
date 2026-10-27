@@ -21,7 +21,6 @@ prod.
 k8s/
 ├── README.md                       ← этот файл
 ├── CLOUD-RESOURCES.md              ← инвентарь YC: S3, DNS, registry, SA, ключи
-├── prepare-secrets.sh              ← генератор base64 для секретов
 ├── twc-sber500-config.yaml         ← kubeconfig (в .gitignore!)
 ├── namespaces/manifests/
 │   ├── 00-namespaces.yaml          ← prod (+istio-injection), infra, ryadom-db, monitoring
@@ -35,12 +34,11 @@ k8s/
 │   ├── values-istiod.yaml          ← helm values control plane
 │   ├── values-ingressgateway.yaml  ← helm values gateway (DaemonSet + hostPort)
 │   └── manifests/
-│       ├── 00-example-gateway.yaml ← ШАБЛОН HTTPRoute (path-based)
 │       └── 01-gateway-api-gateway.yaml  ← Gateway ryadom-gateway (manual, GW API)
 ├── cert-manager/manifests/
 │   ├── 00-cluster-issuer.yaml      ← letsencrypt-prod, solver gatewayHTTPRoute
 │   └── 01-certificate-ryadom-tls.yaml   ← cert на корневой домен → istio-system
-├── agent/                          ← упрощённый агент (ns agent): 00-config, 01-service, 02-deployment, README
+├── agent/                          ← агент (ns agent): config, Service, Deployment, ServiceMonitor, Cognee, README
 ├── app/                            ← сервисы из app/ репозитория (ns prod): см. раздел ниже
 │   ├── 00-app-config.yaml          ← ConfigMap app-config (всё статическое и несекретное)
 │   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 05-job-migrate-0005 (drizzle)
@@ -148,7 +146,7 @@ LoadBalancer в Timeweb managed k8s нет. Схема:
 Домен: **слышу-рядом.рф** (`xn----htbtgjker8b3a2c.xn--p1ai`), делегирован
 с reg.ru на Yandex Cloud DNS (зона `slyshu-ryadom`, см. CLOUD-RESOURCES.md).
 Только корневой домен, поддоменов нет, wildcard нет — маршрутизация
-path-based через HTTPRoute (шаблон `istio/manifests/00-example-gateway.yaml`).
+path-based через HTTPRoute (образец — `app/api/02-httproute.yaml`).
 Так же публикуются сервисы из `app/` (`/`, `/api`, `/app`, `/admin`) — см.
 раздел «Сервисы из app/» ниже. Новых DNS-записей, сертификатов и listener'ов
 для них не нужно.
@@ -173,12 +171,11 @@ TLS — cert-manager + Gateway API:
 
 ## Порядок применения
 
-### 0. Секреты (заполнить заранее, НЕ коммитить)
+### 0. Секреты (создать заранее, НЕ коммитить)
 
-```bash
-export KUBECONFIG=~/PycharmProjects/ryadom/k8s/twc-sber500-config.yaml
-cd k8s && ./prepare-secrets.sh   # base64 для подстановки; справка — ~/.config/ryadom/k8s-secrets.env
-```
+Секреты создаются напрямую командой `kubectl create secret generic ... --from-env-file=...` под админским
+kubeconfig; значения хранятся локально у администратора, в git их нет. Шаблоны с плейсхолдерами лежат в
+`postgres/manifests/00-secrets.yaml`, `redis/manifests/00-secret.yaml`, `langfuse/manifests/00-secrets.yaml`.
 
 | Секрет | Namespace | Ключи |
 |---|---|---|
@@ -193,7 +190,7 @@ cd k8s && ./prepare-secrets.sh   # base64 для подстановки; спр�
 | `langfuse-redis-credentials` | infra | `REDIS_PASSWORD` (bundled Redis Langfuse) |
 | `grafana-admin-credentials` | monitoring | `admin-user`, `admin-password` |
 
-S3-ключи и пароли — в `~/.config/ryadom/` (см. CLOUD-RESOURCES.md).
+S3-ключи и пароли хранятся локально у администратора (какие ключи и у каких SA — в CLOUD-RESOURCES.md).
 
 ### 1. Namespaces → NetworkPolicy → Istio → TLS → CNPG → PostgreSQL → Redis → Langfuse
 
@@ -233,8 +230,8 @@ helm install langfuse langfuse/langfuse -n infra \
 
 ```bash
 # ns monitoring уже создан на шаге 1 (namespaces/manifests/00)
-# Секрет grafana-admin-credentials — заранее (kubectl create, пароль из
-# ~/.config/ryadom/k8s-secrets.env, ключ GRAFANA_ADMIN_PASSWORD)
+# Секрет grafana-admin-credentials — заранее (kubectl create; пароль хранится
+# локально у администратора)
 kubectl apply -f monitoring/manifests/   # NetworkPolicy + дашборд (ConfigMap)
 
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -466,9 +463,8 @@ ingressgateway), `cnpg` (инстансы ryadom-db :9187). Grafana datasource L
 `agent/04-servicemonitor.yaml`: расход моделей, задержки голоса, база диалогов).
 
 Доступ к Grafana: `kubectl port-forward -n monitoring svc/prometheus-grafana
-3000:80` → http://localhost:3000, логин `admin`, пароль — ключ
-`GRAFANA_ADMIN_PASSWORD` в `~/.config/ryadom/k8s-secrets.env`
-(секрет `grafana-admin-credentials`). Prometheus UI: port-forward на
+3000:80` → http://localhost:3000, логин `admin`, пароль — в секрете
+`grafana-admin-credentials` (значение хранится локально у администратора). Prometheus UI: port-forward на
 svc/prometheus-kube-prometheus-prometheus 9090. Loki: svc/loki 3100.
 
 Дашборды — как код: JSON в `monitoring/dashboards/`, ConfigMap с label
@@ -534,10 +530,11 @@ CNPG `ryadom-db` (`ryadom-db-rw.ryadom-db:5432`), но **своя база и с
 независимо, поэтому API должен оставаться совместимым с предыдущей сборкой PWA (у уже
 установленных копий service worker обновляется по кнопке и может отставать). Для
 обратно-несовместимых изменений API — сначала расширение, потом выкат PWA, потом сужение.
-Мета-теги с адресом сайта и окружением (`PUBLIC_WEB_URL`, `APP_ENV` из ConfigMap) nginx-образ
-вписывает в `index.html` на старте контейнера; после смены значений нужен
-`kubectl -n prod rollout restart deploy/app-pwa`, а у уже установленных копий они
-обновятся только вместе со следующей сборкой образа.
+Мета-тег с адресом сайта (`PUBLIC_WEB_URL` из ConfigMap) nginx-образ
+вписывает в `index.html` на старте контейнера; после смены значения нужен
+`kubectl -n prod rollout restart deploy/app-pwa`, а у уже установленных копий он
+обновится только вместе со следующей сборкой образа. `APP_ENV` образ с этой версии не читает;
+в Deployment он остался, чтобы откат на прежний образ не упал.
 
 **Хранилище браузера принадлежит origin'у, а не пути.** Клиенты на одном хосте делили
 бы его ключи, а API при повторе уже ротированного refresh-токена завершает ВСЕ сессии
@@ -592,7 +589,7 @@ ConfigMap'ах (в git).** Значения секретов хранятся л
 |---|---|---|
 | Статика, несекретное | ConfigMap `app-config` ([00-app-config.yaml](app/00-app-config.yaml)) | `DB_HOST/PORT/NAME/USER`, публичные URL, `TRUSTED_PROXY_HOPS`, `REDIS_*` адреса, флаги |
 | Статика только админки | ConfigMap `app-admin-config` ([admin/00-config.yaml](app/admin/00-config.yaml)) | `ADMIN_EMAILS` (в API он попадать не должен) |
-| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`, `TELEGRAM_BOT_TOKEN` (токен бота Telegram Mini App, необязательный: без него вход через Telegram выключен, см. `app/RUNBOOK-telegram-miniapp.md`); `SMTP_PASSWORD` |
+| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`, `TELEGRAM_BOT_TOKEN` (токен бота Telegram Mini App, необязательный: без него вход через Telegram выключен); `SMTP_PASSWORD` |
 
 `DATABASE_URL` нигде не хранится: Deployment'ы собирают его из `DB_*`
 (ConfigMap) и `DB_PASSWORD` (Secret). `REDIS_PASSWORD` в `app-secrets` — копия
@@ -624,34 +621,22 @@ generic ... --from-env-file=...` (именно `create`, а не `apply`, что
   `eu.i.posthog.com` с адреса кластера до выката не проверялся (см. раздел «Проверка после выката» в
   docs/analytics.md).
 
-### Что сознательно выключено на первом выкате
+### Агент и реплики
 
-- **Agent** (`AGENT_API_URL` — `http://agent.agent.svc.cluster.local:8001`): манифесты
-  упрощённого агента подготовлены в `k8s/agent/` (шаблонные ответы + озвучка Qwen TTS,
-  см. `k8s/agent/README.md`), но **в кластер ещё не выкатывались**. Пока агента нет, api
-  стартует, а диалоги и стирание данных у агента не работают.
+- **Agent** (`AGENT_API_URL` — `http://agent.agent.svc.cluster.local:8001`) выкачен в ns `agent`;
+  манифесты и порядок выката — `k8s/agent/README.md`.
 - 1 реплика на сервис: ресурсов в кластере впритык (см. «Доступные ресурсы»).
 
 ### DNS и почта: что сделать руками (Yandex Cloud, консоль)
 
 Почта включена: `EMAIL_TRANSPORT=smtp` (регистрация, подтверждение и сброс пароля, код
-входа в админку). **С 2026-10-11 письма идут через Unisender Go**: Postbox в этот день
-перестал отвечать на TCP (158.160.78.193 молчал и из кластера, и из другой сети).
-Настройка Postbox ниже описана как прежняя и пригодится для отката.
+входа в админку). Письма идут через Unisender Go (с 2026-10-11); прежний Yandex Postbox
+не используется.
 
 Все записи — в Cloud DNS, зона `slyshu-ryadom` (NS домена уже у Yandex Cloud,
 в reg.ru ничего заводить не нужно). Имена в зоне — относительные. Для самих сервисов
 записей не нужно (всё на корневом домене, который уже указывает на
-`185.207.64.68`); нужны только записи почты. Проверка DKIM у Postbox идёт до суток,
-так что начинать стоит с неё.
-
-| Имя | Тип | Значение | Зачем |
-|---|---|---|---|
-| 2 записи из консоли Postbox | CNAME | как покажет консоль | DKIM (Easy DKIM) |
-| `@` | TXT | `"v=spf1 include:spf.postbox.yandexcloud.net ~all"` | SPF; на домене он может быть только один — позже другие отправители дописываются в эту же запись |
-| `_dmarc` | TXT | `"v=DMARC1;p=none"` | DMARC (ужесточить позже) |
-
-TTL 300.
+`185.207.64.68`); нужны только записи почты. TTL 300.
 
 **Unisender Go** (кабинет `go2.unisender.ru`, SMTP `smtp.go2.unisender.ru:465`, TLS с
 первого байта; логин — идентификатор аккаунта, пароль — API-ключ, он в Secret `app-smtp`):
@@ -662,8 +647,9 @@ TTL 300.
 
    | Имя | Тип | Значение | Зачем |
    |---|---|---|---|
-   | `@` | TXT | `"v=spf1 include:spf.postbox.yandexcloud.net include:spf.unisender.ru ~all"` | SPF: он один на домен, поэтому оба отправителя в одной записи |
+   | `@` | TXT | `"v=spf1 include:spf.postbox.yandexcloud.net include:spf.unisender.ru ~all"` | SPF: он один на домен; `include` Postbox остался от прежней схемы |
    | `@` | TXT | `"unisender-go-validate-hash=…"` | подтверждение домена (вторая строка в том же наборе TXT) |
+   | `_dmarc` | TXT | `"v=DMARC1;p=none"` | DMARC (ужесточить позже) |
    | `gokey._domainkey` | TXT | `"v=DKIM1; k=rsa; p=…"` | DKIM; подпись нашим доменом включается примерно через час после проверки |
    | `email` | NS | `uns1/2/3.unisender.com.` | делегирование домена ссылок; без него API отвечает ошибкой 229 «tracking domain required», активация занимает около 15 минут |
 
@@ -671,40 +657,14 @@ TTL 300.
 3. Тариф «Стартовый 6К»: бесплатно до 2026-12-11, затем 800 ₽/мес. На бесплатном тарифе
    письма уходят только на адреса своего домена, поэтому для пользователей он не годится.
 4. Egress: политика `prod-allow-egress-smtp-postbox` разрешает `31.184.200.0/24:465`
-   (Unisender) и `158.160.0.0/16:465` (Postbox, для отката). Имя политики историческое.
+   (Unisender) и `158.160.0.0/16:465` (прежний Postbox, правило осталось в манифесте). Имя политики историческое.
 5. Что известно о доставке на 2026-10-11: Gmail принимает письма во «Входящие», подписанные
    нашим доменом; Яндекс отклоняет их (`554 5.7.1 Message rejected under suspicion of SPAM`)
    как письма нового домена с общих IP. Статусы каждого письма — в кабинете, «История событий».
    Отслеживание прочтений и переходов по умолчанию включено, «ссылка отписки» отключению не
    поддаётся; выключить отслеживание можно в «Конфигурация SMTP».
-6. Откат на Postbox: `SMTP_HOST: postbox.cloud.yandex.net` и `SMTP_USER` прежние (в
-   `00-app-config.yaml` из git-истории), `SMTP_PASSWORD` в Secret `app-smtp` из предыдущей
-   версии секрета в хранилище, затем `rollout restart` app-api и app-admin.
 
-Postbox ([документация](https://yandex.cloud/ru/docs/postbox/quickstart)):
-
-1. Сервисный аккаунт (напр. `ryadom-postbox`) с ролью `postbox.sender` в том же
-   каталоге, что и зона DNS.
-2. API-ключ этого аккаунта с областью `yc.postbox.send`. Секретная часть
-   показывается один раз: сразу в хранилище администратора как `SMTP_PASSWORD`, в чаты
-   и коммиты — нет. Идентификатор ключа — это `SMTP_USER` (несекретный).
-3. Адрес (identity) для домена `xn----htbtgjker8b3a2c.xn--p1ai` (punycode;
-   про кириллицу документация молчит), настройка DKIM — «Простая». Консоль
-   покажет две CNAME-записи — добавить в зону. Статус должен стать `Success`.
-   Отправлять можно с `noreply@<домен>`, но не с поддомена `x@mail.<домен>`.
-4. Проверить в консоли Postbox лимиты и ограничения на отправку (в
-   документации они не описаны).
-5. Секрет в кластер: `kubectl -n prod create secret generic app-smtp
-   --from-env-file=<файл с одной строкой SMTP_PASSWORD=...>` (нужен админский
-   kubeconfig). Затем в `00-app-config.yaml` задать `SMTP_USER`,
-   `EMAIL_TRANSPORT: "smtp"` и применить вместе с
-   `07-network-policy-prod-apps.yaml` (там egress на :465). Транспорт читается при
-   старте, поэтому после `apply` нужен `rollout restart` app-api и app-admin.
-6. До перезапуска app-admin убедиться, что письмо доходит на `ADMIN_EMAILS`
-   (проверить на app-api): вход в админку идёт по коду из письма. Если письмо не
-   доходит, вернуть прежние `SMTP_*` и перезапустить оба сервиса.
-
-Входящей почты у домена нет (Postbox только отправляет): `support@` и ответы на
+Входящей почты у домена нет (только отправка): `support@` и ответы на
 `noreply@` пока уходят в никуда — нужны MX (напр. Яндекс 360 для домена) и
 замена `PUBLIC_SUPPORT_EMAIL`.
 
@@ -757,7 +717,7 @@ kubectl -n prod get httproute                                        # Accepted/
 
 Проверка: `curl https://<домен>/api/health` → 200; страницы `/` (landing), `/app`
 (веб-клиент, с CSP), `/pwa/` (PWA: 200, `Cache-Control: no-cache`, CSP, `X-Robots-Tag: noindex`,
-в теле два мета-тега `ryadom-web-url` и `ryadom-app-env` перед `</head>`; `/pwa` → 301 на
+в теле мета-тег `ryadom-web-url` перед `</head>`; `/pwa` → 301 на
 `/pwa/`; `/pwa/sw.js` и `/pwa/manifest.webmanifest` отдаются), `/admin/` (редирект на
 `/admin/login`); на `/download` карточка «Установить из браузера» ведёт на `/pwa/`;
 логи api: «Redis подключён»;
@@ -770,20 +730,6 @@ kubectl -n prod get httproute                                        # Accepted/
 Собрать и отправить нужный образ (раздел ниже) → поправить тег в
 `k8s/app/<svc>/03-deployment.yaml` → `kubectl apply` → `rollout status`. Для
 миграций — новый Job `app-migrate-NNNN` (копия последнего файла в `k8s/app/db/`) с новым образом `app/migrate:<тег>`.
-
-**Перенос PWA на уже работающий стенд** (раньше его раздавал образ api, но наружу он не
-публиковался; теперь это `app-pwa`, а ключ `PUBLIC_PWA_URL` в `app-config` получил новый
-смысл, адрес веб-клиента переехал в `PUBLIC_WEBAPP_URL`). Порядок важен, иначе кнопки
-на landing поведут не туда:
-1. порт 3004 в сети: `kubectl apply -f k8s/namespaces/manifests/07-network-policy-prod-apps.yaml`;
-2. образ `pwa` собрать и отправить (раздел ниже);
-3. `kubectl apply -f k8s/app/pwa/01-service.yaml -f k8s/app/pwa/03-deployment.yaml`, дождаться
-   `rollout status deploy/app-pwa`, затем `kubectl apply -f k8s/app/pwa/02-httproute.yaml`;
-4. `kubectl apply -f k8s/app/00-app-config.yaml` (появляется `PUBLIC_WEBAPP_URL`, `PUBLIC_PWA_URL`
-   теперь `…/pwa/`; старый образ landing в этот момент ведёт «Открыть приложение» на `/pwa/`,
-   что работает);
-5. новый образ landing (читает `PUBLIC_WEBAPP_URL`): поправить тег, `kubectl apply`, `rollout status`;
-6. образ api без PWA — когда удобно, на работу PWA не влияет.
 
 ### Сборка и push образов
 
@@ -878,12 +824,12 @@ NVMe (PG 2×10, Redis 3×5, CH 10, Loki 5, Prom 5, Grafana 2, Langfuse-redis).
 
 - Публичная: `https://слышу-рядом.рф` → istio-gateway (нода .5) → HTTPRoute.
   Публикация сервиса = HTTPRoute с parentRef на listener `https`
-  (шаблон `istio/manifests/00-example-gateway.yaml`) + правило ingress в NP
+  (образец — `app/api/02-httproute.yaml`) + правило ingress в NP
   namespace.
 - Сервисы из `app/` — на корневом домене по путям: `/` landing, `/api` api, `/app`
   веб-клиент, `/pwa` PWA, `/admin` админка (HTTPRoute'ы на listener `https`);
   см. раздел «Сервисы из app/».
 - Админские UI (ClusterIP + port-forward): Grafana `:3000`
-  (`svc/prometheus-grafana`, пароль в `~/.config/ryadom/k8s-secrets.env`),
+  (`svc/prometheus-grafana`, пароль хранится у администратора),
   Langfuse `:3000` (`svc/langfuse-web`), Prometheus `:9090`
   (`svc/prometheus-kube-prometheus-prometheus`).

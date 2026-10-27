@@ -23,7 +23,6 @@ services:
     volumes:
       # compose.tmpfs.yaml replaces this volume with tmpfs for the stands of agents, whose data must not outlive them.
       - pg_data:/var/lib/postgresql/data
-      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ryadom -d ryadom']
       interval: 5s

@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
  * - nothing the person said ever reaches the log here: ids and counts only.
  */
 
-export const NOTE_KINDS = ['name', 'style', 'person', 'situation', 'event', 'agreement', 'interest', 'boundary', 'wellbeing', 'beliefs']
+const NOTE_KINDS = ['name', 'style', 'person', 'situation', 'event', 'agreement', 'interest', 'boundary', 'wellbeing', 'beliefs']
 const SENSITIVE_KINDS = new Set(['wellbeing', 'beliefs'])
 const NOTES_MAX = 200
 const NOTE_DELAY_MS = Number(process.env.MOCK_NOTE_DELAY_MS ?? 1500)

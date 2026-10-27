@@ -42,7 +42,7 @@ export async function enableMemory(): Promise<
 }
 
 /** The invitation is answered once on this device; storage that fails reads as "not dismissed". */
-export const MEMORY_INVITE_STORAGE_KEY = 'ryadom.memory-invite-dismissed'
+const MEMORY_INVITE_STORAGE_KEY = 'ryadom.memory-invite-dismissed'
 
 export function memoryInviteDismissed(): boolean {
   try {
