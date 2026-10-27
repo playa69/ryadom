@@ -100,8 +100,8 @@ class CogneeClient:
         return data_id
 
     async def delete_document(self, dataset: str, data_id: str | None = None, name: str | None = None) -> bool:
-        """Жёстко удалить один документ: Cognee убирает вместе с ним куски, эмбеддинги и узлы графа (проверено спайком
-        `scripts/cognee_spike.py`). Нет ни датасета, ни документа — уже удалено (False). Документ ищется по `data_id`, иначе по `name`."""
+        """Жёстко удалить один документ: Cognee убирает вместе с ним куски, эмбеддинги и узлы графа (проверено разовым спайком на Cognee 1.5.3).
+        Нет ни датасета, ни документа — уже удалено (False). Документ ищется по `data_id`, иначе по `name`."""
         dataset_id = await self._dataset_id(dataset)
         if dataset_id is None:
             return False
