@@ -1,64 +1,65 @@
-# «Рядом»: правила для агентов
+# Ryadom: rules for agents
 
-Этот файл читают все агенты команды: Codex и Kimi Code — напрямую, Claude Code — через `CLAUDE.md`. Здесь то, что
-нужно в каждой задаче; пошаговое — в скиллах (ниже). О продукте и запуске — README.md.
+Every agent on the team reads this file: Codex and Kimi Code directly, Claude Code through `CLAUDE.md`. It holds what
+every task needs; step-by-step procedures are in skills (below). The product and how to run it — README.md.
 
-## Где что
+## Where things are
 
-- `app/` — pnpm + Turborepo, Node 24: `services/api` (Hono: REST `/api/*` и WebSocket-шлюз к агенту), `apps/web`,
-  `apps/landing`, `apps/admin` (Next.js), `apps/mobile` (PWA, Android и iOS на Framework7 + Capacitor), `packages/*`,
-  `e2e` (Playwright), `dev/agent-mock` (заглушка агента).
-- `agent/` — агент разговора: Python 3.12, FastAPI, uv; PostgreSQL, Cognee, Langfuse.
-- `k8s/` — манифесты единственного кластера (Timeweb `twc-sber500`, окружение одно — prod) и ранбуки.
-- `openspec/` — спеки поведения; `docs/` — продуктовая спека (`docs/spec.md`) и аналитика.
+- `app/` — pnpm + Turborepo, Node 24: `services/api` (Hono: REST `/api/*` and the WebSocket gateway to the agent),
+  `apps/web`, `apps/landing`, `apps/admin` (Next.js), `apps/mobile` (PWA, Android and iOS on Framework7 + Capacitor),
+  `packages/*`, `e2e` (Playwright), `dev/agent-mock` (agent mock).
+- `agent/` — the conversation agent: Python 3.12, FastAPI, uv; PostgreSQL, Cognee, Langfuse.
+- `k8s/` — manifests of the only cluster (Timeweb `twc-sber500`, a single environment — prod) and runbooks.
+- `openspec/` — behavior specs; `docs/` — the product spec (`docs/spec.md`) and analytics.
 
-## Источник правды
+## Source of truth
 
-Сейчас — код в `main`: `openspec/specs/` ещё нет, старые change'и разошлись с кодом. Спека противоречит коду — прав
-код, расхождение назови в отчёте и PR. Изменение поведения начинается с OpenSpec change — скилл `openspec`.
+For now — the code in `main`: there is no `openspec/specs/` yet, and the old changes have drifted from the code. Where
+a spec contradicts the code, the code wins; name the mismatch in the report and the PR. A behavior change starts with an
+OpenSpec change — skill `openspec`.
 
-## Правила
+## Rules
 
-- Работай в своём git worktree и своей ветке от свежего `origin/main`. В общем каталоге ветки не переключай и не
-  коммить: там работают другие агенты.
-- В `main` — только через PR; мёржит и выкатывает человек. Без force-push и переписывания истории.
-- Репозиторий публичный: без секретов, внутренних адресов узлов, почты людей, названий платёжных аккаунтов и деталей
-  бэкапов. Про секреты — «хранятся локально у администратора».
-- Разговоры людей из прода (работа, места, близкие, дословные фразы) не попадают в тесты, фикстуры, коммиты, PR и
-  задачи: только синтетика.
-- Прод — и чтение, и изменения — только после явного «да» человека на конкретную операцию.
-- Без строк авторства инструментов (`Co-Authored-By`, «Generated with …») в коммитах и PR.
-- Язык: комментарии в коде `app/` — по-английски и только о причинах; в `agent/`, документации и текстах интерфейса —
-  по-русски.
+- Work in your own git worktree and your own branch from a fresh `origin/main`. Do not switch branches or commit in the
+  shared directory: other agents work there.
+- Into `main` only through a PR; a human merges and rolls out. No force-push and no history rewriting.
+- The repository is public: no secrets, internal node addresses, people's email addresses, payment account names or
+  backup details. About secrets say only that they are "kept locally by the administrator".
+- Conversations of real people from production (work, places, close people, verbatim phrases) never go into tests,
+  fixtures, commits, PRs or issues: synthetic data only.
+- Production — reading as well as changing — only after a human's explicit "yes" for the specific operation.
+- No tool attribution lines (`Co-Authored-By`, "Generated with …") in commits and PRs.
+- Language: code comments in `app/` — English and only about reasons; in `agent/`, documentation and UI texts —
+  Russian. Agent instructions (`AGENTS.md`) and skills — English.
 
-## Проверки
+## Checks
 
-- По ходу задачи — typecheck и тесты затронутых пакетов, e2e затронутой функции; перед сдачей — весь набор (скиллы
-  `local-dev`, `e2e`).
-- Визуальная правка — скриншоты шагов пользовательского сценария на 390 и 1280, без видео (скилл `screenshots`).
-- В отчёте прямо перечисляй, что не проверено.
+- While working — typecheck and tests of the affected packages, e2e of the affected feature; before handing over — the
+  full set (skills `local-dev`, `e2e`).
+- A visual change — screenshots of the user scenario steps at 390 and 1280, no video (skill `screenshots`).
+- In the report, list plainly what was not checked.
 
-## Правила кода по папкам
+## Code rules by folder
 
-Как устроен код в папке (конфигурация, логи, заголовки, язык комментариев) — во вложенных `AGENTS.md`:
-`agent/AGENTS.md`, `app/AGENTS.md`. Рядом с каждым лежит `CLAUDE.md` с одной строкой `@AGENTS.md`: при корневом
-`CLAUDE.md` Claude Code вложенные `AGENTS.md` сам не читает. Правило, которое действует всегда в папке, — туда; скилл —
-пошаговая процедура, которую берут по случаю (запустить, проверить, выкатить).
+How the code in a folder is built (configuration, logs, headers, comment language) lives in nested `AGENTS.md` files:
+`agent/AGENTS.md`, `app/AGENTS.md`, `app/packages/core/AGENTS.md`. Next to each one is a `CLAUDE.md` with the single
+line `@AGENTS.md`: with a root `CLAUDE.md`, Claude Code does not read nested `AGENTS.md` files by itself. A rule that
+always applies in a folder goes there; a skill is a step-by-step procedure taken when needed (run, check, roll out).
 
-## Скиллы
+## Skills
 
-Одна папка для всех агентов — `.agents/skills/<имя>/SKILL.md`. Claude Code читает только `.claude/skills/`, поэтому там
-копии.
+One folder for all agents — `.agents/skills/<name>/SKILL.md`. Claude Code reads only `.claude/skills/`, so copies live
+there.
 
-- Скиллы пишутся по-английски.
-- Правишь или добавляешь скилл — только в `.agents/skills/`, затем `node scripts/sync-agent-skills.mjs`, копии — в том
-  же коммите. Проверка — `node scripts/sync-agent-skills.mjs --check`.
-- Для OpenSpec один скилл `openspec`. `openspec init` и `openspec update` не запускай: они раскладывают в
-  `.agents/skills/` по скиллу на каждую операцию.
-- Что есть:
-  - разработка: `local-dev`, `e2e`, `screenshots`, `commit`, `openspec`;
-  - прод: `deploy`, `logs`, `db`, `analytics`, `backup`;
-  - командная память: `ryadom-cognee-mcp`.
+- Skills are written in English.
+- Edit or add a skill only in `.agents/skills/`, then run `node scripts/sync-agent-skills.mjs` and commit the copies in
+  the same commit. Check — `node scripts/sync-agent-skills.mjs --check`.
+- OpenSpec has one skill, `openspec`. Do not run `openspec init` or `openspec update`: they lay out one skill per
+  operation in `.agents/skills/`.
+- What there is:
+  - development: `local-dev`, `e2e`, `screenshots`, `commit`, `openspec`;
+  - production: `deploy`, `logs`, `db`, `analytics`, `backup`;
+  - team memory: `ryadom-cognee-mcp`.
 
-Агенты Multica получают ещё правила самой платформы (задачи, статусы, отчёт в задаче) и инструкции своей машины; к
-коду они не относятся и лежат в Multica.
+Multica agents also get the platform's own rules (issues, statuses, the report in the issue) and the instructions of
+their machine; those are not about the code and live in Multica.
