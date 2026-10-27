@@ -121,7 +121,7 @@ self_check_results(id uuid pk, user_id fk users, test_id text, test_version int,
 
 #### Что сделать
 - **Контракт** `app/packages/contracts/src/api/self-check.ts` и пути в `paths.ts`.
-- **Процессы** в `app/packages/core` (по правилам `app/packages/core/rules.md`) и **маршруты** в `app/services/api/src/routes/self-check/index.ts`, за сессией и флагом `SELF_CHECK_ENABLED`:
+- **Процессы** в `app/packages/core` (по правилам `app/packages/core/AGENTS.md`) и **маршруты** в `app/services/api/src/routes/self-check/index.ts`, за сессией и флагом `SELF_CHECK_ENABLED`:
   - `GET /api/self-check/results?testId=&before=` — история, новые сверху;
   - `GET /api/self-check/latest` — последний результат по каждому тесту;
   - `POST /api/self-check/results {testId, testVersion, answers, takenAt}`:

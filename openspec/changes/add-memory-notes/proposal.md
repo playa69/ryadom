@@ -63,5 +63,5 @@
   - экраны памяти в `web` и `mobile`;
   - мок агента, e2e.
 - **`k8s/agent/00-config.yaml`:** новые параметры, `MEMORY_BRIEF_LEVEL` удаляется.
-- **Документы:** `docs/spec.md` (`REQ-MEM-07`, `REQ-MEM-08`, `REQ-MEM-11`), пометка в `docs/agent-memory-spec.md`, раздел Cognee в `agent/README.md`.
+- **Документы:** `docs/spec.md` (`REQ-MEM-07`, `REQ-MEM-08`, `REQ-MEM-11`), раздел Cognee в `agent/README.md`.
 - **Вне этого change'а:** итог разговора, журнал, лист завершения и пересчёт итогов недели — `add-mood-diary` (capability `dialog-recaps`). PR #44 (итог в листе завершения) опирается на удалённый `MemoryLlm` и берёт итог оттуда.

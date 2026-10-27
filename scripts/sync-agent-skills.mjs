@@ -21,7 +21,7 @@ const readme = `# Копии скиллов для Claude Code
 `
 const check = process.argv.includes('--check')
 
-// A skill is a directory; dotfiles at the top level (OpenSpec's .openspec-target marker) are not skills.
+// A skill is a directory; hidden entries at the top level (tool markers) are not skills.
 const skillNames = (dir) =>
   existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name).sort() : []
 

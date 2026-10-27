@@ -15,7 +15,7 @@ function markLogged(error: unknown): boolean {
 /**
  * Request name for the logs: `constructor.name` is minified in the production web build (Turbopack
  * renames classes), so every contract declares `static readonly requestName`, a string literal the
- * minifier leaves alone (rules.md).
+ * minifier leaves alone (AGENTS.md).
  */
 function requestName(request: RequestData<unknown>): string {
   const declared = (request.constructor as { requestName?: unknown }).requestName

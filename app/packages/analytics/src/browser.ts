@@ -184,7 +184,7 @@ export const NEVER_CAPTURE = [
  * from the server: `config.features` is there only for clients shipped before that (see the contract).
  *
  * Above every option stands its legal risk under Russian law, in short ("Legal risk"). A research summary
- * from 2026-10-10, not a lawyer's opinion; sources and detail in docs/analytics.md ("Правовые риски").
+ * from 2026-10-10, not a lawyer's opinion.
  * What is true of every option: events with an account id stay personal data of the operator (152-FZ
  * art. 3 p. 1, 9, art. 13.1: "depersonalised" is not "not personal data"); they go to a processor abroad
  * (cross-border transfer, art. 12: notify Roskomnadzor before it starts) through our proxy straight into a
