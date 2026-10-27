@@ -354,19 +354,6 @@ function scrubElementList(value: unknown): Array<Record<string, unknown>> {
   })
 }
 
-/** Heatmaps: the keys are page addresses, with their query strings and ids; the entries are coordinates. */
-function scrubHeatmap(value: unknown): Record<string, unknown[]> {
-  const clean: Record<string, unknown[]> = {}
-  if (!isRecord(value)) return clean
-  for (const [address, entries] of Object.entries(value)) {
-    if (!Array.isArray(entries)) continue
-    const route = sanitizeUrl(address)
-    const points = entries.slice(0, 500).filter(isRecord).map((entry) => sanitizeProperties(entry))
-    clean[route] = [...(clean[route] ?? []), ...points]
-  }
-  return clean
-}
-
 function scrubClickProperties(properties: Record<string, unknown>): void {
   delete properties.$el_text
   delete properties.$selected_content
@@ -389,7 +376,6 @@ function scrubClickProperties(properties: Record<string, unknown>): void {
     properties.$elements_chain = scrubElementsChain(properties.$elements_chain)
   }
   if ('$elements' in properties) properties.$elements = scrubElementList(properties.$elements)
-  if ('$heatmap_data' in properties) properties.$heatmap_data = scrubHeatmap(properties.$heatmap_data)
 }
 
 // ── Web vitals ──────────────────────────────────────────────────────────────────────────────

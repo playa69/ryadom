@@ -80,26 +80,27 @@ export function createAnalytics(
   })
 }
 
-/** What the clients are told at startup: whether to report, with which token, and which extras to load. */
+/** Kept for older clients, which take from here what to collect (see `AnalyticsFeatures`). */
+const LEGACY_CLIENT_FEATURES: AnalyticsConfigApiResponse['features'] = {
+  sessionReplay: false,
+  clickCapture: true,
+  heatmapCapture: false,
+  errorTracking: true,
+  webVitals: true,
+  featureFlags: false,
+  autocapture: false,
+  heatmaps: false,
+}
+
+/** What the clients are told at startup: whether to report, and with which token. */
 export function toAnalyticsConfig(env: AppServerEnv): AnalyticsConfigApiResponse {
   const key = projectToken(env)
-  const enabled = key !== undefined
   return {
-    enabled,
+    enabled: key !== undefined,
     key: key ?? null,
     uiHost: env.POSTHOG_UI_HOST,
     environment: env.APP_ENV,
-    features: {
-      sessionReplay: enabled && env.POSTHOG_SESSION_REPLAY,
-      clickCapture: enabled && env.POSTHOG_CLICK_CAPTURE,
-      heatmapCapture: enabled && env.POSTHOG_HEATMAP_CAPTURE,
-      errorTracking: enabled && env.POSTHOG_ERROR_TRACKING,
-      webVitals: enabled && env.POSTHOG_WEB_VITALS,
-      featureFlags: enabled && env.POSTHOG_FEATURE_FLAGS,
-      // Clients shipped before the new names read these two; they cannot strip what the new ones can.
-      autocapture: false,
-      heatmaps: false,
-    },
+    features: LEGACY_CLIENT_FEATURES,
   }
 }
 

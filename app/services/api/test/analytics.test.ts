@@ -32,15 +32,14 @@ function only(analytics: { events: RecordedEvent[] }, event: AnalyticsEvent): Re
 }
 
 describe('GET /api/analytics/config', () => {
-  it('без ключа PostHog аналитика выключена и клиенту не отдаётся ничего лишнего', async () => {
+  it('без ключа PostHog аналитика выключена и токена нет', async () => {
     const { app } = makeApp()
     const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
     expect(config.enabled).toBe(false)
     expect(config.key).toBeNull()
-    expect(Object.values(config.features).every((on) => on === false)).toBe(true)
   })
 
-  it('с ключом: токен, окружение и безопасные значения по умолчанию', async () => {
+  it('с ключом: токен, окружение и для старых клиентов то, что собирают новые', async () => {
     const { app } = makeApp({ env: POSTHOG })
     const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
     expect(config).toMatchObject({
@@ -49,43 +48,39 @@ describe('GET /api/analytics/config', () => {
       uiHost: 'https://eu.posthog.com',
       environment: 'local',
     })
-    // The sensitive switches are off until someone turns them on; the harmless ones are on.
+    // Older clients take from here what to collect; the current ones have the same built in.
     expect(config.features).toEqual({
       sessionReplay: false,
-      clickCapture: false,
+      clickCapture: true,
       heatmapCapture: false,
       errorTracking: true,
       webVitals: true,
-      featureFlags: true,
+      featureFlags: false,
       autocapture: false,
       heatmaps: false,
     })
   })
 
-  it('каждый переключатель включается своей переменной', async () => {
+  it('прежние переменные-переключатели ничего не меняют', async () => {
     const { app } = makeApp({
       env: {
         ...POSTHOG,
         POSTHOG_SESSION_REPLAY: 'true',
-        POSTHOG_CLICK_CAPTURE: 'on',
+        POSTHOG_CLICK_CAPTURE: 'off',
         POSTHOG_HEATMAP_CAPTURE: 'yes',
         POSTHOG_ERROR_TRACKING: 'false',
         POSTHOG_WEB_VITALS: '0',
-        POSTHOG_FEATURE_FLAGS: 'no',
+        POSTHOG_FEATURE_FLAGS: 'yes',
       },
     })
     const { features } = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
-    expect(features).toEqual({
-      sessionReplay: true,
+    expect(features).toMatchObject({
+      sessionReplay: false,
       clickCapture: true,
-      heatmapCapture: true,
-      errorTracking: false,
-      webVitals: false,
+      heatmapCapture: false,
+      errorTracking: true,
+      webVitals: true,
       featureFlags: false,
-      // The names old clients read stay off whatever the switches say: they cannot strip element text
-      // or page addresses, so a ConfigMap change must never turn those on in them.
-      autocapture: false,
-      heatmaps: false,
     })
   })
 
@@ -437,7 +432,6 @@ describe('отказ человека от аналитики (сервер ег
     const client = {
       capture: vi.fn(),
       identify: vi.fn(),
-      isFeatureEnabled: vi.fn(async () => true),
       captureException: vi.fn(),
       shutdown: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),
@@ -535,7 +529,6 @@ describe('тип трафика аккаунта (сервер помечает 
     const client = {
       capture: vi.fn(),
       identify: vi.fn(),
-      isFeatureEnabled: vi.fn(async () => true),
       captureException: vi.fn(),
       shutdown: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),

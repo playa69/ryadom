@@ -39,7 +39,6 @@ export interface ServerAnalyticsClient {
     timestamp?: Date
   }): void
   identify(message: { distinctId: string; properties?: Record<string, unknown>; disableGeoip?: boolean }): void
-  isFeatureEnabled(key: string, distinctId: string): Promise<boolean | undefined>
   captureException(error: unknown, distinctId?: string, additionalProperties?: Record<string | number, unknown>): void
   shutdown(timeoutMs?: number): Promise<void>
   /** Sends what is queued without stopping. */
@@ -52,7 +51,7 @@ export interface ServerAnalyticsOptions {
   key?: string | undefined
   /** The ingestion host, e.g. `https://eu.i.posthog.com`. */
   host: string
-  /** `local`, `staging` or `prod`: lets one PostHog project hold more than one environment. */
+  /** `local` or `prod`: keeps local runs apart from prod in the one PostHog project. */
   appEnv: string
   /** Which service reports, e.g. `api`. */
   service: string
@@ -102,8 +101,6 @@ export interface ServerAnalytics {
   captureAnonymous<E extends AnalyticsEvent>(event: E, ...args: AnalyticsEventArgs<E>): void
   /** Sets what is known about a person. */
   identify(userId: string, traits: AnalyticsTraits): void
-  /** A feature flag for a person; false when analytics are off or PostHog does not answer. */
-  isFeatureEnabled(flag: string, userId: string): Promise<boolean>
   /** An error that was handled but is worth a look. */
   captureException(error: unknown, userId?: string, context?: object): void
   /**
@@ -126,7 +123,6 @@ const DISABLED: ServerAnalytics = {
   capture() {},
   captureAnonymous() {},
   identify() {},
-  isFeatureEnabled: async () => false,
   captureException() {},
   shutdown: async () => {},
 }
@@ -288,16 +284,6 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
           disableGeoip: true,
         }),
       )
-    },
-    async isFeatureEnabled(flag, userId) {
-      try {
-        // A person who said no is not asked about for flags either: that request names them to PostHog.
-        if ((await stateOf(userId)).optOut) return false
-        return (await client.isFeatureEnabled(flag, userId)) === true
-      } catch (error) {
-        onError?.(error)
-        return false
-      }
     },
     captureException(error, userId, context) {
       const send = () => client.captureException(impersonalError(error), userId, { ...sanitizeProperties(context), ...common })

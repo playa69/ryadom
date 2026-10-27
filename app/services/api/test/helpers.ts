@@ -53,7 +53,6 @@ export function recordingAnalytics(): RecordingAnalytics {
     capture: (userId, event, ...args) => void events.push({ userId, event, properties: { ...args[0] } }),
     captureAnonymous: (event, ...args) => void events.push({ userId: null, event, properties: { ...args[0] } }),
     identify: (userId, traits) => void identified.push({ userId, traits: { ...traits } }),
-    isFeatureEnabled: async () => false,
     captureException: () => {},
     shutdown: async () => {},
   }
@@ -68,7 +67,6 @@ const DISABLED_ANALYTICS: ServerAnalytics = {
   capture() {},
   captureAnonymous() {},
   identify() {},
-  isFeatureEnabled: async () => false,
   captureException() {},
   shutdown: async () => {},
 }

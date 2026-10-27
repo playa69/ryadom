@@ -6,7 +6,6 @@ function fakeClient(overrides: Partial<ServerAnalyticsClient> = {}) {
   const client = {
     capture: vi.fn<ServerAnalyticsClient['capture']>(),
     identify: vi.fn<ServerAnalyticsClient['identify']>(),
-    isFeatureEnabled: vi.fn<ServerAnalyticsClient['isFeatureEnabled']>(async () => true),
     captureException: vi.fn<ServerAnalyticsClient['captureException']>(),
     shutdown: vi.fn<ServerAnalyticsClient['shutdown']>(async () => {}),
     on: vi.fn(),
@@ -22,7 +21,6 @@ describe('createServerAnalytics', () => {
     const analytics = createServerAnalytics({ ...base, key: '' })
     expect(analytics.enabled).toBe(false)
     expect(() => analytics.capture('u1', AnalyticsEvent.EmailConfirmed)).not.toThrow()
-    expect(await analytics.isFeatureEnabled('x', 'u1')).toBe(false)
     await expect(analytics.shutdown()).resolves.toBeUndefined()
   })
 
@@ -107,20 +105,6 @@ describe('createServerAnalytics', () => {
     const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, onError })
     expect(() => analytics.capture('u', AnalyticsEvent.LoggedOut, { all_devices: false })).not.toThrow()
     expect(onError).toHaveBeenCalledTimes(1)
-  })
-
-  it('флаг: при ошибке PostHog — false, а не исключение', async () => {
-    const onError = vi.fn()
-    const client = fakeClient({ isFeatureEnabled: vi.fn(async () => Promise.reject(new Error('timeout'))) })
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, onError })
-    expect(await analytics.isFeatureEnabled('beta', 'u1')).toBe(false)
-    expect(onError).toHaveBeenCalled()
-  })
-
-  it('флаг: undefined от PostHog означает «не включён»', async () => {
-    const client = fakeClient({ isFeatureEnabled: vi.fn(async () => undefined) })
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
-    expect(await analytics.isFeatureEnabled('beta', 'u1')).toBe(false)
   })
 
   it('стирание человека: сначала отправляется очередь, потом PostHog просят удалить профиль', async () => {
@@ -274,8 +258,6 @@ describe('createServerAnalytics', () => {
       expect(client.capture.mock.calls[0]![0]).toMatchObject({ distinctId: 'talker' })
       expect(client.identify).not.toHaveBeenCalled()
       expect(client.captureException).not.toHaveBeenCalled()
-      expect(await analytics.isFeatureEnabled('beta', 'quiet')).toBe(false)
-      expect(client.isFeatureEnabled).not.toHaveBeenCalled()
     })
 
     it('спрашивает один раз на пачку событий и помнит ответ', async () => {

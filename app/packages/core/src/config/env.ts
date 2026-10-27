@@ -205,8 +205,8 @@ const appShape = {
   /**
    * Product analytics (PostHog). The project token is public by design (it only lets events in), so
    * it belongs in the ConfigMap rather than a Secret. Empty switches analytics off altogether: the
-   * server reports nothing, `/api/ingest` is a 404 and the clients are told not to load the SDK.
-   * What the clients do with it is decided here and handed to them by `GET /api/analytics/config`.
+   * server reports nothing, `/api/ingest` is a 404 and the clients are told not to load the SDK
+   * (`GET /api/analytics/config`). What the clients collect is fixed in their code (`buildSdkConfig`).
    *
    * LEGAL RISKS (Russian law) of every option below, in short. A research summary from 2026-10-10, not a
    * lawyer's opinion; sources and detail in docs/analytics.md ("Правовые риски"):
@@ -228,7 +228,7 @@ const appShape = {
   POSTHOG_KEY: optionalString,
   /** Where events go. The EU cloud keeps the data in the EU. */
   POSTHOG_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.i.posthog.com')),
-  /** Where the SDK's lazy-loaded scripts come from (replay, dead clicks, web vitals, error tracking). */
+  /** Where the SDK's lazy-loaded scripts come from (dead clicks, web vitals, error tracking). */
   POSTHOG_ASSETS_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu-assets.i.posthog.com')),
   /** The PostHog web app, for links such as the toolbar, and the host of its management API. */
   POSTHOG_UI_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.posthog.com')),
@@ -272,55 +272,6 @@ const appShape = {
    * random base64 and does not start with a word.
    */
   ANALYTICS_TEST_DEVICE_PREFIX: z.string().trim().max(32).default('loadtest-'),
-  /**
-   * Session replay with every piece of text and every input masked. Off: it is the most sensitive switch.
-   * RISK, HIGH: a recording of behaviour on screen is the largest processing there is. Even masked it shows
-   * layout, pauses and taps on screens with personal content, possibly the person's state (art. 10: written
-   * consent). Only with a separate consent and an updated policy. The recording's own events carry raw page
-   * addresses (secret codes among them): scrub those first.
-   */
-  POSTHOG_SESSION_REPLAY: booleanFlag.transform((value) => value ?? false),
-  /**
-   * Clicks, dead clicks and rage clicks as the structure of the page (the text is masked and cut).
-   * RISK, MEDIUM: the events carry the account id and describe behaviour in detail (art. 5 parts 1-2,
-   * proportionality). If the scrubbing ever lets an element's text through, it is page content, and on
-   * conversation and profile screens data about the person (art. 10). SOS, hotlines and screens with
-   * content carry `ph-no-capture`; so must every new crisis-path button.
-   */
-  POSTHOG_CLICK_CAPTURE: booleanFlag.transform((value) => value ?? false),
-  /**
-   * Heatmaps (where people tap): coordinates and the route, no text. OFF, and meant to stay off for now.
-   * RISK, MEDIUM until reworked: the SDK takes clicks and mouse moves at the `document` in the capture
-   * phase and knows nothing of `ph-no-capture`, so a tap on SOS or on a hotline becomes a point under the
-   * account id, which defeats `trackAnonymous` (and the hour-rounded time) for the crisis path. Switch it
-   * on only after the client cuts the points inside `ph-no-capture` (docs/analytics.md, "Тепловые карты").
-   * The event also takes the same cross-border path as every other.
-   */
-  POSTHOG_HEATMAP_CAPTURE: booleanFlag.transform((value) => value ?? false),
-  /**
-   * Unhandled errors of the clients, reported as exceptions.
-   * RISK, LOW-MEDIUM: an error's text and stack could hold page data (a name, a piece of typed text in an
-   * engine message, a page address with a secret code in a frame's file name), art. 5 part 5 (minimisation).
-   * In code the text is made impersonal (what is quoted, addresses and mail addresses are replaced, 80
-   * characters at most) and a frame keeps its line, column and a scrubbed file address. Clients shipped
-   * before 2026-10-10 do not do this.
-   */
-  POSTHOG_ERROR_TRACKING: booleanFlag.transform((value) => value ?? true),
-  /**
-   * Core Web Vitals and page load timings.
-   * RISK, LOW: load timings and device data; attribution (which element and resource were slowest) is off
-   * and also cut in code.
-   */
-  POSTHOG_WEB_VITALS: booleanFlag.transform((value) => value ?? true),
-  /**
-   * Feature flags for the clients (and `analytics.isFeatureEnabled` on the server).
-   * OFF in the ConfigMap (there are no flags in the product). RISK, MEDIUM: the request for flags goes around
-   * the scrubbing of events and carries the stored initial properties of the person: the full entry address
-   * with its query (utm, click ids, anything), the referrer, the account id, the device id and the time zone.
-   * A transfer even without events. The client does not send it after an opt-out or with "do not track", but
-   * flags may be switched on only once the body of that request is scrubbed in the ingest proxy.
-   */
-  POSTHOG_FEATURE_FLAGS: booleanFlag.transform((value) => value ?? true),
 }
 
 const adminShape = {
