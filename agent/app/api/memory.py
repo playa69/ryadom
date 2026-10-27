@@ -4,8 +4,7 @@
 всегда, даже при выключенной памяти (I1). Тексты ошибок не содержат фактов (I4): причина отказа — только код.
 """
 
-import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,8 +13,6 @@ from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import AgentError, validation_error
 from app.memory.backend import MemoryBackend
 from app.memory.errors import MemoryServiceError
-
-logger = logging.getLogger("agent.memory")
 
 router = APIRouter(prefix="/v1/users/{user_id}/memory", dependencies=[Depends(require_token)])
 
@@ -57,27 +54,10 @@ class SettingsBody(BaseModel):
     chat_search_enabled: bool | None = Field(default=None, alias="chatSearchEnabled")
 
 
-class FactBody(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    category: str = Field(max_length=20)
-    text: str | None = Field(default=None, max_length=1000)
-    slots: dict[str, Any] | None = None
-
-
 class NoteBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     text: str = Field(min_length=1, max_length=1000)
-
-
-class PatchBody(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    text: str | None = Field(default=None, max_length=1000)
-    slots: dict[str, Any] | None = None
-    status: Literal["active", "pinned"] | None = None
-    confirm: bool = False
 
 
 @router.get("")
@@ -100,36 +80,6 @@ async def put_settings(user_id: str, body: SettingsBody, store: Store, memory: M
         )
     except MemoryServiceError as error:
         raise _error(error) from error
-
-
-@router.post("/facts", status_code=201)
-async def add_fact(user_id: str, body: FactBody, store: Store, memory: Memory) -> dict[str, Any]:
-    user = _user(user_id)
-    await store.ensure_user(user)
-    try:
-        return await memory.add_fact(user, body.category, body.text, body.slots)
-    except MemoryServiceError as error:
-        logger.info("memory fact rejected code=%s reason=%s", error.code, error.reason)
-        raise _error(error) from error
-
-
-@router.patch("/facts/{fact_id}")
-async def patch_fact(user_id: str, fact_id: str, body: PatchBody, store: Store, memory: Memory) -> dict[str, Any]:
-    user = _user(user_id)
-    await store.ensure_user(user)
-    try:
-        return await memory.patch_fact(user, fact_id, body.text, body.slots, body.status, body.confirm)
-    except MemoryServiceError as error:
-        raise _error(error) from error
-
-
-@router.delete("/facts/{fact_id}", status_code=204)
-async def delete_fact(user_id: str, fact_id: str, memory: Memory) -> Response:
-    try:
-        await memory.delete_fact(_user(user_id), fact_id)
-    except MemoryServiceError as error:
-        raise _error(error) from error
-    return Response(status_code=204)
 
 
 @router.delete("", status_code=204)

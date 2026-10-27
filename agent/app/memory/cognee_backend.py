@@ -24,19 +24,11 @@ from typing import Any
 from app.clients.cognee import CogneeClient
 from app.core.config import MemorySettings
 from app.memory.models import iso
-from app.memory.errors import (
-    MemoryActionUnsupported,
-    MemoryDisabled,
-    FactNotFound,
-    FactRejected,
-    MemoryUnavailable,
-    MemoryValidation,
-)
-from app.memory.errors import NoteNotFound, NoteRejected
+from app.memory.errors import MemoryDisabled, MemoryUnavailable, MemoryValidation
 from app.memory.indexer import CogneeOutbox, dataset_name
 from app.memory.extractor import NotesExtractor, Outcome
 from app.memory.suppress import filter_found
-from app.memory.notes import NotesService, build_notes_block, kind_of_category, note_as_fact
+from app.memory.notes import NotesService, build_notes_block, note_as_fact
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import Dialog
 
@@ -542,47 +534,6 @@ class CogneeMemoryBackend:
         self._removed_by_person(user_id)
         logger.info("cognee memory disabled (данные сохранены) user=%s", user_id)
         return {"enabled": False, "consentVersion": version, "consentAt": at}
-
-    async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:
-        """Факт, который человек написал сам: документом в его датасет. Ответ — в форме факта API (201)."""
-        if not self._effective_enabled(user_id):
-            raise MemoryDisabled()
-        rendered = text if isinstance(text, str) and text else ", ".join(f"{key}: {value}" for key, value in (slots or {}).items())
-        if not rendered:
-            raise MemoryValidation("нужен текст")
-        try:
-            note = await self.notes.add(user_id, kind_of_category(category), rendered)
-        except NoteRejected as error:  # прежний маршрут говорит прежним кодом
-            raise FactRejected(error.reason or "rejected") from error
-        return note_as_fact(note)
-
-    async def patch_fact(
-        self,
-        user_id: str,
-        fact_id: str,
-        text: Any = None,
-        slots: Any = None,
-        status: str | None = None,
-        confirm: bool = False,
-    ) -> dict[str, Any]:
-        """Прежний маршрут факта: правка текста заметки; закрепление и «Верно» больше не поддержаны (`design.md` D11)."""
-        if status == "pinned" or confirm or (text is None and slots is None):
-            raise MemoryActionUnsupported()
-        if not isinstance(text, str) or not text:
-            raise MemoryValidation("нужен текст")
-        try:
-            return note_as_fact(await self.notes.patch(user_id, fact_id, text))
-        except NoteRejected as error:
-            raise FactRejected(error.reason or "rejected") from error
-        except NoteNotFound as error:
-            raise FactNotFound() from error
-
-    async def delete_fact(self, user_id: str, fact_id: str) -> None:
-        """Прежний маршрут факта: удаляет заметку."""
-        try:
-            await self.notes.delete(user_id, fact_id)
-        except NoteNotFound as error:
-            raise FactNotFound() from error
 
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
         """«Удалить всю память»: заметки удаляются сразу, индекс прошлых разговоров в Cognee — через очередь (повтор, если Cognee

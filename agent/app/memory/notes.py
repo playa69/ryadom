@@ -35,16 +35,6 @@ _FACT_CATEGORY = {
     "wellbeing": "situation",
     "beliefs": "situation",
 }
-# Прежняя категория факта → вид новой заметки (добавление через старый `POST /facts`).
-_KIND_OF_CATEGORY = {
-    "style": "style",
-    "boundary": "boundary",
-    "person": "person",
-    "situation": "situation",
-    "goal": "agreement",
-    "works": "interest",
-    "interest": "interest",
-}
 
 
 _SAME_STRIP = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -71,7 +61,7 @@ def note_json(row: tuple[Any, ...]) -> dict[str, Any]:
 
 
 def note_as_fact(note: dict[str, Any]) -> dict[str, Any]:
-    """Заметка в форме прежнего факта: старая PWA показывает её, «Забыть» удаляет, «Закрепить» получает отказ."""
+    """Заметка в форме прежнего факта: старая PWA показывает её, «Забыть» удаляет заметку."""
     sources = [{"dialogId": note["dialogId"], "date": (note["createdAt"] or "")[:10]}] if note.get("dialogId") else []
     return {
         "id": note["id"],
@@ -86,15 +76,9 @@ def note_as_fact(note: dict[str, Any]) -> dict[str, Any]:
         "sources": sources,
         "createdAt": note["createdAt"],
         "updatedAt": note["updatedAt"],
-        "lastConfirmedAt": None,
         "expiresAt": None,
-        "confirmCount": 0,
         "seenByUser": True,
     }
-
-
-def kind_of_category(category: str) -> str:
-    return _KIND_OF_CATEGORY.get(category, "situation")
 
 
 class NotesService:

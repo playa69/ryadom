@@ -533,7 +533,6 @@ Google по квоте: при открытии, посреди сессии, п
 | `agent_memory_blocked_total{reason}` | операции памяти, отброшенные проверками: класс чёрного списка, `not_grounded`, `tombstone`, `full`… |
 | `agent_memory_brief_tokens` | гистограмма: размер сводки в токенах (оценка 2,9 знака на токен) |
 | `agent_memory_brief_cache_total{result}` | чтения сводки на ходу: `hit`, `miss`, `empty` |
-| `agent_memory_user_actions_total{action}` | действия людей с памятью (включить, исправить, закрепить, забыть, скачать…) |
 | `agent_memory_jobs{status}` | задания извлечения в базе по статусам |
 | `agent_process_memory_reclaim_runs_total` | проходы возврата памяти процесса (`MEMORY_RECLAIM_SECONDS`) |
 | `agent_process_memory_reclaim_seconds{step}` | гистограмма шагов прохода: `gc` (полная сборка мусора, цикл событий на это время стоит) и `trim` (`malloc_trim` в потоке, цикл не держит; время считается от запуска потока и под нагрузкой на 0,5 CPU включает ожидание процессора) |

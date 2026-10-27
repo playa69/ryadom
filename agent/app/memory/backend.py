@@ -41,26 +41,6 @@ class MemoryBackend(MemoryLink, Protocol):
         """Включить (только с версией согласия) или выключить память человека; переключатели чувствительного и поиска."""
         ...
 
-    async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:
-        """Факт, который человек написал сам."""
-        ...
-
-    async def patch_fact(
-        self,
-        user_id: str,
-        fact_id: str,
-        text: Any = None,
-        slots: Any = None,
-        status: str | None = None,
-        confirm: bool = False,
-    ) -> dict[str, Any]:
-        """Исправить, закрепить, «Запомнить», «Верно»."""
-        ...
-
-    async def delete_fact(self, user_id: str, fact_id: str) -> None:
-        """«Забыть» факт."""
-        ...
-
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
         """«Забыть всё»."""
         ...

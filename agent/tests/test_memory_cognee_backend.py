@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.clients.cognee import CogneeClient
 from app.memory.cognee_backend import CogneeMemoryBackend, dataset_name
-from app.memory.errors import MemoryDisabled, MemoryServiceError, MemoryValidation
+from app.memory.errors import MemoryServiceError, MemoryValidation
 from app.services.dialog_store import Dialog, Message, now_iso
 from tests.fake_db import FakeDialogDatabase
 from app.core.config import MemorySettings
@@ -398,40 +398,6 @@ async def test_brief_memory_off_dialog() -> None:
     assert fake.remembered == []
 
 
-async def test_add_fact_makes_a_note_and_checks_consent() -> None:
-    """Прежний `POST /facts` создаёт заметку (через проверки) и отвечает в форме факта; без включённой памяти — отказ."""
-    FakeDialogDatabase.reset()
-    fake = FakeCognee()
-    service, db = with_db(fake)
-    user = uid()
-    with pytest.raises(MemoryDisabled):
-        await service.add_fact(user, "works", "Помогают прогулки", None)
-    await service.update_settings(user, True, CONSENT)
-    await service.drain()
-    created = await service.add_fact(user, "works", "Помогают прогулки", None)
-    assert created["category"] == "interest" and created["text"] == "Помогают прогулки"
-    assert [row[2] for row in db.list_notes(user)] == ["Помогают прогулки"]
-
-
-async def test_legacy_fact_routes_work_on_notes() -> None:
-    """Прежние маршруты факта: правка текста и удаление работают на заметках, закрепление и «Верно» — отказ, чужой факт — 404."""
-    FakeDialogDatabase.reset()
-    service, db = with_db(FakeCognee())
-    user = uid()
-    await service.update_settings(user, True, CONSENT)
-    fact = await service.add_fact(user, "situation", "Работает в продажах", None)
-    edited = await service.patch_fact(user, fact["id"], text="Работает в продажах уже год")
-    assert edited["text"] == "Работает в продажах уже год"
-    with pytest.raises(MemoryServiceError) as pinned:
-        await service.patch_fact(user, fact["id"], status="pinned")
-    assert pinned.value.status == 422 and pinned.value.code == "MEMORY_ACTION_UNSUPPORTED"
-    await service.delete_fact(user, fact["id"])
-    with pytest.raises(MemoryServiceError) as gone:
-        await service.delete_fact(user, fact["id"])
-    assert gone.value.status == 404 and gone.value.code == "FACT_NOT_FOUND"
-    assert db.list_notes(user) == []
-
-
 async def test_forget_all_deletes_data_keeps_settings() -> None:
     fake = FakeCognee()
     service = backend(fake)
@@ -524,9 +490,6 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
                 break
             time.sleep(0.05)
         assert fake.deleted == [dataset_name(user)]
-        pinned = client.patch(f"/v1/users/{user}/memory/facts/f-1", json={"status": "pinned"}, headers=AUTH)
-        assert pinned.status_code == 422
-        assert pinned.json()["error"]["code"] == "MEMORY_ACTION_UNSUPPORTED"
 
 
 async def test_user_message_spawns_turn_recall_into_brief() -> None:

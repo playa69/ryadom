@@ -25,7 +25,6 @@ async def test_adding_and_switching_things_on_do_not_count() -> None:
     user = uid()
     service = await enabled_service(user)
     await service.notes.add(user, "interest", "Любит ходить пешком")
-    await service.add_fact(user, "interest", "Любит чай", None)
     await service.update_settings(user, True, CONSENT, sensitive_enabled=True, chat_search_enabled=True)  # включили чувствительное
     assert service.removals(user) == 0
     service.user_message(dialog(user, 0), "расскажу про работу")  # находка поиска по реплике — тоже добавление в сводку
@@ -41,15 +40,6 @@ async def test_deleting_or_editing_a_note_counts() -> None:
     await service.notes.patch(user, first["id"], "Любит ходить пешком по утрам")
     assert service.removals(user) == 1  # прежний текст заметки из сводки убран
     await service.notes.delete(user, second["id"])
-    assert service.removals(user) == 2
-
-
-async def test_the_old_fact_routes_count_too() -> None:
-    user = uid()
-    service = await enabled_service(user)
-    fact = await service.add_fact(user, "interest", "Любит чай", None)
-    await service.patch_fact(user, fact["id"], text="Любит зелёный чай")
-    await service.delete_fact(user, fact["id"])
     assert service.removals(user) == 2
 
 
