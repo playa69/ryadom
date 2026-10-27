@@ -294,13 +294,6 @@ MEMORY_BRIEF_CACHE_TOTAL = Counter(
     ["result"],
 )
 
-# action: enable | disable | add | edit | active | pinned | confirm | delete | forget_all | export
-MEMORY_USER_ACTIONS_TOTAL = Counter(
-    "agent_memory_user_actions_total",
-    "Действия людей с памятью.",
-    ["action"],
-)
-
 # status: queued | running | done | skipped | failed
 MEMORY_JOBS = Gauge(
     "agent_memory_jobs",

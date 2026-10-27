@@ -1,12 +1,14 @@
-"""REST заметок (PROTEUS-242, задачи 2.5 и 2.6): каждый маршрут и код ответа, лимит, чувствительное по согласию, совместимость
-прежних маршрутов фактов. Приложение собрано с двойником базы диалогов; Cognee подменён фейком. Все тексты выдуманы."""
+"""REST заметок (PROTEUS-242, задачи 2.5 и 2.6): каждый маршрут и код ответа, лимит, чувствительное по согласию, согласие на паузе.
+Приложение собрано с двойником базы диалогов; Cognee подменён фейком. Все тексты выдуманы."""
 
+import asyncio
 import uuid
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.memory.errors import MemoryFull
 from tests.conftest import AUTH, make_app
 from tests.fake_db import FakeDialogDatabase
 from tests.test_memory_cognee_backend import FakeCognee, memory_settings
@@ -43,10 +45,9 @@ def enable(client: TestClient, user: str, **extra: Any) -> None:
     assert response.status_code == 200, response.text
 
 
-def add(client: TestClient, user: str, text: str, category: str = "situation") -> dict[str, Any]:
-    response = client.post(f"{base(user)}/facts", json={"category": category, "text": text}, headers=AUTH)
-    assert response.status_code == 201, response.text
-    return response.json()
+def add(client: TestClient, user: str, text: str, kind: str = "situation") -> dict[str, Any]:
+    """Заметка через сервис, как её пишет извлекатель: маршрута для ручного добавления нет."""
+    return asyncio.run(client.app.state.memory.notes.add(user, kind, text))  # type: ignore[no-any-return]
 
 
 def test_get_memory_has_notes_limits_and_compatible_fields(client: TestClient) -> None:
@@ -96,12 +97,12 @@ def test_delete_note_and_delete_all_keep_settings(client: TestClient) -> None:
 
 
 def test_limit_of_notes(client: TestClient) -> None:
-    """2.6: на лимите новая заметка — `MEMORY_FULL`; существующие правятся и удаляются."""
+    """2.6: на лимите новая заметка — `MemoryFull`; существующие правятся и удаляются."""
     user = uid()
     enable(client, user)
     notes = [add(client, user, text) for text in ("Первая заметка", "Вторая заметка", "Третья заметка")]
-    full = client.post(f"{base(user)}/facts", json={"category": "situation", "text": "Четвёртая заметка"}, headers=AUTH)
-    assert full.status_code == 409 and full.json()["error"]["code"] == "MEMORY_FULL"
+    with pytest.raises(MemoryFull):  # извлекатель на лимите пропускает новое; маршрута добавления у REST нет
+        add(client, user, "Четвёртая заметка")
     edited = client.patch(f"{base(user)}/notes/{notes[0]['id']}", json={"text": "Первая заметка, уточнённая"}, headers=AUTH)
     assert edited.status_code == 200
     client.delete(f"{base(user)}/notes/{notes[1]['id']}", headers=AUTH)
@@ -150,6 +151,34 @@ def test_settings_without_enabled_only_change_switches(client: TestClient) -> No
     assert body["chatSearchEnabled"] is False and body["enabled"] is True and body["consentVersion"] == CONSENT
 
 
+def test_pause_keeps_the_consent_in_every_answer(client: TestClient) -> None:
+    """Пауза не отзывает согласие: его отдают ответ на выключение, GET /memory и выгрузка; «Удалить всю память» его тоже не стирает."""
+    user = uid()
+    enable(client, user)
+    paused = client.put(f"{base(user)}/settings", json={"enabled": False}, headers=AUTH).json()
+    assert paused["enabled"] is False and paused["consentVersion"] == CONSENT and paused["consentAt"]
+
+    memory = client.get(base(user), headers=AUTH).json()
+    assert memory["enabled"] is False and memory["paused"] is True
+    assert memory["consentVersion"] == CONSENT and memory["consentAt"] == paused["consentAt"]
+    settings = client.get(f"{base(user)}/export", headers=AUTH).json()["settings"]
+    assert settings["enabled"] is False and settings["consentVersion"] == CONSENT
+
+    assert client.delete(f"{base(user)}/notes", headers=AUTH).status_code == 204
+    assert client.get(base(user), headers=AUTH).json()["consentVersion"] == CONSENT
+
+    resumed = client.put(f"{base(user)}/settings", json={"enabled": True, "consentVersion": CONSENT}, headers=AUTH).json()
+    assert resumed["enabled"] is True and resumed["consentAt"] == paused["consentAt"]  # тот же текст — прежнее принятие
+
+
+def test_a_person_who_never_consented_has_no_consent(client: TestClient) -> None:
+    user = uid()
+    memory = client.get(base(user), headers=AUTH).json()
+    assert memory["enabled"] is False and memory["consentVersion"] is None and memory["consentAt"] is None
+    switched = client.put(f"{base(user)}/settings", json={"chatSearchEnabled": False}, headers=AUTH).json()
+    assert switched["enabled"] is False and switched["consentVersion"] is None
+
+
 def test_export_has_notes_and_settings(client: TestClient) -> None:
     user = uid()
     enable(client, user)
@@ -159,10 +188,13 @@ def test_export_has_notes_and_settings(client: TestClient) -> None:
     assert exported["settings"]["enabled"] is True
 
 
-def test_legacy_routes(client: TestClient) -> None:
+def test_changes_stay_and_the_old_fact_routes_are_gone(client: TestClient) -> None:
     user = uid()
     enable(client, user)
     note = add(client, user, "Работает в продажах")
-    assert client.patch(f"{base(user)}/facts/{note['id']}", json={"status": "pinned"}, headers=AUTH).json()["error"]["code"] == "MEMORY_ACTION_UNSUPPORTED"
     assert client.get(f"{base(user)}/changes", params={"dialogId": "d-1"}, headers=AUTH).json()["status"] == "ready"
-    assert client.delete(f"{base(user)}/facts/{note['id']}", headers=AUTH).status_code == 204
+    # Правят и удаляют заметку только по `/notes/{id}`; маршрутов факта (создать, править, забыть) у агента больше нет.
+    assert client.post(f"{base(user)}/facts", json={"category": "situation", "text": "Новая"}, headers=AUTH).status_code == 404
+    assert client.patch(f"{base(user)}/facts/{note['id']}", json={"text": "Другое"}, headers=AUTH).status_code == 404
+    assert client.delete(f"{base(user)}/facts/{note['id']}", headers=AUTH).status_code == 404
+    assert [n["text"] for n in client.get(f"{base(user)}/notes", headers=AUTH).json()["notes"]] == ["Работает в продажах"]

@@ -43,7 +43,7 @@ export enum ApiPath {
   Memory = '/api/memory',
   /** The person's switch "Remember" and the consent to it. */
   MemorySettings = '/api/memory/settings',
-  /** A fact the person writes themselves; `/api/memory/facts/:id` edits or forgets one. */
+  /** `/api/memory/facts/:id` corrects or forgets one note; the name is from before notes and stays for the clients that predate them. */
   MemoryFacts = '/api/memory/facts',
   /** What one conversation added to memory: `?dialogId=`. */
   MemoryChanges = '/api/memory/changes',
@@ -96,7 +96,7 @@ export function dialogRecapPath(dialogId: string): string {
   return `${dialogPath(dialogId)}/recap`
 }
 
-/** `/api/memory/facts/:id`: one remembered fact of the person. */
+/** `/api/memory/facts/:id`: one remembered note of the person. */
 export function memoryFactPath(factId: string): string {
   return `${ApiPath.MemoryFacts}/${encodeURIComponent(factId)}`
 }

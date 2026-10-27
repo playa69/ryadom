@@ -1,5 +1,4 @@
 import {
-  CreateMemoryFactApiErrorCode,
   ForgetMemoryApiErrorCode,
   MEMORY_CONSENT_VERSION,
   MemoryChangeOp,
@@ -17,11 +16,7 @@ import {
   type MemoryFactApiResponse,
   type MemoryInstructionApiResponse,
   type MemoryNoteApiResponse,
-  type MemoryPersonSlots,
-  type MemoryStyleSlots,
-  type UpdateMemoryFactApiRequest,
 } from '@ryadom/contracts/api/memory'
-import { InputLimit } from '@ryadom/contracts/api/limits'
 import type { ApiOutcome } from './errors'
 
 /**
@@ -68,7 +63,10 @@ export const MEMORY_HOW_IT_WORKS: readonly string[] = [
   'Если выключить «Память», заметки останутся, но я не буду ими пользоваться. Разговор с галочкой «Не сохранять этот разговор» не попадает ни в журнал, ни в память.',
 ]
 
-/** Turning memory on shows the sheet first unless the person has accepted this very text before. */
+/**
+ * Turning memory on shows the sheet first unless the person has accepted this very text before. A pause keeps the consent (the
+ * agent answers with it while memory is off), so resuming does not ask again; a person who accepted an older text is asked again.
+ */
 export function needsMemoryConsent(memory: Pick<MemoryApiResponse, 'consentVersion'> | null): boolean {
   return memory?.consentVersion !== MEMORY_CONSENT_VERSION
 }
@@ -200,8 +198,6 @@ export function memoryFactSource(
 /** A short mark beside the source for a fact that is not simply active. */
 export function memoryFactBadge(fact: Pick<MemoryFactApiResponse, 'status'>): string | null {
   switch (fact.status) {
-    case MemoryFactStatus.Pinned:
-      return 'Закреплено'
     case MemoryFactStatus.Proposed:
       return 'Ждёт ответа'
     case MemoryFactStatus.Candidate:
@@ -212,21 +208,17 @@ export function memoryFactBadge(fact: Pick<MemoryFactApiResponse, 'status'>): st
 }
 
 /**
- * What can be done with a fact; the names are those of the analytics event `memory_fact_action`.
- * `delete` is "Забыть" (and "Не запоминать" is `decline`): both forget the fact for good.
+ * What can be done with a fact. `delete` is "Забыть" (and "Не запоминать" is `decline`): both forget the fact for good.
  */
-export type MemoryFactAction = 'edit' | 'pin' | 'unpin' | 'delete' | 'confirm' | 'accept' | 'decline'
+export type MemoryFactAction = 'edit' | 'delete' | 'decline'
 
 export function memoryFactActions(fact: Pick<MemoryFactApiResponse, 'status'>): MemoryFactAction[] {
   switch (fact.status) {
     case MemoryFactStatus.Proposed:
-      return ['accept', 'decline']
+      return ['decline']
     case MemoryFactStatus.Candidate:
-      return ['confirm', 'edit', 'delete']
-    case MemoryFactStatus.Pinned:
-      return ['edit', 'unpin', 'delete']
     case MemoryFactStatus.Active:
-      return ['edit', 'pin', 'delete']
+      return ['edit', 'delete']
     default:
       return []
   }
@@ -235,25 +227,8 @@ export function memoryFactActions(fact: Pick<MemoryFactApiResponse, 'status'>): 
 /** The words on the buttons. */
 export const MEMORY_ACTION_LABEL: Record<MemoryFactAction, string> = {
   edit: 'Исправить',
-  pin: 'Закрепить',
-  unpin: 'Открепить',
   delete: 'Забыть',
-  confirm: 'Верно',
-  accept: 'Запомнить',
   decline: 'Не запоминать',
-}
-
-/** The request behind an action that is a PATCH; `edit` carries the new text, the forgetting ones are a DELETE. */
-export function memoryFactChange(action: 'pin' | 'unpin' | 'accept' | 'confirm'): UpdateMemoryFactApiRequest {
-  switch (action) {
-    case 'pin':
-      return { status: MemoryFactStatus.Pinned }
-    case 'unpin':
-    case 'accept':
-      return { status: MemoryFactStatus.Active }
-    case 'confirm':
-      return { confirm: true }
-  }
 }
 
 /** Puts a fact the server returned in place of the old one, keeping the order of the screen. */
@@ -262,240 +237,6 @@ export function replaceMemoryFact(
   fact: MemoryFactApiResponse,
 ): MemoryFactApiResponse[] {
   return facts.map((item) => (item.id === fact.id ? fact : item))
-}
-
-// ─── editing ──────────────────────────────────────────────────────────────────
-
-/**
- * How long a fact written as text may be: from `InputLimit.MemoryFactMin` up to the agent's limit for
- * the category (spec 6.1), never above `InputLimit.MemoryFactMax`. The server checks it anyway; the
- * field checks it first so that a short or long text is not refused as "cannot remember this". Facts
- * built from fields (style, person) have no minimum.
- */
-export const MEMORY_TEXT_MIN: number = InputLimit.MemoryFactMin
-const MEMORY_TEXT_MAX: Partial<Record<MemoryFactCategory, number>> = {
-  [MemoryFactCategory.Boundary]: 120,
-  [MemoryFactCategory.Situation]: 160,
-  [MemoryFactCategory.Goal]: 160,
-  [MemoryFactCategory.Works]: 160,
-  [MemoryFactCategory.Interest]: 120,
-}
-
-export function memoryTextMax(category: MemoryFactCategory): number {
-  return Math.min(MEMORY_TEXT_MAX[category] ?? InputLimit.MemoryFactMax, InputLimit.MemoryFactMax)
-}
-
-/** A phrase for a text the person typed, or null when it may go to the server. */
-export function memoryTextProblem(text: string, category: MemoryFactCategory): string | null {
-  const length = text.trim().length
-  if (length === 0) return 'Напиши, что запомнить'
-  if (length < MEMORY_TEXT_MIN) return `Чуть подробнее: хотя бы ${MEMORY_TEXT_MIN} знаков`
-  const max = memoryTextMax(category)
-  if (length > max) return `Не длиннее ${max} знаков`
-  return null
-}
-
-/** The fields of "how to talk to me": a fact of this category is built from them, never written as text. */
-export const STYLE_SLOTS = {
-  form: {
-    label: 'Обращение',
-    options: [
-      { value: 'ty', label: 'на «ты»' },
-      { value: 'vy', label: 'на «вы»' },
-    ],
-  },
-  length: {
-    label: 'Ответы',
-    options: [
-      { value: 'short', label: 'покороче' },
-      { value: 'normal', label: 'как обычно' },
-    ],
-  },
-  advice: {
-    label: 'Советы',
-    options: [
-      { value: 'ask_first', label: 'сначала спросить' },
-      { value: 'ok', label: 'можно сразу' },
-    ],
-  },
-  tone: {
-    label: 'Тон',
-    options: [
-      { value: 'soft', label: 'мягче' },
-      { value: 'direct', label: 'прямее' },
-    ],
-  },
-} as const
-
-export type StyleChoiceSlot = keyof typeof STYLE_SLOTS
-
-export const STYLE_ADDRESS_LABEL = 'Как к тебе обращаться'
-export const STYLE_ADDRESS_MAX = 30
-
-/** The slots with empty fields dropped and the name trimmed: what goes to the server. */
-export function cleanStyleSlots(slots: MemoryStyleSlots): MemoryStyleSlots {
-  const clean: MemoryStyleSlots = {}
-  const address = slots.address?.trim()
-  if (address) clean.address = address
-  if (slots.form) clean.form = slots.form
-  if (slots.length) clean.length = slots.length
-  if (slots.advice) clean.advice = slots.advice
-  if (slots.tone) clean.tone = slots.tone
-  return clean
-}
-
-/** The server's rule for the name (no digits, no links, up to 30) and "at least one field". */
-export function styleSlotsProblem(slots: MemoryStyleSlots): string | null {
-  const clean = cleanStyleSlots(slots)
-  if (Object.keys(clean).length === 0) return 'Выбери хотя бы что-нибудь одно'
-  if (clean.address !== undefined) {
-    if (clean.address.length > STYLE_ADDRESS_MAX) return `Имя — не длиннее ${STYLE_ADDRESS_MAX} знаков`
-    if (/\d|https?:|www\.|@/i.test(clean.address)) return 'Только имя, без цифр и ссылок'
-  }
-  return null
-}
-
-/**
- * A close person is three fields too, and the server writes the text from them ("Сестра Аня:
- * поддерживает"). The role comes from the server's dictionary; these are the ones offered for a
- * choice. A role this list lacks (one the server took from a conversation) is kept as it is.
- */
-export const PERSON_ROLES: readonly string[] = [
-  'мама',
-  'папа',
-  'сестра',
-  'брат',
-  'бабушка',
-  'дедушка',
-  'муж',
-  'жена',
-  'партнёр',
-  'парень',
-  'девушка',
-  'друг',
-  'подруга',
-  'сын',
-  'дочь',
-  'ребёнок',
-  'коллега',
-  'начальник',
-]
-
-export const PERSON_SLOT_LABELS = { role: 'Кто это', name: 'Имя', note: 'Пара слов' } as const
-export const PERSON_NAME_MAX = 20
-export const PERSON_NOTE_MAX = 60
-
-/** The person's fields as the server takes them: trimmed, empty ones dropped, the name capitalised. */
-export function cleanPersonSlots(slots: Partial<MemoryPersonSlots>): MemoryPersonSlots {
-  const clean: MemoryPersonSlots = { role: slots.role?.trim().toLowerCase() ?? '' }
-  const name = slots.name?.trim()
-  if (name) clean.name = name.charAt(0).toUpperCase() + name.slice(1)
-  const note = slots.note?.trim()
-  if (note) clean.note = note
-  return clean
-}
-
-/** The server's rules: a role; the name one word of letters up to 20; the note up to 60. */
-export function personSlotsProblem(slots: Partial<MemoryPersonSlots>): string | null {
-  const clean = cleanPersonSlots(slots)
-  if (!clean.role) return 'Выбери, кто это'
-  if (clean.name !== undefined) {
-    if (clean.name.length > PERSON_NAME_MAX) return `Имя — не длиннее ${PERSON_NAME_MAX} знаков`
-    if (!/^[\p{L}-]+$/u.test(clean.name)) return 'Только имя, одним словом'
-  }
-  if (clean.note !== undefined && clean.note.length > PERSON_NOTE_MAX)
-    return `Не длиннее ${PERSON_NOTE_MAX} знаков`
-  return null
-}
-
-/** What the person can write down themselves, in the words of the form "Добавить". */
-export const MEMORY_CATEGORY_LABEL: Record<MemoryFactCategory, string> = {
-  [MemoryFactCategory.Style]: 'Как со мной говорить',
-  [MemoryFactCategory.Person]: 'Близкий человек',
-  [MemoryFactCategory.Situation]: 'Что сейчас происходит',
-  [MemoryFactCategory.Goal]: 'Планы и цели',
-  [MemoryFactCategory.Works]: 'Что помогает',
-  [MemoryFactCategory.Interest]: 'Интересы и приятное',
-  [MemoryFactCategory.Boundary]: 'О чём не говорить',
-  [MemoryFactCategory.Recap]: 'Прошлый разговор',
-}
-
-/** Under the form of a correction or a new fact. */
-export const MEMORY_FORM_NOTE =
-  'Записанное тобой я закреплю и сам менять не буду. Кое-что я запомнить не могу: например, телефоны и адреса.'
-
-/** A hint inside the empty text field. */
-export const MEMORY_TEXT_PLACEHOLDER: Partial<Record<MemoryFactCategory, string>> = {
-  [MemoryFactCategory.Situation]: 'Например: ищу работу после переезда',
-  [MemoryFactCategory.Goal]: 'Например: готовлюсь к экзамену в ноябре',
-  [MemoryFactCategory.Works]: 'Например: помогают вечерние прогулки',
-  [MemoryFactCategory.Interest]: 'Например: люблю джаз, у меня собака',
-  [MemoryFactCategory.Boundary]: 'Например: не спрашивать про работу',
-}
-
-/**
- * The categories the form "Добавить" offers. A retelling is the agent's own, not the person's to write;
- * "how to talk to me" is one fact per person, so while there is one it is corrected, not added again.
- */
-export function newMemoryFactCategories(facts: readonly MemoryFactApiResponse[]): MemoryFactCategory[] {
-  const hasStyle = facts.some(
-    (fact) => fact.category === MemoryFactCategory.Style && fact.status !== MemoryFactStatus.Expired,
-  )
-  return [
-    MemoryFactCategory.Style,
-    MemoryFactCategory.Person,
-    MemoryFactCategory.Situation,
-    MemoryFactCategory.Goal,
-    MemoryFactCategory.Works,
-    MemoryFactCategory.Interest,
-    MemoryFactCategory.Boundary,
-  ].filter((category) => category !== MemoryFactCategory.Style || !hasStyle)
-}
-
-/** Which form a correction takes: the server builds `style` and `person` from fields, the rest is text. */
-export function memoryEditKind(category: MemoryFactCategory): 'style' | 'person' | 'text' {
-  if (category === MemoryFactCategory.Style) return 'style'
-  if (category === MemoryFactCategory.Person) return 'person'
-  return 'text'
-}
-
-/** What the form holds while the person fills it in; only the part for the category is sent. */
-export interface MemoryFactDraft {
-  text: string
-  style: MemoryStyleSlots
-  person: Partial<MemoryPersonSlots>
-}
-
-/** The form for a fact: empty for a new one, its fields or its text for a correction. */
-export function memoryFactDraft(fact: MemoryFactApiResponse | null): MemoryFactDraft {
-  if (!fact) return { text: '', style: {}, person: {} }
-  const kind = memoryEditKind(fact.category)
-  return {
-    text: kind === 'text' ? fact.text : '',
-    style: kind === 'style' ? { ...((fact.slots ?? {}) as MemoryStyleSlots) } : {},
-    person: kind === 'person' ? { ...((fact.slots ?? {}) as MemoryPersonSlots) } : {},
-  }
-}
-
-/**
- * The checked body of a correction or a new fact: `{ body }` to send, or `{ problem }` to show under
- * the form. `style` and `person` send only their fields, the rest only the text (the contract).
- */
-export function memoryFactBody(
-  category: MemoryFactCategory,
-  draft: MemoryFactDraft,
-): { body: { text: string } | { slots: MemoryStyleSlots | MemoryPersonSlots } } | { problem: string } {
-  const kind = memoryEditKind(category)
-  if (kind === 'style') {
-    const problem = styleSlotsProblem(draft.style)
-    return problem ? { problem } : { body: { slots: cleanStyleSlots(draft.style) } }
-  }
-  if (kind === 'person') {
-    const problem = personSlotsProblem(draft.person)
-    return problem ? { problem } : { body: { slots: cleanPersonSlots(draft.person) } }
-  }
-  const problem = memoryTextProblem(draft.text, category)
-  return problem ? { problem } : { body: { text: draft.text.trim() } }
 }
 
 // ─── refusals ─────────────────────────────────────────────────────────────────
@@ -513,21 +254,16 @@ export const MEMORY_SETTINGS_ERRORS: Record<UpdateMemorySettingsApiErrorCode, st
  * `FACT_REJECTED` is said neutrally, whatever the server's reason was: the person is not told what
  * class of words tripped the rule.
  */
-export const MEMORY_FACT_ERRORS: Record<UpdateMemoryFactApiErrorCode | CreateMemoryFactApiErrorCode, string> =
-  {
-    [UpdateMemoryFactApiErrorCode.USER_NOT_FOUND]: ACCOUNT_GONE,
-    [UpdateMemoryFactApiErrorCode.MEMORY_DISABLED]: 'Сначала включи память',
-    [UpdateMemoryFactApiErrorCode.FACT_NOT_FOUND]: 'Этого я уже не помню',
-    [UpdateMemoryFactApiErrorCode.FACT_REJECTED]: 'Это я не могу запомнить',
-    [UpdateMemoryFactApiErrorCode.MEMORY_UNAVAILABLE]: UNAVAILABLE,
-    [CreateMemoryFactApiErrorCode.MEMORY_FULL]: 'Память заполнена. Забудь что-нибудь, чтобы запомнить новое',
-  }
+export const MEMORY_FACT_ERRORS: Record<UpdateMemoryFactApiErrorCode, string> = {
+  [UpdateMemoryFactApiErrorCode.USER_NOT_FOUND]: ACCOUNT_GONE,
+  [UpdateMemoryFactApiErrorCode.FACT_NOT_FOUND]: 'Этого я уже не помню',
+  [UpdateMemoryFactApiErrorCode.FACT_REJECTED]: 'Это я не могу запомнить',
+  [UpdateMemoryFactApiErrorCode.MEMORY_UNAVAILABLE]: UNAVAILABLE,
+}
 
 export const MEMORY_FORGET_ERRORS: Record<ForgetMemoryApiErrorCode, string> = {
   [ForgetMemoryApiErrorCode.USER_NOT_FOUND]: ACCOUNT_GONE,
   [ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE]: 'Сейчас не получается забыть. Попробуй чуть позже',
-  [ForgetMemoryApiErrorCode.FACT_UNSUPPORTED]:
-    'Отдельный факт пока забыть нельзя. Можно забыть всё сразу в разделе «Память»',
 }
 
 // ─── the card "Я запомнил" ────────────────────────────────────────────────────
@@ -548,11 +284,7 @@ export interface MemoryCardContent {
 }
 
 const CARD_OPS = new Set<string>([MemoryChangeOp.Add, MemoryChangeOp.Update, MemoryChangeOp.Supersede])
-const CARD_STATUSES = new Set<string>([
-  MemoryFactStatus.Active,
-  MemoryFactStatus.Pinned,
-  MemoryFactStatus.Proposed,
-])
+const CARD_STATUSES = new Set<string>([MemoryFactStatus.Active, MemoryFactStatus.Proposed])
 
 /**
  * What the card lists after a conversation: what is new or changed (a fact merely confirmed again is
@@ -712,7 +444,7 @@ export function createMemoryCard(poll: Omit<MemoryPollOptions, 'signal'> = {}) {
       set(items.length === 0 && state.more === 0 ? null : { ...state, items })
     },
 
-    /** A point the server answered for ("Запомнить"): it stays, no longer waiting. */
+    /** A point the server answered for: it stays, no longer waiting. */
     update(fact: MemoryFactApiResponse): void {
       if (!state) return
       set({
@@ -1003,10 +735,14 @@ export const MEMORY_INVITE = {
   decline: 'Не сейчас',
 } as const
 
-/** Whether to show the sheet: the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
+/**
+ * Whether to show the sheet: the feature works, the person has never accepted a memory consent and has not said "Не сейчас"
+ * already. A pause keeps the consent, so someone who turned memory off never gets the invitation back; whether memory is on
+ * right now does not matter, only whether the person has ever decided.
+ */
 export function shouldInviteToMemory(
-  memory: Pick<MemoryApiResponse, 'available' | 'enabled' | 'consentVersion'> | null,
+  memory: Pick<MemoryApiResponse, 'available' | 'consentVersion'> | null,
   dismissed: boolean,
 ): boolean {
-  return memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
+  return memory !== null && memory.available && memory.consentVersion === null && !dismissed
 }

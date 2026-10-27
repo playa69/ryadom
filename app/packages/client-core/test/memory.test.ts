@@ -14,34 +14,24 @@ import {
   type MemoryChangesApiResponse,
   type MemoryFactApiResponse,
 } from '@ryadom/contracts/api/memory'
-import { InputLimit } from '@ryadom/contracts/api/limits'
 import type { ApiOutcome } from '../src/errors'
 import {
   FORGET_UNDO_MS,
   MEMORY_CARD_MAX_ITEMS,
-  cleanPersonSlots,
   createMemoryCard,
   createPendingForgets,
   dialogMemoryMark,
   groupMemory,
   memoryCardContent,
-  memoryEditKind,
   memoryExportFileName,
-  memoryFactBody,
-  memoryFactDraft,
   memoryFactActions,
-  memoryFactChange,
   memoryFactSource,
   memoryInUse,
   memorySectionStatus,
-  memoryTextProblem,
   needsMemoryConsent,
-  newMemoryFactCategories,
-  personSlotsProblem,
   pollMemoryChanges,
   shouldShowMemoryCard,
   shouldWatchMemoryChanges,
-  styleSlotsProblem,
 } from '../src/memory'
 
 let nextId = 1
@@ -61,9 +51,7 @@ function fact(patch: Partial<MemoryFactApiResponse> = {}): MemoryFactApiResponse
     sources: [{ dialogId: 'd-1', date: '2026-10-12' }],
     createdAt: '2026-10-12T10:00:00Z',
     updatedAt: '2026-10-12T10:00:00Z',
-    lastConfirmedAt: null,
     expiresAt: null,
-    confirmCount: 0,
     seenByUser: false,
     ...patch,
   }
@@ -88,6 +76,13 @@ describe('лист согласия', () => {
     expect(needsMemoryConsent({ consentVersion: null })).toBe(true)
     expect(needsMemoryConsent({ consentVersion: '2020-01-01' })).toBe(true)
     expect(needsMemoryConsent({ consentVersion: MEMORY_CONSENT_VERSION })).toBe(false)
+  })
+
+  it('включение с паузы: тот же текст не спрашивают заново, новый — спрашивают', () => {
+    // Агент отдаёт согласие и на паузе, поэтому «на паузе, согласие на этот текст» — обычное состояние после выключения.
+    const paused = { enabled: false, consentVersion: MEMORY_CONSENT_VERSION }
+    expect(needsMemoryConsent(paused)).toBe(false)
+    expect(needsMemoryConsent({ ...paused, consentVersion: '2020-01-01' })).toBe(true)
   })
 })
 
@@ -141,12 +136,12 @@ describe('экран «Память»: группы', () => {
   it('ждущие ответа — отдельно, предположения — последней группой, истёкшие не видны', () => {
     const proposed = fact({ category: MemoryFactCategory.Situation, status: MemoryFactStatus.Proposed })
     const guess = fact({ category: MemoryFactCategory.Works, status: MemoryFactStatus.Candidate })
-    const pinned = fact({ category: MemoryFactCategory.Works, status: MemoryFactStatus.Pinned })
+    const settled = fact({ category: MemoryFactCategory.Works })
     const expired = fact({ category: MemoryFactCategory.Works, status: MemoryFactStatus.Expired })
-    const view = groupMemory([proposed, guess, pinned, expired])
+    const view = groupMemory([proposed, guess, settled, expired])
     expect(view.proposed).toEqual([proposed])
     expect(view.groups.map((group) => group.id)).toEqual(['helps', 'guesses'])
-    expect(view.groups[0]!.facts).toEqual([pinned])
+    expect(view.groups[0]!.facts).toEqual([settled])
     expect(view.groups[1]!.facts).toEqual([guess])
     expect(view.count).toBe(3)
   })
@@ -192,143 +187,11 @@ describe('откуда факт', () => {
 })
 
 describe('действия с фактом', () => {
-  it('по статусу', () => {
-    expect(memoryFactActions(fact())).toEqual(['edit', 'pin', 'delete'])
-    expect(memoryFactActions(fact({ status: MemoryFactStatus.Pinned }))).toEqual(['edit', 'unpin', 'delete'])
-    expect(memoryFactActions(fact({ status: MemoryFactStatus.Proposed }))).toEqual(['accept', 'decline'])
-    expect(memoryFactActions(fact({ status: MemoryFactStatus.Candidate }))).toEqual([
-      'confirm',
-      'edit',
-      'delete',
-    ])
+  it('по статусу: исправить и забыть; ждущему ответа — только «Не запоминать»', () => {
+    expect(memoryFactActions(fact())).toEqual(['edit', 'delete'])
+    expect(memoryFactActions(fact({ status: MemoryFactStatus.Candidate }))).toEqual(['edit', 'delete'])
+    expect(memoryFactActions(fact({ status: MemoryFactStatus.Proposed }))).toEqual(['decline'])
     expect(memoryFactActions(fact({ status: MemoryFactStatus.Expired }))).toEqual([])
-  })
-
-  it('запросы PATCH', () => {
-    expect(memoryFactChange('pin')).toEqual({ status: MemoryFactStatus.Pinned })
-    expect(memoryFactChange('unpin')).toEqual({ status: MemoryFactStatus.Active })
-    expect(memoryFactChange('accept')).toEqual({ status: MemoryFactStatus.Active })
-    expect(memoryFactChange('confirm')).toEqual({ confirm: true })
-  })
-
-  it('правка: стиль и близкие — полями, остальное — текстом', () => {
-    expect(memoryEditKind(MemoryFactCategory.Style)).toBe('style')
-    expect(memoryEditKind(MemoryFactCategory.Person)).toBe('person')
-    expect(memoryEditKind(MemoryFactCategory.Works)).toBe('text')
-  })
-})
-
-describe('проверка правки', () => {
-  it('текст: не пустой, не короче 8 и не длиннее предела категории', () => {
-    expect(memoryTextProblem('  ', MemoryFactCategory.Works)).not.toBeNull()
-    expect(memoryTextProblem('коротко', MemoryFactCategory.Works)).not.toBeNull()
-    // The agent's minimum, from the contract: eight characters pass, seven do not.
-    expect(memoryTextProblem('а'.repeat(InputLimit.MemoryFactMin), MemoryFactCategory.Works)).toBeNull()
-    expect(
-      memoryTextProblem('а'.repeat(InputLimit.MemoryFactMin - 1), MemoryFactCategory.Works),
-    ).not.toBeNull()
-    expect(memoryTextProblem('Помогают вечерние прогулки', MemoryFactCategory.Works)).toBeNull()
-    expect(memoryTextProblem('а'.repeat(161), MemoryFactCategory.Works)).toBe('Не длиннее 160 знаков')
-    expect(memoryTextProblem('а'.repeat(121), MemoryFactCategory.Boundary)).toBe('Не длиннее 120 знаков')
-  })
-
-  it('стиль: хотя бы одно поле, имя без цифр и ссылок', () => {
-    expect(styleSlotsProblem({})).not.toBeNull()
-    expect(styleSlotsProblem({ address: '   ' })).not.toBeNull()
-    expect(styleSlotsProblem({ form: 'ty' })).toBeNull()
-    expect(styleSlotsProblem({ address: 'Марина' })).toBeNull()
-    expect(styleSlotsProblem({ address: 'Марина 2000' })).not.toBeNull()
-    expect(styleSlotsProblem({ address: 'https://x.ru' })).not.toBeNull()
-  })
-
-  it('близкий человек: роль обязательна, имя одним словом с заглавной', () => {
-    expect(personSlotsProblem({ name: 'Аня' })).toBe('Выбери, кто это')
-    expect(personSlotsProblem({ role: 'сестра', name: 'Аня Петрова' })).not.toBeNull()
-    expect(personSlotsProblem({ role: 'сестра', name: 'аня', note: 'поддерживает' })).toBeNull()
-    expect(personSlotsProblem({ role: 'сестра', note: 'а'.repeat(61) })).not.toBeNull()
-    expect(cleanPersonSlots({ role: ' Сестра ', name: 'аня', note: ' ' })).toEqual({
-      role: 'сестра',
-      name: 'Аня',
-    })
-  })
-})
-
-describe('форма «Исправить» / «Добавить»', () => {
-  it('стиль и близкие уходят только полями, остальное — только текстом', () => {
-    expect(
-      memoryFactBody(MemoryFactCategory.Person, {
-        text: 'лишнее',
-        style: {},
-        person: { role: 'сестра', name: 'аня' },
-      }),
-    ).toEqual({ body: { slots: { role: 'сестра', name: 'Аня' } } })
-    expect(
-      memoryFactBody(MemoryFactCategory.Style, { text: '', style: { form: 'ty', address: ' ' }, person: {} }),
-    ).toEqual({ body: { slots: { form: 'ty' } } })
-    expect(
-      memoryFactBody(MemoryFactCategory.Works, {
-        text: '  Помогают прогулки  ',
-        style: { form: 'ty' },
-        person: {},
-      }),
-    ).toEqual({ body: { text: 'Помогают прогулки' } })
-  })
-
-  it('у полей минимума нет: «на ты» и «мама» проходят', () => {
-    expect(memoryFactBody(MemoryFactCategory.Style, { text: '', style: { form: 'ty' }, person: {} })).toEqual(
-      {
-        body: { slots: { form: 'ty' } },
-      },
-    )
-    expect(
-      memoryFactBody(MemoryFactCategory.Person, { text: '', style: {}, person: { role: 'мама' } }),
-    ).toEqual({
-      body: { slots: { role: 'мама' } },
-    })
-  })
-
-  it('правка стиля шлёт весь набор полей: сервер заменяет слоты целиком', () => {
-    const style = fact({
-      category: MemoryFactCategory.Style,
-      slots: { address: 'Марина', form: 'ty', advice: 'ask_first' },
-    })
-    const draft = memoryFactDraft(style)
-    draft.style.length = 'short'
-    expect(memoryFactBody(MemoryFactCategory.Style, draft)).toEqual({
-      body: { slots: { address: 'Марина', form: 'ty', length: 'short', advice: 'ask_first' } },
-    })
-  })
-
-  it('ошибка формы вместо запроса', () => {
-    expect(memoryFactBody(MemoryFactCategory.Person, { text: '', style: {}, person: {} })).toEqual({
-      problem: 'Выбери, кто это',
-    })
-    expect('problem' in memoryFactBody(MemoryFactCategory.Works, { text: 'да', style: {}, person: {} })).toBe(
-      true,
-    )
-  })
-
-  it('правка начинается с полей или текста факта', () => {
-    const person = fact({
-      category: MemoryFactCategory.Person,
-      text: 'Сестра Аня',
-      slots: { role: 'сестра', name: 'Аня' },
-    })
-    expect(memoryFactDraft(person)).toEqual({ text: '', style: {}, person: { role: 'сестра', name: 'Аня' } })
-    expect(memoryFactDraft(fact({ text: 'Любит джаз' }))).toEqual({
-      text: 'Любит джаз',
-      style: {},
-      person: {},
-    })
-    expect(memoryFactDraft(null)).toEqual({ text: '', style: {}, person: {} })
-  })
-
-  it('«как со мной говорить» добавляется, только пока его нет; пересказ не добавляется никогда', () => {
-    expect(newMemoryFactCategories([])).toContain(MemoryFactCategory.Style)
-    expect(newMemoryFactCategories([])).not.toContain(MemoryFactCategory.Recap)
-    expect(newMemoryFactCategories([fact({ category: MemoryFactCategory.Style })])).not.toContain(
-      MemoryFactCategory.Style,
-    )
   })
 })
 
@@ -679,12 +542,19 @@ describe('«Запомнил: … · Убрать» и лист «Рядом т�
 
   it('лист-приглашение: один раз, тому, кто ещё не решал; согласие и «Не сейчас» его снимают', async () => {
     const { shouldInviteToMemory } = await import('../src/memory')
-    const fresh = { available: true, enabled: false, consentVersion: null }
+    const fresh = { available: true, consentVersion: null }
     expect(shouldInviteToMemory(fresh, false)).toBe(true)
     expect(shouldInviteToMemory(fresh, true)).toBe(false) // «Не сейчас»
-    expect(shouldInviteToMemory({ ...fresh, consentVersion: '2026-10-12' }, false)).toBe(false) // уже давал согласие (и выключил)
-    expect(shouldInviteToMemory({ ...fresh, enabled: true }, false)).toBe(false)
     expect(shouldInviteToMemory({ ...fresh, available: false }, false)).toBe(false)
     expect(shouldInviteToMemory(null, false)).toBe(false)
+  })
+
+  it('лист-приглашение не возвращается к тому, кто давал согласие: включил, поставил на паузу, согласие на старый текст', async () => {
+    const { shouldInviteToMemory } = await import('../src/memory')
+    // Пауза не отзывает согласие: агент отдаёт версию и при выключенной памяти, а приглашение смотрит только на неё.
+    const person = (enabled: boolean, consentVersion: string | null) => ({ available: true, enabled, consentVersion })
+    expect(shouldInviteToMemory(person(false, MEMORY_CONSENT_VERSION), false)).toBe(false) // на паузе
+    expect(shouldInviteToMemory(person(true, MEMORY_CONSENT_VERSION), false)).toBe(false) // включена
+    expect(shouldInviteToMemory(person(false, '2020-01-01'), false)).toBe(false) // новый текст — лист согласия, не приглашение
   })
 })

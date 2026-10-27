@@ -53,9 +53,7 @@ export interface MemoryFactDTO {
   sources: MemoryFactSourceDTO[]
   createdAt: Date
   updatedAt: Date
-  lastConfirmedAt: Date | null
   expiresAt: Date | null
-  confirmCount: number
   seenByUser: boolean
 }
 
@@ -162,9 +160,7 @@ export function toMemoryFactDTO(fact: AgentMemoryFactResponse): MemoryFactDTO {
     // The agent writes ISO strings; an unusable date is not replaced with "now", let it show.
     createdAt: toDate(fact.createdAt) ?? new Date(0),
     updatedAt: toDate(fact.updatedAt) ?? new Date(0),
-    lastConfirmedAt: toDate(fact.lastConfirmedAt),
     expiresAt: toDate(fact.expiresAt),
-    confirmCount: fact.confirmCount,
     seenByUser: fact.seenByUser,
   }
 }

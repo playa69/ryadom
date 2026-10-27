@@ -124,7 +124,7 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
     memory = api.result("GET", "/api/memory", token=token)
     facts = memory["facts"]
     assert facts, "память пуста после извлечения"
-    assert all(fact["status"] in ("active", "pinned", "candidate", "proposed") for fact in facts)
+    assert all(fact["status"] == "active" for fact in facts)
     assert any(source["dialogId"] == first["dialogId"] for fact in facts for source in fact["sources"]), "у фактов нет источника"
     assert len(facts) <= memory["limits"]["maxFacts"]
 
@@ -134,10 +134,10 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
     assert {fact["id"] for fact in export["facts"]} >= {fact["id"] for fact in facts}
     assert export["events"], "журнал изменений пуст"
 
-    # 4. Человек управляет фактом: закрепляет (агент такой факт не перезапишет).
+    # 4. Человек правит заметку: в ответе заметка с новым текстом.
     target = facts[0]
-    pinned = api.result("PATCH", f"/api/memory/facts/{target['id']}", token=token, body={"status": "pinned"})
-    assert pinned["status"] == "pinned"
+    edited = api.result("PATCH", f"/api/memory/facts/{target['id']}", token=token, body={"text": "Любит прогулки у воды"})
+    assert edited["id"] == target["id"] and edited["text"] == "Любит прогулки у воды"
 
     # 5. Разговор «Без памяти»: ничего не запоминается.
     before = len(api.result("GET", "/api/memory", token=token)["facts"])
@@ -156,7 +156,7 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
     assert turn.tts_codec in (None, "pcm16") and turn.audio_frames, "озвучка не пришла"
     end_dialog(api, token, third["dialogId"])
 
-    # 7. Забыть один факт (повтор тоже успешен), затем забыть всё.
+    # 7. Забыть одну заметку (повтор тоже успешен), затем забыть всё.
     victim = api.result("GET", "/api/memory", token=token)["facts"][0]["id"]
     api.result("DELETE", f"/api/memory/facts/{victim}", token=token)
     api.result("DELETE", f"/api/memory/facts/{victim}", token=token)

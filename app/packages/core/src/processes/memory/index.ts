@@ -1,7 +1,6 @@
 // 1. Handler imports
 import './get-memory/get-memory.handler'
 import './update-memory-settings/update-memory-settings.handler'
-import './create-memory-fact/create-memory-fact.handler'
 import './update-memory-fact/update-memory-fact.handler'
 import './forget-memory-fact/forget-memory-fact.handler'
 import './forget-memory/forget-memory.handler'
@@ -17,8 +16,6 @@ export { GetMemoryOperation } from './get-memory/get-memory.operation'
 export type { GetMemoryOperationData } from './get-memory/get-memory.operation'
 export { UpdateMemorySettingsOperation } from './update-memory-settings/update-memory-settings.operation'
 export type { UpdateMemorySettingsOperationData } from './update-memory-settings/update-memory-settings.operation'
-export { CreateMemoryFactOperation } from './create-memory-fact/create-memory-fact.operation'
-export type { CreateMemoryFactOperationData } from './create-memory-fact/create-memory-fact.operation'
 export { UpdateMemoryFactOperation } from './update-memory-fact/update-memory-fact.operation'
 export type { UpdateMemoryFactOperationData } from './update-memory-fact/update-memory-fact.operation'
 export { ForgetMemoryFactOperation } from './forget-memory-fact/forget-memory-fact.operation'
@@ -37,8 +34,6 @@ export type { GetMemoryResult } from './get-memory/get-memory.types'
 export { GetMemoryOperationErrorCode } from './get-memory/get-memory.types'
 export type { UpdateMemorySettingsResult } from './update-memory-settings/update-memory-settings.types'
 export { UpdateMemorySettingsOperationErrorCode } from './update-memory-settings/update-memory-settings.types'
-export type { CreateMemoryFactResult } from './create-memory-fact/create-memory-fact.types'
-export { CreateMemoryFactOperationErrorCode } from './create-memory-fact/create-memory-fact.types'
 export type { UpdateMemoryFactResult } from './update-memory-fact/update-memory-fact.types'
 export { UpdateMemoryFactOperationErrorCode } from './update-memory-fact/update-memory-fact.types'
 export type { ForgetMemoryFactResult } from './forget-memory-fact/forget-memory-fact.types'
@@ -70,7 +65,6 @@ export type {
 // 4. Union type
 import type { GetMemoryOperation } from './get-memory/get-memory.operation'
 import type { UpdateMemorySettingsOperation } from './update-memory-settings/update-memory-settings.operation'
-import type { CreateMemoryFactOperation } from './create-memory-fact/create-memory-fact.operation'
 import type { UpdateMemoryFactOperation } from './update-memory-fact/update-memory-fact.operation'
 import type { ForgetMemoryFactOperation } from './forget-memory-fact/forget-memory-fact.operation'
 import type { ForgetMemoryOperation } from './forget-memory/forget-memory.operation'
@@ -81,7 +75,6 @@ import type { MemoryInstructionOperation } from './memory-instruction/memory-ins
 export type MemoryOperations =
   | GetMemoryOperation
   | UpdateMemorySettingsOperation
-  | CreateMemoryFactOperation
   | UpdateMemoryFactOperation
   | ForgetMemoryFactOperation
   | ForgetMemoryOperation

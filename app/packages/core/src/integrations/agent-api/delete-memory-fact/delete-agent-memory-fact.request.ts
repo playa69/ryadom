@@ -6,7 +6,7 @@ export interface DeleteAgentMemoryFactRequestData {
   factId: string
 }
 
-/** "Forget" one fact (or "Don't remember" a proposed one). A repeat is a success. */
+/** "Forget" one note. A repeat is a success. */
 export class DeleteAgentMemoryFactRequest extends RequestData<DeleteAgentMemoryFactResult> {
   /** Survives build minification: DeleteAgentMemoryFactRequest.name is not kept in production. Used by LoggingBehavior. */
   static readonly requestName = 'DeleteAgentMemoryFactRequest'

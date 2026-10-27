@@ -21,7 +21,7 @@ export const AGENT_MEMORY_FACT_CATEGORIES = [
 ] as const
 export type AgentMemoryFactCategory = (typeof AGENT_MEMORY_FACT_CATEGORIES)[number]
 
-export const AGENT_MEMORY_FACT_STATUSES = ['candidate', 'proposed', 'active', 'pinned', 'expired'] as const
+export const AGENT_MEMORY_FACT_STATUSES = ['candidate', 'proposed', 'active', 'expired'] as const
 export type AgentMemoryFactStatus = (typeof AGENT_MEMORY_FACT_STATUSES)[number]
 
 export const AGENT_MEMORY_FACT_ORIGINS = ['auto', 'user_said', 'user_edit'] as const
@@ -68,9 +68,7 @@ export interface AgentMemoryFactResponse {
   /** ISO 8601, as the agent wrote them. */
   createdAt: string
   updatedAt: string
-  lastConfirmedAt: string | null
   expiresAt: string | null
-  confirmCount: number
   seenByUser: boolean
 }
 

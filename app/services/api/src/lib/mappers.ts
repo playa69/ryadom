@@ -178,7 +178,6 @@ const MEMORY_FACT_STATUSES: Record<MemoryFactDTO['status'], MemoryFactStatus> = 
   candidate: MemoryFactStatus.Candidate,
   proposed: MemoryFactStatus.Proposed,
   active: MemoryFactStatus.Active,
-  pinned: MemoryFactStatus.Pinned,
   expired: MemoryFactStatus.Expired,
 }
 
@@ -269,9 +268,7 @@ export function toMemoryFact(fact: MemoryFactDTO): MemoryFactApiResponse {
     sources: fact.sources.map((source) => ({ dialogId: source.dialogId, date: source.date })),
     createdAt: fact.createdAt.toISOString(),
     updatedAt: fact.updatedAt.toISOString(),
-    lastConfirmedAt: fact.lastConfirmedAt?.toISOString() ?? null,
     expiresAt: fact.expiresAt?.toISOString() ?? null,
-    confirmCount: fact.confirmCount,
     seenByUser: fact.seenByUser,
   }
 }

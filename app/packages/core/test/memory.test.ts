@@ -15,8 +15,6 @@ import {
 } from '@ryadom/db/schema'
 import { AgentUnavailableError, getDb, maskPIIRecursively, ValidationError } from '../src/shared'
 import {
-  CreateMemoryFactOperation,
-  CreateMemoryFactOperationErrorCode,
   ExportMemoryOperation,
   ForgetMemoryFactOperation,
   ForgetMemoryFactOperationErrorCode,
@@ -62,10 +60,22 @@ function agentFact(overrides: Record<string, unknown> = {}) {
     sources: [{ dialogId: 'd-1', date: '2026-10-12' }],
     createdAt: '2026-10-12T10:00:00.000Z',
     updatedAt: '2026-10-12T10:05:00.000Z',
-    lastConfirmedAt: null,
     expiresAt: '2027-10-12T00:00:00.000Z',
-    confirmCount: 0,
     seenByUser: false,
+    ...overrides,
+  }
+}
+
+function agentNote(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'n-1',
+    kind: 'interest',
+    text: 'Прогулки у воды помогают',
+    sensitive: false,
+    eventDate: null,
+    createdAt: '2026-10-12T10:00:00.000Z',
+    updatedAt: '2026-10-12T10:05:00.000Z',
+    dialogId: 'd-1',
     ...overrides,
   }
 }
@@ -389,9 +399,7 @@ describe('что помнит агент', () => {
         sources: [{ dialogId: 'd-1', date: '2026-10-12' }],
         createdAt: new Date('2026-10-12T10:00:00.000Z'),
         updatedAt: new Date('2026-10-12T10:05:00.000Z'),
-        lastConfirmedAt: null,
         expiresAt: new Date('2027-10-12T00:00:00.000Z'),
-        confirmCount: 0,
         seenByUser: false,
       },
     ])
@@ -435,232 +443,116 @@ describe('что помнит агент', () => {
   })
 })
 
-describe('факты, которые пишет человек', () => {
-  const create = (
-    userId: string,
-    data: Partial<ConstructorParameters<typeof CreateMemoryFactOperation>[0]> = {},
-  ) =>
-    memoryProcess.execute(
-      new CreateMemoryFactOperation({
-        userId,
-        category: 'interest',
-        text: 'Рисую акварелью',
-        slots: null,
-        ...data,
-      }),
-    )
+describe('правка заметки', () => {
+  const update = (userId: string, text = 'Гуляю по вечерам') =>
+    memoryProcess.execute(new UpdateMemoryFactOperation({ userId, factId: 'n-1', text }))
 
-  it('текст уходит агенту обрезанным, факт возвращается', async () => {
+  it('агенту уходит только текст, путь — к заметке этого человека, ответ — заметка в форме факта', async () => {
     const user = await registerConfirmedUser()
     const { calls } = mockFetch({
-      [`POST ${AGENT}/facts`]: () =>
-        json(
-          agentFact({ id: 'f-new', category: 'interest', text: 'Рисую акварелью', origin: 'user_edit' }),
-          201,
-        ),
+      [`PATCH ${AGENT}/notes/*`]: () => json(agentNote({ text: 'Гуляю по вечерам' })),
     })
 
-    const result = await create(user.id, { text: '  Рисую акварелью  ' })
-
-    expect(result).toMatchObject({ success: true, fact: { id: 'f-new', origin: 'user_edit' } })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ category: 'interest', text: 'Рисую акварелью' })
-  })
-
-  it('person уходит только слотами: текст строит агент', async () => {
-    const user = await registerConfirmedUser()
-    const { calls } = mockFetch({
-      [`POST ${AGENT}/facts`]: () =>
-        json(
-          agentFact({ category: 'person', text: 'Сестра Оля: поддерживает', slots: { role: 'сестра' } }),
-          201,
-        ),
-    })
-
-    await create(user.id, {
-      category: 'person',
-      text: null,
-      slots: { role: 'сестра', name: 'Оля', note: 'поддерживает' },
-    })
-
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({
-      category: 'person',
-      slots: { role: 'сестра', name: 'Оля', note: 'поддерживает' },
-    })
-  })
-
-  it('отказы агента различаются по коду, а не по статусу', async () => {
-    const user = await registerConfirmedUser()
-    const cases: [() => Response, unknown][] = [
-      [
-        () => agentError(409, 'MEMORY_DISABLED'),
-        { error: CreateMemoryFactOperationErrorCode.MEMORY_DISABLED },
-      ],
-      [() => agentError(409, 'MEMORY_FULL'), { error: CreateMemoryFactOperationErrorCode.MEMORY_FULL }],
-      [
-        () => agentError(422, 'FACT_REJECTED', { reason: 'contact_pii' }),
-        { error: CreateMemoryFactOperationErrorCode.FACT_REJECTED, reason: 'contact_pii' },
-      ],
-      [
-        () => agentError(503, 'MEMORY_UNAVAILABLE'),
-        { error: CreateMemoryFactOperationErrorCode.MEMORY_UNAVAILABLE },
-      ],
-      [() => agentError(422, 'AGENT_VALIDATION'), { error: CreateMemoryFactOperationErrorCode.INVALID_FACT }],
-      [() => agentError(400, 'AGENT_VALIDATION'), { error: CreateMemoryFactOperationErrorCode.INVALID_FACT }],
-    ]
-    for (const [answer, expected] of cases) {
-      mockFetch({ [`POST ${AGENT}/facts`]: answer })
-      expect(await create(user.id)).toEqual({ success: false, ...(expected as object) })
-    }
-  })
-
-  it('причина отказа, похожая на текст, а не на код, не пропускается дальше', async () => {
-    const user = await registerConfirmedUser()
-    mockFetch({
-      [`POST ${AGENT}/facts`]: () =>
-        agentError(422, 'FACT_REJECTED', { reason: 'Мой номер 8 900 000 00 00' }),
-    })
-    expect(await create(user.id)).toEqual({
-      success: false,
-      error: CreateMemoryFactOperationErrorCode.FACT_REJECTED,
-      reason: null,
-    })
-  })
-
-  it('неизвестный отказ агента — ошибка, и в её тексте нет текста факта', async () => {
-    const user = await registerConfirmedUser()
-    mockFetch({ [`POST ${AGENT}/facts`]: () => agentError(418, 'SOMETHING_NEW') })
-    const error = await create(user.id, { text: 'Секретная строка для проверки' }).catch(
-      (caught: unknown) => caught,
-    )
-    expect(error).toBeInstanceOf(Error)
-    expect(String((error as Error).message)).not.toContain('Секретная')
-  })
-
-  it('пустой и слишком длинный текст ядро не пропускает', async () => {
-    const user = await registerConfirmedUser()
-    mockFetch({})
-    await expect(create(user.id, { text: '   ' })).rejects.toBeInstanceOf(ValidationError)
-    await expect(create(user.id, { text: 'а'.repeat(201) })).rejects.toBeInstanceOf(ValidationError)
-  })
-
-  it('текст и слоты помечены как ПДн: в журнал запроса они не попадают', () => {
-    const operation = new CreateMemoryFactOperation({
-      userId: 'u-1',
-      category: 'person',
-      text: 'Секретная строка',
-      slots: { role: 'сестра', name: 'Оля' },
-    })
-    const masked = JSON.stringify(maskPIIRecursively(operation))
-    expect(masked).not.toContain('Секретная')
-    expect(masked).not.toContain('Оля')
-    const update = JSON.stringify(
-      maskPIIRecursively(
-        new UpdateMemoryFactOperation({ userId: 'u-1', factId: 'f-1', text: 'Секретная строка' }),
-      ),
-    )
-    expect(update).not.toContain('Секретная')
-  })
-})
-
-describe('правка, закрепление и «Верно»', () => {
-  const update = (
-    userId: string,
-    data: Partial<ConstructorParameters<typeof UpdateMemoryFactOperation>[0]>,
-  ) => memoryProcess.execute(new UpdateMemoryFactOperation({ userId, factId: 'f-1', ...data }))
-
-  it('агенту уходят только переданные поля, путь — к факту этого человека', async () => {
-    const user = await registerConfirmedUser()
-    const { calls } = mockFetch({
-      [`PATCH ${AGENT}/facts/*`]: () => json(agentFact({ status: 'pinned' })),
-    })
-
-    expect(await update(user.id, { status: 'pinned' })).toMatchObject({
+    expect(await update(user.id, '  Гуляю по вечерам  ')).toMatchObject({
       success: true,
-      fact: { status: 'pinned' },
+      fact: { id: 'n-1', category: 'interest', text: 'Гуляю по вечерам', status: 'active', sources: [{ dialogId: 'd-1' }] },
     })
-    expect(calls.at(-1)!.url.pathname).toBe(`/v1/users/${user.id}/memory/facts/f-1`)
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ status: 'pinned' })
-
-    await update(user.id, { confirm: true })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ confirm: true })
+    expect(calls.at(-1)!.url.pathname).toBe(`/v1/users/${user.id}/memory/notes/n-1`)
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ text: 'Гуляю по вечерам' })
   })
 
-  it('чужой или забытый факт — FACT_NOT_FOUND; отказы по кодам', async () => {
+  it('чужая или забытая заметка — FACT_NOT_FOUND; отказы по кодам, а не по статусу', async () => {
     const user = await registerConfirmedUser()
     const cases: [() => Response, unknown][] = [
-      [() => agentError(404, 'FACT_NOT_FOUND'), { error: UpdateMemoryFactOperationErrorCode.FACT_NOT_FOUND }],
+      [() => agentError(404, 'NOTE_NOT_FOUND'), { error: UpdateMemoryFactOperationErrorCode.FACT_NOT_FOUND }],
       [
-        () => agentError(409, 'MEMORY_DISABLED'),
-        { error: UpdateMemoryFactOperationErrorCode.MEMORY_DISABLED },
-      ],
-      [
-        () => agentError(422, 'FACT_REJECTED', { reason: 'diagnosis' }),
+        () => agentError(422, 'NOTE_REJECTED', { reason: 'diagnosis' }),
         { error: UpdateMemoryFactOperationErrorCode.FACT_REJECTED, reason: 'diagnosis' },
       ],
       [
         () => agentError(503, 'MEMORY_UNAVAILABLE'),
         { error: UpdateMemoryFactOperationErrorCode.MEMORY_UNAVAILABLE },
       ],
+      [() => agentError(422, 'AGENT_VALIDATION'), { error: UpdateMemoryFactOperationErrorCode.INVALID_FACT }],
     ]
     for (const [answer, expected] of cases) {
-      mockFetch({ [`PATCH ${AGENT}/facts/*`]: answer })
-      expect(await update(user.id, { text: 'Гуляю по вечерам' })).toEqual({
-        success: false,
-        ...(expected as object),
-      })
+      mockFetch({ [`PATCH ${AGENT}/notes/*`]: answer })
+      expect(await update(user.id)).toEqual({ success: false, ...(expected as object) })
     }
   })
 
-  it('404 без кода FACT_NOT_FOUND (нет такого маршрута у агента) — ошибка, а не «факт не найден»', async () => {
+  it('причина отказа, похожая на текст, а не на код, не пропускается дальше', async () => {
     const user = await registerConfirmedUser()
-    mockFetch({ [`PATCH ${AGENT}/facts/*`]: () => agentError(404, 'AGENT_VALIDATION') })
-    await expect(update(user.id, { confirm: true })).rejects.toThrow()
+    mockFetch({
+      [`PATCH ${AGENT}/notes/*`]: () => agentError(422, 'NOTE_REJECTED', { reason: 'Мой номер 8 900 000 00 00' }),
+    })
+    expect(await update(user.id)).toEqual({
+      success: false,
+      error: UpdateMemoryFactOperationErrorCode.FACT_REJECTED,
+      reason: null,
+    })
   })
 
-  it('без изменений — ошибка ввода, агента не зовут', async () => {
+  it('404 без кода NOTE_NOT_FOUND (нет такого маршрута у агента) — ошибка, а не «заметка не найдена»', async () => {
+    const user = await registerConfirmedUser()
+    mockFetch({ [`PATCH ${AGENT}/notes/*`]: () => agentError(404, 'AGENT_VALIDATION') })
+    await expect(update(user.id)).rejects.toThrow()
+  })
+
+  it('неизвестный отказ агента — ошибка, и в её тексте нет текста заметки', async () => {
+    const user = await registerConfirmedUser()
+    mockFetch({ [`PATCH ${AGENT}/notes/*`]: () => agentError(418, 'SOMETHING_NEW') })
+    const error = await update(user.id, 'Секретная строка для проверки').catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(Error)
+    expect(String((error as Error).message)).not.toContain('Секретная')
+  })
+
+  it('пустой и слишком длинный текст ядро не пропускает, агента не зовут', async () => {
     const user = await registerConfirmedUser()
     const { calls } = mockFetch({})
-    await expect(update(user.id, {})).rejects.toBeInstanceOf(ValidationError)
+    await expect(update(user.id, '   ')).rejects.toBeInstanceOf(ValidationError)
+    await expect(update(user.id, 'а'.repeat(201))).rejects.toBeInstanceOf(ValidationError)
     expect(calls).toHaveLength(0)
+  })
+
+  it('удалённому — USER_NOT_FOUND без вызова агента', async () => {
+    const { calls } = mockFetch({})
+    expect(await update(DELETED_OR_MISSING)).toEqual({
+      success: false,
+      error: UpdateMemoryFactOperationErrorCode.USER_NOT_FOUND,
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('текст помечен как ПДн: в журнал запроса он не попадает', () => {
+    const masked = JSON.stringify(
+      maskPIIRecursively(new UpdateMemoryFactOperation({ userId: 'u-1', factId: 'n-1', text: 'Секретная строка' })),
+    )
+    expect(masked).not.toContain('Секретная')
   })
 })
 
 describe('«Забыть» и «Забыть всё»', () => {
-  it('факт: 204 и повтор (404) — успех; MEMORY_UNAVAILABLE — отказ; 503 с другим кодом — агент недоступен', async () => {
+  it('заметка: 204 и повтор (404) — успех; MEMORY_UNAVAILABLE — отказ; 503 с другим кодом — агент недоступен', async () => {
     const user = await registerConfirmedUser()
     const forget = () =>
       memoryProcess.execute(new ForgetMemoryFactOperation({ userId: user.id, factId: 'f-1' }))
 
-    const { calls } = mockFetch({ [`DELETE ${AGENT}/facts/*`]: () => noContent() })
+    const { calls } = mockFetch({ [`DELETE ${AGENT}/notes/*`]: () => noContent() })
     expect(await forget()).toEqual({ success: true })
-    expect(calls.at(-1)!.url.pathname).toBe(`/v1/users/${user.id}/memory/facts/f-1`)
+    expect(calls.at(-1)!.url.pathname).toBe(`/v1/users/${user.id}/memory/notes/f-1`)
 
-    mockFetch({ [`DELETE ${AGENT}/facts/*`]: () => agentError(404, 'FACT_NOT_FOUND') })
+    mockFetch({ [`DELETE ${AGENT}/notes/*`]: () => agentError(404, 'NOTE_NOT_FOUND') })
     expect(await forget()).toEqual({ success: true })
 
-    mockFetch({ [`DELETE ${AGENT}/facts/*`]: () => agentError(503, 'MEMORY_UNAVAILABLE') })
+    mockFetch({ [`DELETE ${AGENT}/notes/*`]: () => agentError(503, 'MEMORY_UNAVAILABLE') })
     expect(await forget()).toEqual({
       success: false,
       error: ForgetMemoryFactOperationErrorCode.MEMORY_UNAVAILABLE,
     })
 
-    mockFetch({ [`DELETE ${AGENT}/facts/*`]: () => agentError(503, 'AGENT_INTERNAL') })
+    mockFetch({ [`DELETE ${AGENT}/notes/*`]: () => agentError(503, 'AGENT_INTERNAL') })
     await expect(forget()).rejects.toBeInstanceOf(AgentUnavailableError)
-  })
-
-  it('факт при агенте на Cognee (422 unsupported_in_cognee) — отказ с кодом, а не ошибка сервера', async () => {
-    const user = await registerConfirmedUser()
-    const forget = () =>
-      memoryProcess.execute(new ForgetMemoryFactOperation({ userId: user.id, factId: 'f-1' }))
-
-    mockFetch({
-      [`DELETE ${AGENT}/facts/*`]: () => agentError(422, 'AGENT_VALIDATION', { reason: 'unsupported_in_cognee' }),
-    })
-    expect(await forget()).toEqual({ success: false, error: ForgetMemoryFactOperationErrorCode.UNSUPPORTED })
-
-    // Another 422 is still our failure: only the known reason is a refusal.
-    mockFetch({ [`DELETE ${AGENT}/facts/*`]: () => agentError(422, 'AGENT_VALIDATION', { reason: 'other' }) })
-    await expect(forget()).rejects.toThrow()
   })
 
   it('всё: 204 — успех, MEMORY_UNAVAILABLE — отказ, согласие и журнал не трогаются', async () => {

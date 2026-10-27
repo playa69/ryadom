@@ -50,9 +50,7 @@ const factSchema = z.object({
   sources: z.array(z.object({ dialogId: z.string(), date: z.string() })).catch([]),
   createdAt: z.string(),
   updatedAt: z.string(),
-  lastConfirmedAt: nullableString,
   expiresAt: nullableString,
-  confirmCount: z.number().catch(0),
   seenByUser: z.boolean().catch(false),
 })
 
@@ -157,10 +155,43 @@ export function parseAgentMemorySettings(body: unknown): AgentMemorySettingsResp
   return parseOrThrow(settingsSchema, body, 'memory settings answer')
 }
 
-export function parseAgentMemoryFactOrThrow(body: unknown): AgentMemoryFactResponse {
-  const fact = parseAgentFact(body)
-  if (!fact) throw new Error('Agent API returned a malformed memory fact')
-  return fact
+/** The note the agent answered a correction with; one that does not hold up is an error, not an empty answer. */
+export function parseAgentMemoryNoteOrThrow(body: unknown): AgentMemoryNoteResponse {
+  return parseOrThrow(noteSchema, body, 'memory note')
+}
+
+/** The category of the old fact a note kind is shown as (what the agent puts in `facts`). */
+const FACT_CATEGORY_OF_NOTE_KIND: Record<string, AgentMemoryFactResponse['category']> = {
+  name: 'style',
+  style: 'style',
+  person: 'person',
+  situation: 'situation',
+  event: 'situation',
+  agreement: 'goal',
+  interest: 'interest',
+  boundary: 'boundary',
+  wellbeing: 'situation',
+  beliefs: 'situation',
+}
+
+/** A note in the shape of the old fact, as the agent shows it in `facts`: the clients that predate notes read that shape. */
+export function agentNoteAsFact(note: AgentMemoryNoteResponse): AgentMemoryFactResponse {
+  return {
+    id: note.id,
+    category: FACT_CATEGORY_OF_NOTE_KIND[note.kind] ?? 'situation',
+    text: note.text,
+    slots: null,
+    importance: 5,
+    confidence: 1,
+    status: 'active',
+    origin: 'user_edit',
+    sensitivity: note.sensitive ? 'sensitive' : 'normal',
+    sources: note.dialogId ? [{ dialogId: note.dialogId, date: note.createdAt.slice(0, 10) }] : [],
+    createdAt: note.createdAt,
+    updatedAt: note.updatedAt,
+    expiresAt: null,
+    seenByUser: true,
+  }
 }
 
 const changesSchema = z.object({
@@ -211,7 +242,7 @@ export function parseAgentMemoryExport(body: unknown): AgentMemoryExportResponse
 }
 
 /**
- * `details.reason` of `FACT_REJECTED`: a code of the rule that refused the fact (`contact_pii`,
+ * `details.reason` of `NOTE_REJECTED`: a code of the rule that refused the note (`contact_pii`,
  * `diagnosis`...). Only something that looks like a code is kept, so that no text of the fact can
  * ride along into a log or an answer.
  */

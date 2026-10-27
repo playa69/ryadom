@@ -1,6 +1,7 @@
 """Извлечение заметок по ходу разговора (PROTEUS-242, задача 2.2): каденция, финальный проход, сбой модели, поле «Скажи, что
 поправить», недоступность без модели. Модель фиктивная, Cognee — фейк."""
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -121,8 +122,8 @@ def test_instruction_route(monkeypatch: pytest.MonkeyPatch) -> None:
         unavailable = client.post(f"{base}/notes/instruction", json={"text": "Убери тему про отца"}, headers=AUTH)
         assert unavailable.status_code == 503 and unavailable.json()["error"]["code"] == "MEMORY_UNAVAILABLE"
 
-        note = client.post(f"{base}/facts", json={"category": "boundary", "text": "Не хочет обсуждать отца"}, headers=AUTH).json()
         memory = app.state.memory
+        note = asyncio.run(memory.notes.add(user, "boundary", "Не хочет обсуждать отца"))
         memory.set_extractor(NotesExtractor(FakeModel({"ops": [{"op": "delete", "id": note["id"], "quote": "убери тему про отца"}]}), memory.notes))
         done = client.post(f"{base}/notes/instruction", json={"text": "Убери тему про отца"}, headers=AUTH)
         assert done.status_code == 200 and done.json()["changes"]["deleted"] == [note["id"]]

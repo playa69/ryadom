@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.clients.cognee import CogneeClient
 from app.memory.cognee_backend import CogneeMemoryBackend, dataset_name
-from app.memory.errors import MemoryDisabled, MemoryServiceError, MemoryValidation
+from app.memory.errors import MemoryServiceError, MemoryValidation
 from app.services.dialog_store import Dialog, Message, now_iso
 from tests.fake_db import FakeDialogDatabase
 from app.core.config import MemorySettings
@@ -49,6 +49,7 @@ class FakeCognee:
         self.connected = False
         self.datasets: set[str] = set()
         self.consents: dict[str, str] = {}
+        self.consent_reads = 0  # сколько раз бэкенд ходил в Cognee за зерном согласия
         self.remembered: list[tuple[str, str]] = []
         self.recalls: list[tuple[str, str]] = []
         self.deleted: list[str] = []
@@ -104,6 +105,7 @@ class FakeCognee:
         return docs.pop(data_id, None) is not None if data_id else False
 
     async def read_consent(self, dataset: str) -> str:
+        self.consent_reads += 1
         return self.consents.get(dataset, "")
 
     async def dataset_exists(self, dataset: str) -> bool:
@@ -396,40 +398,6 @@ async def test_brief_memory_off_dialog() -> None:
     assert fake.remembered == []
 
 
-async def test_add_fact_makes_a_note_and_checks_consent() -> None:
-    """Прежний `POST /facts` создаёт заметку (через проверки) и отвечает в форме факта; без включённой памяти — отказ."""
-    FakeDialogDatabase.reset()
-    fake = FakeCognee()
-    service, db = with_db(fake)
-    user = uid()
-    with pytest.raises(MemoryDisabled):
-        await service.add_fact(user, "works", "Помогают прогулки", None)
-    await service.update_settings(user, True, CONSENT)
-    await service.drain()
-    created = await service.add_fact(user, "works", "Помогают прогулки", None)
-    assert created["category"] == "interest" and created["text"] == "Помогают прогулки"
-    assert [row[2] for row in db.list_notes(user)] == ["Помогают прогулки"]
-
-
-async def test_legacy_fact_routes_work_on_notes() -> None:
-    """Прежние маршруты факта: правка текста и удаление работают на заметках, закрепление и «Верно» — отказ, чужой факт — 404."""
-    FakeDialogDatabase.reset()
-    service, db = with_db(FakeCognee())
-    user = uid()
-    await service.update_settings(user, True, CONSENT)
-    fact = await service.add_fact(user, "situation", "Работает в продажах", None)
-    edited = await service.patch_fact(user, fact["id"], text="Работает в продажах уже год")
-    assert edited["text"] == "Работает в продажах уже год"
-    with pytest.raises(MemoryServiceError) as pinned:
-        await service.patch_fact(user, fact["id"], status="pinned")
-    assert pinned.value.status == 422 and pinned.value.code == "MEMORY_ACTION_UNSUPPORTED"
-    await service.delete_fact(user, fact["id"])
-    with pytest.raises(MemoryServiceError) as gone:
-        await service.delete_fact(user, fact["id"])
-    assert gone.value.status == 404 and gone.value.code == "FACT_NOT_FOUND"
-    assert db.list_notes(user) == []
-
-
 async def test_forget_all_deletes_data_keeps_settings() -> None:
     fake = FakeCognee()
     service = backend(fake)
@@ -522,9 +490,6 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
                 break
             time.sleep(0.05)
         assert fake.deleted == [dataset_name(user)]
-        pinned = client.patch(f"/v1/users/{user}/memory/facts/f-1", json={"status": "pinned"}, headers=AUTH)
-        assert pinned.status_code == 422
-        assert pinned.json()["error"]["code"] == "MEMORY_ACTION_UNSUPPORTED"
 
 
 async def test_user_message_spawns_turn_recall_into_brief() -> None:
@@ -590,6 +555,77 @@ async def test_enabled_with_consent_survives_restart() -> None:
     assert memory["enabled"] is True and memory["consentVersion"] == CONSENT
 
 
+async def test_pause_keeps_the_consent_visible_everywhere() -> None:
+    """Пауза не отзывает согласие: ответ на выключение, GET /memory и выгрузка отдают версию и дату, в том числе после перезапуска."""
+    FakeDialogDatabase.reset()
+    fake = FakeCognee()
+    user = uid()
+    service, db = with_db(fake)
+    enabled = await service.update_settings(user, True, CONSENT)
+    paused = await service.update_settings(user, False, None)
+    assert paused["enabled"] is False
+    assert paused["consentVersion"] == CONSENT and paused["consentAt"] == enabled["consentAt"]
+
+    memory = await service.get_memory(user)
+    assert memory["enabled"] is False and memory["paused"] is True
+    assert memory["consentVersion"] == CONSENT and memory["consentAt"] == enabled["consentAt"]
+    settings = (await service.export(user))["settings"]
+    assert settings["enabled"] is False and settings["consentVersion"] == CONSENT and settings["consentAt"] == enabled["consentAt"]
+
+    restarted = CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]
+    again = await restarted.get_memory(user)
+    assert again["enabled"] is False and again["consentVersion"] == CONSENT and again["consentAt"] == enabled["consentAt"]
+    assert (await restarted.export(user))["settings"]["consentVersion"] == CONSENT
+    assert fake.consent_reads == 0  # решение человека берётся из строки настроек, зерно в Cognee не читается
+
+
+async def test_settings_change_on_pause_answers_with_the_consent() -> None:
+    """Переключатели на паузе: ответ тоже несёт сохранённое согласие, а не пустое."""
+    FakeDialogDatabase.reset()
+    user = uid()
+    service, _ = with_db(FakeCognee())
+    await service.update_settings(user, True, CONSENT)
+    await service.update_settings(user, False, None)
+    answer = await service.update_settings(user, None, None, chat_search_enabled=False)
+    assert answer["enabled"] is False and answer["consentVersion"] == CONSENT and answer["consentAt"] is not None
+
+
+async def test_resume_with_the_same_text_keeps_the_first_acceptance() -> None:
+    """Включение с паузы под тем же текстом не новое согласие: дата первого принятия прежняя; новый текст — новая дата."""
+    FakeDialogDatabase.reset()
+    user = uid()
+    service, db = with_db(FakeCognee())
+    first = await service.update_settings(user, True, CONSENT)
+    await service.update_settings(user, False, None)
+    await asyncio.sleep(0.01)  # дата в миллисекундах: без паузы «новая» могла бы совпасть
+    resumed = await service.update_settings(user, True, CONSENT)
+    assert resumed["consentVersion"] == CONSENT and resumed["consentAt"] == first["consentAt"]
+    assert db.get_memory_settings(user) == (True, CONSENT, first["consentAt"])
+
+    await service.update_settings(user, False, None)
+    await asyncio.sleep(0.01)
+    renewed = await service.update_settings(user, True, "2026-11-01")
+    assert renewed["consentVersion"] == "2026-11-01" and renewed["consentAt"] != first["consentAt"]
+    assert (await service.get_memory(user))["consentVersion"] == "2026-11-01"
+
+
+async def test_consent_stays_empty_when_it_was_never_given() -> None:
+    """Согласия не было ни разу (человек только тронул переключатель или не трогал ничего): null и на паузе, в Cognee не ходим."""
+    FakeDialogDatabase.reset()
+    fake = FakeCognee()
+    service, db = with_db(fake)
+    fresh, toggled = uid(), uid()
+    memory = await service.get_memory(fresh)
+    assert memory["enabled"] is False and memory["consentVersion"] is None and memory["consentAt"] is None
+
+    await service.update_settings(toggled, None, None, chat_search_enabled=False)
+    assert db.get_memory_settings(toggled) == (False, None, None)
+    memory = await service.get_memory(toggled)
+    assert memory["enabled"] is False and memory["consentVersion"] is None and memory["consentAt"] is None
+    assert (await service.export(toggled))["settings"]["consentVersion"] is None
+    assert fake.consent_reads == 0
+
+
 async def test_forget_all_keeps_pause_and_consent_in_db() -> None:
     """«Забыть всё» на паузе: данные стёрты, пауза и согласие в базе прежние, после перезапуска тоже."""
     FakeDialogDatabase.reset()
@@ -603,7 +639,8 @@ async def test_forget_all_keeps_pause_and_consent_in_db() -> None:
     assert fake.deleted == [dataset_name(user)]
 
     restarted = CogneeMemoryBackend(fake, memory_settings(), lambda: db)  # type: ignore[arg-type]
-    assert (await restarted.get_memory(user))["enabled"] is False
+    after = await restarted.get_memory(user)
+    assert after["enabled"] is False and after["consentVersion"] == CONSENT
     assert db.get_memory_settings(user) == (False, CONSENT, db.get_memory_settings(user)[2])  # type: ignore[index]
 
 
