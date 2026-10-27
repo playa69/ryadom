@@ -241,7 +241,7 @@ self_check_results(id uuid pk, user_id fk users, test_id text, test_version int,
 ## Migration Plan
 
 1. Пакет `self-check` и подсчёт с тестами — без интерфейса.
-2. Миграция `0010_self_check` (номер и порядок — ниже), маршруты, вид согласия.
+2. Миграция `0011_self_check` (номер и порядок — ниже), маршруты, вид согласия.
 3. Клиенты за флагом `SELF_CHECK_ENABLED` (часть сегментов дневника, D9).
 4. Включение тестов по одному, по мере статуса `ready`.
 5. Откат — флаг. Сохранённые результаты остаются у людей и снова видны после включения.
@@ -249,7 +249,7 @@ self_check_results(id uuid pk, user_id fk users, test_id text, test_version int,
 ### Порядок слияния и миграции шлюза
 
 - **Порядок слияния в main:** PROTEUS-183 (`add-mood-diary`) → PROTEUS-242 (`add-memory-notes`) → PROTEUS-218 (`add-self-check-tests`) → PROTEUS-243 (`add-notifications`) → PROTEUS-246 (`add-unsaved-dialog`) → PROTEUS-245 (`add-recap-search`).
-- **Миграции шлюза** (`app/packages/db/migrations`) идут в том же порядке: `0009_mood_diary` (183) → `0010_self_check` (218) → `0011_notifications` (243). 242, 246 и 245 миграций шлюза не добавляют: таблицы агента создаёт сам агент при старте.
+- **Миграции шлюза** (`app/packages/db/migrations`) идут в том же порядке: `0010_mood_diary` (183) → `0011_self_check` (218) → `0012_notifications` (243). 242, 246 и 245 миграций шлюза не добавляют: таблицы агента создаёт сам агент при старте.
 - **Как Drizzle решает, что применять.** `drizzle-orm/postgres-js/migrator` применяет миграцию, только если её `when` в `meta/_journal.json` позже последней применённой. Номер в имени файла на это не влияет.
 - **Поэтому миграцию генерируют** `drizzle-kit generate` после ребейза на main, где уже есть предыдущая. Если ветка сливается не в свою очередь, она удаляет свою миграцию и генерирует её заново поверх main, а не переименовывает файл.
 - **Выкат миграций** — в том же порядке.

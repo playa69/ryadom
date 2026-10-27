@@ -60,7 +60,7 @@
 ## Impact
 
 - **`app/packages/db`:**
-  - миграция `0009`: `users.timezone`;
+  - миграция `0010`: `users.timezone`;
   - таблицы `mood_checkins`, `diary_summaries`, `widget_tokens`.
 - **`app/packages/contracts`:** новый `api/diary.ts`, поле `timezone` в `me.ts`.
 - **`app/packages/core`:**

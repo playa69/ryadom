@@ -178,7 +178,7 @@
 
 **PWA.** В `manifest.webmanifest` добавляется ярлык «Отметить настроение» (`shortcuts` → `/pwa/diary/?checkin=1`): он появляется при долгом нажатии на значок установленной PWA в Android и на рабочем столе. В PWA строка «Виджет на главный экран» заменяется строкой «Быстрая отметка: удерживай значок Рядом». В вебе и Mini App строки нет.
 
-### D11. Данные (`app/packages/db`, миграция `0009_mood_diary`)
+### D11. Данные (`app/packages/db`, миграция `0010_mood_diary`)
 
 ```text
 users + timezone text not null default 'Europe/Moscow'
@@ -277,7 +277,7 @@ widget_tokens(id uuid pk, user_id fk users, token_hash bytea unique, created_at,
 
 ## Migration Plan
 
-1. Миграция `0009_mood_diary`. Таблицы новые, старые данные не меняются.
+1. Миграция `0010_mood_diary`. Таблицы новые, старые данные не меняются.
 2. **API и клиенты** выходят сразу для всех: серверного флага нет, вкладка и пункт сайдбара видны всем вошедшим.
 3. **Нативная сборка Android** с виджетом выходит отдельно (`native-app-build`).
 4. **Откат** — выкатить предыдущие образы api, web и pwa. Таблицы остаются, данные не теряются и вернутся при следующем выкате.
@@ -285,7 +285,7 @@ widget_tokens(id uuid pk, user_id fk users, token_hash bytea unique, created_at,
 ### Порядок слияния и миграции шлюза
 
 - **Порядок слияния в main:** PROTEUS-183 (`add-mood-diary`) → PROTEUS-242 (`add-memory-notes`) → PROTEUS-218 (`add-self-check-tests`) → PROTEUS-243 (`add-notifications`) → PROTEUS-246 (`add-unsaved-dialog`) → PROTEUS-245 (`add-recap-search`).
-- **Миграции шлюза** (`app/packages/db/migrations`) идут в том же порядке: `0009_mood_diary` (183) → `0010_self_check` (218) → `0011_notifications` (243). PROTEUS-242, 246 и 245 миграций шлюза не добавляют.
+- **Миграции шлюза** (`app/packages/db/migrations`) идут в том же порядке: `0010_mood_diary` (183) → `0011_self_check` (218) → `0012_notifications` (243). PROTEUS-242, 246 и 245 миграций шлюза не добавляют.
 - **Номер в имени не важен.** Drizzle (`drizzle-orm/postgres-js/migrator`) применяет миграцию, только если её `when` в `meta/_journal.json` позже последней применённой.
 - **Поэтому миграцию генерируют, а не переносят.** `drizzle-kit generate` (скрипт `generate` в `app/packages/db`) запускается после ребейза на main. Если ветка сливается не в свою очередь, она удаляет свою миграцию (SQL, снимок и запись в `meta/_journal.json`) и генерирует её заново поверх main, а не переименовывает файл.
 - **Выкат миграций** — в том же порядке.
