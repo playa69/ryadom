@@ -5,7 +5,7 @@
 Уведомления Рядом устроены одинаково для всех видов: каналы по платформам, согласие перед системным разрешением, подписки устройств, планировщик с одной доставкой, пауза при неоткрытых, ничего личного на экране блокировки. Первый вид — напоминание о настроении (capability `mood-reminders`). Решения — `design.md` этого change'а.
 
 Где это реализуется:
-- `app/packages/db` — миграция `0011_notifications`;
+- `app/packages/db` — миграция `0012_notifications`;
 - `app/packages/contracts/src/api/notifications.ts`;
 - `app/packages/core` — уведомления, интеграции Web Push и Telegram Bot API;
 - `app/services/api/src/routes/notifications`, планировщик в `app/services/api/src/index.ts`;

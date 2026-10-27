@@ -45,7 +45,7 @@
 
 ## Impact
 
-- **`app/packages/db`:** миграция `0011_notifications`. Зависит от `0009_mood_diary`: нужны `users.timezone` и `mood_checkins`. Идёт после `0010_self_check` и генерируется после ребейза на `main` (порядок слияния и миграций — `design.md`, Migration Plan).
+- **`app/packages/db`:** миграция `0012_notifications`. Зависит от `0010_mood_diary`: нужны `users.timezone` и `mood_checkins`. Идёт после `0011_self_check` и генерируется после ребейза на `main` (порядок слияния и миграций — `design.md`, Migration Plan).
 - **`app/packages/contracts/src/api/notifications.ts`, `app/packages/core`:** процессы уведомлений, интеграции Web Push и Telegram Bot API.
 - **`app/services/api`:** маршруты `/api/notifications/*`, тик планировщика в `src/index.ts`.
 - **`app/apps/mobile`:** `src/sw/sw.ts` (push), `lib/notifications.ts`, плагин `@capacitor/local-notifications`, `android/` (разрешение). Нативное — новой сборкой APK.

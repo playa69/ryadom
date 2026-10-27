@@ -57,7 +57,7 @@
 
 - **Новый пакет `app/packages/self-check`.** Описания, подсчёт и тесты подсчёта на эталонных примерах из источников.
 - **`app/packages/db`:**
-  - миграция `0010_self_check`: таблица `self_check_results`. Номер — по порядку слияния (183 → 242 → 218 → 243 → 246 → 245, миграции `0009_mood_diary` → `0010_self_check` → `0011_notifications`). Миграцию генерируют `drizzle-kit generate` после ребейза на main, где уже есть предыдущая: Drizzle применяет её по `when` в `meta/_journal.json`, а не по номеру. Правило — `design.md`, «Порядок слияния и миграции шлюза»;
+  - миграция `0011_self_check`: таблица `self_check_results`. Номер — по порядку слияния (183 → 242 → 218 → 243 → 246 → 245, миграции `0010_mood_diary` → `0011_self_check` → `0012_notifications`). Миграцию генерируют `drizzle-kit generate` после ребейза на main, где уже есть предыдущая: Drizzle применяет её по `when` в `meta/_journal.json`, а не по номеру. Правило — `design.md`, «Порядок слияния и миграции шлюза»;
   - вид согласия `self_check` в `user_consents`.
 - **`app/packages/contracts/src/api/self-check.ts`, `app/packages/core`, `app/services/api/src/routes/self-check`.**
 - **Клиенты:**
