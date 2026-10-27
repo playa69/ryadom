@@ -344,7 +344,7 @@ describe('подтверждённая почта и ключ устройств
 })
 
 describe('чистка неактивных не стирает профиль в аналитике', () => {
-  // `openspec/changes/add-job-queue`: only the person's own request queues the erasure in analytics.
+  // `openspec/changes/archive/2026-10-27-add-job-queue`: only the person's own request queues the erasure in analytics.
   it('стёртый по сроку аккаунт не ставит задач в очередь', async () => {
     mockAgent()
     await anonymousSeen(RETENTION_DAYS + 5)

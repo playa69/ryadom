@@ -5,7 +5,7 @@ import { defaultMigrationsFolder, runMigrations } from '../src/migrate'
 import { migrationsHash, pgBossVersion, prepareTestDatabase, testDatabase } from '../src/test-db'
 
 /**
- * `openspec/changes/add-job-queue`: the migrator installs the job queue's schema (`pgboss`) after the drizzle
+ * `openspec/changes/archive/2026-10-27-add-job-queue`: the migrator installs the job queue's schema (`pgboss`) after the drizzle
  * migrations, from the role that owns the database and has no superuser rights, like the `app` role in the cluster.
  */
 

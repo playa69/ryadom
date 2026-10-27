@@ -484,7 +484,7 @@ describe('удаление разговора: итоги недели пере�
     expect(digestCalls(calls)).toHaveLength(1)
   })
 
-  // `openspec/changes/add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался». The reset is
+  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался». The reset is
   // made by the request and, if that did not finish, by the job `dialogs.after-delete`: a repeat must change nothing more.
   it('сброс идемпотентен: повтор после запроса (задача очереди) оставляет один маркер и ничего не ломает', async () => {
     const user = await registerConfirmedUser()

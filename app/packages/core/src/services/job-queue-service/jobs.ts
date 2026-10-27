@@ -1,5 +1,5 @@
 /**
- * The queues of the background work and what a job in each carries (`openspec/changes/add-job-queue`, design D4).
+ * The queues of the background work and what a job in each carries (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4).
  * The names and the data types live next to the service so that a typo in a name fails the compilation, in the
  * core that enqueues and in the API that works the queue off.
  *

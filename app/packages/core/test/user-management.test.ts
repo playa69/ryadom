@@ -102,7 +102,7 @@ describe('удаление аккаунта админом', () => {
 })
 
 describe('админка не ставит задач в очередь', () => {
-  // `openspec/changes/add-job-queue`, design D9: the admin app registers no transport and works no queue; its actions
+  // `openspec/changes/archive/2026-10-27-add-job-queue`, design D9: the admin app registers no transport and works no queue; its actions
   // must neither need one nor queue anything (and, by the spec, they do not erase a profile in analytics).
   it('блокировка, подтверждение почты, отзыв сессий и удаление админом работают без транспорта и ничего не ставят', async () => {
     registerJobQueueTransport(undefined)

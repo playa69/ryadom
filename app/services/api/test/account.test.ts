@@ -331,7 +331,7 @@ describe('состояние аккаунта проверяет только re
     ok(await call(app, 'POST', '/api/auth/register', { email: user.email, password: PASSWORD, name: 'Аня' }))
   })
 
-  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: сценарии «(API) Удаление человеком»
+  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Профиль и события в аналитике»: сценарии «(API) Удаление человеком»
   // и «(API) Удаление не состоялось».
   it('удаление ставит задачу стирания профиля в аналитике с выдержкой 30 секунд, не дожидаясь её', async () => {
     resetLimits()

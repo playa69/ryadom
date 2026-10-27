@@ -18,7 +18,7 @@ import {
 import type { AppServerEnv } from './env'
 
 /**
- * The job queue of the API (`openspec/changes/add-job-queue`): pg-boss in the PostgreSQL the API already has,
+ * The job queue of the API (`openspec/changes/archive/2026-10-27-add-job-queue`): pg-boss in the PostgreSQL the API already has,
  * schema `pgboss`. This file builds and starts it; the queues and their work are in `src/jobs`. Everything that
  * knows pg-boss is under `src/jobs` and here: the core sees only the port of `job-queue-service` (design D3).
  *

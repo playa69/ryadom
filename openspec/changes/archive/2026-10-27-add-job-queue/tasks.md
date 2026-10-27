@@ -29,16 +29,16 @@
 - [x] 3.5 Стирание в аналитике: очередь `analytics.erase-person`; постановка внутри транзакции `DeleteAccountOperationHandler` (`app/packages/core/src/processes/account-deletion/delete-account/`); воркер вызывает `eraseNow` без таймера; убрать `void analytics.erasePerson` в `routes/auth/me.ts`, таймер и `pendingErasures` в `app/packages/analytics/src/server.ts`, опцию `erasureDelayMs`. Приёмка: тесты `app/packages/core/test/account-deletion.test.ts` и `app/services/api/test/account.test.ts` — удаление ставит задачу с выдержкой 30 с, откат удаления задачи не оставляет, сбой PostHog повторяется, `not_configured` завершает задачу без повторов, исчерпание повторов оставляет запись в `jobs.dead-letter` и строку в журнале с идентификатором; `app/packages/analytics/test/server.test.ts` обновлён
 - [x] 3.6 После удаления разговора: очередь `dialogs.after-delete`; постановка до вызова агента в `DeleteDialogOperationHandler`, отмена после успешного сброса в маршруте (`routes/dialogs/index.ts`), обработчик проверяет у агента, что разговора нет, отзывает ссылку и сбрасывает неделю. Приёмка: сценарии «Сброс после удаления не удался» и «Удаление разговора не состоялось» из дельты `mood-diary`: `app/services/api/test/dialogs.test.ts` и `app/packages/core/test/diary.test.ts`
 - [x] 3.7 Сторож `jobs.watchdog` (`design.md`, D5). Приёмка: тест — при задаче в `jobs.dead-letter` или готовой задаче старше 10 минут в журнале `warn` с именем очереди и числами, при пустых очередях тишина; данные задач в журнал не попадают
-- [ ] 3.8 Проверка стирания в PostHog: как отвечает `bulk_delete` на уже стёртую персону, и обработчик 3.5 считает такой ответ успехом. Приёмка: результат проверки на тестовом проекте PostHog записан в `design.md` («Не проверено» → «Проверено»), тест в `app/packages/analytics/test/admin.test.ts`
+- [ ] 3.8 Проверка стирания в PostHog: как отвечает `bulk_delete` на уже стёртую персону, и обработчик 3.5 считает такой ответ успехом. Приёмка: результат проверки на тестовом проекте PostHog записан в `design.md` («Не проверено» → «Проверено»), тест в `app/packages/analytics/test/admin.test.ts` **Не сделано**: нужен тестовый проект PostHog, ключей при реализации не было. Обработчик ведёт себя по D6: ответ без ошибок удаления — успех, любой другой — повтор очереди (после исчерпания — `jobs.dead-letter`); как PostHog отвечает на уже стёртую персону, не проверено.
 
 ## 4. Клиенты
 
-- [ ] 4.1 Клиенты не меняются: контракты, экраны и тексты прежние. Приёмка: `git diff --stat origin/main-cleanup -- app/apps app/packages/client-core app/packages/contracts` пуст
+- [x] 4.1 Клиенты не меняются: контракты, экраны и тексты прежние. Приёмка: `git diff --stat origin/main-cleanup -- app/apps app/packages/client-core app/packages/contracts` пуст
 
 ## 5. Проверка
 
-- [ ] 5.1 Модульные и интеграционные тесты: `pnpm turbo run test --filter='!@ryadom/e2e'` и `pnpm turbo run typecheck`. Приёмка: зелёные
-- [ ] 5.2 Сценарии дельт покрыты тестами. Приёмка: каждый сценарий ниже назван в тесте и проходит
+- [x] 5.1 Модульные и интеграционные тесты: `pnpm turbo run test --filter='!@ryadom/e2e'` и `pnpm turbo run typecheck`. Приёмка: зелёные
+- [x] 5.2 Сценарии дельт покрыты тестами. Приёмка: каждый сценарий ниже назван в тесте и проходит
 
 | Требование | Сценарий | Тест |
 |---|---|---|
@@ -56,12 +56,14 @@
 | | Две реплики | `api/test/jobs.test.ts` |
 | | прежние четыре сценария | `core/test/diary.test.ts`, `api/test/diary.test.ts` без изменений |
 
-- [ ] 5.3 e2e удаления аккаунта и дневника проходят как прежде. Приёмка: `app/e2e/tests/web-account.spec.ts` и `web-diary.spec.ts` (проект `desktop`), `app-account.spec.ts` и `app-diary.spec.ts` (проект `mobile`) зелёные
+- [x] 5.3 e2e удаления аккаунта и дневника проходят как прежде. Приёмка: `app/e2e/tests/web-account.spec.ts` и `web-diary.spec.ts` (проект `desktop`), `app-account.spec.ts` и `app-diary.spec.ts` (проект `mobile`) зелёные
 - [ ] 5.4 Ручная проверка на стенде с двумя экземплярами `api` (`app/scripts/stand.mjs`): убить один посреди задачи, перезапустить оба, остановить по `SIGTERM` при идущей задаче. Приёмка: в отчёте — время возврата задачи, число запусков каждой работы, коды закрытия сокетов, что случилось с хвостом остановки (сайдкар Istio из `design.md`, D7 на стенде без кластера не проверить: записать как не проверенное)
-- [ ] 5.5 Скриншоты не нужны: интерфейс не меняется. Приёмка: в отчёте строка «скриншотов нет, интерфейс не затронут»
-- [ ] 5.6 Отчёт перечисляет, что не проверено: сайдкар Istio, переключение primary в CNPG, две реплики в кластере, ответ PostHog на повторное стирание (если не закрыто 3.8)
+- [x] 5.5 Скриншоты не нужны: интерфейс не меняется. Приёмка: в отчёте строка «скриншотов нет, интерфейс не затронут»
+- [x] 5.6 Отчёт перечисляет, что не проверено: сайдкар Istio, переключение primary в CNPG, две реплики в кластере, ответ PostHog на повторное стирание (если не закрыто 3.8)
 
 ## 6. Выкат
+
+Раздел не выполнялся в ветке с реализацией: образы, манифесты и кластер трогает человек после проверки. Задачи 6.1–6.5 остаются открытыми.
 
 - [ ] 6.1 Образы `migrate` и `api` из коммита; теги в `k8s/app/db/*-job-migrate-*.yaml` и `k8s/app/api/03-deployment.yaml`; ключи `JOBS_*` в `k8s/app/00-app-config.yaml`. Приёмка: `kubectl diff` показывает только эти правки; число реплик `api` остаётся 1
 - [ ] 6.2 Миграции первыми (скилл `deploy`): Job применяется и завершается. Приёмка: в журнале Job «applied …» или «up to date», в базе есть схема `pgboss` и `drizzle.__drizzle_migrations` не изменился
@@ -71,4 +73,4 @@
 
 ## 7. Архив
 
-- [ ] 7.1 После выката: `archive add-job-queue --yes`, дельты вливаются в базу (`account-deletion`, `data-retention`, `mood-diary`, `product-analytics`), правка D4 в `add-notifications` сделана. Приёмка: `validate --all --strict` зелёный, change лежит в `openspec/changes/archive/`
+- [x] 7.1 После выката: `archive add-job-queue --yes`, дельты вливаются в базу (`account-deletion`, `data-retention`, `mood-diary`, `product-analytics`), правка D4 в `add-notifications` сделана. Приёмка: `validate --all --strict` зелёный, change лежит в `openspec/changes/archive/`

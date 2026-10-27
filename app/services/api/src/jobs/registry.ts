@@ -5,7 +5,7 @@ import { QUEUE_CATALOG, type QueueDefinition } from './catalog'
 
 /**
  * Creates the queues of the catalog, hangs the schedules on them and registers the workers
- * (`openspec/changes/add-job-queue`, design D4). Everything pg-boss-specific stays under `src/jobs` and
+ * (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4). Everything pg-boss-specific stays under `src/jobs` and
  * `lib/jobs.ts`: the core sees only the port of `job-queue-service`.
  */
 

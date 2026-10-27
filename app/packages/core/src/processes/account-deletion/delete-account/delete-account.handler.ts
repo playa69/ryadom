@@ -50,7 +50,7 @@ import { DeleteAccountOperationErrorCode, type DeleteAccountResult } from './del
  * registration.
  *
  * Erasing the person in product analytics is a job queued in the same transaction as the last step of the
- * deletion (`analytics.erase-person`, `openspec/changes/add-job-queue`): the account is deleted and the erasure
+ * deletion (`analytics.erase-person`, `openspec/changes/archive/2026-10-27-add-job-queue`): the account is deleted and the erasure
  * is queued, or neither happens. The job waits `ERASE_PERSON_DELAY_SECONDS` so that the batches of events the
  * clients sent before the deletion land first, and the queue keeps it through a restart of the pod. It is the
  * person's own request only: an administrator's deletion and the retention clean-up leave analytics alone.
