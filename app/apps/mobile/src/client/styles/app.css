@@ -3202,6 +3202,7 @@ p.rd-recap-text {
 .rd-dialog-gone .button {
   align-self: center;
   width: min(100%, 320px);
+}
 
 .rd-dot {
   display: inline-block;
