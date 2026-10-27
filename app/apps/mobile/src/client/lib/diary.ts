@@ -25,11 +25,12 @@ import {
 const QUEUE_KEY = 'ryadom.diary.queue'
 const SEGMENT_KEY = 'ryadom.diary.segment'
 
-/** «Тесты» (PROTEUS-218) will be the third one. */
-export type DiarySegment = 'diary' | 'journal'
+/** «Тесты» (PROTEUS-218) is the third one, and only with the tests switched on. */
+export type DiarySegment = 'diary' | 'journal' | 'tests'
 export const SEGMENT_URLS: Record<DiarySegment, string> = {
   diary: '/diary/',
   journal: '/diary/journal/',
+  tests: '/diary/tests/',
 }
 
 export async function rememberedSegment(): Promise<DiarySegment> {

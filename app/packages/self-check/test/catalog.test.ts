@@ -52,8 +52,8 @@ describe('повтор теста', () => {
 })
 
 describe('каталог', () => {
-  it('в каталоге все семь тестов, у каждого свой id', () => {
-    expect(allTests.map((t) => t.id)).toEqual(['gad7', 'phq9', 'rosenberg', 'wellbeing', 'stress', 'burnout', 'mini-ipip'])
+  it('в каталоге все одиннадцать тестов, у каждого свой id', () => {
+    expect(allTests.map((t) => t.id)).toEqual(['gad7', 'phq9', 'rosenberg', 'wellbeing', 'stress', 'burnout', 'swls', 'k6', 'phq2', 'gad2', 'mini-ipip'])
     expect(new Set(allTests.map((t) => t.id)).size).toBe(allTests.length)
   })
   it('byId находит тест любой волны', () => {

@@ -357,6 +357,9 @@ importers:
       '@ryadom/design':
         specifier: workspace:*
         version: link:../../packages/design
+      '@ryadom/self-check':
+        specifier: workspace:*
+        version: link:../../packages/self-check
       '@twa-dev/sdk':
         specifier: 8.0.2
         version: 8.0.2(react@19.3.0)
