@@ -80,9 +80,9 @@ def _build_live() -> "LiveConnector":
 
 def _build_notes_model(memory_cfg: MemorySettings) -> ProxyBackgroundModel | None:
     """Модель извлечения заметок: свой экземпляр фоновой модели (`MEMORY_NOTES_MODEL`, по умолчанию `LLM_CHAT_MODEL`).
-    Нет флага `MEMORY_NOTES_ENABLED` или нет ключа прокси — извлечения нет, разговор идёт как раньше."""
+    Нет ключа прокси — извлечения нет, разговор идёт как раньше."""
     cfg = APP_CONFIG.background_model
-    if not memory_cfg.notes_enabled or cfg.api_key is None or not cfg.base_url:
+    if cfg.api_key is None or not cfg.base_url:
         return None
     return ProxyBackgroundModel(
         cfg.base_url,

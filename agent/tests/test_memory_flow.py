@@ -20,7 +20,7 @@ def build(answer: Any = None, fail: bool = False) -> tuple[CogneeMemoryBackend, 
     FakeDialogDatabase.reset()
     db = FakeDialogDatabase("flow")
     db.open()
-    service = CogneeMemoryBackend(FakeCognee(), memory_settings(MEMORY_NOTES_ENABLED="true"), lambda: db)  # type: ignore[arg-type]
+    service = CogneeMemoryBackend(FakeCognee(), memory_settings(), lambda: db)  # type: ignore[arg-type]
     model = FakeModel(answer, fail)
     service.set_extractor(NotesExtractor(model, service.notes))
     return service, model, db
@@ -91,27 +91,26 @@ async def test_nothing_is_extracted_when_memory_is_off_or_dialog_is_unsaved() ->
     assert model.seen == [] and db.list_notes(user) == []
 
 
-async def test_no_extraction_without_the_flag() -> None:
+async def test_no_extraction_without_an_extractor() -> None:
+    """Нет фоновой модели (ключа прокси) — извлекателя нет, реплики никуда не уходят, разговор идёт как обычно."""
     FakeDialogDatabase.reset()
     db = FakeDialogDatabase("flow")
     db.open()
     service = CogneeMemoryBackend(FakeCognee(), memory_settings(), lambda: db)  # type: ignore[arg-type]
-    model = FakeModel(ADD_WORK)
-    service.set_extractor(NotesExtractor(model, service.notes))
     user = uid()
     await service.update_settings(user, True, CONSENT)
     current = dialog(user, 0)
     service.user_message(current, "Я работаю в продажах")
     service.user_message(current, "и очень устаю")
     await service.drain()
-    assert model.seen == []  # MEMORY_NOTES_ENABLED выключен (выкат за флагом)
+    assert db.list_notes(user) == []
 
 
 def test_instruction_route(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeDialogDatabase.reset()
     monkeypatch.setattr("app.main.build_cognee_client", lambda cfg: FakeCognee())
     settings = memory_settings(
-        COGNEE_BASE_URL="http://cognee.test", COGNEE_SERVICE_EMAIL="a@b.c", COGNEE_SERVICE_PASSWORD="x", MEMORY_NOTES_ENABLED="true"
+        COGNEE_BASE_URL="http://cognee.test", COGNEE_SERVICE_EMAIL="a@b.c", COGNEE_SERVICE_PASSWORD="x"
     )
     app = make_app(memory_settings=settings, database_factory=lambda: FakeDialogDatabase("flow-route"))
     user = str(uuid.uuid4())
@@ -148,7 +147,7 @@ async def test_unprocessed_messages_survive_an_agent_restart() -> None:
     assert db.list_notes(user) == [] and db.get_notes_cursor(current.id) == 0  # модель была недоступна, курсор не сдвинулся
 
     # «перезапуск»: новый бэкенд, та же база и тот же диалог с сохранёнными репликами
-    restarted = CogneeMemoryBackend(FakeCognee(), memory_settings(MEMORY_NOTES_ENABLED="true"), lambda: db)  # type: ignore[arg-type]
+    restarted = CogneeMemoryBackend(FakeCognee(), memory_settings(), lambda: db)  # type: ignore[arg-type]
     model2 = FakeModel(ADD_WORK)
     restarted.set_extractor(NotesExtractor(model2, restarted.notes))
     await restarted.update_settings(user, True, CONSENT)

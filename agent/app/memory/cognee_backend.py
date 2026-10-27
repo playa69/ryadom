@@ -259,12 +259,7 @@ class CogneeMemoryBackend:
         self._extractor = extractor
 
     def _notes_active(self, dialog: Dialog) -> bool:
-        return (
-            self._cfg.notes_enabled
-            and self._extractor is not None
-            and dialog.memory_mode == "on"
-            and self._effective_enabled(dialog.user_id)
-        )
+        return self._extractor is not None and dialog.memory_mode == "on" and self._effective_enabled(dialog.user_id)
 
     def _sources_suppressed(self, user_id: str, dialog_ids: list[str]) -> None:
         """Заметка убрана: документы её разговоров в Cognee пересобираются без реплик-источников (D15)."""

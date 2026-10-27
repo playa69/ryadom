@@ -218,8 +218,8 @@ class MemorySettings(BaseAppSettings):
     """Память агента о человеке (`app/memory/`): заметки в PostgreSQL (слой 1) и поиск по прошлым разговорам в Cognee (слой 2).
 
     Включена ли память у человека и согласие хранятся в базе агента (`memory_settings`), а не в окружении: пауза переживает
-    перезапуск. Флаг выката — `MEMORY_NOTES_ENABLED` (извлечение заметок по ходу разговора). Вызовы Cognee — REST с Bearer
-    сервисного пользователя.
+    перезапуск. Заметки извлекаются по ходу разговора всегда, когда есть фоновая модель и память включена у человека. Вызовы
+    Cognee — REST с Bearer сервисного пользователя.
     """
 
     # Адрес Cognee API и сервисный пользователь (multi-user access control — вызовы с Bearer).
@@ -230,8 +230,7 @@ class MemorySettings(BaseAppSettings):
     notes_max: int = Field(validation_alias="MEMORY_NOTES_MAX", default=200, ge=1)
     # Сколько токенов блока памяти уходит в голосовую модель.
     brief_max_tokens: int = Field(validation_alias="MEMORY_BRIEF_MAX_TOKENS", default=1200, ge=100)
-    # Извлечение заметок по ходу разговора (флаг выката) и модель извлечения (по умолчанию LLM_CHAT_MODEL).
-    notes_enabled: bool = Field(validation_alias="MEMORY_NOTES_ENABLED", default=False)
+    # Модель извлечения заметок по ходу разговора (по умолчанию LLM_CHAT_MODEL).
     notes_model: str | None = Field(validation_alias="MEMORY_NOTES_MODEL", default=None)
     # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
     allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")

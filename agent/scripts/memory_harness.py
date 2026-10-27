@@ -188,7 +188,7 @@ async def main() -> int:
     await store.attach(db, 0.2)
     client = CogneeClient(os.environ["COGNEE_URL"], os.environ.get("COGNEE_EMAIL", "spike@example.com"), os.environ.get("COGNEE_PASSWORD", "spike-password-123"))
     await client.connect()
-    settings = MemorySettings(MEMORY_ALLOWLIST="", MEMORY_NOTES_ENABLED="true")
+    settings = MemorySettings()
     memory = CogneeMemoryBackend(client, settings, lambda: store.database)
     store.memory = memory
     memory.set_extractor(NotesExtractor(notes_chat, memory.notes))
