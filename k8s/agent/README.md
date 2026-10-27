@@ -415,13 +415,13 @@ kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingre
 Память — Cognee (Deployment `cognee`, раздел выше): датасет `ryadom_user_<user_id>` на человека. Агент ходит в Cognee
 по REST (`COGNEE_BASE_URL: "http://cognee:8000"` в `agent-config`) с Bearer сервисного пользователя (Secret
 `cognee-service-account`, ключи подключены в `02-deployment.yaml`). Извлечение фактов делает сам Cognee, модели
-извлечения и воркера у агента нет. Устройство — `agent/README.md`, раздел «Память». **В манифесте память включена:
-`MEMORY_MODE: "on"`** (в коде по умолчанию `off`). Согласия и факты SQLite-памяти образов < 0.8.0 в Cognee не
+извлечения и воркера у агента нет. Устройство — `agent/README.md`, раздел «Память». Общего режима памяти (`MEMORY_MODE`:
+`off` / `shadow` / `on`) больше нет: включена ли память у человека, хранится в базе агента (`memory_settings`), а API всегда отвечает
+`"mode": "on"` ради старых клиентов. Согласия и факты SQLite-памяти образов < 0.8.0 в Cognee не
 мигрируют (решение владельца): человек включает память заново в профиле.
 
 | Переменная | По умолчанию | Смысл |
 |---|---|---|
-| `MEMORY_MODE` | `off` | `off` / `shadow` (запись у включивших память, без сводки в разговоре) / `on` |
 | `COGNEE_BASE_URL` | — | адрес Cognee API; без него (и без email/пароля) память `unavailable` |
 | `MEMORY_BRIEF_LEVEL` | `minimal` | что уходит в голосовую модель: `minimal` (как говорить, о чём не говорить) / `standard` / `full` |
 | `MEMORY_COGNIFY_SETTLE_SECONDS` | 90 | пауза перед перечитыванием сводки после записи (cognify асинхронный) |
@@ -429,8 +429,9 @@ kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingre
 | `MEMORY_DEFAULT_ENABLED` | `false` | только стенды: память всем без согласия (opt-out). В бою НЕ включать |
 | `MEMORY_ALLOWLIST` | пусто | UUID через запятую: включить память могут только они (бета) |
 
-**Откат функции:** `MEMORY_MODE: "off"`, применить ConfigMap, `kubectl -n agent rollout restart deploy/agent`. Сводка пропадает со
-следующего хода, данные в Cognee остаются (человек может прочитать, скачать и стереть их и при `off`).
+**Откат функции:** общего выключателя памяти нет. Остановить извлечение новых заметок — `MEMORY_NOTES_ENABLED: "false"`, применить
+ConfigMap, `kubectl -n agent rollout restart deploy/agent`; данные остаются (человек может прочитать, скачать и стереть их и при
+выключенной памяти).
 
 ## Ограничения (честно)
 
