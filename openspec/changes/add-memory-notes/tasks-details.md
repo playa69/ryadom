@@ -336,7 +336,7 @@
 Прогон на выбранной `MEMORY_NOTES_MODEL`.
 
 #### Приёмка
-- Отчёт в `docs/agent-memory-eval.md`, новый раздел.
+- Отчёт — комментарием в задаче.
 - Пороги: точность ≥ 0,9, полнота ≥ 0,75, утечки «никогда» — 0, p95 появления заметки ≤ 60 с.
 
 ### 7.3 Живой прогон на стенде
@@ -395,7 +395,6 @@
 
 #### Что сделать
 - Статусы `REQ-MEM-*` в `docs/spec.md`.
-- Пометка в `docs/agent-memory-spec.md`, какие разделы заменены.
 - Раздел Cognee в `agent/README.md`, комментарий в `k8s/agent/10-cognee-config.yaml`.
 - `openspec archive add-memory-notes`, только после архивации `add-agent-service`.
 
