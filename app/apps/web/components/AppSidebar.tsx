@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { Avatar, AvatarFallback } from '@ryadom/ui/components/avatar'
 import { Button } from '@ryadom/ui/components/button'
 import {
@@ -34,6 +33,7 @@ import { readLastSegment, segmentHref } from '@/lib/diary'
 import { useJournal } from '@/lib/journal'
 import { groupJournal } from '@/lib/journal-groups'
 import { BrandMark } from './Brand'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
 /** An open conversation is resumed in the dialog screen; a finished one opens read-only in the journal. */
 function itemHref(item: DialogListItemApiResponse): string {
@@ -245,10 +245,10 @@ export default function AppSidebar() {
             data-testid="guest-card"
             className="mb-1 flex flex-col gap-2 rounded-lg border border-brand-line bg-brand-soft p-3 group-data-[collapsible=icon]:hidden"
           >
-            <p className="text-sm font-semibold text-foreground">Сохрани разговоры</p>
+            <p className="text-sm font-semibold text-foreground">Сохрани аккаунт</p>
             <p className="text-xs leading-snug text-dim">
-              Без почты они хранятся {ANONYMOUS_RETENTION_DAYS} дней. С почтой не потеряются и откроются на
-              другом устройстве.
+              Без почты аккаунт {GUEST_LIFE_CLAUSE}. С почтой он не удалится и откроется на другом
+              устройстве.
             </p>
             <Button asChild size="sm" className="h-10 w-full bg-clip-border text-[0.9375rem]">
               <Link href="/profile?linkEmail=1" data-testid="guest-card-link">

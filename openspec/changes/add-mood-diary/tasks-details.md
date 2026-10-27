@@ -155,7 +155,7 @@
 ### 7.1–7.2 Документы и архив
 
 #### Что сделать
-- Статусы `REQ-WELL-01`…`REQ-WELL-05` и `REQ-WELL-10` в `docs/spec.md` по коду, трассировка (§14).
+- Статусы `REQ-WELL-01`…`REQ-WELL-05` и `REQ-WELL-10` в `docs/spec.md` по коду, индекс требований (§5).
 - `openspec archive add-mood-diary --yes` после выката; проверить `git diff openspec/specs`: MODIFIED заменяют «Токен виджета в API» и «Срок хранения разговоров» целиком.
 
 #### Приёмка

@@ -79,9 +79,12 @@ export type UserConsentKind = RequiredUserConsentKind | OptionalUserConsentKind
 
 /**
  * What a person did with their consent to memory (`memory_consent_events.action`): `granted` when
- * they turned memory on after the consent sheet, `revoked` when they turned it off.
+ * they accepted the consent sheet and turned memory on, `paused` when they turned it off (the
+ * consent stays in force), `resumed` when they turned it back on under the same sheet, `revoked`
+ * when the consent itself ended. Rows written before the pause stopped counting as a withdrawal
+ * carry `revoked` for what is now `paused`; they stay as they were.
  *
  * These values are stored in the column, so they must not be changed.
  */
-export const MEMORY_CONSENT_ACTIONS = ['granted', 'revoked'] as const
+export const MEMORY_CONSENT_ACTIONS = ['granted', 'revoked', 'paused', 'resumed'] as const
 export type MemoryConsentAction = (typeof MEMORY_CONSENT_ACTIONS)[number]

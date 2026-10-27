@@ -52,8 +52,8 @@ describe('повтор теста', () => {
 })
 
 describe('каталог', () => {
-  it('в каталоге все семь тестов, у каждого свой id', () => {
-    expect(allTests.map((t) => t.id)).toEqual(['gad7', 'phq9', 'rosenberg', 'wellbeing', 'stress', 'burnout', 'mini-ipip'])
+  it('в каталоге все одиннадцать тестов, у каждого свой id', () => {
+    expect(allTests.map((t) => t.id)).toEqual(['gad7', 'phq9', 'rosenberg', 'wellbeing', 'stress', 'burnout', 'swls', 'k6', 'phq2', 'gad2', 'mini-ipip'])
     expect(new Set(allTests.map((t) => t.id)).size).toBe(allTests.length)
   })
   it('byId находит тест любой волны', () => {
@@ -69,5 +69,53 @@ describe('PHQ-9 по спеке', () => {
     expect(isHigh(phq, 21)).toBe(true)
     expect(isHigh(phq, 19)).toBe(false)
     expect(phq.items[8]?.crisis).toEqual({ from: 1 })
+  })
+})
+
+describe('указание авторов', () => {
+  it('у каждого теста есть источник, который показывается на экране результата', () => {
+    for (const t of allTests) expect(t.source.trim().length, t.id).toBeGreaterThan(0)
+  })
+  it('SWLS называет всех четырёх авторов, K6 — авторское право Кесслера и статью', () => {
+    const swls = byId('swls')!.source
+    for (const name of ['Diener', 'Emmons', 'Larsen', 'Griffin']) expect(swls).toContain(name)
+    const k6 = byId('k6')!.source
+    expect(k6).toContain('© Ronald C. Kessler')
+    expect(k6).toContain('Archives of General Psychiatry')
+  })
+  it('в собственных переводах нет обращения на «вы» и родовых окончаний', () => {
+    for (const id of ['swls', 'k6']) {
+      const t = byId(id)!
+      const text = [t.preface, ...t.items.map((i) => i.text), ...t.options.map((o) => o.label), ...t.bands.map((b) => b.text)].join(' ')
+      expect(text, id).not.toMatch(/\b[Вв]ы\b|\b[Вв]ам\b|\b[Вв]ас\b/)
+      expect(text, id).not.toMatch(/(?:^|\s)(?:доволен|согласен|получил|хотел|нервничал)(?=[\s.,])/i)
+    }
+  })
+})
+
+describe('подсчёт SWLS, K6, PHQ-2 и GAD-2', () => {
+  const allAnswers = (id: string, pick: 'lo' | 'hi') => {
+    const t = byId(id)!
+    const values = t.options.map((o) => o.value)
+    const v = pick === 'hi' ? Math.max(...values) : Math.min(...values)
+    return t.items.map(() => v)
+  }
+  it('минимум и максимум совпадают с описанием, а подписи покрывают весь диапазон', () => {
+    for (const [id, min, max] of [['swls', 5, 35], ['k6', 0, 24], ['phq2', 0, 6], ['gad2', 0, 6]] as const) {
+      const t = byId(id)!
+      expect(score(t, allAnswers(id, 'lo')).score, id).toBe(min)
+      expect(score(t, allAnswers(id, 'hi')).score, id).toBe(max)
+      expect(t.scoring.max, id).toBe(max)
+      for (let v = min; v <= max; v++) expect(band(t, v), `${id}: ${v}`).toBeDefined()
+    }
+  })
+  it('SWLS: 20 — нейтрально, K6: от 13 — высокий уровень, быстрые тесты — порог на 3', () => {
+    expect(band(byId('swls')!, 20)?.label).toBe('ориентир: нейтрально')
+    expect(isHigh(byId('k6')!, 13)).toBe(true)
+    expect(isHigh(byId('k6')!, 12)).toBe(false)
+    for (const id of ['phq2', 'gad2']) {
+      expect(band(byId(id)!, 2)?.label, id).toBe('ниже порога')
+      expect(band(byId(id)!, 3)?.label, id).toBe('от порога')
+    }
   })
 })

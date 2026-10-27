@@ -2,7 +2,7 @@
 
 Контракт — `specs/{mood-widget,mood-diary,data-retention}/spec.md`. Решения — `design.md` (D10, D14 и «Open Questions»). Требования продукта — `REQ-WELL-05`, `REQ-WELL-10` в `docs/spec.md`. Подробности каждой задачи — `tasks-details.md`.
 
-Выполнено — см. capability `mood-diary`, `dialog-recaps`, `dialog-history`, `data-retention`, `app-shell`, `pwa-delivery` в `openspec/specs/` (миграция `0010_mood_diary`, отметки и очередь без сети, график, итоги недели, фоновый проход, итоги разговоров и лист завершения, журнал внутри «Дневника», вкладки и сайдбар, ярлык PWA, токен виджета в API, срок хранения 21 день, аналитика дневника, e2e и мок агента). Напоминание о настроении — `add-notifications`, поиск по итогам — `add-recap-search`, тесты в мобильном клиенте — `add-self-check-tests`.
+Выполнено — см. capability `mood-diary`, `dialog-recaps`, `dialog-history`, `data-retention`, `app-shell`, `pwa-delivery` в `openspec/specs/` (миграция `0010_mood_diary`, отметки и очередь без сети, график, итоги недели, фоновый проход, итоги разговоров и лист завершения, журнал внутри «Дневника», вкладки и сайдбар, ярлык PWA, токен виджета в API, срок хранения 21 день, аналитика дневника, e2e и мок агента). Напоминание о настроении — `add-notifications`, поиск по итогам — `add-recap-search`, тесты и сегмент «Тесты» в мобильном клиенте — capability `self-check`, серверная часть тестов — `add-self-check-tests`.
 
 ## 0. Решения и макеты
 
@@ -39,5 +39,5 @@
 
 ## 7. Архив
 
-- [ ] 7.1 Статусы `REQ-WELL-01`…`REQ-WELL-05` и `REQ-WELL-10` в `docs/spec.md` по коду; трассировка (§14). Приёмка: `docs/spec.md` соответствует коду
+- [ ] 7.1 Статусы `REQ-WELL-01`…`REQ-WELL-05` и `REQ-WELL-10` в `docs/spec.md` по коду; индекс требований (§5). Приёмка: `docs/spec.md` соответствует коду
 - [ ] 7.2 `openspec archive add-mood-diary` после выката: MODIFIED вливает «Токен виджета в API» и «Срок хранения разговоров» в базу целиком. Приёмка: `openspec validate --specs --strict` зелёный, `git diff openspec/specs` ничего нужного не теряет

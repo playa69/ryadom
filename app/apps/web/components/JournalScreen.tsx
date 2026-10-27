@@ -4,7 +4,6 @@ import { MessagesSquare } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useId, useMemo, useState } from 'react'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { dialogMemoryMark } from '@ryadom/client-core/memory'
 import { Alert } from '@ryadom/ui/components/alert'
 import { Badge } from '@ryadom/ui/components/badge'
@@ -19,6 +18,7 @@ import { BUTTON } from './controls'
 import { BADGE_COMPACT, conversationHref, RetryButton, StatePanel } from './JournalParts'
 import { SECTION_HEADING } from './Page'
 import RecapAutoSetting from './RecapAutoSetting'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
 function entryTitle(item: DialogListItemApiResponse): string {
   if (item.saved === false) return 'Разговор не сохранён'
@@ -192,8 +192,8 @@ export default function JournalScreen() {
               data-testid="journal-link-email"
             >
               <span className="min-w-0 flex-1 basis-60">
-                Разговоры хранятся только на этом устройстве, {ANONYMOUS_RETENTION_DAYS} дней после последнего
-                визита. Привяжи почту, чтобы не потерять их.
+                {DIALOG_KEEP_NOTE} Без почты аккаунт открывается только на этом устройстве и {GUEST_LIFE_CLAUSE}.
+                Привяжи почту, чтобы сохранить аккаунт.
               </span>
               <Button asChild variant="outline" size="sm" className={cn(BUTTON, 'border-input! px-4')}>
                 <Link href="/profile?linkEmail=1">

@@ -4,7 +4,6 @@ import { Block, Button, List, ListInput, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, deviceLogin, telegramLogin, updateProfile } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
@@ -14,6 +13,7 @@ import { nameProblem } from '../../../lib/validation'
 import { useEnvSwitcherTaps } from '../../../lib/use-env-switcher'
 import { BrandMark } from '../../Brand'
 import ConsentList, { NO_CONSENT, allConsented } from '../../ConsentList'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
 /**
  * The first screen. Someone new here sees what the service is, agrees to what it needs (being 18, the
@@ -174,8 +174,8 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
         )}
         {!signedIn && !telegram && (
           <p className="rd-fineprint">
-            Без почты разговоры хранятся {ANONYMOUS_RETENTION_DAYS} дней после последнего визита. Привязать
-            почту, чтобы их не потерять, можно в любой момент в профиле.
+            {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}. Привязать почту можно в любой момент в
+            профиле.
           </p>
         )}
         {!signedIn && telegram && (

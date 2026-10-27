@@ -21,8 +21,8 @@ import { initServiceWorker } from './service-worker'
  * uses a service worker instead.
  */
 
-/** Version of this JS bundle: `version` from package.json at the time it was built. */
-const JS_VERSION = __APP_VERSION__
+/** Version of this JS: the version the OTA manifest gives it, so that an applied bundle stops being offered. */
+const JS_VERSION = __JS_VERSION__
 
 const LAST_VERSION_CODE_KEY = 'ryadom.update.lastVersionCode'
 const NEXT_BUNDLE_KEY = 'ryadom.update.nextJsVersion'

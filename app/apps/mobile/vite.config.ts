@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { jsVersion } from './scripts/js-version.mjs'
 
 /**
  * The app client (src/client). Three build outputs and a dev server:
@@ -127,8 +128,9 @@ export default defineConfig(({ command, mode }) => {
     ],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
-      // What analytics report as `app_version`: the image tag (`RELEASE`) when the build has one. `__APP_VERSION__`
-      // is not that: the native update check compares it, so it stays the package's version.
+      // What the native update check reports and compares: the same version the OTA manifest gives this JS.
+      __JS_VERSION__: JSON.stringify(jsVersion(pkg.version)),
+      // What analytics report as `app_version`: the image tag (`RELEASE`) when the build has one.
       __RELEASE__: JSON.stringify(process.env.RELEASE?.trim() || pkg.version),
     },
     server: {

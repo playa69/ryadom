@@ -79,6 +79,17 @@ describe('config', () => {
     expect(env.MOBILE_IOS_MIN_VERSION_CODE).toBe(0)
     expect(env.MOBILE_IOS_LATEST_VERSION_CODE).toBe(0)
     expect(env.MOBILE_ANDROID_DOWNLOAD_URL).toBeUndefined()
+    expect(env.MOBILE_JS_MIN_VERSION).toBeUndefined()
+  })
+
+  // `openspec/changes/add-required-js-update`, «Откуда берётся политика релизов».
+  it('минимум JS: версия принимается, пусто — не задано, не версия — ошибка запуска', () => {
+    const appEnv = { ...baseEnv, MOBILE_JWT_SECRET: 'y'.repeat(32) }
+    expect(loadEnv(appEnvSchema, { ...appEnv, MOBILE_JS_MIN_VERSION: '0.1.0.42' }).MOBILE_JS_MIN_VERSION).toBe('0.1.0.42')
+    expect(loadEnv(appEnvSchema, { ...appEnv, MOBILE_JS_MIN_VERSION: '' }).MOBILE_JS_MIN_VERSION).toBeUndefined()
+    for (const bad of ['latest', '0.1.0-beta', '1.2.3.4.5']) {
+      expect(() => loadEnv(appEnvSchema, { ...appEnv, MOBILE_JS_MIN_VERSION: bad })).toThrow(EnvValidationError)
+    }
   })
 
   it('собирает все проблемы env в одну ошибку', () => {

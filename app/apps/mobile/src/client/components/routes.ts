@@ -6,6 +6,7 @@ import RegisterPage from './pages/auth/RegisterPage'
 import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import WelcomePage from './pages/auth/WelcomePage'
 import DiaryPage from './pages/diary/DiaryPage'
+import TestsPage from './pages/diary/TestsPage'
 import DialogPage from './pages/dialog/DialogPage'
 import HomePage from './pages/home/HomePage'
 import JournalEntryPage from './pages/journal/JournalEntryPage'
@@ -34,6 +35,7 @@ export const routes: Router.RouteParameters[] = [
   { path: '/diary/', component: DiaryPage },
   // The journal lives inside the diary: «Дневник · Журнал».
   { path: '/diary/journal/', component: JournalPage },
+  { path: '/diary/tests/', component: TestsPage },
   { path: '/diary/journal/:dialogId/', component: JournalEntryPage },
   // The old address of the journal tab (a link kept from before, a restored history entry).
   { path: '/journal/', redirect: '/diary/journal/' },

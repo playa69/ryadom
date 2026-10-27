@@ -1,6 +1,6 @@
 import type { MemoryConsentAction, MemoryConsentEventRow } from '@ryadom/db/schema'
 
-/** One time a person turned the agent's memory on (`granted`) or off (`revoked`). */
+/** One time a person accepted the memory consent (`granted`), paused memory (`paused`) or resumed it (`resumed`). */
 export interface MemoryConsentEventDTO {
   id: string
   userId: string

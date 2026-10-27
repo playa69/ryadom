@@ -66,7 +66,7 @@ class StartBody(BaseModel):
     # Конкретный голос Gemini (профиль): действует только вместе с `voice` (его родом).
     voice_name: str | None = Field(default=None, alias="voiceName", max_length=32)
     new: bool = False
-    # `off` — разговор «Без памяти»: без заметок и индекса (срок хранения и пометка в журнале — `add-unsaved-dialog`).
+    # `off` — разговор «Без памяти»: без заметок и индекса (срок хранения и пометка в журнале — PROTEUS-246).
     # Только для нового диалога: возвращённый открытый остаётся со своей памятью.
     memory: Literal["on", "off"] = "on"
 

@@ -184,7 +184,7 @@ test('аккаунт без почты: профиль, привязка, под
   // someone who has not signed in; a signed-in account gets no such card.
   await openSidebar(page)
   await expect(page.getByTestId('account-menu')).toContainText('Гость')
-  await expect(page.getByTestId('guest-card')).toContainText('Сохрани разговоры')
+  await expect(page.getByTestId('guest-card')).toContainText('Сохрани аккаунт')
   await expect(page.getByTestId('guest-card-link')).toHaveAttribute('href', '/profile?linkEmail=1')
   await shot(page, 'web-anonymous-guest-card')
   await closeSidebar(page)

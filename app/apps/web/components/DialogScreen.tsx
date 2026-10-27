@@ -52,7 +52,6 @@ import { Button } from '@ryadom/ui/components/button'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
 import type { OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { appPath } from '@/lib/base-path'
@@ -71,6 +70,7 @@ import { useSos } from './Sos'
 import { claimFreshStart, readDialogStart, takeDialogHandoff } from './dialog-start'
 import { initialDialogView, rememberDialogView, type DialogView } from './dialog-view'
 import { useStickToEnd } from './dialog-scroll'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
 /**
  * The conversation. Voice is the main way to talk: the screen opens on the sphere. Hands-free (the
@@ -921,8 +921,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           >
             <EyeOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-brand-400" />
             <span>
-              <b className="font-semibold text-foreground">Без памяти.</b> Этот разговор я не запомню, а сам
-              он удалится через сутки
+              <b className="font-semibold text-foreground">Без памяти.</b> Этот разговор я не запомню
             </span>
           </p>
         </div>
@@ -1038,7 +1037,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         offer={
           alert?.leaves && (user?.email === null || user?.isEmailConfirmed === false)
             ? {
-                text: `Без почты разговоры хранятся ${ANONYMOUS_RETENTION_DAYS} дней после последнего визита, и войти с другого телефона нельзя. Привяжи почту, чтобы не потерять их.`,
+                text: `${DIALOG_KEEP_NOTE} Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
                 action: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
                 onAction: () => {
                   setAlert(null)

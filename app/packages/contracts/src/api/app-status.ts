@@ -1,8 +1,8 @@
 import type { AppPlatform } from './headers'
 
 /**
- * `GET /api/app-status` — the version policy from the `policy.json` manifest in the bucket
- *. Two axes: the native build, updated only through the store, and the JS bundle (OTA).
+ * `GET /api/app-status` — the version policy. Two axes: the native build, updated only through the
+ * store, and the JS bundle (OTA), baked into the API image.
  *
  * Open to any version and unauthenticated: this is exactly where an outdated client comes for
  * instructions after a 426. Unusable parameters produce a 400.

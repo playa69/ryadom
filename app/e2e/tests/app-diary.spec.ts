@@ -33,10 +33,11 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-today-title')).toHaveText('Как ты сегодня?')
   await expect(diary.getByTestId('diary-chart-empty')).toContainText('здесь появится график')
   await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 0 из 3)')
-  // Neither the self-check (PROTEUS-218) nor the events of the week live on this page, and memory is not mentioned.
-  await expect(diary.getByTestId('diary-selfcheck')).toHaveCount(0)
+  // The events of the week do not live on this page, and memory is not mentioned.
   await expect(diary.getByTestId('diary-events-card')).toHaveCount(0)
-  await expect(diary).not.toContainText(/Самопроверка|События|памят/i)
+  await expect(diary).not.toContainText(/События|памят/i)
+  await expect(diary.getByTestId('self-check-block')).toBeVisible()
+  await expect(diary.getByTestId('diary-segment-tests')).toBeVisible()
   await expect(diary.getByTestId('diary-streak')).toHaveCount(0)
   await shot(page, 'diary-empty')
 
@@ -98,14 +99,14 @@ test('дневник: пустой → отметка в два касания �
     .toBe(3)
 })
 
-test('дневник: сегменты «Дневник» и «Журнал»; последний открытый помнится', async ({ page, shot }) => {
+test('дневник: сегменты «Дневник», «Журнал» и «Тесты»; последний открытый помнится', async ({ page, shot }) => {
   test.setTimeout(120_000)
   await openApp(page)
   await startAnonymously(page)
   await openTab(page, 'Дневник')
   await expect(page.getByTestId('diary-segment-diary')).toHaveAttribute('aria-checked', 'true')
-  // Two segments: the year and the recaps are not in the diary, the tests come later.
-  await expect(page.locator('.page-current [data-testid^="diary-segment-"]')).toHaveCount(2)
+  // Three segments: the diary, the journal and the tests; the year and the recaps are not in the diary.
+  await expect(page.locator('.page-current [data-testid^="diary-segment-"]')).toHaveCount(3)
   await expect(page.getByTestId('diary-year-card')).toHaveCount(0)
 
   await page.getByTestId('diary-segment-journal').click()

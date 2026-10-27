@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { jsVersion } from './js-version.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const clientDist = join(root, 'dist', 'client')
@@ -29,11 +30,16 @@ if (!existsSync(join(root, 'package.json'))) {
 }
 
 const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
-// Ties the bundle version to the pipeline run that produced this image, the same way
-// mobile-android.yml derives the native versionCode from github.run_number. 0 locally, where this
-// script is never part of a real release.
-const buildNumber = process.env.OTA_BUILD_NUMBER || '0'
-const version = `${pkg.version}.${buildNumber}`
+// OTA_BUILD_NUMBER ties the bundle version to the commit the image is built from (the deploy passes
+// `git rev-list --count`); 0 locally, where this script is never part of a real release. vite.config.ts
+// bakes the same version into the JS, read from the same variable, which the build below inherits.
+let version
+try {
+  version = jsVersion(pkg.version)
+} catch (error) {
+  console.error(error.message)
+  process.exit(1)
+}
 
 function run(command, args, options = {}) {
   console.log(`\n> ${command} ${args.join(' ')}`)

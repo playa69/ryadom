@@ -195,6 +195,19 @@ const appShape = {
   MOBILE_IOS_MIN_VERSION_CODE: optionalInt(0).transform((value) => value ?? 0),
   MOBILE_IOS_LATEST_VERSION_CODE: optionalInt(0).transform((value) => value ?? 0),
   /**
+   * The one lever on the JS axis that is not baked into the image: a client whose JS is older than this
+   * applies the image's bundle at once instead of quietly at the next launch. In env for the same
+   * reason as the native minimum: "this bundle is mandatory" is decided after the deploy, without a
+   * rebuild. Same format as the `js_version` the clients send (services/api `isVersionString`).
+   */
+  MOBILE_JS_MIN_VERSION: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\d{1,6}(\.\d{1,6}){0,3}$/, 'must be a version like 0.1.0.42')
+      .optional(),
+  ),
+  /**
    * Product analytics (PostHog). The project token is public by design (it only lets events in), so
    * it belongs in the ConfigMap rather than a Secret. Empty switches analytics off altogether: the
    * server reports nothing, `/api/ingest` is a 404 and the clients are told not to load the SDK

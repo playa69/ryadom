@@ -185,7 +185,7 @@ function listItem(dialog) {
     endedAt: dialog.endedAt,
     summary: dialog.summary,
     memoryMode: dialog.memoryMode ?? 'on',
-    // `saved: false` marks a conversation the person asked not to keep: only the mark is listed (add-unsaved-dialog).
+    // `saved: false` marks a conversation the person asked not to keep: only the mark is listed (PROTEUS-246).
     saved: dialog.saved !== false,
   }
 }

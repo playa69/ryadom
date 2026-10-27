@@ -15,8 +15,11 @@ interface ImportMeta {
   readonly env: ImportMetaEnv
 }
 
-/** Version from apps/mobile/package.json, also the build versionName and the OTA bundle version. */
+/** Version from apps/mobile/package.json, also the fallback build versionName. */
 declare const __APP_VERSION__: string
+
+/** Version of this JS, `<package version>.<OTA_BUILD_NUMBER>`: equal to the OTA manifest's version of it. */
+declare const __JS_VERSION__: string
 
 /** What analytics report as `app_version`: the build's release tag (`RELEASE`), else the package version. */
 declare const __RELEASE__: string
