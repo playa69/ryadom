@@ -11,9 +11,16 @@ import {
   DialogWsErrorCode,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
-import { apiErrorText } from '@ryadom/client-core/errors'
+import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { RECAP_ERROR_TEXT } from '@ryadom/client-core/recaps'
-import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
+import {
+  MEMORY_FORGET_ERRORS,
+  MEMORY_NOTICE,
+  MEMORY_NOTICE_POLL_MS,
+  memoryInUse,
+  newSensitiveNotes,
+  noteIds,
+} from '@ryadom/client-core/memory'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import type {
   DialogMessageView,
@@ -48,7 +55,6 @@ import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { appPath } from '@/lib/base-path'
-import { watchMemoryCard } from '@/lib/memory'
 import { WEB_HANDS_FREE_KEY } from '@/lib/storage-keys'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
@@ -149,20 +155,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [missing, setMissing] = useState(false)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
   const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(start?.memoryMode)
-  /** What the end needs to decide whether to wait for the card "Я запомнил". */
-  const memoryWatch = useRef({
-    memoryMode,
-    memoryEnabled: start?.memoryEnabled ?? user?.memoryEnabled,
-    userId: user?.id,
-  })
-  useEffect(() => {
-    memoryWatch.current = {
-      memoryMode,
-      memoryEnabled: start?.memoryEnabled ?? user?.memoryEnabled,
-      userId: user?.id,
-    }
-  })
-
+  /** Sensitive notes made during this conversation, told as "Запомнил: … · Убрать". The texts are the person's words: state only. */
+  const [notices, setNotices] = useState<Array<{ id: string; text: string }>>([])
+  const [noticeBusy, setNoticeBusy] = useState<string | null>(null)
   const socket = useRef<DialogSocket | null>(null)
   const capture = useRef<VoiceCapture | null>(null)
   const player = useRef<VoicePlayer | null>(null)
@@ -193,6 +188,90 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // Coming back to the text must land on the end of the feed, as a new message does.
   const feedVersion = useMemo(() => ({ messages, view }), [messages, view])
   const { hasNew, follow, jumpToEnd } = useStickToEnd(feedVersion, view === 'text' ? dock : undefined)
+
+  // While memory and "Запоминать чувствительное" are on, new sensitive notes are asked for every MEMORY_NOTICE_POLL_MS.
+  // Not in a conversation "Без памяти". The start's notes are remembered first, so old ones do not show up as new.
+  const incognito = memoryMode === DialogMemoryMode.Off
+  useEffect(() => {
+    if (incognito) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let known: Set<string> | null = null
+    const active = (memory: Awaited<ReturnType<typeof client.getMemory>>) =>
+      memoryInUse(memory) && memory.sensitiveEnabled
+    async function tick() {
+      try {
+        const memory = await client.getMemory()
+        if (cancelled) return
+        if (active(memory)) {
+          if (known === null) {
+            known = noteIds(memory.notes)
+          } else {
+            const fresh = newSensitiveNotes(known, memory.notes)
+            if (fresh.length > 0) {
+              for (const note of fresh) known.add(note.id)
+              setNotices((current) => [...current, ...fresh.map(({ id, text }) => ({ id, text }))])
+            }
+          }
+        } else {
+          // Switched off elsewhere: nothing is told, and what was seen before is forgotten.
+          known = null
+        }
+      } catch {
+        // A failed poll is silent: the next one tries again.
+      }
+      if (!cancelled) timer = setTimeout(() => void tick(), MEMORY_NOTICE_POLL_MS)
+    }
+    void tick()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [client, incognito])
+
+  async function removeNotice(id: string) {
+    if (noticeBusy) return
+    setNoticeBusy(id)
+    try {
+      const result = await client.forgetMemoryFact(id)
+      if (!result.ok) {
+        notify(codeText(MEMORY_FORGET_ERRORS, result.code, 'Не получилось убрать'), 'error')
+        return
+      }
+      setNotices((current) => current.filter((notice) => notice.id !== id))
+    } catch (err) {
+      notify(apiErrorText(err, {}, 'Не получилось убрать'), 'error')
+    } finally {
+      setNoticeBusy(null)
+    }
+  }
+
+  const noticeLines = notices.length > 0 && (
+    <ul className="flex flex-col gap-2" data-testid="memory-notices">
+      {notices.map((notice) => (
+        <li
+          key={notice.id}
+          className="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-brand-line bg-brand-soft px-4 py-2 text-sm leading-snug text-dim"
+          data-testid="memory-notice"
+        >
+          <span className="min-w-0 wrap-anywhere">
+            {MEMORY_NOTICE.prefix}
+            {notice.text}
+          </span>
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            disabled={noticeBusy !== null}
+            onClick={() => void removeNotice(notice.id)}
+            className="font-medium text-foreground underline underline-offset-4 disabled:opacity-60"
+            data-testid="memory-notice-undo"
+          >
+            {MEMORY_NOTICE.undo}
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
 
   useEffect(() => {
     viewRef.current = view
@@ -247,9 +326,6 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setEnding(false)
       void stopRecording()
       voice.current?.cancel()
-      // What the conversation added to memory shows up on home as "Я запомнил" once the agent is done.
-      const { userId, ...memory } = memoryWatch.current
-      if (userId && shouldWatchMemoryChanges(memory)) void watchMemoryCard(client, dialogId, userId)
       setAlert({
         title: 'Спасибо, что поговорил(а)',
         text:
@@ -855,6 +931,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         </p>
       )}
 
+      {view === 'voice' && noticeLines && <div className={cn(COLUMN, 'pt-4')}>{noticeLines}</div>}
+
       {view === 'voice' ? (
         <DialogVoice
           orb={orb}
@@ -885,6 +963,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
             )}
 
             <DialogFeed messages={messages} />
+            {noticeLines}
           </div>
 
           {/* The dock: the feed scrolls under a fade into the page color, so the last line never meets a hard edge. */}

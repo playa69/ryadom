@@ -30,8 +30,15 @@ class MemoryBackend(MemoryLink, Protocol):
         """Состояние памяти человека для REST: настройки, факты, сводка."""
         ...
 
-    async def update_settings(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
-        """Включить (только с версией согласия) или выключить память человека."""
+    async def update_settings(
+        self,
+        user_id: str,
+        enabled: bool | None,
+        consent_version: str | None,
+        sensitive_enabled: bool | None = None,
+        chat_search_enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        """Включить (только с версией согласия) или выключить память человека; переключатели чувствительного и поиска."""
         ...
 
     async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:

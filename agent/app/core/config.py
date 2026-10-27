@@ -286,34 +286,27 @@ class GeminiSettings(BaseAppSettings):
 
 
 class MemorySettings(BaseAppSettings):
-    """Долговременная память агента — Cognee (`app/memory/cognee_backend.py`): факты о человеке между разговорами.
+    """Память агента о человеке (`app/memory/`): заметки в PostgreSQL (слой 1) и поиск по прошлым разговорам в Cognee (слой 2).
 
-    `MEMORY_MODE`:
-      off     память не пишется и не подмешивается (по умолчанию). Чтение, экспорт и стирание памяти работают всегда
-      shadow  транскрипты уходят в Cognee у людей, включивших память, но сводка в разговор не попадает (проверка)
-      on      запись и сводка в разговоре
-
-    Согласие и данные человека — его датасет `ryadom_user_<user_id>` в Cognee; вызовы — REST с Bearer сервисного
-    пользователя. Извлечение фактов делает сам Cognee (cognify), своей модели извлечения у агента нет.
+    Включена ли память у человека и согласие хранятся в базе агента (`memory_settings`), а не в окружении: пауза переживает
+    перезапуск. Флаг выката — `MEMORY_NOTES_ENABLED` (извлечение заметок по ходу разговора). Вызовы Cognee — REST с Bearer
+    сервисного пользователя.
     """
 
-    mode: Literal["off", "shadow", "on"] = Field(validation_alias="MEMORY_MODE", default="off")
     # Адрес Cognee API и сервисный пользователь (multi-user access control — вызовы с Bearer).
     cognee_base_url: str | None = Field(validation_alias="COGNEE_BASE_URL", default=None)
     cognee_email: str | None = Field(validation_alias="COGNEE_SERVICE_EMAIL", default=None)
     cognee_password: SecretStr | None = Field(validation_alias="COGNEE_SERVICE_PASSWORD", default=None)
-    # Только для стендов: память включена всем по умолчанию (opt-out вместо opt-in).
-    # В бою согласие обязательно — флаг НЕ включать (false по умолчанию).
-    default_enabled: bool = Field(validation_alias="MEMORY_DEFAULT_ENABLED", default=False)
-    # Пауза перед перечитыванием сводки после записи транскрипта. cognify в Cognee асинхронный
-    # (POST /cognify = поставить в очередь), граф готов через десятки секунд — без паузы закэшируем «нет информации».
-    cognify_settle_seconds: int = Field(validation_alias="MEMORY_COGNIFY_SETTLE_SECONDS", default=90, ge=0)
     # Инструмент recall_memory в голосовом контуре: синхронный поиск в Cognee — 10–30 с паузы посреди хода.
     # По умолчанию выключен: память подтягивается фоном (реплика → поиск к следующему ходу), без пауз в разговоре.
     recall_tool: bool = Field(validation_alias="MEMORY_RECALL_TOOL", default=False)
-    # Сколько памяти уходит в голосовую модель: minimal — только как говорить и о чём не говорить (и мягкий тон после тяжёлого
-    # разговора); standard — плюс близкие (без имён), что помогает, планы, обстоятельства, прошлый разговор; full — с именами.
-    brief_level: Literal["minimal", "standard", "full"] = Field(validation_alias="MEMORY_BRIEF_LEVEL", default="minimal")
+    # Заметки о человеке (слой 1, PROTEUS-242): лимит живых заметок на человека. Срока давности у заметок нет.
+    notes_max: int = Field(validation_alias="MEMORY_NOTES_MAX", default=200, ge=1)
+    # Сколько токенов блока памяти уходит в голосовую модель.
+    brief_max_tokens: int = Field(validation_alias="MEMORY_BRIEF_MAX_TOKENS", default=1200, ge=100)
+    # Извлечение заметок по ходу разговора (флаг выката) и модель извлечения (по умолчанию чат-модель прокси).
+    notes_enabled: bool = Field(validation_alias="MEMORY_NOTES_ENABLED", default=False)
+    notes_model: str | None = Field(validation_alias="MEMORY_NOTES_MODEL", default=None)
     # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
     allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
 

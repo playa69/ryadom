@@ -27,12 +27,18 @@ const e2eRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = join(e2eRoot, '..')
 const isWindows = process.platform === 'win32'
 
+// E2E_PORT_OFFSET shifts every port of the stack, so that several stacks run on one machine (one per working copy): the
+// ports are fixed, and a second stack would otherwise run into the first. playwright.config.ts computes the same ones.
 const OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0)
 const port = (base) => String(base + OFFSET)
-const DB_PORT = port(55434)
-const SMTP_PORT = port(1027)
-const DB_URL = `postgres://ryadom:ryadom@127.0.0.1:${DB_PORT}/ryadom`
-const AGENT_URL = `http://127.0.0.1:${port(8081)}`
+process.env.E2E_PG_PORT = port(55434)
+process.env.E2E_MAIL_SMTP_PORT = port(1027)
+process.env.E2E_MAIL_UI_PORT = port(8027)
+process.env.E2E_AGENT_MOCK_PORT = process.env.E2E_AGENT_MOCK_PORT ?? port(8081)
+
+const DB_URL = `postgres://ryadom:ryadom@127.0.0.1:${port(55434)}/ryadom`
+// E2E_REAL_AGENT_URL runs the scenarios against a real agent (started locally, with a real model) instead of the mock.
+const AGENT_URL = process.env.E2E_REAL_AGENT_URL ?? `http://127.0.0.1:${port(8081)}`
 // 3100 is the landing site (its env var is still called WEB_*: the legal pages live there), 3102
 // is the API, 3103 is the signed-in web app and 3104 is the PWA.
 const WEB_PORT = port(3100)
@@ -41,17 +47,13 @@ const WEBAPP_PORT = port(3103)
 const PWA_PORT = port(3104)
 
 // The project follows the caller's (an agent run sets COMPOSE_PROJECT_NAME) or the offset, so that two stacks
-// never share containers. compose.yaml reads the ports from these variables; through WSL only the names
-// listed in WSLENV get across.
+// never share containers. compose.yaml reads the ports from the E2E_*_PORT variables above; through WSL only the
+// names listed in WSLENV get across.
 const PROJECT = process.env.COMPOSE_PROJECT_NAME
   ? `${process.env.COMPOSE_PROJECT_NAME}-e2e`
   : OFFSET ? `ryadom-e2e-${OFFSET}` : 'ryadom-e2e'
-const COMPOSE_PORTS = { E2E_DB_PORT: DB_PORT, E2E_SMTP_PORT: SMTP_PORT, E2E_MAIL_PORT: port(8027), E2E_AGENT_PORT: port(8081) }
-const composeEnv = {
-  ...process.env,
-  ...COMPOSE_PORTS,
-  WSLENV: [process.env.WSLENV, ...Object.keys(COMPOSE_PORTS)].filter(Boolean).join(':'),
-}
+const COMPOSE_PORTS = ['E2E_PG_PORT', 'E2E_MAIL_SMTP_PORT', 'E2E_MAIL_UI_PORT', 'E2E_AGENT_MOCK_PORT']
+const composeEnv = { ...process.env, WSLENV: [process.env.WSLENV, ...COMPOSE_PORTS].filter(Boolean).join(':') }
 const compose = (...args) => ['scripts/docker.mjs', 'compose', '-p', PROJECT, '-f', 'e2e/compose.yaml', ...args]
 
 const children = []
@@ -164,7 +166,7 @@ const apiEnv = {
   EMAIL_TRANSPORT: 'smtp',
   EMAIL_FROM: 'Рядом <noreply@ryadom.local>',
   SMTP_HOST: '127.0.0.1',
-  SMTP_PORT,
+  SMTP_PORT: port(1027),
   AGENT_API_URL: AGENT_URL,
   AGENT_TIMEOUT_MS: '10000',
   DIALOG_IDLE_TIMEOUT_SEC: '900',

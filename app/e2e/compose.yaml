@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ryadom
       POSTGRES_DB: ryadom
     ports:
-      - '${E2E_DB_PORT:-55434}:5432'
+      - '${E2E_PG_PORT:-55434}:5432'
     volumes:
       - ../dev/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     # tmpfs: the database lives only for the run, so every next run starts from a clean one.
@@ -27,8 +27,8 @@ services:
   mailpit:
     image: axllent/mailpit:v1.27
     ports:
-      - '${E2E_SMTP_PORT:-1027}:1025'
-      - '${E2E_MAIL_PORT:-8027}:8025'
+      - '${E2E_MAIL_SMTP_PORT:-1027}:1025'
+      - '${E2E_MAIL_UI_PORT:-8027}:8025'
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8025/readyz']
       interval: 3s
@@ -41,7 +41,7 @@ services:
     environment:
       PORT: '8080'
     ports:
-      - '${E2E_AGENT_PORT:-8081}:8080'
+      - '${E2E_AGENT_MOCK_PORT:-8081}:8080'
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
       interval: 3s

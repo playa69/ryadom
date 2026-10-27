@@ -13,6 +13,8 @@ import type {
   MemoryExportDTO,
   MemoryFactDTO,
   MemoryFactSlotsDTO,
+  MemoryInstructionChangesDTO,
+  MemoryNoteDTO,
   MemorySettingsDTO,
 } from '@ryadom/core/processes/memory'
 import { describeUserAgent } from '@ryadom/core/shared'
@@ -31,6 +33,8 @@ import {
   MemoryChangeOp,
   MemoryChangesStatus,
   MemoryFactCategory,
+  MemoryNoteApiResponse,
+  MemoryNoteKind,
   MemoryFactOrigin,
   MemoryFactSensitivity,
   MemoryFactStatus,
@@ -40,6 +44,7 @@ import {
   type MemoryExportApiResponse,
   type MemoryFactApiResponse,
   type MemoryFactSlots,
+  type MemoryInstructionApiResponse,
   type UpdateMemorySettingsApiResponse,
 } from '@ryadom/contracts/api/memory'
 
@@ -182,6 +187,10 @@ const MEMORY_FACT_STATUSES: Record<MemoryFactDTO['status'], MemoryFactStatus> = 
   expired: MemoryFactStatus.Expired,
 }
 
+const MEMORY_NOTE_KINDS: Record<string, MemoryNoteKind> = Object.fromEntries(
+  Object.values(MemoryNoteKind).map((kind) => [kind, kind]),
+)
+
 const MEMORY_FACT_ORIGINS: Record<MemoryFactDTO['origin'], MemoryFactOrigin> = {
   auto: MemoryFactOrigin.Auto,
   user_said: MemoryFactOrigin.UserSaid,
@@ -280,14 +289,42 @@ export function toMemory(memory: MemoryDTO): MemoryApiResponse {
     consentVersion: memory.consentVersion,
     consentAt: memory.consentAt?.toISOString() ?? null,
     rulesVersion: memory.rulesVersion,
-    limits: { maxFacts: memory.maxFacts },
+    limits: { maxFacts: memory.maxFacts, maxNotes: memory.maxNotes },
+    paused: memory.paused,
+    sensitiveEnabled: memory.sensitiveEnabled,
+    chatSearchEnabled: memory.chatSearchEnabled,
+    notes: memory.notes.map(toMemoryNote),
     facts: memory.facts.map(toMemoryFact),
+  }
+}
+
+export function toMemoryNote(note: MemoryNoteDTO): MemoryNoteApiResponse {
+  return {
+    id: note.id,
+    kind: MEMORY_NOTE_KINDS[note.kind] ?? MemoryNoteKind.Situation,
+    text: note.text,
+    sensitive: note.sensitive,
+    eventDate: note.eventDate,
+    createdAt: note.createdAt.toISOString(),
+    updatedAt: note.updatedAt.toISOString(),
+    dialogId: note.dialogId,
+  }
+}
+
+export function toMemoryInstruction(changes: MemoryInstructionChangesDTO): MemoryInstructionApiResponse {
+  return {
+    added: changes.added.map(toMemoryNote),
+    updated: changes.updated.map(toMemoryNote),
+    deleted: changes.deleted,
+    blocked: changes.blocked,
   }
 }
 
 export function toMemorySettings(settings: MemorySettingsDTO): UpdateMemorySettingsApiResponse {
   return {
     enabled: settings.enabled,
+    sensitiveEnabled: settings.sensitiveEnabled,
+    chatSearchEnabled: settings.chatSearchEnabled,
     consentVersion: settings.consentVersion,
     consentAt: settings.consentAt?.toISOString() ?? null,
   }
@@ -312,6 +349,7 @@ export function toMemoryExport(exported: MemoryExportDTO): MemoryExportApiRespon
       epochAt: exported.settings.epochAt?.toISOString() ?? null,
       updatedAt: exported.settings.updatedAt?.toISOString() ?? null,
     },
+    notes: exported.notes.map(toMemoryNote),
     facts: exported.facts.map(toMemoryFact),
     events: exported.events.map((event) => ({
       factId: event.factId,

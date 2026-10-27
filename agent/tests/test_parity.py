@@ -1167,7 +1167,8 @@ def test_continuation_of_an_unfinished_phrase_gets_one_answer() -> None:
         "мне кажется, что…",
         "я просто устал.",
     ]
-    assert "мне кажется, что… я просто устал." in cascade.rig.chat.calls[0][-1]["content"]  # модель видит обе части как одну реплику
+    seen = re.sub(r"\[\d{4}-[^\]]*Z\] ", "", cascade.rig.chat.calls[0][-1]["content"])  # время реплик в контексте не важно
+    assert "мне кажется, что… я просто устал." in seen  # модель видит обе части как одну реплику
     gap(len(live.replies) == 1, f"live ответил {len(live.replies)} раза(ов) на две части одной мысли: {live.replies}")
 
 

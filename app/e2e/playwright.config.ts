@@ -15,19 +15,20 @@ import { defineConfig, devices } from '@playwright/test'
  * machine each get a stack of their own, e.g. E2E_PORT_OFFSET=100 → 3200, 3202, … Default 0.
  */
 const OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0)
-const local = (port: number) => `http://127.0.0.1:${port + OFFSET}`
+const at = (base: number) => `http://127.0.0.1:${base + OFFSET}`
 
-export const WEB_URL = process.env.E2E_WEB_URL ?? local(3100)
+export const WEB_URL = process.env.E2E_WEB_URL ?? at(3100)
 /** The API. It serves no client any more: the PWA below is a separate server. */
-export const APP_URL = process.env.E2E_APP_URL ?? local(3102)
+export const APP_URL = process.env.E2E_APP_URL ?? at(3102)
 /** The signed-in web app (apps/web). `baseURL` above is the landing site, not this one. */
-export const WEBAPP_URL = process.env.E2E_WEBAPP_URL ?? local(3103)
+export const WEBAPP_URL = process.env.E2E_WEBAPP_URL ?? at(3103)
 /** The PWA (apps/mobile web build), on its own origin with `/api` proxied to the API. */
-export const PWA_URL = process.env.E2E_PWA_URL ?? local(3104)
+export const PWA_URL = process.env.E2E_PWA_URL ?? at(3104)
 /** Mailpit web UI: this is where the tests read the codes from the emails. */
-export const MAIL_URL = process.env.E2E_MAIL_URL ?? local(8027)
-/** The agent mock: the tests feed it speech and memory. */
-export const AGENT_URL = process.env.E2E_AGENT_URL ?? local(8081)
+export const MAIL_URL = process.env.E2E_MAIL_URL ?? at(8027)
+/** The agent mock: the tests feed it speech and memory through its dev endpoints. */
+export const AGENT_URL =
+  process.env.E2E_AGENT_URL ?? `http://127.0.0.1:${process.env.E2E_AGENT_MOCK_PORT ?? 8081 + OFFSET}`
 
 /** A headless browser has no microphone of its own: the fake device plays a tone, and the fake prompt grants it. */
 const FAKE_MICROPHONE = { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] }

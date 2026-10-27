@@ -57,7 +57,7 @@ class StartBody(BaseModel):
 
     voice: Literal["male", "female"] | None = None
     new: bool = False
-    # `off` — разговор «Без памяти»: без сводки и извлечения, текст удаляется через 24 часа (спецификация памяти, MEM-9).
+    # `off` — разговор «Без памяти»: без заметок и индекса (срок хранения и пометка в журнале — `add-unsaved-dialog`).
     # Только для нового диалога: возвращённый открытый остаётся со своей памятью.
     memory: Literal["on", "off"] = "on"
 
@@ -167,7 +167,10 @@ async def put_recap(user_id: str, dialog_id: str, body: RecapPutBody, store: Sto
 
 @router.delete("/dialogs/{dialog_id}", status_code=204)
 async def delete_dialog(user_id: str, dialog_id: str, store: Store) -> Response:
-    """«Удалить разговор» в журнале: сообщения и итог стираются. Заметки памяти и итоги недели агент не трогает."""
+    """«Удалить разговор» в журнале: разговор с итогом удаляется мягко (`deleted_at`), его документ в индексе прошлых разговоров
+    уходит в очередь на жёсткое удаление (`memory.dialog_deleting`). Открытый разговор сначала завершается (сокет получает
+    `ended`), автоитог и извлечение памяти для него не запускаются. Заметки памяти и итоги недели агент не трогает.
+    Чужой и несуществующий — `404`."""
     user = _user(user_id)
     await store.ensure_user(user)
     dialog = _ended_dialog(store, user, dialog_id)
@@ -229,8 +232,16 @@ async def put_dialog_settings(user_id: str, body: DialogSettingsBody, store: Sto
 
 @router.delete("", status_code=204)
 async def erase_user(user_id: str, store: Store) -> Response:
+    user = _user(user_id)
+    memory = store.memory
+    if memory is not None:
+        try:
+            await memory.erase_user_data(user)  # индекс в Cognee удаляется до 204; недоступен — 503, аккаунт не трогается
+        except Exception as error:
+            logger.error("erase user memory failed: %s", type(error).__name__)
+            raise AgentError(503, "AGENT_INTERNAL", "Не удалось стереть данные, повторите позже") from error
     try:
-        await store.erase_user_durable(_user(user_id))
+        await store.erase_user_durable(user)
     except Exception as error:
         # 204 означает «стёрто». Диск недоступен или сбойнул: приложение не должно удалять аккаунт, оно повторит позже.
         logger.error("erase user failed: %s", type(error).__name__)

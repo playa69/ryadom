@@ -78,6 +78,8 @@ import {
   type CreateMemoryFactApiErrorCode,
   type CreateMemoryFactApiRequest,
   type ForgetMemoryApiErrorCode,
+  type MemoryInstructionApiErrorCode,
+  type MemoryInstructionApiResponse,
   type MemoryApiResponse,
   type MemoryChangesApiErrorCode,
   type MemoryChangesApiResponse,
@@ -869,6 +871,15 @@ export function createClient(config: ClientConfig) {
       )
     },
 
+    /** The switches "Запоминать чувствительное" and "Опираться на прошлые разговоры": without `enabled`, so no consent is involved. */
+    updateMemorySettings: (
+      change: Pick<UpdateMemorySettingsApiRequest, 'sensitiveEnabled' | 'chatSearchEnabled'>,
+    ): Promise<ApiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>> =>
+      apiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>(ApiPath.MemorySettings, {
+        method: 'PUT',
+        body: change,
+      }),
+
     /** A fact the person writes themselves: it is theirs and pinned. */
     createMemoryFact: (
       fact: CreateMemoryFactApiRequest,
@@ -905,6 +916,15 @@ export function createClient(config: ClientConfig) {
       apiOutcome<MemoryChangesApiResponse, MemoryChangesApiErrorCode>(
         `${ApiPath.MemoryChanges}?dialogId=${encodeURIComponent(dialogId)}`,
       ),
+
+    /** "Скажи, что поправить или убрать": a request in the person's words, carried out on the notes. */
+    memoryInstruction: (
+      text: string,
+    ): Promise<ApiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>> =>
+      apiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>(ApiPath.MemoryInstruction, {
+        method: 'POST',
+        body: { text },
+      }),
 
     /** "Скачать мою память": everything, guesses and proposed facts included. */
     exportMemory: (): Promise<MemoryExportApiResponse> =>

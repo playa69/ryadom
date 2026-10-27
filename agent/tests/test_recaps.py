@@ -360,6 +360,8 @@ def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
         store.retention_days, store.retention_dry_run = 21, False
         assert second.portal.call(store.retention_pass, datetime.now(UTC)) == (1, 1)  # type: ignore[union-attr]
         assert second.get(url(user, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 404
+        # Удаление мягкое: строка осталась в базе с пометкой, следующий проход её уже не считает.
+        assert second.portal.call(store.retention_pass, datetime.now(UTC)) == (0, 0)  # type: ignore[union-attr]
 
 
 # ─── валидация итога ──────────────────────────────────────────────────────────

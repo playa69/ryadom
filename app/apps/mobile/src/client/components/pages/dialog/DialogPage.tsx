@@ -3,7 +3,6 @@ import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import { shouldWatchMemoryChanges } from '@ryadom/client-core/memory'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
@@ -15,9 +14,8 @@ import {
   type DialogMessageView,
   type DialogSocketState,
 } from '../../../lib/dialog-socket'
-import { getDialog } from '../../../lib/api'
+import { apiErrorText, codeText, forgetMemoryFact, getDialog, getMemory } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
-import { watchMemoryCard } from '../../../lib/memory'
 import { openRoute } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
 import { setTelegramClosingConfirmation } from '../../../lib/telegram'
@@ -47,6 +45,15 @@ import Breathing from '../../Breathing'
 import VoiceOrb, { type OrbState } from '../../VoiceOrb'
 import DialogEndSheet from './DialogEndSheet'
 import ShareSheet, { ShareNavButton } from '../journal/ShareSheet'
+import MemoryNotesSheet from '../profile/MemoryNotesSheet'
+import {
+  MEMORY_FORGET_ERRORS,
+  MEMORY_NOTICE,
+  MEMORY_NOTICE_POLL_MS,
+  MEMORY_SHEET,
+  newSensitiveNotes,
+  noteIds,
+} from '@ryadom/client-core/memory'
 
 /**
  * Conversation screen. Voice is the main way to talk: the sphere is the interface. Hands-free (the
@@ -135,6 +142,58 @@ export default function DialogPage({
       cancelled = true
     }
   }, [dialogId, resumed])
+  /**
+   * "Запомнил: … · Убрать": a line for every sensitive note that appeared during the conversation. The text is
+   * the person's own words: it stays on screen and is never reported or logged.
+   */
+  const [notices, setNotices] = useState<Array<{ id: string; text: string; error?: string }>>([])
+  const seenNotes = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    // Not in a conversation held without memory, and not before it is known which kind this is.
+    if (memoryMode === undefined || memoryMode === DialogMemoryMode.Off || user?.memoryEnabled === false) return
+    let stopped = false
+    async function poll() {
+      try {
+        const memory = await getMemory()
+        if (stopped) return
+        if (seenNotes.current === null) {
+          // The notes there already are at the start are not news.
+          seenNotes.current = noteIds(memory.notes)
+          if (!memory.enabled || !memory.sensitiveEnabled) seenNotes.current = null
+          return
+        }
+        if (!memory.available || !memory.enabled || !memory.sensitiveEnabled) return
+        const fresh = newSensitiveNotes(seenNotes.current, memory.notes)
+        if (fresh.length === 0) return
+        for (const note of fresh) seenNotes.current.add(note.id)
+        setNotices((current) => [...current, ...fresh.map((note) => ({ id: note.id, text: note.text }))])
+      } catch {
+        // The next tick asks again.
+      }
+    }
+    void poll()
+    const timer = setInterval(() => void poll(), MEMORY_NOTICE_POLL_MS)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [memoryMode, user?.memoryEnabled])
+
+  async function removeNotice(id: string) {
+    try {
+      const outcome = await forgetMemoryFact(id)
+      if (outcome.ok) {
+        setNotices((current) => current.filter((notice) => notice.id !== id))
+        return
+      }
+      const error = codeText(MEMORY_FORGET_ERRORS, outcome.code, 'Не получилось удалить')
+      setNotices((current) => current.map((notice) => (notice.id === id ? { ...notice, error } : notice)))
+    } catch (err) {
+      const error = apiErrorText(err, {}, 'Не получилось удалить')
+      setNotices((current) => current.map((notice) => (notice.id === id ? { ...notice, error } : notice)))
+    }
+  }
+
   const [messages, setMessages] = useState<DialogMessageView[]>([])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
@@ -153,6 +212,7 @@ export default function DialogPage({
   const [voiceOut, setVoiceOut] = useState(false)
   const [endOpened, setEndOpened] = useState(false)
   const [shareOpened, setShareOpened] = useState(false)
+  const [notesOpened, setNotesOpened] = useState(false)
   const [summary, setSummary] = useState<DialogSummaryApiResponse | null | undefined>(undefined)
 
   const socket = useRef<DialogSocket | null>(null)
@@ -602,13 +662,6 @@ export default function DialogPage({
     setEndOpened(false)
     // The journal lives on another tab; on a wide screen its list is visible right away.
     void journal.refresh()
-    // What the conversation added to memory shows up on home as "Я запомнил" once the agent is done.
-    if (
-      user &&
-      shouldWatchMemoryChanges({ memoryMode, memoryEnabled: memoryEnabled ?? user.memoryEnabled })
-    ) {
-      void watchMemoryCard(dialogId, user.id)
-    }
     const text =
       (summary?.title ? `Забираешь с собой: ${summary.title}` : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
       (summary?.recapStatus === 'pending'
@@ -690,6 +743,19 @@ export default function DialogPage({
       <Navbar backLink="Назад" title="Разговор">
         {/* The link shows the stored messages, and the greeting is not one of them: it needs something said. */}
         {(saidBefore || messages.some((message) => message.role === 'user')) && <ShareNavButton onClick={() => setShareOpened(true)} />}
+        {/* What Ryadom remembers, one tap from the conversation. Not in a conversation held without memory. */}
+        {memoryMode !== DialogMemoryMode.Off && user?.memoryEnabled !== false && (
+          <button
+            slot="right"
+            type="button"
+            className="rd-navbar-icon ph-no-capture"
+            aria-label={MEMORY_SHEET.title}
+            data-testid="memory-nav"
+            onClick={() => setNotesOpened(true)}
+          >
+            <Icon f7="sparkles" size={22} />
+          </button>
+        )}
         <button
           slot="right"
           type="button"
@@ -701,6 +767,7 @@ export default function DialogPage({
       </Navbar>
 
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
+      <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />
 
       {memoryMode === DialogMemoryMode.Off && (
         <div className="rd-incognito-mark" role="note" data-testid="dialog-incognito">
@@ -786,6 +853,28 @@ export default function DialogPage({
                   {message.text}
                 </span>
               </Message>
+            ))}
+            {notices.map((notice) => (
+              <div key={notice.id} className="rd-memory-notice" data-testid="memory-notice">
+                <span className="rd-memory-notice-text">
+                  {MEMORY_NOTICE.prefix}
+                  {notice.text}
+                </span>
+                {' · '}
+                <button
+                  type="button"
+                  className="rd-memory-notice-undo"
+                  data-testid="memory-notice-remove"
+                  onClick={() => void removeNotice(notice.id)}
+                >
+                  {MEMORY_NOTICE.undo}
+                </button>
+                {notice.error && (
+                  <span className="rd-form-error" data-testid="memory-notice-error">
+                    {notice.error}
+                  </span>
+                )}
+              </div>
             ))}
           </Messages>
 

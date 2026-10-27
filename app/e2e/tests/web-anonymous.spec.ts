@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { ANONYMOUS_RETENTION_DAYS, POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { APP_URL } from '../playwright.config'
 import {
+  dismissMemoryInvite,
   button,
   checkConsent,
   closeSidebar,
@@ -493,6 +494,7 @@ test('вход по почте на новом устройстве даёт т�
   const other = await newDevice()
   const otherSession = trackSession(other)
   await openWebApp(other)
+  await dismissMemoryInvite(other) // a new device: the sheet "Рядом теперь запоминает важное" is not this test's subject
   await expect(other).toHaveURL(/\/welcome$/)
   await other.getByTestId('have-account').click()
   await field(other, 'email').fill(email)

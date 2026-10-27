@@ -1,5 +1,6 @@
 import { WEB_URL } from '../playwright.config'
 import {
+  dismissMemoryInvite,
   button,
   checkConsent,
   expectNoHorizontalOverflow,
@@ -316,6 +317,7 @@ test('неподтверждённую почту можно зарегистр�
 
   async function register(name: string, password: string): Promise<void> {
     await openWebApp(page, '/register')
+    await dismissMemoryInvite(page) // the sheet "Рядом теперь запоминает важное" is not this test's subject
     await field(page, 'name').fill(name)
     await field(page, 'email').fill(email)
     await field(page, 'password').fill(password)

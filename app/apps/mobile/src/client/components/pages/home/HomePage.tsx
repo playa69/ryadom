@@ -1,13 +1,14 @@
-import { Button, Icon, Page } from 'framework7-react'
+import { Button, Icon, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { chosenMemoryMode, nextStartStep } from '@ryadom/client-core/dialog-start'
 import { DialogMode, StartDialogApiErrorCode, type StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
-import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
-import { memoryInUse } from '@ryadom/client-core/memory'
+import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
+import { memoryInUse, shouldInviteToMemory } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText, getMemory, startDialog } from '../../../lib/api'
+import { dismissMemoryInvite, enableMemory, memoryInviteDismissed } from '../../../lib/memory'
 import { START_TALK_EVENT } from '../../../lib/nav'
 import { unlockSpeech } from '../../../lib/voice/speech'
 import { useAuth } from '../../../lib/store'
@@ -15,8 +16,8 @@ import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import Breathing from '../../Breathing'
 import Switch from '../../Switch'
 import { SosButton, openSos } from '../../SosSheet'
-import { memoryCard } from '../../../lib/memory'
-import MemoryCard from './MemoryCard'
+import MemoryConsentSheet from '../profile/MemoryConsentSheet'
+import MemoryInviteSheet from './MemoryInviteSheet'
 import ResumeDialogSheet from './ResumeDialogSheet'
 
 /**
@@ -103,6 +104,11 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const memoryEnabled = auth.user?.memoryEnabled
   /** "Без памяти" for the next conversation; it goes back to off once a conversation starts. */
   const [withoutMemory, setWithoutMemory] = useState(false)
+  /** The invitation to memory: the sheet with the offer, then the consent sheet after "Включить". */
+  const [invite, setInvite] = useState<'invite' | 'consent' | null>(null)
+  const [invitedMemory, setInvitedMemory] = useState<MemoryApiResponse | null>(null)
+  const [consentBusy, setConsentBusy] = useState(false)
+  const [consentError, setConsentError] = useState('')
   const wanted = chosenMemoryMode(memoryEnabled, withoutMemory)
 
   // Whether to offer "Без памяти" is asked whenever home comes into view: the person's switch and
@@ -110,13 +116,47 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const loadMemory = useCallback(() => {
     if (!userId) return
     getMemory()
-      .then((memory) => updateUser({ memoryEnabled: memoryInUse(memory) }))
+      .then((memory) => {
+        updateUser({ memoryEnabled: memoryInUse(memory) })
+        // The invitation comes once, to someone who has not decided; never while a conversation is starting.
+        if (!starting.current && shouldInviteToMemory(memory, memoryInviteDismissed())) {
+          setInvitedMemory(memory)
+          setInvite((current) => current ?? 'invite')
+        }
+      })
       .catch(() => {})
   }, [userId, updateUser])
 
   useEffect(() => {
     loadMemory()
   }, [loadMemory])
+
+  /** Whatever the answer, the offer is made once: it is not shown again on this device. */
+  function declineInvite() {
+    dismissMemoryInvite()
+    // A close that follows "Включить" belongs to the consent sheet now.
+    setInvite((current) => (current === 'invite' ? null : current))
+  }
+
+  function acceptInvite() {
+    dismissMemoryInvite()
+    setConsentError('')
+    setInvite('consent')
+  }
+
+  async function acceptConsent() {
+    setConsentBusy(true)
+    setConsentError('')
+    const result = await enableMemory()
+    setConsentBusy(false)
+    if (!result.ok) {
+      setConsentError(result.text)
+      return
+    }
+    updateUser({ memoryEnabled: invitedMemory !== null && memoryInUse({ ...invitedMemory, ...result.data }) })
+    setInvite(null)
+    f7.toast.create({ text: 'Память включена', closeTimeout: 2500 }).open()
+  }
 
   function release(navigated: boolean) {
     if (navigated) setTimeout(() => (starting.current = false), NAVIGATION_LOCK_MS)
@@ -129,8 +169,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   }
 
   function openDialog(data: StartDialogApiResponse) {
-    // A new conversation makes the card of the previous one old news.
-    memoryCard.close()
     f7router.navigate(`/dialog/${data.dialogId}/`, {
       props: {
         greeting: data.greeting,
@@ -294,8 +332,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             )}
           </div>
 
-          <MemoryCard owner={userId} />
-
           <div className="rd-modes">
             {MODES.map((item) => (
               <button
@@ -360,6 +396,15 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         onContinue={continueDialog}
         onStartNew={() => void startNew()}
         onClose={closeQuestion}
+      />
+      <MemoryInviteSheet opened={invite === 'invite'} onAccept={acceptInvite} onDecline={declineInvite} />
+      <MemoryConsentSheet
+        opened={invite === 'consent'}
+        kind="consent"
+        busy={consentBusy}
+        error={consentError}
+        onAccept={() => void acceptConsent()}
+        onClose={() => !consentBusy && setInvite(null)}
       />
     </Page>
   )

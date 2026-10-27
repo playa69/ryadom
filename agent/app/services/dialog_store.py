@@ -143,7 +143,7 @@ class MemoryLink(Protocol):
         ...
 
     async def prepare(self, dialog: Dialog) -> None:
-        """Загрузить доступную сводку перед открытием модельной сессии."""
+        """Загрузить состояние памяти и блок памяти перед открытием модельной сессии."""
         ...
 
     def enabled(self, user_id: str) -> bool:
@@ -163,8 +163,15 @@ class MemoryLink(Protocol):
         ...
 
     def user_erased(self, user_id: str) -> None:
-        """Человек стёрт: забыть его сводку и настройки в кэше и не включать память обратно. Зовётся также при
-        холодной загрузке человека с меткой `memory_deletions`: оставшийся до джобы датасет не должен воскресать."""
+        """Человек стёрт: забыть его заметки и настройки в кэше. Внешний индекс к этому моменту удалён (`erase_user_data`)."""
+        ...
+
+    async def dialog_deleting(self, user_id: str, dialog_id: str) -> None:
+        """Разговор удаляется (вручную или по сроку): убрать его документ из индекса прошлых разговоров. Вызывается до удаления с диска."""
+        ...
+
+    async def erase_user_data(self, user_id: str) -> None:
+        """Стирание аккаунта: данные человека во внешнем индексе удаляются синхронно; исключение — удалить не удалось."""
         ...
 
     def user_message(self, dialog: Dialog, text: str) -> None:
@@ -605,12 +612,19 @@ class DialogStore:
 
     async def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         """Удалить один диалог из памяти процесса и пометить `deleted_at` на диске. Сообщения, идентификаторы клиента
-        и расход остаются в базе до отдельной джобы физической очистки. Маршрута в API нет: так воркер памяти удаляет
-        разговоры «Без памяти» (MEM-9, MEM-13.4).
+        и расход остаются в базе до отдельной джобы физической очистки (PROTEUS-255). Вызывают маршрут
+        `DELETE /v1/users/{id}/dialogs/{dialogId}` (через `delete_by_person`) и проход срока хранения; перед удалением
+        вызывается `memory.dialog_deleting`: документ разговора в Cognee уходит в очередь на жёсткое удаление.
 
         `forget_derived` — убрать и факты памяти, у которых этот диалог единственный источник (см. `DialogDatabase.delete_dialog`).
         Исключение — диск не ответил; из памяти процесса диалог к этому моменту уже убран.
         """
+        memory = self.memory
+        if memory is not None:
+            try:
+                await memory.dialog_deleting(user_id, dialog_id)  # документ в индексе уходит в очередь, пока известен его id
+            except Exception:  # noqa: BLE001 - память не должна мешать удалению разговора
+                logger.exception("memory dialog_deleting failed dialog=%s", dialog_id)
         async with self._load_lock:  # догрузка выгруженного человека иначе могла прочитать диалог до удаления и вернуть его в память
             self._forget(user_id, dialog_id)
             await self._delete_on_disk(user_id, dialog_id, forget_derived)
@@ -721,7 +735,7 @@ class DialogStore:
                 return
             started = time.monotonic()
             try:
-                stored, pref, memory_deleted, recap_setting = await asyncio.to_thread(self._load_from_disk, db, user_id)
+                stored, pref, recap_setting = await asyncio.to_thread(self._load_from_disk, db, user_id)
             except Exception:
                 DIALOG_DB_ERRORS_TOTAL.labels("load").inc()
                 logger.exception("dialog db load failed user=%s", user_id)
@@ -750,20 +764,17 @@ class DialogStore:
             memory = self.memory
             if memory is not None:
                 try:
-                    if memory_deleted:
-                        # Метка memory_deletions: память человека стёрта. Датасет Cognee мог остаться до джобы —
-                        # не даём ему воскреснуть после рестарта или выгрузки (user_loaded включил бы его обратно).
-                        memory.user_erased(user_id)
-                    else:
-                        await memory.user_loaded(user_id)
+                    # Метки memory_deletions агента 0.8.8 здесь не читаются: при открытии базы они перенесены в очередь
+                    # memory_outbox, а выключенная ими память записана в memory_settings (DialogDatabase.open).
+                    await memory.user_loaded(user_id)
                 except Exception:  # noqa: BLE001 - без памяти разговор идёт, без диалогов — нет (I3)
                     logger.exception("memory load failed user=%s", user_id)
 
     @staticmethod
-    def _load_from_disk(db: DialogDatabase, user_id: str) -> tuple[list[StoredDialog], str | None, bool, bool | None]:
-        """Диалоги человека, его голос, метка стёртой памяти и настройка итогов — одним обращением к диску (в потоке)."""
+    def _load_from_disk(db: DialogDatabase, user_id: str) -> tuple[list[StoredDialog], str | None, bool | None]:
+        """Диалоги человека, его голос и настройка итогов — одним обращением к диску (выполняется в потоке)."""
         stored, pref = db.load_user(user_id)
-        return stored, pref, db.is_memory_deleted(user_id), db.load_settings(user_id)
+        return stored, pref, db.load_settings(user_id)
 
     @staticmethod
     def _from_stored(item: StoredDialog) -> Dialog:
@@ -937,9 +948,10 @@ class DialogStore:
 
     async def erase_user_durable(self, user_id: str) -> None:
         """Стереть всё о человеке в памяти и на диске. Идемпотентно. Стирание мягкое: строки диалогов и выбор голоса
-        получают `deleted_at` и остаются в базе (чтения их не видят, физически уберёт отдельная джоба), а в
-        `memory_deletions` встаёт метка для удаления датасета Cognee. Исключение при сбое диска или если диск задан,
-        но не подключён: вызывающий (приложение) не должен считать данные стёртыми и может повторить."""
+        получают `deleted_at` и остаются в базе (чтения их не видят, физически уберёт отдельная джоба), заметки и очередь
+        Cognee человека удаляются; датасет Cognee маршрут стирания удаляет раньше (`memory.erase_user_data`). Исключение
+        при сбое диска или если диск задан, но не подключён: вызывающий (приложение) не должен считать данные стёртыми и
+        может повторить."""
         async with self._load_lock:  # не стирать посреди загрузки того же человека: прочитанное с диска иначе вернулось бы в память
             self.erase_user(user_id)
             db = self._db
@@ -959,44 +971,6 @@ class DialogStore:
             # Обращение посреди стирания могло снова поставить отметку, а выгрузка — запомнить человека: стёртого не помним.
             self._last_access.pop(user_id, None)
             self._evicted.discard(user_id)
-
-    async def mark_memory_deleted(self, user_id: str) -> None:
-        """Записать на диск метку «память человека удалена» (`memory_deletions`): по ней отдельная джоба физически
-        удалит датасет Cognee. Зовёт REST «забыть всё» (DELETE …/memory) до выключения памяти в бэкенде.
-
-        Идемпотентно. Без диска (разработка, тесты без базы) — нет-оп, как раньше; но если диск задан в настройках
-        и не подключён или запись сбоила — исключение: вызывающий не должен отвечать «забыто», метка обязательна."""
-        db = self._db
-        if db is None:
-            if self._disk_required:
-                DIALOG_DB_ERRORS_TOTAL.labels("mark").inc()
-                raise DialogDbError("хранилище диалогов недоступно: метку об удалении памяти записать нельзя")
-            return
-        try:
-            await asyncio.to_thread(db.mark_memory_deleted, user_id)
-        except Exception:
-            DIALOG_DB_ERRORS_TOTAL.labels("mark").inc()
-            logger.exception("dialog db memory deletion mark failed user=%s", user_id)
-            raise
-
-    async def clear_memory_deleted(self, user_id: str) -> None:
-        """Снять метку удаления памяти после повторного согласия, не трогая пользовательские данные.
-
-        Без необязательного диска — нет-оп. Если обязательный диск недоступен или запись не удалась, вызывающий
-        обязан выключить память и не подтверждать включение: иначе старая метка снова отключит её после рестарта.
-        """
-        db = self._db
-        if db is None:
-            if self._disk_required:
-                DIALOG_DB_ERRORS_TOTAL.labels("clear").inc()
-                raise DialogDbError("хранилище диалогов недоступно: метку удаления памяти снять нельзя")
-            return
-        try:
-            await asyncio.to_thread(db.clear_memory_deleted, user_id)
-        except Exception as error:
-            DIALOG_DB_ERRORS_TOTAL.labels("clear").inc()
-            logger.exception("dialog db memory deletion clear failed user=%s", user_id)
-            raise DialogDbError("не удалось снять метку удаления памяти") from error
 
     # ─── выгрузка неактивных ──────────────────────────────────────────────────
 

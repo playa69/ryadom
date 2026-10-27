@@ -2031,195 +2031,83 @@ input:-webkit-autofill:focus {
   font-size: 15px;
 }
 
-.rd-memory-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ryadom-s-2);
-  margin: var(--ryadom-s-3) var(--ryadom-s-4) 0;
-}
-
-.rd-memory-toolbar .button {
-  width: auto;
-  gap: 4px;
-}
-
-.rd-memory-fact {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: var(--ryadom-s-2) var(--ryadom-s-4);
-  padding: 14px var(--ryadom-s-4);
-  border: 1px solid var(--ryadom-line);
-  border-radius: var(--ryadom-r-m);
-  background: var(--ryadom-surface-glass);
-  box-shadow: var(--ryadom-highlight);
-  -webkit-backdrop-filter: var(--ryadom-blur);
-  backdrop-filter: var(--ryadom-blur);
-}
-
-.rd-memory-fact[data-status='proposed'] {
-  border-color: var(--ryadom-brand-100);
-}
-
-.rd-memory-fact[data-status='candidate'] {
-  border-style: dashed;
-}
-
-.rd-memory-fact-text {
-  margin: 0;
-  font-size: var(--ryadom-t-md);
-  line-height: 1.45;
-  color: var(--ryadom-text);
-  overflow-wrap: anywhere;
-}
-
-.rd-memory-fact-text--hidden {
-  color: var(--ryadom-text-faint);
-  font-style: italic;
-}
-
-.rd-memory-fact-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 0;
+/* The sheet "Что помнит Рядом": notes in groups, each with its date and a quick "×". */
+.rd-note-group-title {
+  margin: var(--ryadom-s-2) 0 0;
   font-size: 13px;
-  color: var(--ryadom-text-faint);
-}
-
-.rd-memory-badge {
-  padding: 1px 8px;
-  border: 1px solid var(--ryadom-line-strong);
-  border-radius: var(--ryadom-r-pill);
-  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--ryadom-text-dim);
 }
 
-.rd-memory-fact-actions {
+.rd-memory-note {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.rd-memory-fact-actions .button,
-.rd-memory-undo .button {
-  width: auto;
-  padding: 0 14px;
-}
-
-.button.rd-memory-forget {
-  --f7-button-text-color: var(--ryadom-danger);
-  --f7-button-border-color: var(--ryadom-danger-100);
-}
-
-.rd-memory-undo {
-  flex-direction: row;
+  gap: var(--ryadom-s-2);
   align-items: center;
   justify-content: space-between;
+  padding: 10px var(--ryadom-s-4);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
 }
 
-.rd-memory-form {
-  margin: 0;
-}
-
-.rd-memory-choice {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* Four short choices share a row; on the narrowest phone the words may wrap inside a button. */
-.rd-memory-choice .segmented .button {
-  height: auto;
-  min-height: 36px;
-  padding: 4px 8px;
-  line-height: 1.2;
-  white-space: normal;
-}
-
-/* The card "Я запомнил" on home. */
-.rd-memory-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ryadom-s-2);
-  margin: var(--ryadom-s-4) 0 0;
-  padding: var(--ryadom-s-4);
-  border-color: var(--ryadom-sage-100);
-  text-align: left;
-}
-
-.rd-memory-card-head {
-  display: flex;
-  gap: var(--ryadom-s-2);
-  align-items: center;
-}
-
-.rd-memory-card-head .rd-note-icon {
-  margin: 0;
-  color: var(--ryadom-sage);
-}
-
-.rd-memory-card-head .rd-note-title {
+.rd-memory-note-body {
   flex: 1;
-  margin: 0;
-}
-
-.rd-memory-card-close {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  margin: -6px -6px -6px 0;
+  min-width: 0;
+  padding: 0;
   border: 0;
-  border-radius: 50%;
   background: transparent;
-  color: var(--ryadom-text-faint);
+  text-align: left;
+  font: inherit;
+  color: inherit;
   cursor: pointer;
 }
 
-.rd-memory-card-items {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ryadom-s-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.rd-memory-card-item {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px var(--ryadom-s-2);
-  align-items: center;
-  justify-content: space-between;
-  padding-top: var(--ryadom-s-2);
-  border-top: 1px solid var(--ryadom-line);
-}
-
-.rd-memory-card-text {
-  flex: 1 1 180px;
-  font-size: 15px;
+.rd-memory-note-text {
+  display: block;
+  font-size: var(--ryadom-t-md);
   line-height: 1.4;
   color: var(--ryadom-text);
   overflow-wrap: anywhere;
 }
 
-.rd-memory-card-actions {
-  display: flex;
-  gap: 6px;
+.rd-memory-note-date {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--ryadom-text-faint);
 }
 
-.rd-memory-card-actions .button,
-.rd-memory-card-link.button {
+.rd-memory-note-remove {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ryadom-text-faint);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rd-memory-undo {
+  justify-content: space-between;
+}
+
+.rd-memory-undo .button {
   width: auto;
-  padding: 0 12px;
+  padding: 0 14px;
 }
 
-.rd-memory-card-link.button {
-  align-self: flex-start;
-  margin-left: -12px;
+.rd-memory-instruction {
+  margin: 0;
+}
+
+.rd-memory-result {
+  margin: 0;
 }
 
 /* "Без памяти" under the talk button. */
@@ -3044,4 +2932,27 @@ p.rd-recap-text {
 
 .rd-danger-button {
   color: var(--ryadom-danger);
+}
+
+/* The line "Запомнил: … · Убрать" in the conversation stream (6.4). */
+.rd-memory-notice {
+  margin: var(--ryadom-s-2) var(--ryadom-s-4);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-memory-notice-undo {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
+.rd-memory-notice .rd-form-error {
+  display: block;
 }

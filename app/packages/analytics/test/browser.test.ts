@@ -181,12 +181,12 @@ describe('отправка', () => {
     await started
     track(AnalyticsEvent.MemoryEnabled, { enabled: true })
     track(AnalyticsEvent.MemoryIncognitoToggled, { on: true })
-    track(AnalyticsEvent.MemoryFactAction, { action: 'pin', text: 'Сестра Аня' } as never)
-    track(AnalyticsEvent.MemoryCardAction, { action: 'dismiss_item', note: 'поддерживает' } as never)
+    track(AnalyticsEvent.MemoryNoteDeleted, { undone: false, text: 'Сестра Аня' } as never)
+    track(AnalyticsEvent.MemorySettingChanged, { setting: 'sensitive', enabled: true, note: 'поддерживает' } as never)
     expect(posthog.capture).toHaveBeenCalledWith('memory_enabled', { enabled: true })
     expect(posthog.capture).toHaveBeenCalledWith('memory_incognito_toggled', { on: true })
-    expect(posthog.capture).toHaveBeenCalledWith('memory_fact_action', { action: 'pin' })
-    expect(posthog.capture).toHaveBeenCalledWith('memory_card_action', { action: 'dismiss_item' })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_note_deleted', { undone: false })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_setting_changed', { setting: 'sensitive', enabled: true })
   })
 
   it('просмотр экрана отправляется по маршруту, без идентификаторов и запроса', async () => {

@@ -23,7 +23,12 @@ export class UpdateAgentMemorySettingsRequestHandler implements RequestHandler<
       `${userMemoryPath(request.userId)}/settings`,
       {
         method: 'PUT',
-        body: { enabled: request.enabled, consentVersion: request.consentVersion },
+        body: {
+          ...(request.enabled !== undefined ? { enabled: request.enabled } : {}),
+          consentVersion: request.consentVersion,
+          ...(request.sensitiveEnabled !== undefined ? { sensitiveEnabled: request.sensitiveEnabled } : {}),
+          ...(request.chatSearchEnabled !== undefined ? { chatSearchEnabled: request.chatSearchEnabled } : {}),
+        },
         handledErrorCodes: ['MEMORY_UNAVAILABLE'],
       },
     )

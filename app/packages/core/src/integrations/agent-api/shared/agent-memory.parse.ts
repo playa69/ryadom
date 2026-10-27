@@ -11,6 +11,7 @@ import {
   type AgentMemoryChangesResponse,
   type AgentMemoryExportResponse,
   type AgentMemoryFactResponse,
+  type AgentMemoryNoteResponse,
   type AgentMemoryResponse,
   type AgentMemorySettingsResponse,
 } from './agent-memory.types'
@@ -90,6 +91,38 @@ function parseOrThrow<S extends z.ZodType>(schema: S, body: unknown, what: strin
   return parsed.data
 }
 
+const noteSchema = z.object({
+  id: z.string().min(1),
+  kind: z.string(),
+  text: z.string(),
+  sensitive: z.boolean().catch(false),
+  eventDate: nullableString,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  dialogId: nullableString,
+})
+
+/** The notes the agent gave; one that does not hold up is left out (logged by its id), like a fact. */
+export function parseNotesList(raw: unknown[]): AgentMemoryNoteResponse[] {
+  return parseNotes(raw)
+}
+
+function parseNotes(raw: unknown[]): AgentMemoryNoteResponse[] {
+  const notes: AgentMemoryNoteResponse[] = []
+  for (const item of raw) {
+    const parsed = noteSchema.safeParse(item)
+    if (parsed.success) notes.push(parsed.data)
+    else {
+      const id = typeof item === 'object' && item !== null ? (item as { id?: unknown }).id : undefined
+      createLogger('agent-api').warn('Agent API returned a malformed memory note, left out', undefined, {
+        noteId: typeof id === 'string' ? id : null,
+        fields: fieldsOf(parsed.error),
+      })
+    }
+  }
+  return notes
+}
+
 const memorySchema = z.object({
   available: z.boolean(),
   mode: z.enum(AGENT_MEMORY_MODES),
@@ -97,17 +130,27 @@ const memorySchema = z.object({
   consentVersion: nullableString,
   consentAt: nullableString,
   rulesVersion: z.string().catch(''),
-  limits: z.object({ maxFacts: z.number().nullable() }),
+  limits: z.object({
+    maxFacts: z.number().nullable(),
+    maxNotes: z.number().nullable().catch(null),
+  }),
+  // An older agent (before notes) has none of these: pause follows `enabled`, the switches take their defaults.
+  paused: z.boolean().optional(),
+  sensitiveEnabled: z.boolean().catch(false),
+  chatSearchEnabled: z.boolean().catch(true),
+  notes: z.array(z.unknown()).catch([]),
   facts: z.array(z.unknown()),
 })
 
 export function parseAgentMemory(body: unknown): AgentMemoryResponse {
-  const memory = parseOrThrow(memorySchema, body, 'memory')
-  return { ...memory, facts: parseFacts(memory.facts) }
+  const { paused, notes, ...memory } = parseOrThrow(memorySchema, body, 'memory')
+  return { ...memory, paused: paused ?? !memory.enabled, notes: parseNotes(notes), facts: parseFacts(memory.facts) }
 }
 
 const settingsSchema = z.object({
   enabled: z.boolean(),
+  sensitiveEnabled: z.boolean().catch(false),
+  chatSearchEnabled: z.boolean().catch(true),
   consentVersion: nullableString,
   consentAt: nullableString,
 })
@@ -148,6 +191,7 @@ const exportSchema = z.object({
     epochAt: nullableString,
     updatedAt: nullableString,
   }),
+  notes: z.array(z.unknown()).catch([]),
   facts: z.array(z.unknown()),
   events: z
     .array(
@@ -164,7 +208,8 @@ const exportSchema = z.object({
 
 export function parseAgentMemoryExport(body: unknown): AgentMemoryExportResponse {
   const exported = parseOrThrow(exportSchema, body, 'memory export')
-  return { ...exported, facts: parseFacts(exported.facts) }
+  const { notes, ...rest } = exported
+  return { ...rest, notes: parseNotes(notes), facts: parseFacts(exported.facts) }
 }
 
 /**
