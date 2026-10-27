@@ -25,6 +25,12 @@ import {
 import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
 import { DeleteUserDialogSharesCommand, dialogSharesManager } from '../../../managers/dialog-shares-manager'
 import { DeleteUserDiaryCommand, diaryManager } from '../../../managers/diary-manager'
+import {
+  EnqueueJobRequest,
+  ERASE_PERSON_DELAY_SECONDS,
+  JobQueue,
+  jobQueueService,
+} from '../../../services/job-queue-service'
 import { buildDeletionArchive } from '../shared/deletion-archive'
 import { PROCESSES_CONFIG } from '../../config'
 import { DeleteAccountOperation } from './delete-account.operation'
@@ -41,6 +47,12 @@ import { DeleteAccountOperationErrorCode, type DeleteAccountResult } from './del
  * The deletion is soft: personal data is archived into `users.properties.deletion`, the
  * password and codes are deleted, and the row is anonymized. The email is freed for a new
  * registration.
+ *
+ * Erasing the person in product analytics is a job queued in the same transaction as the last step of the
+ * deletion (`analytics.erase-person`, `openspec/changes/add-job-queue`): the account is deleted and the erasure
+ * is queued, or neither happens. The job waits `ERASE_PERSON_DELAY_SECONDS` so that the batches of events the
+ * clients sent before the deletion land first, and the queue keeps it through a restart of the pod. It is the
+ * person's own request only: an administrator's deletion and the retention clean-up leave analytics alone.
  */
 @requestHandler(DeleteAccountOperation)
 export class DeleteAccountOperationHandler implements RequestHandler<DeleteAccountOperation, DeleteAccountResult> {
@@ -110,6 +122,16 @@ export class DeleteAccountOperationHandler implements RequestHandler<DeleteAccou
       }
       await refreshTokensManager.execute(
         new RevokeUserRefreshTokensCommand({ userId, exceptSessionId: null, revokedAt: new Date() }),
+      )
+      // Last, and in the transaction: a deletion that did not complete leaves no job behind. The key keeps a
+      // second request from queuing a second erasure while the first one waits.
+      await jobQueueService.execute(
+        new EnqueueJobRequest({
+          queue: JobQueue.AnalyticsErasePerson,
+          data: { userId },
+          startAfterSeconds: ERASE_PERSON_DELAY_SECONDS,
+          singletonKey: userId,
+        }),
       )
       return null
     })

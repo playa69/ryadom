@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url'
 import { sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { testDatabase } from '@ryadom/db/test-db'
-import { inTransaction, getDb } from '@ryadom/core/shared'
+import { getDb, getRootLogger, inTransaction } from '@ryadom/core/shared'
 import { resetEnvCache } from '@ryadom/core/config'
+import { accountDeletionProcess, DeleteAccountOperation } from '@ryadom/core/processes/account-deletion'
 import {
   agentApiIntegration,
   DeleteAgentDialogRequest,
@@ -26,9 +27,11 @@ import {
   type JobQueueName,
 } from '@ryadom/core/services/job-queue-service'
 import { QUEUE_CATALOG, type QueueDefinition } from '../src/jobs/catalog'
+import { erasePersonJob } from '../src/jobs/erase-person'
 import type { JobDeps } from '../src/jobs/handlers'
 import { ensureQueues, queueDrift, registerSchedules, type JobHandlers } from '../src/jobs/registry'
 import { startJobs, type Jobs, type JobsConfig } from '../src/lib/jobs'
+import { call, makeApp, mockAgent, ok, PASSWORD, signUpAndIn } from './helpers'
 
 const DATABASE_URL = process.env.DATABASE_URL!
 
@@ -44,7 +47,7 @@ function config(overrides: Partial<JobsConfig> = {}): JobsConfig {
 
 const deps: JobDeps = {
   sessions: { purgeExpired: async () => {} },
-  analytics: { capture: () => {} },
+  analytics: { capture: () => {}, erasePerson: async () => 'erased' },
 }
 
 /** The queue of a test only: not in the catalog of the product, so the product's queues stay out of the way. */
@@ -194,6 +197,16 @@ describe('реестр и каталог очередей', () => {
       heartbeatSeconds: 30,
       cron: '* * * * *',
     },
+    'analytics.erase-person': {
+      policy: 'short',
+      expireInSeconds: 120,
+      retentionSeconds: 14 * 86_400,
+      retryLimit: 8,
+      retryDelay: 60,
+      retryBackoff: true,
+      retryDelayMax: 3600,
+      heartbeatSeconds: null,
+    },
   } as const
 
   it('параметры очередей в базе совпадают с таблицей решения D4', async () => {
@@ -239,6 +252,7 @@ describe('реестр и каталог очередей', () => {
       JobQueue.SessionsPurgeExpired,
       JobQueue.AccountsPurgeInactiveAnonymous,
       JobQueue.DiaryWeeklyPass,
+      JobQueue.AnalyticsErasePerson,
     ])
     const schedules = await jobs.boss.getSchedules()
     expect(schedules.map((schedule) => [schedule.name, schedule.cron]).sort()).toEqual([
@@ -494,5 +508,166 @@ describe('агент: повторные удаления (заглушка app/
     // And the question the follow-up job asks, «is the dialog still there», answers the same way.
     const found = await agentApiIntegration.execute(new GetAgentDialogRequest({ userId, dialogId }))
     expect(found.success).toBe(false)
+  })
+})
+
+describe('стирание профиля в аналитике через очередь', () => {
+  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: сценарии «Сбой аналитики» и «Несколько реплик».
+  const erasure = QUEUE_CATALOG.filter((queue) => queue.name === JobQueue.AnalyticsErasePerson)
+  /** The erasure of the catalog with the waits cut to a second, so the retries fit in a test. */
+  const fastErasure: QueueDefinition[] = erasure.map((queue) => ({
+    ...queue,
+    options: { ...queue.options, retryLimit: 2, retryDelay: 1, retryBackoff: false, retryDelayMax: null },
+  }))
+  const dead = QUEUE_CATALOG.filter((queue) => queue.name === JobQueue.JobsDeadLetter)
+
+  function startErasing(
+    erasePerson: JobDeps['analytics']['erasePerson'],
+    overrides: Partial<JobsConfig> = {},
+  ) {
+    return start(overrides, {
+      catalog: [...dead, ...fastErasure],
+      handlers: { [JobQueue.AnalyticsErasePerson]: erasePersonJob({ erasePerson }) },
+      skipTransport: true,
+    })
+  }
+
+  async function queueErasure(jobs: Jobs, userId: string) {
+    return jobs.boss.send(JobQueue.AnalyticsErasePerson, { userId }, { singletonKey: userId })
+  }
+
+  it('erased: задача выполнена с первой попытки, повторов нет', async () => {
+    const erasePerson = vi.fn(async () => 'erased' as const)
+    const jobs = await startErasing(erasePerson)
+
+    await queueErasure(jobs, 'user-1')
+
+    await vi.waitFor(
+      async () =>
+        expect((await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson))[0]?.state).toBe('completed'),
+      {
+        timeout: 10_000,
+      },
+    )
+    expect(erasePerson).toHaveBeenCalledTimes(1)
+    expect(erasePerson).toHaveBeenCalledWith('user-1')
+  })
+
+  it('Сбой аналитики: PostHog не принял запрос — задача повторяется и после успеха завершается', async () => {
+    const outcomes = ['failed', 'failed', 'erased'] as const
+    let call = 0
+    const erasePerson = vi.fn(async () => outcomes[call++]!)
+    const jobs = await startErasing(erasePerson)
+
+    await queueErasure(jobs, 'user-1')
+
+    await vi.waitFor(
+      async () =>
+        expect((await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson))[0]?.state).toBe('completed'),
+      {
+        timeout: 20_000,
+      },
+    )
+    expect(erasePerson).toHaveBeenCalledTimes(3)
+    expect((await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson))[0]?.retryCount).toBe(2)
+    expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toEqual([])
+  })
+
+  it('Сбой аналитики: когда повторы исчерпаны, копия данных лежит в jobs.dead-letter, а id — в журнале ошибок', async () => {
+    const errors = vi.spyOn(getRootLogger(), 'error')
+    try {
+      const jobs = await startErasing(async () => 'failed')
+
+      await queueErasure(jobs, 'user-gone')
+
+      await vi.waitFor(
+        async () => expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toHaveLength(1),
+        {
+          timeout: 20_000,
+        },
+      )
+      const [copy] = await jobs.boss.findJobs<{ userId: string }>(JobQueue.JobsDeadLetter)
+      expect(copy?.data).toEqual({ userId: 'user-gone' })
+      // One line with the id, on the last attempt only: the way to remove the profile by hand.
+      const lines = errors.mock.calls.filter(
+        ([fields]) => (fields as { userId?: string }).userId === 'user-gone',
+      )
+      expect(lines).toHaveLength(1)
+      expect(lines[0]?.[1]).toContain('убрать вручную')
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('not_configured: стирание не настроено — задача завершается без повторов', async () => {
+    const erasePerson = vi.fn(async () => 'not_configured' as const)
+    const jobs = await startErasing(erasePerson)
+
+    await queueErasure(jobs, 'user-1')
+
+    await vi.waitFor(
+      async () =>
+        expect((await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson))[0]?.state).toBe('completed'),
+      {
+        timeout: 10_000,
+      },
+    )
+    expect(erasePerson).toHaveBeenCalledTimes(1)
+    expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toEqual([])
+  })
+
+  it('Несколько реплик: два экземпляра выполняют каждое стирание один раз, а второй запрос на ту же персону отбрасывается', async () => {
+    const erased: string[] = []
+    const erasePerson = async (userId: string) => {
+      erased.push(userId)
+      return 'erased' as const
+    }
+    const a = await startErasing(erasePerson)
+    await startErasing(erasePerson)
+    const users = ['u1', 'u2', 'u3', 'u4', 'u5', 'u6']
+
+    for (const userId of users) expect(await queueErasure(a, userId)).toEqual(expect.any(String))
+    // The person is already waiting: the second request is dropped.
+    expect(await queueErasure(a, 'u1')).toBeNull()
+
+    await vi.waitFor(() => expect(erased).toHaveLength(users.length), { timeout: 20_000 })
+    expect([...erased].sort()).toEqual(users)
+  })
+})
+
+describe('удаление аккаунта и настоящая очередь', () => {
+  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: сценарии «Удаление с настроенной аналитикой»,
+  // «Остановка сервиса» (задача лежит в базе) и «Удаление не состоялось» (откат уносит и задачу).
+  const { app } = makeApp()
+
+  it('удаление по запросу кладёт в базу задачу с выдержкой 30 секунд, а откат внешней транзакции уносит и аккаунт, и задачу', async () => {
+    const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+    const { user, tokens } = await signUpAndIn(app)
+    mockAgent()
+
+    // The deletion and the erasure are one transaction: a failure after the job was queued undoes both.
+    await expect(
+      inTransaction(async () => {
+        await accountDeletionProcess.execute(new DeleteAccountOperation({ userId: user.id }))
+        throw new Error('the scenario failed after the deletion')
+      }),
+    ).rejects.toThrow('scenario failed')
+    expect(await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson)).toEqual([])
+    ok(await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD }))
+
+    expect(ok(await call(app, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
+
+    const [job] = await jobs.boss.findJobs<{ userId: string }>(JobQueue.AnalyticsErasePerson)
+    expect(job).toMatchObject({ state: 'created', singletonKey: user.id, data: { userId: user.id } })
+    // Waits 30 seconds, in the database: the next start of a pod finds it there.
+    const waits = (job!.startAfter.getTime() - Date.now()) / 1000
+    expect(waits).toBeGreaterThan(20)
+    expect(waits).toBeLessThanOrEqual(31)
+    // Identifiers only: no text, email or name in the data of the job (design D6).
+    expect(JSON.stringify(job!.data)).not.toContain('@')
+
+    // The repeated request queues nothing more.
+    expect(ok(await call(app, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
+    expect(await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson)).toHaveLength(1)
   })
 })

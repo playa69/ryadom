@@ -113,7 +113,7 @@ describe('createServerAnalytics', () => {
       flush: vi.fn(async () => void order.push('flush')),
     })
     const admin = { deletePerson: vi.fn(async () => (order.push('delete'), true)) }
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin, erasureDelayMs: 0 })
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin })
 
     expect(analytics.canErase).toBe(true)
     expect(await analytics.erasePerson('user-1')).toBe('erased')
@@ -128,7 +128,6 @@ describe('createServerAnalytics', () => {
       key: 'phc_test',
       client: fakeClient(),
       admin: { deletePerson: async () => false },
-      erasureDelayMs: 0,
     })
     expect(await refusing.erasePerson('user-1')).toBe('failed')
 
@@ -139,42 +138,24 @@ describe('createServerAnalytics', () => {
     expect(await createServerAnalytics({ ...base, key: '' }).erasePerson('user-1')).toBe('not_configured')
   })
 
-  it('стирание откладывается: запоздавший клиентский батч не успевает воскресить профиль', async () => {
-    vi.useFakeTimers()
-    try {
-      const admin = { deletePerson: vi.fn(async () => true) }
-      const analytics = createServerAnalytics({
-        ...base,
-        key: 'phc_test',
-        client: fakeClient(),
-        admin,
-        erasureDelayMs: 30_000,
-      })
-      const outcome = analytics.erasePerson('user-1')
-      await vi.advanceTimersByTimeAsync(29_000)
-      expect(admin.deletePerson).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(1_500)
-      expect(admin.deletePerson).toHaveBeenCalledWith('user-1')
-      expect(await outcome).toBe('erased')
-    } finally {
-      vi.useRealTimers()
-    }
+  it('стирание идёт сразу: выдержку в 30 секунд держит очередь задач, а не таймер в памяти пода', async () => {
+    const admin = { deletePerson: vi.fn(async () => true) }
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client: fakeClient(), admin })
+
+    // The promise settles when PostHog has been asked: no timer stands between the call and the request.
+    expect(await analytics.erasePerson('user-1')).toBe('erased')
+    expect(admin.deletePerson).toHaveBeenCalledTimes(1)
   })
 
-  it('остановка пода не теряет ожидающее стирание: оно исполняется сразу, ровно один раз', async () => {
+  it('остановка пода ничего не стирает: ожидающие стирания лежат в очереди и дойдут после запуска', async () => {
     const admin = { deletePerson: vi.fn(async () => true) }
-    const analytics = createServerAnalytics({
-      ...base,
-      key: 'phc_test',
-      client: fakeClient(),
-      admin,
-      erasureDelayMs: 60_000,
-    })
-    const outcome = analytics.erasePerson('user-1')
-    expect(admin.deletePerson).not.toHaveBeenCalled()
+    const client = fakeClient()
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin })
+
     await analytics.shutdown()
-    expect(admin.deletePerson).toHaveBeenCalledTimes(1)
-    expect(await outcome).toBe('erased')
+
+    expect(admin.deletePerson).not.toHaveBeenCalled()
+    expect(client.shutdown).toHaveBeenCalledTimes(1)
   })
 
   describe('тип трафика аккаунта', () => {

@@ -1,4 +1,4 @@
-import type { Job, PgBoss, Queue, QueueResult, UpdateQueueOptions } from 'pg-boss'
+import type { JobWithMetadata, PgBoss, Queue, QueueResult, UpdateQueueOptions } from 'pg-boss'
 import { AgentUnavailableError, createLogger } from '@ryadom/core/shared'
 import type { JobData, JobQueueName } from '@ryadom/core/services/job-queue-service'
 import { QUEUE_CATALOG, type QueueDefinition } from './catalog'
@@ -11,8 +11,11 @@ import { QUEUE_CATALOG, type QueueDefinition } from './catalog'
 
 const logger = createLogger('jobs')
 
-/** What a job is worked off with: its data and the job itself (the attempt number, the id). */
-export type JobHandler<Q extends JobQueueName> = (data: JobData[Q], job: Job<JobData[Q]>) => Promise<void>
+/** What a job is worked off with: its data and the job itself (the id, the attempt and the retries it may still have). */
+export type JobHandler<Q extends JobQueueName> = (
+  data: JobData[Q],
+  job: JobWithMetadata<JobData[Q]>,
+) => Promise<void>
 
 /** The work of each queue; the receiver of dead jobs has none. */
 export type JobHandlers = { [Q in JobQueueName]?: JobHandler<Q> }
@@ -135,9 +138,11 @@ export async function registerWorkers(
     if (!handler) continue
     await boss.work<JobData[JobQueueName]>(
       definition.name,
-      { batchSize: 1, pollingIntervalSeconds: settings.pollingIntervalSeconds ?? 2 },
+      { batchSize: 1, includeMetadata: true, pollingIntervalSeconds: settings.pollingIntervalSeconds ?? 2 },
       async (jobs) => {
-        for (const job of jobs) await runJob(definition.name, handler, job)
+        // `includeMetadata` is set above; the library types a handler by the literal of the options it is given.
+        for (const job of jobs as JobWithMetadata<JobData[JobQueueName]>[])
+          await runJob(definition.name, handler, job)
       },
     )
     registered.push(definition.name)
@@ -149,7 +154,7 @@ export async function registerWorkers(
 async function runJob(
   queue: JobQueueName,
   handler: JobHandler<JobQueueName>,
-  job: Job<JobData[JobQueueName]>,
+  job: JobWithMetadata<JobData[JobQueueName]>,
 ): Promise<void> {
   const started = Date.now()
   // Never the data of the job, only the facts about the run (design D9).

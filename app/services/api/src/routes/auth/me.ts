@@ -189,13 +189,8 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
     logger.info({ userId }, 'Аккаунт удалён по запросу пользователя')
     // Counted without the person: someone who has just asked to be erased gets no new record of themselves.
     analytics.captureAnonymous(AnalyticsEvent.AccountDeleted)
-    // «Erase everything» includes the pseudonymous profile in PostHog. In the background: the account is
-    // already gone, and the answer must not wait for another service. A failure is logged with the id
-    // so the profile can be removed by hand.
-    void analytics.erasePerson(userId).then((outcome) => {
-      if (outcome === 'failed')
-        logger.warn({ userId }, 'Не удалось стереть профиль удалённого аккаунта в PostHog')
-    })
+    // «Erase everything» includes the pseudonymous profile in PostHog: the erasure was queued with the deletion
+    // (`analytics.erase-person`), so it outlives a restart and is retried; the answer does not wait for it.
     return apiOk(c, null)
   })
 }

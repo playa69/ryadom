@@ -1,12 +1,14 @@
 /**
  * "Erase everything": the agent's data first, then the account.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   accountDeletionProcess,
   DeleteAccountOperation,
   DeleteAccountOperationErrorCode,
 } from '../src/processes/account-deletion'
+import { refreshTokensManager } from '../src/managers/refresh-tokens-manager'
+import { ERASE_PERSON_DELAY_SECONDS, getEnqueuedJobs } from '../src/services/job-queue-service'
 import { AgentUnavailableError } from '../src/shared'
 import { LoginOperationErrorCode } from '../src/processes/authentication'
 import {
@@ -92,5 +94,72 @@ describe('удаление аккаунта', () => {
     const user = await registerConfirmedUser()
     mockFetch({ 'DELETE http://agent.test/v1/users/*': () => noContent() })
     expect(await deleteAccount(user.id)).toEqual({ success: true })
+  })
+})
+
+describe('стирание профиля в аналитике ставится вместе с удалением', () => {
+  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике».
+  it('Удаление с настроенной аналитикой: в очереди задача на стирание с выдержкой 30 секунд и ключом-человеком', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent()
+
+    expect(await deleteAccount(user.id)).toEqual({ success: true })
+
+    // Only the identifier: no text, no email, no name (design D6).
+    expect(getEnqueuedJobs()).toEqual([
+      expect.objectContaining({
+        queue: 'analytics.erase-person',
+        data: { userId: user.id },
+        startAfterSeconds: ERASE_PERSON_DELAY_SECONDS,
+        singletonKey: user.id,
+      }),
+    ])
+    expect(ERASE_PERSON_DELAY_SECONDS).toBe(30)
+  })
+
+  it('Удаление не состоялось: агент не стёр данные, аккаунт на месте и задачи нет', async () => {
+    const user = await registerConfirmedUser()
+    mockFetch({ 'DELETE http://agent.test/v1/users/*': () => json({ error: 'boom' }, 503) })
+
+    await expect(deleteAccount(user.id)).rejects.toBeInstanceOf(AgentUnavailableError)
+
+    expect(getEnqueuedJobs()).toEqual([])
+  })
+
+  it('Удаление не состоялось: сбой на последнем шаге транзакции — задача не ставится (она последняя в транзакции)', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent()
+    const failing = vi.spyOn(refreshTokensManager, 'execute').mockRejectedValueOnce(new Error('the database failed'))
+
+    await expect(deleteAccount(user.id)).rejects.toThrow('the database failed')
+    failing.mockRestore()
+
+    expect((await getUserRow(user.id))?.isDeleted).toBe(false)
+    expect(getEnqueuedJobs()).toEqual([])
+    // The same request goes through afterwards, and then the job is queued.
+    expect(await deleteAccount(user.id)).toEqual({ success: true })
+    expect(getEnqueuedJobs()).toHaveLength(1)
+  })
+
+  it('повторный запрос на удаление не ставит вторую задачу', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent()
+
+    await deleteAccount(user.id)
+    await deleteAccount(user.id)
+
+    expect(getEnqueuedJobs()).toHaveLength(1)
+  })
+
+  it('без транспорта очереди удаление не проходит: аккаунт остаётся, профиль в аналитике не теряется молча', async () => {
+    const { registerJobQueueTransport } = await import('../src/services/job-queue-service')
+    const user = await registerConfirmedUser()
+    mockAgent()
+    registerJobQueueTransport(undefined)
+
+    await expect(deleteAccount(user.id)).rejects.toThrow('No job queue transport')
+
+    // The transaction rolled back with the failed step: the account is whole, the person can ask again.
+    expect((await getUserRow(user.id))?.isDeleted).toBe(false)
   })
 })

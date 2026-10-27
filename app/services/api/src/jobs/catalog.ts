@@ -43,6 +43,9 @@ export interface QueueDefinition {
 /** A finished job stays a day: its data holds identifiers only, but there is no reason to keep it longer. */
 const KEEP_FINISHED = DAY
 
+/** The erasure in analytics is tried 1 + 8 times, the pause growing from a minute to an hour. */
+export const ERASE_PERSON_RETRY_LIMIT = 8
+
 /** A job of a schedule: the next firing does the same work from the state, so a failure is not retried. */
 const NO_RETRY = { retryLimit: 0, retryDelay: 0, retryBackoff: false, retryDelayMax: null } as const
 
@@ -98,6 +101,23 @@ export const QUEUE_CATALOG: readonly QueueDefinition[] = [
       deleteAfterSeconds: KEEP_FINISHED,
       ...NO_RETRY,
       heartbeatSeconds: 30,
+      deadLetter: JobQueue.JobsDeadLetter,
+    },
+  },
+  {
+    name: JobQueue.AnalyticsErasePerson,
+    options: {
+      // `short` makes the key (the person) drop a second job while one waits; on `standard` a key does nothing.
+      policy: 'short',
+      expireInSeconds: 120,
+      // A waiting job is kept two weeks: a rollout that is rolled back picks the erasures up when it returns.
+      retentionSeconds: 14 * DAY,
+      deleteAfterSeconds: KEEP_FINISHED,
+      retryLimit: ERASE_PERSON_RETRY_LIMIT,
+      retryDelay: 60,
+      retryBackoff: true,
+      retryDelayMax: HOUR,
+      heartbeatSeconds: null,
       deadLetter: JobQueue.JobsDeadLetter,
     },
   },

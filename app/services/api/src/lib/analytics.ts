@@ -46,8 +46,8 @@ export function hasInvalidProjectToken(env: Pick<AppServerEnv, 'POSTHOG_KEY'>): 
 export function createAnalytics(
   env: AppServerEnv,
   logger: Logger,
-  /** For tests: the PostHog client and the delay before erasing are replaced. */
-  overrides: { client?: ServerAnalyticsClient; erasureDelayMs?: number } = {},
+  /** For tests: the PostHog client is replaced. */
+  overrides: { client?: ServerAnalyticsClient } = {},
 ): ServerAnalytics {
   let lastLoggedAt = 0
   const admin =
@@ -69,7 +69,6 @@ export function createAnalytics(
     accountState,
     release: env.RELEASE,
     ...(overrides.client ? { client: overrides.client } : {}),
-    ...(overrides.erasureDelayMs !== undefined ? { erasureDelayMs: overrides.erasureDelayMs } : {}),
     onError: (error) => {
       const now = Date.now()
       if (now - lastLoggedAt < ERROR_LOG_INTERVAL_MS) return
