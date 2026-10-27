@@ -290,9 +290,16 @@ def test_the_models_reply_is_voiced_with_its_own_sound_and_voices_never_interlea
         read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
         voice.calls.clear()
         send_user_message(ws, "c-1", "раз")
+        # Второе сообщение уходит, когда голос первого ответа уже пошёл. Когда оно уходило сразу следом за первым, тест раз в
+        # двадцать-шестьдесят прогонов зависал: новое сообщение человека перебивает недоигранный голос (`_supersede_speech`), и
+        # если озвучка первого ответа ещё не отдала ни кадра, от неё не остаётся ни `tts_start`, ни `tts_end`, а тест вечно ждал
+        # вторую пару. Начавшаяся озвучка всегда закрывается своим `tts_end`, так что порядок событий задан.
+        started = read_frames(ws, lambda f: has(f, "tts_start"))
         send_user_message(ws, "c-2", "два")
         # звук ответа приходит от модели; tts_end может прийти раньше assistant_end: ждём оба конца дважды
-        frames = read_frames(ws, lambda f: types(f).count("tts_end") == 2 and types(f).count("assistant_end") == 2)
+        frames = started + read_frames(
+            ws, lambda f: types(started + f).count("tts_end") == 2 and types(started + f).count("assistant_end") == 2
+        )
 
     assert voice.calls == []  # ответы озвучивает сама модель, озвучка фраз для них не нужна
     start_ids = [b["messageId"] for k, b in frames if k == "json" and b["type"] == "tts_start"]

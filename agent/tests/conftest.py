@@ -18,6 +18,7 @@ os.environ["LLM_TIMEOUT_SECONDS"] = "1"  # тест зависшей модел�
 os.environ["GEMINI_TPM_LIMIT"] = "0"  # учёт токенов Gemini выключен; его тесты (test_gemini_budget.py) включают его сами
 os.environ.pop("AGENT_API_TOKEN", None)
 
+import anyio  # noqa: E402
 import pytest  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -191,11 +192,34 @@ def ws_url(user_id: str, dialog_id: str) -> str:
 Frame = tuple[str, Any]
 
 
+FRAME_WAIT_SECONDS = 30  # дольше ни один тест кадра не ждёт: так долго идёт только зависший
+
+
+def receive_frame(ws: Any, frames: list[Frame]) -> Any:
+    """Следующий кадр сокета. Если его нет `FRAME_WAIT_SECONDS`, тест падает со списком уже пришедшего, а не висит вечно.
+
+    `WebSocketTestSession.receive` ждёт без срока: тест, у которого кадр так и не придёт (его отменило перебивание, сеанс
+    закончился), вешал весь прогон до убийства по таймауту, и причину было не найти. Срок ставится внутри цикла портала
+    (`_send_rx` — приёмная очередь сессии starlette), поэтому ожидание отменяется чисто."""
+
+    async def wait() -> Any:
+        with anyio.fail_after(FRAME_WAIT_SECONDS):
+            return await ws._send_rx.receive()
+
+    try:
+        return ws.portal.call(wait)
+    except TimeoutError:
+        seen = [(kind, body["type"] if kind == "json" else len(body) if kind == "bin" else body) for kind, body in frames]
+        pytest.fail(f"кадр не пришёл за {FRAME_WAIT_SECONDS} с; до этого пришло: {seen}", pytrace=False)
+
+
 def read_frames(ws: Any, stop: Callable[[list[Frame]], bool], limit: int = 400) -> list[Frame]:
-    """Читает кадры сокета, пока `stop` не скажет хватит. ("json", dict) | ("bin", bytes) | ("close", код)."""
+    """Читает кадры сокета, пока `stop` не скажет хватит. ("json", dict) | ("bin", bytes) | ("close", код).
+
+    Кадр не пришёл вовремя — тест падает (`receive_frame`), а не зависает."""
     frames: list[Frame] = []
     for _ in range(limit):
-        message = ws.receive()
+        message = receive_frame(ws, frames)
         if message["type"] == "websocket.close":
             frames.append(("close", message.get("code")))
             break
