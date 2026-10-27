@@ -867,7 +867,7 @@ sequenceDiagram
 
 Новые параметры бизнес-логики (пороги антизависимости, таймаут реплики, модели классификаторов и эмбеддингов, БД, Redis, Langfuse) добавляются доменными классами Settings в `agent/app/core/config.py` по правилам `agent/AGENTS.md` и описываются здесь.
 
-Шлюз, связанное с агентом: `AGENT_API_URL`, `AGENT_API_TOKEN` (в кластере берётся из ключа `AGENT_INTERNAL_TOKEN` Secret `app-secrets`), `AGENT_TIMEOUT_MS`, `DIALOG_IDLE_TIMEOUT_SEC`, `DIALOG_MAX_DURATION_SEC`, `ANONYMOUS_PURGE_DISABLED`. Озвучка к клиенту: `DIALOG_AUDIO_CODECS` (`opus,mulaw,pcm16`; пусто — только PCM16), `DIALOG_OPUS_COMPLEXITY` (0..10, по умолчанию 5), `DIALOG_OPUS_BITRATE` (бит/с, по умолчанию 24000).
+Шлюз, связанное с агентом: `AGENT_API_URL`, `AGENT_API_TOKEN` (в кластере берётся из ключа `AGENT_INTERNAL_TOKEN` Secret `app-secrets`), `AGENT_TIMEOUT_MS`, `DIALOG_IDLE_TIMEOUT_SEC`, `DIALOG_MAX_DURATION_SEC`. Озвучка к клиенту: `DIALOG_AUDIO_CODECS` (`opus,mulaw,pcm16`; пусто — только PCM16), `DIALOG_OPUS_COMPLEXITY` (0..10, по умолчанию 5), `DIALOG_OPUS_BITRATE` (бит/с, по умолчанию 24000).
 
 ---
 
