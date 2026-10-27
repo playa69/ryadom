@@ -49,7 +49,7 @@ export const REFRESH_GRACE_MS = 10_000
 /** Tokens that expired before this long ago are no longer needed even to recognise a replay. */
 const PURGE_AFTER_MS = 24 * 60 * 60 * 1000
 
-export type RotateOutcome = { ok: true; tokens: TokenPair } | { ok: false; reason: 'invalid' | 'replayed' }
+type RotateOutcome = { ok: true; tokens: TokenPair } | { ok: false; reason: 'invalid' | 'replayed' }
 
 export interface Sessions {
   /** A new session: a token pair whose refresh token is registered. */

@@ -61,7 +61,7 @@ function fieldsOf(error: z.ZodError): string[] {
 }
 
 /** One fact, or null when it does not hold up (logged without its content). */
-export function parseAgentFact(raw: unknown): AgentMemoryFactResponse | null {
+function parseAgentFact(raw: unknown): AgentMemoryFactResponse | null {
   const parsed = factSchema.safeParse(raw)
   if (parsed.success) {
     const { slots, ...fact } = parsed.data

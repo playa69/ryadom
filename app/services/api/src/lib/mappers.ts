@@ -293,7 +293,7 @@ export function toMemory(memory: MemoryDTO): MemoryApiResponse {
   }
 }
 
-export function toMemoryNote(note: MemoryNoteDTO): MemoryNoteApiResponse {
+function toMemoryNote(note: MemoryNoteDTO): MemoryNoteApiResponse {
   return {
     id: note.id,
     kind: MEMORY_NOTE_KINDS[note.kind] ?? MemoryNoteKind.Situation,

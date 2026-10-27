@@ -18,7 +18,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Index in this list is k in the port formula. */
-export const PORT_NAMES = [
+const PORT_NAMES = [
   'landing', // 0
   'admin', // 1
   'api', // 2
@@ -33,9 +33,9 @@ export const PORT_NAMES = [
   'studio', // 11 drizzle studio
 ]
 
-export const SLOT_BASE = 20000
-export const SLOT_STEP = 100
-export const E2E_SHIFT = 50
+const SLOT_BASE = 20000
+const SLOT_STEP = 100
+const E2E_SHIFT = 50
 /** Highest slot whose last port stays below 49152, where the OS hands out ephemeral ports. */
 export const MAX_SLOT = 290
 
@@ -77,7 +77,7 @@ export const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const isWindows = process.platform === 'win32'
 
 /** A compose project, container label and database name must be plain: lower case letters, digits, dashes. */
-export function sanitizeId(raw) {
+function sanitizeId(raw) {
   const id = String(raw)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -88,7 +88,7 @@ export function sanitizeId(raw) {
   return id
 }
 
-export function portsFor(slot) {
+function portsFor(slot) {
   if (!Number.isInteger(slot) || slot < 0 || slot > MAX_SLOT) {
     throw new Error(`slot ${slot} is out of range 0..${MAX_SLOT}`)
   }

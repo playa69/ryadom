@@ -17,13 +17,13 @@ import type { AppServerEnv } from './env'
  * process (env is a pod's spec, the bundle is baked into its image), so there is nothing to poll.
  */
 
-export interface NativePolicy {
+interface NativePolicy {
   minVersionCode: number
   latestVersionCode: number
   downloadUrl: string | null
 }
 
-export interface JsPolicy {
+interface JsPolicy {
   latestVersion: string | null
   bundleUrl: string | null
   checksum: string | null
@@ -98,7 +98,7 @@ function nativeOf(env: AppServerEnv, platform: AppPlatform): NativePolicy {
 }
 
 /** The policy for this process: native axis from env, JS axis from the bundle baked into the image. */
-export function buildReleasePolicy(env: AppServerEnv): ReleasePolicy {
+function buildReleasePolicy(env: AppServerEnv): ReleasePolicy {
   const bundle = otaBundleFor(env.APP_ENV)
   return {
     android: nativeOf(env, AppPlatform.Android),

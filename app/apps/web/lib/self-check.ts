@@ -11,7 +11,7 @@ export const SELF_CHECK_ENABLED = process.env.NEXT_PUBLIC_SELF_CHECK_ENABLED ===
  * Dev stacks and staging also show the tests that wait for the owner's sign-off (`status: 'review'`); production
  * shows only `ready` ones. Switch: `NEXT_PUBLIC_SELF_CHECK_PREVIEW=1` at build time.
  */
-export const SELF_CHECK_PREVIEW = process.env.NEXT_PUBLIC_SELF_CHECK_PREVIEW === '1'
+const SELF_CHECK_PREVIEW = process.env.NEXT_PUBLIC_SELF_CHECK_PREVIEW === '1'
 
 /** Every test to show: nothing while the tests are off. */
 export const shownTests = () => (SELF_CHECK_ENABLED ? visible(SELF_CHECK_PREVIEW) : [])

@@ -6,7 +6,7 @@
  */
 
 /** Memory for one dialog: `off` is a conversation "without memory". */
-export const AGENT_DIALOG_MEMORY_MODES = ['on', 'off'] as const
+const AGENT_DIALOG_MEMORY_MODES = ['on', 'off'] as const
 export type AgentDialogMemoryMode = (typeof AGENT_DIALOG_MEMORY_MODES)[number]
 
 export const AGENT_MEMORY_FACT_CATEGORIES = [

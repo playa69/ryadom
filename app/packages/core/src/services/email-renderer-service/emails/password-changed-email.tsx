@@ -9,7 +9,7 @@ interface PasswordChangedEmailProps {
 }
 
 /** Password changed. Cannot be turned off: it is the owner's signal that someone else signed in. */
-export function PasswordChangedEmail({ userName, changedAt }: PasswordChangedEmailProps) {
+function PasswordChangedEmail({ userName, changedAt }: PasswordChangedEmailProps) {
   return (
     <EmailLayout preview="Пароль от аккаунта изменён" heading={greeting(userName)}>
       <Paragraph>{`Пароль от твоего аккаунта изменён ${formatMoscowDateTime(changedAt)}.`}</Paragraph>

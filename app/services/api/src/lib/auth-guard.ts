@@ -28,7 +28,7 @@ function bearerToken(header: string | undefined): string | null {
   return token || null
 }
 
-export async function getUserFromRequest(jwt: Jwt, authorization: string | undefined): Promise<AuthUser | null> {
+async function getUserFromRequest(jwt: Jwt, authorization: string | undefined): Promise<AuthUser | null> {
   const token = bearerToken(authorization)
   if (!token) return null
   const payload = await jwt.verifyToken(token, 'access')

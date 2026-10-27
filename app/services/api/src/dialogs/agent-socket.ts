@@ -25,7 +25,7 @@ export interface AgentSocketHandlers {
   onError(error: Error): void
 }
 
-export function agentWsUrl(baseUrl: string, userId: string, dialogId: string): string {
+function agentWsUrl(baseUrl: string, userId: string, dialogId: string): string {
   const base = baseUrl.replace(/^http/, 'ws')
   return `${base}/v1/users/${encodeURIComponent(userId)}/dialogs/${encodeURIComponent(dialogId)}/ws`
 }
