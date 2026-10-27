@@ -149,9 +149,9 @@ LoadBalancer в Timeweb managed k8s нет. Схема:
 с reg.ru на Yandex Cloud DNS (зона `slyshu-ryadom`, см. CLOUD-RESOURCES.md).
 Только корневой домен, поддоменов нет, wildcard нет — маршрутизация
 path-based через HTTPRoute (шаблон `istio/manifests/00-example-gateway.yaml`).
-Так же публикуются сервисы из `app/` (`/`, `/api`, `/app`, `/admin`; Python
-backend — `/api/v1`) — см. раздел «Сервисы из app/» ниже. Новых DNS-записей,
-сертификатов и listener'ов для них не нужно.
+Так же публикуются сервисы из `app/` (`/`, `/api`, `/app`, `/admin`) — см.
+раздел «Сервисы из app/» ниже. Новых DNS-записей, сертификатов и listener'ов
+для них не нужно.
 
 TLS — cert-manager + Gateway API:
 
@@ -266,13 +266,13 @@ helm install alloy grafana/alloy \
 | | Админ (`twc-sber500-config.yaml`) | Developer (`developer-kubeconfig.yaml`) |
 |---|---|---|
 | Идентичность | cluster-admin сертификат Timeweb | SA `developer` (ns agent) + RBAC (k8s/rbac/) |
-| Зона ответственности | весь кластер: инфра, NetworkPolicy, Istio, БД, мониторинг, node-level | только ns `agent`/`backend` (полный CRUD своих workload'ов) |
-| БД и Langfuse | управление (секреты, рестарты, удаление) | read-only + port-forward + логи (debug); креды PG/Redis — Secret `db-credentials` в agent/backend (PG-юзер `developer`, не superuser) |
+| Зона ответственности | весь кластер: инфра, NetworkPolicy, Istio, БД, мониторинг, node-level | только ns `agent` (полный CRUD своих workload'ов) |
+| БД и Langfuse | управление (секреты, рестарты, удаление) | read-only + port-forward + логи (debug); креды PG/Redis — Secret `db-credentials` в agent (PG-юзер `developer`, не superuser) |
 | prod, monitoring, istio-system | полный доступ | полный запрет (даже read) |
 | Cluster-scope (CRD, RBAC, NetworkPolicy, namespaces) | да | нет (только get/list namespaces и nodes) |
 | pods/exec, delete подов в ryadom-db | да | нет |
 | Кому выдаётся | только владельцу, не передаётся | всей команде разработки |
-| Компрометация = | потеря всего кластера и данных | ущерб ограничен ns agent/backend; отзыв — `kubectl delete secret developer-token -n agent` + перевыпуск |
+| Компрометация = | потеря всего кластера и данных | ущерб ограничен ns agent; отзыв — `kubectl delete secret developer-token -n agent` + перевыпуск |
 
 ### ServiceAccount внутри кластера (рабочие)
 
@@ -283,7 +283,7 @@ helm install alloy grafana/alloy \
 | `db-jobs` | ryadom-db | админ-Job'ы (create-langfuse-db) |
 | `redis` | ryadom-db | поды redis-node (создаёт чарт bitnami/redis) |
 | `langfuse`, `langfuse-clickhouse`, `langfuse-redis-primary` | infra | чарт Langfuse |
-| `developer` | agent | общий SA коллег-разработчиков (деплой в agent/backend, debug — см. «Доступы для разработчиков») |
+| `developer` | agent | общий SA коллег-разработчиков (деплой в agent, debug — см. «Доступы для разработчиков») |
 
 ### Доступ к Yandex Cloud из кластера (через Secrets)
 
@@ -291,7 +291,7 @@ helm install alloy grafana/alloy \
 |---|---|---|---|
 | `cnpg-backup-s3-credentials` | ryadom-db | статический S3-ключ (бэкапы → ryadom-cnpg-backups) | `ryadom-backups` |
 | `langfuse-s3-credentials` | infra | статический S3-ключ (blobs → ryadom-app-storage) | `ryadom-app-storage` |
-| `registry-pull` | prod, infra, ryadom-db, monitoring, istio-system, cert-manager, cnpg-system, agent, backend | dockerconfigjson для pull из зеркала cr.yandex/crpsqeamqpuvrkm5tpr9 (imagePullSecret всех workload'ов) | `ryadom-registry-puller` |
+| `registry-pull` | prod, infra, ryadom-db, monitoring, istio-system, cert-manager, cnpg-system, agent | dockerconfigjson для pull из зеркала cr.yandex/crpsqeamqpuvrkm5tpr9 (imagePullSecret всех workload'ов) | `ryadom-registry-puller` |
 | `ryadom-tls` | istio-system | LE-сертификат корневого домена (создаёт cert-manager); копия в prod — при публикации Gateway из prod | — |
 
 Ключ SA `ryadom-dns` (dns.editor) в кластер НЕ загружался — HTTP-01 его не
@@ -315,13 +315,13 @@ kubectl get pods -n agent
 
 | Где | Права | Роль (k8s/rbac/) |
 |---|---|---|
-| `agent`, `backend` | полный CRUD: deployments, statefulsets, pods, services, configmaps, secrets, pvc, jobs/cronjobs, ingresses, httproutes + логи/port-forward своих подов | ClusterRole `developer-deploy` (RoleBinding в обоих ns) |
+| `agent` | полный CRUD: deployments, statefulsets, pods, services, configmaps, secrets, pvc, jobs/cronjobs, ingresses, httproutes + логи/port-forward своих подов | ClusterRole `developer-deploy` (RoleBinding в ns agent) |
 | `ryadom-db` (postgres, redis), `infra` (langfuse) | read-only (pods/services/endpoints/statefulsets, логи) + `pods/portforward` | ClusterRole `developer-debug` |
 | весь кластер | get/list namespaces, nodes (ориентироваться) | ClusterRole `developer-read-cluster` (ClusterRoleBinding) |
 
-**Что запрещено:** любые изменения вне agent/backend (prod, monitoring,
+**Что запрещено:** любые изменения вне agent (prod, monitoring,
 istio-system, cert-manager, cnpg-system — read тоже нет), secrets вне
-agent/backend, cluster-scope ресурсы (RBAC, CRD, NetworkPolicy и т.п.),
+agent, cluster-scope ресурсы (RBAC, CRD, NetworkPolicy и т.п.),
 pods/exec нигде.
 
 **Port-forward для отладки:**
@@ -337,7 +337,7 @@ kubectl port-forward -n infra svc/langfuse-web 3000:3000
 ```
 
 **Креды БД для разработчиков** — Secret `db-credentials` в namespace
-`agent` и `backend` (читается их RBAC, значения одинаковые в обоих ns):
+`agent` (читается его RBAC):
 
 ```bash
 # пример: прочитать пароль postgres
@@ -347,17 +347,16 @@ kubectl get secret db-credentials -n agent \
 
 Поля: `postgres-host` (`ryadom-db-rw.ryadom-db.svc.cluster.local`; при
 port-forward — `localhost`), `postgres-port` 5432, `postgres-user`
-`developer`, `postgres-password`, `postgres-db-agent` / `postgres-db-backend`
-(базы уже созданы, owner — developer); `redis-host`
+`developer`, `postgres-password`, `postgres-db-agent`
+(база уже создана); `redis-host`
 (`redis.ryadom-db.svc.cluster.local`), `redis-port` 6379,
 `redis-sentinel-port` 26379, `redis-master-name` `mymaster`,
 `redis-password`.
 
 - PG-пользователь `developer`: LOGIN + CREATEDB, БЕЗ superuser/createrole
   (managed role в `postgres/manifests/01-cnpg-cluster.yaml`, пароль —
-  Secret `developer-pg-role` в ryadom-db). Свои базы (`agent`, `backend`)
-  и новые БД через CREATEDB — можно; чужие базы (langfuse, ryadom) и роли —
-  нельзя.
+  Secret `developer-pg-role` в ryadom-db). Новые БД через CREATEDB — можно;
+  чужие базы (langfuse, ryadom) и роли — нельзя.
 - Redis — один общий AUTH-пароль на всех (ограничение bitnami
   redis+sentinel: ACL-пользователи усложняют репликацию). Hardening
   через Redis ACL — отдельная будущая задача.
@@ -463,7 +462,7 @@ port-forward, наружу НЕ публикуется.
 (:15090, порт http-envoy-prom — сайдкары будущих приложений и сам
 ingressgateway), `cnpg` (инстансы ryadom-db :9187). Grafana datasource Loki
 добавлен через values (`grafana.additionalDataSources`). Метрики приложений —
-через ServiceMonitor: `backend-api` (:8000) и `agent` (:8001,
+через ServiceMonitor: `agent` (:8001,
 `agent/04-servicemonitor.yaml`: расход моделей, задержки голоса, база диалогов).
 
 Доступ к Grafana: `kubectl port-forward -n monitoring svc/prometheus-grafana
@@ -487,15 +486,14 @@ manifests/02-dashboard-cluster-resources.yaml): CPU/RAM usage/requests/limits
 
 ## Сервисы из app/ (ns prod)
 
-Node-приложения «Рядом» из каталога `app/` репозитория (отдельно от Python
-`backend/` в ns `backend`). Манифесты — `k8s/app/`, образы —
+Node-приложения «Рядом» из каталога `app/` репозитория. Манифесты —
+`k8s/app/`, образы —
 `cr.yandex/crpsqeamqpuvrkm5tpr9/app/<name>:<tag>`.
 
 Всё на ОДНОМ хосте по путям, самый длинный префикс побеждает, пути не переписываются:
 
 | Путь | Сервис | Порт | Что |
 |---|---|---|---|
-| `/api/v1/*` | Python backend (ns `backend`) | 8000 | уже работает, длиннее `/api` и побеждает |
 | `/api/*` | `app-api` | 3002 | REST, WebSocket к агенту (`/api/dialogs/ws`), OTA-бандлы (`/api/ota`) |
 | `/app/*` | `app-web` | 3003 | веб-клиент после входа (Next `basePath=/app`) |
 | `/pwa/*` | `app-pwa` | 3004 | PWA: браузерная сборка `apps/mobile` за nginx (Vite `base=/pwa/`), ставится на домашний экран; ссылка с инструкцией — на `/download` |
@@ -505,15 +503,13 @@ Node-приложения «Рядом» из каталога `app/` репоз
 
 `<домен>` = `xn----htbtgjker8b3a2c.xn--p1ai`. Общий ConfigMap `app-config`
 (+ `app-admin-config` для админки), секреты `app-secrets`/`app-smtp`
-(значения хранятся локально у администратора, в git их нет). БД — тот же сервер
-CNPG `ryadom-db` (`ryadom-db-rw.ryadom-db:5432`), что у Python backend, но
-**своя база и своя роль `app`**: у backend база `backend` и роль `developer`.
+(значения хранятся локально у администратора, в git их нет). БД — общий сервер
+CNPG `ryadom-db` (`ryadom-db-rw.ryadom-db:5432`), но **своя база и своя роль `app`**.
 Базу, роль и расширение `citext` создаёт Job `create-app-db`.
 
-**Мобильный клиент** использует именно `app-api` (origin `https://<домен>`, пути
-`/api/*`; это `app/services/api`), а не Python backend: адрес вшивается в образ
-api при сборке (build-arg `VITE_PROD_API_URL`) и попадает в OTA-бандлы.
-Python backend (`/api/v1`) живёт отдельно и мобильным клиентом не используется.
+**Мобильный клиент** ходит в `app-api` (origin `https://<домен>`, пути
+`/api/*`; это `app/services/api`): адрес вшивается в образ api при сборке
+(build-arg `VITE_PROD_API_URL`) и попадает в OTA-бандлы.
 
 ### Пути и префиксы (как приложения живут под `/app`, `/pwa` и `/admin`)
 
@@ -555,8 +551,7 @@ Python backend (`/api/v1`) живёт отдельно и мобильным к�
 
 Общий Redis `ryadom-db` (Sentinel) нужен только `app-api` — для счётчиков
 лимитов запросов (вход, коды из писем, регистрация устройства). Ключи
-`ryadom:rl:*` (префикс по умолчанию; Python backend пишет свои счётчики как
-`rl:*` и коды писем, так что пересечений нет) с TTL окна; пароль — `REDIS_PASSWORD` в `app-secrets`. Если Redis недоступен,
+`ryadom:rl:*` (префикс по умолчанию) с TTL окна; пароль — `REDIS_PASSWORD` в `app-secrets`. Если Redis недоступен,
 api сам считает лимиты в памяти (`lib/redis-rate-limiter.ts`), то есть
 отказ Redis не кладёт вход. Сетевые правила уже есть: `prod` → `ryadom-db`
 :6379/:26379 (01-network-policy-prod) и приём из `prod` на стороне Redis
@@ -768,8 +763,7 @@ kubectl -n prod get httproute                                        # Accepted/
 `/pwa/`; `/pwa/sw.js` и `/pwa/manifest.webmanifest` отдаются), `/admin/` (редирект на
 `/admin/login`); на `/download` карточка «Установить из браузера» ведёт на `/pwa/`;
 логи api: «Redis подключён»;
-проверка IP-лимитов (раздел выше); **регресс** — `https://<домен>/api/v1/...` Python
-backend отвечает как раньше (его маршрут длиннее `/api` и побеждает). Откат:
+проверка IP-лимитов (раздел выше). Откат:
 `kubectl delete -f k8s/app/<svc>/02-httproute.yaml` (снимает публикацию сервиса);
 БД `app` удалять только осознанно (есть daily-бэкап CNPG).
 

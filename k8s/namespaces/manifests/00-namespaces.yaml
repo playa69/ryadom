@@ -1,18 +1,18 @@
 # =============================================================================
-# Namespaces: prod / infra / ryadom-db / monitoring / agent / backend
+# Namespaces: prod / infra / ryadom-db / monitoring / agent
 # =============================================================================
 # Кластер только под production (dev/stage на момент создания каркаса не
 # нужны — при появлении добавить по образцу prod). Изоляция — через
-# NetworkPolicy (см. 01..03,05,06-network-policy-*.yaml и
+# NetworkPolicy (см. 01..03,05-network-policy-*.yaml и
 # monitoring/manifests/01-network-policy.yaml): default-deny
 # ingress/egress в каждом namespace, трафик между namespace запрещён
 # (кроме явных allow).
 #
-# agent (логика агента) и backend (бэкенд) — namespace коллег-разработчиков
-# (2026-10-02), деплоят через SA developer (см. k8s/rbac/). Политики —
-# по образцу prod (05/06-network-policy-*.yaml).
+# agent (логика агента) — namespace коллег-разработчиков (2026-10-02),
+# деплоят через SA developer (см. k8s/rbac/). Политики — по образцу prod
+# (05-network-policy-agent.yaml).
 #
-# istio-injection=enabled — прикладные namespace (prod, agent, backend):
+# istio-injection=enabled — прикладные namespace (prod, agent):
 # сайдкары нужны приложениям и LLM-агентам. infra (служебные workload'ы),
 # ryadom-db (CNPG PostgreSQL) и monitoring (Prometheus/Loki/Grafana) — БЕЗ
 # инъекции: паттерн референса, базы и мониторинг живут в отдельных не-meshed
@@ -60,14 +60,5 @@ metadata:
   name: agent
   labels:
     kubernetes.io/metadata.name: agent
-    app.kubernetes.io/part-of: ryadom
-    istio-injection: enabled
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: backend
-  labels:
-    kubernetes.io/metadata.name: backend
     app.kubernetes.io/part-of: ryadom
     istio-injection: enabled

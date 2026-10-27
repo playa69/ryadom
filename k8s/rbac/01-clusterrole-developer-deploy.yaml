@@ -1,8 +1,8 @@
 # =============================================================================
 # ClusterRole developer-deploy — деплой своих сервисов
 # =============================================================================
-# Выдаётся SA agent/developer RoleBinding'ами ТОЛЬКО в namespace agent и
-# backend (ниже в этом файле) — cluster-scope ресурсов в роли нет,
+# Выдаётся SA agent/developer RoleBinding'ом ТОЛЬКО в namespace agent
+# (ниже в этом файле) — cluster-scope ресурсов в роли нет,
 # ClusterRole использована просто как переиспользуемый набор правил.
 #
 # Помимо CRUD на workload'ы: read pods/log + create pods/portforward —
@@ -54,20 +54,6 @@ kind: RoleBinding
 metadata:
   name: developer-deploy
   namespace: agent
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: developer-deploy
-subjects:
-  - kind: ServiceAccount
-    name: developer
-    namespace: agent
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: developer-deploy
-  namespace: backend
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
