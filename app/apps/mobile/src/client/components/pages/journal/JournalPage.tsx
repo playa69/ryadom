@@ -3,7 +3,6 @@ import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useRef } from 'react'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { dialogMemoryMark } from '@ryadom/client-core/memory'
 import { journal, useJournal } from '../../../lib/journal'
 import { TAB_IDS } from '../../../lib/nav'
@@ -13,6 +12,7 @@ import DiaryShell from '../diary/DiaryShell'
 import { formatJournalDate, nbspDash, tensionLabel } from './format'
 import { JournalEntryBody } from './JournalEntryPage'
 import RecapAutoSetting from './RecapAutoSetting'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
 /**
  * Journal: a feed of past conversations with their summaries. The agent stores the
@@ -82,16 +82,22 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
 
           {items !== null && items.length > 0 && (
             <>
-              {keepsConversations && (
-                // The history is what a person has to lose, so this is where the address is offered.
+              {keepsConversations ? (
+                // The address is offered where the history is: it saves the account, not the conversations.
                 <Block data-testid="journal-link-email">
                   <p className="rd-caption">
-                    Разговоры хранятся только на этом устройстве, {ANONYMOUS_RETENTION_DAYS} дней после
-                    последнего визита. Привяжи почту, чтобы не потерять их.
+                    {DIALOG_KEEP_NOTE} Без почты аккаунт открывается только на этом устройстве и {GUEST_LIFE_CLAUSE}.
+                    Привяжи почту, чтобы сохранить аккаунт.
                   </p>
                   <Button small round outline onClick={() => f7router.navigate('/profile/link-email/')}>
                     {user?.email === null ? 'Привязать почту' : 'Подтвердить почту'}
                   </Button>
+                </Block>
+              ) : (
+                <Block>
+                  <p className="rd-caption" data-testid="journal-retention">
+                    {DIALOG_KEEP_NOTE}
+                  </p>
                 </Block>
               )}
               <RecapAutoSetting />
@@ -113,12 +119,12 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
                       after={tensionLabel(item) ?? undefined}
                       onClick={() => openEntry(item.dialogId)}
                     >
-                      {/* A conversation "without memory" says so beside its date: it is deleted a day after it went quiet. */}
+                      {/* A conversation "without memory" says so beside its date. */}
                       {mark && (
                         <span slot="subtitle">
                           {formatJournalDate(item.startedAt)}
                           <span className="rd-journal-mark" data-testid="journal-incognito">
-                            {mark.label} · удалится через сутки
+                            {mark.label}
                           </span>
                         </span>
                       )}

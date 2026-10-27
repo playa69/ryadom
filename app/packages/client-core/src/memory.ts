@@ -92,7 +92,7 @@ export function dialogMemoryMark(dialog: {
   memoryMode?: string | null
 }): { label: string; hint: string } | null {
   return dialog.memoryMode === 'off'
-    ? { label: 'Без памяти', hint: 'Удалится через сутки после последнего сообщения' }
+    ? { label: 'Без памяти', hint: 'Рядом ничего не запомнит из этого разговора' }
     : null
 }
 
