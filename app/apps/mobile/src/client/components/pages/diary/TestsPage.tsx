@@ -1,12 +1,15 @@
 import type { Router } from 'framework7/types'
 import { useEffect, useMemo, useState } from 'react'
 import { openTest, shownTests } from '../../../lib/self-check'
-import { lengthLine } from '../../self-check/format'
+import { refreshLatestResults, openHistory, useLatestResults } from '../../../lib/self-check-store'
+import SavedLine from '../../self-check/SavedLine'
 import DiaryShell from './DiaryShell'
 
 /** Segment «Тесты»: every shown test with search over the title, the code and the description. */
 export default function TestsPage({ f7router }: { f7router: Router.Router }) {
   const [query, setQuery] = useState('')
+  const latest = useLatestResults()
+  useEffect(() => refreshLatestResults(), [])
   const all = useMemo(() => shownTests(), [])
   const found = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -42,10 +45,19 @@ export default function TestsPage({ f7router }: { f7router: Router.Router }) {
             </h2>
             <p className="rd-muted">{t.preface}</p>
             <div className="rd-test-card-foot">
-              <span className="rd-muted">{lengthLine(t)}</span>
-              <button type="button" className="rd-link-button" data-testid={`tests-start-${t.id}`} onClick={() => openTest(t.id, 'tests')}>
-                Пройти →
-              </button>
+              <span className="rd-muted">
+                <SavedLine test={t} result={latest[t.id]} />
+              </span>
+              <span className="rd-test-card-actions">
+                {latest[t.id] && (
+                  <button type="button" className="rd-link-button rd-link-button--dim" data-testid={`tests-history-${t.id}`} onClick={() => openHistory(t.id)}>
+                    История
+                  </button>
+                )}
+                <button type="button" className="rd-link-button" data-testid={`tests-start-${t.id}`} onClick={() => openTest(t.id, 'tests')}>
+                  Пройти →
+                </button>
+              </span>
             </div>
           </section>
         ))}

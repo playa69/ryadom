@@ -1,3 +1,12 @@
+import type {
+  DeleteSelfCheckApiResponse,
+  SaveSelfCheckApiRequest,
+  SelfCheckApiErrorCode,
+  SelfCheckConsentApiResponse,
+  SelfCheckLatestApiResponse,
+  SelfCheckResultApi,
+  SelfCheckResultsApiResponse,
+} from '@ryadom/contracts/api/self-check'
 import type { AppStatusApiResponse } from '@ryadom/contracts/api/app-status'
 import type {
   ConfirmEmailApiErrorCode,
@@ -109,6 +118,7 @@ import {
   ApiPath,
   dialogEndPath,
   dialogPath,
+  selfCheckResultPath,
   dialogRecapPath,
   dialogSharePath,
   memoryFactPath,
@@ -842,6 +852,60 @@ export function createClient(config: ClientConfig) {
     /** The token of the Android widget; shown once. */
     createWidgetToken: (): Promise<WidgetTokenApiResponse> =>
       apiFetch<WidgetTokenApiResponse>(ApiPath.DiaryWidgetToken, { method: 'POST' }),
+
+    // ─── tests inside the app (add-self-check-tests) ───────────────────────────
+    // A result is a fact about health: the screens show it and keep it in memory only, never in logs or analytics.
+
+    getSelfCheckConsent: (): Promise<SelfCheckConsentApiResponse> =>
+      apiFetch<SelfCheckConsentApiResponse>(ApiPath.SelfCheckConsent),
+
+    giveSelfCheckConsent: (version: string): Promise<SelfCheckConsentApiResponse> =>
+      apiFetch<SelfCheckConsentApiResponse>(ApiPath.SelfCheckConsent, { method: 'POST', body: { version } }),
+
+    /** Withdrawing the consent also deletes every saved result. */
+    revokeSelfCheckConsent: (): Promise<DeleteSelfCheckApiResponse> =>
+      apiFetch<DeleteSelfCheckApiResponse>(ApiPath.SelfCheckConsent, { method: 'DELETE' }),
+
+    /** The server recounts the answers; `CONSENT_REQUIRED` means the consent sheet comes first. */
+    saveSelfCheckResult: (
+      data: SaveSelfCheckApiRequest,
+    ): Promise<ApiOutcome<SelfCheckResultApi, SelfCheckApiErrorCode>> =>
+      apiOutcome<SelfCheckResultApi, SelfCheckApiErrorCode>(ApiPath.SelfCheckResults, { method: 'POST', body: data }),
+
+    /**
+     * A crisis answer was given: the server's counter grows by one. No sign-in, no session headers and no tracing ids go
+     * with it, so nothing ties the count to a person; a failure (no network) is silent.
+     */
+    reportSelfCheckCrisis: (testId: string): Promise<void> =>
+      fetch(`${config.apiBase()}${ApiPath.SelfCheckCrisis}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testId }),
+        credentials: 'omit',
+        keepalive: true,
+        signal: AbortSignal.timeout(5_000),
+      }).then(
+        () => undefined,
+        () => undefined,
+      ),
+
+    latestSelfCheckResults: (): Promise<SelfCheckLatestApiResponse> =>
+      apiFetch<SelfCheckLatestApiResponse>(ApiPath.SelfCheckLatest),
+
+    listSelfCheckResults: (testId: string, before?: string): Promise<SelfCheckResultsApiResponse> =>
+      apiFetch<SelfCheckResultsApiResponse>(
+        `${ApiPath.SelfCheckResults}?testId=${encodeURIComponent(testId)}${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    deleteSelfCheckResult: (resultId: string): Promise<DeleteSelfCheckApiResponse> =>
+      apiFetch<DeleteSelfCheckApiResponse>(selfCheckResultPath(resultId), { method: 'DELETE' }),
+
+    /** All results of one test, or of every test without `testId`. */
+    deleteSelfCheckResults: (testId?: string): Promise<DeleteSelfCheckApiResponse> =>
+      apiFetch<DeleteSelfCheckApiResponse>(
+        testId ? `${ApiPath.SelfCheckResults}?testId=${encodeURIComponent(testId)}` : ApiPath.SelfCheckResults,
+        { method: 'DELETE' },
+      ),
 
     // ─── memory ───────────────────────────────────────────────────────────────
     // What comes back holds the person's own words: the screens show it and keep it in memory only,
