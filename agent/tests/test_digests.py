@@ -36,22 +36,20 @@ def test_needs_the_internal_token(client, user_id):
     assert post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}, headers={}).status_code == 401
 
 
-def test_week_template_text_is_deterministic_and_clean(client, user_id):
-    body = {**WEEK, "marks": marks(3, 4, 4, 5)}
-    first = post(client, user_id, body).json()
-    assert post(client, user_id, body).json() == first
-    assert first["stats"] == {"markedDays": 4, "hardDays": 0, "mostFrequent": 4}
-    assert 2 <= len(re.findall(r"[.!?]", first["text"])) <= 6
-    assert "влияло" not in first["text"] and "чаще всего" not in first["text"].lower()  # обзор, а не перечень статистики
-    assert not FORBIDDEN.search(first["text"])
-    assert "людей" not in first["text"] and "люди" not in first["text"]
+def test_without_a_model_there_is_no_text(client, user_id):
+    response = post(client, user_id, {**WEEK, "marks": marks(3, 4, 4, 5)})
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "DIGEST_UNAVAILABLE"
 
 
-def test_hard_week_ends_with_a_soft_line_about_people(client, user_id):
-    reply = post(client, user_id, {**WEEK, "marks": marks(1, 1, 1, 3)}).json()
-    assert reply["stats"]["hardDays"] == 3
-    assert reply["text"].rstrip().endswith("и я тоже здесь.")
-    assert "люди" in reply["text"]
+def test_a_hard_week_needs_the_soft_line_about_people(user_id):
+    plain = "Неделя была тяжёлой. Много сил ушло на работу. К концу стало чуть спокойнее."
+    with_people = plain + " Рядом могут быть люди, с которыми можно поговорить."
+    with make_client(None, chat=ScriptedChat(with_people)) as client:
+        reply = post(client, user_id, {**WEEK, "marks": marks(1, 1, 1, 3)}).json()
+    assert reply["stats"]["hardDays"] == 3 and reply["text"] == with_people
+    with make_client(None, chat=ScriptedChat(plain)) as client:
+        assert post(client, user_id, {**WEEK, "marks": marks(1, 1, 1, 3)}).status_code == 502
 
 
 def test_validation(client, user_id):
@@ -80,17 +78,29 @@ def test_model_text_is_used_when_it_is_fine_and_gets_only_codes(user_id):
     assert "@" not in sent
 
 
-def test_model_text_with_forbidden_words_falls_back_to_the_template(user_id):
+def test_a_rejected_model_text_is_asked_for_again_and_never_replaced(user_id):
     for bad in (
         "Тебе надо отдыхать. Это важно. Вот так. И так.",
         "Средний балл недели 3,5 из 5. Это хорошо. Так бывает. Всё ок.",
         "Ты отмечал пять дней подряд. Это здорово. Так держать. Рядом.",
         "Слишком коротко.",
     ):
-        with make_client(None, chat=ScriptedChat(bad)) as client:
-            reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
-        assert not FORBIDDEN.search(reply["text"]), bad
-        assert reply["text"].startswith("На этой неделе")
+        chat = ScriptedChat(bad)
+        with make_client(None, chat=chat) as client:
+            response = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)})
+        assert response.status_code == 502, bad  # запасного текста нет
+        assert len(chat.seen) == 2, bad  # один повтор
+
+
+def test_the_second_attempt_can_pass(user_id):
+    class Flaky(ScriptedChat):
+        async def complete(self, messages):
+            self.seen.append(messages)
+            return "Тебе надо отдыхать. Это важно. Вот так. И так." if len(self.seen) == 1 else "Неделя шла ровно. Ты заглядывал в себя. Это бережно."
+
+    with make_client(None, chat=Flaky("")) as client:
+        reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
+    assert reply["text"].startswith("Неделя шла ровно.")
 
 
 def test_model_failure_is_a_502_without_the_body(user_id):
@@ -140,12 +150,11 @@ def test_six_words_in_a_row_from_what_the_person_said_are_a_quotation():
     assert not digests.has_quotation("Начальник меняет приоритеты.", said)  # короче шести слов
 
 
-def test_model_text_with_a_quotation_falls_back_to_the_template(user_id):
+def test_model_text_with_a_quotation_is_not_used(user_id):
     bad = "Неделя была непростой. Ты написал «я больше не могу так работать». Это было важно. Спасибо, что делишься."
     with make_client(None, chat=ScriptedChat(bad)) as client:
-        reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
-    assert "не могу" not in reply["text"]
-    assert reply["text"].startswith("На этой неделе")
+        response = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)})
+    assert response.status_code == 502 and "не могу" not in response.text
 
 
 def test_clean_digest_rejects_a_verbatim_piece_of_the_source():
@@ -161,25 +170,19 @@ def test_week_recaps_reach_the_model_but_are_not_quoted_back(user_id):
     recap = {"date": "2026-10-20", "text": "Ты не можешь больше терпеть начальника каждый день. Тебе важно, чтобы тебя услышали"}
     quoted = (
         "Эта неделя была непростой, и ты не можешь больше терпеть начальника каждый день. "
-        "Ты отмечал настроение и находил время для себя. Чаще всего было нормально. "
-        "Заметно, что тебе важны люди рядом. Я рад быть рядом."
+        "Ты отмечал настроение и находил время для себя. Заметно, что тебе важны люди рядом. Я рад быть рядом."
     )
     chat = ScriptedChat(quoted)
     with make_client(None, chat=chat) as client:
         body = {**WEEK, "marks": marks(3, 3, 4), "recaps": [recap]}
-        text = post(client, user_id, body).json()["text"]
+        response = post(client, user_id, body)
     assert "Итоги разговоров недели" in chat.seen[0][1]["content"] and "начальника" in chat.seen[0][1]["content"]
-    assert "Чаще всего было нормально" not in text  # ответ модели с дословной цитатой отбракован, подставлен шаблон из содержания итогов
-    assert text.startswith("На этой неделе")
-    assert "работа и дела" in text  # общая тема, без слов самого итога
-    assert "начальника" not in text
+    assert "без привязки к дням" in chat.seen[0][1]["content"] and "2026-10-20: Ты не" not in chat.seen[0][1]["content"]
+    assert response.status_code == 502  # дословная цитата итога отбракована, запасного текста нет
 
 
-def test_week_text_is_a_general_overview_without_quotes_or_ties_to_a_dialog():
+def test_clean_digest_rejects_a_tie_to_a_day_or_a_dialog():
     from app.services import digests
 
-    recaps = [{"date": "2026-10-20", "text": "Тяжёлая неделя на работе, поговорю с руководителем до пятницы."}]
-    text = digests.template_digest("week", marks(3, 3, 4), recaps)
-    assert "работа и дела" in text
-    assert "руководител" not in text and "пятниц" not in text
     assert digests.clean_digest("week", "Неделя шла непросто. В понедельник ты много думал о работе. Рядом бывают люди.", marks(3, 3, 4)) is None
+    assert digests.clean_digest("week", "Неделя шла непросто. Ты много думал о работе. Рядом бывают люди.", marks(3, 3, 4)) is not None

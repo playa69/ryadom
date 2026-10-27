@@ -21,6 +21,7 @@ router = APIRouter(prefix="/v1/users/{user_id}/digests", dependencies=[Depends(r
 
 MAX_MARKS = 7
 MAX_RECAPS = 100
+ATTEMPTS = 2  # ответ, не прошедший проверку, просим один раз повторить
 
 
 def _date(value: str) -> str:
@@ -71,20 +72,25 @@ async def create_digest(user_id: str, body: DigestBody, request: Request) -> dic
     stats = digests.stats_of(marks)
 
     chat: ChatModel | None = request.app.state.chat
+    if chat is None:
+        # Запасного текста нет: итоги недели пишет только модель.
+        raise AgentError(502, "DIGEST_UNAVAILABLE", "Модели нет, итоги не написаны")
+    # Тексты, написанные человеком или о нём (итоги разговоров), дословно в итог не берём.
+    sources = [r["text"] for r in recaps]
+    messages = digests.build_messages(body.kind, body.period_start, marks, recaps)
     text: str | None = None
-    if chat is not None:
+    for attempt in range(1, ATTEMPTS + 1):
         try:
-            reply = await chat.complete(digests.build_messages(body.kind, body.period_start, marks, recaps))
+            reply = await chat.complete(messages)
         except ModelError as error:
             # Текст ошибки может нести кусок ответа модели, поэтому в журнал идёт только факт.
             logger.warning("digest model failed kind=%s", body.kind, exc_info=False)
             raise AgentError(502, "DIGEST_UNAVAILABLE", "Модель не написала итоги") from error
-        # Тексты, написанные человеком или о нём (итоги разговоров), дословно в итог не берём.
-        sources = [r["text"] for r in recaps]
         text = digests.clean_digest(body.kind, reply, marks, source_texts=sources)
-        if text is None:
-            logger.info("digest rejected by the validator kind=%s", body.kind)
+        if text is not None:
+            break
+        logger.info("digest rejected by the validator kind=%s attempt=%d", body.kind, attempt)
     if text is None:
-        text = digests.template_digest(body.kind, marks, recaps)
+        raise AgentError(502, "DIGEST_UNAVAILABLE", "Ответ модели не прошёл проверку")
     logger.info("digest kind=%s marks=%d chars=%d", body.kind, len(marks), len(text))
     return {"text": text, "stats": stats}

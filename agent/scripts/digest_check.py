@@ -1,14 +1,15 @@
 """Проверка итогов разговоров и итогов недели без приложения, базы и сокетов: на вход сценарии, на выходе то, что уходит в модель и что вернулось.
 
-    AGENT_INTERNAL_TOKEN=x uv run python scripts/digest_check.py  # шаблонный режим, моделей нет (проверка самого прогона)
     AGENT_INTERNAL_TOKEN=x AGENT_API_TOKEN=… LLM_BASE_URL=… LLM_MODE=proxy uv run python scripts/digest_check.py --out digests.json
-    AGENT_INTERNAL_TOKEN=x uv run python scripts/digest_check.py --scenario work_week --show-prompts
+    AGENT_INTERNAL_TOKEN=x LLM_MODE=template uv run python scripts/digest_check.py --replies scripts/digest_replies.json   # без модели: готовые ответы
+    AGENT_INTERNAL_TOKEN=x LLM_MODE=proxy … uv run python scripts/digest_check.py --scenario work_week --show-prompts --runs 3
 
 Цепочка та же, что в агенте: диалоги → итог каждого (`recaps.make_recap`) → итоги недели (`digests.build_messages` →
-модель → `digests.clean_digest`, при отказе — шаблон). Диалоги собираются в памяти, итог «своей рукой» задаётся полем
-`takeaway`. Для каждой недели печатаются: промпт итога и недели (с `--show-prompts`), итог каждого разговора, сырой ответ модели,
-вердикт проверки и итоговый текст, плюс автоматические проверки: нет цитат, нет привязки к дню или разговору, нет «надо»,
-нет счётчиков, длина. Тон и содержательность оценивает человек по выписанным текстам. Сценарии синтетические.
+модель → `digests.clean_digest`, при отклонении один повтор). Запасного текста нет: если модель не ответила или оба ответа не прошли
+проверку, текста недели нет. Без модели можно подставить готовые ответы (`--replies`): в `digest_replies.json` они написаны мной
+вручную, чтобы показать форму результата, настоящий текст даст модель. Диалоги собираются в памяти, итог «своей рукой»
+задаётся полем `takeaway`. Печатаются промпты (с `--show-prompts`), итог каждого разговора, сырой ответ, вердикт и автопроверки:
+нет цитат, нет привязки к дню или разговору, нет «надо», нет счётчиков, длина. Тон и содержательность оценивает человек. Сценарии синтетические.
 """
 
 import argparse
@@ -27,6 +28,20 @@ from app.services import digests, recaps  # noqa: E402
 from app.services.dialog_store import Dialog, Message  # noqa: E402
 
 Turn = tuple[str, str]  # ("u" | "a", текст)
+
+
+class ReplayChat:
+    """Вместо модели: отдаёт готовые ответы по очереди (итоги разговоров, затем итоги недели)."""
+
+    name = "replay"
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = list(replies)
+
+    async def complete(self, messages: list[dict[str, str]]) -> str:
+        if not self._replies:
+            raise ModelError("в файле ответов не хватает ответа")
+        return self._replies.pop(0)
 
 
 def talk(*turns: Turn) -> list[Turn]:
@@ -177,7 +192,7 @@ def checks(text: str, recap_texts: list[str], marks: list[dict[str, Any]]) -> di
     }
 
 
-async def run_scenario(name: str, spec: dict[str, Any], chat: Any, template: bool, show_prompts: bool) -> dict[str, Any]:
+async def run_scenario(name: str, spec: dict[str, Any], chat: Any, show_prompts: bool) -> dict[str, Any]:
     marks = [
         {"date": date_of(day), "mood": mood, "factor": factor} for day, (mood, factor) in sorted(spec["marks"].items())
     ]
@@ -200,7 +215,7 @@ async def run_scenario(name: str, spec: dict[str, Any], chat: Any, template: boo
                     print(f"\n--- промпт итога разговора {index + 1} ---")
                     for m in recaps.build_messages(dialog):
                         print(f"[{m['role']}]\n{m['content']}")
-                text = await recaps.make_recap(chat, dialog, 60.0, template=template)
+                text = await recaps.make_recap(chat, dialog, 60.0)
                 source = "auto" if text else None
                 if text is None:
                     verdict = "итога нет: модель не ответила или ответ не прошёл проверку"
@@ -219,18 +234,21 @@ async def run_scenario(name: str, spec: dict[str, Any], chat: Any, template: boo
             print(f"[{m['role']}]\n{m['content']}")
     raw: str | None = None
     final: str | None = None
-    verdict = "шаблон (режим без модели)"
-    if chat is not None:
+    verdict = ""
+    for attempt in (1, 2):  # как в агенте: отклонённый ответ просим повторить один раз
         try:
             raw = await chat.complete(prompt)
-            final = digests.clean_digest("week", raw, marks, source_texts=[r["text"] for r in week_recaps])
-            verdict = "ответ модели принят" if final else "ответ модели отбракован проверкой, подставлен шаблон"
         except ModelError:
-            verdict = "модель не ответила, подставлен шаблон"
+            verdict = "модель не ответила: текста недели нет"
+            break
+        print(f"\nсырой ответ модели (попытка {attempt}):\n  {raw}")
+        final = digests.clean_digest("week", raw, marks, source_texts=[r["text"] for r in week_recaps])
+        verdict = "ответ принят" if final else "ответ отклонён проверкой"
+        if final:
+            break
     if final is None:
-        final = digests.template_digest("week", marks, week_recaps)
-    if raw is not None:
-        print(f"\nсырой ответ модели:\n  {raw}")
+        print(f"\nИТОГОВ НЕДЕЛИ НЕТ ({verdict}). Запасного текста нет.")
+        return {"scenario": name, "dialogs": out_dialogs, "raw": raw, "verdict": verdict, "text": None, "checks": {"text_present": False}}
     print(f"\nИТОГИ НЕДЕЛИ ({verdict}):\n  {final}")
     result = checks(final, [r["text"] for r in week_recaps], marks)
     print("автопроверки:", ", ".join(f"{k}={'ok' if v else 'FAIL'}" for k, v in result.items()))
@@ -267,19 +285,27 @@ async def main() -> int:
     parser.add_argument("--show-prompts", action="store_true", help="печатать промпты итога разговора и итогов недели")
     parser.add_argument("--runs", type=int, default=1, help="сколько раз прогнать каждый сценарий (разброс ответов модели)")
     parser.add_argument("--candidates", action="store_true", help="показать, какие ответы модели проверка принимает и отбраковывает")
+    parser.add_argument("--replies", help="JSON с готовыми ответами вместо модели (см. digest_replies.json)")
     parser.add_argument("--out", help="записать результат в JSON")
     args = parser.parse_args()
 
     if args.candidates:
         return run_candidates()
     chat, _ = build_models(APP_CONFIG.llm)
-    template = APP_CONFIG.llm.mode == "template"
-    print(f"режим: {'шаблоны, модели нет' if chat is None else 'модель ' + APP_CONFIG.llm.chat_model}")
+    replies = json.loads(Path(args.replies).read_text(encoding="utf-8")) if args.replies else None
+    if chat is None and replies is None:
+        print("Нужна модель (LLM_MODE=proxy, AGENT_API_TOKEN, LLM_BASE_URL) или --replies с готовыми ответами: запасного текста нет.")
+        return 2
+    print("режим:", "готовые ответы из " + args.replies if replies is not None and chat is None else "модель " + APP_CONFIG.llm.chat_model)
     names = args.scenario or list(SCENARIOS)
     results = []
     for name in names:
         for _ in range(args.runs):
-            results.append(await run_scenario(name, SCENARIOS[name], chat, template, args.show_prompts))
+            scenario_chat = chat
+            if scenario_chat is None:
+                entry = replies[name]  # type: ignore[index]
+                scenario_chat = ReplayChat([*entry["recaps"], entry["week"]])
+            results.append(await run_scenario(name, SCENARIOS[name], scenario_chat, args.show_prompts))
     failed = [(r["scenario"], k) for r in results for k, v in r["checks"].items() if not v]
     print(f"\n{'=' * 78}\nсценариев: {len(results)}, провалов автопроверок: {len(failed)}", failed or "")
     if args.out:

@@ -375,12 +375,7 @@ def test_clean_recap_normalises_spaces():
 
 
 
-def test_the_week_digest_reads_the_recaps(client, user_id):
+def test_the_week_digest_without_a_model_is_unavailable(client, user_id):
     marks = [{"date": f"2026-10-{19 + i:02d}", "mood": 3, "factor": None} for i in range(3)]
     body = {"kind": "week", "periodStart": "2026-10-19", "marks": marks, "recaps": [{"date": "2026-10-20", "text": RECAP}]}
-    text = client.post(url(user_id, "/digests"), json=body, headers=AUTH).json()["text"]
-    assert "работа и дела" in text  # тема итога попадает в текст недели общим названием
-    assert "руководителем" not in text and "пятницы" not in text  # без слов итога
-    assert "договорённостей" not in text and "разговоров с итогом" not in text  # без счётчиков
-    plain = client.post(url(user_id, "/digests"), json={**body, "recaps": []}, headers=AUTH).json()["text"]
-    assert "работа и дела" not in plain
+    assert client.post(url(user_id, "/digests"), json=body, headers=AUTH).status_code == 502  # запасного текста нет

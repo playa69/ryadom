@@ -2,8 +2,9 @@
 
 В модель уходят коды отметок (уровень 1–5, фактор) и тексты итогов разговоров недели, без имени и почты. Запрос и ответ
 не пишутся в журнал. Итог недели — характеристика в свободной форме о том, что было в разговорах и как двигалась неделя, а не
-перечень цифр. Ответ модели проверяется (`clean_digest`); если в нём «надо», среднее число, счёт дней подряд, дословная цитата
-из итогов или он не укладывается в длину, вместо него возвращается шаблонный текст — так же отвечает режим `LLM_MODE=template`.
+перечень цифр. Ответ модели проверяется (`clean_digest`); если в нём «надо», среднее число, счёт дней подряд, привязка к дню или разговору, дословная цитата
+из итогов или он не укладывается в длину, модель просят ещё раз; не вышло — текста недели нет (ответ `DIGEST_UNAVAILABLE`).
+Запасного текста без модели нет: итоги недели пишет только модель.
 """
 
 
@@ -18,8 +19,6 @@ FACTORS = {"work": "работа", "people": "близкие", "health": "здо
 WEEK_SENTENCES = (3, 6)
 HARD_WEEK_DAYS = 3
 
-PEOPLE_LINE = "Если сейчас непросто, рядом могут быть люди, с которыми можно поговорить, и я тоже здесь."
-
 SYSTEM_PROMPT = (
     "Ты — Рядом, тёплый голосовой спутник для эмоциональной поддержки. Напиши человеку итоги недели: общий обзорный текст в "
     "свободной форме. Это взгляд на неделю в целом, а не пересказ отдельных разговоров: не привязывай мысли к конкретному "
@@ -30,21 +29,6 @@ SYSTEM_PROMPT = (
     "средний балл числом. Никаких цитат: ни в кавычках, ни дословно, только своими словами. Пиши спокойно и бережно, без "
     "восклицательных знаков и без эмодзи. Уровни: 1 — тяжело, 2 — так себе, 3 — нормально, 4 — хорошо, 5 — отлично."
 )
-
-# Темы, которые видны в итогах разговоров: по корням слов. В текст недели идёт только название темы, а не слова человека.
-THEMES = (
-    ("работа и дела", r"работ|руковод|начальн|коллег|офис|проект|дедлайн|карьер|увольн"),
-    ("близкие и отношения", r"мам[аыуе]|пап|семь|друг|подруг|отношени|партнёр|партнер|муж|жена|девушк|парень|дет[иейям]"),
-    ("здоровье и сон", r"здоровь|сон\b|сна\b|бессонн|усталост|болезн|врач|тревог|паник"),
-    ("деньги", r"деньг|долг|зарплат|кредит|финанс"),
-)
-
-
-def themes_of(texts: list[str]) -> list[str]:
-    """Названия тем, о которых шла речь в итогах разговоров недели (не больше двух, по порядку списка)."""
-    joined = " ".join(texts).lower()
-    return [name for name, pattern in THEMES if re.search(pattern, joined)][:2]
-
 
 _FORBIDDEN = re.compile(r"\b(надо|должен|должна|нужно)\b", re.IGNORECASE)
 _AVERAGE = re.compile(r"средн\w*\s+(балл|оценк|значени|уровен)|\d+[.,]\d+\s*(из|/)\s*5|\b\d+\s*/\s*5\b", re.IGNORECASE)
@@ -71,47 +55,6 @@ def stats_of(marks: list[dict[str, Any]]) -> dict[str, Any]:
 
 def sentence_count(text: str) -> int:
     return len([part for part in _SENTENCE_END.split(text.strip()) if part.strip()])
-
-
-def _top_factor(marks: list[dict[str, Any]]) -> str | None:
-    factors = Counter(m["factor"] for m in marks if m.get("factor"))
-    return FACTORS.get(factors.most_common(1)[0][0]) if factors else None
-
-
-def _trend(marks: list[dict[str, Any]]) -> str | None:
-    """Как двигалось настроение: вторая половина отметок против первой; None, если отметок мало."""
-    ordered = sorted(marks, key=lambda m: m["date"])
-    if len(ordered) < 4:
-        return None
-    half = len(ordered) // 2
-    first = sum(m["mood"] for m in ordered[:half]) / half
-    last = sum(m["mood"] for m in ordered[-half:]) / half
-    if last - first >= 0.5:
-        return "К концу недели стало заметно легче."
-    if first - last >= 0.5:
-        return "К концу недели стало тяжелее."
-    return None
-
-
-def template_digest(kind: Literal["week"], marks: list[dict[str, Any]], recaps: list[dict[str, Any]] | None = None) -> str:
-    """Детерминированный текст без модели: для `LLM_MODE=template` и как запасной вариант при забракованном ответе.
-
-    Общий обзор недели: названия тем из итогов разговоров и динамика настроения. Слов самих итогов и привязки к
-    отдельному разговору в нём нет."""
-    stats = stats_of(marks)
-    themes = themes_of([str(r.get("text", "")) for r in (recaps or [])])
-    if themes:
-        parts = [f"На этой неделе в твоих мыслях заметное место занимало: {' и '.join(themes)}."]
-    elif recaps:
-        parts = ["На этой неделе ты не раз возвращался к тому, что у тебя на душе."]
-    else:
-        parts = ["На этой неделе ты находил минутку, чтобы прислушаться к себе."]
-    trend = _trend(marks)
-    if trend:
-        parts.append(trend)
-    if stats["hardDays"] >= HARD_WEEK_DAYS:
-        parts.append(PEOPLE_LINE)
-    return " ".join(parts)
 
 
 def build_messages(
@@ -161,7 +104,5 @@ def clean_digest(
     if count < low or count > high:
         return None
     if stats_of(marks)["hardDays"] >= HARD_WEEK_DAYS and not re.search(r"рядом|близк|люд", text, re.IGNORECASE):
-        text = f"{text} {PEOPLE_LINE}"
-        if sentence_count(text) > WEEK_SENTENCES[1]:
-            return None
+        return None  # тяжёлая неделя: текст должен закончиться мягкой строкой про людей рядом (её просит промпт)
     return text
