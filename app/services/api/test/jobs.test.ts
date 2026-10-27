@@ -316,8 +316,8 @@ describe('реестр и каталог очередей', () => {
 })
 
 describe('остановка с настоящей очередью', () => {
-  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: сценарий «Остановка сервиса» (задача переживает
-  // остановку пода); порядок шагов остановки — test/shutdown.test.ts.
+  // `openspec/changes/add-job-queue`, «Стирание при удалении аккаунта» (product-analytics): сценарий «Остановка пода»
+  // (задача переживает остановку); порядок шагов остановки — test/shutdown.test.ts.
   const catalog: QueueDefinition[] = [{ name: SLOW, options: DEFINITION }]
 
   it('задача, идущая при остановке, успевает завершиться и не доставляется второй раз', async () => {
@@ -533,7 +533,7 @@ describe('агент: повторные удаления (заглушка app/
 })
 
 describe('стирание профиля в аналитике через очередь', () => {
-  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: сценарии «Сбой аналитики» и «Несколько реплик».
+  // `openspec/changes/add-job-queue`, «Стирание при удалении аккаунта» (product-analytics): «Сбой стирания», «Несколько реплик».
   const erasure = QUEUE_CATALOG.filter((queue) => queue.name === JobQueue.AnalyticsErasePerson)
   /** The erasure of the catalog with the waits cut to a second, so the retries fit in a test. */
   const fastErasure: QueueDefinition[] = erasure.map((queue) => ({
@@ -574,7 +574,7 @@ describe('стирание профиля в аналитике через оч�
     expect(erasePerson).toHaveBeenCalledWith('user-1')
   })
 
-  it('Сбой аналитики: PostHog не принял запрос — задача повторяется и после успеха завершается', async () => {
+  it('Сбой стирания: PostHog не принял запрос — задача повторяется и после успеха завершается', async () => {
     const outcomes = ['failed', 'failed', 'erased'] as const
     let call = 0
     const erasePerson = vi.fn(async () => outcomes[call++]!)
@@ -594,7 +594,7 @@ describe('стирание профиля в аналитике через оч�
     expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toEqual([])
   })
 
-  it('Сбой аналитики: когда повторы исчерпаны, копия данных лежит в jobs.dead-letter, а id — в журнале ошибок', async () => {
+  it('Сбой стирания: когда повторы исчерпаны, копия данных лежит в jobs.dead-letter, а id — в журнале ошибок', async () => {
     const errors = vi.spyOn(getRootLogger(), 'error')
     try {
       const jobs = await startErasing(async () => 'failed')
@@ -660,8 +660,8 @@ describe('стирание профиля в аналитике через оч�
 })
 
 describe('удаление аккаунта и настоящая очередь', () => {
-  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: сценарии «Удаление с настроенной аналитикой»,
-  // «Остановка сервиса» (задача лежит в базе) и «Удаление не состоялось» (откат уносит и задачу).
+  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: сценарии «(API) Удаление человеком» и «(API) Удаление не состоялось»
+  // (откат уносит и аккаунт, и задачу); product-analytics «Остановка пода» — задача лежит в базе, а не в памяти пода.
   const { app } = makeApp()
 
   it('удаление по запросу кладёт в базу задачу с выдержкой 30 секунд, а откат внешней транзакции уносит и аккаунт, и задачу', async () => {

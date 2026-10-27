@@ -98,8 +98,8 @@ describe('удаление аккаунта', () => {
 })
 
 describe('стирание профиля в аналитике ставится вместе с удалением', () => {
-  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике».
-  it('Удаление с настроенной аналитикой: в очереди задача на стирание с выдержкой 30 секунд и ключом-человеком', async () => {
+  // `openspec/changes/add-job-queue`, «Профиль и события в аналитике»: «(API) Удаление человеком», «(API) Удаление не состоялось».
+  it('(API) Удаление человеком: в очереди задача на стирание с выдержкой 30 секунд и ключом-человеком', async () => {
     const user = await registerConfirmedUser()
     mockAgent()
 
@@ -117,7 +117,7 @@ describe('стирание профиля в аналитике ставится
     expect(ERASE_PERSON_DELAY_SECONDS).toBe(30)
   })
 
-  it('Удаление не состоялось: агент не стёр данные, аккаунт на месте и задачи нет', async () => {
+  it('(API) Удаление не состоялось: агент не стёр данные, аккаунт на месте и задачи нет', async () => {
     const user = await registerConfirmedUser()
     mockFetch({ 'DELETE http://agent.test/v1/users/*': () => json({ error: 'boom' }, 503) })
 
@@ -126,7 +126,7 @@ describe('стирание профиля в аналитике ставится
     expect(getEnqueuedJobs()).toEqual([])
   })
 
-  it('Удаление не состоялось: сбой на последнем шаге транзакции — задача не ставится (она последняя в транзакции)', async () => {
+  it('(API) Удаление не состоялось: сбой на последнем шаге транзакции — задача не ставится (она последняя в транзакции)', async () => {
     const user = await registerConfirmedUser()
     mockAgent()
     const failing = vi.spyOn(refreshTokensManager, 'execute').mockRejectedValueOnce(new Error('the database failed'))

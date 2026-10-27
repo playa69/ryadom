@@ -1,6 +1,6 @@
 # Tasks: add-job-queue
 
-Контракт — `specs/{account-deletion,data-retention,mood-diary}/spec.md` (три MODIFIED). Решения — `design.md` (D1–D10). Change ведётся без номера задачи (решение владельца). Этапы: 1 — 1.x и 3.1–3.4 (очередь и три расписания); 2 — 3.5 и 3.8 (стирание в аналитике); 3 — 3.6 (после удаления разговора); 4 — 3.7 (сторож). Этапы 3 и 4 можно отложить, не ломая остальные.
+Контракт — `specs/{account-deletion,data-retention,mood-diary,product-analytics}/spec.md` (четыре MODIFIED). Решения — `design.md` (D1–D10). Change ведётся без номера задачи (решение владельца). Этапы: 1 — 1.x и 3.1–3.4 (очередь и три расписания); 2 — 3.5 и 3.8 (стирание в аналитике); 3 — 3.6 (после удаления разговора); 4 — 3.7 (сторож). Этапы 3 и 4 можно отложить, не ломая остальные.
 
 ## 0. Решения
 
@@ -42,15 +42,17 @@
 
 | Требование | Сценарий | Тест |
 |---|---|---|
-| Профиль и события в аналитике | Удаление с настроенной аналитикой | `core/test/account-deletion.test.ts`, `api/test/account.test.ts` |
-| | Сбой аналитики | `api/test/jobs.test.ts` (повторы, очередь недоставленных) |
-| | Остановка сервиса | `api/test/shutdown.test.ts` + `jobs.test.ts` (задача переживает остановку) |
+| Профиль и события в аналитике (`account-deletion`) | (API) Удаление человеком | `core/test/account-deletion.test.ts`, `api/test/account.test.ts`, `api/test/jobs.test.ts` (настоящая очередь) |
+| | (API) Удаление не состоялось | `core/test/account-deletion.test.ts`, `api/test/account.test.ts`, `api/test/jobs.test.ts` (откат уносит и задачу) |
+| | (API) Другие способы удаления | `core/test/user-management.test.ts`, `core/test/anonymous-retention.test.ts` (задач нет) |
+| Стирание при удалении аккаунта (`product-analytics`) | Сбой стирания | `api/test/jobs.test.ts` (повторы, очередь недоставленных) |
+| | Остановка пода | `api/test/shutdown.test.ts` + `jobs.test.ts` (задача переживает остановку) |
 | | Несколько реплик | `api/test/jobs.test.ts` (два экземпляра) |
-| | Удаление не состоялось | `core/test/account-deletion.test.ts` (откат) |
+| | Удаление человеком, Ключа нет | `api/test/jobs.test.ts`, `analytics/test/server.test.ts`, `api/test/env.test.ts` |
 | Чистка неактивных гостевых аккаунтов | Несколько реплик и частые перезапуски | `api/test/jobs.test.ts` |
 | | прежние пять сценариев | `core/test/anonymous-retention.test.ts` без изменений |
-| Когда пересчитываются итоги недели | Сброс после удаления не удался | `api/test/dialogs.test.ts` |
-| | Удаление разговора не состоялось | `api/test/dialogs.test.ts` |
+| Когда пересчитываются итоги недели | Сброс после удаления не удался | `api/test/dialogs.test.ts`, `api/test/jobs.test.ts`, `core/test/dialogs.test.ts`, `core/test/diary.test.ts` |
+| | Удаление разговора не состоялось | `api/test/dialogs.test.ts`, `core/test/dialogs.test.ts` |
 | | Две реплики | `api/test/jobs.test.ts` |
 | | прежние четыре сценария | `core/test/diary.test.ts`, `api/test/diary.test.ts` без изменений |
 
@@ -69,4 +71,4 @@
 
 ## 7. Архив
 
-- [ ] 7.1 После выката: `archive add-job-queue --yes`, дельты вливаются в базу (`account-deletion`, `data-retention`, `mood-diary`), правка D4 в `add-notifications` сделана. Приёмка: `validate --all --strict` зелёный, change лежит в `openspec/changes/archive/`
+- [ ] 7.1 После выката: `archive add-job-queue --yes`, дельты вливаются в базу (`account-deletion`, `data-retention`, `mood-diary`, `product-analytics`), правка D4 в `add-notifications` сделана. Приёмка: `validate --all --strict` зелёный, change лежит в `openspec/changes/archive/`
