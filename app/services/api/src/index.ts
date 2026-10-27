@@ -90,15 +90,13 @@ setInterval(() => {
 
 // Anonymous accounts that nobody has opened for the retention period are erased, the agent's copy
 // included. The first pass comes shortly after start so that a pod that is restarted often still
-// gets to it; the switch is for stopping the job without a rebuild.
-if (!env.ANONYMOUS_PURGE_DISABLED) {
-  const purge = () =>
-    purgeInactiveAnonymous().catch((error: unknown) =>
-      logger.warn({ err: error }, 'Не удалось очистить неактивные анонимные аккаунты'),
-    )
-  setTimeout(() => void purge(), 2 * 60_000).unref()
-  setInterval(() => void purge(), 60 * 60_000).unref()
-}
+// gets to it.
+const purge = () =>
+  purgeInactiveAnonymous().catch((error: unknown) =>
+    logger.warn({ err: error }, 'Не удалось очистить неактивные анонимные аккаунты'),
+  )
+setTimeout(() => void purge(), 2 * 60_000).unref()
+setInterval(() => void purge(), 60 * 60_000).unref()
 
 // The diary's automatic week summaries (REQ-WELL-01).
 startDiaryScheduler(logger, analytics)

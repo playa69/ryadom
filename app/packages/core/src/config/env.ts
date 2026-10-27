@@ -88,8 +88,6 @@ const baseShape = {
   LOG_LEVEL: z.preprocess(emptyToUndefined, z.enum(LOG_LEVELS).default('info')),
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
   AUTH_SECRET: z.string().min(32, 'must be at least 32 characters'),
-  /** Kill switch of links to a conversation (`REQ-DATA-05`): on by default, this turns creating and opening them off. */
-  DIALOG_SHARE_DISABLED: booleanFlag,
   PUBLIC_WEB_URL: publicUrl,
   /** Where the web client lives (`https://host/app`); the link to a conversation opens there. Without it: `<PUBLIC_APP_URL>/app`. */
   PUBLIC_WEBAPP_URL: z.preprocess(emptyToUndefined, publicUrl.optional()),
@@ -167,12 +165,12 @@ const appShape = {
     .preprocess(emptyToUndefined, z.coerce.number().int().min(6_000).max(128_000).optional())
     .transform((value) => value ?? 24_000),
   /**
-   * State shared by the replicas; for now only the rate limits. Off by default: each replica then
-   * counts on its own, and the real limit is the stated one times the number of replicas. With it
-   * on, the address is either `REDIS_URL` (one node, local development) or Sentinel, whose password
-   * `REDIS_PASSWORD` serves the Sentinel nodes and the master alike.
+   * State shared by the replicas; for now only the rate limits. Used when an address is set: either
+   * `REDIS_URL` (one node, local development) or Sentinel (`REDIS_SENTINEL_HOST` and
+   * `REDIS_MASTER_NAME`), whose password `REDIS_PASSWORD` serves the Sentinel nodes and the master
+   * alike. With no address each replica counts on its own, and the real limit is the stated one times
+   * the number of replicas.
    */
-  REDIS_ENABLED: booleanFlag,
   REDIS_URL: z.preprocess(
     emptyToUndefined,
     z.url({ protocol: /^rediss?$/, error: 'must be a redis:// URL' }).optional(),
@@ -181,12 +179,6 @@ const appShape = {
   REDIS_SENTINEL_PORT: optionalInt(1).transform((value) => value ?? 26379),
   REDIS_MASTER_NAME: optionalString,
   REDIS_PASSWORD: optionalString,
-  /**
-   * The hourly job that erases anonymous accounts nobody has opened for `ANONYMOUS_RETENTION_DAYS`
-   * (contracts). On by default, because the app promises it; this is the switch to stop it, for
-   * instance while the agent is being migrated and could not confirm its erasures.
-   */
-  ANONYMOUS_PURGE_DISABLED: booleanFlag,
   /**
    * Native version gate: store links plus the min/latest build per platform. There is
    * no bucket manifest any more - the JS/OTA axis is baked into the image (`lib/ota-bundle.ts`) and
@@ -300,17 +292,15 @@ function refineBase(env: BaseEnvInput, ctx: z.RefinementCtx): void {
   }
 }
 
-/** The app's own conditional requirements: Redis needs an address. */
+/** The app's own conditional requirements: Sentinel needs the name of its master. */
 function refineApp(env: z.infer<typeof appObject>, ctx: z.RefinementCtx): void {
-  if (!env.REDIS_ENABLED || env.REDIS_URL) return
-  for (const key of ['REDIS_SENTINEL_HOST', 'REDIS_MASTER_NAME'] as const) {
-    if (env[key] === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: [key],
-        message: 'required when REDIS_ENABLED=true without REDIS_URL',
-      })
-    }
+  if (env.REDIS_URL || env.REDIS_SENTINEL_HOST === undefined) return
+  if (env.REDIS_MASTER_NAME === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['REDIS_MASTER_NAME'],
+      message: 'required with REDIS_SENTINEL_HOST (without REDIS_URL)',
+    })
   }
 }
 
