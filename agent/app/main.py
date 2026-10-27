@@ -32,7 +32,7 @@ from app.core.tracing import build_tracer
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.langfuse_usage import start_langfuse_sink
-from app.services.gemini_budget import CascadeFallback, TokenBudget
+from app.services.gemini_budget import TokenBudget
 from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, split_sentences
 
 if TYPE_CHECKING:
@@ -46,26 +46,6 @@ SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, REPEAT_REQUEST)
 # Сколько сессий Gemini прогрев держит открытыми одновременно (фраза — сессия): 16 открытий разом на старте Google встречал
 # отказами, и после них половина фраз оставалась не прогретой.
 WARM_UP_GEMINI_SESSIONS = 3
-
-FallbackParts = tuple[ChatModel | None, Recognizer | None, TextToSpeech | None]
-
-
-def _build_fallback() -> FallbackParts:
-    """Каскад как запасной путь режима gemini_live: чат, распознавание и озвучка из `LLM_MODE`, `LLM_BASE_URL`, `TTS_MODE`,
-    `QWEN_TTS_*`, `AGENT_API_TOKEN`. Не настроено что-то — без этой части (а не отказ старта: режиму Gemini они не нужны)."""
-    chat: ChatModel | None = None
-    recognizer: Recognizer | None = None
-    tts: TextToSpeech | None = None
-    try:
-        chat, recognizer = build_models(APP_CONFIG.llm)
-    except RuntimeError as error:
-        logger.warning("cascade fallback without chat and stt: %s", error)
-    try:
-        tts = build_tts(APP_CONFIG.speech)
-    except RuntimeError as error:
-        logger.warning("cascade fallback without tts: %s", error)
-    return chat, recognizer, tts
-
 
 class SkipServiceEndpoints(logging.Filter):
     """Служебные эндпоинты не пишутся в access-лог (specs/agent-api «Служебные эндпоинты»)."""
@@ -116,7 +96,6 @@ def create_app(
     live_factory: Callable[[], "LiveConnector | None"] | None = None,
     database_factory: Callable[[], DialogDatabase | None] | None = None,
     memory_settings: MemorySettings | None = None,
-    fallback_factory: Callable[[], FallbackParts] | None = None,
 ) -> FastAPI:
     """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию озвучка и модели берутся из конфига.
 
@@ -130,9 +109,8 @@ def create_app(
     Память агента (`MEMORY_*`, или `memory_settings` в тестах) — датасеты Cognee (`app/memory/cognee_backend.py`):
     транскрипт после разговора, сводка в разговор, согласие человека. Хранилище диалогов память не определяет.
 
-    Бюджет токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся в режиме gemini_live всегда (при лимите
-    0 он выключен). При `GEMINI_TPM_ENFORCE` собирается и каскад как запасной путь (`fallback_factory` в тестах): на него
-    уходят новые разговоры, когда бюджет исчерпан, а его распознавание и озвучка разбирают ход, отданный шаблону.
+    Учёт токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся в режиме gemini_live всегда (при лимите 0
+    он выключен): окно только измеряется, а после отказа Google по квоте включается пауза.
     """
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
@@ -209,27 +187,15 @@ def create_app(
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
             warm_up_parallel = WARM_UP_GEMINI_SESSIONS
-        fallback = None
-        if budget is not None and budget.enforcing:
-            parts = (fallback_factory or _build_fallback)()
-            fallback = CascadeFallback(*parts) if any(part is not None for part in parts) else None
-        app.state.fallback = fallback
         if budget is not None and budget.enabled:
-            logger.info(
-                "gemini budget: limit=%d enforce=%s fallback: llm=%s stt=%s tts=%s",
-                APP_CONFIG.gemini.tpm_limit,
-                budget.enforcing,
-                fallback.chat.name if fallback and fallback.chat else "none",
-                fallback.recognizer.name if fallback and fallback.recognizer else "none",
-                fallback.tts.name if fallback and fallback.tts else "none",
-            )
+            logger.info("gemini budget: limit=%d (measure only)", APP_CONFIG.gemini.tpm_limit)
         if live is not None and models_factory is None:
             app.state.chat, app.state.recognizer = None, None  # речь в речь: чат и распознавание не нужны
         else:
             app.state.chat, app.state.recognizer = models()
-        # Итоги разговоров пишет текстовая модель: в речи в речь её нет у сессии, но есть у запасного каскада.
+        # Итоги разговоров пишет текстовая модель: в речи в речь её нет у сессии.
         recap_owned: Any = None  # собственная модель итогов (закрывается при остановке), если у сессии текстовой нет
-        store.recap_chat = app.state.chat or (fallback.chat if fallback is not None else None)
+        store.recap_chat = app.state.chat
         if store.recap_chat is None and live is not None:
             try:
                 recap_owned, extra_stt = models()
@@ -261,10 +227,6 @@ def create_app(
             sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
             warm_up = asyncio.create_task(app.state.tts.warm_up(sentences, parallel=warm_up_parallel))
         langfuse = start_langfuse_sink(APP_CONFIG.langfuse)
-        fallback_warm_up = None
-        if fallback is not None and isinstance(fallback.tts, CachedTts):
-            sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
-            fallback_warm_up = asyncio.create_task(fallback.tts.warm_up(sentences))
         # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
         evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
         # После прогрева стартовые объекты замораживаются для сборщика мусора, дальше память раз в MEMORY_RECLAIM_SECONDS
@@ -294,11 +256,6 @@ def create_app(
             for client in (app.state.tts, app.state.chat, app.state.recognizer, live, recap_owned):
                 if client is not None:
                     await client.aclose()
-            if fallback_warm_up is not None:
-                fallback_warm_up.cancel()
-            for part in (fallback.chat, fallback.recognizer, fallback.tts) if fallback is not None else ():
-                if part is not None:
-                    await part.aclose()
             await tracer.aclose()  # отправить в Langfuse накопленные трассы
 
     # Встроенная телеметрия FastAPI (OpenTelemetry) включается сама, когда в образе есть opentelemetry-sdk (его тянет langfuse), и
@@ -316,8 +273,7 @@ def create_app(
     app.state.recognizer = None
     app.state.live = None
     app.state.memory = None
-    app.state.budget = None  # бюджет токенов Gemini (только в режиме gemini_live)
-    app.state.fallback = None  # каскад как запасной путь gemini_live (GEMINI_TPM_ENFORCE)
+    app.state.budget = None  # учёт токенов Gemini (только в режиме gemini_live)
     app.state.tracer = None  # подменяется в lifespan (build_tracer); None до старта приложения
     app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)

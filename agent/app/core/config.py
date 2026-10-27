@@ -213,21 +213,19 @@ class GeminiSettings(BaseAppSettings):
     # Модель промолчала на голосовую реплику (ход без звука и текста): столько ждём, не продолжит ли человек, прежде чем
     # попросить модель ответить в свежей сессии. В проде так молчали ~8% ходов, и человек часто продолжал через 2–6 с.
     silence_nudge_ms: int = Field(validation_alias="GEMINI_SILENCE_NUDGE_MS", default=2000, ge=0, le=10000)
-    # Сколько последних сообщений диалога модель получает текстом при новой сессии (после каждого ответа при
-    # GEMINI_TEXT_CONTEXT, а также после переподключения и смены голоса). 0 — весь диалог.
+    # Сколько последних сообщений диалога модель получает текстом при новой сессии (после смены сессии, переподключения и смены
+    # голоса). 0 — весь диалог.
     history_messages: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES", default=40, ge=0)
     # Экономия на контексте: Gemini оплачивает весь контекст сессии на каждый ход, а голос человека и ответа копится в нём
-    # аудио-токенами (на стенде +300 токенов на ход, аудио дороже текста). Поэтому после каждого ответа агент открывает
-    # свежую сессию и кладёт в неё прошлые реплики текстом (history_config.initial_history_in_client_content): аудио в
-    # контексте остаётся только текущей реплики, а память о разговоре сохраняется. Старая сессия закрывается. Возобновление
-    # сессии по handle при включённой опции не используется (handle вернул бы накопленное аудио), сжатие контекста остаётся
-    # страховкой на случай очень длинной истории.
-    text_context: bool = Field(validation_alias="GEMINI_TEXT_CONTEXT", default=True)
-    # Как часто менять сессию при GEMINI_TEXT_CONTEXT. Каждое открытие Google считает в лимите токенов в минуту (TPM) целиком
-    # (промпт + история), а ход в уже открытой сессии — только приращением (замер 13.10: 8 диалогов × 8 ходов, смена каждый ход
-    # ≈ 1,95K токенов TPM на ход, раз в 4 хода ≈ 0,7K, без смены ≈ 0,36K). Зато накопленное аудио оплачивается заново на каждый
-    # ход, поэтому сессию меняем не каждый ход, а когда прошло столько ходов или аудио в контексте дошло до
-    # GEMINI_ROTATE_AUDIO_TOKENS. 1 — после каждого ответа, как раньше.
+    # аудио-токенами (на стенде +300 токенов на ход, аудио дороже текста). Поэтому агент меняет сессию на свежую и кладёт в неё
+    # прошлые реплики текстом (history_config.initial_history_in_client_content): аудио в контексте остаётся только текущей
+    # реплики, а память о разговоре сохраняется. Старая сессия закрывается. Возобновления сессии по handle нет (handle вернул бы
+    # накопленное аудио), сжатие контекста остаётся страховкой на случай очень длинной истории.
+    # Как часто менять сессию. Каждое открытие Google считает в лимите токенов в минуту (TPM) целиком (промпт + история), а ход
+    # в уже открытой сессии — только приращением (замер 13.10: 8 диалогов × 8 ходов, смена каждый ход ≈ 1,95K токенов TPM на
+    # ход, раз в 4 хода ≈ 0,7K, без смены ≈ 0,36K). Зато накопленное аудио оплачивается заново на каждый ход, поэтому сессию
+    # меняем не каждый ход, а когда прошло столько ходов или аудио в контексте дошло до GEMINI_ROTATE_AUDIO_TOKENS. 1 — после
+    # каждого ответа.
     rotate_every: int = Field(validation_alias="GEMINI_ROTATE_EVERY", default=4, ge=1, le=100)
     # Порог «долга аудио»: input_audio последнего хода на текущей сессии (usage_metadata). Длинные реплики копят аудио быстрее
     # четырёх коротких, и сессию тогда меняем раньше. 0 — смотреть только на число ходов.
@@ -244,52 +242,28 @@ class GeminiSettings(BaseAppSettings):
     # Пауза без новых слов расшифровки, после которой реплика уходит на классификацию.
     mood_debounce_ms: int = Field(validation_alias="GEMINI_MOOD_DEBOUNCE_MS", default=300, ge=0)
     # Длинный разговор: когда контекст сессии подходит к пределу, Google сам сжимает его скользящим окном (самое старое
-    # уходит, начало разговора и промпт остаются), и сессия не обрывается. Без сжатия голосовая сессия живёт ~15 минут.
-    compression: bool = Field(validation_alias="GEMINI_COMPRESSION", default=True)
+    # уходит, начало разговора и промпт остаются), и сессия не обрывается. Сжатие включено всегда: без него голосовая сессия
+    # живёт ~15 минут. Ниже — пороги сжатия.
     # При каком размере контекста (токены) сжимать; 0 — решает Google (около 80% окна модели).
     compression_trigger_tokens: int = Field(validation_alias="GEMINI_COMPRESSION_TRIGGER_TOKENS", default=0, ge=0)
     # До какого размера сжимать (токены); 0 — решает Google.
     compression_target_tokens: int = Field(validation_alias="GEMINI_COMPRESSION_TARGET_TOKENS", default=0, ge=0)
-    # Соединение живёт ограниченно (Google шлёт предупреждение GoAway): при возобновлении сессии по handle контекст
-    # разговора переживает переподключение. Без handle (или если он не принят) модель получает последние сообщения текстом.
-    session_resumption: bool = Field(validation_alias="GEMINI_SESSION_RESUMPTION", default=True)
     # Лимит входных токенов в минуту (TPM) проекта Google: агент сам ведёт окно в 60 с по usage_metadata ходов
-    # (app/services/gemini_budget.py). 0 — учёт выключен целиком, поведение как без него. Прод (Tier 2): 400000.
+    # (app/services/gemini_budget.py) и только меряет его (метрики, журнал); поведение разговоров окно не меняет. 0 — учёт
+    # выключен целиком. Прод (Tier 2): 400000.
     tpm_limit: int = Field(validation_alias="GEMINI_TPM_LIMIT", default=0, ge=0)
-    # false — только мерить (окно, метрики, журнал) и не открывать сессии в паузе после 1011; true — ещё и допуск новых
-    # разговоров и деградация ходов по порогам ниже.
-    tpm_enforce: bool = Field(validation_alias="GEMINI_TPM_ENFORCE", default=False)
-    # Пороги доли окна от лимита: история новой сессии короче / новые разговоры в каскад / ход ждёт, потом шаблон без Gemini.
-    tpm_trim_at: float = Field(validation_alias="GEMINI_TPM_TRIM_AT", default=0.6, gt=0, le=1)
-    tpm_admit_at: float = Field(validation_alias="GEMINI_TPM_ADMIT_AT", default=0.7, gt=0, le=1)
-    tpm_hard_at: float = Field(validation_alias="GEMINI_TPM_HARD_AT", default=0.9, gt=0, le=1)
-    # Сколько сообщений истории получает новая сессия, когда окно выше GEMINI_TPM_TRIM_AT (при ENFORCE). 0 — не сокращать.
-    history_messages_tight: int = Field(validation_alias="GEMINI_HISTORY_MESSAGES_TIGHT", default=16, ge=0)
-    # Сколько ход ждёт места в окне (или конца паузы после 1011), прежде чем уйти в шаблон, мс.
-    tpm_wait_ms: int = Field(validation_alias="GEMINI_TPM_WAIT_MS", default=1500, ge=0, le=10_000)
     # Начальная пауза после отказа Google по квоте (1011), с: растёт вдвое с каждой новой ошибкой до 60 с, сбрасывается после
-    # удачных ходов. Действует и при GEMINI_TPM_ENFORCE=false (это защита, а не деградация); 0 — паузы нет.
+    # удачных ходов. В паузе новые сессии Gemini не открываются (открытие заведомо получит тот же отказ); 0 — паузы нет.
     quota_cooldown_seconds: float = Field(validation_alias="GEMINI_QUOTA_COOLDOWN_SECONDS", default=5, ge=0, le=60)
     # Открытие сессии Google считает в TPM сразу, по размеру контекста и щедрее настоящих токенов (эксперимент: ≈ байты UTF-8
     # системной инструкции и истории / 4). Оценка открытия = байты / 4 × этот коэффициент; 0 — открытия не считать.
     tpm_open_factor: float = Field(validation_alias="GEMINI_TPM_OPEN_FACTOR", default=1.0, ge=0, le=10)
-    # Ленивое открытие: сессия открывается не заранее (при подключении сокета и сразу после ответа), а когда она нужна —
-    # по audio_start (открытие идёт, пока человек говорит) или по набранному сообщению. Неиспользованная сессия тратит квоту
-    # впустую (последняя смена после последнего ответа, сокет, где так и не заговорили). Набранное сообщение ждёт открытия
-    # (около 1 с). false — как раньше: сессия готова заранее.
-    lazy_open: bool = Field(validation_alias="GEMINI_LAZY_OPEN", default=False)
 
     @property
     def input_language_codes(self) -> list[str]:
         """Коды языков расшифровки из `GEMINI_INPUT_LANGUAGES`: без пустых и повторов."""
         codes = [code.strip() for code in self.input_languages.split(",")]
         return list(dict.fromkeys(code for code in codes if code))
-
-    @model_validator(mode="after")
-    def _thresholds_in_order(self) -> "GeminiSettings":
-        if not self.tpm_trim_at <= self.tpm_admit_at <= self.tpm_hard_at:
-            raise ValueError("нужно GEMINI_TPM_TRIM_AT <= GEMINI_TPM_ADMIT_AT <= GEMINI_TPM_HARD_AT")
-        return self
 
 
 class MemorySettings(BaseAppSettings):

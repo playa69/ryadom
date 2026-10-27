@@ -12,7 +12,7 @@ from app.core.config import APP_CONFIG
 from app.services.replies import REPLIES
 from tests.conftest import FakeTts, has, read_frames, send_user_message, start_dialog
 from tests.test_gemini_budget import connect
-from tests.test_live import FakeConnector, FakeLink, speak_turn
+from tests.fake_live import FakeConnector, FakeLink, speak_turn
 from tests.test_live_feedback import history_of, make_client
 
 HEARD = "мне сегодня тяжело"
@@ -23,8 +23,6 @@ REPLY = "Похоже, день выдался тяжёлым. Что сильн
 def pinned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Как в проде: контекст текстом, сессия на несколько ходов; пауза перед повторной просьбой короткая, чтобы тест не ждал."""
     for name, value in (
-        ("text_context", True),
-        ("session_resumption", True),
         ("history_messages", 40),
         ("rotate_every", 4),
         ("silence_nudge_ms", 50),
@@ -84,14 +82,14 @@ class QuietConnector(FakeConnector):
         self.first, self.rest = first, rest
 
     async def open(  # type: ignore[override]
-        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+        self, voice: str, instructions: str, history: LiveHistory | None = None
     ) -> FakeLink:
-        self.open_calls.append((voice, resume_handle))
+        self.open_calls.append(voice)
         self.history_calls.append(history)
         if self.fail_from is not None and len(self.open_calls) >= self.fail_from:
             raise LiveError("Gemini Live не открылся в тесте")
         cls = self.first if not self.links else self.rest
-        link = cls(voice, self.reply, self.heard, instructions, resume_handle, history)
+        link = cls(voice, self.reply, self.heard, instructions, history)
         self.links.append(link)
         return link
 

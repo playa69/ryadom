@@ -14,13 +14,12 @@ from app.clients.gemini_live import GeminiLiveConnector, LiveError, LiveEvent, L
 from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.replies import NOISE_CHECK_CHARS, REPEAT_REQUEST
 from tests.conftest import AUTH, FakeTts, has, read_frames, send_user_message, start_dialog, ws_url
-from tests.test_live import FakeConnector, FakeLink, re_split, reply_done, speak_turn
+from tests.fake_live import FakeConnector, FakeLink, re_split, reply_done, speak_turn
 
 
 @pytest.fixture(autouse=True)
 def pinned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40)):
-        monkeypatch.setattr(APP_CONFIG.gemini, name, value)
+    monkeypatch.setattr(APP_CONFIG.gemini, "history_messages", 40)
 
 
 def counter(name: str, **labels: str) -> float:
@@ -35,11 +34,10 @@ class VoicelessLink(FakeLink):
     def _respond(self, heard: str | None) -> None:
         if heard:
             self._queue.put_nowait(LiveEvent("input_text", text=heard))
-        for piece in re_split(self._reply):
+        for piece in re_split(self._reply_text()):
             self._queue.put_nowait(LiveEvent("output_text", text=piece))
         if not self.hang:
             self._queue.put_nowait(LiveEvent("generation_complete"))
-            self._queue.put_nowait(LiveEvent("resumption", text=self.handle_to_issue))
 
 
 class HangingLink(VoicelessLink):
@@ -50,11 +48,11 @@ class LinkConnector(FakeConnector):
     link_class: type[FakeLink] = FakeLink
 
     async def open(  # type: ignore[override]
-        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+        self, voice: str, instructions: str, history: LiveHistory | None = None
     ) -> FakeLink:
-        self.open_calls.append((voice, resume_handle))
+        self.open_calls.append(voice)
         self.history_calls.append(history)
-        link = self.link_class(voice, self.reply, self.heard, instructions, resume_handle, history)
+        link = self.link_class(voice, self.reply, self.heard, instructions, history)
         self.links.append(link)
         return link
 
@@ -219,7 +217,7 @@ def test_typed_latin_is_not_noise(user_id: str) -> None:
 
 
 class SequenceLink(FakeLink):
-    """Ответы модели по очереди: первый ход — первый ответ и т.д. (одна сессия на ход при text_context — свой счётчик)."""
+    """Ответы модели по очереди: первый ход — первый ответ и т.д. (одна сессия на ход — свой счётчик)."""
 
     replies: list[str] = []
 
@@ -320,7 +318,7 @@ def test_session_opens_without_the_hint_when_google_rejects_it(monkeypatch: pyte
     connector = GeminiLiveConnector(GeminiSettings.model_validate({"GEMINI_API_KEY": "test-key"}))
     seen: list[bool] = []
 
-    async def fake_open(voice: str, instructions: str, resume_handle: str | None, history: Any, language_hint: bool) -> str:
+    async def fake_open(voice: str, instructions: str, history: Any, language_hint: bool) -> str:
         seen.append(language_hint)
         if language_hint:
             raise LiveError("Gemini Live не открылся: ConnectionClosedError: 1007 invalid language_codes")

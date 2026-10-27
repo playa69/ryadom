@@ -28,7 +28,7 @@ from app.services.dialog_store import GREETING_NEW, DialogStore
 from app.services.replies import split_sentences
 from app.services.usage import Usage
 from tests.conftest import AUTH, FakeChat, FakeRecognizer, FakeTts, read_frames, send_user_message, start_dialog, ws_url
-from tests.test_live import FakeConnector, reply_done, speak_turn
+from tests.fake_live import FakeConnector, reply_done, speak_turn
 from tests.test_llm import speak
 from tests.test_models import chat, completion, whisper
 from tests.test_speech import qwen

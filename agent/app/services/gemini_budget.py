@@ -1,4 +1,4 @@
-"""Бюджет входных токенов Gemini Live в минуту (TPM): учёт, пауза после превышения квоты, уровни нагрузки.
+"""Бюджет входных токенов Gemini Live в минуту (TPM): учёт и пауза после превышения квоты.
 
 У проекта Google один лимит на всех: 400 000 входных токенов в минуту (Tier 2), отдельных лимитов на запросы и сессии нет.
 Сверх лимита Google закрывает соединение кодом 1011 «You exceeded your current quota» и при открытии сессии, и посреди
@@ -25,46 +25,28 @@
 
 Резервы: `reserve` (id), `settle` (заменить фактом), `cancel` (снять, ход не состоялся).
 
-По доле окна от лимита — уровень (`level`): ok → trim (история новой сессии короче) → admit_off (новые разговоры идут в
-каскад) → hard (ход ждёт `GEMINI_TPM_WAIT_MS`, потом шаблон без Gemini) и cooldown (пауза после 1011: новые сессии Gemini не
-открываются, ходы ждут или уходят в шаблон).
+Окно только измеряется: метрики `agent_gemini_tpm_window_tokens` и `agent_gemini_tpm_limit_tokens` сравнивают с графиком
+AI Studio. Поведение разговоров оно не меняет: новые разговоры не отсекаются, история не сокращается, ход не получает отказ.
+Единственное, что агент делает сам, — пауза после 1011 (`cooling`): новые сессии Gemini не открываются
+`GEMINI_QUOTA_COOLDOWN_SECONDS` (5 с, растёт вдвое до 60 с, сбрасывается после удачных ходов), потому что открытие заведомо
+получило бы тот же отказ. `GEMINI_QUOTA_COOLDOWN_SECONDS=0` выключает и паузу.
 
-`GEMINI_TPM_LIMIT=0` выключает всё: методы ничего не делают, уровень всегда ok. `GEMINI_TPM_ENFORCE=false` — только мерить
-(окно, метрики, журнал) плюс пауза после 1011: это защита от заведомо обречённых открытий, а не деградация
-(`GEMINI_QUOTA_COOLDOWN_SECONDS=0` выключает и её). Уровни меняют поведение только при `GEMINI_TPM_ENFORCE=true`.
+`GEMINI_TPM_LIMIT=0` выключает учёт: методы ничего не делают.
 
-Часы подставляются (`clock`, `sleep`): тесты гоняют окно и паузы без настоящего ожидания.
+Часы подставляются (`clock`): тесты гоняют окно и паузы без настоящего ожидания.
 """
 
-import asyncio
 import logging
 import math
 import time
 import weakref
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from collections.abc import Callable, Iterable
 
 from app.core.config import GeminiSettings
-from app.core.metrics import (
-    GEMINI_BUDGET_LEVEL,
-    GEMINI_BUDGET_WAIT_SECONDS,
-    GEMINI_QUOTA_ERRORS_TOTAL,
-    GEMINI_TPM_LIMIT_TOKENS,
-    GEMINI_TPM_WINDOW_TOKENS,
-)
-
-if TYPE_CHECKING:
-    from app.clients.llm import ChatModel, Recognizer
-    from app.clients.speech import TextToSpeech
+from app.core.metrics import GEMINI_QUOTA_ERRORS_TOTAL, GEMINI_TPM_LIMIT_TOKENS, GEMINI_TPM_WINDOW_TOKENS
 
 logger = logging.getLogger("agent.budget")
-
-Level = Literal["ok", "trim", "admit_off", "hard", "cooldown"]
-LEVELS: tuple[Level, ...] = ("ok", "trim", "admit_off", "hard", "cooldown")
-# Уровни, на которых новый разговор не начинается в Gemini, и на которых ход в идущем разговоре ждёт и деградирует.
-ADMIT_OFF_LEVELS: frozenset[Level] = frozenset({"admit_off", "hard", "cooldown"})
 
 WINDOW_SECONDS = 60.0
 # Текст во входных токенах по счёту квоты Google: байты UTF-8 / 4 (эксперимент: 80 тыс. знаков кириллицы ≈ 37 тыс.).
@@ -77,14 +59,6 @@ PCM_BYTES_PER_SECOND = 16_000 * 2  # голос человека: PCM16, 16 кГ
 # Пауза после 1011 растёт вдвое с каждой новой ошибкой (5 → 10 → 20 → 40 → 60 с) и сбрасывается после стольких удачных ходов.
 COOLDOWN_MAX_SECONDS = 60.0
 COOLDOWN_RESET_TURNS = 3
-# Автокалибровка: Google отказал раньше нашего лимита (его квоту ест кто-то ещё или оценка неточна) — на столько секунд
-# действующий лимит = доля окна на момент ошибки, но не ниже доли настроенного лимита (после перезапуска пода окно пустое,
-# а у Google оно полное: калибровать по нему нельзя, поэтому первую минуту после старта калибровки нет вовсе).
-CALIBRATION_SECONDS = 600.0
-CALIBRATION_SHARE = 0.9
-CALIBRATION_FLOOR = 0.25
-# Как часто ждущий ход проверяет, не освободилось ли окно.
-POLL_SECONDS = 0.05
 # Резерв хода, когда открытие не считается (GEMINI_TPM_OPEN_FACTOR=0) и прошлого хода с prompt_all ещё не было.
 DEFAULT_TURN_TOKENS = 2500
 
@@ -112,41 +86,18 @@ def estimate_turn(text: str | None = None, audio_seconds: float | None = None, c
     return tokens
 
 
-@dataclass
-class CascadeFallback:
-    """Компоненты каскада в режиме gemini_live (`GEMINI_TPM_ENFORCE`): на них уходит новый разговор, когда бюджет Gemini
-    исчерпан, а распознавание и озвучка — ещё и для отдельного хода, который пришлось отдать шаблону."""
-
-    chat: "ChatModel | None"
-    recognizer: "Recognizer | None"
-    tts: "TextToSpeech | None"
-
-    @property
-    def can_converse(self) -> bool:
-        """Есть чем вести голосовой разговор целиком: без чата каскад отвечал бы шаблонами, без распознавания не слышал бы
-        голос, без озвучки молчал бы."""
-        return self.chat is not None and self.recognizer is not None and self.tts is not None
-
-
 class TokenBudget:
     def __init__(
         self,
         settings: GeminiSettings,
         clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         metrics: bool = True,
     ) -> None:
         self._limit = settings.tpm_limit
         self.enabled = settings.tpm_limit > 0
-        self.enforcing = self.enabled and settings.tpm_enforce
-        self._trim_at = settings.tpm_trim_at
-        self._admit_at = settings.tpm_admit_at
-        self._hard_at = settings.tpm_hard_at
         self._cooldown_base = settings.quota_cooldown_seconds
         self._open_factor = settings.tpm_open_factor
         self._clock = clock
-        self._sleep = sleep
-        self._started = clock()
         self._spent: deque[tuple[float, int]] = deque()  # (когда, токенов) за последние 60 с
         self._spent_total = 0
         self._reserved: dict[int, tuple[float, int]] = {}  # id → (когда, оценка)
@@ -156,14 +107,10 @@ class TokenBudget:
         self._cooldown_until = 0.0
         self._step = 0  # сколько раз подряд Google отказал по квоте (растёт пауза)
         self._good = 0  # удачных ходов после последней паузы
-        self._calibrated: int | None = None
-        self._calibrated_until = 0.0
-        self._level: Level = "ok"
         if self.enabled and metrics:
             # Метрики окна считаются в момент опроса Prometheus: окно сползает и без новых ходов.
             GEMINI_TPM_WINDOW_TOKENS.set_function(self.window_tokens)
             GEMINI_TPM_LIMIT_TOKENS.set_function(self.limit)
-            GEMINI_BUDGET_LEVEL.set_function(lambda: LEVELS.index(self.level()))
 
     @classmethod
     def disabled(cls) -> "TokenBudget":
@@ -194,14 +141,8 @@ class TokenBudget:
         self._prune()
         return sum(tokens for _, tokens in self._reserved.values())
 
-    def used(self) -> int:
-        """Окно вместе с резервами идущих ходов и открытий."""
-        return self.window_tokens() + self.reserved_tokens()
-
     def limit(self) -> int:
-        """Действующий лимит: настроенный или, 10 минут после отказа Google раньше него, откалиброванный."""
-        if self._calibrated is not None and self._clock() < self._calibrated_until:
-            return min(self._limit, self._calibrated)
+        """Настроенный лимит (`GEMINI_TPM_LIMIT`): с ним сравнивают окно."""
         return self._limit
 
     def reserve(self, estimate: int) -> int | None:
@@ -212,7 +153,6 @@ class TokenBudget:
         rid = self._next_id
         self._next_id += 1
         self._reserved[rid] = (now, max(0, int(estimate)))
-        self._note_level()
         return rid
 
     def reserved(self, rid: int | None) -> int:
@@ -234,7 +174,6 @@ class TokenBudget:
         if actual > 0:
             self._spent.append((now, int(actual)))
             self._spent_total += int(actual)
-        self._note_level()
 
     def charge(self, tokens: int) -> None:
         """Токены вне хода: сразу в окно."""
@@ -284,7 +223,7 @@ class TokenBudget:
                 self._step = 0  # Google снова отвечает: следующая пауза опять начнётся с начальной
         return charge
 
-    # ─── уровни ───────────────────────────────────────────────────────────────
+    # ─── пауза после отказа Google по квоте ───────────────────────────────────
 
     def cooling(self) -> bool:
         """Идёт пауза после 1011: новые сессии Gemini не открываются."""
@@ -293,81 +232,11 @@ class TokenBudget:
     def cooldown_left(self) -> float:
         return max(0.0, self._cooldown_until - self._clock()) if self.enabled else 0.0
 
-    def level(self) -> Level:
-        if not self.enabled:
-            return "ok"
-        if self.cooling():
-            return "cooldown"
-        share = self.used() / max(1, self.limit())
-        if share >= self._hard_at:
-            return "hard"
-        if share >= self._admit_at:
-            return "admit_off"
-        if share >= self._trim_at:
-            return "trim"
-        return "ok"
-
-    def _note_level(self) -> None:
-        """Смена уровня — строка в журнал: по ней видно, когда агент подходил к лимиту, даже если он только меряет."""
-        level = self.level()
-        if level != self._level:
-            logger.info(
-                "gemini budget level %s -> %s window=%d reserved=%d limit=%d enforce=%s",
-                self._level,
-                level,
-                self.window_tokens(),
-                self.reserved_tokens(),
-                self.limit(),
-                self.enforcing,
-            )
-            self._level = level
-
-    def fits(self, estimate: int) -> bool:
-        """Ход помещается: нет паузы, и окно с резервами и этой оценкой не выше порога hard."""
-        if not self.enabled:
-            return True
-        return not self.cooling() and self.used() + estimate <= self._hard_at * self.limit()
-
-    def admits_live(self) -> bool:
-        """Новый разговор можно начать в Gemini (при `GEMINI_TPM_ENFORCE`; без него — всегда)."""
-        return not self.enforcing or self.level() not in ADMIT_OFF_LEVELS
-
-    def trims_history(self) -> bool:
-        """История новой сессии короче (`GEMINI_HISTORY_MESSAGES_TIGHT`): окно подходит к лимиту."""
-        return self.enforcing and self.level() != "ok"
-
-    async def acquire(self, estimate: int, wait_seconds: float, extra: int = 0) -> int | None:
-        """Резерв на ход. `extra` — открытие сессии, которое ход потянет за собой (его резерв поставит само открытие).
-
-        При `GEMINI_TPM_ENFORCE` ход ждёт места в окне (и конца паузы) до `wait_seconds`; не дождался — None, ход деградирует.
-        Без ENFORCE резерв ставится сразу (а превышение пишется в журнал).
-        """
-        if not self.enabled:
-            return None
-        need = estimate + extra
-        if not self.enforcing:
-            if not self.fits(need):
-                logger.info("gemini budget over (measure only) level=%s estimate=%d", self.level(), need)
-            return self.reserve(estimate)
-        began = self._clock()
-        deadline = began + max(0.0, wait_seconds)
-        while not self.fits(need):
-            now = self._clock()
-            if now >= deadline:
-                GEMINI_BUDGET_WAIT_SECONDS.observe(now - began)
-                return None
-            await self._sleep(min(POLL_SECONDS, deadline - now))
-        GEMINI_BUDGET_WAIT_SECONDS.observe(self._clock() - began)
-        return self.reserve(estimate)
-
-    # ─── отказ Google по квоте ────────────────────────────────────────────────
-
-    def on_quota_error(self, where: str, dialog: str | None = None, calibrate: bool = True) -> None:
+    def on_quota_error(self, where: str, dialog: str | None = None) -> None:
         """Google отказал по квоте (1011). `where`: open | session | tts.
 
         Пауза растёт вдвое с каждой новой ошибкой после конца прошлой паузы; ошибки во время паузы (их много разом: отказ
-        приходит всем идущим разговорам) её не продлевают. `calibrate`: в тексте ошибки прямо сказано про квоту — Google
-        считает больше, чем мы, и лимит на 10 минут опускается до доли окна на момент ошибки.
+        приходит всем идущим разговорам) её не продлевают.
         """
         GEMINI_QUOTA_ERRORS_TOTAL.labels(where).inc()
         if not self.enabled:
@@ -376,17 +245,12 @@ class TokenBudget:
         if self.cooling():
             logger.info("gemini quota error during cooldown where=%s dialog=%s window=%d", where, dialog, window)
             return
-        now = self._clock()
         self._step += 1
         self._good = 0
         seconds = 0.0
         if self._cooldown_base > 0:
             seconds = min(COOLDOWN_MAX_SECONDS, self._cooldown_base * 2 ** (self._step - 1))
-            self._cooldown_until = now + seconds
-        if calibrate and now - self._started >= WINDOW_SECONDS and window > 0:
-            candidate = max(int(window * CALIBRATION_SHARE), int(self._limit * CALIBRATION_FLOOR))
-            if candidate < self.limit():
-                self._calibrated, self._calibrated_until = candidate, now + CALIBRATION_SECONDS
+            self._cooldown_until = self._clock() + seconds
         logger.warning(
             "gemini quota exceeded where=%s dialog=%s window=%d reserved=%d limit=%d cooldown_s=%.1f step=%d",
             where,
@@ -397,4 +261,3 @@ class TokenBudget:
             seconds,
             self._step,
         )
-        self._note_level()

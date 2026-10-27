@@ -25,7 +25,8 @@ from app.core import reclaim
 from app.core.config import APP_CONFIG
 from app.core.reclaim import MemoryReclaimer, forget_cancellation
 from tests.conftest import AUTH, FakeChat, FakeTts, has, make_client, read_frames, send_user_message, start_dialog, ws_url
-from tests.test_live import FakeConnector, make_live_client, reply_done, speak_turn
+from tests.fake_live import FakeConnector, reply_done, speak_turn
+from tests.test_live import make_live_client
 
 OURS = (DialogSession, Synthesis, LiveTurn, GeminiLiveLink)
 

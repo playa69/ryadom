@@ -89,7 +89,7 @@ from tests.conftest import (
     make_client,
     ws_url,
 )
-from tests.test_live import FakeConnector, FakeLink, re_split
+from tests.fake_live import FakeConnector, FakeLink, re_split
 
 WAIT = 6.0  # сколько ждать кадр, который должен прийти; дольше — зависание
 HOLD_SECONDS = 0.4  # INCOMPLETE_HOLD_MS в conftest
@@ -123,8 +123,6 @@ def pinned_settings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFi
         ("idle_timeout_seconds", 15),
         ("transcript_wait_ms", 1000),
         ("history_messages", 12),
-        ("session_resumption", True),
-        ("text_context", True),  # по умолчанию: прошлые реплики уходят в новую сессию отдельно от промпта
     ):
         monkeypatch.setattr(gemini, name, value)
     yield
@@ -198,10 +196,9 @@ class ScriptedLink(FakeLink):
         cfg: "ScriptedConnector",
         voice: str,
         instructions: str,
-        resume_handle: str | None = None,
         history: LiveHistory | None = None,
     ) -> None:
-        super().__init__(voice, "", "", instructions, resume_handle, history)
+        super().__init__(voice, "", "", instructions, history)
         self.cfg = cfg
         self.typed: list[str] = []
         self.heard_log: list[str] = []
@@ -220,7 +217,7 @@ class ScriptedLink(FakeLink):
                     events.append(self.cfg.piece_delay)
             if self.cfg.audio:
                 events += [LiveEvent("audio", data=FAKE_PCM), LiveEvent("audio", data=FAKE_PCM)]
-        events += [LiveEvent("generation_complete"), LiveEvent("resumption", text=self.handle_to_issue)]
+        events += [LiveEvent("generation_complete")]
         if self.instructions == VERBATIM_INSTRUCTIONS:
             # Сессия озвучки фразы: Google присылает turn_complete после звука, и прогрев закрывает её, прежде чем открыть
             # следующую (иначе каждая фраза ждала бы дочитывания расхода до таймаута).
@@ -304,13 +301,13 @@ class ScriptedConnector(FakeConnector):
         self.piece_delay = piece_delay
 
     async def open(  # type: ignore[override]
-        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+        self, voice: str, instructions: str, history: LiveHistory | None = None
     ) -> ScriptedLink:
-        self.open_calls.append((voice, resume_handle))
+        self.open_calls.append(voice)
         self.history_calls.append(history)
         if self.fail:
             raise LiveError("Gemini Live не открылся в тесте")
-        link = ScriptedLink(self, voice, instructions, resume_handle, history)
+        link = ScriptedLink(self, voice, instructions, history)
         self.links.append(link)
         return link
 
@@ -526,7 +523,7 @@ class Rig:
 
     def model_context(self) -> str:
         """Всё, что модель знала к моменту последнего ответа: история для чата или инструкции, прошлые реплики, загруженные в
-        сессию отдельно от промпта (text_context), реплики и слова сессии Gemini."""
+        сессию отдельно от промпта, реплики и слова сессии Gemini."""
         if self.chat is not None:
             return "\n".join(m["content"] for m in self.chat.calls[-1])
         assert self.connector is not None
@@ -1059,7 +1056,7 @@ def test_set_voice_applies_to_the_next_reply_and_is_remembered() -> None:
         assert run.extra["next_voice"] == "female", run.kind
     same(cascade.text, live.text, "кадры после set_voice")
     same(cascade.voice, live.voice, "озвучка после set_voice")
-    assert live.rig.connector.open_calls[-1][0] == "female"  # у Gemini голос один на соединение: новая сессия
+    assert live.rig.connector.open_calls[-1] == "female"  # у Gemini голос один на соединение: новая сессия
 
 
 def sc_end(r: Rig) -> Run:
@@ -1231,7 +1228,7 @@ def split_heard_plan(first_words: int) -> Plan:
         events: list[LiveEvent | float] = [LiveEvent("input_text", text=head)]
         events += [LiveEvent("output_text", text=piece) for piece in re_split(reply)]
         events += [LiveEvent("audio", data=FAKE_PCM), LiveEvent("input_text", text=rest), LiveEvent("audio", data=FAKE_PCM)]
-        events += [LiveEvent("generation_complete"), LiveEvent("resumption", text=link.handle_to_issue)]
+        events += [LiveEvent("generation_complete")]
         return events
 
     return plan

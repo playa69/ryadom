@@ -11,7 +11,8 @@ from app.clients.mood_classifier import parse_mood
 from app.core.config import APP_CONFIG
 from app.services.replies import CRISIS_REPLY
 from tests.conftest import AUTH, FakeTts, has, read_frames, start_dialog, ws_url
-from tests.test_live import FakeConnector, make_live_client, reply_done, speak_turn
+from tests.fake_live import FakeConnector, reply_done, speak_turn
+from tests.test_live import make_live_client
 
 
 def moods(frames: list[Any]) -> list[dict[str, Any]]:

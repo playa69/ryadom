@@ -184,7 +184,7 @@ SPEECH_SECONDS_TOTAL = Counter(
     ["speaker"],
 )
 
-# ─── Бюджет входных токенов в минуту (GEMINI_TPM_*, app/services/gemini_budget.py) ───
+# ─── Учёт входных токенов в минуту (GEMINI_TPM_*, app/services/gemini_budget.py) ───
 
 GEMINI_TPM_WINDOW_TOKENS = Gauge(
     "agent_gemini_tpm_window_tokens",
@@ -193,13 +193,7 @@ GEMINI_TPM_WINDOW_TOKENS = Gauge(
 
 GEMINI_TPM_LIMIT_TOKENS = Gauge(
     "agent_gemini_tpm_limit_tokens",
-    "Действующий лимит входных токенов в минуту: GEMINI_TPM_LIMIT или ниже, если Google отказал раньше (автокалибровка).",
-)
-
-# 0 ok, 1 trim, 2 admit_off, 3 hard, 4 cooldown
-GEMINI_BUDGET_LEVEL = Gauge(
-    "agent_gemini_budget_level",
-    "Уровень нагрузки на Gemini: 0 ok, 1 trim, 2 admit_off, 3 hard, 4 cooldown (пауза после 1011).",
+    "Лимит входных токенов в минуту, с которым сравнивают окно (GEMINI_TPM_LIMIT).",
 )
 
 # purpose: start | rotate | reconnect | voice | tts; result: ok | failed | quota
@@ -224,32 +218,12 @@ GEMINI_QUOTA_ERRORS_TOTAL = Counter(
     ["where"],
 )
 
-# pipeline: live | cascade
-GEMINI_ADMISSION_TOTAL = Counter(
-    "agent_gemini_admission_total",
-    "Новые сокеты в режиме gemini_live: начаты в Gemini или, когда бюджет исчерпан (GEMINI_TPM_ENFORCE), в каскаде.",
-    ["pipeline"],
-)
-
-# reason: hard | cooldown
-GEMINI_TURNS_DEGRADED_TOTAL = Counter(
-    "agent_gemini_turns_degraded_total",
-    "Ходы идущего разговора, отданные шаблону без Gemini: окно у лимита (hard) или пауза после 1011 (cooldown).",
-    ["reason"],
-)
-
-GEMINI_BUDGET_WAIT_SECONDS = Histogram(
-    "agent_gemini_budget_wait_seconds",
-    "Сколько ход ждал места в окне токенов (GEMINI_TPM_ENFORCE), прежде чем уйти модели или в шаблон.",
-    buckets=(0.0, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0),
-)
-
 GEMINI_SESSIONS_OPEN = Gauge(
     "agent_gemini_sessions_open",
     "Открытые сейчас сессии Gemini Live (разговоры и озвучка фраз).",
 )
 
-# result: ok | failed | deferred. Смена сессии после ответа (GEMINI_TEXT_CONTEXT): новая сессия с текстовой историей вместо накопленного аудио.
+# result: ok | failed | deferred. Смена сессии после ответа: новая сессия с текстовой историей вместо накопленного аудио.
 GEMINI_CONTEXT_REFRESH_TOTAL = Counter(
     "agent_gemini_context_refresh_total",
     "Смены сессии Gemini Live с переносом контекста текстом.",

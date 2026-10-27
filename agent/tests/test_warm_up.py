@@ -12,7 +12,7 @@ from app.main import SPOKEN_PHRASES, WARM_UP_GEMINI_SESSIONS, create_app
 from app.services.gemini_budget import TokenBudget
 from app.services.replies import split_sentences
 from tests.conftest import FakeTts
-from tests.test_live import FakeConnector, FakeLink
+from tests.fake_live import FakeConnector, FakeLink
 
 SENTENCES = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
 WANTED = [(voice, part) for part in SENTENCES for voice in ("male", "female")]
@@ -32,15 +32,15 @@ class CountingConnector(FakeConnector):
         self.peak = 0
 
     async def open(
-        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+        self, voice: str, instructions: str, history: LiveHistory | None = None
     ) -> FakeLink:
         self.now += 1
         self.peak = max(self.peak, self.now)
         try:
             if len(self.open_calls) + 1 in self.refuse:
-                self.open_calls.append((voice, resume_handle))
+                self.open_calls.append(voice)
                 raise LiveError(f"Gemini Live не открылся: ConnectionClosedError: {INTERNAL_1011}")
-            link = await super().open(voice, instructions, resume_handle, history)
+            link = await super().open(voice, instructions, history)
         except BaseException:
             self.now -= 1
             raise
