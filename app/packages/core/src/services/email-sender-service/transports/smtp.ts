@@ -4,7 +4,7 @@ import type { EmailTransport } from './types'
 
 type SmtpConfig = Extract<EmailTransportConfig, { kind: 'smtp' }>
 
-/** SMTP through nodemailer: Mailpit locally and on staging, a real SMTP server if needed. */
+/** SMTP through nodemailer: Mailpit locally, the provider's SMTP server in prod. */
 export function createSmtpTransport(config: SmtpConfig): EmailTransport {
   const transporter = createTransport({
     host: config.host,

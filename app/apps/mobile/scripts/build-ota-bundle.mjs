@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 /**
- * Builds the OTA bundle for both native flavours and bakes them into the image.
+ * Builds the OTA bundle of the prod native flavour and bakes it into the image. Only prod is served
+ * over the air (`services/api/src/lib/ota-bundle.ts`); the dev flavour is for developers' own builds.
  * services/api's Dockerfile runs this once and copies dist/ota/ into the runtime layer. (The PWA is
  * a separate image, apps/mobile/Dockerfile, and has nothing to do with this.) There is no bucket and
- * no separate publish step any more: the
- * JS bundle ships from the same commit, in the same deploy, as the server that reads its manifest
- * (`services/api/src/lib/ota-bundle.ts`).
- *
- * `vite build --mode <flavor>` always writes to dist/client (vite.config.ts), so each flavour is
- * zipped before the next one overwrites it - same reason the original ota-bundle.yml workflow only
- * ever ran one flavour per invocation.
+ * no separate publish step: the JS bundle ships from the same commit, in the same deploy, as the
+ * server that reads its manifest.
  *
  * Requires the `zip` binary (apk add zip in services/api's Dockerfile build stage; already present on
  * GitHub's ubuntu runners). It keeps forward slashes in the archive, which the update plugin
@@ -25,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const clientDist = join(root, 'dist', 'client')
 const otaDist = join(root, 'dist', 'ota')
-const FLAVORS = ['prod', 'dev']
+const FLAVOR = 'prod'
 
 if (!existsSync(join(root, 'package.json'))) {
   console.error('apps/mobile/package.json not found next to this script')
@@ -51,9 +47,9 @@ function run(command, args, options = {}) {
 
 async function buildFlavor(flavor) {
   await rm(clientDist, { recursive: true, force: true })
-  // The flavour is also the build mode, so it is passed on instead of being read from .env.dev /
-  // .env.prod: those files are gitignored, and in a clean checkout or in the Docker build the
-  // config would fail with "VITE_FLAVOR must be dev or prod". Where the files exist the value is the same.
+  // The flavour is also the build mode, so it is passed on instead of being read from .env.prod:
+  // that file is gitignored, and in a clean checkout or in the Docker build the config would fail
+  // with "VITE_FLAVOR must be dev or prod". Where the file exists the value is the same.
   run('pnpm', ['exec', 'vite', 'build', '--mode', flavor], {
     cwd: root,
     env: { ...process.env, VITE_FLAVOR: flavor },
@@ -74,8 +70,7 @@ async function buildFlavor(flavor) {
 await rm(otaDist, { recursive: true, force: true })
 await mkdir(otaDist, { recursive: true })
 
-const manifest = {}
-for (const flavor of FLAVORS) manifest[flavor] = await buildFlavor(flavor)
+const manifest = { [FLAVOR]: await buildFlavor(FLAVOR) }
 
 await writeFile(join(otaDist, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 console.log(`\nOTA manifest:\n${JSON.stringify(manifest, null, 2)}`)

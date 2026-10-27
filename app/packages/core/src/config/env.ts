@@ -84,7 +84,7 @@ const adminEmails = z.preprocess(
 )
 
 const baseShape = {
-  APP_ENV: z.enum(['local', 'staging', 'prod']),
+  APP_ENV: z.enum(['local', 'prod']),
   LOG_LEVEL: z.preprocess(emptyToUndefined, z.enum(LOG_LEVELS).default('info')),
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
   AUTH_SECRET: z.string().min(32, 'must be at least 32 characters'),

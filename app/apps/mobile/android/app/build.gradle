@@ -3,7 +3,7 @@ apply plugin: 'com.android.application'
 /**
  * Две сборки одного приложения:
  *
- *  - dev  — applicationId ru.ryadom.app.dev, ставится рядом с боевой, ходит в staging,
+ *  - dev  — applicationId ru.ryadom.app.dev, ставится рядом с боевой, по умолчанию ходит на локальный сервер,
  *           содержит переключатель сред;
  *  - prod — то, что попадает в магазины.
  *

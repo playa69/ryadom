@@ -4,14 +4,14 @@ import type { AppServerEnv } from './env'
 
 /**
  * The OTA bundle baked into this image. There is no bucket: `scripts/build-ota-bundle.mjs`
- * builds both native flavours, zips them and writes `manifest.json` next to them; the Dockerfile
+ * builds the `prod` native flavour, zips it and writes `manifest.json` next to it; the Dockerfile
  * runs it once and copies the result into the runtime layer as `ota/`.
  * The bundle therefore ships from the same commit and the same deploy as the server - no separate
  * publish step, no second pipeline, no S3 key.
  *
- * `staging` serves the `dev` flavour (it carries the env switcher), `prod` serves `prod`.
- * `local` never has one: `pnpm dev:api` does not run the build step. A missing manifest disables
- * OTA rather than failing startup - a build that skipped the step must still run.
+ * Only `prod` serves a bundle. `local` never has one: `pnpm dev:api` does not run the build step, and
+ * the `dev` flavour is not shipped over the air. A missing manifest disables OTA rather than failing
+ * startup - a build that skipped the step must still run.
  */
 
 export interface OtaBundle {
@@ -23,7 +23,6 @@ export interface OtaBundle {
 
 interface OtaManifest {
   prod?: OtaBundle
-  dev?: OtaBundle
 }
 
 function resolveOtaRoot(): string | null {
@@ -55,12 +54,10 @@ export function otaRoot(): string | null {
   return load()?.root ?? null
 }
 
-/** `local` never has a bundle; `staging` gets the dev flavour, `prod` gets prod. */
+/** `local` never has a bundle; `prod` gets the prod flavour. */
 export function otaBundleFor(appEnv: AppServerEnv['APP_ENV']): OtaBundle | null {
   if (appEnv === 'local') return null
-  const found = load()
-  if (!found) return null
-  return found.manifest[appEnv === 'staging' ? 'dev' : 'prod'] ?? null
+  return load()?.manifest.prod ?? null
 }
 
 /** Test-only: force a fresh read on the next call instead of the cached manifest. */

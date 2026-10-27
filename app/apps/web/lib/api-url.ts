@@ -1,6 +1,6 @@
 /**
  * Server-side runtime config. Both addresses are read per request, never at build time, so one
- * image serves staging and prod.
+ * image serves the local stack and prod.
  */
 
 /** The API the browser talks to (REST and WebSocket). No trailing slash. */
