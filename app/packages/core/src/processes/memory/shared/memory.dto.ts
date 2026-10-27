@@ -151,6 +151,12 @@ export function toMemoryFactDTO(fact: AgentMemoryFactResponse): MemoryFactDTO {
   }
 }
 
+/**
+ * The agent on Cognee has no limit of facts and says `maxFacts: null`; the apps' contract wants a
+ * number (cached PWAs read it), so the missing limit is shown as this one.
+ */
+const DEFAULT_MAX_FACTS = 200
+
 export function toMemoryDTO(memory: AgentMemoryResponse): MemoryDTO {
   return {
     available: memory.available,
@@ -159,7 +165,7 @@ export function toMemoryDTO(memory: AgentMemoryResponse): MemoryDTO {
     consentVersion: memory.consentVersion,
     consentAt: toDate(memory.consentAt),
     rulesVersion: memory.rulesVersion,
-    maxFacts: memory.limits.maxFacts,
+    maxFacts: memory.limits.maxFacts ?? DEFAULT_MAX_FACTS,
     facts: memory.facts.map(toMemoryFactDTO),
   }
 }

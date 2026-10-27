@@ -351,6 +351,12 @@ export function memoryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }: 
           return apiRefused(c, ForgetMemoryApiErrorCode.USER_NOT_FOUND, 'User not found')
         case ForgetMemoryFactOperationErrorCode.MEMORY_UNAVAILABLE:
           return apiRefused(c, ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE, 'Memory is unavailable right now')
+        case ForgetMemoryFactOperationErrorCode.UNSUPPORTED:
+          return apiRefused(
+            c,
+            ForgetMemoryApiErrorCode.FACT_UNSUPPORTED,
+            'Forgetting a single fact is not supported right now',
+          )
         default:
           return assertNever(result.error)
       }

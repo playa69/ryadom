@@ -89,6 +89,16 @@ DDL = (
     amount     DOUBLE PRECISION NOT NULL
 )""",
     "CREATE INDEX IF NOT EXISTS model_usage_dialog ON model_usage (dialog_id, message_id)",
+    # Настройки памяти человека: «Память» включена или на паузе и согласие. Переживают перезапуск и выгрузку (PROTEUS-242).
+    """CREATE TABLE IF NOT EXISTS memory_settings (
+    user_id             TEXT PRIMARY KEY,
+    enabled             BOOLEAN NOT NULL DEFAULT FALSE,
+    sensitive_enabled   BOOLEAN NOT NULL DEFAULT FALSE,
+    chat_search_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    consent_version     TEXT,
+    consent_at          TEXT,
+    updated_at          TEXT NOT NULL
+)""",
 )
 
 
@@ -341,12 +351,34 @@ class DialogDatabase:
         """Нет-оп: метод нужен контракту `DialogStore`; журнал транзакций ведёт кластер PostgreSQL."""
 
     def erase_user(self, user_id: str) -> None:
-        """Стереть всё о человеке (диалоги с сообщениями, расходом и идентификаторами — каскадом, выбор голоса) одной
-        транзакцией. Идемпотентно. Память человека стирает бэкенд памяти (Cognee), здесь её таблиц нет."""
+        """Стереть всё о человеке (диалоги с сообщениями, расходом и идентификаторами — каскадом, выбор голоса, настройки
+        памяти) одной транзакцией. Идемпотентно. Данные памяти в Cognee стирает бэкенд памяти."""
         with self._lock, self._connection() as conn, conn.transaction():
             conn.execute("DELETE FROM dialogs WHERE user_id = %s", (user_id,))
             conn.execute("DELETE FROM voice_prefs WHERE user_id = %s", (user_id,))
             conn.execute("DELETE FROM dialog_settings WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM memory_settings WHERE user_id = %s", (user_id,))
+
+    def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
+        """Настройки памяти человека: (включена, версия согласия, когда). None — человек их ещё не задавал."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                "SELECT enabled, consent_version, consent_at FROM memory_settings WHERE user_id = %s", (user_id,)
+            ).fetchone()
+        return None if row is None else (bool(row[0]), row[1], row[2])
+
+    def put_memory_settings(
+        self, user_id: str, enabled: bool, consent_version: str | None, consent_at: str | None, updated_at: str
+    ) -> None:
+        """Записать настройки памяти человека (создаёт строку или заменяет). Остальные переключатели не меняются."""
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO memory_settings (user_id, enabled, consent_version, consent_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET enabled = EXCLUDED.enabled, "
+                "consent_version = EXCLUDED.consent_version, consent_at = EXCLUDED.consent_at, "
+                "updated_at = EXCLUDED.updated_at",
+                (user_id, enabled, clean(consent_version), clean(consent_at), updated_at),
+            )
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         """Удалить один диалог человека целиком (сообщения и расход уходят каскадом).
