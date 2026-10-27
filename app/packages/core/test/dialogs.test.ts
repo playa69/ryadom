@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  ConfirmDialogDeletedOperation,
   DeleteDialogOperation,
   DeleteDialogOperationErrorCode,
   DraftRecapOperation,
@@ -29,6 +30,7 @@ import {
   GetActiveDialogShareQuery,
 } from '../src/managers/dialog-shares-manager'
 import { UpdateUserVoiceCommand, usersManager } from '../src/managers/users-manager'
+import { AFTER_DELETE_DELAY_SECONDS, getEnqueuedJobs } from '../src/services/job-queue-service'
 import { AgentUnavailableError } from '../src/shared'
 import { blockDirectly, json, mockAgent, mockFetch, registerConfirmedUser } from './helpers'
 
@@ -555,7 +557,11 @@ describe('удалить разговор', () => {
       'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
     })
     const result = await dialogsProcess.execute(new DeleteDialogOperation({ userId: user.id, dialogId: 'd-1' }))
-    expect(result).toEqual({ success: true, startedAt: new Date('2026-10-20T10:00:00.000Z') })
+    expect(result).toEqual({
+      success: true,
+      startedAt: new Date('2026-10-20T10:00:00.000Z'),
+      afterDeleteJobId: expect.any(String),
+    })
     expect(calls.map((c) => c.method)).toEqual(['GET', 'DELETE'])
     const active = await dialogSharesManager.execute(new GetActiveDialogShareQuery({ userId: user.id, dialogId: 'd-1', now: new Date() }))
     expect(active).toMatchObject({ share: null })
@@ -571,5 +577,105 @@ describe('удалить разговор', () => {
       error: DeleteDialogOperationErrorCode.DIALOG_NOT_FOUND,
     })
     expect(calls.map((c) => c.method)).toEqual(['GET'])
+  })
+})
+
+describe('удаление разговора: сброс недели не теряется', () => {
+  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Когда пересчитываются итоги недели»: сценарии «Сброс после удаления не удался»
+  // и «Удаление разговора не состоялось».
+  const dialog = {
+    dialogId: 'd-1',
+    startedAt: '2026-10-20T10:00:00.000Z',
+    endedAt: '2026-10-20T10:10:00.000Z',
+    summary: null,
+    messages: [],
+  }
+  const askedAbout = (userId: string) => ({
+    queue: 'dialogs.after-delete',
+    data: { userId, dialogId: 'd-1', dialogAt: '2026-10-20T10:00:00.000Z' },
+    startAfterSeconds: AFTER_DELETE_DELAY_SECONDS,
+    singletonKey: `${userId}:d-1`,
+  })
+
+  async function shareOf(userId: string, dialogId = 'd-1') {
+    const now = new Date()
+    await dialogSharesManager.execute(
+      new CreateDialogShareCommand({
+        id: crypto.randomUUID(),
+        userId,
+        dialogId,
+        tokenHash: `hash-${userId}`,
+        upToMessageId: null,
+        expiresAt: new Date(now.getTime() + 3_600_000),
+        now,
+        maxActive: 5,
+      }),
+    )
+  }
+  const activeShare = async (userId: string) =>
+    (await dialogSharesManager.execute(new GetActiveDialogShareQuery({ userId, dialogId: 'd-1', now: new Date() }))).share
+
+  it('задача сброса ставится до вызова агента: идентификаторы и дата начала, выдержка 2 минуты, ключ человек:разговор', async () => {
+    const user = await registerConfirmedUser()
+    const order: string[] = []
+    mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+      'DELETE http://agent.test/v1/users/*/dialogs/*': () => {
+        // At the moment the agent is asked, the job is already in the queue.
+        order.push(`agent asked, jobs queued: ${getEnqueuedJobs().length}`)
+        return new Response(null, { status: 204 })
+      },
+    })
+
+    const result = await dialogsProcess.execute(new DeleteDialogOperation({ userId: user.id, dialogId: 'd-1' }))
+
+    expect(order).toEqual(['agent asked, jobs queued: 1'])
+    expect(getEnqueuedJobs()).toEqual([expect.objectContaining(askedAbout(user.id))])
+    expect(result).toMatchObject({ success: true, afterDeleteJobId: getEnqueuedJobs()[0]!.id })
+    expect(AFTER_DELETE_DELAY_SECONDS).toBe(120)
+  })
+
+  it('Удаление разговора не состоялось: агент отказал — разговор на месте, задача лежит и ничего не меняет', async () => {
+    const user = await registerConfirmedUser()
+    await shareOf(user.id)
+    mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+      'DELETE http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'boom' }, 502),
+    })
+
+    await expect(
+      dialogsProcess.execute(new DeleteDialogOperation({ userId: user.id, dialogId: 'd-1' })),
+    ).rejects.toBeInstanceOf(AgentUnavailableError)
+    expect(getEnqueuedJobs()).toHaveLength(1)
+
+    // The job meets the conversation in place: nothing is revoked, nothing is reset.
+    mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog) })
+    expect(
+      await dialogsProcess.execute(new ConfirmDialogDeletedOperation({ userId: user.id, dialogId: 'd-1' })),
+    ).toEqual({ success: true, deleted: false })
+    expect(await activeShare(user.id)).not.toBeNull()
+  })
+
+  it('Сброс после удаления не удался: у агента разговора уже нет — ссылка гаснет, повтор ничего не ломает', async () => {
+    const user = await registerConfirmedUser()
+    await shareOf(user.id)
+    mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404),
+    })
+    const confirm = () =>
+      dialogsProcess.execute(new ConfirmDialogDeletedOperation({ userId: user.id, dialogId: 'd-1' }))
+
+    expect(await confirm()).toEqual({ success: true, deleted: true })
+    expect(await activeShare(user.id)).toBeNull()
+    expect(await confirm()).toEqual({ success: true, deleted: true })
+  })
+
+  it('агент не отвечает — исключение: очередь повторит задачу', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'boom' }, 503) })
+
+    await expect(
+      dialogsProcess.execute(new ConfirmDialogDeletedOperation({ userId: user.id, dialogId: 'd-1' })),
+    ).rejects.toBeInstanceOf(AgentUnavailableError)
   })
 })

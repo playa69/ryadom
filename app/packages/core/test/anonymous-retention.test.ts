@@ -19,6 +19,7 @@ import {
   accountDeletionProcess,
 } from '../src/processes/account-deletion'
 import { StartDialogOperation, dialogsProcess } from '../src/processes/dialogs'
+import { getEnqueuedJobs } from '../src/services/job-queue-service'
 import { ConfirmEmailOperation, emailConfirmationProcess } from '../src/processes/email-confirmation'
 import {
   PASSWORD,
@@ -339,5 +340,17 @@ describe('подтверждённая почта и ключ устройств
 
     const result = await dialogsProcess.execute(new StartDialogOperation({ userId: user.id }))
     expect(result.success).toBe(true)
+  })
+})
+
+describe('чистка неактивных не стирает профиль в аналитике', () => {
+  // `openspec/changes/archive/2026-10-27-add-job-queue`: only the person's own request queues the erasure in analytics.
+  it('стёртый по сроку аккаунт не ставит задач в очередь', async () => {
+    mockAgent()
+    await anonymousSeen(RETENTION_DAYS + 5)
+
+    expect(await purge()).toMatchObject({ purged: 1, failed: 0 })
+
+    expect(getEnqueuedJobs()).toEqual([])
   })
 })

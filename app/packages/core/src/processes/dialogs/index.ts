@@ -4,6 +4,7 @@ import './list-dialogs/list-dialogs.handler'
 import './get-dialog/get-dialog.handler'
 import './end-dialog/end-dialog.handler'
 import './delete-dialog/delete-dialog.handler'
+import './confirm-dialog-deleted/confirm-dialog-deleted.handler'
 import './list-recaps/list-recaps.handler'
 import './draft-recap/draft-recap.handler'
 import './put-recap/put-recap.handler'
@@ -24,6 +25,8 @@ export { EndDialogOperation } from './end-dialog/end-dialog.operation'
 export type { EndDialogOperationData } from './end-dialog/end-dialog.operation'
 export { DeleteDialogOperation } from './delete-dialog/delete-dialog.operation'
 export type { DeleteDialogOperationData } from './delete-dialog/delete-dialog.operation'
+export { ConfirmDialogDeletedOperation } from './confirm-dialog-deleted/confirm-dialog-deleted.operation'
+export type { ConfirmDialogDeletedOperationData } from './confirm-dialog-deleted/confirm-dialog-deleted.operation'
 export { ListRecapsOperation } from './list-recaps/list-recaps.operation'
 export type { ListRecapsOperationData } from './list-recaps/list-recaps.operation'
 export { DraftRecapOperation } from './draft-recap/draft-recap.operation'
@@ -46,6 +49,7 @@ export type { EndDialogResult } from './end-dialog/end-dialog.types'
 export { EndDialogOperationErrorCode } from './end-dialog/end-dialog.types'
 export type { DeleteDialogResult } from './delete-dialog/delete-dialog.types'
 export { DeleteDialogOperationErrorCode } from './delete-dialog/delete-dialog.types'
+export type { ConfirmDialogDeletedResult } from './confirm-dialog-deleted/confirm-dialog-deleted.types'
 export type { ListRecapsResult } from './list-recaps/list-recaps.types'
 export { ListRecapsOperationErrorCode } from './list-recaps/list-recaps.types'
 export type { DraftRecapResult } from './draft-recap/draft-recap.types'
@@ -72,6 +76,7 @@ import type { ListDialogsOperation } from './list-dialogs/list-dialogs.operation
 import type { GetDialogOperation } from './get-dialog/get-dialog.operation'
 import type { EndDialogOperation } from './end-dialog/end-dialog.operation'
 import type { DeleteDialogOperation } from './delete-dialog/delete-dialog.operation'
+import type { ConfirmDialogDeletedOperation } from './confirm-dialog-deleted/confirm-dialog-deleted.operation'
 import type { ListRecapsOperation } from './list-recaps/list-recaps.operation'
 import type { DraftRecapOperation } from './draft-recap/draft-recap.operation'
 import type { PutRecapOperation } from './put-recap/put-recap.operation'
@@ -84,6 +89,7 @@ export type DialogsOperations =
   | GetDialogOperation
   | EndDialogOperation
   | DeleteDialogOperation
+  | ConfirmDialogDeletedOperation
   | ListRecapsOperation
   | DraftRecapOperation
   | PutRecapOperation

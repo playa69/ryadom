@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { PgBoss } from 'pg-boss'
 
 /** pg_advisory_lock key: only one process per database applies migrations at a time. */
 const LOCK_NAME = 'ryadom:migrations'
@@ -23,6 +24,8 @@ export interface RunMigrationsResult {
   applied: string[]
   /** Total number of migrations in the journal. */
   total: number
+  /** The job queue's schema (`pgboss`): its version after this run, and whether this run installed or upgraded it. */
+  jobsSchema: { version: number; changed: boolean }
 }
 
 interface JournalEntry {
@@ -61,6 +64,40 @@ async function appliedTimestamps(sql: postgres.Sql): Promise<Set<number>> {
   if (!exists?.exists) return new Set()
   const rows = await sql<{ created_at: string }[]>`select created_at from drizzle.__drizzle_migrations`
   return new Set(rows.map((row) => Number(row.created_at)))
+}
+
+/** The version of the job queue's schema, or null when the schema is not there. */
+async function jobsSchemaVersion(sql: postgres.Sql): Promise<number | null> {
+  const [exists] = await sql<
+    { exists: boolean }[]
+  >`select to_regclass('pgboss.version') is not null as exists`
+  if (!exists?.exists) return null
+  const [row] = await sql<{ version: number }[]>`select version from pgboss.version`
+  return row?.version ?? null
+}
+
+/**
+ * Installs or upgrades the job queue's schema by starting a pg-boss instance that does nothing else: no
+ * supervision, no schedules, no registry row. `start()` applies the schema's own migrations and an
+ * instance that finds the schema current leaves it alone. The API starts pg-boss with `migrate: false`, so
+ * this is the only place the schema changes (design D2 of `add-job-queue`).
+ */
+async function installJobsSchema(url: string): Promise<void> {
+  const boss = new PgBoss({
+    connectionString: url,
+    supervise: false,
+    schedule: false,
+    registerInstance: false,
+    max: 1,
+    application_name: 'ryadom-migrate-jobs',
+  })
+  // Without a listener an 'error' event would throw out of the emitter instead of failing start().
+  boss.on('error', () => {})
+  try {
+    await boss.start()
+  } finally {
+    await boss.stop({ graceful: true, timeout: 5_000 })
+  }
 }
 
 /**
@@ -107,7 +144,16 @@ export async function runMigrations(opts: RunMigrationsOptions): Promise<RunMigr
       const applied = journal
         .filter((entry) => after.has(entry.when) && !before.has(entry.when))
         .map((entry) => entry.tag)
-      return { applied, total: journal.length }
+      // Under the same lock: two migrators never install the queue's schema at once.
+      const jobsBefore = await jobsSchemaVersion(migrateSql)
+      await installJobsSchema(opts.url)
+      const jobsAfter = await jobsSchemaVersion(migrateSql)
+      if (jobsAfter === null) throw new Error('pg-boss did not install its schema')
+      return {
+        applied,
+        total: journal.length,
+        jobsSchema: { version: jobsAfter, changed: jobsBefore !== jobsAfter },
+      }
     } finally {
       await lockSql`select pg_advisory_unlock(hashtext(${LOCK_NAME}))`
     }

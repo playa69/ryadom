@@ -267,6 +267,16 @@ const appShape = {
    * random base64 and does not start with a word.
    */
   ANALYTICS_TEST_DEVICE_PREFIX: z.string().trim().max(32).default('loadtest-'),
+  /**
+   * Whether this process works the job queue off (the schedules and the jobs of `lib/jobs.ts`). Queuing a job
+   * works either way. Not a feature flag: the workers live in the API for now, and this is how they move to a
+   * pod of their own later (`JOBS_WORKERS_ENABLED=false` on the API).
+   */
+  JOBS_WORKERS_ENABLED: booleanFlag.transform((value) => value ?? true),
+  /** Connections of the queue's own pool, for queuing, the workers and the upkeep together. */
+  JOBS_POOL_MAX: optionalInt(1).transform((value) => value ?? 4),
+  /** How long the stop of a pod waits for the jobs that are running; the ones that do not finish go to another replica. */
+  JOBS_STOP_TIMEOUT_MS: optionalInt(1000).transform((value) => value ?? 10_000),
 }
 
 const adminShape = {

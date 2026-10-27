@@ -6,8 +6,9 @@ import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 
 /**
  * Erases the anonymous accounts that nobody has opened for `ANONYMOUS_RETENTION_DAYS`, the promise the
- * app makes on the profile screen. Every replica runs it on its own timer, which is harmless: an
- * account is erased once, and a second replica that meets it half erased finds it gone.
+ * app makes on the profile screen. Run hourly by the queue `accounts.purge-inactive-anonymous`
+ * (`src/jobs/purge-anonymous.ts`), one run for all replicas. A run that meets an account another one has half erased
+ * finds it gone: the erasure is idempotent.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000

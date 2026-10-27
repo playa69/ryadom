@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { basename, dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
@@ -12,8 +13,9 @@ import { defaultMigrationsFolder, runMigrations } from './migrate.ts'
  * The tests used to share two fixed databases on the development server, and their
  * global setup dropped every table in them: two agents testing at the same time wiped each other's data. Now a
  * run creates `ryadom_test_<stand>_<pid>` from a template that already holds the migrated schema, and drops it at
- * the end. The template (`ryadom_tpl_<hash of the migrations>`) is built once per set of migrations, under an
- * advisory lock, so a run costs a `CREATE DATABASE ... TEMPLATE` (a second) instead of a migration of its own.
+ * the end. The template (`ryadom_tpl_<hash of the migrations and of the pg-boss version>`) is built once per set of
+ * migrations, under an advisory lock, so a run costs a `CREATE DATABASE ... TEMPLATE` (a second) instead of a
+ * migration of its own. It holds the job queue's schema too (`pgboss`), which `runMigrations` installs.
  *
  * Which server: TEST_DB_ADMIN_URL, else the stand pinned in app/.stand.json (scripts/stand.mjs; `pnpm test` sets
  * the variable), else the old development server on 55433. There is no way to name the test database itself: a
@@ -76,9 +78,20 @@ export function testDatabase(): TestDatabase {
   return { url: withDatabase(admin, name), name, adminUrl: admin }
 }
 
-/** Hash of the migration files: the template is rebuilt exactly when the schema may have changed. */
-function migrationsHash(folder: string): string {
+/**
+ * The installed version of pg-boss, which owns the `pgboss` schema: a new version may migrate that schema, and a
+ * template built by the old one would still hold the old schema.
+ */
+export function pgBossVersion(): string {
+  const require = createRequire(import.meta.url)
+  return (JSON.parse(readFileSync(require.resolve('pg-boss/package.json'), 'utf8')) as { version: string })
+    .version
+}
+
+/** Hash of the migration files and of the pg-boss version: the template is rebuilt exactly when a schema may have changed. */
+export function migrationsHash(folder: string, jobsVersion = pgBossVersion()): string {
   const hash = createHash('sha256')
+  hash.update(`pg-boss\0${jobsVersion}\0`)
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
       a.name.localeCompare(b.name),

@@ -484,6 +484,21 @@ describe('удаление разговора: итоги недели пере�
     expect(digestCalls(calls)).toHaveLength(1)
   })
 
+  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался». The reset is
+  // made by the request and, if that did not finish, by the job `dialogs.after-delete`: a repeat must change nothing more.
+  it('сброс идемпотентен: повтор после запроса (задача очереди) оставляет один маркер и ничего не ломает', async () => {
+    const user = await registerConfirmedUser()
+    for (const day of ['05', '06', '07']) await mark(user.id, `2026-10-${day}`)
+    await finalWeek(user.id, '2026-10-05')
+
+    expect(await recompute(user.id)).toEqual({ success: true, weekDeleted: true, scheduled: true })
+    expect(await recompute(user.id)).toEqual({ success: true, weekDeleted: false, scheduled: true })
+
+    const rows = (await rowsOf(user.id)).filter((r) => r.periodStart === '2026-10-05')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ status: 'pending', text: '' })
+  })
+
   it('у недели осталось меньше трёх отмеченных дней: текст убран и заново не пишется, маркера не остаётся', async () => {
     const user = await registerConfirmedUser()
     for (const day of ['05', '06']) await mark(user.id, `2026-10-${day}`)
