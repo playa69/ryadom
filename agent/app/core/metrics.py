@@ -80,7 +80,7 @@ VOICE_HELD_TURNS_TOTAL = Counter(
     "Реплики, оборванные на полуслове (союз, запятая): ответ задержан, пока человек договаривает.",
 )
 
-# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase | delete | mark | clear.
+# Диалоги на диске (DIALOG_DATABASE_URL). op: open | load | write | erase | delete | mark | clear | purge.
 DIALOG_DB_ERRORS_TOTAL = Counter(
     "agent_dialog_db_errors_total",
     "Сбои базы диалогов на диске: при сбое запись повторяется, диалоги остаются в памяти.",
@@ -132,6 +132,25 @@ DIALOG_RETENTION_WOULD_DELETE = Gauge(
 DIALOG_RETENTION_DELETED_TOTAL = Counter(
     "agent_dialogs_retention_deleted_total",
     "Разговоры, удалённые проходом по сроку хранения (DIALOG_RETENTION_DAYS).",
+)
+
+# Физическая очистка мягко стёртого (app/services/dialog_purge.py, PROTEUS-255). table у счётчика удалённого: dialogs | messages |
+# client_ids | memory_sources | voice_prefs; у gauge: dialogs | voice_prefs.
+DIALOG_PURGE_OVERDUE_ROWS = Gauge(
+    "agent_dialog_purge_overdue_rows",
+    "Строки, помеченные стёртыми больше 2 часов назад и всё ещё лежащие в базе: очистка убирает помеченное через час.",
+    ["table"],
+)
+
+DIALOG_PURGE_DELETED_ROWS_TOTAL = Counter(
+    "agent_dialog_purge_deleted_rows_total",
+    "Строки, физически удалённые очисткой стёртого, по таблицам.",
+    ["table"],
+)
+
+DIALOG_PURGE_USAGE_ANONYMIZED_TOTAL = Counter(
+    "agent_dialog_purge_usage_anonymized_total",
+    "Строки расхода моделей (model_usage), у которых очистка убрала dialog_id и message_id; сами строки остаются.",
 )
 
 # kind: first — первая загрузка человека после старта пода; reload — загрузка после выгрузки.

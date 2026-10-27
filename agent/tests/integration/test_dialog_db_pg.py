@@ -6,13 +6,15 @@
 """
 
 import os
+import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 import pytest
 
 from app.services.dialog_db import DialogDatabase as PostgresDialogDatabase
-from app.services.dialog_db import encode_summary
+from app.services.dialog_db import PurgeStats, encode_summary, iso_utc
 
 TABLES = (
     "model_usage",
@@ -207,3 +209,198 @@ def test_memory_deletion_marks_of_0_8_8_move_to_the_outbox_once(db: PostgresDial
     assert db.get_memory_settings("kept") == (True, "2026-10-21", "2026-10-26T11:00:00.000Z")
     with psycopg.connect(db.dsn, autocommit=True) as conn:
         assert conn.execute("SELECT count(*) FROM memory_deletions").fetchone()[0] == 0
+
+
+# ─── физическая очистка мягко стёртого (PROTEUS-255) ──────────────────────────────────────────────────────────────
+
+
+def _age_marks(db: PostgresDialogDatabase, hours: float) -> None:
+    """Сделать все пометки `deleted_at` старше на `hours` часов, как будто они поставлены давно."""
+    at = iso_utc(datetime.now(UTC) - timedelta(hours=hours))
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        conn.execute("UPDATE dialogs SET deleted_at = %s WHERE deleted_at IS NOT NULL", (at,))
+        conn.execute("UPDATE voice_prefs SET deleted_at = %s WHERE deleted_at IS NOT NULL", (at,))
+
+
+def _count(db: PostgresDialogDatabase, table: str, where: str = "TRUE") -> int:
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        return conn.execute(f"SELECT count(*) FROM {table} WHERE {where}").fetchone()[0]
+
+
+def _cutoff(minutes_ago: float = 60) -> str:
+    return iso_utc(datetime.now(UTC) - timedelta(minutes=minutes_ago))
+
+
+def test_model_usage_survives_the_dialog_after_migration_from_the_cascading_schema(db: PostgresDialogDatabase) -> None:
+    """База, созданная прежним DDL (dialog_id NOT NULL, внешний ключ с каскадом), при открытии теряет и то и другое:
+    физическое удаление диалога больше не уносит расход."""
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        conn.execute("ALTER TABLE model_usage ALTER COLUMN dialog_id SET NOT NULL")
+        conn.execute(
+            "ALTER TABLE model_usage ADD CONSTRAINT model_usage_dialog_id_fkey FOREIGN KEY (dialog_id) "
+            "REFERENCES dialogs (id) ON DELETE CASCADE"
+        )
+    db.apply([_write("d1", "u1")])
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        conn.execute("DELETE FROM dialogs WHERE id = 'd1'")
+    assert _count(db, "model_usage") == 0  # исходная посылка: старая схема каскадом убирала расход
+
+    for _ in range(2):  # открытие идемпотентно
+        migrated = PostgresDialogDatabase(db.dsn)
+        migrated.open()
+        migrated.close()
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        nullable = conn.execute(
+            "SELECT is_nullable FROM information_schema.columns WHERE table_name = 'model_usage' AND column_name = 'dialog_id'"
+        ).fetchone()[0]
+        foreign_keys = conn.execute(
+            "SELECT count(*) FROM pg_constraint WHERE conrelid = 'model_usage'::regclass AND contype = 'f'"
+        ).fetchone()[0]
+    assert (nullable, foreign_keys) == ("YES", 0)
+    db.apply([_write("d1", "u1")])
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        conn.execute("DELETE FROM dialogs WHERE id = 'd1'")
+    assert _count(db, "model_usage") == 1
+
+
+def test_purge_removes_marked_rows_anonymizes_usage_and_leaves_others(db: PostgresDialogDatabase) -> None:
+    db.apply([_write("d1", "u1"), _write("d2", "u2")])
+    db.erase_user("u1")
+    db.add_note_source("u1", "n1", "d1", "hash", "2026-10-24T10:00:00.000Z")  # запоздалая запись извлекателя заметок
+    _age_marks(db, 3)
+    assert db.marked_counts(_cutoff(120)) == (1, 1)
+
+    stats = db.purge_dialogs(_cutoff(), 500)
+    prefs = db.purge_voice_prefs(_cutoff(), 500)
+
+    assert stats == PurgeStats(dialogs=1, messages=1, client_ids=1, memory_sources=1, voice_prefs=0, usage_anonymized=1)
+    assert prefs == 1 and db.marked_counts(_cutoff(120)) == (0, 0)
+    assert db.counts() == (1, 1)
+    assert [d.id for d in db.load_user("u2")[0]] == ["d2"] and db.load_user("u2")[1] == "male"
+    assert (_count(db, "client_ids"), _count(db, "voice_prefs"), _count(db, "memory_sources")) == (1, 1, 0)
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        rows = conn.execute(
+            "SELECT dialog_id, message_id, created_at, model, task, direction, modality, unit, amount FROM model_usage "
+            "ORDER BY dialog_id NULLS FIRST"
+        ).fetchall()
+    assert rows == [
+        (None, None, "2026-10-24T10:00:02+00:00", "chat", "reply", "out", "text", "tokens", 42.0),
+        ("d2", "m1", "2026-10-24T10:00:02+00:00", "chat", "reply", "out", "text", "tokens", 42.0),
+    ]
+    assert db.purge_dialogs(_cutoff(), 500) == PurgeStats() and db.purge_voice_prefs(_cutoff(), 500) == 0  # повтор ничего не делает
+
+
+def test_purge_ignores_fresh_marks_and_unmarked_rows(db: PostgresDialogDatabase) -> None:
+    db.apply([_write("d1", "u1"), _write("d2", "u2")])
+    db.erase_user("u1")  # пометка только что
+    assert db.purge_dialogs(_cutoff(), 500) == PurgeStats() and db.purge_voice_prefs(_cutoff(), 500) == 0
+    assert db.counts() == (2, 2) and _count(db, "voice_prefs") == 2
+    db.delete_dialog("u2", "d2", forget_derived=False)
+    _age_marks(db, 0.5)  # полчаса: ещё не час
+    assert db.purge_dialogs(_cutoff(), 500) == PurgeStats()
+    assert db.marked_counts(_cutoff(120)) == (0, 0)
+    assert db.marked_counts(_cutoff(10)) == (2, 1)
+
+
+def test_purge_takes_at_most_limit_dialogs_oldest_first(db: PostgresDialogDatabase) -> None:
+    db.apply([_write(f"d{i}", f"u{i}") for i in range(5)])
+    for i in range(5):
+        db.erase_user(f"u{i}")
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        for i in range(5):  # d0 самый старый
+            at = iso_utc(datetime.now(UTC) - timedelta(hours=10 - i))
+            conn.execute("UPDATE dialogs SET deleted_at = %s WHERE id = %s", (at, f"d{i}"))
+            conn.execute("UPDATE voice_prefs SET deleted_at = %s WHERE user_id = %s", (at, f"u{i}"))
+    first = db.purge_dialogs(_cutoff(), 2)
+    with psycopg.connect(db.dsn, autocommit=True) as conn:
+        left = {row[0] for row in conn.execute("SELECT id FROM dialogs").fetchall()}
+    assert first.dialogs == 2 and left == {"d2", "d3", "d4"}  # ушли два самых старых
+    assert [db.purge_dialogs(_cutoff(), 2).dialogs for _ in range(3)] == [2, 1, 0]
+    assert [db.purge_voice_prefs(_cutoff(), 2) for _ in range(4)] == [2, 2, 1, 0]
+    assert db.counts() == (0, 0) and _count(db, "model_usage") == 5 and _count(db, "model_usage", "dialog_id IS NOT NULL") == 0
+
+
+def test_two_executors_split_the_backlog_without_double_counting_and_do_not_block_the_writer(db: PostgresDialogDatabase) -> None:
+    """Две реплики очищают одно и то же: пачки не пересекаются (SKIP LOCKED), каждая строка считается один раз, а писатель живых
+    людей в это время не упирается в очистку."""
+    total = 400
+    at = iso_utc(datetime.now(UTC) - timedelta(hours=3))
+    day = "2026-10-24T10:00:00+00:00"
+    with psycopg.connect(db.dsn, autocommit=True) as conn:  # готовое стёртое одним набором запросов, а не через писателя
+        conn.execute(
+            "INSERT INTO dialogs (id, user_id, started_at, voice, deleted_at) "
+            "SELECT 'd' || g, 'u' || g, %s, 'male', %s FROM generate_series(1, %s) g",
+            (day, at, total),
+        )
+        conn.execute(
+            "INSERT INTO messages (id, dialog_id, position, role, text, created_at) "
+            "SELECT 'm' || p, 'd' || g, p, 'user', 'x', %s FROM generate_series(1, %s) g, generate_series(1, 2) p",
+            (day, total),
+        )
+        conn.execute("INSERT INTO client_ids SELECT 'd' || g, 'c1', 'm1' FROM generate_series(1, %s) g", (total,))
+        conn.execute(
+            "INSERT INTO model_usage (dialog_id, message_id, created_at, model, task, direction, modality, unit, amount) "
+            "SELECT 'd' || g, 'm1', %s, 'chat', 'reply', 'out', 'text', 'tokens', 42 FROM generate_series(1, %s) g",
+            (day, total),
+        )
+    other = PostgresDialogDatabase(db.dsn)
+    other.open()
+    cutoff = _cutoff()
+    results: list[PurgeStats] = []
+    failures: list[BaseException] = []
+    purging = threading.Barrier(3)
+    finished = threading.Event()
+    written: list[str] = []
+
+    def purge(executor: PostgresDialogDatabase) -> None:
+        try:
+            purging.wait(10)
+            while True:
+                stats = executor.purge_dialogs(cutoff, 7)
+                results.append(stats)
+                if stats.dialogs == 0:
+                    return
+        except BaseException as error:  # noqa: BLE001
+            failures.append(error)
+
+    def write_alive() -> None:
+        try:
+            purging.wait(10)
+            while not finished.is_set() or not written:  # пишет всё время, пока идёт очистка
+                dialog_id = f"live{len(written)}"
+                db.apply([_write(dialog_id, "alive")])
+                written.append(dialog_id)
+        except BaseException as error:  # noqa: BLE001
+            failures.append(error)
+
+    purgers = [threading.Thread(target=purge, args=(executor,)) for executor in (db, other)]
+    writer = threading.Thread(target=write_alive)
+    for thread in (*purgers, writer):
+        thread.start()
+    for thread in purgers:
+        thread.join(60)
+    finished.set()
+    writer.join(60)
+    other.close()
+
+    assert not failures and not any(thread.is_alive() for thread in (*purgers, writer))
+    assert sum(stats.dialogs for stats in results) == total
+    assert sum(stats.messages for stats in results) == 2 * total and sum(stats.client_ids for stats in results) == total
+    assert sum(stats.usage_anonymized for stats in results) == total
+    assert _count(db, "dialogs", "deleted_at IS NOT NULL") == 0 and _count(db, "dialogs") == len(written)  # живые на месте
+    assert _count(db, "model_usage", "dialog_id IS NULL") == total
+
+
+def test_purged_person_can_choose_a_voice_again(db: PostgresDialogDatabase) -> None:
+    """Пока пометка жива, запись голоса стёртого игнорируется; после очистки строка заводится заново."""
+    db.apply([_write("d1", "u1")])
+    db.erase_user("u1")
+    again = _write("d2", "u1")
+    again.pref = ("u1", "female")
+    db.apply([again])
+    assert db.load_user("u1")[1] is None  # пометка держит
+    _age_marks(db, 3)
+    db.purge_dialogs(_cutoff(), 500)
+    db.purge_voice_prefs(_cutoff(), 500)
+    db.apply([again])
+    assert db.load_user("u1")[1] == "female"
