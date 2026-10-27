@@ -240,12 +240,6 @@ export function memoryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }: 
             UpdateMemorySettingsApiErrorCode.MEMORY_UNAVAILABLE,
             'Memory is unavailable right now',
           )
-        case UpdateMemorySettingsOperationErrorCode.MEMORY_NOT_ALLOWED:
-          return apiRefused(
-            c,
-            UpdateMemorySettingsApiErrorCode.MEMORY_NOT_ALLOWED,
-            'Memory is not open to this account',
-          )
         default:
           return assertNever(result.error)
       }
