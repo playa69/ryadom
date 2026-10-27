@@ -16,7 +16,7 @@ description: Читать логи и метрики прода «Рядом» �
 
 | Где | developer | admin |
 |---|---|---|
-| логи и port-forward в `agent`, `backend`, `ryadom-db`, `infra` | да | да |
+| логи и port-forward в `agent`, `ryadom-db`, `infra` | да | да |
 | `prod` (app-api, app-web, app-admin, app-landing, app-pwa) | нет, даже чтения | да |
 | `monitoring` (Loki, Prometheus, Grafana) | нет | да |
 | `exec` в поды | нигде | да |
@@ -52,9 +52,9 @@ kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opene
 ## Loki (7 дней)
 
 ```bash
-.claude/skills/logs/scripts/monitoring.py loki '{namespace="agent",container="agent"} |~ "WARNING|ERROR|Traceback"' 2h
-.claude/skills/logs/scripts/monitoring.py loki '{namespace="prod",container="api"} |= "<dialogId>"' 2026-10-14T10:00:00Z 2026-10-14T11:00:00Z
-.claude/skills/logs/scripts/monitoring.py loki 'sum(count_over_time({namespace="agent",container="agent"} |= "exceeded your current quota" [5m]))' 6h
+.agents/skills/logs/scripts/monitoring.py loki '{namespace="agent",container="agent"} |~ "WARNING|ERROR|Traceback"' 2h
+.agents/skills/logs/scripts/monitoring.py loki '{namespace="prod",container="api"} |= "<dialogId>"' 2026-10-14T10:00:00Z 2026-10-14T11:00:00Z
+.agents/skills/logs/scripts/monitoring.py loki 'sum(count_over_time({namespace="agent",container="agent"} |= "exceeded your current quota" [5m]))' 6h
 ```
 
 Скрипт поднимает port-forward к `svc/loki` (admin), спрашивает `query_range` и печатает строки `время  под  строка`
@@ -69,8 +69,8 @@ kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opene
 ## Prometheus (14 дней)
 
 ```bash
-.claude/skills/logs/scripts/monitoring.py prom 'sum by (purpose, result) (increase(agent_gemini_opens_total[1h]))'
-.claude/skills/logs/scripts/monitoring.py prom 'sum by (response_code) (rate(istio_requests_total{reporter="destination",destination_service_name="app-api"}[5m]))' 3h --step 300
+.agents/skills/logs/scripts/monitoring.py prom 'sum by (purpose, result) (increase(agent_gemini_opens_total[1h]))'
+.agents/skills/logs/scripts/monitoring.py prom 'sum by (response_code) (rate(istio_requests_total{reporter="destination",destination_service_name="app-api"}[5m]))' 3h --step 300
 ```
 
 Без окна — текущее значение, с окном — ряд с шагом `--step` секунд.

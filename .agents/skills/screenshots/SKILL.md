@@ -16,29 +16,34 @@ description: Снять скриншоты экранов «Рядом» (web, P
   Это минуты, а не полчаса.
 - **Финальный отчёт** (человек спрашивает «готово?», PR идёт на слияние) — затронутые экраны на всех четырёх ширинах
   (390, 820, 1280, 1920) или полный набор (ниже).
+- **Новая визуальная фича** — пользовательский сценарий по шагам, как в спеке: начальное состояние, действие,
+  результат, плюс пустое состояние и ошибка, если они есть в спеке. Один снимок на шаг, 390 и 1280, имена
+  `NN-<шаг>.png` (например `01-diary-empty.png`), подпись к каждому — что видит человек. Шаги, до которых не
+  дойти через `ui-shots.mjs`, снимает Playwright-тест фичи (`page.screenshot` после `expect` шага). Android — только
+  если задача меняет нативную часть (виджет, уведомления, плагины). Данные только синтетические.
 - **Видео** — только если о нём попросили.
 
 ## Стенд и вход
 
-Нужен поднятый стенд разработки: на машине агента — `app-up` (адреса в его выводе), иначе `pnpm dev` (скилл
-`local-dev`). Адреса передаются флагами: `--base` (приложение), `--agent` (мок агента), `--mail` (Mailpit). Из
+Нужен поднятый стенд разработки: `pnpm dev` (скилл `local-dev`) или свой стенд на других портах. Адреса передаются флагами: `--base` (приложение), `--agent` (мок агента), `--mail` (Mailpit). Из
 каталога `app/`:
 
 ```bash
 # один раз на стенд: демо-аккаунт «Женя» с журналом разговоров; сессия ляжет в .playwright-mcp/web-state.json
-node e2e/scripts/demo-account.mjs --base http://localhost:4003 --mail http://localhost:4025 --agent http://127.0.0.1:4080
-node e2e/scripts/ui-shots.mjs --app mobile --login --base http://localhost:4004       # входит тем же демо-аккаунтом
-node e2e/scripts/ui-shots.mjs --app admin --login --base http://localhost:4001 --mail http://localhost:4025
+node e2e/scripts/demo-account.mjs --base http://localhost:3003 --mail http://localhost:8026 --agent http://127.0.0.1:8080
+node e2e/scripts/ui-shots.mjs --app mobile --login --base http://localhost:5174       # входит тем же демо-аккаунтом
+node e2e/scripts/ui-shots.mjs --app admin --login --base http://localhost:3001 --mail http://localhost:8026
 ```
 
-(Порты в примерах — `app-up` в слоте 0: landing 4000, admin 4001, web 4003, PWA 4004, Mailpit 4025, мок 4080.)
+(Порты в примерах — стенд разработки из `local-dev`: landing 3000, admin 3001, web 3003, PWA 5174, Mailpit 8026,
+мок 8080. У своего стенда — свои адреса.)
 
 ## Снимок
 
 ```bash
-node e2e/scripts/ui-shots.mjs --app web --base http://localhost:4003 --agent http://127.0.0.1:4080 \
+node e2e/scripts/ui-shots.mjs --app web --base http://localhost:3003 --agent http://127.0.0.1:8080 \
   --screens home,profile --widths 390,1280 --out ../screenshots/after
-node e2e/scripts/ui-shots.mjs --app mobile --base http://localhost:4004 --agent http://127.0.0.1:4080 --screens home,dialog
+node e2e/scripts/ui-shots.mjs --app mobile --base http://localhost:5174 --agent http://127.0.0.1:8080 --screens home,dialog
 ```
 
 Файлы — `<app>-<экран>-<ширина>.png`, по умолчанию в `screenshots/` в корне репозитория (в git не попадает).

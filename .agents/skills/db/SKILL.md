@@ -1,6 +1,6 @@
 ---
 name: db
-description: Выполнить запрос к базе прода «Рядом» — PostgreSQL кластера CNPG ryadom-db (базы app, agent, backend, cognee_db) через psql в первичном поде, только чтение по умолчанию. Использовать при вопросах «посмотри в базе», «сколько пользователей», «что за аккаунт», «сколько диалогов за день», «найди диалог по id», при сверке аналитики с базой и при правке данных на проде по прямой просьбе человека.
+description: Выполнить запрос к базе прода «Рядом» — PostgreSQL кластера CNPG ryadom-db (базы app, agent, cognee_db) через psql в первичном поде, только чтение по умолчанию. Использовать при вопросах «посмотри в базе», «сколько пользователей», «что за аккаунт», «сколько диалогов за день», «найди диалог по id», при сверке аналитики с базой и при правке данных на проде по прямой просьбе человека.
 ---
 
 # База прода
@@ -12,7 +12,6 @@ description: Выполнить запрос к базе прода «Рядом
 |---|---|---|---|
 | `app` | роль `app` | аккаунты приложения: `users`, `user_credentials`, `user_devices`, `user_consents`, `refresh_tokens`, `email_codes`, `audit_log`, `memory_consent_events` | `app/packages/db/src/schema/`, миграции drizzle |
 | `agent` | роль `agent` (с 0.8.0) | диалоги агента: `dialogs`, `messages`, `model_usage`, `voice_prefs`, `client_ids` | `agent/app/services/dialog_db.py` (агент создаёт сам) |
-| `backend` | роль `developer` | Python backend (приложением не вызывается) | `backend/alembic/` |
 | `cognee_db` и базы вида `"<uuid>"` | роль `cognee` | память агента, по базе на тенанта | ведёт Cognee, руками не трогать |
 | `langfuse` | — | Langfuse | не трогать |
 
@@ -25,8 +24,8 @@ description: Выполнить запрос к базе прода «Рядом
 ## Запрос
 
 ```bash
-.claude/skills/db/scripts/query.py app "SELECT count(*) FROM users WHERE NOT is_deleted"
-.claude/skills/db/scripts/query.py agent -f /tmp/dialogs-by-day.sql --csv
+.agents/skills/db/scripts/query.py app "SELECT count(*) FROM users WHERE NOT is_deleted"
+.agents/skills/db/scripts/query.py agent -f /tmp/dialogs-by-day.sql --csv
 ```
 
 Скрипт находит первичный под, запускает в нём `psql -U postgres` через локальный сокет (пароль не нужен и не
@@ -41,8 +40,8 @@ POD=$(kubectl -n ryadom-db get pod -l cnpg.io/cluster=ryadom-db,cnpg.io/instance
 kubectl -n ryadom-db exec -i "$POD" -c postgres -- psql -U postgres -d app -X -v ON_ERROR_STOP=1 < query.sql
 ```
 
-Порт-форвард `svc/ryadom-db-rw` с ролью `developer` (developer-kubeconfig) открывает только базу `backend`: к `app` и
-`agent` у этой роли прав нет.
+У роли `developer` прав на базы `app` и `agent` нет: только `exec` в первичный под, то есть admin. Если в кластере
+ещё есть база `backend`, это остаток удалённого Python-сервиса: не использовать, её снимает администратор.
 
 ## Шпаргалка
 

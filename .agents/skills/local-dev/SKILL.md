@@ -5,8 +5,8 @@ description: Поднять «Рядом» локально и прогнать 
 
 # Локальный запуск и проверки
 
-Монорепозиторий `app/` (pnpm + Turborepo, Node 24), агент `agent/` (Python 3.12, uv), backend `backend/` (Python,
-приложением не вызывается). Быстрый старт — README, раздел «Быстрый старт»; здесь — то, что на нём спотыкалось.
+Монорепозиторий `app/` (pnpm + Turborepo, Node 24) и агент `agent/` (Python 3.12, uv). Быстрый старт — README,
+раздел «Быстрый старт»; здесь — то, что на нём спотыкалось.
 
 Docker нужен для инфраструктуры. На Windows он живёт в WSL: `app/scripts/docker.mjs` сам переходит на `wsl docker`,
 когда в Windows docker нет, поэтому `pnpm infra:up` работает и оттуда.
@@ -26,8 +26,6 @@ pnpm dev                         # landing :3000, admin :3001, api :3002, web :3
 `apps/admin/.env.local`), web и landing работают на локальных значениях по умолчанию. Порты Next.js зашиты в
 `package.json` (`next dev --port`), PWA — `strictPort` в `vite.config.ts`: второй стенд рядом на тех же портах не
 встанет. `pnpm infra:up` уже поднимает мок агента на 8080, отдельный `pnpm dev:agent-mock` с ним столкнётся.
-
-На машине агента (Multica) всё это делает `app-up`: своя база, свои порты прогона, адреса в выводе.
 
 ## Вход
 
@@ -76,16 +74,13 @@ pnpm exec prettier --check <изменённые файлы>  # pnpm lint нич
 
 cd agent
 uv sync && timeout 900 uv run pytest -q -p no:cacheprovider -o faulthandler_timeout=120
-uvx ruff check --select F app tests           # ruff в окружение агента не входит, pre-commit проверяет только backend/
+uvx ruff check --select F app tests           # ruff в окружение агента не входит
 ```
 
 - Тестам нужна база: `pnpm infra:up` или свой PostgreSQL с `dev/postgres-init.sql` и
-  `DATABASE_URL_TEST=…/ryadom_test DATABASE_URL_TEST_API=…/ryadom_test_api pnpm test`. На машине агента —
-  `app-up infra`, затем `eval "$(app-up env)"`.
+  `DATABASE_URL_TEST=…/ryadom_test DATABASE_URL_TEST_API=…/ryadom_test_api pnpm test`.
 - pytest агента обходится без сети и моделей (около 2,5 минут, ~600 тестов). Тайм-аут обязателен: `test_ws.py`
   изредка виснет, `test_live.py` изредка падает с `CancelledError` — повтори прежде, чем чинить.
-- backend: `cd backend && uv run pytest` ждёт PostgreSQL на 127.0.0.1:15432 (база `backend_test`, пользователь
-  `developer`) — это port-forward к кластеру; хуки — `pre-commit install` (ruff по `backend/`).
 
 ## Грабли
 

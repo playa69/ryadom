@@ -5,10 +5,9 @@ description: Бэкапы базы прода «Рядом» — провери�
 
 # Бэкапы и дампы
 
-PostgreSQL прода (CNPG `ryadom-db`, базы `app`, `agent`, `backend`, `cognee_db`, `langfuse`) бэкапится оператором
+PostgreSQL прода (CNPG `ryadom-db`, базы `app`, `agent`, `cognee_db`, `langfuse`) бэкапится оператором
 CloudNativePG в Object Storage: непрерывный архив WAL и ежедневная базовая копия в 03:00 по Москве
-(`ScheduledBackup` `ryadom-db-daily`), хранение 30 дней, путь
-`s3://ryadom-cnpg-backups/cnpg-backups/ryadom-db-twc`. Настройки — `k8s/postgres/manifests/01-cnpg-cluster.yaml` и
+(`ScheduledBackup` `ryadom-db-daily`), хранение 30 дней. Настройки — `k8s/postgres/manifests/01-cnpg-cluster.yaml` и
 `02-cnpg-backup.yaml`. С 0.8.0 диалоги агента лежат в той же базе и покрыты тем же архивом.
 
 Всё ниже — в ns `ryadom-db`, это admin-kubeconfig: только после «да» человека, а копия по требованию и дамп — по его
@@ -24,8 +23,7 @@ kubectl -n ryadom-db get cluster ryadom-db \
 ```
 
 Норма: последняя копия `completed` моложе суток, `ContinuousArchiving` = `True`, точка восстановления в пределах 30
-дней. Список объектов в бакете смотрит тот, у кого есть ключ бэкапов (у администратора):
-`aws s3 ls s3://ryadom-cnpg-backups/cnpg-backups/ryadom-db-twc/ --endpoint-url https://storage.yandexcloud.net`.
+дней. Содержимое хранилища бэкапов смотрит администратор: ключ доступа к нему есть только у него.
 
 ## Копия по требованию
 

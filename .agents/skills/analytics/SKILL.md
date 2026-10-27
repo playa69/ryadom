@@ -12,8 +12,8 @@ description: Продуктовая аналитика «Рядом» в PostHog
 ## Доступ
 
 ```bash
-node .claude/skills/analytics/scripts/hogql.mjs "SELECT count() FROM events WHERE timestamp > now() - INTERVAL 1 DAY"
-node .claude/skills/analytics/scripts/hogql.mjs -f /tmp/dau.sql --json
+node .agents/skills/analytics/scripts/hogql.mjs "SELECT count() FROM events WHERE timestamp > now() - INTERVAL 1 DAY"
+node .agents/skills/analytics/scripts/hogql.mjs -f /tmp/dau.sql --json
 ```
 
 Скрипт шлёт HogQL в `POST /api/environments/300786/query/` и печатает таблицу (`--json` — колонки и строки как JSON).

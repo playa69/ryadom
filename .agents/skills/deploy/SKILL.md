@@ -5,7 +5,8 @@ description: Выкатить «Рядом» в кластер Timeweb twc-sber5
 
 # Выкат в кластер
 
-Все сервисы живут в одном кластере, окружение одно — prod. Образы — в `cr.yandex/crpsqeamqpuvrkm5tpr9`, манифесты — в
+Все сервисы живут в одном кластере Timeweb `twc-sber500`, окружение одно — prod. На машинах людей kubeconfig по
+умолчанию может смотреть в другой кластер: задавай его явно. Образы — в `cr.yandex/crpsqeamqpuvrkm5tpr9`, манифесты — в
 `k8s/`. Источник правды по шагам — [k8s/README.md](../../../k8s/README.md) («Сервисы из app/», «Сборка и push
 образов», «Новая версия»), [k8s/agent/README.md](../../../k8s/agent/README.md) и ранбуки `k8s/agent/RUNBOOK-*.md`.
 
@@ -23,7 +24,7 @@ description: Выкатить «Рядом» в кластер Timeweb twc-sber5
 
 - **Выкат — только по прямой просьбе**, и прод — с отдельным «да» человека на этот выкат. Перед ним покажи: ветку и
   SHA, образы и теги, namespace, `kubectl diff`, нужны ли миграции, Secret'ы и admin.
-- **admin-kubeconfig** нужен для всего в `prod` и для создания Secret'ов; developer достаточно для ns `agent` и `backend`.
+- **admin-kubeconfig** нужен для всего в `prod` и для создания Secret'ов; developer достаточно для ns `agent`.
   admin — только после «да» на конкретные операции.
 - **Тег**: не указан — спроси; существующий в реестре не перезаписывать; `latest` не использовать.
 - **Изменения в репозитории** — в своей ветке `deploy/<кратко>` в отдельном worktree, коммит
@@ -40,8 +41,8 @@ description: Выкатить «Рядом» в кластер Timeweb twc-sber5
 2. **Сборка** из коммита, а не из рабочего каталога:
 
    ```bash
-   .claude/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main          # только собрать
-   .claude/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main --push   # собрать и отправить
+   .agents/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main          # только собрать
+   .agents/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main --push   # собрать и отправить
    ```
 
    Скрипт берёт `git archive` коммита (без `node_modules` и локальных правок, с LF), собирает
