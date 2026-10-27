@@ -30,6 +30,7 @@ from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.extractor import NotesExtractor
 from app.core.tracing import build_tracer
 from app.services.dialog_db import DialogDatabase
+from app.services.dialog_purge import purge_loop
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.langfuse_usage import start_langfuse_sink
 from app.services.gemini_budget import CascadeFallback, TokenBudget
@@ -267,6 +268,7 @@ def create_app(
             fallback_warm_up = asyncio.create_task(fallback.tts.warm_up(sentences))
         # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
         evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
+        purger = asyncio.create_task(purge_loop(lambda: store.database), name="dialog-purger")  # физически убирает мягко стёртое
         # После прогрева стартовые объекты замораживаются для сборщика мусора, дальше память раз в MEMORY_RECLAIM_SECONDS
         # возвращается системе (app/core/reclaim.py).
         reclaimer = MemoryReclaimer(APP_CONFIG.memory_reclaim.seconds)
@@ -275,7 +277,8 @@ def create_app(
             yield
         finally:
             evictor.cancel()
-            await asyncio.gather(evictor, return_exceptions=True)
+            purger.cancel()
+            await asyncio.gather(evictor, purger, return_exceptions=True)
             await reclaimer.stop()
             if langfuse is not None:
                 langfuse.close()
