@@ -2,7 +2,10 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM"],
-    "types": ["node"]
+    "types": ["node"],
+    // The stand's port map and the glitch finder are plain .mjs shared with the scripts; their types are read, not checked.
+    "allowJs": true,
+    "checkJs": false
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "../scripts/stand-ports.mjs", "scripts/shots/glitches.mjs"]
 }

@@ -6,14 +6,16 @@
  * deleted — and a short audit log. The demo account of the product (zhenya.demo@example.com, see
  * demo-account.mjs) is kept and is the newest one. Everything else in `users` and `audit_log` goes.
  *
- * Only for the local development database (postgres :55433). It refuses to touch anything else.
+ * Only for the development database of this worktree's stand (app/.stand.json; postgres :55433 without a slot).
+ * It refuses to touch anything else.
  *
- * Usage: node e2e/scripts/demo-admin-data.mjs [--db postgres://ryadom:ryadom@localhost:55433/ryadom]
+ * Usage: node e2e/scripts/demo-admin-data.mjs [--db <url of that database>]
  */
 import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveStand } from '../../scripts/stand-ports.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const requireFromDb = createRequire(join(repoRoot, 'packages', 'db', 'package.json'))
@@ -23,9 +25,14 @@ const arg = (name, fallback) => {
   const at = process.argv.indexOf(`--${name}`)
   return at >= 0 ? process.argv[at + 1] : fallback
 }
-const URL = arg('db', 'postgres://ryadom:ryadom@localhost:55433/ryadom')
-if (!/localhost:55433\//.test(URL)) {
-  console.error('refusing to run: this seeds only the local development database (localhost:55433)')
+const DEV_DATABASE = resolveStand().databases.dev
+const URL = arg('db', DEV_DATABASE)
+const sameServer = (a, b) => {
+  const [x, y] = [new globalThis.URL(a), new globalThis.URL(b)]
+  return ['localhost', '127.0.0.1'].includes(x.hostname) && x.port === y.port && x.pathname === y.pathname
+}
+if (!sameServer(URL, DEV_DATABASE)) {
+  console.error(`refusing to run: this seeds only the development database of this stand (${DEV_DATABASE})`)
   process.exit(2)
 }
 

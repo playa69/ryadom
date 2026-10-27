@@ -5,8 +5,8 @@
   "type": "module",
   "description": "«Рядом» — e2e: лендинг, PWA и API вместе, браузером, на локальной инфраструктуре.",
   "scripts": {
-    "test": "playwright test",
-    "test:headed": "playwright test --headed",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
     "report": "playwright show-report report"
   },
   "devDependencies": {

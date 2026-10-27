@@ -1,4 +1,5 @@
 import postgres from 'postgres'
+import { AGENT_URL, DATABASE_URL } from '../playwright.config'
 
 /**
  * Marked days of the mood diary, written straight to the table: the API takes only today and yesterday
@@ -7,8 +8,7 @@ import postgres from 'postgres'
  * background pass waits after the last change is over for them.
  */
 
-const DB_URL =
-  process.env.E2E_DATABASE_URL ?? `postgres://ryadom:ryadom@127.0.0.1:${55434 + Number(process.env.E2E_PORT_OFFSET ?? 0)}/ryadom`
+const DB_URL = DATABASE_URL
 
 export interface SeedMark {
   date: string
@@ -46,9 +46,7 @@ export async function ageWeekSummary(userId: string): Promise<void> {
   }
 }
 
-/** The agent mock's own address: the `seed` route fills a person's journal with ready-made conversations (dev only). */
-const AGENT_URL = `http://127.0.0.1:${8081 + Number(process.env.E2E_PORT_OFFSET ?? 0)}`
-
+/** Goes to the agent mock: its `seed` route fills a person's journal with ready-made conversations (dev only). */
 export interface SeedDialog {
   startedAt: string
   endedAt: string

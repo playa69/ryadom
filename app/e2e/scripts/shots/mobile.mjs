@@ -3,11 +3,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { seedJournal, ACCOUNT } from '../demo-data.mjs'
+import { standUrls } from './stand.mjs'
 
 /** apps/mobile: the Framework7 client (PWA build served by vite), on the demo account. */
 export function mobileSpec(args, repoRoot) {
-  const base = String(args.base ?? 'http://localhost:5184').replace(/\/$/, '')
-  const agent = String(args.agent ?? 'http://localhost:8080')
+  const urls = standUrls(args)
+  const base = String(args.base ?? urls.pwa).replace(/\/$/, '')
+  const agent = String(args.agent ?? urls.mock)
   const state = resolve(String(args.state ?? join(repoRoot, '.playwright-mcp', 'mobile-state.json')))
 
   const userId = () => {
