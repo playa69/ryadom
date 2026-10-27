@@ -57,17 +57,19 @@ class LiveError(Exception):
     """Gemini Live не отвечает, отказал в доступе или закрыл соединение."""
 
 
-_CLOSE_1011 = re.compile(r"\b1011\b")
+_HTTP_429 = re.compile(r"\b429\b")
 
 
 def is_quota_error(text: str) -> bool:
-    """Отказ Google по квоте: соединение закрыто кодом 1011 с «You exceeded your current quota» (при открытии и посреди хода)."""
+    """Отказ Google по квоте: соединение закрыто кодом 1011 с «You exceeded your current quota» (при открытии и посреди хода),
+    RESOURCE_EXHAUSTED или 429. Сам код 1011 квотой не считается: им же Google закрывает соединение и по «Internal error
+    encountered», и пауза после такой ошибки только задерживала ответы и прогрев озвучки."""
     lower = text.lower()
-    return "quota" in lower or "resource_exhausted" in lower or _CLOSE_1011.search(lower) is not None
+    return "quota" in lower or "resource_exhausted" in lower or _HTTP_429.search(lower) is not None
 
 
 def is_explicit_quota_error(text: str) -> bool:
-    """В тексте прямо сказано про квоту: по такой ошибке можно калибровать лимит (голый 1011 бывает и внутренней ошибкой)."""
+    """В тексте прямо сказано про квоту: по такой ошибке можно калибровать лимит (голый 429 не говорит, какой лимит исчерпан)."""
     lower = text.lower()
     return "quota" in lower or "resource_exhausted" in lower
 

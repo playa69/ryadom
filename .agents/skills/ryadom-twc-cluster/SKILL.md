@@ -1,6 +1,6 @@
 ---
 name: ryadom-twc-cluster
-description: "Проект Рядом (ryadom) живёт в кластере Timeweb Cloud twc-sber500. Используй ВСЕГДА этот кластер для ryadom: kubectl через admin-kubeconfig.yaml, namespaces backend/agent/ryadom-db/infra/prod, БД app/backend/agent в ryadom-db, Langfuse в infra. НЕ путать с кластером yc-seven-element (Seven Element — другой проект)."
+description: "Проект Рядом (ryadom) живёт в кластере Timeweb Cloud twc-sber500. Используй ВСЕГДА этот кластер для ryadom: kubectl через admin-kubeconfig.yaml, namespaces agent/ryadom-db/infra/prod, БД app/agent в ryadom-db, Langfuse в infra. НЕ путать с кластером yc-seven-element (Seven Element — другой проект)."
 ---
 
 # Рядом = Timeweb Cloud (twc-sber500)
@@ -24,12 +24,14 @@ export KUBECONFIG=/Users/aleksandrsamofalov/PycharmProjects/ryadom/admin-kubecon
 
 | Namespace | Что там |
 |---|---|
-| `backend` | backend API (FastAPI, auth: users/auth_identities) |
 | `agent` | AI-агент + Cognee (`svc/cognee:8000`, память агента, только внутри кластера) |
 | `prod` | app API (мобильное приложение, пользователи) |
 | `ryadom-db` | PostgreSQL CNPG-кластер `ryadom-db` (primary `ryadom-db-1`) + Redis |
 | `infra` | Langfuse (`svc/langfuse-web:3000`), clickhouse, redis |
 | `monitoring` | мониторинг |
+
+Если в кластере ещё есть namespace `backend` или база `backend` — это остатки удалённого
+Python-сервиса (PROTEUS-250): не использовать, их снимает администратор.
 
 ## База данных
 
@@ -37,7 +39,6 @@ export KUBECONFIG=/Users/aleksandrsamofalov/PycharmProjects/ryadom/admin-kubecon
 
 Базы внутри:
 - **`app`** — пользователи мобильного приложения: `users` (email citext, telegram_id, is_deleted, last_active_at), `user_credentials`, `email_codes`, `refresh_tokens`, `user_devices`, `user_consents`.
-- **`backend`** — auth-сервис: `users` + `auth_identities` (device/email), `devices`, `consents`.
 - **`agent`** — данные агента.
 - **`cognee_db`** — Cognee (память агента, роль `cognee`, расширение vector).
 - `langfuse` — БД лангфьюза, не трогать.
@@ -57,5 +58,5 @@ kubectl port-forward -n infra svc/langfuse-web 3000:3000
 
 ## Манифесты
 
-`k8s/` в репо: backend, app, agent, postgres, redis, langfuse, istio, monitoring, tls.
+`k8s/` в репо: app, agent, postgres, redis, langfuse, istio, monitoring, tls.
 Конфиг кластера: `k8s/twc-sber500-config.yaml`.

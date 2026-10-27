@@ -1,5 +1,7 @@
 # Design: add-app-client-specs
 
+> Примечание (PROTEUS-250): Python-сервис `backend/` и change'ы `add-backend-*` удалены из репозитория (`docs/spec.md`, Q-02). Упоминания backend ниже — исторический контекст.
+
 ## Context
 
 Приложение «Рядом» (`app/`) устроено так: клиенты (`app/apps/web`, `app/apps/mobile`) ходят только в `app/services/api`; тот хранит аккаунты в PostgreSQL, держит WebSocket-шлюз и вызывает агента по `agent-api`. Публичный сайт (`app/apps/landing`) и админка (`app/apps/admin`) — отдельные Next.js-приложения. Мобильный клиент — один код на три способа поставки (PWA, Android, iOS на Capacitor); PWA публикуется отдельным контейнером на том же хосте, что и API, под `/pwa/`. Подробнее о составе — в `openspec/config.yaml`.

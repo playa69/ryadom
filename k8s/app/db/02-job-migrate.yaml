@@ -45,7 +45,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         # Образ node:alpine запускается как USER node (uid 1000) — числовой uid
-        # нужен kubelet'у, чтобы проверить runAsNonRoot (у backend та же история)
+        # нужен kubelet'у, чтобы проверить runAsNonRoot
         runAsUser: 1000
         runAsGroup: 1000
         seccompProfile:

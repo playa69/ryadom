@@ -115,6 +115,34 @@ def test_a_closed_live_session_leaves_no_cycles_of_our_code(user_id: str) -> Non
     assert ours_in(cyclic_garbage()) == []
 
 
+def test_a_session_closed_while_the_memory_loads_leaves_no_cycles(user_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Загрузка памяти, не успевшая к открытию сессии, идёт и после закрытия сокета; дойдя, она не оставляет сеанс в цикле."""
+    monkeypatch.setattr("app.api.dialog_live.MEMORY_WAIT_SECONDS", 0.05)
+    loaded = threading.Event()
+    gc.collect()
+    with make_live_client(FakeConnector(turn_complete=True), FakeTts()) as client:
+        store = client.app.state.store
+        real = store.memory
+
+        class SlowMemory:
+            def __getattr__(self, name: str) -> Any:
+                return getattr(real, name)
+
+            async def prepare(self, dialog: Any) -> None:
+                await asyncio.sleep(0.3)
+                loaded.set()
+
+        store.memory = SlowMemory()
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            send_user_message(ws, "c-1", "Мне сегодня тревожно")
+            read_frames(ws, reply_done)
+            assert not loaded.is_set()  # сокет закрывается, пока память ещё грузится
+        assert loaded.wait(3)
+        time.sleep(0.05)  # колбэки законченной задачи
+    assert ours_in(cyclic_garbage()) == []
+
+
 def test_cut_off_speech_leaves_no_cycles_of_our_code(user_id: str) -> None:
     class Slow(FakeTts):
         async def stream(self, text: str, voice: str = "male") -> Any:
