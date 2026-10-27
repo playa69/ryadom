@@ -17,14 +17,14 @@ async def health() -> dict[str, str]:
 async def ready(request: Request) -> dict[str, str]:
     # Модели и озвучка не обязательны для готовности: при их отказе агент отвечает текстом, а итоги и заметки откладываются.
     tts = request.app.state.tts
-    chat = request.app.state.chat
+    background = request.app.state.background
     live = request.app.state.live
     memory = getattr(request.app.state, "memory", None)
     return {
         "status": "ok",
         "pipeline": live.name if live else "none",  # голос: Gemini Live (имя соединителя с моделью)
         "tts": tts.name if tts else "none",  # озвучка фраз
-        "llm": chat.name if chat else "none",  # текстовая модель итогов и заметок
+        "llm": background.name if background else "none",  # фоновая модель итогов и заметок
         # postgres: диалоги в PostgreSQL и переживают перезапуск; memory: только в памяти (не задано или не открылось)
         "dialogs": request.app.state.store.persistence,
         # Память агента: off | shadow | on | unavailable (режим задан, но диск или модель извлечения не готовы)

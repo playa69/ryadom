@@ -247,9 +247,9 @@ class DialogStore:
         self._background: set[asyncio.Task[Any]] = set()
         # Память агента; None — память не подключена (нет диска или тесты без неё).
         self.memory: MemoryLink | None = None
-        # Модель для итогов разговоров (add-mood-diary, D13): ставит приложение; None — автоматических итогов нет (человек заводит
+        # Фоновая модель для итогов разговоров (add-mood-diary, D13): ставит приложение; None — автоматических итогов нет (человек заводит
         # итог сам, а черновика «Предзаполнить» нет).
-        self.recap_chat: Any = None
+        self.recap_model: Any = None
         self.recap_timeout_seconds = 20.0
         # Настройка «Подводить итог автоматически» (`dialog_settings`): человек → включено; нет записи — включено.
         self._recap_enabled: dict[str, bool] = {}
@@ -488,7 +488,7 @@ class DialogStore:
 
     async def _auto_recap(self, dialog: Dialog) -> None:
         """Автоматический итог в фоне: не заменяет ручной и не пишет текст итога в журнал."""
-        recap = await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds)
+        recap = await recaps.make_recap(self.recap_model, dialog, self.recap_timeout_seconds)
         summary = dialog.summary
         if summary is None or summary.get("recapStatus") != "pending":
             return  # пока считалось, человек написал итог сам или разговор удалили
@@ -510,7 +510,7 @@ class DialogStore:
 
     async def draft_recap(self, dialog: Dialog) -> str | None:
         """Черновик итога для «Предзаполнить»: ничего не сохраняется. None — модель не ответила."""
-        return await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds)
+        return await recaps.make_recap(self.recap_model, dialog, self.recap_timeout_seconds)
 
     def can_recap(self, dialog: Dialog) -> bool:
         return recaps.eligible(dialog)

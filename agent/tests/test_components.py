@@ -13,7 +13,7 @@ import httpx
 import pytest
 from prometheus_client import REGISTRY
 
-from app.clients.llm import ModelError, ProxyChat
+from app.clients.background_model import ModelError, ProxyBackgroundModel
 from app.clients.speech import CachedTts
 from app.services import usage as model_usage
 from tests.conftest import AUTH, audio_in_frame, components, make_client, read_frames, send_user_message, start_dialog, ws_url
@@ -44,9 +44,9 @@ def completion(content: str) -> dict:
     return {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]}
 
 
-def chat(handler) -> ProxyChat:
+def chat(handler) -> ProxyBackgroundModel:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return ProxyChat(BASE, "key", "chat-model", max_tokens=100, temperature=0.5, timeout_seconds=5, client=client)
+    return ProxyBackgroundModel(BASE, "key", "chat-model", max_tokens=100, temperature=0.5, timeout_seconds=5, client=client)
 
 
 # ─── Само обращение ───────────────────────────────────────────────────────────

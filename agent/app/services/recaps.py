@@ -13,7 +13,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any, Literal
 
-from app.clients.llm import ChatModel, ModelError
+from app.clients.background_model import BackgroundModel, ModelError
 
 if TYPE_CHECKING:
     from app.services.dialog_store import Dialog
@@ -85,13 +85,13 @@ def parse_model_reply(reply: str) -> str | None:
     return clean_model_recap(reply.strip().strip('"«»').strip())
 
 
-async def make_recap(chat: ChatModel | None, dialog: "Dialog", timeout: float) -> str | None:
+async def make_recap(model: BackgroundModel | None, dialog: "Dialog", timeout: float) -> str | None:
     """Итог разговора от модели. None, если модели нет или она не ответила, или ответ не годится: тогда итог можно завести
     вручную."""
-    if chat is None:
+    if model is None:
         return None
     try:
-        reply = await asyncio.wait_for(chat.complete(build_messages(dialog)), timeout)
+        reply = await asyncio.wait_for(model.complete(build_messages(dialog)), timeout)
     except (ModelError, TimeoutError):
         logger.warning("recap model failed dialog=%s", dialog.id)
         return None

@@ -104,7 +104,7 @@ def test_the_second_attempt_can_pass(user_id):
 
 
 def test_model_failure_is_a_502_without_the_body(user_id):
-    from app.clients.llm import ModelError
+    from app.clients.background_model import ModelError
 
     class Down(ScriptedChat):
         async def complete(self, messages):

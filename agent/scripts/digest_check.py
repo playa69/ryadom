@@ -22,7 +22,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.clients.llm import ModelError, build_chat  # noqa: E402
+from app.clients.background_model import ModelError, build_background_model  # noqa: E402
 from app.core.config import APP_CONFIG  # noqa: E402
 from app.services import digests, recaps  # noqa: E402
 from app.services.dialog_store import Dialog, Message  # noqa: E402
@@ -291,12 +291,12 @@ async def main() -> int:
 
     if args.candidates:
         return run_candidates()
-    chat = build_chat(APP_CONFIG.llm)
+    chat = build_background_model(APP_CONFIG.background_model)
     replies = json.loads(Path(args.replies).read_text(encoding="utf-8")) if args.replies else None
     if chat is None and replies is None:
         print("Нужна модель (AGENT_API_TOKEN, LLM_BASE_URL) или --replies с готовыми ответами: запасного текста нет.")
         return 2
-    print("режим:", "готовые ответы из " + args.replies if replies is not None and chat is None else "модель " + APP_CONFIG.llm.chat_model)
+    print("режим:", "готовые ответы из " + args.replies if replies is not None and chat is None else "модель " + APP_CONFIG.background_model.chat_model)
     names = args.scenario or list(SCENARIOS)
     results = []
     for name in names:

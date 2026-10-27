@@ -68,7 +68,7 @@ def fake_db_files() -> Iterator[None]:
     FakeDialogDatabase.reset()
 
 # app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
-# чьё отсутствие ждут тесты (умолчания LlmSettings и отказ build_chat без ключа).
+# чьё отсутствие ждут тесты (умолчания BackgroundModelSettings и отказ build_background_model без ключа).
 for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL"):
     os.environ.pop(leaked, None)
 
@@ -105,7 +105,7 @@ class FakeTts:
         return None
 
 
-class FakeChat:
+class FakeBackgroundModel:
     """Текстовая модель для тестов (итоги разговоров и недели): ответ задан заранее, запросы запоминаются."""
 
     name = "fake-chat"
@@ -121,7 +121,7 @@ class FakeChat:
         if self.delay:
             await asyncio.sleep(self.delay)
         if self.fail:
-            from app.clients.llm import ModelError
+            from app.clients.background_model import ModelError
 
             raise ModelError("модель сломана в тесте")
         return self.reply
@@ -145,7 +145,7 @@ def make_app(
     return create_app(
         live_factory=lambda: live,
         tts_factory=None if real_tts else (lambda: tts),
-        chat_factory=lambda: background,
+        background_factory=lambda: background,
         **create_kwargs,
     )
 

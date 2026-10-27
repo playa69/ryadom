@@ -26,7 +26,7 @@ from app.services.replies import CRISIS_REPLY, split_sentences
 from app.services.usage import Usage
 from tests.conftest import AUTH, FakeTts, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_live import FakeConnector, reply_done, speak_turn
-from tests.test_models import chat, completion
+from tests.test_background_model import chat, completion
 
 
 def metric(name: str, **labels: str) -> float:

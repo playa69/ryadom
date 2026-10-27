@@ -114,12 +114,13 @@ class SpeechSettings(BaseAppSettings):
     tts_cache_items: int = Field(validation_alias="TTS_CACHE_ITEMS", default=64, ge=0)
 
 
-class LlmSettings(BaseAppSettings):
-    """Текстовая модель прокси программы (LiteLLM, OpenAI-совместимый): только фоновые задачи вне голосового пути — итоги
+class BackgroundModelSettings(BaseAppSettings):
+    """Фоновая модель: текстовая модель прокси программы (LiteLLM, OpenAI-совместимый) для задач вне голосового пути — итоги
     разговоров, итоги недели, заметки памяти. Голос ведёт Gemini Live, этой моделью агент с человеком не говорит.
 
-    Нужны `AGENT_API_TOKEN` (ключ прокси; принадлежит только агенту) и `LLM_BASE_URL`; без них модели нет: итоги не
-    подводятся, заметки не извлекаются, итоги недели отвечают `DIGEST_UNAVAILABLE`, разговор идёт как обычно.
+    Имена переменных прежние (`LLM_*`, `AGENT_API_TOKEN`): они относятся к фоновой модели, а не к голосу. Нужны
+    `AGENT_API_TOKEN` (ключ прокси; принадлежит только агенту) и `LLM_BASE_URL`; без них модели нет: итоги не подводятся,
+    заметки не извлекаются, итоги недели отвечают `DIGEST_UNAVAILABLE`, разговор идёт как обычно.
     """
 
     base_url: str | None = Field(validation_alias="LLM_BASE_URL", default=None)
@@ -303,7 +304,7 @@ class Config:
     security: SecuritySettings = SecuritySettings()
     dialog: DialogSettings = DialogSettings()
     speech: SpeechSettings = SpeechSettings()
-    llm: LlmSettings = LlmSettings()
+    background_model: BackgroundModelSettings = BackgroundModelSettings()
     gemini: GeminiSettings = GeminiSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
     memory: MemorySettings = MemorySettings()

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.deps import canonical_user_id, require_token
-from app.clients.llm import ChatModel, ModelError
+from app.clients.background_model import BackgroundModel, ModelError
 from app.core.errors import AgentError, validation_error
 from app.services import digests
 
@@ -71,8 +71,8 @@ async def create_digest(user_id: str, body: DigestBody, request: Request) -> dic
     recaps = [r.model_dump() for r in body.recaps]
     stats = digests.stats_of(marks)
 
-    chat: ChatModel | None = request.app.state.chat
-    if chat is None:
+    model: BackgroundModel | None = request.app.state.background
+    if model is None:
         # Запасного текста нет: итоги недели пишет только модель.
         raise AgentError(502, "DIGEST_UNAVAILABLE", "Модели нет, итоги не написаны")
     # Тексты, написанные человеком или о нём (итоги разговоров), дословно в итог не берём.
@@ -81,7 +81,7 @@ async def create_digest(user_id: str, body: DigestBody, request: Request) -> dic
     text: str | None = None
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            reply = await chat.complete(messages)
+            reply = await model.complete(messages)
         except ModelError as error:
             # Текст ошибки может нести кусок ответа модели, поэтому в журнал идёт только факт.
             logger.warning("digest model failed kind=%s", body.kind, exc_info=False)

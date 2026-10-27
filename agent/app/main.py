@@ -16,7 +16,7 @@ from fastapi import FastAPI
 
 from app.api import dialog_ws, dialogs, digests, health, memory
 from app.clients.cognee import build_cognee_client
-from app.clients.llm import ChatModel, ProxyChat, build_chat
+from app.clients.background_model import BackgroundModel, ProxyBackgroundModel, build_background_model
 from app.clients.speech import CachedTts, TextToSpeech
 from app.core.config import APP_CONFIG, MemorySettings
 from app.core.errors import install_error_handlers
@@ -78,26 +78,26 @@ def _build_live() -> "LiveConnector":
     return build_live(APP_CONFIG.gemini)
 
 
-def _build_notes_model(memory_cfg: MemorySettings) -> ProxyChat | None:
-    """Модель извлечения заметок: текстовая модель прокси программы (`MEMORY_NOTES_MODEL`, по умолчанию `LLM_CHAT_MODEL`).
+def _build_notes_model(memory_cfg: MemorySettings) -> ProxyBackgroundModel | None:
+    """Модель извлечения заметок: свой экземпляр фоновой модели (`MEMORY_NOTES_MODEL`, по умолчанию `LLM_CHAT_MODEL`).
     Нет флага `MEMORY_NOTES_ENABLED` или нет ключа прокси — извлечения нет, разговор идёт как раньше."""
-    llm = APP_CONFIG.llm
-    if not memory_cfg.notes_enabled or llm.api_key is None or not llm.base_url:
+    cfg = APP_CONFIG.background_model
+    if not memory_cfg.notes_enabled or cfg.api_key is None or not cfg.base_url:
         return None
-    return ProxyChat(
-        llm.base_url,
-        llm.api_key.get_secret_value(),
-        memory_cfg.notes_model or llm.chat_model,
+    return ProxyBackgroundModel(
+        cfg.base_url,
+        cfg.api_key.get_secret_value(),
+        memory_cfg.notes_model or cfg.chat_model,
         max_tokens=600,
         temperature=0.0,
-        timeout_seconds=max(llm.timeout_seconds, 30),
+        timeout_seconds=max(cfg.timeout_seconds, 30),
     )
 
 
 def create_app(
     live_factory: Callable[[], "LiveConnector"] | None = None,
     tts_factory: Callable[[], TextToSpeech | None] | None = None,
-    chat_factory: Callable[[], ChatModel | None] | None = None,
+    background_factory: Callable[[], BackgroundModel | None] | None = None,
     database_factory: Callable[[], DialogDatabase | None] | None = None,
     memory_settings: MemorySettings | None = None,
 ) -> FastAPI:
@@ -107,8 +107,8 @@ def create_app(
     фразы (приветствие, кризисный ответ, просьба повторить) озвучивает тот же голос Gemini (`GeminiLiveTts`) с памятью фраз
     (`tts_factory` в тестах подменяет озвучку).
 
-    Текстовая модель прокси (`chat_factory`; по умолчанию `LLM_*`) пишет фоновые тексты: итоги разговоров и недели. Нет ключа
-    прокси — модели нет, итоги не подводятся, а разговор идёт как обычно.
+    Фоновая модель (`background_factory`; по умолчанию `LLM_*`, прокси программы) пишет фоновые тексты: итоги разговоров и недели.
+    Нет ключа прокси — модели нет, итоги не подводятся, а разговор идёт как обычно.
 
     Хранилище диалогов (`DIALOG_DATABASE_URL` → PostgreSQL; в тестах — `database_factory`): не открылось —
     диалоги остаются в памяти, агент не падает, но пишет об этом в журнал (ошибка) и показывает `dialogs: memory`
@@ -123,7 +123,7 @@ def create_app(
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
     make_live = live_factory or _build_live
-    make_chat = chat_factory or (lambda: build_chat(APP_CONFIG.llm))
+    make_background = background_factory or (lambda: build_background_model(APP_CONFIG.background_model))
 
     def make_configured_database() -> DialogDatabase | None:
         # DIALOG_DATABASE_URL задан — диалоги в PostgreSQL; пусто — только в памяти процесса (разработка).
@@ -188,20 +188,20 @@ def create_app(
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
             warm_up_parallel = WARM_UP_GEMINI_SESSIONS
-        # Текстовая модель прокси: итоги разговоров и недели (заметки памяти берут свой экземпляр, `_build_notes_model`).
-        chat = make_chat()
-        if chat is None:
-            logger.warning("text model is not configured (AGENT_API_TOKEN, LLM_BASE_URL): recaps and weekly digests are off")
-        app.state.chat = chat
-        store.recap_chat = chat
+        # Фоновая модель: итоги разговоров и недели (заметки памяти берут свой экземпляр, `_build_notes_model`).
+        background = make_background()
+        if background is None:
+            logger.warning("background model is not configured (AGENT_API_TOKEN, LLM_BASE_URL): recaps and weekly digests are off")
+        app.state.background = background
+        store.recap_model = background
         store.recap_timeout_seconds = APP_CONFIG.dialog.recap_timeout_seconds
         store.retention_days = APP_CONFIG.dialog.retention_days
         store.retention_dry_run = APP_CONFIG.dialog.retention_dry_run
         logger.info(
-            "agent started: voice=%s tts=%s llm=%s dialogs=%s memory=%s tracing=%s gemini budget limit=%d (measure only)",
+            "agent started: voice=%s tts=%s background=%s dialogs=%s memory=%s tracing=%s gemini budget limit=%d (measure only)",
             live.name,
             app.state.tts.name if app.state.tts else "none",
-            chat.name if chat else "none",
+            background.name if background else "none",
             store.persistence,
             memory_service.status(),
             tracer.name,
@@ -242,7 +242,7 @@ def create_app(
                 await cognee_client.aclose()
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
             store.memory = None
-            for client in (app.state.tts, chat, live):
+            for client in (app.state.tts, background, live):
                 if client is not None:
                     await client.aclose()
             await tracer.aclose()  # отправить в Langfuse накопленные трассы
@@ -258,7 +258,7 @@ def create_app(
         idle_end_seconds=APP_CONFIG.dialog.idle_end_seconds,
     )
     app.state.tts = None  # озвучка фраз (в lifespan)
-    app.state.chat = None  # текстовая модель итогов (в lifespan)
+    app.state.background = None  # фоновая модель итогов (в lifespan)
     app.state.live = None  # Gemini Live (в lifespan)
     app.state.memory = None
     app.state.budget = None  # учёт токенов Gemini (в lifespan)

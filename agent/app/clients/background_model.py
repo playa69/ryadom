@@ -1,7 +1,8 @@
-"""Текстовая модель прокси программы (LiteLLM, OpenAI-совместимый): итоги разговоров и недели, заметки памяти.
+"""Фоновая модель: текстовая модель прокси программы (LiteLLM, OpenAI-совместимый) для итогов разговоров и недели и заметок памяти.
 
-Голосом агент не говорит этой моделью: голос ведёт Gemini Live (app/clients/gemini_live.py). Текст человека уходит во внешний
-сервис: в журнал пишутся только модель, время и размер, сами реплики — никогда.
+Это не голосовой путь: агент говорит с человеком через Gemini Live (app/clients/gemini_live.py), а эта модель пишет тексты
+в фоне, после и вне разговора. Текст человека уходит во внешний сервис: в журнал пишутся только модель, время и размер, сами
+реплики — никогда.
 """
 
 import logging
@@ -11,13 +12,13 @@ from typing import Protocol
 
 import httpx
 
-from app.core.config import LlmSettings
+from app.core.config import BackgroundModelSettings
 from app.services import usage as model_usage
 
-logger = logging.getLogger("agent.llm")
+logger = logging.getLogger("agent.background")
 
 # Соединения с прокси живут дольше 5 секунд простоя (по умолчанию в httpx): между фоновыми запросами проходят минуты, но
-# каждый запрос не должен начинаться с нового TCP+TLS, пока соединение живо. Прокси держит простаивающее соединение не меньше
+# запрос не должен начинаться с нового TCP+TLS, пока соединение живо. Прокси держит простаивающее соединение не меньше
 # минуты (проверено), а закрытое им httpx замечает и открывает заново.
 KEEPALIVE_LIMITS = httpx.Limits(keepalive_expiry=60)
 
@@ -28,7 +29,9 @@ class ModelError(Exception):
     """Модель не ответила или ответила мусором."""
 
 
-class ChatModel(Protocol):
+class BackgroundModel(Protocol):
+    """Фоновая текстовая модель: один запрос — один ответ целиком."""
+
     name: str
 
     async def complete(self, messages: list[ChatMessage]) -> str: ...
@@ -57,8 +60,8 @@ def _trim_to_sentence(text: str) -> str:
     return text[: ends[-1]] if ends else text
 
 
-class ProxyChat:
-    """Текстовая модель через `POST {base_url}/chat/completions`, без стрима: ответ короткий и нужен целиком."""
+class ProxyBackgroundModel:
+    """Фоновая модель через `POST {base_url}/chat/completions`, без стрима: ответ короткий и нужен целиком."""
 
     def __init__(
         self,
@@ -93,15 +96,15 @@ class ProxyChat:
                 },
             )
         except httpx.HTTPError as error:
-            raise ModelError(f"Чат-модель не ответила: {error!r}") from error
+            raise ModelError(f"Фоновая модель не ответила: {error!r}") from error
         if response.status_code != 200:
-            raise ModelError(f"Чат-модель ответила {response.status_code}: {response.text[:200]}")
+            raise ModelError(f"Фоновая модель ответила {response.status_code}: {response.text[:200]}")
         try:
             body = response.json()
             choice = body["choices"][0]
             text = (choice["message"]["content"] or "").strip()
         except (ValueError, KeyError, IndexError, TypeError) as error:
-            raise ModelError(f"Чат-модель вернула неожиданный ответ: {response.text[:200]}") from error
+            raise ModelError(f"Фоновая модель вернула неожиданный ответ: {response.text[:200]}") from error
         if choice.get("finish_reason") == "length":
             text = _trim_to_sentence(text)
         tokens = _record_chat_usage(self._model, body.get("usage"))
@@ -119,11 +122,11 @@ class ProxyChat:
         await self._client.aclose()
 
 
-def build_chat(settings: LlmSettings) -> ChatModel | None:
-    """Текстовая модель по настройкам; без ключа прокси или его адреса — None (фоновые тексты не пишутся)."""
+def build_background_model(settings: BackgroundModelSettings) -> BackgroundModel | None:
+    """Фоновая модель по настройкам; без ключа прокси или его адреса — None (фоновые тексты не пишутся)."""
     if settings.api_key is None or not settings.base_url:
         return None
-    return ProxyChat(
+    return ProxyBackgroundModel(
         settings.base_url,
         settings.api_key.get_secret_value(),
         settings.chat_model,

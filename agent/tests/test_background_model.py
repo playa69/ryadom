@@ -5,15 +5,15 @@ import json
 import httpx
 import pytest
 
-from app.clients.llm import ModelError, ProxyChat, build_chat
-from app.core.config import LlmSettings
+from app.clients.background_model import ModelError, ProxyBackgroundModel, build_background_model
+from app.core.config import BackgroundModelSettings
 
 BASE = "https://proxy.test/v1"
 
 
-def chat(handler) -> ProxyChat:
+def chat(handler) -> ProxyBackgroundModel:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return ProxyChat(BASE + "/", "secret-key", "chat-model", max_tokens=100, temperature=0.5, timeout_seconds=5, client=client)
+    return ProxyBackgroundModel(BASE + "/", "secret-key", "chat-model", max_tokens=100, temperature=0.5, timeout_seconds=5, client=client)
 
 
 def completion(content, finish_reason="stop") -> dict:
@@ -74,19 +74,19 @@ async def test_chat_network_failure_becomes_a_model_error():
 
 def test_without_a_key_or_an_address_there_is_no_model():
     """Нет ключа прокси или его адреса — модели нет (итоги и заметки откладываются), сервис при этом стартует."""
-    assert build_chat(LlmSettings()) is None
-    assert build_chat(LlmSettings(LLM_BASE_URL="https://proxy.test/v1")) is None
-    assert build_chat(LlmSettings(AGENT_API_TOKEN="k")) is None
+    assert build_background_model(BackgroundModelSettings()) is None
+    assert build_background_model(BackgroundModelSettings(LLM_BASE_URL="https://proxy.test/v1")) is None
+    assert build_background_model(BackgroundModelSettings(AGENT_API_TOKEN="k")) is None
 
 
 def test_a_configured_model_gets_its_name_timeout_and_limits_from_the_settings():
-    model = build_chat(LlmSettings(LLM_BASE_URL="https://proxy.test/v1", AGENT_API_TOKEN="k"))
+    model = build_background_model(BackgroundModelSettings(LLM_BASE_URL="https://proxy.test/v1", AGENT_API_TOKEN="k"))
     assert model.name == "proxy:gigachat3.5-432b-a28b"
     assert model._max_tokens == 200 and model._temperature == 0.7
 
 
 async def test_the_client_keeps_idle_connections_longer_than_httpx_does_by_default():
     # Фоновые запросы идут не подряд, но соединение с прокси живо между ними: с умолчанием в 5 с каждый начинался бы с TCP+TLS.
-    model = ProxyChat("https://p/v1", "k", "m", 200, 0.7, 15)
+    model = ProxyBackgroundModel("https://p/v1", "k", "m", 200, 0.7, 15)
     assert model._client._transport._pool._keepalive_expiry == 60
     await model.aclose()
