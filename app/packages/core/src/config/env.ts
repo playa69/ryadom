@@ -39,7 +39,7 @@ const optionalInt = (min = 0) => z.preprocess(emptyToUndefined, z.coerce.number(
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'] as const
 /** memory is for tests only (APP_ENV=local): emails are collected in process memory. */
-export const EMAIL_TRANSPORTS = ['smtp', 'console', 'memory'] as const
+export const EMAIL_TRANSPORTS = ['smtp', 'memory'] as const
 /**
  * Codecs of the agent's speech the dialog gateway can send, by their names in the client contract
  * (`TTS_CODECS` in @ryadom/contracts; the core does not depend on it, so the names are repeated here).
