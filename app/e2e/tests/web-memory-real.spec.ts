@@ -68,7 +68,14 @@ async function talkAndEnd(page: Page, words: string, shotName?: string, shoot?: 
   // The first assistant line is the fixed greeting; the model's answer to the words is the second.
   await expect.poll(() => messages(page, 'assistant').count(), { timeout: 90_000 }).toBeGreaterThanOrEqual(2)
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 90_000 })
-  const reply = (await messages(page, 'assistant').last().innerText()).toLowerCase()
+  // The streaming flag can lag behind the first chunks: take the text only when it stops changing.
+  let reply = (await messages(page, 'assistant').last().innerText()).toLowerCase()
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await page.waitForTimeout(1_500)
+    const again = (await messages(page, 'assistant').last().innerText()).toLowerCase()
+    if (again === reply) break
+    reply = again
+  }
   await expect(dialogInput(page)).toBeVisible()
   if (shotName && shoot) await shoot(page, shotName) // the conversation with the answer of the model, before it is ended
   await page.getByTestId('dialog-end').click()
