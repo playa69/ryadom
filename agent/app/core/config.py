@@ -84,7 +84,7 @@ class DialogSettings(BaseAppSettings):
     idle_end_seconds: int = Field(validation_alias="DIALOG_IDLE_END_SECONDS", default=300, ge=0)
     # Срок хранения разговоров (add-mood-diary, D14): разговор, итог (и документ в Cognee через память) помечаются удалёнными через
     # столько дней после последнего сообщения (физически их убирает очистка). Проход раз в час.
-    retention_days: int = Field(validation_alias="DIALOG_RETENTION_DAYS", default=21, ge=1)
+    retention_days: int = Field(validation_alias="DIALOG_RETENTION_DAYS", default=90, ge=1)
     # Сколько ждать модель при подведении итога разговора, секунды (add-mood-diary, D13).
     recap_timeout_seconds: float = Field(validation_alias="RECAP_TIMEOUT_SECONDS", default=20, gt=0, le=120)
 
