@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Раздел «Дневник» — привычка вокруг разговора. В нём отметка настроения в два касания, график последних 28 дней, итоги недели, сегмент «Журнал» (история разговоров с итогами) и тесты. Отметки и итоги хранит `app/services/api` (PostgreSQL приложения). Тексты итогов пишет агент. Итоги разговоров и работа сегмента «Журнал» (удаление разговора, итог в записи) описаны в capability `memory-notes` (`add-memory-notes`), тесты — `self-check` (`add-self-check-tests`). Требования продукта — `REQ-WELL-01`…`REQ-WELL-03` в `docs/spec.md`. Решения — `design.md` этого change'а. Где это реализуется: `app/packages/db` (миграция `0009_mood_diary`), `app/packages/contracts/src/api/diary.ts`, `app/packages/core` (дневник), `app/services/api/src/routes/diary`, `app/apps/mobile/src/client/components/pages/diary/`, `app/apps/web/app/(app)/diary/`, `agent/app/api/digests.py`.
+Раздел «Дневник» — привычка вокруг разговора. В нём отметка настроения в два касания, график последних 28 дней, итоги недели, сегмент «Журнал» (история разговоров с итогами) и тесты. Отметки и итоги хранит `app/services/api` (PostgreSQL приложения). Тексты итогов пишет агент. Итоги разговоров и работа сегмента «Журнал» (удаление разговора, итог в записи) описаны в capability `dialog-recaps` этого change'а, тесты — `self-check` (`add-self-check-tests`). Требования продукта — `REQ-WELL-01`…`REQ-WELL-03` в `docs/spec.md`. Решения — `design.md` этого change'а. Где это реализуется: `app/packages/db` (миграция `0009_mood_diary`), `app/packages/contracts/src/api/diary.ts`, `app/packages/core` (дневник), `app/services/api/src/routes/diary`, `app/apps/mobile/src/client/components/pages/diary/`, `app/apps/web/app/(app)/diary/`, `agent/app/api/digests.py`.
 
 ## ADDED Requirements
 
@@ -189,7 +189,7 @@
 
 ### Requirement: Входы итогов недели
 
-Текст недели SHALL строиться из отметок настроения и из итогов разговоров этой недели (`dialog-recaps`; разговор относится к неделе по дню его начала в часовом поясе человека). Дневник к памяти (Cognee, заметки) не обращается.
+Текст недели SHALL строиться из отметок настроения и из итогов разговоров этой недели (`dialog-recaps`; разговор относится к неделе по дню его начала в часовом поясе человека). Итоги разговоров шлюз дневника читает у агента и передаёт в запросе вместе с отметками. Заметки памяти во вход MUST NOT входить: дневник к памяти (Cognee, заметки) не обращается.
 
 #### Scenario: Итог разговора входит в текст
 
@@ -269,7 +269,7 @@
 
 ### Requirement: Итоги пишет агент, хранит приложение
 
-Агент SHALL предоставлять `POST /v1/users/{userId}/digests` с телом `{kind: week, periodStart, marks}` и ответом `{text, stats}`. Агент дополняет запрос итогами разговоров за период (`add-memory-notes`), не хранит ни запрос, ни ответ и не цитирует разговоры дословно. Шлюз сохраняет ответ в `diary_summaries`, повторная генерация заменяет текст. Тексты итогов MUST NOT попадать в логи и аналитику.
+Агент SHALL предоставлять `POST /v1/users/{userId}/digests` с телом `{kind: week, periodStart, marks, recaps}` и ответом `{text, stats}`. Итоги разговоров недели (`recaps`, `dialog-recaps`) шлюз дневника читает у агента и передаёт в запросе; `add-memory-notes` в этом не участвует. Агент не хранит ни запрос, ни ответ и не цитирует разговоры и итоги дословно. Шлюз сохраняет ответ в `diary_summaries`, повторная генерация заменяет текст. Тексты итогов MUST NOT попадать в логи и аналитику.
 
 #### Scenario: Все источники
 

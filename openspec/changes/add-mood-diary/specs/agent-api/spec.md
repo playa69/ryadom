@@ -6,9 +6,9 @@
 
 Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/end` с телом `{ "takeaway"?: string, "tensionAfter"?: 1..10, "recapSource"?: "manual" | "draft" }` и ответом `200 { "summary" }` либо `404`. `takeaway` — поле «Что забираешь с собой?» и одновременно итог, написанный человеком (способы «вручную» и «предзаполнить»); `recapSource: draft` говорит, что поле было предзаполнено черновиком.
 
-Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": string | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null, "recapAvailable": boolean, "recapAt"?: string }`. `recapAvailable` равен `false`, когда итог для разговора невозможен (мало сказано, кризис, «Без памяти»); `recapAt` — когда итог сохранён.
+Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": string | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null, "recapAvailable": boolean, "recapAt"?: string }`. `recap` — один текст итога в свободной форме, до 500 знаков, без деления на части. `recapAvailable` равен `false`, когда итог для разговора невозможен (мало сказано, кризис, «Без памяти»); `recapAt` — когда итог сохранён.
 
-Автоматический итог (`recapSource: auto`) считается в фоне после завершения любым путём и готов не позже чем через 60 секунд, если включена настройка `recapEnabled` («Подводить итог автоматически») или у человека её нет в базе (по умолчанию включена). До этого `recapStatus` равен `pending`, а `recap` — `null`. Непустой `takeaway` годного для итога разговора сохраняется как итог сразу (`ready`) и сразу (`ready`) и не заменяется автоматическим. Для не сохраняемого разговора, разговора с кризисом и разговора, где человек сказал меньше 40 знаков, `recapStatus` равен `none`.
+Автоматический итог (`recapSource: auto`) считается в фоне после завершения любым путём и готов не позже чем через 60 секунд, если включена настройка `recapEnabled` («Подводить итог автоматически») или у человека её нет в базе (по умолчанию включена). До этого `recapStatus` равен `pending`, а `recap` — `null`. Непустой `takeaway` годного для итога разговора сохраняется как итог сразу (`ready`) и не заменяется автоматическим. Для не сохраняемого разговора, разговора с кризисом и разговора, где человек сказал меньше 40 знаков, `recapStatus` равен `none`.
 
 Эндпоинт — запасной путь на случай, когда сокет уже закрыт. Повторный вызов для завершённого диалога SHOULD возвращать ту же сводку с актуальным итогом.
 
@@ -64,7 +64,7 @@
 
 ### Requirement: Список итогов
 
-Агент SHALL предоставлять `GET /v1/users/{userId}/recaps?limit=&before=` — разговоры с итогом, новые сверху, без разговоров без итога. Шлюз проксирует его как `GET /api/recaps`.
+Агент SHALL предоставлять `GET /v1/users/{userId}/recaps?limit=&before=` — разговоры с итогом, новые сверху, без разговоров без итога: `{items: [{dialogId, startedAt, endedAt, title, recap, recapSource, recapAt}], next}`, где `recap` — один текст итога. Шлюз проксирует его как `GET /api/recaps` и читает его же, собирая вход итогов недели (`recapAt` — версия входа).
 
 #### Scenario: Постраничный список
 
