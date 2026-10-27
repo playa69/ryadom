@@ -12,7 +12,6 @@
 # Runtime config, read on every container start (nginx/entrypoint.sh), so one image serves the local
 # stack and prod:
 #   PUBLIC_WEB_URL  the marketing site, where the legal documents live
-#   APP_ENV         local | prod
 #
 # The one thing that is NOT runtime config is the URL prefix: Vite writes it into every asset URL, the
 # manifest scope and the service worker scope, so the image is built for the place it is published at:
