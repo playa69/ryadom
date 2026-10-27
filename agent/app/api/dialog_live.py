@@ -431,6 +431,7 @@ class LiveDialogSession(DialogSession):
                 if extra is not None:
                     tasks.append(extra)
             self._tasks, self._rotation, self._preparing = [], None, None
+            self._memory_load = None  # недошедшая загрузка памяти идёт дальше (её держит _MEMORY_LOADS), но без ссылки из сеанса
             for task in tasks:
                 task.cancel()
             try:
@@ -576,7 +577,11 @@ class LiveDialogSession(DialogSession):
         began = time.monotonic()
         await asyncio.wait({load}, timeout=MEMORY_WAIT_SECONDS)
         waited = time.monotonic() - began
-        if not load.done():
+        if load.done():
+            # Задача держит контекст сокета, а в нём обработчик кадров `component` — метод сеанса: сеанс и законченная
+            # задача, ссылаясь друг на друга, освобождались бы только полной сборкой мусора.
+            self._memory_load = None
+        else:
             logger.info("memory not ready for gemini open dialog=%s waited_ms=%.0f", self._dialog.id, waited * 1000)
         return waited
 
