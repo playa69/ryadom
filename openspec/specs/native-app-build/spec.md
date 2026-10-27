@@ -11,15 +11,15 @@
 Поверхности: android · ios
 
 #### Scenario: Боевая сборка Android
-- **WHEN** (android) собирается вариант `prod`
+- **WHEN** (Android) собирается вариант `prod`
 - **THEN** `applicationId` равен `ru.ryadom.app`, имя под иконкой — «Рядом»
 
 #### Scenario: Dev-сборка рядом с боевой
-- **WHEN** (android) на телефон, где стоит боевое приложение, ставится вариант `dev`
+- **WHEN** (Android) на телефон, где стоит боевое приложение, ставится вариант `dev`
 - **THEN** он устанавливается как отдельное приложение `ru.ryadom.app.dev` с именем «Рядом dev»
 
 #### Scenario: iOS
-- **WHEN** (ios) собирается приложение
+- **WHEN** (iOS) собирается приложение
 - **THEN** `PRODUCT_BUNDLE_IDENTIFIER` равен `ru.ryadom.app`, имя на домашнем экране — «Рядом»
 
 ### Requirement: Порядок нативной сборки
@@ -28,7 +28,7 @@
 Поверхности: android · ios
 
 #### Scenario: Локальная dev-сборка Android
-- **WHEN** (android) выполняется `pnpm android:dev`
+- **WHEN** (Android) выполняется `pnpm android:dev`
 - **THEN** собирается JS в режиме `dev`, затем `cap sync android`, затем `assembleDevDebug`, установка по `adb` и запуск
 
 #### Scenario: Целевой синтаксис
@@ -66,7 +66,7 @@
 Поверхности: android · ios
 
 #### Scenario: Переключение на prod
-- **WHEN** (android) в `dev`-сборке человек семь раз быстро нажимает на знак и выбирает «Prod»
+- **WHEN** (Android) в `dev`-сборке человек семь раз быстро нажимает на знак и выбирает «Prod»
 - **THEN** он выходит из аккаунта, WebView перезагружается и приложение работает с `prod`, а после перезапуска выбор сохранён
 
 #### Scenario: Медленные нажатия
@@ -95,7 +95,7 @@
 - **THEN** он не скачивает обновления сам и не шлёт статистику
 
 #### Scenario: Работа с dev-сервером
-- **WHEN** (android) выполняется `pnpm android:live`
+- **WHEN** (Android) выполняется `pnpm android:live`
 - **THEN** WebView загружает адрес из `CAP_LIVE_RELOAD_URL`, и правки видны без пересборки
 
 #### Scenario: Dev-сборка после live-запуска
@@ -121,19 +121,19 @@ Android-приложение SHALL запрашивать только разр�
 Поверхности: android · ios
 
 #### Scenario: Телефон без микрофона
-- **WHEN** (android) приложение ставится на устройство без микрофона
+- **WHEN** (Android) приложение ставится на устройство без микрофона
 - **THEN** установка не блокируется
 
 #### Scenario: SOS
-- **WHEN** (android) человек нажимает на номер линии помощи
+- **WHEN** (Android) человек нажимает на номер линии помощи
 - **THEN** набирается номер без разрешения `CALL_PHONE`, звонок начинает человек
 
 #### Scenario: Первый запрос микрофона на iOS
-- **WHEN** (ios) система впервые запрашивает доступ к микрофону
+- **WHEN** (iOS) система впервые запрашивает доступ к микрофону
 - **THEN** показывается пояснение из `NSMicrophoneUsageDescription`
 
 #### Scenario: Перенос на новый телефон
-- **WHEN** (android) человек переносит данные со старого телефона на новый
+- **WHEN** (Android) человек переносит данные со старого телефона на новый
 - **THEN** данные приложения не переносятся, на новом телефоне нужно войти заново
 
 ### Requirement: Версии нативной сборки
@@ -142,15 +142,15 @@ Android SHALL брать `versionCode` из переменной `RYADOM_VERSION
 Поверхности: android · ios
 
 #### Scenario: Локальная сборка без переменных
-- **WHEN** (android) собирается без `RYADOM_VERSION_CODE` и `RYADOM_VERSION_NAME`
+- **WHEN** (Android) собирается без `RYADOM_VERSION_CODE` и `RYADOM_VERSION_NAME`
 - **THEN** `versionCode` равен `1`, `versionName` — `0.1.0` (для `dev` — `0.1.0-dev`)
 
 #### Scenario: Сборка с переменными
-- **WHEN** (android) заданы `RYADOM_VERSION_CODE=57` и `RYADOM_VERSION_NAME=0.1.0`
+- **WHEN** (Android) заданы `RYADOM_VERSION_CODE=57` и `RYADOM_VERSION_NAME=0.1.0`
 - **THEN** вариант `prod` получает `versionCode` 57 и `versionName` `0.1.0`
 
 #### Scenario: Номер iOS
-- **WHEN** (ios) архив собирается с `CURRENT_PROJECT_VERSION=57`
+- **WHEN** (iOS) архив собирается с `CURRENT_PROJECT_VERSION=57`
 - **THEN** `CFBundleVersion` равен `57`, и приложение сообщает API номер сборки 57
 
 ### Requirement: Артефакты и подпись
@@ -159,23 +159,23 @@ Android-сборка SHALL производить для каждого вари
 Поверхности: android · ios
 
 #### Scenario: AAB для магазина
-- **WHEN** (android) выпускается вариант `prod` в формате AAB
+- **WHEN** (Android) выпускается вариант `prod` в формате AAB
 - **THEN** выполняется `bundleProdRelease`, результат — AAB
 
 #### Scenario: APK для установки напрямую
-- **WHEN** (android) выпускается вариант `dev` в формате APK
+- **WHEN** (Android) выпускается вариант `dev` в формате APK
 - **THEN** выполняется `assembleDevRelease`, результат — APK
 
 #### Scenario: Релиз с ключом
-- **WHEN** (android) релиз собирается с `RYADOM_KEYSTORE_PATH` и остальными входными данными
+- **WHEN** (Android) релиз собирается с `RYADOM_KEYSTORE_PATH` и остальными входными данными
 - **THEN** артефакт подписан этим ключом
 
 #### Scenario: Релиз без ключа
-- **WHEN** (android) релиз собирается без `RYADOM_KEYSTORE_PATH`
+- **WHEN** (Android) релиз собирается без `RYADOM_KEYSTORE_PATH`
 - **THEN** сборка завершается успешно, артефакт не подписан
 
 #### Scenario: IPA
-- **WHEN** (ios) выпускается сборка
+- **WHEN** (iOS) выпускается сборка
 - **THEN** результат — IPA, экспортированный для App Store Connect
 
 ### Requirement: Каналы выпуска
@@ -184,11 +184,11 @@ Android-сборка SHALL распространяться через мага�
 Поверхности: android · ios · api · landing
 
 #### Scenario: Задан только магазин
-- **WHEN** (android) `MOBILE_ANDROID_DOWNLOAD_URL` пуст, а `MOBILE_ANDROID_STORE_URL` задан
+- **WHEN** (Android) `MOBILE_ANDROID_DOWNLOAD_URL` пуст, а `MOBILE_ANDROID_STORE_URL` задан
 - **THEN** API отдаёт `downloadUrl: null`, и окно обновления предлагает только магазин
 
 #### Scenario: iOS
-- **WHEN** (ios) приложение запрашивает статус версий как iOS
+- **WHEN** (iOS) приложение запрашивает статус версий как iOS
 - **THEN** `downloadUrl` равен `null`: прямой ссылки для iOS нет
 
 #### Scenario: Канал не настроен
