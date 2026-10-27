@@ -9,7 +9,7 @@ import { defaultMigrationsFolder, runMigrations } from './migrate.ts'
 /**
  * A database of its own for every run of the unit tests.
  *
- * The tests used to share two databases (ryadom_test, ryadom_test_api) on the development server, and their
+ * The tests used to share two fixed databases on the development server, and their
  * global setup dropped every table in them: two agents testing at the same time wiped each other's data. Now a
  * run creates `ryadom_test_<stand>_<pid>` from a template that already holds the migrated schema, and drops it at
  * the end. The template (`ryadom_tpl_<hash of the migrations>`) is built once per set of migrations, under an
