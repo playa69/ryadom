@@ -80,6 +80,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           isEmailConfirmed: me.isEmailConfirmed,
           createdAt: me.createdAt,
           voice: me.voice,
+          voiceName: me.voiceName,
         })
       })
       .catch(() => {})

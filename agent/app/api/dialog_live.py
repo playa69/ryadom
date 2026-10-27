@@ -494,7 +494,7 @@ class LiveDialogSession(DialogSession):
         """
         async with self._link_lock:
             link = self._link
-            voice = self._dialog.voice
+            voice = self._dialog.voice_key
             budget = self._budget
             if rotate:
                 if self._turn is not None or self._voice_turn is not None:
@@ -751,7 +751,7 @@ class LiveDialogSession(DialogSession):
     def _needs_open(self) -> bool:
         """Ходу не обойтись без новой сессии: живой нет или голос сменился."""
         link = self._link
-        return link is None or link.closed or link.voice != self._dialog.voice
+        return link is None or link.closed or link.voice != self._dialog.voice_key
 
     def _will_open(self) -> bool:
         """Ход откроет новую сессию: без неё не обойтись или ждёт смена (GoAway, кризис, отложенная, ленивая), которую сейчас
@@ -787,6 +787,9 @@ class LiveDialogSession(DialogSession):
         if degraded or self._budget.enforcing:
             return FallbackTurn(started=started)
         return Turn(started=started)
+
+    def _main_voice(self) -> str:
+        return self._dialog.voice_key  # озвучка Gemini Live: выбранный человеком голос, иначе голос рода
 
     def _fallback_tts(self) -> TextToSpeech | None:
         main = self._tts_source()  # None, если озвучку выключили (dev-переключатель)

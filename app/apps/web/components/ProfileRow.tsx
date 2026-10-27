@@ -9,6 +9,7 @@ import {
   Lock,
   LogIn,
   Mail,
+  Mic,
   MonitorSmartphone,
   Sparkles,
   Trash2,
@@ -31,6 +32,7 @@ const ICONS = {
   memory: Sparkles,
   download: Download,
   help: CircleHelp,
+  voice: Mic,
 } satisfies Record<string, LucideIcon>
 
 type ProfileRowIcon = keyof typeof ICONS

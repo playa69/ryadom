@@ -31,6 +31,7 @@ export class StartAgentDialogRequestHandler implements RequestHandler<
   async handle(request: StartAgentDialogRequest): Promise<StartAgentDialogResponse> {
     const payload = {
       ...(request.voice ? { voice: request.voice } : {}),
+      ...(request.voiceName ? { voiceName: request.voiceName } : {}),
       ...(request.startNew ? { new: true } : {}),
       ...(request.memory ? { memory: request.memory } : {}),
     }

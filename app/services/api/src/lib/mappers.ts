@@ -19,6 +19,7 @@ import type {
 } from '@ryadom/core/processes/memory'
 import { describeUserAgent } from '@ryadom/core/shared'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
+import { DEFAULT_VOICE_ID } from '@ryadom/contracts/voices'
 import { SessionClient, type SessionApiResponse } from '@ryadom/contracts/api/auth/sessions'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
 import {
@@ -68,6 +69,7 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     consentsCompleted: consent.completed,
     consentVersion: consent.offerVersion,
     voice: user.agentVoice,
+    voiceName: user.agentVoiceName ?? DEFAULT_VOICE_ID[user.agentVoice],
     analyticsOptOut: user.analyticsOptOut,
     timezone: user.timezone,
   }
