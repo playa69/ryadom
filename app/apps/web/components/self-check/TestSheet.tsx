@@ -238,6 +238,9 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
         Повтори тест через {weeks} {plural(weeks, ['неделю', 'недели', 'недель'])} — так видно динамику.
       </p>
       <p className="text-xs text-faint">{DISCLAIMER}</p>
+      <p className="text-xs text-faint" data-testid="result-source">
+        Источник: {test.source}
+      </p>
       <div className="flex gap-2">
         <Button
           variant="outline"

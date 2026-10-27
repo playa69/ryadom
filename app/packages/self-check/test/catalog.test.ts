@@ -71,3 +71,24 @@ describe('PHQ-9 по спеке', () => {
     expect(phq.items[8]?.crisis).toEqual({ from: 1 })
   })
 })
+
+describe('указание авторов', () => {
+  it('у каждого теста есть источник, который показывается на экране результата', () => {
+    for (const t of allTests) expect(t.source.trim().length, t.id).toBeGreaterThan(0)
+  })
+  it('SWLS называет всех четырёх авторов, K6 — авторское право Кесслера и статью', () => {
+    const swls = byId('swls')!.source
+    for (const name of ['Diener', 'Emmons', 'Larsen', 'Griffin']) expect(swls).toContain(name)
+    const k6 = byId('k6')!.source
+    expect(k6).toContain('© Ronald C. Kessler')
+    expect(k6).toContain('Archives of General Psychiatry')
+  })
+  it('в собственных переводах нет обращения на «вы» и родовых окончаний', () => {
+    for (const id of ['swls', 'k6']) {
+      const t = byId(id)!
+      const text = [t.preface, ...t.items.map((i) => i.text), ...t.options.map((o) => o.label), ...t.bands.map((b) => b.text)].join(' ')
+      expect(text, id).not.toMatch(/\b[Вв]ы\b|\b[Вв]ам\b|\b[Вв]ас\b/)
+      expect(text, id).not.toMatch(/(?:^|\s)(?:доволен|согласен|получил|хотел|нервничал)(?=[\s.,])/i)
+    }
+  })
+})

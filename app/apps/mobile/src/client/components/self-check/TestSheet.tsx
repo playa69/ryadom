@@ -260,6 +260,9 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
         Повтори тест через {weeks} {plural(weeks, ['неделю', 'недели', 'недель'])} — так видно динамику.
       </p>
       <p className="rd-muted rd-test-note">{DISCLAIMER}</p>
+      <p className="rd-muted rd-test-note" data-testid="result-source">
+        Источник: {test.source}
+      </p>
       <Button
         large
         outline

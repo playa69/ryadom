@@ -97,7 +97,7 @@ describe('GET /api/analytics/config', () => {
       policy: {
         android: { minVersionCode: 100, latestVersionCode: 100, downloadUrl: null },
         ios: { minVersionCode: 0, latestVersionCode: 0, downloadUrl: null },
-        js: { latestVersion: null, bundleUrl: null, checksum: null },
+        js: { latestVersion: null, minVersion: null, bundleUrl: null, checksum: null },
       },
     })
     const response = await app.request('/api/analytics/config', {
@@ -188,7 +188,7 @@ describe('/api/ingest: обратный прокси к PostHog', () => {
       policy: {
         android: { minVersionCode: 100, latestVersionCode: 100, downloadUrl: null },
         ios: { minVersionCode: 0, latestVersionCode: 0, downloadUrl: null },
-        js: { latestVersion: null, bundleUrl: null, checksum: null },
+        js: { latestVersion: null, minVersion: null, bundleUrl: null, checksum: null },
       },
     })
     stubPostHog()
