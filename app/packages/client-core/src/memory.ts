@@ -68,7 +68,10 @@ export const MEMORY_HOW_IT_WORKS: readonly string[] = [
   'Если выключить «Память», заметки останутся, но я не буду ими пользоваться. Разговор с галочкой «Не сохранять этот разговор» не попадает ни в журнал, ни в память.',
 ]
 
-/** Turning memory on shows the sheet first unless the person has accepted this very text before. */
+/**
+ * Turning memory on shows the sheet first unless the person has accepted this very text before. A pause keeps the consent (the
+ * agent answers with it while memory is off), so resuming does not ask again; a person who accepted an older text is asked again.
+ */
 export function needsMemoryConsent(memory: Pick<MemoryApiResponse, 'consentVersion'> | null): boolean {
   return memory?.consentVersion !== MEMORY_CONSENT_VERSION
 }
@@ -1003,10 +1006,14 @@ export const MEMORY_INVITE = {
   decline: 'Не сейчас',
 } as const
 
-/** Whether to show the sheet: the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
+/**
+ * Whether to show the sheet: the feature works, the person has never accepted a memory consent and has not said "Не сейчас"
+ * already. A pause keeps the consent, so someone who turned memory off never gets the invitation back; whether memory is on
+ * right now does not matter, only whether the person has ever decided.
+ */
 export function shouldInviteToMemory(
-  memory: Pick<MemoryApiResponse, 'available' | 'enabled' | 'consentVersion'> | null,
+  memory: Pick<MemoryApiResponse, 'available' | 'consentVersion'> | null,
   dismissed: boolean,
 ): boolean {
-  return memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
+  return memory !== null && memory.available && memory.consentVersion === null && !dismissed
 }

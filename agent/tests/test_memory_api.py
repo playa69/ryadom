@@ -150,6 +150,34 @@ def test_settings_without_enabled_only_change_switches(client: TestClient) -> No
     assert body["chatSearchEnabled"] is False and body["enabled"] is True and body["consentVersion"] == CONSENT
 
 
+def test_pause_keeps_the_consent_in_every_answer(client: TestClient) -> None:
+    """Пауза не отзывает согласие: его отдают ответ на выключение, GET /memory и выгрузка; «Удалить всю память» его тоже не стирает."""
+    user = uid()
+    enable(client, user)
+    paused = client.put(f"{base(user)}/settings", json={"enabled": False}, headers=AUTH).json()
+    assert paused["enabled"] is False and paused["consentVersion"] == CONSENT and paused["consentAt"]
+
+    memory = client.get(base(user), headers=AUTH).json()
+    assert memory["enabled"] is False and memory["paused"] is True
+    assert memory["consentVersion"] == CONSENT and memory["consentAt"] == paused["consentAt"]
+    settings = client.get(f"{base(user)}/export", headers=AUTH).json()["settings"]
+    assert settings["enabled"] is False and settings["consentVersion"] == CONSENT
+
+    assert client.delete(f"{base(user)}/notes", headers=AUTH).status_code == 204
+    assert client.get(base(user), headers=AUTH).json()["consentVersion"] == CONSENT
+
+    resumed = client.put(f"{base(user)}/settings", json={"enabled": True, "consentVersion": CONSENT}, headers=AUTH).json()
+    assert resumed["enabled"] is True and resumed["consentAt"] == paused["consentAt"]  # тот же текст — прежнее принятие
+
+
+def test_a_person_who_never_consented_has_no_consent(client: TestClient) -> None:
+    user = uid()
+    memory = client.get(base(user), headers=AUTH).json()
+    assert memory["enabled"] is False and memory["consentVersion"] is None and memory["consentAt"] is None
+    switched = client.put(f"{base(user)}/settings", json={"chatSearchEnabled": False}, headers=AUTH).json()
+    assert switched["enabled"] is False and switched["consentVersion"] is None
+
+
 def test_export_has_notes_and_settings(client: TestClient) -> None:
     user = uid()
     enable(client, user)

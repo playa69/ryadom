@@ -212,14 +212,15 @@ class CogneeMemoryBackend:
                 # Решение человека хранится в базе и сильнее датасета: пауза остаётся паузой после перезапуска.
                 enabled, version, at = saved
                 self._datasets[user_id] = enabled
-                if version:
-                    self._consents[user_id] = (version, at)
+                self._consents[user_id] = (version, at)  # и пустое согласие: строка настроек главнее зерна в датасете
                 await self._refresh_notes(user_id)
                 return
             exists = await self._client.dataset_exists(dataset_name(user_id))
             self._datasets[user_id] = exists  # старая память без строки настроек: есть датасет — человек включал
             if exists:
                 await self._adopt_legacy(user_id)
+            else:
+                self._consents[user_id] = (None, None)  # датасета нет — зерна согласия тоже, в Cognee за ним не ходим
             await self._refresh_notes(user_id)
         except Exception:  # noqa: BLE001 - память не должна мешать разговору (I3)
             logger.exception("cognee memory state load failed user=%s", user_id)
@@ -435,7 +436,7 @@ class CogneeMemoryBackend:
         if user_id not in self._datasets and self._client is not None:
             await self._load_state(user_id)
         enabled = self._effective_enabled(user_id)
-        version, at = await self._consent_of(user_id) if enabled else (None, None)
+        version, at = await self._consent_of(user_id)  # согласие отдаётся и на паузе: пауза его не отзывает
         notes = await self.notes.list(user_id)
         sensitive, chat_search = await self.notes.flags(user_id)
         return {
@@ -458,7 +459,7 @@ class CogneeMemoryBackend:
         if user_id not in self._datasets and self._client is not None:
             await self._load_state(user_id)
         enabled = self._effective_enabled(user_id)
-        version, at = await self._consent_of(user_id) if enabled else (None, None)
+        version, at = await self._consent_of(user_id)
         return {
             "exportedAt": iso(datetime.now(UTC)),
             "rulesVersion": "cognee",
@@ -520,14 +521,16 @@ class CogneeMemoryBackend:
         return {**result, "sensitiveEnabled": sensitive, "chatSearchEnabled": chat_search}
 
     async def _update_enabled(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
-        """Включение — запись согласия в настройки памяти (база агента), Cognee для этого не нужен; пауза — только флаг, заметки и
-        индекс остаются. На паузе вызовов в Cognee нет (все пути режутся `_effective_enabled`)."""
+        """Включение — запись согласия в настройки памяти (база агента), Cognee для этого не нужен; пауза — только флаг, заметки,
+        индекс и согласие остаются. На паузе вызовов в Cognee нет (все пути режутся `_effective_enabled`)."""
         if enabled:
             if self._database() is None:
                 raise MemoryUnavailable()  # настройки и заметки хранятся в базе агента: без неё включать нечего
             if not consent_version:
                 raise MemoryValidation("consentVersion обязателен при включении")
-            at = iso(datetime.now(UTC))
+            version, accepted_at = await self._consent_of(user_id)
+            # Тот же текст, что человек уже принимал до паузы, — не новое согласие: дата первого принятия остаётся.
+            at = accepted_at if version == consent_version and accepted_at else iso(datetime.now(UTC))
             await self._write_settings(user_id, True, consent_version, at)
             self._datasets[user_id] = True
             self._consents[user_id] = (consent_version, at)
@@ -538,7 +541,7 @@ class CogneeMemoryBackend:
         self._datasets[user_id] = False
         self._removed_by_person(user_id)
         logger.info("cognee memory disabled (данные сохранены) user=%s", user_id)
-        return {"enabled": False, "consentVersion": None, "consentAt": None}
+        return {"enabled": False, "consentVersion": version, "consentAt": at}
 
     async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:
         """Факт, который человек написал сам: документом в его датасет. Ответ — в форме факта API (201)."""

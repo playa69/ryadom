@@ -89,6 +89,13 @@ describe('лист согласия', () => {
     expect(needsMemoryConsent({ consentVersion: '2020-01-01' })).toBe(true)
     expect(needsMemoryConsent({ consentVersion: MEMORY_CONSENT_VERSION })).toBe(false)
   })
+
+  it('включение с паузы: тот же текст не спрашивают заново, новый — спрашивают', () => {
+    // Агент отдаёт согласие и на паузе, поэтому «на паузе, согласие на этот текст» — обычное состояние после выключения.
+    const paused = { enabled: false, consentVersion: MEMORY_CONSENT_VERSION }
+    expect(needsMemoryConsent(paused)).toBe(false)
+    expect(needsMemoryConsent({ ...paused, consentVersion: '2020-01-01' })).toBe(true)
+  })
 })
 
 describe('память в работе', () => {
@@ -679,12 +686,19 @@ describe('«Запомнил: … · Убрать» и лист «Рядом т�
 
   it('лист-приглашение: один раз, тому, кто ещё не решал; согласие и «Не сейчас» его снимают', async () => {
     const { shouldInviteToMemory } = await import('../src/memory')
-    const fresh = { available: true, enabled: false, consentVersion: null }
+    const fresh = { available: true, consentVersion: null }
     expect(shouldInviteToMemory(fresh, false)).toBe(true)
     expect(shouldInviteToMemory(fresh, true)).toBe(false) // «Не сейчас»
-    expect(shouldInviteToMemory({ ...fresh, consentVersion: '2026-10-12' }, false)).toBe(false) // уже давал согласие (и выключил)
-    expect(shouldInviteToMemory({ ...fresh, enabled: true }, false)).toBe(false)
     expect(shouldInviteToMemory({ ...fresh, available: false }, false)).toBe(false)
     expect(shouldInviteToMemory(null, false)).toBe(false)
+  })
+
+  it('лист-приглашение не возвращается к тому, кто давал согласие: включил, поставил на паузу, согласие на старый текст', async () => {
+    const { shouldInviteToMemory } = await import('../src/memory')
+    // Пауза не отзывает согласие: агент отдаёт версию и при выключенной памяти, а приглашение смотрит только на неё.
+    const paused = { available: true, enabled: false, consentVersion: MEMORY_CONSENT_VERSION }
+    expect(shouldInviteToMemory(paused, false)).toBe(false)
+    expect(shouldInviteToMemory({ ...paused, enabled: true }, false)).toBe(false)
+    expect(shouldInviteToMemory({ ...paused, consentVersion: '2020-01-01' }, false)).toBe(false) // новый текст — лист согласия, не приглашение
   })
 })

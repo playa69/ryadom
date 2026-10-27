@@ -210,13 +210,16 @@ export function onUserMessage(memory, dialog, text) {
   }, NOTE_DELAY_MS)
 }
 
-/** Dev seed: `memory: { enabled, consentVersion?, sensitiveEnabled?, notes: [{ kind, text, eventDate? }] }`. */
+/**
+ * Dev seed: `memory: { enabled, consentVersion?, sensitiveEnabled?, notes: [{ kind, text, eventDate? }] }`. A paused seed
+ * (`enabled: false`) has a consent only when `consentVersion` is given: a pause keeps the consent, it never had one otherwise.
+ */
 export function seedMemory(body) {
   const memory = newMemory()
   const at = now()
   memory.enabled = body.enabled === true
-  memory.consentVersion = memory.enabled ? (body.consentVersion ?? '2026-10-12') : null
-  memory.consentAt = memory.enabled ? at : null
+  memory.consentVersion = body.consentVersion ?? (memory.enabled ? '2026-10-12' : null)
+  memory.consentAt = memory.consentVersion ? at : null
   memory.sensitiveEnabled = body.sensitiveEnabled === true
   memory.updatedAt = at
   let offset = 0
@@ -281,8 +284,9 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
         return agentError(res, 422, 'AGENT_VALIDATION', 'Для включения нужна версия согласия')
       }
       memory.enabled = true
+      // The same text accepted before the pause is not a new acceptance: the first date stays.
+      if (memory.consentVersion !== body.consentVersion || !memory.consentAt) memory.consentAt = at
       memory.consentVersion = body.consentVersion
-      memory.consentAt = memory.consentAt ?? at
     } else if (body.enabled === false) {
       memory.enabled = false // a pause: the notes stay, the consent stays
     }
