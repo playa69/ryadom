@@ -59,17 +59,26 @@ class FakeCognee:
         self.remembered: list[tuple[str, str]] = []
         self.recalls: list[tuple[str, str]] = []
         self.deleted: list[str] = []
+        self.cognified: list[str] = []
         self.recall_text = recall_text
         self.recall_gate: asyncio.Event | None = None  # если задан, recall ждёт его (управление моментом prefetch)
 
     async def connect(self) -> None:
         self.connected = True
 
-    async def remember(self, text: str, dataset: str) -> None:
+    async def add(self, text: str, dataset: str) -> None:
+        """Документ в датасет без графа; в `remembered` попадает так же, как через remember."""
         self.remembered.append((text, dataset))
         self.datasets.add(dataset)
         if text.startswith("CONSENT memory"):
             self.consents[dataset] = text
+
+    async def cognify(self, dataset: str) -> None:
+        self.cognified.append(dataset)
+
+    async def remember(self, text: str, dataset: str) -> None:
+        await self.add(text, dataset)
+        await self.cognify(dataset)
 
     async def recall(self, query: str, dataset: str) -> str:
         self.recalls.append((query, dataset))

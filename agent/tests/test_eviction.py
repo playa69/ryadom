@@ -406,7 +406,7 @@ async def test_evicted_user_can_be_erased(tmp_path: Path) -> None:
     assert store.evict_idle(later()) == 1
 
     await store.erase_user_durable(user)
-    assert db.load_user(user) == ([], None) and db.counts() == (0, 0)
+    assert db.load_user(user) == ([], None) and db.counts() == (1, 1)  # мягко: строки с пометкой ждут физической очистки
     assert user not in store._evicted  # даже id стёртого человека в памяти не остаётся
     await store.ensure_user(user)
     assert store.list(user, 10, None)[0] == [] and user not in store._voice_prefs

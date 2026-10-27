@@ -58,8 +58,8 @@ class CogneeClient:
             response = await self._client.request(method, url, **kwargs)
         return response
 
-    async def remember(self, text: str, dataset: str) -> None:
-        """Документ в датасет человека: add складывает файл, cognify строит граф (как MCP-инструмент remember)."""
+    async def add(self, text: str, dataset: str) -> None:
+        """Сохраняет документ в датасете без построения графа."""
         response = await self._send(
             "POST",
             "/add",
@@ -67,8 +67,16 @@ class CogneeClient:
             data={"datasetName": dataset},
         )
         response.raise_for_status()
+
+    async def cognify(self, dataset: str) -> None:
+        """Строит граф по документам датасета."""
         response = await self._send("POST", "/cognify", json={"datasets": [dataset]})
         response.raise_for_status()
+
+    async def remember(self, text: str, dataset: str) -> None:
+        """Сохраняет документ и строит граф, как MCP-инструмент remember."""
+        await self.add(text, dataset)
+        await self.cognify(dataset)
 
     @staticmethod
     def _texts(payload: Any) -> list[str]:
@@ -155,7 +163,11 @@ class CogneeClient:
         return await self._dataset_id(dataset) is not None
 
     async def forget_dataset(self, dataset: str) -> bool:
-        """Удалить датасет целиком (выключение памяти, «забыть всё», стирание человека). False — его и не было."""
+        """Удалить датасет целиком. False — его и не было.
+
+        Оставлено для будущей джобы-чистильщика (по меткам `memory_deletions`); пользовательские пути
+        (выключение памяти, «забыть всё», стирание человека) датасет не удаляют и этот метод не зовут.
+        """
         dataset_id = await self._dataset_id(dataset)
         if dataset_id is None:
             return False

@@ -14,6 +14,7 @@ from app.api.deps import Store, canonical_user_id, require_token
 from app.core.errors import AgentError, validation_error
 from app.memory.backend import MemoryBackend
 from app.memory.errors import MemoryServiceError
+from app.services.dialog_db import DialogDbError
 
 logger = logging.getLogger("agent.memory")
 
@@ -82,9 +83,18 @@ async def put_settings(user_id: str, body: SettingsBody, store: Store, memory: M
     user = _user(user_id)
     await store.ensure_user(user)
     try:
-        return await memory.update_settings(user, body.enabled, body.consent_version)
+        result = await memory.update_settings(user, body.enabled, body.consent_version)
     except MemoryServiceError as error:
         raise _error(error) from error
+    if not body.enabled:
+        return result
+    try:
+        await store.clear_memory_deleted(user)
+    except DialogDbError as error:
+        memory.user_erased(user)
+        logger.error("memory enable failed: %s", type(error).__name__)
+        raise AgentError(503, "AGENT_INTERNAL", "Не удалось включить память, повторите позже") from error
+    return result
 
 
 @router.post("/facts", status_code=201)
@@ -119,6 +129,8 @@ async def delete_fact(user_id: str, fact_id: str, memory: Memory) -> Response:
 
 @router.delete("", status_code=204)
 async def forget_all(user_id: str, memory: Memory) -> Response:
+    # Датасет Cognee стирается сразу, а память остаётся включённой (PROTEUS-242, 0.4). Метку memory_deletions здесь не
+    # ставим: по ней холодная загрузка считает человека стёртым и выключила бы ему память.
     try:
         await memory.forget_all(_user(user_id))
     except MemoryServiceError as error:

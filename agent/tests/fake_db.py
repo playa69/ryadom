@@ -1,4 +1,4 @@
-"""In-memory двойник `DialogDatabase` для тестов: та же семантика без PostgreSQL и без файла.
+"""In-memory двойник `DialogDatabase` для тестов: та же семантика без PostgreSQL и без файла (включая мягкое стирание).
 
 Экземпляры с одинаковым `path` делят состояние — так тест «перезапуска пода» (новый `DialogStore` и новая база на том
 же пути) видит записанное прежним. Тесты подменяют им настоящий класс:
@@ -27,6 +27,10 @@ class _File:
         self.prefs: dict[str, str] = {}  # user_id -> voice
         self.memory_settings: dict[str, tuple[bool, str | None, str | None]] = {}  # user_id -> (enabled, version, at)
         self.usage: list[tuple] = []
+        # Мягкое стирание, как deleted_at в PostgreSQL: строки остаются, чтения их не видят, запись не воскрешает.
+        self.deleted_dialogs: set[str] = set()
+        self.deleted_prefs: set[str] = set()
+        self.memory_deletions: dict[str, str] = {}  # user_id -> отметка (метка для джобы удаления датасета Cognee)
 
 
 class FakeDialogDatabase:
@@ -86,7 +90,7 @@ class FakeDialogDatabase:
             state = self._state()
             dialogs = []
             for row in sorted(state.dialogs.values(), key=lambda r: (r[2], r[0])):
-                if row[1] != user_id:
+                if row[1] != user_id or row[0] in state.deleted_dialogs:
                     continue
                 dialog_id = row[0]
                 messages = [
@@ -112,7 +116,7 @@ class FakeDialogDatabase:
                         client_ids=client_ids,
                     )
                 )
-            return dialogs, state.prefs.get(user_id)
+            return dialogs, None if user_id in state.deleted_prefs else state.prefs.get(user_id)
 
     def apply(self, writes: list[DialogWrite]) -> None:
         with self._lock:
@@ -121,6 +125,8 @@ class FakeDialogDatabase:
                 old = state.dialogs.get(write.dialog_id)
                 if old is None:
                     state.dialogs[write.dialog_id] = (*write.row, None)
+                elif write.dialog_id in state.deleted_dialogs:
+                    pass  # мягко стёртый диалог запись не воскрешает
                 else:
                     new = write.row
                     state.dialogs[write.dialog_id] = (
@@ -135,7 +141,7 @@ class FakeDialogDatabase:
                 state.usage.extend(write.usage)
                 for dialog_id, client_id, message_id in write.client_ids:
                     state.client_ids.setdefault((dialog_id, client_id), message_id)
-                if write.pref is not None:
+                if write.pref is not None and write.pref[0] not in state.deleted_prefs:
                     state.prefs[write.pref[0]] = write.pref[1]
 
     def checkpoint(self) -> None:
@@ -144,13 +150,23 @@ class FakeDialogDatabase:
     def erase_user(self, user_id: str) -> None:
         with self._lock:
             state = self._state()
-            gone = {dialog_id for dialog_id, row in state.dialogs.items() if row[1] == user_id}
-            state.dialogs = {k: v for k, v in state.dialogs.items() if k not in gone}
-            state.messages = {k: v for k, v in state.messages.items() if k[0] not in gone}
-            state.client_ids = {k: v for k, v in state.client_ids.items() if k[0] not in gone}
-            state.usage = [row for row in state.usage if row[0] not in gone]
-            state.prefs.pop(user_id, None)
+            state.deleted_dialogs |= {dialog_id for dialog_id, row in state.dialogs.items() if row[1] == user_id}
+            if user_id in state.prefs:
+                state.deleted_prefs.add(user_id)
             state.memory_settings.pop(user_id, None)
+            state.memory_deletions.setdefault(user_id, "erased")
+
+    def mark_memory_deleted(self, user_id: str) -> None:
+        with self._lock:
+            self._state().memory_deletions.setdefault(user_id, "forgotten")
+
+    def clear_memory_deleted(self, user_id: str) -> None:
+        with self._lock:
+            self._state().memory_deletions.pop(user_id, None)
+
+    def is_memory_deleted(self, user_id: str) -> bool:
+        with self._lock:
+            return user_id in self._state().memory_deletions
 
     def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         with self._lock:
@@ -165,7 +181,6 @@ class FakeDialogDatabase:
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         with self._lock:
             state = self._state()
-            state.dialogs.pop(dialog_id, None)
-            state.messages = {k: v for k, v in state.messages.items() if k[0] != dialog_id}
-            state.client_ids = {k: v for k, v in state.client_ids.items() if k[0] != dialog_id}
-            state.usage = [row for row in state.usage if row[0] != dialog_id]
+            row = state.dialogs.get(dialog_id)
+            if row is not None and row[1] == user_id:
+                state.deleted_dialogs.add(dialog_id)

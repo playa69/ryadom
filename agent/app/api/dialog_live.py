@@ -556,6 +556,7 @@ class LiveDialogSession(DialogSession):
     async def _open(self, voice: Voice, handle: str | None, purpose: str = "start") -> LiveLink | None:
         budget = self._budget
         history: LiveHistory | None = self._history() if self._cfg.text_context and handle is None else None
+        await self._store.memory_prepare(self._dialog)
         instructions = self._instructions(resumed=handle is not None)
         cost = budget.open_estimate([instructions, *(text for _, text in history or ())])
         if not self._may_open(cost):

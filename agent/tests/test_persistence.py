@@ -84,8 +84,9 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
     db.erase_user(user)  # идемпотентно
     assert db.load_user(user) == ([], None)
     assert len(db.load_user(other)[0]) == 1  # чужой не тронут
-    assert db.counts() == (1, 2)
-    assert {row[0] for row in db._state().usage} == {"d2"}  # расход стёртого ушёл вместе с диалогом
+    # Стирание мягкое: строки стёртого остаются с пометкой до физической очистки, чтения их не видят.
+    assert db.counts() == (2, 4)
+    assert {row[0] for row in db._state().usage} == {"d1", "d2"}
     db.close()
 
 
@@ -192,7 +193,7 @@ async def test_erase_removes_memory_and_disk_and_late_writes_do_not_bring_the_pe
     assert await store.flush()
     assert store.get(user, dialog.id) is None
     assert db.load_user(user) == ([], None)  # ни диалога, ни выбора голоса
-    assert db.counts() == (0, 0)
+    assert db.counts() == (1, 1)  # мягко: строки с пометкой ждут физической очистки, поздняя реплика не дописалась
     await store.erase_user_durable(user)  # повтор допустим
     await store.detach()
 
