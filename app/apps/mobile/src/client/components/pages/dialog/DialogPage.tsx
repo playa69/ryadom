@@ -2,7 +2,8 @@ import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
@@ -195,6 +196,10 @@ export default function DialogPage({
   }
 
   const [messages, setMessages] = useState<DialogMessageView[]>([])
+  // The tone the agent reports for the person's last turn tints the sphere for a while (REQ-VOICE-10).
+  const [mood, setMood] = useState<OrbMood | null>(null)
+  const moodHold = useMemo(() => createMoodHold(setMood), [])
+  useEffect(() => () => moodHold.clear(), [moodHold])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
   const [draft, setDraft] = useState('')
@@ -334,6 +339,7 @@ export default function DialogPage({
         },
         onAudio: (speech) => voicePlayer.enqueue(speech),
         onSafety: (_level, text, hotlines) => openSos({ text, hotlines, source: 'safety_frame' }),
+        onMood: (tone, intensity) => moodHold.report(tone, intensity),
         onEnded: (result) => setSummary(result),
         onError: (code, message) => {
           if (code === DialogWsErrorCode.VOICE_UNAVAILABLE) {
@@ -789,7 +795,7 @@ export default function DialogPage({
           {/* The whole stage is the target: the sphere is large, and the person need not aim. The
               microphone button below is the same action for those who look for a button. */}
           <div className="rd-voice-stage" role="presentation" onClick={toggleListening}>
-            <VoiceOrb state={orb} level={level} />
+            <VoiceOrb state={orb} level={level} mood={mood} />
           </div>
 
           <div ref={caption} className="rd-voice-caption" data-testid="voice-caption">

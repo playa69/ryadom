@@ -49,6 +49,7 @@ import {
   type TurnEvent,
 } from '@ryadom/client-core/voice/turn-detector'
 import { Button } from '@ryadom/ui/components/button'
+import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
 import type { OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
@@ -134,6 +135,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [view, setView] = useState<DialogView>(() => initialDialogView(dialogId))
   const [sharing, setSharing] = useState(false)
   const [recording, setRecording] = useState(false)
+  // PROTEUS-168: the tone the agent reports for the person's last turn; fades back after a while.
+  const [mood, setMood] = useState<OrbMood | null>(null)
+  const moodHold = useMemo(() => createMoodHold(setMood), [])
+  useEffect(() => () => moodHold.clear(), [moodHold])
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
   const [handsFree] = useState(() => readHandsFree(WEB_HANDS_FREE_KEY) && isTurnDetectionSupported())
   /** Hands-free: the microphone is open and the detector listens for turns. */
@@ -421,6 +426,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       // Not reported from here on purpose: the server already counts this signal (safety_signal), with no
       // person attached; a second count from a signed-in screen would only risk pointing at who was in crisis.
       onSafety: (_level, text, hotlines) => latest.current.openSos({ text, hotlines }),
+      onMood: (tone, intensity) => moodHold.report(tone, intensity),
       onEnded: (result) => finish(result),
       onError: (code, message) => {
         if (code === DialogWsErrorCode.VOICE_UNAVAILABLE) {
@@ -936,6 +942,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       {view === 'voice' ? (
         <DialogVoice
           orb={orb}
+          mood={mood}
           level={level}
           caption={caption}
           hint={hint}

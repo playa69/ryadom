@@ -739,6 +739,37 @@ input:-webkit-autofill:focus {
   --orb-ring: rgb(247 190 130);
 }
 
+/*
+ * Mood over the state (REQ-VOICE-10). After the state rules on purpose: same specificity, the later wins.
+ * The colour properties are registered, so the change is the same slow dissolve.
+ */
+.rd-orb[data-mood='sleepy'] {
+  --orb-hi: rgb(238 228 255);
+  --orb-warm: rgb(170 130 240);
+  --orb-mid: rgb(124 77 212);
+  --orb-deep: rgb(62 38 140);
+  --orb-halo: rgb(110 70 200);
+  --orb-ring: rgb(160 120 235);
+}
+
+.rd-orb[data-mood='angry'] {
+  --orb-hi: rgb(255 226 200);
+  --orb-warm: rgb(255 120 70);
+  --orb-mid: rgb(220 38 38);
+  --orb-deep: rgb(127 20 20);
+  --orb-halo: rgb(239 68 68);
+  --orb-ring: rgb(248 113 113);
+}
+
+.rd-orb[data-mood='afraid'] {
+  --orb-hi: rgb(228 255 236);
+  --orb-warm: rgb(110 220 150);
+  --orb-mid: rgb(34 160 90);
+  --orb-deep: rgb(20 90 70);
+  --orb-halo: rgb(52 190 130);
+  --orb-ring: rgb(110 220 150);
+}
+
 /* ── Home ────────────────────────────────────────────────────────────────── */
 
 .rd-home {

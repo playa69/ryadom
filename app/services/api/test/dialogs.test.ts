@@ -653,6 +653,20 @@ describe('WebSocket-шлюз', () => {
     client.close()
   })
 
+  it('кадр mood от агента доходит до клиента, чужие значения отбрасываются (PROTEUS-168)', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-mood-1' }))
+    const agentSide = await agent.waitFor('d-mood-1')
+
+    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'furious', intensity: 1 }))
+    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'angry', intensity: 7, risk: 'self_harm', at: 5 }))
+    const mood = await nextFrame(client, DialogServerFrame.Mood)
+    expect(mood).toEqual({ v: 1, type: 'mood', tone: 'angry', intensity: 1, at: 5 })
+    client.close()
+  })
+
   it('аналитика: завершённый диалог — счётчики реплик, длительность и перемена напряжения, но не текст', async () => {
     const { userId, accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)

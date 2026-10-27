@@ -648,6 +648,14 @@ function send(socket, frame) {
 
 const STREAM_DELAY_MS = 60
 
+/** The tone the real agent's classifier would report for a line (REQ-VOICE-10): a few words are enough for the mock. */
+function moodOf(text) {
+  if (/бесит|злюсь|достало|ненавижу/iu.test(text)) return { tone: 'angry', intensity: 0.8 }
+  if (/спать|сонн|устал/iu.test(text)) return { tone: 'sleepy', intensity: 0.8 }
+  if (/страшно|боюсь|тревожно/iu.test(text)) return { tone: 'afraid', intensity: 0.9 }
+  return { tone: 'neutral', intensity: 0.1 }
+}
+
 async function streamAssistantReply(socket, dialog, crisis = false) {
   const text = crisis
     ? 'Я слышу, что тебе очень тяжело. Ты не один на один с этим. Давай посмотрим, кому можно позвонить прямо сейчас.'
@@ -722,6 +730,7 @@ wss.on('connection', (socket, request, context) => {
         const message = addMessage(dialog, 'user', text)
         if (frame.id) dialog.clientIds.set(frame.id, message.id)
         send(socket, { type: 'ack', id: frame.id ?? message.id, messageId: message.id })
+        send(socket, { type: 'mood', ...moodOf(text), at: Date.now() })
         // Help is needed now: the app shows its own helplines under the agent's words.
         if (crisis) {
           send(socket, { type: 'safety', text: 'Если тебе сейчас опасно — позвони по одному из номеров ниже.' })

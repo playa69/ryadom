@@ -99,6 +99,8 @@ interface AgentTextFrame {
   [key: string]: unknown
 }
 
+const MOOD_TONES = ['neutral', 'sleepy', 'angry', 'afraid', 'sad', 'calm'] as const
+
 class DialogSession {
   private readonly logger = createLogger('dialog-gateway')
   private agent: AgentSocket | null = null
@@ -636,6 +638,18 @@ class DialogSession {
           cached: frame.cached === true,
         })
         return
+      }
+      case 'mood': {
+        // The tone of the person's last turn, from the agent's classifier (PROTEUS-168). Only known values pass.
+        const tone = MOOD_TONES.find((name) => name === frame.tone)
+        const intensity = num('intensity')
+        if (!tone || intensity === null) return
+        return this.toClient({
+          type: DialogServerFrame.Mood,
+          tone,
+          intensity: Math.min(1, Math.max(0, intensity)),
+          at: num('at') ?? Date.now(),
+        })
       }
       case 'safety': {
         // The hotlines in this frame are always filled in: if the agent gave none, we substitute
