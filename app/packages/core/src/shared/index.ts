@@ -21,7 +21,6 @@ export {
   updateRequestContext,
   type RequestContext,
 } from './request-context'
-export { startTelemetry, shutdownTelemetry } from './telemetry'
 export {
   getDb,
   inTransaction,

@@ -30,9 +30,9 @@ export const LOG_REDACT = [
 ]
 
 /**
- * The core's root pino logger at level `LOG_LEVEL`: JSON to stdout, which Docker collects, plus
- * OTLP when `OTEL_ENABLED=true`. Russian text belongs only here, in messages for the people who
- * read the logs, and never in responses to the client.
+ * The core's root pino logger at level `LOG_LEVEL`: JSON to stdout, which Docker collects.
+ * Russian text belongs only here, in messages for the people who read the logs, and never in
+ * responses to the client.
  */
 export function createLogger(level: string): Logger {
   return getRootLogger().child({}, { level })

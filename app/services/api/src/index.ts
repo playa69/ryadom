@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { serve } from '@hono/node-server'
-import { configureLogger, shutdownTelemetry, startTelemetry } from '@ryadom/core/shared'
+import { configureLogger } from '@ryadom/core/shared'
 import { WebSocketServer } from 'ws'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { createApp } from './app'
@@ -41,9 +41,8 @@ function loadEnvOrExit() {
 }
 
 const env = loadEnvOrExit()
-// Logger settings and OTLP log export must be in place before the first log entry.
+// Logger settings must be in place before the first log entry.
 configureLogger({ redact: LOG_REDACT })
-startTelemetry()
 const logger = createLogger(env.LOG_LEVEL)
 // Product analytics (PostHog). A no-op object without POSTHOG_KEY; its queue is flushed on shutdown.
 const analytics = createAnalytics(env, logger)
@@ -132,10 +131,9 @@ const shutdown = createShutdown({
   closeSessions: closeAllDialogSessions,
   closeServer: (done) => server.close(done),
   finish: () => {
-    // Logging shuts down last so that it still records what happened while the DB pool closed.
-    void Promise.allSettled([shutdownCore(), redis?.quit(), analytics.shutdown()])
-      .finally(() => shutdownTelemetry())
-      .finally(() => process.exit(0))
+    void Promise.allSettled([shutdownCore(), redis?.quit(), analytics.shutdown()]).finally(() =>
+      process.exit(0),
+    )
   },
   forceExit: () => process.exit(0),
   log: (signal, graceful) => logger.info({ signal, graceful }, 'приложение останавливается'),

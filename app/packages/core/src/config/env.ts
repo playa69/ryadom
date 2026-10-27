@@ -136,14 +136,6 @@ const baseShape = {
    * when there is no session; the limit is what a copy that leaked is good for.
    */
   TELEGRAM_INIT_DATA_MAX_AGE_SEC: optionalInt(60).transform((value) => value ?? 86_400),
-  // Logs over OTLP when the infrastructure collects them; the OTel exporter reads these from
-  // process.env on its own.
-  OTEL_ENABLED: booleanFlag,
-  OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(
-    emptyToUndefined,
-    z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
-  ),
-  OTEL_SERVICE_NAME: optionalString,
 }
 
 const appShape = {
@@ -355,7 +347,6 @@ function refineBase(env: BaseEnvInput, ctx: z.RefinementCtx): void {
       message: 'memory is allowed only with APP_ENV=local',
     })
   }
-  if (env.OTEL_ENABLED) require('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_ENABLED=true')
 }
 
 /** The app's own conditional requirements: Redis needs an address. */
