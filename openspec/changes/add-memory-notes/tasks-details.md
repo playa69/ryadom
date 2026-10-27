@@ -38,7 +38,7 @@
 #### Что сделать
 Независимо от остальной работы — то, что сломано у людей сейчас:
 - **Схема разбора ответа агента** в шлюзе принимает `limits.maxFacts: null` (`app/packages/core/src/integrations/agent-api/shared/agent-memory.parse.ts`, `agent-memory.types.ts`). Сейчас `GET /api/memory` отвечает 500.
-- **«Забыть» у факта** и правка при `422 unsupported_in_cognee` отдают понятный текст, а не 500 (`delete-agent-memory-fact.handler.ts`, `update-memory-fact`).
+- **«Забыть» у заметки** и правка отдают понятный текст, а не 500 (`delete-agent-memory-fact.handler.ts`, `update-memory-fact`); отдельного кода «действие не поддерживается» нет.
 - **Выключение памяти хранится** у агента в базе, а не в памяти процесса, и переживает перезапуск и выгрузку (`cognee_backend.py`).
 - **«Забыть всё» не выключает память** и не сбрасывает согласие.
 - **`delete_dialog` получает вызывающих** (маршрут удаления и проход чистки — `add-mood-diary`; память подключается к ним задачей 3.4): правило «Без памяти удаляется через 24 часа» отменено (`add-unsaved-dialog`), вместо него срок хранения 21 день (`add-mood-diary`, D14) и галочка «Не сохранять этот разговор» (`add-unsaved-dialog`) (D8).
@@ -232,7 +232,7 @@
 ### 5.1 Шлюз: контракты, интеграции, маршруты /api/memory
 
 #### Что сделать
-- **`app/packages/contracts/src/api/memory.ts`:** `notes`, `paused`, `sensitiveEnabled`, `chatSearchEnabled`, `reindexing`; запросы правки и инструкции; коды `NOTE_NOT_FOUND`, `NOTE_REJECTED`, `MEMORY_ACTION_UNSUPPORTED`.
+- **`app/packages/contracts/src/api/memory.ts`:** `notes`, `paused`, `sensitiveEnabled`, `chatSearchEnabled`, `reindexing`; запросы правки и инструкции; коды `NOTE_NOT_FOUND`, `NOTE_REJECTED` (кода «действие не поддерживается» нет: закрепления в приложении нет).
 - **`app/packages/core`:** интеграции и процессы под новые маршруты агента, разбор с `maxFacts: null`. Журнал согласий (`memory_consent_events`) — и для «чувствительного».
 - **Маршруты** `app/services/api/src/routes/memory`: `PATCH`/`DELETE /api/memory/notes/{id}`, `POST /api/memory/notes/instruction`, `DELETE /api/memory/notes`, `PUT /api/memory/settings`, совместимость старых маршрутов.
 
