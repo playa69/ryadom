@@ -15,7 +15,7 @@
 ## Источник правды
 
 Сейчас — код в `main`: `openspec/specs/` ещё нет, старые change'и разошлись с кодом. Спека противоречит коду — прав
-код, расхождение назови в отчёте и PR. Изменение поведения начинается с OpenSpec change — скилл `openspec-workflow`.
+код, расхождение назови в отчёте и PR. Изменение поведения начинается с OpenSpec change — скилл `openspec`.
 
 ## Правила
 
@@ -50,12 +50,13 @@
 Одна папка для всех агентов — `.agents/skills/<имя>/SKILL.md`. Claude Code читает только `.claude/skills/`, поэтому там
 копии.
 
+- Скиллы пишутся по-английски.
 - Правишь или добавляешь скилл — только в `.agents/skills/`, затем `node scripts/sync-agent-skills.mjs`, копии — в том
   же коммите. Проверка — `node scripts/sync-agent-skills.mjs --check`.
-- `openspec-*` (кроме `openspec-workflow`) генерирует `npx -y @fission-ai/openspec@1.9.0 init --tools agents`: руками
-  их не правят.
+- Для OpenSpec один скилл `openspec`. `openspec init` и `openspec update` не запускай: они раскладывают в
+  `.agents/skills/` по скиллу на каждую операцию.
 - Что есть:
-  - разработка: `local-dev`, `e2e`, `screenshots`, `commit`, `openspec-workflow`, `openspec-*`;
+  - разработка: `local-dev`, `e2e`, `screenshots`, `commit`, `openspec`;
   - прод: `deploy`, `logs`, `db`, `analytics`, `backup`;
   - командная память: `ryadom-cognee-mcp`.
 

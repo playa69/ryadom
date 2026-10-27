@@ -1,55 +1,56 @@
 ---
 name: logs
-description: Читать логи и метрики прода «Рядом» и следить за ним — kubectl logs подов (agent, app-api и остальных), Loki (LogQL за 7 дней), Prometheus (PromQL, метрики агента), /health и /metrics агента, Langfuse. Использовать при вопросах «что в логах», «какие ошибки на проде», «почему упало», «почему агент молчал», «сколько ошибок квоты», «последи за продом после выката», при разборе инцидентов и привязке ошибки к диалогу или человеку.
+description: Read Ryadom production logs and metrics and monitor production — kubectl logs of pods (agent, app-api and the rest), Loki (LogQL, 7 days), Prometheus (PromQL, agent metrics), the agent /health and /metrics, Langfuse. Use for questions like "what is in the logs", "what errors are there in production", "why did it crash", "why was the agent silent", "how many quota errors", "watch production after a rollout", when investigating incidents and when tying an error to a dialog or a person.
 ---
 
-# Логи и мониторинг прода
+# Production logs and monitoring
 
-Кластер один, Timeweb `twc-sber500`, окружение только prod. Приложения пишут в stdout, Alloy собирает это в Loki,
-метрики собирает Prometheus. Наружу ничего не опубликовано: доступ только `kubectl logs` и `port-forward`. Устройство
-стека — `k8s/README.md`, раздел «Мониторинг».
+There is one cluster, Timeweb `twc-sber500`, and a single environment — production. Applications write to stdout, Alloy
+collects it into Loki, and Prometheus collects the metrics. Nothing is published externally: access is only through
+`kubectl logs` and `port-forward`. For the layout of the stack see `k8s/README.md`, section «Мониторинг: Prometheus + Loki + Grafana».
 
-## Доступ
+## Access
 
-`kubectl` ниже — команда к кластеру на этой машине; чем она подключается (kubeconfig, обёртка), знает администратор.
-Скрипт скилла берёт её из `RYADOM_KUBECTL_ADMIN` (по умолчанию просто `kubectl`).
+`kubectl` below is the command to the cluster on this machine; what it connects with (kubeconfig, wrapper) is known to
+the administrator. The skill script takes it from `RYADOM_KUBECTL_ADMIN` (default: plain `kubectl`).
 
-| Где | developer | admin |
+| Where | developer | admin |
 |---|---|---|
-| логи и port-forward в `agent`, `ryadom-db`, `infra` | да | да |
-| `prod` (app-api, app-web, app-admin, app-landing, app-pwa) | нет, даже чтения | да |
-| `monitoring` (Loki, Prometheus, Grafana) | нет | да |
-| `exec` в поды | нигде | да |
+| logs and port-forward in `agent`, `ryadom-db`, `infra` | yes | yes |
+| `prod` (app-api, app-web, app-admin, app-landing, app-pwa) | no, not even reading | yes |
+| `monitoring` (Loki, Prometheus, Grafana) | no | yes |
+| `exec` into pods | nowhere | yes |
 
-По умолчанию — developer. **admin — только после явного «да» человека на конкретное чтение** (логи `prod`, Loki,
-Prometheus): одним сообщением скажи, что прочитаешь и за какое окно, и ничего не меняй.
+Default is developer. **Use admin only after the user's explicit "yes" for a specific read** (`prod` logs, Loki,
+Prometheus): say in one message what you will read and for which window, and change nothing.
 
-## Где что
+## Where things are
 
-| ns | Deployment | `-c` | Что в журнале |
+| ns | Deployment | `-c` | What is in the log |
 |---|---|---|---|
 | prod | app-api | api | JSON: `level`, `time`, `msg`, `component`, `userId`, `dialogId`, `codec` |
 | prod | app-web, app-admin, app-landing | web, admin, landing | Next.js |
 | prod | app-pwa | pwa | nginx |
-| agent | agent | agent | текст: `dialog started`, `socket opened/closed`, `first sound`, `live timeline`, `live usage`, `WARNING` |
-| agent | cognee | cognee | память агента |
-| infra | langfuse-web | — | трассировка LLM (UI, не журнал) |
+| agent | agent | agent | text: `dialog started`, `socket opened/closed`, `first sound`, `live timeline`, `live usage`, `WARNING` |
+| agent | cognee | cognee | agent memory |
+| infra | langfuse-web | — | LLM tracing (a UI, not a log) |
 
-Всегда указывай `-c`: в подах с сайдкаром Istio `--all-containers` подмешивает шум `istio-proxy`.
+Always specify `-c`: in pods with an Istio sidecar, `--all-containers` mixes in `istio-proxy` noise.
 
 ## kubectl logs
 
 ```bash
 kubectl -n agent logs deploy/agent -c agent --since=30m --timestamps > agent.log
 kubectl -n prod logs deploy/app-api -c api --since=10m | grep -E '"level":"(warn|error)"'      # admin
-kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opened|dialog started'  # живые разговоры
+kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opened|dialog started'  # live dialogs
 ```
 
-- Отдаёт только живой под. У агента стратегия `Recreate`: после выката журнал прежнего пода есть только в Loki.
-- Без `--since` или `--tail` команда идёт долго; час журнала агента под нагрузкой весит около 8 МБ, поэтому выгружай в
-  файл вне репозитория и разбирай скриптом.
+- Returns only the live pod. The agent uses the `Recreate` strategy: after a rollout the log of the previous pod exists
+  only in Loki.
+- Without `--since` or `--tail` the command runs for a long time; an hour of the agent log under load weighs about 8 MB,
+  so dump it to a file outside the repository and analyze it with a script.
 
-## Loki (7 дней)
+## Loki (7 days)
 
 ```bash
 .agents/skills/logs/scripts/monitoring.py loki '{namespace="agent",container="agent"} |~ "WARNING|ERROR|Traceback"' 2h
@@ -57,38 +58,39 @@ kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opene
 .agents/skills/logs/scripts/monitoring.py loki 'sum(count_over_time({namespace="agent",container="agent"} |= "exceeded your current quota" [5m]))' 6h
 ```
 
-Скрипт поднимает port-forward к `svc/loki` (admin), спрашивает `query_range` и печатает строки `время  под  строка`
-(метрики LogQL — рядами). `--raw` — исходный JSON, `--limit N` — потолок строк (5000 у Loki).
+The script brings up a port-forward to `svc/loki` (admin), queries `query_range` and prints lines as `time  pod  line`
+(LogQL metrics as series). `--raw` — the raw JSON, `--limit N` — the line ceiling (5000 for Loki).
 
-- Метки: `namespace`, `container`, `pod`, `app`, `service_name`, `job`, `instance`.
-- Журнал api — JSON: `{namespace="prod",container="api"} | json | level="error"`; уровни по минутам —
+- Labels: `namespace`, `container`, `pod`, `app`, `service_name`, `job`, `instance`.
+- The api log is JSON: `{namespace="prod",container="api"} | json | level="error"`; levels per minute —
   `sum by (level) (count_over_time({namespace="prod",container="api"} | json | __error__="" [1m]))`.
-- Шум агента отсекается так: `!= "GET /" != "POST /" != "connection open" != "WebSocket /"`.
-- Длинные окна режь кусками по 30 минут: больше 5000 строк Loki не отдаст. Скобку в регулярке пиши `[)]`, не `\\)`.
+- Agent noise is cut off like this: `!= "GET /" != "POST /" != "connection open" != "WebSocket /"`.
+- Cut long windows into 30-minute chunks: Loki will not return more than 5000 lines. Write a parenthesis in a regex as
+  `[)]`, not `\\)`.
 
-## Prometheus (14 дней)
+## Prometheus (14 days)
 
 ```bash
 .agents/skills/logs/scripts/monitoring.py prom 'sum by (purpose, result) (increase(agent_gemini_opens_total[1h]))'
 .agents/skills/logs/scripts/monitoring.py prom 'sum by (response_code) (rate(istio_requests_total{reporter="destination",destination_service_name="app-api"}[5m]))' 3h --step 300
 ```
 
-Без окна — текущее значение, с окном — ряд с шагом `--step` секунд.
+Without a window — the current value; with a window — a series with a step of `--step` seconds.
 
-| Что | PromQL |
+| What | PromQL |
 |---|---|
-| рестарты | `kube_pod_container_status_restarts_total{namespace=~"prod\|agent"}` |
-| готовность | `kube_pod_status_ready{namespace=~"prod\|agent",condition="true"}` |
-| память и CPU | `container_memory_working_set_bytes{namespace="agent",container="agent"}`, `rate(container_cpu_usage_seconds_total{namespace="agent",container="agent"}[5m])` |
-| WebSocket-апгрейды к api | `sum(rate(istio_requests_total{reporter="destination",destination_service_name="app-api",response_code="101"}[5m]))` |
-| бюджет Gemini | `agent_gemini_tpm_window_tokens`, `agent_gemini_tpm_limit_tokens`, `agent_gemini_budget_level`, `increase(agent_gemini_quota_errors_total[1h])` |
-| расход моделей | `agent_model_usage_total` (метки `model`, `task`, `direction`, `modality`, `unit`), `agent_component_calls_total` |
-| база и память агента | `agent_dialog_db_errors_total`, `agent_memory_*`, `process_resident_memory_bytes` |
+| restarts | `kube_pod_container_status_restarts_total{namespace=~"prod\|agent"}` |
+| readiness | `kube_pod_status_ready{namespace=~"prod\|agent",condition="true"}` |
+| memory and CPU | `container_memory_working_set_bytes{namespace="agent",container="agent"}`, `rate(container_cpu_usage_seconds_total{namespace="agent",container="agent"}[5m])` |
+| WebSocket upgrades to api | `sum(rate(istio_requests_total{reporter="destination",destination_service_name="app-api",response_code="101"}[5m]))` |
+| Gemini budget | `agent_gemini_tpm_window_tokens`, `agent_gemini_tpm_limit_tokens`, `agent_gemini_budget_level`, `increase(agent_gemini_quota_errors_total[1h])` |
+| model usage | `agent_model_usage_total` (labels `model`, `task`, `direction`, `modality`, `unit`), `agent_component_calls_total` |
+| agent database and memory | `agent_dialog_db_errors_total`, `agent_memory_*`, `process_resident_memory_bytes` |
 
-Полный список метрик агента и что они значат — `agent/README.md`. Grafana есть (`svc/prometheus-grafana`), но для
-чтения хватает этих двух API.
+The full list of agent metrics and what they mean is in `agent/README.md`. Grafana exists (`svc/prometheus-grafana`),
+but these two APIs are enough for reading.
 
-## Агент напрямую (developer)
+## The agent directly (developer)
 
 ```bash
 kubectl -n agent port-forward deploy/agent 18001:8001 & pf=$!; sleep 5
@@ -97,41 +99,47 @@ curl -s localhost:18001/metrics | grep '^agent_'
 kill $pf
 ```
 
-`/health/ready` показывает конвейер (`pipeline`), озвучку (`tts`), хранилище диалогов (`dialogs`: `postgres` — норма,
-`memory` — база не открылась) и режим памяти (`memory`).
+`/health/ready` shows the pipeline (`pipeline`), voice synthesis (`tts`), dialog storage (`dialogs`: `postgres` is
+normal, `memory` — the database did not open) and the memory mode (`memory`).
 
 ## Langfuse
 
-`kubectl -n infra port-forward svc/langfuse-web 3000:3000` (developer) → `http://localhost:3000`, вход у администратора.
-Тексты реплик в трассы не пишутся (`LANGFUSE_TRACE_TEXT=false`), по токенам Langfuse — источник правды; стоимость там 0,
-цены моделей не заданы. Ключи проекта Langfuse есть только в окружении пода агента: из пода их не выноси, read-only
-скрипт к его API запускай в самом поде (`kubectl exec -i -n agent deploy/agent -c agent -- python - < script.py`, admin).
+`kubectl -n infra port-forward svc/langfuse-web 3000:3000` (developer) → `http://localhost:3000`; the administrator holds
+the login. Message texts are not written to traces (`LANGFUSE_TRACE_TEXT=false`); for tokens, Langfuse is the source of
+truth; the cost there is 0, model prices are not set. The Langfuse project keys exist only in the environment of the
+agent pod: do not take them out of the pod; run a read-only script against its API inside the pod itself
+(`kubectl exec -i -n agent deploy/agent -c agent -- python - < script.py`, admin).
 
-## Ошибка → диалог → человек
+## Error → dialog → person
 
-- В журнале api есть `userId` и `dialogId`; путь сокета агента — `/v1/users/<userId>/dialogs/<dialogId>/ws`.
-- `dialog_id` один и тот же в PostHog, в журналах и в базе агента (скиллы `analytics` и `db`).
-- Порядок: найти `dialogId` (событие PostHog или строка базы) → Loki `|= "<dialogId>"` в `agent` и `prod` за окно разговора.
+- The api log has `userId` and `dialogId`; the agent socket path is `/v1/users/<userId>/dialogs/<dialogId>/ws`.
+- `dialog_id` is the same in PostHog, in the logs and in the agent database (skills `analytics` and `db`).
+- Order: find the `dialogId` (a PostHog event or a database row) → Loki `|= "<dialogId>"` in `agent` and `prod` for the
+  time window of the dialog.
 
-## После выката
+## After a rollout
 
-1. `kubectl -n <ns> rollout status deploy/<имя> --timeout=300s`; под Ready, рестартов 0.
-2. Агент: в журнале старта `dialog db opened`, `agent started: pipeline=… memory=…`,
-   `прогрев озвучки закончен: озвучено N, не удалось 0`; затем `grep -E ' (WARNING|ERROR|CRITICAL) |Traceback'`.
-3. api: `--since=10m` без `"level":"error"`, есть «Redis подключён».
-4. `/health/ready` и `/version` агента; снаружи `curl -sI https://xn----htbtgjker8b3a2c.xn--p1ai/api/health`, `/app`, `/pwa/`.
-5. Автоматические проверки — `k8s/postdeploy` (скилл `deploy`).
-6. Долгое наблюдение — фоновой командой с опросом раз в 5–10 минут; в чат или задачу только аномалии и итог.
+1. `kubectl -n <ns> rollout status deploy/<name> --timeout=300s`; the pod is Ready, restarts 0.
+2. Agent: the startup log has `dialog db opened`, `agent started: pipeline=… memory=…`,
+   `прогрев озвучки закончен: озвучено N, не удалось 0`; then `grep -E ' (WARNING|ERROR|CRITICAL) |Traceback'`.
+3. api: `--since=10m` without `"level":"error"`, and "Redis подключён" is present.
+4. The agent's `/health/ready` and `/version`; from outside `curl -sI https://xn----htbtgjker8b3a2c.xn--p1ai/api/health`,
+   `/app`, `/pwa/`.
+5. Automatic checks — `k8s/postdeploy` (skill `deploy`).
+6. Long observation — a background command polling every 5–10 minutes; post only anomalies and the result to the chat or
+   the issue.
 
-## Грабли
+## Pitfalls
 
-- **Время.** Журналы, Loki и Prometheus в UTC, люди говорят по Москве (UTC+3).
-- **Хранение.** Loki — 7 дней, Prometheus — 14 дней или 3 ГБ, `kubectl logs` — только живой под.
-- **Разговоры людей.** Тексты реплик в журнал не пишутся; если что-то личное всё же попалось, в отчёты, задачи,
-  коммиты и PR оно не идёт. Выгрузки журналов — только вне репозитория.
-- **Шум, а не тревога:** строки `Forwarding`/`Handling` от port-forward, `GET /health`, `fsnotify … too many open files`
-  у istio-proxy, штатные `live timeline`, `live usage`, `first sound`.
-- **Сетевой сбой — не ответ.** Тайм-аут TLS к API кластера или к реестру (бывает за VPN) не значит, что ресурса нет.
-- **`ImagePullBackOff` с `no match for platform`** — образ собран не под `linux/amd64` (скилл `deploy`).
+- **Time.** Logs, Loki and Prometheus are in UTC, people speak in Moscow time (UTC+3).
+- **Retention.** Loki — 7 days, Prometheus — 14 days or 3 GB, `kubectl logs` — only the live pod.
+- **People's dialogs.** Message texts are not written to the log; if something personal does turn up, it does not go into
+  reports, issues, commits and PRs. Log dumps — only outside the repository.
+- **Noise, not an alarm:** `Forwarding`/`Handling` lines from port-forward, `GET /health`, `fsnotify … too many open files`
+  from istio-proxy, the routine `live timeline`, `live usage`, `first sound`.
+- **A network failure is not an answer.** A TLS timeout to the cluster API or the registry (happens behind a VPN) does
+  not mean the resource does not exist.
+- **`ImagePullBackOff` with `no match for platform`** — the image was not built for `linux/amd64` (skill `deploy`).
 
-Связано: [[deploy]] — что и когда выкатывалось; [[db]] — данные по `userId` и `dialogId`; [[analytics]] — события PostHog.
+Related: [[deploy]] — what was rolled out and when; [[db]] — data by `userId` and `dialogId`; [[analytics]] — PostHog
+events.

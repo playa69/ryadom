@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// HogQL against the PostHog project «Рядом» (EU cloud, project 300786) through its query API.
+// HogQL against the PostHog project "Ryadom" (EU cloud, project 300786) through its query API.
 //   node hogql.mjs "<HogQL>" [--json]
 //   node hogql.mjs -f query.sql [--json]
 // The personal API key (scope query:read is enough) comes from POSTHOG_PERSONAL_API_KEY; it is never printed.

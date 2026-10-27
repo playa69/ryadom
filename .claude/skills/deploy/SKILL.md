@@ -1,104 +1,115 @@
 ---
 name: deploy
-description: Выкатить «Рядом» в кластер Timeweb twc-sber500 — собрать образ под linux/amd64 из коммита, отправить в cr.yandex, поднять тег в манифестах k8s/, проверить diff, применить миграции и Deployment, дождаться rollout и проверить, откатить. Использовать при просьбах «задеплой», «выкати агента», «обнови api на проде», «собери образ», «почему под не стартует после выката», «откати», а также при изменении ConfigMap и Secret приложений.
+description: Roll out Ryadom to the Timeweb cluster twc-sber500 — build a linux/amd64 image from a commit, push it to cr.yandex, bump the tag in the k8s/ manifests, check the diff, apply migrations and the Deployment, wait for the rollout and verify it, roll back. Use when asked to "deploy", "roll out the agent", "update api in production", "build an image", "why does the pod not start after a rollout", "roll back", and when changing application ConfigMaps and Secrets.
 ---
 
-# Выкат в кластер
+# Rollout to the cluster
 
-Все сервисы живут в одном кластере Timeweb `twc-sber500`, окружение одно — prod. На машинах людей kubeconfig по
-умолчанию может смотреть в другой кластер: задавай его явно. Образы — в `cr.yandex/crpsqeamqpuvrkm5tpr9`, манифесты — в
-`k8s/`. Источник правды по шагам — [k8s/README.md](../../../k8s/README.md) («Сервисы из app/», «Сборка и push
-образов», «Новая версия»), [k8s/agent/README.md](../../../k8s/agent/README.md) и ранбуки `k8s/agent/RUNBOOK-*.md`.
+All services live in one Timeweb cluster `twc-sber500`; there is a single environment — production. On people's
+machines the default kubeconfig may point to another cluster: set it explicitly. Images are in
+`cr.yandex/crpsqeamqpuvrkm5tpr9`, manifests are in `k8s/`. The source of truth for the steps is
+[k8s/README.md](../../../k8s/README.md) (sections «Сервисы из app/», «Сборка и push образов», «Новая версия»),
+[k8s/agent/README.md](../../../k8s/agent/README.md) and the runbooks `k8s/agent/RUNBOOK-*.md`.
 
-| Что | Образ | Манифест | ns |
+| What | Image | Manifest | ns |
 |---|---|---|---|
-| api, web, admin, landing, pwa | `…/app/<имя>:<тег>` | `k8s/app/<имя>/03-deployment.yaml` | prod |
-| миграции базы `app` | `…/app/migrate:<тег>` | `k8s/app/db/0N-job-migrate-000N.yaml`, Job `app-migrate-000N` | prod |
-| агент | `…/agent/agent:<тег>` | `k8s/agent/02-deployment.yaml` + `APP_VERSION` в `k8s/agent/00-config.yaml` | agent |
-| cognee | `cognee/cognee:<версия>` (официальный) | `k8s/agent/12-cognee-deployment.yaml` | agent |
+| api, web, admin, landing, pwa | `…/app/<name>:<tag>` | `k8s/app/<name>/03-deployment.yaml` | prod |
+| `app` database migrations | `…/app/migrate:<tag>` | `k8s/app/db/0N-job-migrate-000N.yaml`, Job `app-migrate-000N` | prod |
+| agent | `…/agent/agent:<tag>` | `k8s/agent/02-deployment.yaml` + `APP_VERSION` in `k8s/agent/00-config.yaml` | agent |
+| cognee | `cognee/cognee:<version>` (official) | `k8s/agent/12-cognee-deployment.yaml` | agent |
 
-Что сейчас в кластере: `kubectl -n prod get deploy -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image`
-(admin; для `-n agent` хватает developer).
+What is in the cluster now: `kubectl -n prod get deploy -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image`
+(admin; for `-n agent` developer is enough).
 
-## Правила
+## Rules
 
-- **Выкат — только по прямой просьбе**, и прод — с отдельным «да» человека на этот выкат. Перед ним покажи: ветку и
-  SHA, образы и теги, namespace, `kubectl diff`, нужны ли миграции, Secret'ы и admin.
-- **admin-kubeconfig** нужен для всего в `prod` и для создания Secret'ов; developer достаточно для ns `agent`.
-  admin — только после «да» на конкретные операции.
-- **Тег**: не указан — спроси; существующий в реестре не перезаписывать; `latest` не использовать.
-- **Изменения в репозитории** — в своей ветке `deploy/<кратко>` в отдельном worktree, коммит
-  `deploy(agent): образ 0.8.2 — <что внутри> (#PR)` с ревизией сборки и digest образа в теле, PR в `main`. Мёржит человек.
-- **Применять поимённо**, никогда `kubectl apply -f k8s/` или `-R k8s/app`: в каталогах лежат шаблоны Secret'ов с
-  `CHANGE_ME` и Job'ы прошлых миграций.
+- **Roll out only on a direct request**, and to production only with a separate explicit "yes" from the user for this
+  rollout. Before it, show: the branch and SHA, images and tags, namespace, `kubectl diff`, whether migrations, Secrets
+  and admin are needed.
+- **The admin kubeconfig** is needed for everything in `prod` and for creating Secrets; developer is enough for ns
+  `agent`. Use admin only after the user's explicit "yes" for the specific operations.
+- **Tag**: if it is not given, ask; do not overwrite one that already exists in the registry; do not use `latest`.
+- **Repository changes** — in your own branch `deploy/<short-name>` in a separate worktree, commit
+  `deploy(agent): образ 0.8.2 — <что внутри> (#PR)` with the build revision and image digest in the body, PR to `main`.
+  The user merges.
+- **Apply by name**, never `kubectl apply -f k8s/` or `-R k8s/app`: the directories hold Secret templates with
+  `CHANGE_ME` and Jobs of past migrations.
 
-`kubectl` и `docker` ниже — команды к кластеру и к реестру на этой машине (как они подключаются, знает
-администратор); скрипт сборки ходит в реестр через `RYADOM_DOCKER` (по умолчанию `docker`, уже вошедший в `cr.yandex`).
+`kubectl` and `docker` below are the commands to the cluster and to the registry on this machine (how they connect is
+known to the administrator); the build script goes to the registry via `RYADOM_DOCKER` (default `docker`, already logged
+in to `cr.yandex`).
 
-## Новая версия
+## New version
 
-1. **Проверки** в ветке, из которой выкатываешь (скилл `local-dev`): тесты зелёные, коммит запушен.
-2. **Сборка** из коммита, а не из рабочего каталога:
+1. **Checks** in the branch you roll out from (skill `local-dev`): tests are green, the commit is pushed.
+2. **Build** from a commit, not from the working directory:
 
    ```bash
-   .agents/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main          # только собрать
-   .agents/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main --push   # собрать и отправить
+   .agents/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main          # build only
+   .agents/skills/deploy/scripts/build.sh agent 0.8.2 --ref origin/main --push   # build and push
    ```
 
-   Скрипт берёт `git archive` коммита (без `node_modules` и локальных правок, с LF), собирает
-   `buildx --platform linux/amd64 --provenance=false --sbom=false --load` с нужными build-arg'ами (`BASE_PATH`,
-   `PWA_BASE_PATH`, `RELEASE`, адреса и номер сборки OTA для api), ставит метки ревизии и версии, отказывается от
-   занятого тега, проверяет платформу и после push печатает digest. Сборка долгая — запускай в фоне.
-3. **Манифест**: тег в `03-deployment.yaml` (у агента — ещё `APP_VERSION` в `00-config.yaml`), для миграции — новый
-   файл Job `0N-job-migrate-000N.yaml` по образцу предыдущего с новым образом `migrate`.
-4. **Diff**: `kubectl diff -f <файл>` (код 1 = есть различия). Ожидаешь ровно тег образа и версию; что-то ещё (живой
-   ConfigMap разошёлся с репозиторием) — остановись и разберись.
-5. **Тихое окно для агента**: `kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opened|dialog started'`
-   — выкатывай при нуле: стратегия `Recreate`, живые разговоры оборвутся, клиенты переподключатся.
-6. **Миграции — первыми**: `kubectl apply -f k8s/app/db/0N-job-migrate-000N.yaml`,
-   `kubectl -n prod wait --for=condition=complete job/app-migrate-000N --timeout=240s`, в логах Job — «applied …»;
-   затем `kubectl -n prod delete job app-migrate-<предыдущий> --ignore-not-found`.
-7. **Сервисы по одному**: `kubectl apply -f k8s/app/<имя>/03-deployment.yaml`,
-   `kubectl -n prod rollout status deploy/app-<имя> --timeout=300s`. Порядок для app: migrate → api → web и pwa → landing;
-   api должен оставаться совместимым с уже выкаченной PWA.
-8. **Проверка**: digest в `kubectl -n prod get pod -l app=app-<имя> -o jsonpath='{.items[0].status.containerStatuses[*].imageID}'`
-   (у агента `-n agent -l app=agent`) совпадает с отправленным; журнал старта и ошибки — скилл `logs`; снаружи
-   `curl -sI https://xn----htbtgjker8b3a2c.xn--p1ai/api/health`, `/app`, `/pwa/`, `/admin/` (редирект на вход).
-9. **Пост-деплойные проверки** на тестовом аккаунте — `k8s/postdeploy` ([README](../../../k8s/postdeploy/README.md)):
-   `POSTDEPLOY_BASELINE=<снимок> uv run --no-project --with requests --with websocket-client --with pytest python -m pytest -q -p no:cacheprovider --expect post`
-   (снимок с кредами тестового аккаунта хранится у администратора; `EXPECT_MEMORY_MODE=on` при включённой памяти).
-10. **PR** с `git diff` манифестов, digest и результатами проверок; для крупного выката — `k8s/agent/RUNBOOK-x.y.z.md`.
+   The script takes `git archive` of the commit (no `node_modules` and no local edits, with LF), builds
+   `buildx --platform linux/amd64 --provenance=false --sbom=false --load` with the required build-args (`BASE_PATH`,
+   `PWA_BASE_PATH`, `RELEASE`, the OTA addresses and build number for api), sets the revision and version labels,
+   refuses a tag that is already taken, checks the platform and prints the digest after the push. The build is long —
+   run it in the background.
+3. **Manifest**: the tag in `03-deployment.yaml` (for the agent — also `APP_VERSION` in `00-config.yaml`); for a
+   migration — a new Job file `0N-job-migrate-000N.yaml` modeled on the previous one, with the new `migrate` image.
+4. **Diff**: `kubectl diff -f <file>` (exit code 1 = there are differences). Expect exactly the image tag and the
+   version; if there is anything else (the live ConfigMap has diverged from the repository), stop and investigate.
+5. **Quiet window for the agent**: `kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opened|dialog started'`
+   — roll out when it prints zero: the strategy is `Recreate`, live dialogs will be cut off, clients will reconnect.
+6. **Migrations first**: `kubectl apply -f k8s/app/db/0N-job-migrate-000N.yaml`,
+   `kubectl -n prod wait --for=condition=complete job/app-migrate-000N --timeout=240s`, "applied …" in the Job logs;
+   then `kubectl -n prod delete job app-migrate-<previous> --ignore-not-found`.
+7. **Services one at a time**: `kubectl apply -f k8s/app/<name>/03-deployment.yaml`,
+   `kubectl -n prod rollout status deploy/app-<name> --timeout=300s`. Order for app: migrate → api → web and pwa →
+   landing; api must stay compatible with the PWA that is already rolled out.
+8. **Verification**: the digest in `kubectl -n prod get pod -l app=app-<name> -o jsonpath='{.items[0].status.containerStatuses[*].imageID}'`
+   (for the agent `-n agent -l app=agent`) matches the pushed one; the startup log and errors — skill `logs`; from
+   outside `curl -sI https://xn----htbtgjker8b3a2c.xn--p1ai/api/health`, `/app`, `/pwa/`, `/admin/` (redirect to login).
+9. **Post-deploy checks** on the test account — `k8s/postdeploy` ([README](../../../k8s/postdeploy/README.md)):
+   `POSTDEPLOY_BASELINE=<snapshot> uv run --no-project --with requests --with websocket-client --with pytest python -m pytest -q -p no:cacheprovider --expect post`
+   (the snapshot with the test account credentials is kept locally by the administrator; `EXPECT_MEMORY_MODE=on` when
+   memory is enabled).
+10. **PR** with the `git diff` of the manifests, the digest and the check results; for a large rollout —
+    `k8s/agent/RUNBOOK-x.y.z.md`.
 
-## Конфиг и секреты
+## Config and secrets
 
-- **ConfigMap** (`k8s/app/00-app-config.yaml`, `k8s/agent/00-config.yaml`): сначала `kubectl diff`. Если в кластере есть
-  значения, которых нет в репозитории, не перезаписывай их целиком — правь только свои ключи
-  (`kubectl -n prod patch configmap app-config --type merge --patch-file <файл>`) и верни расхождение в репозиторий
-  отдельным PR. Конфиг читается при старте: после правки `kubectl -n <ns> rollout restart deploy/<имя>`.
-- **Secret** — только создание: `kubectl -n <ns> create secret generic <имя> --from-env-file=<файл>`, значения даёт
-  администратор, в командную строку, вывод и репозиторий они не попадают. Перед созданием — `--dry-run=server -o name`.
-  Заменить существующий — только по отдельному «да» с названием Secret'а, namespace и ключей. Какие Secret'ы и ключи
-  нужны — таблицы в k8s/README.md и k8s/agent/README.md.
+- **ConfigMap** (`k8s/app/00-app-config.yaml`, `k8s/agent/00-config.yaml`): `kubectl diff` first. If the cluster has
+  values that are not in the repository, do not overwrite them wholesale — edit only your own keys
+  (`kubectl -n prod patch configmap app-config --type merge --patch-file <file>`) and bring the discrepancy back into
+  the repository in a separate PR. The config is read at startup: after an edit run
+  `kubectl -n <ns> rollout restart deploy/<name>`.
+- **Secret** — create only: `kubectl -n <ns> create secret generic <name> --from-env-file=<file>`; the administrator
+  supplies the values, they never appear in the command line, the output or the repository. Before creating — run
+  `--dry-run=server -o name`. Replacing an existing one — only with a separate explicit "yes" from the user naming the
+  Secret, the namespace and the keys. Which Secrets and keys are needed — see the tables in k8s/README.md and
+  k8s/agent/README.md.
 
-## Откат
+## Rollback
 
-- Образ: `kubectl -n <ns> rollout undo deploy/<имя>` или `kubectl -n <ns> set image deploy/<имя> <контейнер>=<прежний образ>`
-  (у агента вернуть и `APP_VERSION`), затем `rollout status`.
-- ConfigMap — прежняя версия из git, `apply` или `patch`, `rollout restart`.
-- Миграции базы назад не откатываются: перед схемой, которую прежний образ не понимает, — бэкап (скилл `backup`) и
-  отдельный план в ранбуке.
+- Image: `kubectl -n <ns> rollout undo deploy/<name>` or
+  `kubectl -n <ns> set image deploy/<name> <container>=<previous image>` (for the agent restore `APP_VERSION` too), then
+  `rollout status`.
+- ConfigMap — the previous version from git, `apply` or `patch`, `rollout restart`.
+- Database migrations are not rolled back: before a schema that the previous image does not understand — a backup
+  (skill `backup`) and a separate plan in the runbook.
 
-## Грабли
+## Pitfalls
 
-- **`ImagePullBackOff` с `no match for platform`** — образ собран не под `linux/amd64` (например, на Mac без
-  `--platform`). Скрипт сборки это проверяет; уже отправленный тег не перезаписывай — следующий тег и откат пода.
-- **Push с attestations** падает в этом реестре на «Permission denied» — отсюда `--provenance=false --sbom=false` и
-  раздельные `build --load` и `push`.
-- **Сборка из `/mnt/c` в WSL** висит на `node_modules` и тащит CRLF — поэтому контекст из `git archive`.
-- **Сетевой сбой ≠ «нет ресурса».** Тайм-аут TLS к API кластера или реестру (бывает за VPN) не значит, что секрета или
-  образа нет: не создавай ничего «взамен».
-- **`kubectl auth can-i`** врёт на сабресурсах (`pods/portforward`, `pods/exec`) — проверяй делом.
-- **Публичный репозиторий.** В коммитах, PR, манифестах и ранбуках — без внутренних адресов узлов, названий платёжных
-  аккаунтов, значений и способа хранения секретов («хранятся локально у администратора»).
+- **`ImagePullBackOff` with `no match for platform`** — the image was not built for `linux/amd64` (for example, on a
+  Mac without `--platform`). The build script checks this; do not overwrite a tag that was already pushed — use the next
+  tag and roll the pod back.
+- **Push with attestations** fails in this registry with "Permission denied" — hence `--provenance=false --sbom=false`
+  and the separate `build --load` and `push`.
+- **Building from `/mnt/c` in WSL** hangs on `node_modules` and drags in CRLF — hence the context from `git archive`.
+- **A network failure ≠ "no resource".** A TLS timeout to the cluster API or the registry (happens behind a VPN) does
+  not mean the Secret or the image does not exist: do not create anything "instead".
+- **`kubectl auth can-i`** lies on subresources (`pods/portforward`, `pods/exec`) — check by actually doing it.
+- **Public repository.** In commits, PRs, manifests and runbooks — no internal node addresses, no payment account names,
+  no secret values or how secrets are stored ("kept locally by the administrator").
 
-Связано: [[logs]] — проверка после выката; [[backup]] — перед миграцией схемы; [[commit]] — ветка и PR.
+Related: [[logs]] — verification after a rollout; [[backup]] — before a schema migration; [[commit]] — branch and PR.

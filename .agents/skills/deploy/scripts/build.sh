@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds one image of «Рядом» the way k8s/README.md («Сборка и push образов») describes it, from a commit rather than
+# Builds one image of Ryadom the way k8s/README.md (section «Сборка и push образов») describes it, from a commit rather than
 # from the working tree: the context is `git archive` of that commit (no node_modules, no local edits, LF endings).
 #   build.sh <api|web|admin|landing|pwa|migrate|agent> <tag> [--ref <commit>] [--push]
 # Refuses a tag that is already in the registry, checks the image is linux/amd64 (the cluster nodes) and, with --push,

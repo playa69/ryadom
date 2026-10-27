@@ -12,7 +12,7 @@ context: |
   старые change'и разошлись с кодом. Спека противоречит коду — прав код, расхождение называется
   в отчёте и PR. Когда базу снимут с кода и архивируют, источником правды по поведению станет
   openspec/specs/, а изменения поведения пойдут только через change. Как работать — скилл
-  openspec-workflow (.agents/skills/openspec-workflow/SKILL.md).
+  openspec (.agents/skills/openspec/SKILL.md).
 
   Сервисы: агент agent/ (Python 3.12, FastAPI: диалоги, голос, кризисный протокол) и
   приложение в app/ (см. ниже).
