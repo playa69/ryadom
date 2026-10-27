@@ -13,35 +13,12 @@ import httpx
 import pytest
 from prometheus_client import REGISTRY
 
-from app.clients.llm import ModelError, ProxyChat, ProxyWhisper, ToolCallRequested
-from app.clients.speech import CachedTts, QwenTts, TtsError
+from app.clients.llm import ModelError, ProxyChat
+from app.clients.speech import CachedTts
 from app.services import usage as model_usage
-from tests.conftest import (
-    AUTH,
-    FakeChat,
-    FakeRecognizer,
-    FakeTts,
-    audio_in_frame,
-    components,
-    has,
-    make_client,
-    read_frames,
-    send_user_message,
-    start_dialog,
-    ws_url,
-)
-BASE = "https://proxy.test/v1"
+from tests.conftest import AUTH, audio_in_frame, components, make_client, read_frames, send_user_message, start_dialog, ws_url
 
-RECALL_TOOLS_STUB = [
-    {
-        "type": "function",
-        "function": {
-            "name": "recall_memory",
-            "description": "Вспомнить факты о человеке",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
-        },
-    }
-]
+BASE = "https://proxy.test/v1"
 
 
 def counted(component: str, outcome: str = "ok", cached: str = "false") -> float:
@@ -120,91 +97,12 @@ async def test_chat_complete_is_one_call(calls: Calls) -> None:
     assert calls.items == [("llm", "ok", False)]
 
 
-async def test_chat_stream_is_one_call_however_many_pieces(calls: Calls) -> None:
-    sse = (
-        'data: {"choices":[{"delta":{"content":"Я "}}]}\n\n'
-        'data: {"choices":[{"delta":{"content":"рядом."},"finish_reason":"stop"}]}\n\n'
-        "data: [DONE]\n\n"
-    )
-    model = chat(lambda r: httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"}))
-    pieces = [p async for p in model.stream([{"role": "user", "content": "привет"}])]
-    assert "".join(pieces) == "Я рядом."
-    assert calls.items == [("llm", "ok", False)]
-
-
 async def test_a_failed_chat_call_is_an_error_without_the_vendors_text(calls: Calls) -> None:
     model = chat(lambda r: httpx.Response(500, text="секретная ошибка вендора"))
     with pytest.raises(ModelError):
         await model.complete([])
     assert calls.items == [("llm", "error", False)]
     assert "секретная" not in json.dumps(calls.items, ensure_ascii=False)
-
-
-async def test_a_stream_the_listener_walked_away_from_is_still_one_call(calls: Calls) -> None:
-    sse = 'data: {"choices":[{"delta":{"content":"раз "}}]}\n\ndata: {"choices":[{"delta":{"content":"два"}}]}\n\n'
-    model = chat(lambda r: httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"}))
-    stream = model.stream([])
-    assert await stream.__anext__() == "раз "
-    await stream.aclose()  # перебили на середине ответа
-    assert calls.items == [("llm", "ok", False)]
-
-
-async def test_stream_with_tools_collects_the_tool_call(calls: Calls) -> None:
-    """Ход, закончившийся вызовом инструмента: куски delta.tool_calls собираются в ToolCallRequested, текста нет."""
-    sse = (
-        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"recall_memory",'
-        '"arguments":"{\\"query\\":"}}]}}]}\n\n'
-        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \\"имя сына\\"}"}}]}}]}\n\n'
-        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
-        "data: [DONE]\n\n"
-    )
-    sent: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        sent.append(json.loads(request.content))
-        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
-
-    model = chat(handler)
-    with pytest.raises(ToolCallRequested) as caught:
-        _ = [p async for p in model.stream([{"role": "user", "content": "как зовут сына?"}], tools=RECALL_TOOLS_STUB)]
-    assert sent[0]["tools"] == RECALL_TOOLS_STUB  # объявления инструментов ушли в запросе
-    call = caught.value.calls[0]
-    assert call.id == "call-1" and call.name == "recall_memory"
-    assert call.query() == "имя сына"
-    assistant = call.assistant_message()
-    assert assistant["role"] == "assistant" and assistant["tool_calls"][0]["function"]["name"] == "recall_memory"
-
-
-async def test_recognition_is_one_call_and_a_failure_is_an_error(calls: Calls) -> None:
-    ok = ProxyWhisper(BASE, "key", "stt", 5, client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"text": "привет"}))))
-    assert await ok.transcribe(b"\x00\x00" * 1600) == "привет"
-    bad = ProxyWhisper(BASE, "key", "stt", 5, client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(503, text="x"))))
-    with pytest.raises(ModelError):
-        await bad.transcribe(b"\x00\x00" * 1600)
-    assert calls.items == [("stt", "ok", False), ("stt", "error", False)]
-
-
-def qwen(handler, streaming: bool = True) -> QwenTts:
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return QwenTts("https://proxy.example/v1/", "k", "qwen", {"male": "a", "female": "b"}, client=client, streaming=streaming)
-
-
-async def test_synthesis_is_one_call_in_both_modes(calls: Calls) -> None:
-    handler = lambda r: httpx.Response(200, content=b"\x01\x00" * 100)  # noqa: E731
-    await qwen(handler).synthesize("Привет", "male")
-    assert [p async for p in qwen(handler).stream("Привет", "male")]
-    # Без потока `stream` отдаёт всё через `synthesize`: это тот же один вызов, а не два.
-    assert [p async for p in qwen(handler, streaming=False).stream("Привет", "male")]
-    assert calls.items == [("tts", "ok", False)] * 3
-
-
-async def test_a_refused_synthesis_is_an_error_call(calls: Calls) -> None:
-    refuse = lambda r: httpx.Response(500, text="секретная ошибка")  # noqa: E731
-    with pytest.raises(TtsError):
-        await qwen(refuse).synthesize("Привет", "male")
-    with pytest.raises(TtsError):
-        _ = [p async for p in qwen(refuse).stream("Привет", "male")]
-    assert calls.items == [("tts", "error", False), ("tts", "error", False)]
 
 
 class _Counting:
@@ -237,35 +135,45 @@ def done(frames: list[Any]) -> bool:
     return any(k == "json" and b["type"] == "assistant_end" for k, b in frames)
 
 
-def test_a_typed_turn_reports_the_safety_check_and_nothing_else_in_the_frame(user_id: str) -> None:
-    with make_client(chat=FakeChat("Слышу тебя.")) as client:
+def answered_and_counted(frames: list[Any]) -> bool:
+    """Ответ дозвучал и обращение к модели засчитано: два кадра приходят в любом порядке, оба нужны."""
+    return reply_done(frames) and ("live", "ok", False) in components(frames)
+
+
+def reply_done(frames: list[Any]) -> bool:
+    ends = [b for k, b in frames if k == "json" and b["type"] == "assistant_end"]
+    return bool(ends) and any(k == "json" and b["type"] == "tts_end" and b["messageId"] == ends[-1]["messageId"] for k, b in frames)
+
+
+def test_a_typed_turn_reports_the_safety_check_and_the_model_call_and_nothing_else_in_the_frame(user_id: str) -> None:
+    with make_client() as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "Мне плохо")
-            frames = read_frames(ws, done)
-    assert ("safety", "ok", False) in components(frames)
+            frames = read_frames(ws, answered_and_counted)
+    assert sorted(components(frames)) == [("live", "ok", False), ("safety", "ok", False)]
     frame = next(b for k, b in frames if k == "json" and b["type"] == "component")
     assert set(frame) == {"v", "type", "component", "outcome", "cached"}
 
 
-def test_a_crisis_phrase_is_still_one_safety_call(user_id: str) -> None:
-    with make_client(chat=FakeChat("Я рядом.")) as client:
+def test_a_crisis_phrase_is_still_one_safety_call_and_the_model_is_not_called(user_id: str) -> None:
+    with make_client() as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "не хочу больше жить")
             frames = read_frames(ws, done)
     assert components(frames).count(("safety", "ok", False)) == 1
+    assert ("live", "ok", False) not in components(frames)
 
 
 def test_a_spoken_turn_reports_each_part_it_used(user_id: str) -> None:
-    """Каскад: проверка безопасности на реплику. Распознавание, модель и озвучка здесь подменены и сами не считаются (их считают
-    настоящие клиенты, см. выше), поэтому в кадрах только то, что делает сама сессия."""
-    with make_client(tts=FakeTts(), chat=FakeChat("Слышу."), recognizer=FakeRecognizer("мне тяжело")) as client:
+    """Речь в речь: проверка безопасности на реплику и один вызов модели; отдельных распознавания и озвучки нет."""
+    with make_client() as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             ws.send_text(json.dumps({"type": "audio_start"}))
             for n in range(10):
                 ws.send_bytes(audio_in_frame(n, loud=True))
             ws.send_text(json.dumps({"type": "audio_end"}))
-            frames = read_frames(ws, done)
-    assert components(frames) == [("safety", "ok", False)]
+            frames = read_frames(ws, answered_and_counted)
+    assert sorted(components(frames)) == [("live", "ok", False), ("safety", "ok", False)]

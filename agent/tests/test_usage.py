@@ -5,11 +5,9 @@
 """
 
 import asyncio
-import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -25,14 +23,11 @@ from app.services import usage as model_usage
 from app.services.dialog_db import DialogDbError
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from app.services.dialog_store import GREETING_NEW, DialogStore
-from app.services.replies import split_sentences
+from app.services.replies import CRISIS_REPLY, split_sentences
 from app.services.usage import Usage
-from tests.conftest import AUTH, FakeChat, FakeRecognizer, FakeTts, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, FakeTts, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_live import FakeConnector, reply_done, speak_turn
-from tests.test_llm import speak
-from tests.test_models import chat, completion, whisper
-from tests.test_speech import qwen
-from tests.test_streaming import delta, proxy_chat, sse
+from tests.test_models import chat, completion
 
 
 def metric(name: str, **labels: str) -> float:
@@ -77,38 +72,6 @@ async def test_chat_answer_records_its_tokens_and_without_usage_nothing() -> Non
     ]
 
 
-async def test_chat_stream_records_the_usage_chunk() -> None:
-    usage_chunk = json.dumps({"choices": [], "usage": {"prompt_tokens": 300, "completion_tokens": 12}})
-    model = proxy_chat(lambda r: httpx.Response(200, content=sse(delta("Я "), delta("рядом.", "stop"), usage_chunk, "[DONE]")))
-    with model_usage.collect() as spent:
-        assert [piece async for piece in model.stream([])] == ["Я ", "рядом."]
-    assert [(u.model, u.direction, u.amount) for u in spent] == [("model", "input", 300), ("model", "output", 12)]
-
-
-async def test_whisper_records_the_seconds_of_audio_it_got() -> None:
-    with model_usage.collect() as spent:
-        await whisper(lambda r: httpx.Response(200, json={"text": "привет"})).transcribe(bytes(48_000))  # 1,5 с на 16 кГц
-    assert spent == [Usage("stt-model", "stt", "input", "audio", "seconds", 1.5)]
-
-
-async def test_qwen_records_characters_and_seconds_even_when_the_speech_is_cut() -> None:
-    model = "qwen/qwen-audio-3.0-tts-flash"
-    with model_usage.collect() as whole:
-        await qwen(lambda r: httpx.Response(200, content=b"\x01\x00" * 24_000)).synthesize("Привет", "male")  # 1 с на 24 кГц
-    assert whole == [Usage(model, "tts", "input", "text", "chars", 6), Usage(model, "tts", "output", "audio", "seconds", 1.0)]
-
-    async def body() -> AsyncIterator[bytes]:
-        yield b"\x01\x00" * 12_000
-        yield b"\x01\x00" * 12_000
-
-    with model_usage.collect() as cut:
-        stream = qwen(lambda r: httpx.Response(200, content=body())).stream("Привет", "male")
-        async for _ in stream:
-            break  # человек перебил: дальше не слушаем
-        await stream.aclose()  # type: ignore[attr-defined]
-    assert cut == [Usage(model, "tts", "input", "text", "chars", 6), Usage(model, "tts", "output", "audio", "seconds", 0.5)]
-
-
 async def test_gemini_phrase_session_logs_its_voice_without_the_text(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger="agent.gemini")
     tts = GeminiLiveTts(FakeConnector(reply="Я рядом."))
@@ -132,21 +95,7 @@ async def test_gemini_phrase_usage_arrives_after_the_sound_and_is_read_in_the_ba
     assert connector.links[0].closed  # после usage соединение закрыто
 
 
-# ─── Каскад: расход каждой модели — на своём сообщении ────────────────────────────────────────────────────────────
-
-
-class SpendingRecognizer(FakeRecognizer):
-    async def transcribe(self, pcm: bytes) -> str:
-        model_usage.record("stt-model", "stt", "input", "audio", "seconds", len(pcm) / 32_000)
-        return await super().transcribe(pcm)
-
-
-class SpendingChat(FakeChat):
-    async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        async for piece in super().stream(messages):
-            yield piece
-        model_usage.record("chat-model", "chat", "input", "text", "tokens", 120)
-        model_usage.record("chat-model", "chat", "output", "text", "tokens", 9)
+# ─── Озвучка фраз: расход — на озвучиваемом сообщении ─────────────────────────────────────────────────────────────
 
 
 class SpendingTts(FakeTts):
@@ -160,33 +109,24 @@ def chars(text: str) -> int:
     return sum(len(sentence) for sentence in split_sentences(text))
 
 
-def test_cascade_turns_put_each_models_usage_on_the_message_it_produced(tmp_path: Path) -> None:
+def test_phrase_speech_usage_goes_on_the_message_it_voices(tmp_path: Path) -> None:
     path, user = tmp_path / "d.sqlite3", str(uuid.uuid4())
-    chat_model = SpendingChat()
-    app = create_app(
-        lambda: SpendingTts(), lambda: (chat_model, SpendingRecognizer()), database_factory=lambda: DialogDatabase(str(path))
-    )
-    dialogs, human = metric("agent_dialogs_total"), metric("agent_speech_seconds_total", speaker="human")
+    app = create_app(lambda: SpendingTts(), lambda: (None, None), live_factory=lambda: FakeConnector(), database_factory=lambda: DialogDatabase(str(path)))
+    dialogs = metric("agent_dialogs_total")
     with TestClient(app) as client:
         dialog = start_dialog(client, user)
         with client.websocket_connect(ws_url(user, dialog["dialogId"]), headers=AUTH) as ws:
-            speak(ws, frames=10)  # реплика 1 с
-            read_frames(ws, reply_done)
-            send_user_message(ws, "c-2", "И ещё одно")
-            read_frames(ws, reply_done)
+            read_frames(ws, lambda f: any(k == "json" and b["type"] == "tts_end" for k, b in f))  # приветствие
+            send_user_message(ws, "c-1", "я больше не хочу жить")  # кризисный ответ — фиксированная фраза, звучит озвучкой фраз
+            read_frames(ws, lambda f: any(k == "json" and b["type"] == "assistant_end" for k, b in f) and sum(1 for k, b in f if k == "json" and b["type"] == "tts_end") == 1)
 
-    reply = chars(chat_model.reply)
     assert usage_by_message(path) == [
-        ("assistant", "chat-model", "chat", "input", "text", "tokens", 240.0),
-        ("assistant", "chat-model", "chat", "output", "text", "tokens", 18.0),
-        ("assistant", "tts-model", "tts", "input", "text", "chars", 2.0 * reply),
+        ("assistant", "tts-model", "tts", "input", "text", "chars", float(chars(CRISIS_REPLY))),
         ("dialog", "tts-model", "tts", "input", "text", "chars", float(chars(GREETING_NEW))),  # приветствие — не сообщение
-        ("user", "stt-model", "stt", "input", "audio", "seconds", 1.0),  # набранная реплика распознавания не тратит
     ]
     spoken = [(role, seconds) for role, _, seconds in speech_by_message(path)]
-    assert spoken == [("user", 1.0), ("assistant", 0.5), ("user", None), ("assistant", 0.5)]  # FakeTts: 0,5 с на предложение
-    assert metric("agent_dialogs_total") == dialogs + 1  # один диалог, хоть реплик две
-    assert metric("agent_speech_seconds_total", speaker="human") == human + 1.0
+    assert spoken == [("user", None), ("assistant", 1.5)]  # FakeTts: 0,5 с на предложение, в кризисном ответе их три
+    assert metric("agent_dialogs_total") == dialogs + 1
 
 
 # ─── Gemini Live: расход хода — на ответе модели ──────────────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ from prometheus_client import REGISTRY
 from app.main import create_app
 from app.services.dialog_db import DialogDbError, DialogWrite
 from app.services.dialog_store import DialogStore
-from tests.conftest import AUTH, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 
@@ -254,7 +254,7 @@ async def test_store_without_a_database_behaves_as_before() -> None:
 
 
 def app_client(path: Path) -> TestClient:
-    return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+    return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
 
 def say(client: TestClient, user: str, dialog_id: str, text: str, msg_id: str, until: str = "assistant_end") -> list[Any]:
@@ -335,7 +335,7 @@ def test_agent_keeps_serving_in_memory_when_the_disk_is_not_available(tmp_path: 
 
 
 def test_without_a_path_dialogs_are_in_memory_as_before() -> None:
-    with TestClient(create_app(lambda: None, lambda: (None, None))) as client:
+    with TestClient(make_app()) as client:
         assert client.get("/health/ready").json()["dialogs"] == "memory"
 
 

@@ -45,10 +45,10 @@ def test_without_a_model_there_is_no_text(client, user_id):
 def test_a_hard_week_needs_the_soft_line_about_people(user_id):
     plain = "Неделя была тяжёлой. Много сил ушло на работу. К концу стало чуть спокойнее."
     with_people = plain + " Рядом могут быть люди, с которыми можно поговорить."
-    with make_client(None, chat=ScriptedChat(with_people)) as client:
+    with make_client(None, background=ScriptedChat(with_people)) as client:
         reply = post(client, user_id, {**WEEK, "marks": marks(1, 1, 1, 3)}).json()
     assert reply["stats"]["hardDays"] == 3 and reply["text"] == with_people
-    with make_client(None, chat=ScriptedChat(plain)) as client:
+    with make_client(None, background=ScriptedChat(plain)) as client:
         assert post(client, user_id, {**WEEK, "marks": marks(1, 1, 1, 3)}).status_code == 502
 
 
@@ -70,7 +70,7 @@ def test_validation(client, user_id):
 
 def test_model_text_is_used_when_it_is_fine_and_gets_only_codes(user_id):
     chat = ScriptedChat("Неделя была разной. Ты заглядывал в себя. Чаще всего было спокойно. Спасибо, что делишься.")
-    with make_client(None, chat=chat) as client:
+    with make_client(None, background=chat) as client:
         reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
     assert reply["text"].startswith("Неделя была разной.")
     sent = " ".join(m["content"] for m in chat.seen[0])
@@ -86,7 +86,7 @@ def test_a_rejected_model_text_is_asked_for_again_and_never_replaced(user_id):
         "Слишком коротко.",
     ):
         chat = ScriptedChat(bad)
-        with make_client(None, chat=chat) as client:
+        with make_client(None, background=chat) as client:
             response = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)})
         assert response.status_code == 502, bad  # запасного текста нет
         assert len(chat.seen) == 2, bad  # один повтор
@@ -98,7 +98,7 @@ def test_the_second_attempt_can_pass(user_id):
             self.seen.append(messages)
             return "Тебе надо отдыхать. Это важно. Вот так. И так." if len(self.seen) == 1 else "Неделя шла ровно. Ты заглядывал в себя. Это бережно."
 
-    with make_client(None, chat=Flaky("")) as client:
+    with make_client(None, background=Flaky("")) as client:
         reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
     assert reply["text"].startswith("Неделя шла ровно.")
 
@@ -110,7 +110,7 @@ def test_model_failure_is_a_502_without_the_body(user_id):
         async def complete(self, messages):
             raise ModelError("секрет в тексте")
 
-    with make_client(None, chat=Down("")) as client:
+    with make_client(None, background=Down("")) as client:
         response = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)})
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "DIGEST_UNAVAILABLE"
@@ -152,7 +152,7 @@ def test_six_words_in_a_row_from_what_the_person_said_are_a_quotation():
 
 def test_model_text_with_a_quotation_is_not_used(user_id):
     bad = "Неделя была непростой. Ты написал «я больше не могу так работать». Это было важно. Спасибо, что делишься."
-    with make_client(None, chat=ScriptedChat(bad)) as client:
+    with make_client(None, background=ScriptedChat(bad)) as client:
         response = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)})
     assert response.status_code == 502 and "не могу" not in response.text
 
@@ -173,7 +173,7 @@ def test_week_recaps_reach_the_model_but_are_not_quoted_back(user_id):
         "Ты отмечал настроение и находил время для себя. Заметно, что тебе важны люди рядом. Я рад быть рядом."
     )
     chat = ScriptedChat(quoted)
-    with make_client(None, chat=chat) as client:
+    with make_client(None, background=chat) as client:
         body = {**WEEK, "marks": marks(3, 3, 4), "recaps": [recap]}
         response = post(client, user_id, body)
     assert "Итоги разговоров недели" in chat.seen[0][1]["content"] and "начальника" in chat.seen[0][1]["content"]

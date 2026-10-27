@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.services import recaps
-from tests.conftest import AUTH, make_client, start_dialog
+from tests.conftest import AUTH, make_app, make_client, start_dialog
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 LONG = "Мне сегодня очень тревожно из-за работы, и я не знаю, как поговорить с руководителем."
@@ -100,7 +100,7 @@ def test_automatic_recap_is_pending_then_ready(client, user_id):
 
 
 def test_a_manual_recap_is_not_replaced_by_the_automatic_one(user_id):
-    with make_client(chat=SlowChat("Авто итог.", delay=0.4)) as client:
+    with make_client(background=SlowChat("Авто итог.", delay=0.4)) as client:
         dialog_id = talk(client, user_id)
         assert end(client, user_id, dialog_id)["recapStatus"] == "pending"
         # пока модель думает, человек пишет итог сам в журнале
@@ -113,14 +113,14 @@ def test_a_manual_recap_is_not_replaced_by_the_automatic_one(user_id):
 
 def test_the_model_recap_is_validated_and_a_failed_one_leaves_none(user_id):
     bad = "Тебе надо поговорить."
-    with make_client(chat=SlowChat(bad)) as client:
+    with make_client(background=SlowChat(bad)) as client:
         dialog_id = talk(client, user_id)
         end(client, user_id, dialog_id)
         assert wait_status(client, user_id, dialog_id, "none")["recap"] is None
 
 
 def test_the_model_recap_is_the_free_text(user_id):
-    with make_client(chat=SlowChat("Ты говорил о работе, и стало легче.")) as client:
+    with make_client(background=SlowChat("Ты говорил о работе, и стало легче.")) as client:
         dialog_id = talk(client, user_id)
         end(client, user_id, dialog_id)
         ready = wait_status(client, user_id, dialog_id, "ready")
@@ -180,7 +180,7 @@ def test_the_setting_survives_a_restart(tmp_path: Path):
     path = tmp_path / "dialogs.db"
 
     def app() -> TestClient:
-        return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+        return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
     with app() as first:
         first.put(url(user, "/dialog-settings"), json={"recapEnabled": False}, headers=AUTH)
@@ -274,7 +274,7 @@ def test_the_recap_is_stored_with_the_dialog_on_disk(tmp_path: Path):
     path = tmp_path / "dialogs.db"
 
     def app() -> TestClient:
-        return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+        return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
     with app() as first:
         dialog_id = talk(first, user)
@@ -347,7 +347,7 @@ def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
     path = tmp_path / "dialogs.db"
 
     def app() -> TestClient:
-        return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+        return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
     with app() as first:
         dialog_id = talk(first, user)

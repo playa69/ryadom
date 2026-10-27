@@ -20,6 +20,7 @@ from app.clients.speech import (
     build_tts,
     pcm_chunks,
     pcm_from_wav,
+    pcm_stream,
     pcm_to_wav,
     resample,
     tts_frame,
@@ -441,3 +442,41 @@ async def test_warm_up_voices_every_text_in_both_voices_and_survives_a_failure()
 def test_build_tts_wraps_the_provider_in_the_phrase_cache_unless_disabled(monkeypatch):
     assert isinstance(build_tts(settings(monkeypatch, **PROXY)), CachedTts)
     assert isinstance(build_tts(settings(monkeypatch, TTS_CACHE_ITEMS="0", **PROXY)), QwenTts)
+
+
+class WholeOnlyTts:
+    """Провайдер без потока: отдаёт звук только целиком."""
+
+    name = "whole"
+
+    async def synthesize(self, text: str, voice: str) -> bytes:
+        return b"\x01\x00" * 4
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_a_provider_without_a_stream_is_read_whole():
+    assert [piece async for piece in pcm_stream(WholeOnlyTts(), "Привет.", "male")] == [b"\x01\x00" * 4]
+
+
+async def test_cache_replays_a_finished_stream_but_forgets_an_unfinished_one():
+    calls = []
+
+    class Source(WholeOnlyTts):
+        async def stream(self, text, voice):
+            calls.append(text)
+            yield b"\x01\x00" * 2
+            if text == "обрыв":
+                raise TtsError("связь оборвалась")
+            yield b"\x02\x00" * 2
+
+    cached = CachedTts(Source(), 8)
+    first = b"".join([p async for p in cached.stream("целая", "male")])
+    again = b"".join([p async for p in cached.stream("целая", "male")])
+    assert first == again == b"\x01\x00" * 2 + b"\x02\x00" * 2 and calls == ["целая"]  # второй раз из памяти
+
+    for _ in range(2):
+        with pytest.raises(TtsError):
+            [_ async for _ in cached.stream("обрыв", "male")]
+    assert calls.count("обрыв") == 2  # обрезок не запомнился

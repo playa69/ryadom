@@ -5,6 +5,7 @@ import json
 import os
 import re
 import struct
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
@@ -24,10 +25,45 @@ os.environ.pop("SALUTE_SPEECH_AUTH_KEY", None)
 os.environ.pop("AGENT_API_TOKEN", None)
 
 import pytest  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.testclient import WebSocketTestSession  # noqa: E402
 
 from app.main import create_app  # noqa: E402
 from tests.fake_db import FakeDialogDatabase  # noqa: E402
+
+
+def _let_the_session_finish(session: Any) -> None:
+    """Закрыть сокет и дождаться, пока сеанс агента закончит уборку, прежде чем TestClient отменит приложение.
+
+    `WebSocketTestSession.__exit__` шлёт disconnect и тут же отменяет задачу приложения: уборка сеанса (отмена задач, закрытие
+    соединения с моделью, расход, трассы) рвалась посередине, а CancelledError выходил в тело теста. В бою сокет закрывается
+    без отмены приложения. Ждём не дольше трёх секунд: зависший сеанс не должен вешать весь прогон."""
+    parts = str(session.scope.get("path", "")).split("/")
+    store = getattr(getattr(session.app, "state", None), "store", None)
+    if store is None or len(parts) < 7 or parts[1:4] != ["v1", "users", parts[3]]:
+        return
+    try:
+        session.close(1000)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            dialog = store.get(parts[3], parts[5])
+            if dialog is None or not dialog.has_live_socket:
+                return
+            time.sleep(0.005)
+    except Exception:  # noqa: BLE001 - сокет уже закрыт или приложение остановлено: ждать нечего
+        return
+
+
+_original_exit = WebSocketTestSession.__exit__
+
+
+def _exit_after_session_finished(self: WebSocketTestSession, *args: Any) -> bool | None:
+    _let_the_session_finish(self)
+    return _original_exit(self, *args)
+
+
+WebSocketTestSession.__exit__ = _exit_after_session_finished  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)
@@ -156,13 +192,30 @@ class FakeRecognizer:
         return None
 
 
-def make_client(tts: Any = None, chat: Any = None, recognizer: Any = None) -> TestClient:
-    return TestClient(create_app(lambda: tts, lambda: (chat, recognizer)))
+def make_app(
+    connector: Any = None, tts: Any = None, background: Any = None, real_tts: bool = False, **create_kwargs: Any
+) -> FastAPI:
+    """Приложение на поддельном Gemini Live (`tests/fake_live.py`): единственного голосового пути, другого у агента нет.
+
+    `tts` — озвучка фиксированных фраз (приветствие, кризисный ответ, просьба повторить); без неё фразы не звучат, а текст
+    доходит. `real_tts=True` — настоящая обвязка фраз (`GeminiLiveTts` поверх того же поддельного Gemini с кэшем и прогревом).
+    `background` — фоновая текстовая модель (итоги разговоров, итоги недели); остальное (`database_factory`,
+    `memory_settings`) уходит в `create_app` как есть."""
+    from tests.fake_live import FakeConnector
+
+    live = connector or FakeConnector()
+    return create_app(
+        None if real_tts else (lambda: tts), lambda: (background, None), live_factory=lambda: live, **create_kwargs
+    )
+
+
+def make_client(tts: Any = None, background: Any = None, connector: Any = None, **kwargs: Any) -> TestClient:
+    return TestClient(make_app(connector, tts, background, **kwargs))
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    """Агент без озвучки: протокол текста и REST."""
+    """Агент на поддельном Gemini Live без озвучки фраз: протокол текста и REST."""
     with make_client(None) as c:
         yield c
 
@@ -174,7 +227,7 @@ def voice() -> FakeTts:
 
 @pytest.fixture
 def voice_client(voice: FakeTts) -> Iterator[TestClient]:
-    """Агент с поддельной озвучкой: кадры 0x02, приветствие, tts_cancel."""
+    """Агент на поддельном Gemini Live с поддельной озвучкой фраз: кадры 0x02 приветствия, tts_cancel."""
     with make_client(voice) as c:
         yield c
 

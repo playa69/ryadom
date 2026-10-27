@@ -21,7 +21,7 @@ from app.main import create_app
 from app.services.dialog_db import DialogDbError, DialogWrite
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from app.services.dialog_store import DialogStore
-from tests.conftest import AUTH, FakeTts, has, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, FakeTts, has, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.test_persistence import app_client, say
 
 HOUR = 3600.0
@@ -605,7 +605,7 @@ def test_greeting_after_eviction_is_not_voiced_and_the_dialog_still_works(tmp_pa
     path = tmp_path / "dialogs.sqlite3"
     user = str(uuid.uuid4())
     voice = FakeTts()
-    app = create_app(lambda: voice, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path)))
+    app = make_app(tts=voice, database_factory=lambda: DialogDatabase(str(path)))
     with TestClient(app) as client:
         store: DialogStore = client.app.state.store  # type: ignore[attr-defined]
         dialog = start_dialog(client, user)

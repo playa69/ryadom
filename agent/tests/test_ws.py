@@ -1,4 +1,8 @@
-"""WebSocket-контракт agent-api: текст, голос, озвучка (specs/agent-api, specs/speech-pipeline)."""
+"""WebSocket-контракт agent-api: текст, голос, озвучка (specs/agent-api, specs/speech-pipeline).
+
+Агент на поддельном Gemini Live (tests/fake_live.py): ответ и его звук приходят от модели, а приветствие и кризисный ответ
+озвучивает озвучка фраз (поддельная `FakeTts`).
+"""
 
 import json
 import struct
@@ -8,10 +12,9 @@ import uuid
 import pytest
 from starlette.testclient import WebSocketDenialResponse
 
-from app.services.replies import CRISIS_REPLY, CRISIS_SAFETY_TEXT
+from app.services.replies import CRISIS_REPLY, CRISIS_SAFETY_TEXT, split_sentences
 from tests.conftest import (
     AUTH,
-    FakeChat,
     FakeTts,
     audio_in_frame,
     has,
@@ -22,6 +25,8 @@ from tests.conftest import (
     types,
     ws_url,
 )
+from tests.fake_live import FakeConnector
+from tests.fake_live import reply_done as voiced_reply_done
 
 
 def history(client, user_id, dialog_id):
@@ -46,12 +51,13 @@ def test_text_turn_ack_then_streamed_reply(client, user_id):
     dialog = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
         send_user_message(ws, "c-1", "Мне плохо")
-        frames = read_frames(ws, reply_done)
+        frames = read_frames(ws, voiced_reply_done)
 
     order = types(frames)
     assert order[:2] == ["ready", "ack"]
-    assert order[2] == "assistant_start" and order[-1] == "assistant_end"
-    assert set(order[3:-1]) == {"assistant_delta"}
+    assert order[2] == "assistant_start"
+    assert order.count("assistant_start") == 1 and order.count("assistant_end") == 1
+    assert set(order[3:]) <= {"assistant_delta", "tts_start", "tts_end", "assistant_end"}
 
     ack = next(b for k, b in frames if k == "json" and b["type"] == "ack")
     assert ack["id"] == "c-1"
@@ -71,7 +77,7 @@ def test_repeated_user_message_gives_the_same_message_id_and_no_second_reply(cli
     dialog = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
         send_user_message(ws, "c-1", "раз")
-        first = read_frames(ws, reply_done)
+        first = read_frames(ws, voiced_reply_done)
         send_user_message(ws, "c-1", "раз")  # клиент не получил ack и повторяет
         second = read_frames(ws, lambda f: has(f, "ack"))
 
@@ -81,27 +87,29 @@ def test_repeated_user_message_gives_the_same_message_id_and_no_second_reply(cli
     assert len(history(client, user_id, dialog["dialogId"])) == 2  # одно сообщение человека и один ответ
 
 
-def test_next_message_waits_in_the_queue_for_the_current_reply(client, user_id):
+def test_next_message_gets_its_own_reply(client, user_id):
     dialog = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
         send_user_message(ws, "c-1", "первое")
+        read_frames(ws, voiced_reply_done)
         send_user_message(ws, "c-2", "второе")
-        frames = read_frames(ws, lambda f: types(f).count("assistant_end") == 2)
+        frames = read_frames(ws, voiced_reply_done)
 
-    order = [t for t in types(frames) if t in ("assistant_start", "assistant_end")]
-    assert order == ["assistant_start", "assistant_end", "assistant_start", "assistant_end"]
+    assert types(frames).count("assistant_end") == 1  # на каждую реплику свой ответ
     assert [m["role"] for m in history(client, user_id, dialog["dialogId"])] == ["user", "assistant", "user", "assistant"]
 
 
-def test_replies_differ_from_turn_to_turn(client, user_id):
-    dialog = start_dialog(client, user_id)
-    with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
-        texts = []
-        for n in range(3):
-            send_user_message(ws, f"c-{n}", "расскажу")
-            frames = read_frames(ws, reply_done)
-            texts.append(next(b["text"] for k, b in frames if k == "json" and b["type"] == "assistant_end"))
-    assert len(set(texts)) == 3
+def test_replies_differ_from_turn_to_turn(user_id):
+    connector = FakeConnector(replies=["Первый ответ.", "Второй ответ.", "Третий ответ."])
+    with make_client(None, connector=connector) as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            texts = []
+            for n in range(3):
+                send_user_message(ws, f"c-{n}", "расскажу")
+                frames = read_frames(ws, voiced_reply_done)
+                texts.append(next(b["text"] for k, b in frames if k == "json" and b["type"] == "assistant_end"))
+    assert texts == ["Первый ответ.", "Второй ответ.", "Третий ответ."]
 
 
 def test_crisis_message_triggers_safety_and_a_fixed_reply(client, user_id):
@@ -119,7 +127,7 @@ def test_end_frame_sends_summary_and_closes_with_1000(client, user_id):
     dialog = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
         send_user_message(ws, "c-1", "поговорим")
-        read_frames(ws, reply_done)
+        read_frames(ws, voiced_reply_done)
         ws.send_text(json.dumps({"type": "end", "takeaway": "Стало легче", "tensionAfter": 3}))
         frames = read_frames(ws, lambda f: f[-1][0] == "close")
 
@@ -137,7 +145,7 @@ def test_unknown_and_broken_frames_are_ignored(client, user_id):
         ws.send_text(json.dumps({"type": "something_new", "extra": 1}))
         ws.send_text(json.dumps({"type": "user_message", "id": "c-0", "text": "   "}))  # пустая реплика
         send_user_message(ws, "c-1", "привет")
-        frames = read_frames(ws, reply_done)
+        frames = read_frames(ws, voiced_reply_done)
     assert types(frames)[:2] == ["ready", "ack"]
     assert len(history(client, user_id, dialog["dialogId"])) == 2
 
@@ -172,7 +180,7 @@ def test_second_live_socket_gets_409_and_the_first_keeps_working(client, user_id
                 pass
         assert denied.value.status_code == 409
         send_user_message(first, "c-1", "я тут")
-        assert has(read_frames(first, reply_done), "assistant_end")
+        assert has(read_frames(first, voiced_reply_done), "assistant_end")
 
     # после закрытия первого сокета диалог снова доступен
     with client.websocket_connect(path, headers=AUTH) as again:
@@ -182,14 +190,18 @@ def test_second_live_socket_gets_409_and_the_first_keeps_working(client, user_id
 # ─── Голос ────────────────────────────────────────────────────────────────────
 
 
+def speak(ws, frames=25, loud=True):
+    ws.send_text(json.dumps({"type": "audio_start"}))
+    for n in range(frames):  # 2,5 с речи
+        ws.send_bytes(audio_in_frame(n, loud=loud))
+    ws.send_text(json.dumps({"type": "audio_end"}))
+
+
 def test_voice_turn_gives_final_transcript_with_message_id_and_a_reply(client, user_id):
     dialog = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
-        ws.send_text(json.dumps({"type": "audio_start"}))
-        for n in range(25):  # 2,5 с речи
-            ws.send_bytes(audio_in_frame(n))
-        ws.send_text(json.dumps({"type": "audio_end"}))
-        frames = read_frames(ws, reply_done)
+        speak(ws)
+        frames = read_frames(ws, voiced_reply_done)
 
     transcript = next(b for k, b in frames if k == "json" and b["type"] == "transcript")
     assert transcript["final"] is True and transcript["text"] and transcript["messageId"]
@@ -209,7 +221,7 @@ def test_silence_gives_an_empty_final_transcript_and_no_reply(client, user_id):
         assert silent == {"v": 1, "type": "transcript", "text": "", "final": True}
         # ответа на тишину нет: следующий же кадр относится уже к новой реплике
         send_user_message(ws, "c-1", "я тут")
-        after = read_frames(ws, reply_done)
+        after = read_frames(ws, voiced_reply_done)
     assert types(after)[0] == "ack"
     assert len(history(client, user_id, dialog["dialogId"])) == 2
 
@@ -219,7 +231,7 @@ def test_voice_turn_without_audio_end_is_dropped(client, user_id):
     with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
         ws.send_text(json.dumps({"type": "audio_start"}))
         for n in range(5):
-            ws.send_bytes(audio_in_frame(n))
+            ws.send_bytes(audio_in_frame(n, loud=True))
         # экран закрыт: сокет рвётся без audio_end
     assert history(client, user_id, dialog["dialogId"]) == []
 
@@ -244,7 +256,7 @@ def test_greeting_is_voiced_once_per_start_not_per_socket(voice_client, voice, u
     # переподключение: приветствие не повторяется
     with voice_client.websocket_connect(path, headers=AUTH) as ws:
         send_user_message(ws, "c-1", "я тут")
-        again = read_frames(ws, reply_done)
+        again = read_frames(ws, voiced_reply_done)
     assert not has(again, "tts_start", messageId="greeting")
 
     # новый успешный POST …/dialogs (resumed) — приветствие звучит снова на первом сокете
@@ -272,15 +284,17 @@ def test_tts_frames_have_the_contract_format(voice_client, user_id):
     assert order[1] == ("json", "tts_start") and order[-1] == ("json", "tts_end")
 
 
-def test_reply_is_voiced_and_voices_never_interleave(voice_client, voice, user_id):
+def test_the_models_reply_is_voiced_with_its_own_sound_and_voices_never_interleave(voice_client, voice, user_id):
     dialog = start_dialog(voice_client, user_id)
     with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
         read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+        voice.calls.clear()
         send_user_message(ws, "c-1", "раз")
         send_user_message(ws, "c-2", "два")
-        # синтез мгновенный, поэтому tts_end может прийти раньше assistant_end: ждём оба конца дважды
+        # звук ответа приходит от модели; tts_end может прийти раньше assistant_end: ждём оба конца дважды
         frames = read_frames(ws, lambda f: types(f).count("tts_end") == 2 and types(f).count("assistant_end") == 2)
 
+    assert voice.calls == []  # ответы озвучивает сама модель, озвучка фраз для них не нужна
     start_ids = [b["messageId"] for k, b in frames if k == "json" and b["type"] == "tts_start"]
     end_ids = [b["messageId"] for k, b in frames if k == "json" and b["type"] == "tts_end"]
     assert len(start_ids) == 2 and start_ids == end_ids  # start/end парами, без перемежения
@@ -308,42 +322,45 @@ class OverlapTts(FakeTts):
 
 
 def test_next_sentence_is_synthesized_while_the_previous_one_is_sent(user_id):
-    """Пока звучит предложение, следующее уже синтезируется (но не все сразу), а кадры идут по порядку."""
+    """Фиксированная фраза (кризисный ответ из трёх предложений): пока звучит предложение, следующее уже синтезируется (но не
+    все сразу), а кадры идут по порядку."""
+    sentences = split_sentences(CRISIS_REPLY)
+    assert len(sentences) == 3
     tts = OverlapTts(delay=0.05)
-    chat = FakeChat(reply="Раз. Два. Три. Четыре.")
-    with make_client(tts, chat=chat) as client:
+    with make_client(tts) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
             tts.calls.clear()
             tts.most_running = 0
-            send_user_message(ws, "c-1", "привет")
+            send_user_message(ws, "c-1", "я больше не хочу жить")
             frames = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
 
-    assert tts.calls == ["Раз.", "Два.", "Три.", "Четыре."]
-    assert tts.most_running == 2  # звучащее и следующее, не четыре сразу
+    assert tts.calls == sentences
+    assert tts.most_running == 2  # звучащее и следующее, не все три сразу
     sequences = [struct.unpack(">BI", frame[:5])[1] for frame in binary_frames(frames)]
-    assert sequences == list(range(len(sequences))) and len(sequences) == 12  # 4 предложения по 3 кадра
+    assert sequences == list(range(len(sequences))) and len(sequences) == 9  # 3 предложения по 3 кадра
     order = types(frames)
     assert order.count("tts_start") == 1 and order.index("tts_start") < order.index("tts_end")
 
 
 def test_a_failing_second_sentence_reports_one_error_and_closes_the_speech(user_id):
     """Отказ синтеза на втором предложении: первое прозвучало, ошибка одна, tts_end уходит."""
+    sentences = split_sentences(CRISIS_REPLY)
 
     class FailsOnSecond(FakeTts):
         async def synthesize(self, text: str, voice: str = "male") -> bytes:
-            if text == "Два.":
+            if text == sentences[1]:
                 from app.clients.speech import TtsError
 
                 raise TtsError("синтез сломан в тесте")
             return await super().synthesize(text, voice)
 
-    with make_client(FailsOnSecond(), chat=FakeChat(reply="Раз. Два. Три.")) as client:
+    with make_client(FailsOnSecond()) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
-            send_user_message(ws, "c-1", "привет")
+            send_user_message(ws, "c-1", "я больше не хочу жить")
             frames = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
 
     assert has(frames, "error", code="VOICE_UNAVAILABLE") and types(frames).count("error") == 1
@@ -356,7 +373,7 @@ def test_tts_cancel_stops_the_message_speech(user_id):
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
-            send_user_message(ws, "c-1", "раз")
+            send_user_message(ws, "c-1", "я больше не хочу жить")
             frames = read_frames(ws, lambda f: has(f, "assistant_start"))
             message_id = next(b["messageId"] for k, b in frames if k == "json" and b["type"] == "assistant_start")
             ws.send_text(json.dumps({"type": "tts_cancel", "messageId": message_id}))
@@ -369,79 +386,72 @@ def test_tts_cancel_stops_the_message_speech(user_id):
     assert binary_frames(tail) == []
 
 
-def test_broken_tts_does_not_break_the_dialog(user_id):
+def test_broken_phrase_tts_does_not_break_the_dialog(user_id):
+    """Озвучка фраз отказала (приветствие не прозвучало): один error, а ответы модели идут со своим звуком."""
     with make_client(FakeTts(fail=True)) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            greeting = read_frames(ws, lambda f: has(f, "error"))
             send_user_message(ws, "c-1", "привет")
-            frames = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "error"))
+            frames = read_frames(ws, voiced_reply_done)
 
-    assert has(frames, "error", code="VOICE_UNAVAILABLE")
-    assert not has(frames, "tts_start")  # приложение прочитает ответ само
-    assert has(frames, "assistant_end")
-    assert types(frames).count("error") == 1  # не сыплем ошибками на каждое предложение
+    assert has(greeting, "error", code="VOICE_UNAVAILABLE") and not has(greeting, "tts_start")  # приветствие прочтёт приложение
+    assert has(frames, "assistant_end") and has(frames, "tts_start")
+    assert types(frames).count("error") == 0
 
 
-def test_without_tts_there_are_no_voice_frames(client, user_id):
+def test_a_crisis_reply_without_phrase_tts_goes_as_text_only(client, user_id):
     dialog = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
-        send_user_message(ws, "c-1", "привет")
+        send_user_message(ws, "c-1", "я больше не хочу жить")
         frames = read_frames(ws, reply_done)
-    assert not has(frames, "tts_start") and binary_frames(frames) == []
-
-
-def test_switching_speech_off_applies_to_a_live_socket(voice_client, user_id):
-    """Агент с отказавшей озвучкой (dev-режим): текст идёт, звука нет, клиент читает ответ сам."""
-    dialog = start_dialog(voice_client, user_id)
-    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
-        read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
-        voice_client.post("/dev/tts", json={"mode": "none"}, headers=AUTH)
-        send_user_message(ws, "c-1", "раз")
-        off = read_frames(ws, reply_done)
-        assert not has(off, "tts_start") and binary_frames(off) == []
-
-        voice_client.post("/dev/tts", json={"mode": "auto"}, headers=AUTH)
-        send_user_message(ws, "c-2", "два")
-        on = read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
-        assert has(on, "tts_start") and binary_frames(on)
+    assert not has(frames, "tts_start") and binary_frames(frames) == [] and not has(frames, "error")
+    assert next(b["text"] for k, b in frames if k == "json" and b["type"] == "assistant_end") == CRISIS_REPLY
 
 
 # ─── голос по роду ────────────────────────────────────────────────────────────
 
 
-def test_greeting_and_replies_use_the_voice_chosen_at_start(voice_client, voice, user_id):
-    dialog = voice_client.post(f"/v1/users/{user_id}/dialogs", json={"voice": "female"}, headers=AUTH).json()
-    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
-        read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
-        assert set(voice.voices) == {"female"}
-        send_user_message(ws, "c-1", "раз")
-        read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
-    assert set(voice.voices) == {"female"}
+def test_greeting_and_replies_use_the_voice_chosen_at_start(user_id):
+    tts, connector = FakeTts(), FakeConnector()
+    with make_client(tts, connector=connector) as client:
+        dialog = client.post(f"/v1/users/{user_id}/dialogs", json={"voice": "female"}, headers=AUTH).json()
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие
+            assert set(tts.voices) == {"female"}
+            send_user_message(ws, "c-1", "раз")
+            read_frames(ws, voiced_reply_done)
+    assert set(tts.voices) == {"female"} and set(connector.open_calls) == {"female"}  # и озвучка фраз, и сессия модели
 
 
-def test_default_voice_is_male(voice_client, voice, user_id):
-    dialog = start_dialog(voice_client, user_id)
-    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
-        read_frames(ws, lambda f: has(f, "tts_end"))
-    assert set(voice.voices) == {"male"}
+def test_default_voice_is_male(user_id):
+    tts, connector = FakeTts(), FakeConnector()
+    with make_client(tts, connector=connector) as client:
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda f: has(f, "tts_end"))
+            send_user_message(ws, "c-1", "раз")
+            read_frames(ws, voiced_reply_done)
+    assert set(tts.voices) == {"male"} and set(connector.open_calls) == {"male"}
 
 
-def test_set_voice_frame_switches_the_voice_of_the_next_reply(voice_client, voice, user_id):
-    dialog = start_dialog(voice_client, user_id)  # male
-    with voice_client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
-        read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие мужским голосом
-        greeting_calls = len(voice.voices)
-        assert set(voice.voices) == {"male"}
+def test_set_voice_frame_switches_the_voice_of_the_next_reply(user_id):
+    tts, connector = FakeTts(), FakeConnector()
+    with make_client(tts, connector=connector) as client:
+        dialog = start_dialog(client, user_id)  # male
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda f: has(f, "tts_end"))  # приветствие мужским голосом
+            assert set(tts.voices) == {"male"}
 
-        ws.send_text(json.dumps({"type": "set_voice", "voice": "robot"}))  # чужое значение игнорируется
-        ws.send_text(json.dumps({"type": "set_voice", "voice": "female"}))
-        send_user_message(ws, "c-1", "раз")
-        read_frames(ws, lambda f: has(f, "assistant_end") and has(f, "tts_end"))
-        assert set(voice.voices[greeting_calls:]) == {"female"}
+            ws.send_text(json.dumps({"type": "set_voice", "voice": "robot"}))  # чужое значение игнорируется
+            ws.send_text(json.dumps({"type": "set_voice", "voice": "female"}))
+            send_user_message(ws, "c-1", "раз")
+            read_frames(ws, voiced_reply_done)
+            assert connector.open_calls[-1] == "female"  # новая сессия модели открыта женским голосом
 
-    # выбор запомнен: следующий диалог человека начинается женским голосом
-    voice_client.post(f"/v1/users/{user_id}/dialogs/{dialog['dialogId']}/end", headers=AUTH)
-    assert start_dialog(voice_client, user_id)["voice"] == "female"
+        # выбор запомнен: следующий диалог человека начинается женским голосом
+        client.post(f"/v1/users/{user_id}/dialogs/{dialog['dialogId']}/end", headers=AUTH)
+        assert start_dialog(client, user_id)["voice"] == "female"
 
 
 def test_live_socket_of_a_replaced_dialog_gets_ended_and_is_closed(client, user_id):
@@ -449,7 +459,7 @@ def test_live_socket_of_a_replaced_dialog_gets_ended_and_is_closed(client, user_
     first = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, first["dialogId"]), headers=AUTH) as ws:
         send_user_message(ws, "c-1", "Мне плохо")
-        read_frames(ws, reply_done)
+        read_frames(ws, voiced_reply_done)
         second = client.post(f"/v1/users/{user_id}/dialogs", json={"new": True}, headers=AUTH).json()
         assert second["dialogId"] != first["dialogId"]
         frames = read_frames(ws, lambda f: any(k == "close" for k, _ in f))
@@ -463,7 +473,7 @@ def test_socket_to_a_dialog_that_was_ended_elsewhere_is_closed_without_taking_me
     first = start_dialog(client, user_id)
     with client.websocket_connect(ws_url(user_id, first["dialogId"]), headers=AUTH) as ws:
         send_user_message(ws, "c-1", "Мне плохо")
-        read_frames(ws, reply_done)
+        read_frames(ws, voiced_reply_done)
     second = client.post(f"/v1/users/{user_id}/dialogs", json={"new": True}, headers=AUTH).json()
     assert second["dialogId"] != first["dialogId"]
 

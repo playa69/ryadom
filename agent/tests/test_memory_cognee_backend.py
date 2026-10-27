@@ -497,7 +497,7 @@ def test_dataset_name_sanitized() -> None:
 
 def test_app_cognee_mode(monkeypatch: Any) -> None:
     """Приложение с памятью Cognee: клиент подменён фейком, диалоги в памяти процесса."""
-    from tests.conftest import AUTH
+    from tests.conftest import AUTH, make_app
 
     fake = FakeCognee()
     monkeypatch.setattr("app.main.build_cognee_client", lambda cfg: fake)
@@ -507,7 +507,7 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
         COGNEE_SERVICE_PASSWORD="test-password",
     )
     FakeDialogDatabase.reset()
-    app = create_app(lambda: None, lambda: (None, None), memory_settings=settings, database_factory=lambda: FakeDialogDatabase("app-cognee"))
+    app = make_app(memory_settings=settings, database_factory=lambda: FakeDialogDatabase("app-cognee"))
     with TestClient(app) as client:
         assert fake.connected is True  # логин при старте
         ready = client.get("/health/ready").json()

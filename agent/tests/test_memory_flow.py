@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.extractor import NotesExtractor
-from tests.conftest import AUTH
+from tests.conftest import AUTH, make_app
 from tests.fake_db import FakeDialogDatabase
 from tests.test_memory_cognee_backend import CONSENT, FakeCognee, dialog, memory_settings, uid
 from tests.test_memory_extractor import FakeModel
@@ -114,7 +114,7 @@ def test_instruction_route(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = memory_settings(
         COGNEE_BASE_URL="http://cognee.test", COGNEE_SERVICE_EMAIL="a@b.c", COGNEE_SERVICE_PASSWORD="x", MEMORY_NOTES_ENABLED="true"
     )
-    app = create_app(lambda: None, lambda: (None, None), memory_settings=settings, database_factory=lambda: FakeDialogDatabase("flow-route"))
+    app = make_app(memory_settings=settings, database_factory=lambda: FakeDialogDatabase("flow-route"))
     user = str(uuid.uuid4())
     base = f"/v1/users/{user}/memory"
     with TestClient(app) as client:

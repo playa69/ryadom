@@ -103,22 +103,16 @@ def test_start_with_new_without_an_open_dialog_just_creates_one(client, user_id)
     assert len(client.get(url(user_id), headers=AUTH).json()["items"]) == 1
 
 
-def test_start_remembers_the_picked_voice_name_in_gemini_mode_only(client, user_id):
-    """`voiceName` из профиля действует только с Gemini Live и только вместе с родом; без него остаётся голос рода."""
+def test_start_remembers_the_picked_voice_name(client, user_id):
+    """`voiceName` из профиля действует только вместе с родом; без него остаётся голос рода."""
     body = {"voice": "female", "voiceName": "Aoede"}
-    assert client.post(url(user_id), json=body, headers=AUTH).json()["voiceName"] is None  # каскад: озвучивает движок рода
-
-    client.app.state.live = object()  # режим gemini_live включён
-    try:
-        picked = client.post(url(user_id), json=body, headers=AUTH).json()
-        assert (picked["voice"], picked["voiceName"]) == ("female", "Aoede")
-        # Следующий старт без имени (человек вернулся к голосу рода) сбрасывает выбор.
-        assert client.post(url(user_id), json={"voice": "female"}, headers=AUTH).json()["voiceName"] is None
-        # Имя вне списка — ошибка запроса, а не молчаливая подмена.
-        refused = client.post(url(user_id), json={"voice": "male", "voiceName": "Robot"}, headers=AUTH)
-        assert refused.status_code == 400
-    finally:
-        client.app.state.live = None
+    picked = client.post(url(user_id), json=body, headers=AUTH).json()
+    assert (picked["voice"], picked["voiceName"]) == ("female", "Aoede")
+    # Следующий старт без имени (человек вернулся к голосу рода) сбрасывает выбор.
+    assert client.post(url(user_id), json={"voice": "female"}, headers=AUTH).json()["voiceName"] is None
+    # Имя вне списка — ошибка запроса, а не молчаливая подмена.
+    refused = client.post(url(user_id), json={"voice": "male", "voiceName": "Robot"}, headers=AUTH)
+    assert refused.status_code == 400
 
 
 def test_start_with_new_keeps_the_voice_choice(client, user_id):

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from tests.conftest import AUTH
+from tests.conftest import AUTH, make_app
 from tests.fake_db import FakeDialogDatabase
 from tests.test_memory_cognee_backend import FakeCognee, memory_settings
 
@@ -26,12 +26,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Any:
         COGNEE_SERVICE_PASSWORD="test-password",
         MEMORY_NOTES_MAX="3",
     )
-    app = create_app(
-        lambda: None,
-        lambda: (None, None),
-        memory_settings=settings,
-        database_factory=lambda: FakeDialogDatabase("notes-api"),
-    )
+    app = make_app(memory_settings=settings, database_factory=lambda: FakeDialogDatabase("notes-api"))
     with TestClient(app) as test_client:
         yield test_client
 
