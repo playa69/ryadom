@@ -22,8 +22,8 @@ PWA (браузерная сборка мобильного клиента) SHAL
 - **WHEN** PWA, открытая по `https://<хост>/pwa/`, выполняет fetch к `/api/dialogs`
 - **THEN** запрос уходит на `https://<хост>/api/dialogs` — тот же origin, без CORS — и его обслуживает API
 
-#### Scenario: Диалог по WebSocket
-- **WHEN** PWA открывает диалог на странице `https://<хост>/pwa/`
+#### Scenario: Разговор по WebSocket
+- **WHEN** PWA открывает разговор на странице `https://<хост>/pwa/`
 - **THEN** WebSocket подключается к `wss://<хост>/api/dialogs/ws`: схема и хост берутся из адреса страницы
 
 ### Requirement: Префикс адреса задаётся при сборке образа
@@ -165,7 +165,7 @@ PWA (браузерная сборка мобильного клиента) SHAL
 - **THEN** ответ приходит с `Content-Encoding: gzip`
 
 ### Requirement: Заголовки безопасности ответов PWA
-Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `worker-src 'self' blob:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors https://web.telegram.org`. Диалог идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`. Встраивание приложения во фрейм MUST быть разрешено только Telegram Web (`https://web.telegram.org`), который показывает Mini App во фрейме; приложения Telegram для телефона и компьютера открывают его в собственном WebView без фрейма (см. `telegram-mini-app`). `'wasm-unsafe-eval'` разрешает лишь компиляцию WebAssembly для декодера озвучки там, где у браузера нет своего декодера Opus.
+Каждый ответ контейнера (файл, оболочка, перенаправление, 404, проверка живости) SHALL нести `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff` и `Content-Security-Policy` с директивами `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`, `font-src 'self' data:`, `media-src 'self' blob:`, `connect-src 'self' ws: wss:`, `worker-src 'self' blob:`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors https://web.telegram.org`. Разговор идёт по WebSocket на тот же origin, поэтому `connect-src` MUST разрешать `ws:` и `wss:`. Встраивание приложения во фрейм MUST быть разрешено только Telegram Web (`https://web.telegram.org`), который показывает Mini App во фрейме; приложения Telegram для телефона и компьютера открывают его в собственном WebView без фрейма (см. `telegram-mini-app`). `'wasm-unsafe-eval'` разрешает лишь компиляцию WebAssembly для декодера озвучки там, где у браузера нет своего декодера Opus.
 
 Поверхности: pwa · tg
 
@@ -221,7 +221,7 @@ API и PWA SHALL выпускаться отдельными образами с
 - **THEN** открывается `/pwa/diary/?checkin=1`, и клиент показывает вкладку «Дневник» (см. `app-shell`)
 
 #### Scenario: Нативная сборка
-- **WHEN** (android) или (ios) собран JS для нативной сборки
+- **WHEN** (Android, iOS) собран JS для нативной сборки
 - **THEN** в его `index.html` нет ссылки на манифест и тегов `apple-*`
 
 ### Requirement: Регистрация service worker
@@ -242,7 +242,7 @@ API и PWA SHALL выпускаться отдельными образами с
 - **THEN** приложение работает как обычная страница, человек ошибки не видит
 
 #### Scenario: Нативная сборка
-- **WHEN** (android) или (ios) приложение запущено как нативное
+- **WHEN** (Android, iOS) приложение запущено как нативное
 - **THEN** service worker не регистрируется
 
 ### Requirement: Что кэширует service worker
@@ -338,7 +338,7 @@ Service worker SHALL при установке предкэшировать об
 - **THEN** метка снимается, баннер появляется с кнопкой «Установить»
 
 #### Scenario: Нативная сборка и Telegram
-- **WHEN** (android) или (ios) или (tg) приложение запущено как нативное либо как Mini App
+- **WHEN** (Android, iOS, Telegram) приложение запущено как нативное либо как Mini App
 - **THEN** баннер установки не показывается
 
 ### Requirement: Текст подсказки и кнопка «Установить»
@@ -389,7 +389,7 @@ Service worker SHALL при установке предкэшировать об
 Поверхности: web · pwa
 
 #### Scenario: Открытие веб-клиента
-- **WHEN** (web) человек открывает веб-клиент в браузере
+- **WHEN** (Web) человек открывает веб-клиент в браузере
 - **THEN** страница не регистрирует service worker, не ссылается на манифест и не показывает баннер установки
 
 #### Scenario: Две сессии на одном хосте
