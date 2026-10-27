@@ -23,7 +23,7 @@ const CONFIG: AnalyticsConfigApiResponse = {
   enabled: true,
   key: 'phc_test',
   uiHost: 'https://eu.posthog.com',
-  environment: 'staging',
+  environment: 'local',
   features: {
     sessionReplay: false,
     clickCapture: true,
@@ -117,7 +117,7 @@ describe('startAnalytics', () => {
     expect(posthog.register).toHaveBeenCalledWith({
       app_platform: 'web',
       app_version: '1.2.3',
-      app_env: 'staging',
+      app_env: 'local',
       $geoip_disable: true,
     })
   })
@@ -247,7 +247,7 @@ describe('анонимные события', () => {
     expect(sent[0]!.body).toMatchObject({
       api_key: 'phc_test',
       event: 'sos_opened',
-      properties: { source: 'header', app_platform: 'web', app_env: 'staging', $process_person_profile: false },
+      properties: { source: 'header', app_platform: 'web', app_env: 'local', $process_person_profile: false },
     })
     expect(sent[1]!.body.properties).not.toHaveProperty('email')
     // A new id every time: two taps by one person cannot be joined into a history.
@@ -422,7 +422,7 @@ describe('buildSdkConfig: приватность по умолчанию', () =>
 
     // `posthog.reset()` (sign-out) wipes the super properties; an event after it comes without them.
     const lost = beforeSend({ properties: { $current_url: 'https://app.test/home' } })
-    expect(lost.properties).toMatchObject({ app_platform: 'web', app_version: '1.2.3', app_env: 'staging' })
+    expect(lost.properties).toMatchObject({ app_platform: 'web', app_version: '1.2.3', app_env: 'local' })
 
     // What the event already carries is not overwritten.
     const own = beforeSend({ properties: { app_env: 'prod' } })

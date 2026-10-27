@@ -104,7 +104,7 @@
 
 ## Каталог событий
 
-Полный список с типами свойств — [`events.ts`](../app/packages/analytics/src/events.ts). К каждому событию добавляются `app_env` (`local`/`staging`/`prod`: один проект на все окружения) и, у клиентов, `app_platform` (`web`, `pwa`, `telegram` — PWA, открытая как Mini App в Telegram, `android`, `ios`, `landing`) и `app_version`.
+Полный список с типами свойств — [`events.ts`](../app/packages/analytics/src/events.ts). К каждому событию добавляются `app_env` (`local`/`prod`: один проект на все окружения) и, у клиентов, `app_platform` (`web`, `pwa`, `telegram` — PWA, открытая как Mini App в Telegram, `android`, `ios`, `landing`) и `app_version`.
 
 **Сервер** (`services/api`):
 

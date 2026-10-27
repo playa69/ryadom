@@ -14,7 +14,7 @@ function fakeClient(overrides: Partial<ServerAnalyticsClient> = {}) {
   return Object.assign(client, overrides) as typeof client
 }
 
-const base = { host: 'https://eu.i.posthog.com', appEnv: 'staging', service: 'api' }
+const base = { host: 'https://eu.i.posthog.com', appEnv: 'prod', service: 'api' }
 
 describe('createServerAnalytics', () => {
   it('без ключа всё выключено и ничего не делает', async () => {
@@ -31,7 +31,7 @@ describe('createServerAnalytics', () => {
     expect(client.capture).toHaveBeenCalledWith({
       distinctId: 'user-1',
       event: 'account_created',
-      properties: { kind: 'email', app_env: 'staging', service: 'api', traffic_type: 'real' },
+      properties: { kind: 'email', app_env: 'prod', service: 'api', traffic_type: 'real' },
       disableGeoip: true,
     })
   })
@@ -45,7 +45,7 @@ describe('createServerAnalytics', () => {
       takeaway: 'тяжело',
     } as never)
     const { properties } = client.capture.mock.calls[0]![0]
-    expect(properties).toEqual({ fields: ['name'], app_env: 'staging', service: 'api', traffic_type: 'real' })
+    expect(properties).toEqual({ fields: ['name'], app_env: 'prod', service: 'api', traffic_type: 'real' })
   })
 
   it('анонимное событие не привязано к человеку и не создаёт профиль', () => {
