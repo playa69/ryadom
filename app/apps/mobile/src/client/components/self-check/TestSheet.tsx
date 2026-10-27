@@ -19,6 +19,7 @@ import { getSelfCheckConsent, giveSelfCheckConsent, reportSelfCheckCrisis, saveS
 import { startTalk } from '../../lib/nav'
 import { notify, refreshLatestResults } from '../../lib/self-check-store'
 import { SELF_CHECK_CONSENT_VERSION, SelfCheckApiErrorCode } from '@ryadom/contracts/api/self-check'
+import { BACK_REQUESTED_EVENT } from '../../lib/native'
 import { TEST_EVENT, type SelfCheckFrom } from '../../lib/self-check'
 import { openSos } from '../SosSheet'
 import { DISCLAIMER, TONE_COLOR, lengthLine, plural } from './format'
@@ -58,6 +59,19 @@ export default function TestSheet() {
     else setPass(next.state)
   }
 
+  // The system "back" (Android, the browser, Telegram) means what "×" means: it asks before leaving a test that has
+  // answers, "continue" on that question, and it cannot close the help screen of a crisis answer (`data-back-guard`).
+  useEffect(() => {
+    if (!opened || !test || !pass) return
+    function onBack() {
+      if (!test || !pass) return
+      if (pass.phase === 'question') requestClose()
+      else if (pass.phase === 'interrupt') setPass(resumePass(pass))
+    }
+    window.addEventListener(BACK_REQUESTED_EVENT, onBack)
+    return () => window.removeEventListener(BACK_REQUESTED_EVENT, onBack)
+  })
+
   function answer(value: number) {
     if (!test || !pass) return
     const next = answerPass(test, pass, value)
@@ -79,7 +93,11 @@ export default function TestSheet() {
       style={{ height: 'auto' }}
     >
       {test && pass && (
-        <div className="rd-sheet-body rd-sheet-body--scroll" data-testid="test-sheet">
+        <div
+          className="rd-sheet-body rd-sheet-body--scroll"
+          data-testid="test-sheet"
+          data-back-guard={pass.phase === 'crisis' ? 'block' : pass.phase === 'question' || pass.phase === 'interrupt' ? 'intercept' : undefined}
+        >
           <div className="rd-test-head">
             <div>
               <h2 className="rd-sheet-title" data-testid="test-title">
@@ -265,7 +283,6 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
     return (
       <div className="rd-test-body" data-testid="test-consent">
         <h3 className="rd-sheet-title">Сохранить результат?</h3>
-        <p className="rd-muted">Результаты тестов — сведения о самочувствии.</p>
         <ul className="rd-muted rd-test-checks">
           {['Хранятся в России', 'Видны только тебе', 'Агент их не читает', 'Можно удалить в любой момент'].map((t) => (
             <li key={t}>✓ {t}</li>
