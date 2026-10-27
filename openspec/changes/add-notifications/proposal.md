@@ -77,7 +77,7 @@
 
 - **`app/packages/db`:** миграция `0012_notifications`.
 - **`app/packages/contracts/src/api/notifications.ts`, `app/packages/core`:** процессы уведомлений, интеграции Web Push и Telegram Bot API.
-- **`app/services/api`:** маршруты `/api/notifications/*`, тик планировщика в `src/index.ts`.
+- **`app/services/api`:** маршруты `/api/notifications/*`, расписание планировщика на очереди задач (`add-job-queue`).
 - **`app/apps/mobile`:** `src/sw/sw.ts` (push), `src/client/lib/notifications.ts`, плагин `@capacitor/local-notifications`, `android/` (разрешение).
 - **`app/apps/web`:** подписка Web Push, service worker для push.
 - **`app/packages/analytics`:** события `notification_*`.
