@@ -4,6 +4,7 @@ import { Loader2, Sparkles } from 'lucide-react'
 import { useId, useState } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { RECAP_AUTO_LABEL } from '@ryadom/client-core/recaps'
+import { UNSAVED_END_NOTE } from '@ryadom/client-core/unsaved'
 import { NativeCheckbox } from '@ryadom/ui/components/native-checkbox'
 import { Button } from '@ryadom/ui/components/button'
 import { FieldError } from '@ryadom/ui/components/field'
@@ -34,6 +35,8 @@ export interface DialogEndSheetProps {
   /** The end request is in flight: one press is enough, and the sheet must not vanish under it. */
   busy: boolean
   error: string
+  /** A conversation held unsaved keeps nothing, so nothing is asked: no takeaway, no scale, no recap. */
+  unsaved?: boolean
 }
 
 const SCALE = Array.from({ length: 10 }, (_, index) => index + 1)
@@ -52,6 +55,7 @@ export default function DialogEndSheet({
   recapEnabled = null,
   onRecapEnabledChange,
   onDraft,
+  unsaved = false,
 }: DialogEndSheetProps) {
   // Held here, not in the modal body (which unmounts on close): going back to the conversation
   // must not throw away what the person had already written.
@@ -76,6 +80,47 @@ export default function DialogEndSheet({
   function submit() {
     if (busy) return
     onSubmit(takeaway.trim() || null, tension, drafted ? 'draft' : 'manual')
+  }
+
+  if (unsaved) {
+    return (
+      <Modal
+        open={open}
+        onClose={onClose}
+        title="Завершить разговор?"
+        dismissible={!busy}
+        className="tab:w-[min(92vw,600px)]"
+      >
+        <p className="text-base leading-[1.55] text-dim" data-testid="unsaved-end-note">
+          {UNSAVED_END_NOTE}
+        </p>
+        {error && (
+          <FieldError className="text-center leading-[1.4]" data-testid="form-error">
+            {error}
+          </FieldError>
+        )}
+        <div className="flex flex-col gap-3 tab:flex-row [@media(max-height:520px)]:flex-row [@media(max-height:520px)]:gap-2">
+          <Button
+            type="button"
+            className={cn(BUTTON, BUSY, 'w-full bg-clip-border focus-visible:border-transparent tab:w-auto tab:flex-1', SHORT_BUTTON)}
+            aria-busy={busy}
+            onClick={() => onSubmit(null, null, 'manual')}
+            data-testid="dialog-end-submit"
+          >
+            Завершить
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(BUTTON, 'w-full border-input! tab:w-auto tab:flex-1', SHORT_BUTTON)}
+            disabled={busy}
+            onClick={onClose}
+          >
+            Продолжить разговор
+          </Button>
+        </div>
+      </Modal>
+    )
   }
 
   return (

@@ -14,6 +14,8 @@ export interface DialogStart {
   sinceLastDialogHours: number | null
   /** `off`: held "without memory" (the screen says so). Absent from a gateway that predates memory. */
   memoryMode?: DialogMemoryMode
+  /** `false`: held unsaved ("Не сохранять этот разговор"); the screen says so. Absent from a gateway that predates it. */
+  saved?: boolean
   /** Whether the person's memory was on when it started: the card "Я запомнил" is awaited only then. */
   memoryEnabled?: boolean
 }

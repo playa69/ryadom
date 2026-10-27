@@ -87,11 +87,15 @@ export function memorySectionStatus(memory: Pick<MemoryApiResponse, 'enabled' | 
   return memory.enabled ? 'включена' : 'на паузе'
 }
 
-/** The mark of a conversation held "without memory" in the journal; null for any other. */
+/**
+ * The mark of a conversation held "without memory" in the journal; null for any other. A conversation held unsaved is `off` too, but
+ * it has a mark of its own ("Разговор не сохранён"), so it gets none here.
+ */
 export function dialogMemoryMark(dialog: {
   memoryMode?: string | null
+  saved?: boolean | null
 }): { label: string; hint: string } | null {
-  return dialog.memoryMode === 'off'
+  return dialog.memoryMode === 'off' && dialog.saved !== false
     ? { label: 'Без памяти', hint: 'Рядом ничего не запомнит из этого разговора' }
     : null
 }

@@ -462,7 +462,11 @@ export class DialogSocket {
     }
 
     // Retrying these is pointless: they need a new dialog or a new version of the app.
-    const fatal: number[] = [DialogCloseCode.Unauthorized, DialogCloseCode.Superseded]
+    const fatal: number[] = [
+      DialogCloseCode.Unauthorized,
+      DialogCloseCode.Superseded,
+      DialogCloseCode.DialogGone,
+    ]
     if (fatal.includes(event.code)) {
       this.setState('failed')
       return

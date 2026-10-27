@@ -3,7 +3,8 @@ import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { chosenMemoryMode, nextStartStep } from '@ryadom/client-core/dialog-start'
+import { chosenStart, nextStartStep } from '@ryadom/client-core/dialog-start'
+import { rememberUnsaved, UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
 import { DialogMode, StartDialogApiErrorCode, type StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
 import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import { memoryInUse, shouldInviteToMemory } from '@ryadom/client-core/memory'
@@ -104,12 +105,15 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const memoryEnabled = auth.user?.memoryEnabled
   /** "Без памяти" for the next conversation; it goes back to off once a conversation starts. */
   const [withoutMemory, setWithoutMemory] = useState(false)
+  /** "Не сохранять этот разговор" for the next conversation, a choice of its own; it goes back to off once a conversation starts. */
+  const [unsaved, setUnsaved] = useState(false)
   /** The invitation to memory: the sheet with the offer, then the consent sheet after "Включить". */
   const [invite, setInvite] = useState<'invite' | 'consent' | null>(null)
   const [invitedMemory, setInvitedMemory] = useState<MemoryApiResponse | null>(null)
   const [consentBusy, setConsentBusy] = useState(false)
   const [consentError, setConsentError] = useState('')
-  const wanted = chosenMemoryMode(memoryEnabled, withoutMemory)
+  const choice = chosenStart(memoryEnabled, withoutMemory, unsaved)
+  const wanted = choice.memory
 
   // Whether to offer "Без памяти" is asked whenever home comes into view: the person's switch and
   // whether the server uses memory at all can both change elsewhere. A failure leaves what was known.
@@ -169,18 +173,22 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   }
 
   function openDialog(data: StartDialogApiResponse) {
+    // Only the answer decides: a gateway that did not hold the dialog unsaved has promised nothing.
+    if (data.saved === false) rememberUnsaved(data.dialogId)
     f7router.navigate(`/dialog/${data.dialogId}/`, {
       props: {
         greeting: data.greeting,
         resumed: data.resumed,
         sinceLastDialogHours: data.sinceLastDialogHours,
         memoryMode: data.memoryMode ?? DialogMemoryMode.On,
+        saved: data.saved,
         memoryEnabled: data.memoryEnabled,
         // The button says "talk": the conversation opens on the voice screen and already listens.
         listen: true,
       },
     })
     setWithoutMemory(false)
+    setUnsaved(false)
   }
 
   async function handleTalk() {
@@ -192,7 +200,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     setLoading(true)
     let navigated = false
     try {
-      let result = await startDialog(mode, { memory: wanted })
+      let result = await startDialog(mode, { memory: wanted, saved: choice.saved })
       if (!result.ok) {
         // The server has no agreement on record for this account: forget what was cached, and the
         // app's gate takes the person through the first screen.
@@ -201,7 +209,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         return
       }
       learnMemory(result.data)
-      const step = nextStartStep(result.data, wanted)
+      const step = nextStartStep(result.data, wanted, choice.saved)
       if (step === 'ask') {
         // Something was said in the conversation left open. Nothing changes until the person answers.
         answered.current = false
@@ -209,8 +217,8 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         return
       }
       if (step === 'restart') {
-        // An empty open conversation in the other memory mode: nothing in it to lose, a new one in the chosen mode.
-        result = await startDialog(mode, { startNew: true, memory: wanted })
+        // An empty open conversation chosen otherwise (memory, saving): nothing in it to lose, a new one as chosen.
+        result = await startDialog(mode, { startNew: true, memory: wanted, saved: choice.saved })
         if (!result.ok) {
           setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
           return
@@ -256,7 +264,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     setRenewing(true)
     let navigated = false
     try {
-      const result = await startDialog(mode, { startNew: true, memory: wanted })
+      const result = await startDialog(mode, { startNew: true, memory: wanted, saved: choice.saved })
       if (!result.ok) {
         if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать новый разговор'))
@@ -330,6 +338,20 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                 />
               </div>
             )}
+            {/* Always there, memory or no memory: this conversation is kept out of the journal, the recaps and the analytics. */}
+            <label className="rd-incognito rd-unsaved" data-testid="unsaved">
+              <span className="rd-incognito-text">
+                <span className="rd-incognito-title">{UNSAVED_LABEL}</span>
+                <span className="rd-caption">{UNSAVED_HINT}</span>
+              </span>
+              <input
+                type="checkbox"
+                className="rd-unsaved-check"
+                data-testid="unsaved-toggle"
+                checked={unsaved}
+                onChange={(event) => setUnsaved(event.target.checked)}
+              />
+            </label>
           </div>
 
           <div className="rd-modes">
@@ -387,11 +409,15 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
       <ResumeDialogSheet
         opened={prompt !== null}
         busy={renewing}
-        // A returned conversation keeps the mode it began in: "Без памяти" applies only to a new one.
+        // A returned conversation keeps the choices it began with: "Без памяти" and "Не сохранять" apply only to a new one.
         note={
-          wanted === DialogMemoryMode.Off && prompt?.memoryMode !== DialogMemoryMode.Off
-            ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
-            : undefined
+          unsaved && prompt?.saved === false
+            ? undefined
+            : unsaved
+              ? '«Не сохранять» будет только у нового разговора: этот продолжится как обычно.'
+              : wanted === DialogMemoryMode.Off && prompt?.memoryMode !== DialogMemoryMode.Off
+                ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
+                : undefined
         }
         onContinue={continueDialog}
         onStartNew={() => void startNew()}

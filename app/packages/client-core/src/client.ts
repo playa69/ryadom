@@ -681,15 +681,17 @@ export function createClient(config: ClientConfig) {
      * A plain start returns the open dialog if there is one (see `nextStartStep`); `startNew` is the
      * person's answer "end it and begin a new one", and is sent only then. `memory` goes out only as
      * `off` (a conversation "without memory"): `on` is the server's default, so a start that asks for
-     * nothing special looks exactly as it did before memory existed.
+     * nothing special looks exactly as it did before memory existed. `saved` goes out only as `false`
+     * ("Не сохранять этот разговор"), for the same reason; it is a choice apart from `memory`.
      */
     startDialog: (
       mode: DialogMode,
-      options: { startNew?: boolean; memory?: DialogMemoryMode } = {},
+      options: { startNew?: boolean; memory?: DialogMemoryMode; saved?: boolean } = {},
     ): Promise<ApiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>> => {
       const body: StartDialogApiRequest = { mode }
       if (options.startNew) body.startNew = true
       if (options.memory === DialogMemoryMode.Off) body.memory = DialogMemoryMode.Off
+      if (options.saved === false) body.saved = false
       return apiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>(ApiPath.Dialogs, {
         method: 'POST',
         body,
