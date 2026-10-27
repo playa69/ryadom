@@ -1,6 +1,6 @@
 """Точка входа сервиса agent «Слышу Рядом».
 
-Контракт agent-api целиком (REST + WebSocket, текст и голос). Голос — Gemini Live (речь в речь, app/api/dialog_live.py);
+Контракт agent-api целиком (REST + WebSocket, текст и голос). Голос — Gemini Live (речь в речь, app/api/dialog_session.py);
 текстовая модель прокси программы пишет только фоновые тексты (итоги разговоров и недели, заметки памяти). Диалоги живут в памяти
 с копией в PostgreSQL (DIALOG_DATABASE_URL): они переживают перезапуск и выкат пода. Память агента — заметки в PostgreSQL и поиск
 по прошлым разговорам в Cognee.
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
-from app.api import dialog_ws, dialogs, digests, health, memory
+from app.api import dialogs, digests, health, memory
 from app.clients.cognee import build_cognee_client
 from app.clients.background_model import BackgroundModel, ProxyBackgroundModel, build_background_model
 from app.clients.speech import CachedTts, TextToSpeech
@@ -266,7 +266,7 @@ def create_app(
     app.include_router(dialogs.router)
     app.include_router(memory.router)
     app.include_router(digests.router)
-    app.include_router(dialog_ws.router)
+    app.include_router(dialogs.ws_router)
     return app
 
 

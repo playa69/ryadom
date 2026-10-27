@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.api.dialog_live import LIVE_ADDENDUM  # noqa: E402
+from app.api.dialog_session import LIVE_ADDENDUM  # noqa: E402
 from app.clients.gemini_live import build_live  # noqa: E402
 from app.core.config import APP_CONFIG  # noqa: E402
 from app.services.replies import system_prompt  # noqa: E402

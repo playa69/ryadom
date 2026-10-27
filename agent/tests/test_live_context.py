@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import DialogSession, LiveTurn
+from app.api.dialog_session import DialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveConnector, LiveError, LiveEvent, _translate, live_config
 from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.dialog_store import DialogStore
@@ -461,7 +461,7 @@ def with_memory(memory: Memory, connector: FakeConnector, *messages: tuple[str, 
 async def test_slow_memory_does_not_hold_back_the_session(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Поиск в Cognee бывает дольше минуты: сессия открывается через MEMORY_WAIT_SECONDS со сводкой, что есть, загрузка
     доходит в фоне и при следующем открытии не начинается заново. Задержка первой сессии — одной строкой в журнале."""
-    monkeypatch.setattr("app.api.dialog_live.MEMORY_WAIT_SECONDS", 0.1)
+    monkeypatch.setattr("app.api.dialog_session.MEMORY_WAIT_SECONDS", 0.1)
     caplog.set_level(logging.INFO, logger="agent.live")
     connector = FakeConnector()
     memory = Memory(delay=0.6, loaded=BRIEF)

@@ -32,7 +32,7 @@ def classifier(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings: None)
     monkeypatch.setattr(mood_classifier.MoodClassifier, "classify", fake)
     monkeypatch.setattr(APP_CONFIG.gemini, "api_key", SecretStr("x"))
-    monkeypatch.setattr("app.api.dialog_live.MOOD_DEBOUNCE_SECONDS", 0)
+    monkeypatch.setattr("app.api.dialog_session.MOOD_DEBOUNCE_SECONDS", 0)
     return seen
 
 

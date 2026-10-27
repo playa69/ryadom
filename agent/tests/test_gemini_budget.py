@@ -83,7 +83,7 @@ def tune(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
         for name, value in values.items():
             monkeypatch.setattr(APP_CONFIG.gemini, name, value)
         if cooldown_wait is not None:
-            monkeypatch.setattr("app.api.dialog_live.COOLDOWN_WAIT_SECONDS", cooldown_wait)
+            monkeypatch.setattr("app.api.dialog_session.COOLDOWN_WAIT_SECONDS", cooldown_wait)
 
     return apply
 

@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import DialogSession, LiveTurn, Synthesis
+from app.api.dialog_session import DialogSession, LiveTurn, Synthesis
 from app.clients.gemini_live import GeminiLiveLink
 from app.core import reclaim
 from app.core.config import APP_CONFIG
@@ -117,7 +117,7 @@ def test_a_closed_live_session_leaves_no_cycles_of_our_code(user_id: str) -> Non
 
 def test_a_session_closed_while_the_memory_loads_leaves_no_cycles(user_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Загрузка памяти, не успевшая к открытию сессии, идёт и после закрытия сокета; дойдя, она не оставляет сеанс в цикле."""
-    monkeypatch.setattr("app.api.dialog_live.MEMORY_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr("app.api.dialog_session.MEMORY_WAIT_SECONDS", 0.05)
     loaded = threading.Event()
     gc.collect()
     with make_live_client(FakeConnector(turn_complete=True), FakeTts()) as client:

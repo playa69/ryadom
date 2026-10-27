@@ -1,20 +1,26 @@
-"""REST диалогов: начать, журнал, история, завершить, стереть пользователя (specs/agent-api)."""
+"""Диалоги (specs/agent-api): REST — начать, журнал, история, завершить, стереть пользователя; WebSocket — рукопожатие
+и выдача сокета сессии (`DialogSession`, app/api/dialog_session.py)."""
 
+import json
 import logging
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Response, WebSocket
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import Store, canonical_user_id, require_token
+from app.api.deps import Store, canonical_user_id, require_token, token_ok
+from app.api.dialog_session import DialogSession
 from app.core.voices import GEMINI_VOICE_NAMES
-from app.core.errors import AgentError, dialog_not_found, validation_error
+from app.core.errors import AgentError, dialog_not_found, error_body, validation_error
 from app.services import recaps
-from app.services.dialog_store import InvalidCursor
+from app.services.dialog_store import DialogStore, InvalidCursor
 
 logger = logging.getLogger("agent.dialogs")
 
 router = APIRouter(prefix="/v1/users/{user_id}", dependencies=[Depends(require_token)])
+# WebSocket-маршрут отдельно: зависимости на Request к рукопожатию не применимы, токен проверяется в самом обработчике.
+ws_router = APIRouter()
 
 
 def _user(user_id: str) -> str:
@@ -253,3 +259,53 @@ async def erase_user(user_id: str, store: Store) -> Response:
         logger.error("erase user failed: %s", type(error).__name__)
         raise AgentError(503, "AGENT_INTERNAL", "Не удалось стереть данные, повторите позже") from error
     return Response(status_code=204)
+
+
+# ─── WebSocket: рукопожатие ───────────────────────────────────────────────────
+
+
+async def _deny(websocket: WebSocket, status: int, code: str, message: str) -> None:
+    """Отклонить рукопожатие HTTP-статусом (401/404/409), как требует контракт."""
+    try:
+        await websocket.send_denial_response(JSONResponse(error_body(code, message), status_code=status))
+    except RuntimeError:
+        # Сервер не умеет HTTP-ответ на рукопожатие: закрываем сокет, статус достанется библиотеке.
+        await websocket.close(code=1008)
+
+
+@ws_router.websocket("/v1/users/{user_id}/dialogs/{dialog_id}/ws")
+async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
+    if not token_ok(websocket.headers.get("authorization")):
+        return await _deny(websocket, 401, "AGENT_UNAUTHORIZED", "Нужен внутренний токен")
+
+    app = websocket.app
+    store: DialogStore = app.state.store
+    canonical = canonical_user_id(user_id)
+    if canonical:
+        await store.ensure_user(canonical)  # после перезапуска диалоги человека поднимаются с диска
+    dialog = store.get(canonical, dialog_id) if canonical else None
+    # Чужой и несуществующий диалог неразличимы.
+    if dialog is None:
+        return await _deny(websocket, 404, "AGENT_DIALOG_NOT_FOUND", "Диалог не найден")
+    # Один живой сокет на диалог: второе соединение отклоняем, первое не трогаем.
+    if dialog.has_live_socket:
+        return await _deny(websocket, 409, "AGENT_VALIDATION", "У диалога уже есть живое соединение")
+
+    store.socket_opened(dialog)
+    try:
+        await websocket.accept()
+        logger.info("socket opened dialog=%s", dialog.id)
+        if dialog.ended_at is not None:
+            # Диалог завершён (человек начал новый разговор с другого экрана, а этот был без связи): в него больше ничего не пишем.
+            await websocket.send_text(json.dumps({"v": 1, "type": "ready"}))
+            await websocket.send_text(json.dumps({"v": 1, "type": "ended", "summary": dialog.summary}, ensure_ascii=False))
+            await websocket.close(code=1000)
+            return
+        session = DialogSession(
+            websocket, store, dialog, lambda: app.state.tts, app.state.live, budget=app.state.budget, tracer=app.state.tracer
+        )
+        session.bind_component_calls()
+        await session.run()
+    finally:
+        store.socket_closed(dialog)
+        logger.info("socket closed dialog=%s", dialog.id)

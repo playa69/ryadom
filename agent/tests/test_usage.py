@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import DialogSession, LiveTurn
+from app.api.dialog_session import DialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveTts
 from app.services import usage as model_usage
 from app.services.dialog_db import DialogDbError

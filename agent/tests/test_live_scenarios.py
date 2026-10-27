@@ -33,7 +33,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from starlette.testclient import WebSocketDenialResponse
 
-from app.api.dialog_live import MAX_AUDIO_BYTES, PRE_ROLL_FRAMES
+from app.api.dialog_session import MAX_AUDIO_BYTES, PRE_ROLL_FRAMES
 from app.clients.gemini_live import VERBATIM_INSTRUCTIONS, LiveError, LiveEvent, LiveHistory
 from app.core.config import APP_CONFIG
 from app.services.dialog_store import GREETING_NEW, GREETING_RESUMED

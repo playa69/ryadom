@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.api.dialog_live import is_silence
+from app.api.dialog_session import is_silence
 from app.services.replies import SYSTEM_PROMPT, is_echo, is_foreign_noise, split_sentences, take_sentences
 
 # ─── Промпт: оффтоп, хорошее настроение, язык ─────────────────────────────────
