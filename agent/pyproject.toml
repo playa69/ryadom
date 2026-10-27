@@ -3,8 +3,8 @@ name = "ryadom-agent"
 version = "0.1.0"
 description = "Агент «Слышу Рядом» — упрощённая версия: контракт agent-api, ответы чат-модели и распознавание речи через прокси, озвучка (Qwen TTS / SaluteSpeech / espeak-ng)"
 requires-python = ">=3.12"
-# Намеренно минимум. LangGraph, БД, память и классификаторы из openspec/changes/add-agent-service
-# подключаются позже; чат и распознавание — обычные HTTP-вызовы прокси через httpx, без SDK.
+# Намеренно минимум. LangGraph и классификаторы из openspec/changes/add-agent-service не подключены;
+# вызовы прокси, Cognee и Langfuse usage — обычный httpx, без SDK.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",

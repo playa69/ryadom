@@ -730,7 +730,6 @@ AGENT_INTERNAL_TOKEN=<токен> VOICE_PIPELINE=gemini_live GEMINI_API_KEY=<к�
 
 ```bash
 uv run pytest                                   # 205 тестов: REST, WebSocket, голос, озвучка, провайдеры речи, чат и распознавание, Gemini Live
-uv run python scripts/prompt_check.py           # ручная проверка промпта на живой модели (LLM_MODE=proxy): набор диалогов и ответы
 uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> --wav reply.wav [--voice female]
 ```
 
