@@ -5,18 +5,18 @@ description: "Проект Рядом (ryadom) живёт в кластере Ti
 
 # Рядом = Timeweb Cloud (twc-sber500)
 
-**Жёсткое правило:** для проекта Рядом (`/Users/aleksandrsamofalov/PycharmProjects/ryadom`)
+**Жёсткое правило:** для проекта Рядом (корень этого репозитория)
 вся инфраструктура — только кластер **Timeweb Cloud `twc-sber500`**.
 Никогда не ходить в `yc-seven-element` (Yandex Cloud) — это проект Seven Element, другой клиент.
 
 ## Подключение
 
 ```bash
-export KUBECONFIG=/Users/aleksandrsamofalov/PycharmProjects/ryadom/admin-kubeconfig.yaml
-# server: https://5.129.247.168:6443, context: twc-sber500
+export KUBECONFIG=<корень репозитория>/admin-kubeconfig.yaml
+# context: twc-sber500; адрес API-сервера лежит в самом kubeconfig
 ```
 
-- `admin-kubeconfig.yaml` (корень репо) — полный доступ, user `ur310990-1113299`.
+- `admin-kubeconfig.yaml` (корень репо) — полный доступ (cluster-admin).
 - `developer-kubeconfig.yaml` — ограниченный (user `developer`), для обычных операций.
 - Дефолтный `~/.kube/config` указывает на чужой кластер — всегда задавать `KUBECONFIG` явно.
 

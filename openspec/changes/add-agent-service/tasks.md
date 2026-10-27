@@ -2,7 +2,7 @@
 
 > Примечание (PROTEUS-250): Python-сервис `backend/` (namespace `backend`), `docs/openapi.yaml` и change'ы `add-backend-*` удалены из репозитория. Агента вызывает `app/services/api`; функции, которые планировались для backend, развиваются там же (`docs/spec.md`, Q-02). Упоминания backend ниже — исторический контекст.
 
-Ссылки: specs — `openspec/changes/add-agent-service/specs/{agent-core,speech-pipeline,agent-api}/spec.md`; design — `openspec/changes/add-agent-service/design.md` (D1–D11). docs/openapi.yaml здесь не применим — API agent внутренний (specs agent-api). UnionApp-паттерны: `/Users/aleksandrsamofalov/PycharmProjects/UnionApp/SevenElementBackend` (формат ошибок, конфиг).
+Ссылки: specs — `openspec/changes/add-agent-service/specs/{agent-core,speech-pipeline,agent-api}/spec.md`; design — `openspec/changes/add-agent-service/design.md` (D1–D11). docs/openapi.yaml здесь не применим — API agent внутренний (specs agent-api). UnionApp-паттерны (формат ошибок, конфиг) — в соседнем репозитории UnionApp, каталог SevenElementBackend.
 
 ## 1. Каркас и конфиг
 
