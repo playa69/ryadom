@@ -9,30 +9,67 @@ import { isTelegramMiniApp, telegramWebApp } from './telegram'
 
 const MAIN_TAB = `#${TAB_IDS.home}`
 
-/** Closes the topmost open Framework7 modal, if any. */
-function closeTopModal(): boolean {
-  const selectors = [
-    '.dialog.modal-in',
-    '.actions-modal.modal-in',
-    '.sheet-modal.modal-in',
-    '.popup.modal-in',
-    '.popover.modal-in',
-  ]
-  for (const selector of selectors) {
-    const el = document.querySelector(selector)
-    if (!el) continue
-    if (selector.startsWith('.dialog')) f7.dialog.close(el as HTMLElement)
-    else if (selector.startsWith('.actions')) f7.actions.close(el as HTMLElement)
-    else if (selector.startsWith('.sheet')) f7.sheet.close(el as HTMLElement)
-    else if (selector.startsWith('.popup')) f7.popup.close(el as HTMLElement)
-    else f7.popover.close(el as HTMLElement)
-    return true
-  }
-  return false
-}
-
 const MODAL_SELECTOR =
   '.dialog.modal-in, .actions-modal.modal-in, .sheet-modal.modal-in, .popup.modal-in, .popover.modal-in'
+
+/**
+ * Sent on the window when "back" is pressed over a modal that asked to handle it itself
+ * (`data-back-guard="intercept"` on an element inside it): the modal decides what back means.
+ */
+export const BACK_REQUESTED_EVENT = 'ryadom:back'
+
+// Open modals in the order they were opened. The document order says nothing about it: a sheet stays where React
+// rendered it, so "the first open sheet in the document" may be the one underneath.
+const modalStack: HTMLElement[] = []
+let modalStackTracked = false
+
+function trackModals(): void {
+  if (modalStackTracked) return
+  modalStackTracked = true
+  // Modal events reach the app instance at run time, but its typings list only its own.
+  type ModalBus = { on(name: string, handler: (modal: { el?: HTMLElement }) => void): void }
+  f7ready((instance) => {
+    const bus = instance as unknown as ModalBus
+    bus.on('modalOpen', (modal) => {
+      if (modal.el && !modalStack.includes(modal.el)) modalStack.push(modal.el)
+    })
+    bus.on('modalClosed', (modal) => {
+      const at = modal.el ? modalStack.indexOf(modal.el) : -1
+      if (at >= 0) modalStack.splice(at, 1)
+    })
+  })
+}
+
+function topModal(): HTMLElement | null {
+  for (let i = modalStack.length - 1; i >= 0; i--) {
+    const el = modalStack[i]
+    if (el && el.isConnected && el.classList.contains('modal-in')) return el
+  }
+  // Opened before the tracking started.
+  return document.querySelector<HTMLElement>(MODAL_SELECTOR)
+}
+
+/**
+ * Closes the topmost open Framework7 modal, if any. A modal can hold "back" back: `data-back-guard="block"` inside it
+ * swallows the press (the help screen of a crisis answer has no way out), `"intercept"` hands it to the modal
+ * through `BACK_REQUESTED_EVENT` (a test asks "Прервать тест?" instead of vanishing).
+ */
+function closeTopModal(): boolean {
+  const el = topModal()
+  if (!el) return false
+  const guard = el.querySelector<HTMLElement>('[data-back-guard]')?.dataset.backGuard
+  if (guard === 'block') return true
+  if (guard === 'intercept') {
+    window.dispatchEvent(new CustomEvent(BACK_REQUESTED_EVENT))
+    return true
+  }
+  if (el.matches('.dialog')) f7.dialog.close(el)
+  else if (el.matches('.actions-modal')) f7.actions.close(el)
+  else if (el.matches('.sheet-modal')) f7.sheet.close(el)
+  else if (el.matches('.popup')) f7.popup.close(el)
+  else f7.popover.close(el)
+  return true
+}
 
 /** Whether "back" has somewhere to go inside the app: an open modal, a step in the tab, or another tab. */
 function canGoBack(): boolean {
@@ -69,6 +106,7 @@ function handleBackStep(): boolean {
  */
 export function initBackButton(): () => void {
   if (!isNative()) return () => {}
+  trackModals()
   let remove: (() => void) | null = null
   let removed = false
 
@@ -98,6 +136,7 @@ export function initBackButton(): () => void {
 export function initBackTrap(): () => void {
   // Telegram has a back button of its own (below), and a history entry in its frame would trap the outer page's.
   if (!isWebBuild() || isTelegramMiniApp()) return () => {}
+  trackModals()
 
   function pushGuard(): void {
     history.pushState({ ryadomBackGuard: true }, '', location.href)
@@ -119,6 +158,7 @@ export function initBackTrap(): () => void {
 export function initTelegramBackButton(): () => void {
   const app = telegramWebApp()
   if (!app?.isVersionAtLeast('6.1')) return () => {}
+  trackModals()
   const sync = () => {
     if (canGoBack()) app.BackButton.show()
     else app.BackButton.hide()

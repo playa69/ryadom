@@ -42,6 +42,11 @@ test('тесты в PWA: самопроверка, каталог, прохож�
   await page.getByTestId('test-option-2').click()
   await page.getByTestId('test-option-1').click()
   await expect(page.getByTestId('test-progress-label')).toHaveText('Вопрос 4 из 7')
+  // The system "back" (the browser here, the hardware key on Android) asks the same as «×», it does not just close the sheet.
+  await page.goBack()
+  await expect(page.getByTestId('test-interrupt')).toContainText('Прервать тест?')
+  await page.getByTestId('test-continue').click()
+  await expect(page.getByTestId('test-progress-label')).toHaveText('Вопрос 4 из 7')
   await page.getByTestId('test-close').click()
   await expect(page.getByTestId('test-interrupt')).toContainText('Прервать тест?')
   await expect(page.getByTestId('test-interrupt')).toContainText('Ответы не сохранятся.')
@@ -72,6 +77,9 @@ test('тесты в PWA: самопроверка, каталог, прохож�
   await expect(crisis).toContainText('Ты отметил(а), что бывают мысли о смерти')
   await expect(page.getByTestId('test-close')).toHaveCount(0)
   await page.keyboard.press('Escape')
+  await expect(crisis).toBeVisible()
+  // Nor can the system "back" close the help screen: the only ways out are its three buttons.
+  await page.goBack()
   await expect(crisis).toBeVisible()
   await shot(page, 'app-self-check-crisis')
   await page.getByTestId('crisis-call').click()

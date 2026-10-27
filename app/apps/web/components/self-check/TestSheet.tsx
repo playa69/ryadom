@@ -256,7 +256,6 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
     return (
       <div className="flex flex-col gap-3" data-testid="test-consent">
         <h2 className="text-lg font-semibold">Сохранить результат?</h2>
-        <p className="text-dim">Результаты тестов — сведения о самочувствии.</p>
         <ul className="flex flex-col gap-1 text-[0.9375rem]">
           {['Хранятся в России', 'Видны только тебе', 'Агент их не читает', 'Можно удалить в любой момент'].map((t) => (
             <li key={t}>✓ {t}</li>
