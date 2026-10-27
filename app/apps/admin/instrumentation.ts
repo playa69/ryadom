@@ -18,7 +18,8 @@ const LOG_REDACT = [
 /**
  * Server start: logger settings before the first record, then env validated by the core schema
  * so a bad configuration kills the process immediately with every error listed, rather than on
- * the first database query.
+ * the first database query; then the transport of the job queue, so that a deletion can queue the
+ * erasure of the person in analytics (`lib/jobs.ts`).
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
@@ -27,7 +28,9 @@ export async function register() {
   const { configureLogger } = await import('@ryadom/core/shared')
   configureLogger({ redact: LOG_REDACT })
   const { loadEnv, adminEnvSchema } = await import('@ryadom/core/config')
-  loadEnv(adminEnvSchema)
+  const env = loadEnv(adminEnvSchema)
+  const { registerAdminJobQueue } = await import('./lib/jobs')
+  registerAdminJobQueue(env)
 }
 
 /** Render and route errors go to the core logger with the digest shown on the error page. */
