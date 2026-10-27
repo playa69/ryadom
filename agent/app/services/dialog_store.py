@@ -259,7 +259,7 @@ class DialogStore:
         self._recap_enabled: dict[str, bool] = {}
         self._persisted_settings: dict[str, bool] = {}
         # Срок хранения разговоров (D14): сколько дней после последнего сообщения разговор помечается удалённым.
-        self.retention_days = 21
+        self.retention_days = 90
         self.retention_interval_seconds = 3600.0
         self._last_retention = 0.0
 

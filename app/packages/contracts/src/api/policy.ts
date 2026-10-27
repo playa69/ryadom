@@ -19,7 +19,7 @@ export const ANONYMOUS_RETENTION_DAYS = 90
 
 /**
  * How many days a conversation is kept after its last message, for every account. The agent holds the real
- * setting (`DIALOG_RETENTION_DAYS`, default 21); this constant only feeds the texts the screens show, so
+ * setting (`DIALOG_RETENTION_DAYS`, default 90); this constant only feeds the texts the screens show, so
  * change both together.
  */
-export const DIALOG_RETENTION_DAYS = 21
+export const DIALOG_RETENTION_DAYS = 90
