@@ -37,9 +37,12 @@ export default function AppUpdateGate() {
       <div className="rd-blocking" role="dialog" aria-modal="true" aria-labelledby="rd-update-title">
         <BrandMark size={64} />
         <h1 id="rd-update-title" className="rd-title">
-          Нужно обновить приложение
+          Пора обновить «Рядом»
         </h1>
-        <p className="rd-muted">Эта версия больше не работает с сервером. Поставь свежую&nbsp;— всё на месте.</p>
+        <p className="rd-muted">
+          Вышла новая версия «Рядом», и эта больше не подойдёт. Установи её&nbsp;— это займёт минуту. Входить
+          заново не придётся: всё останется на месте.
+        </p>
         <div className="rd-blocking-actions">
           {state.storeUrl && (
             <Button fill large onClick={() => void openExternal(state.storeUrl!)}>
