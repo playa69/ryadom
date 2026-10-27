@@ -8,11 +8,11 @@ context: |
   анонимный device-based вход, «стереть всё» одной кнопкой, кризисный протокол
   перекрывает любой режим и любую метрику.
 
-  Единый источник правды по API: OpenSpec (openspec/specs/ — утверждённые capabilities,
-  openspec/changes/ — активные предложения) + docs/openapi.yaml (OpenAPI 3.1,
-  41 операция, для понимания и генерации клиентов).
-  Любые задачи backend ОБЯЗАНЫ соответствовать specs; расхождения —
-  сначала правим specs, потом код.
+  Источник правды сейчас — код в main: openspec/specs/ ещё нет (ни один change не архивирован),
+  старые change'и разошлись с кодом. Спека противоречит коду — прав код, расхождение называется
+  в отчёте и PR. Когда базу снимут с кода и архивируют, источником правды по поведению станет
+  openspec/specs/, а изменения поведения пойдут только через change. Как работать — скилл
+  openspec-workflow (.agents/skills/openspec-workflow/SKILL.md).
 
   Tech stack backend: Python 3.12, FastAPI, WebSocket (голос/текст стриминг),
   SQLAlchemy async, PostgreSQL 16 + pgvector, Redis 8 + Sentinel (сессии, очереди,
@@ -62,19 +62,24 @@ context: |
 
 # Per-artifact rules (optional)
 rules:
+  proposal:
+    - "Первая строка — «Задача: PROTEUS-NNN», если задача есть"
+    - "Таблица поверхностей: agent, api, web, pwa, android, ios, tg, admin, landing — да, нет или позже"
+    - "Зависимости от других change'ей и номера миграций; что вне рамок"
+    - "Для изменений интерфейса — макеты в mockups/ до кода"
+  specs:
+    - "Только поведение, которое видит человек или клиент, и контракты клиент ↔ API ↔ агент; без путей к файлам, классов и библиотек"
+    - "У каждого требования строка «Поверхности: …»; сценарий одной поверхности начинается с неё в скобках: (PWA), (Android)"
+    - "Capability — по домену продукта, не по сервису; MODIFIED несёт требование целиком со всеми сохраняемыми сценариями"
+    - "Пока openspec/specs нет — только ADDED; MODIFIED и REMOVED на требования из папки другого change'а не писать"
   tasks:
-    - "Задачи нарезать стандартно: каждая — атомарная, проверяемая, с критерием приёмки"
-    - "Ссылки на spec.md своего change'а, docs/openapi.yaml и (для UnionApp-паттернов) прямые пути UnionApp в каждой задаче"
-    - "Порядок: каркас/конфиг → модели/миграции → репозитории → сервисы → роутеры → тесты → деплой-манифесты"
+    - "Каждая задача атомарная и проверяемая, с реальными путями и строкой «Приёмка:»"
+    - "Порядок разделов: 0 Решения → 1 Данные и контракты → 2 Агент → 3 Шлюз API → 4 Клиенты по поверхностям → 5 Проверка → 6 Выкат → 7 Архив"
+    - "Раздел «Проверка» по каждому сценарию: unit/integration-тест, e2e (файл и проект desktop или mobile), скриншоты шагов сценария (390 и 1280, без видео), ручные проверки (Android, iOS, Telegram), проверки после выката"
+    - "Галочка ставится только в коммите, который приносит код задачи"
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+operations:
+  archive:
+    guidance:
+      - "Архивировать, только когда код в main и выкачен; брошенный change удаляется, а не архивируется"
+      - "Перед архивацией все задачи [x] или помечены «→ <другой change>» либо «снято» с причиной, открытые вопросы закрыты, openspec validate --strict зелёный"
