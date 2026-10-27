@@ -163,13 +163,9 @@ class FakeDialogDatabase:
             state.notes = {k: v for k, v in state.notes.items() if v[1] != user_id}
             state.sources = [x for x in state.sources if x["user_id"] != user_id]
 
-    def list_notes(self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None) -> list[tuple]:
+    def list_notes(self, user_id: str) -> list[tuple]:
         with self._lock:
             rows = [n for n in self._state().notes.values() if n[1] == user_id]
-        if since:
-            rows = [n for n in rows if n[7] >= since]
-        if kinds:
-            rows = [n for n in rows if n[2] in kinds]
         rows.sort(key=lambda n: (n[7], n[0]), reverse=False)
         rows.sort(key=lambda n: n[7], reverse=True)
         return [(n[0], n[2], n[3], n[4], n[5], n[6], n[7], n[8]) for n in rows]

@@ -383,20 +383,11 @@ class DialogDatabase:
 
     _NOTE_COLUMNS = "id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at"
 
-    def list_notes(
-        self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None
-    ) -> list[tuple[Any, ...]]:
+    def list_notes(self, user_id: str) -> list[tuple[Any, ...]]:
         """Заметки человека, новые сверху: (id, kind, text, sensitive, event_date, dialog_id, created_at, updated_at)."""
-        sql = f"SELECT {self._NOTE_COLUMNS} FROM memory_notes WHERE user_id = %s"
-        args: list[Any] = [user_id]
-        if since:
-            sql += " AND created_at >= %s"
-            args.append(since)
-        if kinds:
-            sql += " AND kind = ANY(%s)"
-            args.append(list(kinds))
+        sql = f"SELECT {self._NOTE_COLUMNS} FROM memory_notes WHERE user_id = %s ORDER BY created_at DESC, id"
         with self._lock, self._connection() as conn:
-            return [tuple(row) for row in conn.execute(sql + " ORDER BY created_at DESC, id", args).fetchall()]
+            return [tuple(row) for row in conn.execute(sql, (user_id,)).fetchall()]
 
     def count_notes(self, user_id: str) -> int:
         with self._lock, self._connection() as conn:

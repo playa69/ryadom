@@ -877,6 +877,10 @@ Cognee недоступен — `503`.
 `COGNEE_SERVICE_PASSWORD` (сервисный пользователь; в деплое Cognee включён multi-user access control, вызовы с Bearer, на
 401 перелогин). Без базы диалогов память включить нельзя (`MEMORY_UNAVAILABLE`), без Cognee заметки работают, поиска нет.
 
+Проверка без UI: `scripts/memory_harness.py` прогоняет сценарии (`scripts/memory_harness_scenarios.py`) через настоящие хранилище
+диалогов, извлекатель на модели прокси и Cognee и печатает отчёт: заметки после каждого разговора, находки Cognee, блок памяти и ответ
+модели на вопросы (нужны `DIALOG_DATABASE_URL`, `COGNEE_URL`, ключ прокси в `MEMORY_LLM_TOKEN_FILE`; данные синтетических людей стираются).
+
 Проверка на настоящем Cognee: `COGNEE_URL=… COGNEE_EMAIL=… COGNEE_PASSWORD=… uv run pytest tests/integration/test_cognee_live.py`.
 
 

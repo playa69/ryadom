@@ -8,6 +8,7 @@
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -44,6 +45,14 @@ _KIND_OF_CATEGORY = {
     "works": "interest",
     "interest": "interest",
 }
+
+
+_SAME_STRIP = re.compile(r"[\s\W_]+", re.UNICODE)
+
+
+def _same_key(text: str) -> str:
+    """Ключ повтора: без регистра, знаков и «ё»: «Работает, устаёт.» и «работает устает» — одна заметка."""
+    return _SAME_STRIP.sub("", text.lower().replace("ё", "е"))
 
 
 def note_json(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -147,11 +156,11 @@ class NotesService:
 
     # ─── чтение ───────────────────────────────────────────────────────────────
 
-    async def list(self, user_id: str, since: str | None = None, kinds: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+    async def list(self, user_id: str) -> list[dict[str, Any]]:
         db = self._database()
         if db is None:
             return []
-        rows = await self._call(db.list_notes, user_id, since, kinds)
+        rows = await self._call(db.list_notes, user_id)
         return [note_json(row) for row in rows]
 
     # ─── запись ───────────────────────────────────────────────────────────────
@@ -180,9 +189,10 @@ class NotesService:
                 date.fromisoformat(event_date)
             except ValueError as error:
                 raise MemoryValidation("eventDate должна быть датой YYYY-MM-DD") from error
-        existing = await self._call(db.list_notes, user_id, None, None)
+        existing = await self._call(db.list_notes, user_id)
+        wanted = _same_key(cleaned)
         for row in existing:  # та же заметка уже есть: не плодим повторы (извлекатель видит ту же реплику дважды)
-            if row[2].strip().lower() == cleaned.lower():
+            if _same_key(row[2]) == wanted:
                 return note_json(row)
         if len(existing) >= self._max:
             raise MemoryFull()
@@ -199,7 +209,7 @@ class NotesService:
     async def patch(self, user_id: str, note_id: str, text: str) -> dict[str, Any]:
         """Правка текста: те же проверки, что у новой заметки. Чужая или несуществующая — `NOTE_NOT_FOUND`."""
         db = self._db()
-        rows = await self._call(db.list_notes, user_id, None, None)
+        rows = await self._call(db.list_notes, user_id)
         current = next((row for row in rows if row[0] == note_id), None)
         if current is None:
             raise NoteNotFound()

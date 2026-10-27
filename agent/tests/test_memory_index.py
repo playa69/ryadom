@@ -238,3 +238,34 @@ async def test_clearing_all_notes_and_editing_one_suppress_their_sources_too() -
     assert db.suppressed_hashes(user) == {fingerprint("У меня есть кот Барсик"), fingerprint("Работаю в продажах")}
     db.erase_user(user)
     assert db.suppressed_hashes(user) == set()  # отпечатки уходят вместе с аккаунтом
+
+
+def test_document_leaves_out_what_notes_never_keep() -> None:
+    """Харнесс памяти нашёл: диагноз, лекарства и «лучше бы меня не было» шли в индекс дословно, хотя заметкой стать не могли."""
+    from app.memory.indexer import build_document
+
+    messages = [
+        ("user", "Мне поставили диагноз депрессия, пью антидепрессанты по утрам."),
+        ("user", "Иногда думаю, что лучше бы меня не было."),
+        ("user", "Номер карты 4276 1234 5678 9012."),
+        ("user", "Работаю дизайнером, это нравится."),
+        ("user", "Люблю гулять у воды по вечерам."),
+    ]
+    document = build_document("2026-10-20T10:00:00Z", messages) or ""
+    assert "дизайнером" in document and "гулять" in document
+    assert not any(word in document for word in ("диагноз", "антидепрессант", "не было", "карта", "4276"))
+
+
+def test_document_leaves_out_requests_to_forget_or_correct() -> None:
+    """Харнесс памяти нашёл: «Забудь, что я говорил про отца» попадало в индекс и возвращало тему, которую просили убрать."""
+    from app.memory.indexer import build_document
+
+    messages = [
+        ("user", "Хочу поговорить про отпуск, давно не отдыхал."),
+        ("user", "Поправь, пожалуйста: у меня не кот, а кошка Муська."),
+        ("user", "Забудь, что я говорил про отца."),
+        ("user", "Люблю гулять у воды по вечерам."),
+    ]
+    document = build_document("2026-10-20T10:00:00Z", messages) or ""
+    assert "отпуск" in document and "гулять" in document
+    assert "отца" not in document and "Поправь" not in document

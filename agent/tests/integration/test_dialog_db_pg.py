@@ -149,8 +149,6 @@ def test_notes_crud_search_index_and_cascade_of_erase(db: PostgresDialogDatabase
         db.add_note(item)
     assert db.count_notes("u1") == 2
     assert [row[2] for row in db.list_notes("u1")] == ["Последние недели плохо спит", "Работает в продажах"]
-    assert [row[1] for row in db.list_notes("u1", kinds=("situation",))] == ["situation"]
-    assert [row[1] for row in db.list_notes("u1", since="2026-10-25T00:00:00+00:00")] == ["wellbeing"]
 
     assert db.update_note("u1", first[0], "Работает в продажах уже год", "2026-10-26T10:00:00+00:00")
     assert not db.update_note("u2", first[0], "чужая", "2026-10-26T10:00:00+00:00")  # чужая заметка не правится

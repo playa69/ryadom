@@ -193,19 +193,12 @@ async def delete_all_notes(user_id: str, memory: Memory) -> Response:
 
 
 @router.get("/notes")
-async def list_notes(
-    user_id: str,
-    store: Store,
-    memory: Memory,
-    since: Annotated[str | None, Query(max_length=40)] = None,
-    kinds: Annotated[str | None, Query(max_length=200)] = None,
-) -> dict[str, Any]:
-    """Заметки за период (для «Событий недели» дневника): `since` — ISO-время, `kinds` — виды через запятую."""
+async def list_notes(user_id: str, store: Store, memory: Memory) -> dict[str, Any]:
+    """Живые заметки человека, новые сверху."""
     user = _user(user_id)
     await store.ensure_user(user)
-    wanted = tuple(item for item in (kinds or "").split(",") if item) or None
     try:
-        return {"notes": await _notes(memory).list(user, since, wanted)}
+        return {"notes": await _notes(memory).list(user)}
     except MemoryServiceError as error:
         raise _error(error) from error
 

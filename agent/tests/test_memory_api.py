@@ -101,17 +101,6 @@ def test_delete_note_and_delete_all_keep_settings(client: TestClient) -> None:
     assert memory["enabled"] is True and memory["consentVersion"] == CONSENT  # настройки и согласие прежние
 
 
-def test_notes_filter_by_kinds_and_since(client: TestClient) -> None:
-    user = uid()
-    enable(client, user)
-    add(client, user, "Работает в продажах", "situation")
-    add(client, user, "Есть сестра Маша", "person")
-    kinds = client.get(f"{base(user)}/notes", params={"kinds": "person"}, headers=AUTH).json()["notes"]
-    assert [n["kind"] for n in kinds] == ["person"]
-    future = client.get(f"{base(user)}/notes", params={"since": "2999-01-01T00:00:00Z"}, headers=AUTH).json()["notes"]
-    assert future == []
-
-
 def test_limit_of_notes(client: TestClient) -> None:
     """2.6: на лимите новая заметка — `MEMORY_FULL`; существующие правятся и удаляются."""
     user = uid()

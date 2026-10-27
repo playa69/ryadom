@@ -47,6 +47,7 @@ _NEVER: tuple[tuple[str, re.Pattern[str]], ...] = (
         _rx(
             r"суицид", r"самоубий", r"покончить с собой", r"не хочет жить", r"не хочу жить", r"хочет умереть", r"хочу умереть",
             r"самоповрежд", r"режет себя", r"резал[аи]? себя", r"навредить себе", r"мысли о смерти", r"убить себя",
+            r"лучше бы (?:меня|мне) не было", r"лучше бы я не (?:родил|жил)", r"хочу исчезнуть", r"хочется исчезнуть", r"не хочу (?:больше )?быть",
         ),
     ),
     ("document", _rx(r"паспорт", r"снилс", r"\bинн\b", r"водительск\w+ удостоверен", r"полис")),
@@ -83,6 +84,19 @@ def check_note(text: str, kind: str, sensitive_enabled: bool) -> Verdict:
     if kind in SENSITIVE_KINDS and not sensitive_enabled:
         return Verdict(False, "sensitive_off")
     return Verdict(True)
+
+
+# Из этих причин состоит и список «в индекс прошлых разговоров не попадает» (`design.md` D4): диагнозы и лекарства, самоповреждение,
+# документы и платёжное. Ярлыки и инструкции агенту — про заметки, а не про дословные слова человека.
+_NEVER_IN_INDEX = frozenset({"diagnosis", "medication", "self_harm", "document", "payment"})
+
+
+def forbidden_in_index(text: str) -> str | None:
+    """Причина, по которой реплику нельзя класть в индекс прошлых разговоров (то же «никогда», что у заметок), или None."""
+    for reason, pattern in _NEVER:
+        if reason in _NEVER_IN_INDEX and pattern.search(text):
+            return reason
+    return None
 
 
 def is_sensitive(kind: str) -> bool:

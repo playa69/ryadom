@@ -15,6 +15,8 @@ from typing import Any
 
 from app.clients.cognee import CogneeClient
 from app.core.metrics import MEMORY_OUTBOX_PENDING
+from app.memory.extractor import is_explicit_request
+from app.memory.guard import forbidden_in_index
 from app.memory.masking import mask
 from app.memory.suppress import fingerprint
 from app.services.dialog_db import DialogDatabase
@@ -37,13 +39,17 @@ def document_name(dialog_id: str) -> str:
 
 
 def build_document(started_at: str, messages: list[tuple[str, str]], suppressed: set[str] | None = None) -> str | None:
-    """Документ разговора для индекса: реплики человека с маскированием, без кризисных реплик и без подавленных (человек убрал
+    """Документ разговора для индекса: реплики человека с маскированием, без кризисных реплик, без диагнозов, лекарств, самоповреждения,
+    документов и платёжного (то же «никогда», что у заметок), без просьб «забудь», «поправь», «убери» (в них названа тема, которую
+    человек просит убрать) и без подавленных (человек убрал
     заметку, выросшую из реплики, D15). Мало осталось — документа нет."""
     lines = []
     for role, text in messages:
-        if role != "user" or not text.strip() or is_crisis(text):
+        if role != "user" or not text.strip() or is_crisis(text) or forbidden_in_index(text) or is_explicit_request([text]):
             continue
         masked = mask(text.strip())
+        if "[карта]" in masked or "[документ]" in masked:
+            continue  # платёжное и документы не кладём в индекс даже замаскированными
         if suppressed and fingerprint(masked) in suppressed:
             continue
         lines.append(masked)

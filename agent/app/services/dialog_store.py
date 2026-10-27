@@ -476,7 +476,7 @@ class DialogStore:
 
     async def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         """Удалить один диалог целиком: из памяти процесса и с диска (сообщения, идентификаторы клиента, `secure_delete`,
-        усечение WAL). Маршрута в API нет: так воркер памяти удаляет разговоры «Без памяти» (MEM-9, MEM-13.4).
+        усечение WAL). Вызывают маршрут `DELETE /v1/users/{id}/dialogs/{dialogId}` и стирание по сроку; перед удалением вызывается `memory.dialog_deleting` (документ в Cognee, отпечатки).
 
         `forget_derived` — убрать и факты памяти, у которых этот диалог единственный источник (см. `DialogDatabase.delete_dialog`).
         Исключение — диск не ответил; из памяти процесса диалог к этому моменту уже убран.

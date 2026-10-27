@@ -66,6 +66,7 @@ class _Pending:
         self.texts: list[str] = []
         self.base: int | None = None  # None — курсор ещё не прочитан из базы
         self.last_run = time.monotonic()  # отсчёт «раз в 20 секунд» идёт от первой реплики, а не от начала времён
+        self.final = False  # разговор завершён, пока шёл проход: после него нужен ещё один, финальный
 
 
 class CogneeMemoryBackend:
@@ -302,6 +303,11 @@ class CogneeMemoryBackend:
             logger.exception("memory extraction task failed dialog=%s", dialog.id)
         finally:
             self._extracting.discard(dialog.id)
+            pending = self._pending.get(dialog.id)
+            if pending is not None and pending.final:
+                pending.final = False
+                self._extracting.add(dialog.id)
+                self._spawn(self._final_extract(dialog))  # финальный проход после того, что шёл при завершении разговора
 
     async def instruct(self, user_id: str, request: str) -> Outcome:
         """«Скажи, что поправить или убрать»: просьба человека выполняется тем же извлекателем."""
@@ -382,9 +388,12 @@ class CogneeMemoryBackend:
     def dialog_ended(self, dialog: Dialog) -> None:
         """Диалог завершён: финальный проход извлечения и транскрипт в датасет человека (в фоне)."""
         if self._notes_active(dialog):
-            self._pending.setdefault(dialog.id, _Pending(dialog.user_id))  # после перезапуска состояния нет: добор из диалога
-            self._extracting.add(dialog.id)
-            self._spawn(self._final_extract(dialog))
+            pending = self._pending.setdefault(dialog.id, _Pending(dialog.user_id))  # после перезапуска состояния нет: добор из диалога
+            if dialog.id in self._extracting:
+                pending.final = True  # проход уже идёт: второй параллельно взял бы те же реплики и продублировал заметки
+            else:
+                self._extracting.add(dialog.id)
+                self._spawn(self._final_extract(dialog))
         if not self._notes_active(dialog):
             self._pending.pop(dialog.id, None)
         if self._client is None or dialog.memory_mode != "on" or not self._effective_enabled(dialog.user_id):

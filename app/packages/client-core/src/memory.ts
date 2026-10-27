@@ -1020,10 +1020,17 @@ export const MEMORY_INVITE = {
   decline: 'Не сейчас',
 } as const
 
-/** Whether to show the sheet: the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
+/**
+ * The sheet is off until the owner decides about memory by default (task 0.1, `design.md` D9): until then
+ * a person turns memory on in "Профиль → Память". Flip to `true` after the decision.
+ */
+export const MEMORY_INVITE_ENABLED = false
+
+/** Whether to show the sheet: it is enabled, the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
 export function shouldInviteToMemory(
   memory: Pick<MemoryApiResponse, 'available' | 'enabled' | 'consentVersion'> | null,
   dismissed: boolean,
+  enabled: boolean = MEMORY_INVITE_ENABLED,
 ): boolean {
-  return memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
+  return enabled && memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
 }

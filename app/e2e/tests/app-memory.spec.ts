@@ -168,7 +168,8 @@ test('память в приложении: согласие → разгово�
 
 // ── the invitation to memory on home (REQ-MEM-*, task 6.7) ─────────────────────────────────────────
 
-test('приглашение к памяти: аноним видит лист; «Не сейчас» не возвращается; «Включить» → согласие → память включена', async ({
+// The sheet is off until the owner decides about memory by default (task 0.1): MEMORY_INVITE_ENABLED in client-core.
+test.fixme('приглашение к памяти: аноним видит лист; «Не сейчас» не возвращается; «Включить» → согласие → память включена', async ({
   page,
   shot,
 }) => {

@@ -161,3 +161,38 @@ async def test_unprocessed_messages_survive_an_agent_restart() -> None:
     assert "Я работаю в продажах" in sent and "и очень устаю" in sent and "вот ещё" in sent
     assert [row[2] for row in db.list_notes(user)] == ["Работает в продажах"]
     assert db.get_notes_cursor(current.id) == 3  # разобрано всё
+
+
+async def test_end_during_a_running_pass_does_not_extract_the_same_replies_twice() -> None:
+    """Харнесс памяти нашёл: завершение при идущем проходе запускало второй проход по тем же репликам, заметки дублировались."""
+    import asyncio
+
+    gate = asyncio.Event()
+
+    class SlowModel(FakeModel):
+        async def complete(self, messages: list[dict[str, str]]) -> str:
+            await gate.wait()
+            return await super().complete(messages)
+
+    service, _, db = build(ADD_WORK)
+    model = SlowModel(ADD_WORK)
+    service.set_extractor(NotesExtractor(model, service.notes))
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    current = dialog(user, 0)
+    service.user_message(current, "Я работаю в продажах")
+    service.user_message(current, "и очень устаю")  # второй реплики хватает для прохода: он идёт и ждёт модель
+    await asyncio.sleep(0)
+    service.dialog_ended(current)  # завершили, пока проход идёт
+    gate.set()
+    await service.drain()
+    assert len(model.seen) == 1  # те же реплики модели второй раз не отдавались
+    assert [row[2] for row in db.list_notes(user)] == ["Работает в продажах"]
+
+
+async def test_a_note_differing_only_in_punctuation_and_yo_is_the_same_note() -> None:
+    service, _, db = build()
+    user = uid()
+    await service.notes.add(user, "situation", "Работает менеджером, последнее время очень устаёт.")
+    again = await service.notes.add(user, "situation", "Работает менеджером последнее время очень устает")
+    assert len(db.list_notes(user)) == 1 and again["text"].startswith("Работает")

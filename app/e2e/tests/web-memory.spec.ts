@@ -317,7 +317,8 @@ test('память в вебе: разговор «Без памяти» нич�
 
 const invite = (page: Page) => page.getByTestId('memory-invite')
 
-test('приглашение «Рядом теперь запоминает важное»: «Не сейчас» закрывает насовсем, «Включить» ведёт через согласие', async ({
+// The sheet is off until the owner decides about memory by default (task 0.1): MEMORY_INVITE_ENABLED in client-core.
+test.fixme('приглашение «Рядом теперь запоминает важное»: «Не сейчас» закрывает насовсем, «Включить» ведёт через согласие', async ({
   browser,
   page,
   shot,

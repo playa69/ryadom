@@ -308,14 +308,7 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
     })
   }
 
-  if (resource === 'notes' && !id && method === 'GET') {
-    const kinds = (url.searchParams.get('kinds') ?? '').split(',').filter(Boolean)
-    const since = url.searchParams.get('since')
-    let notes = liveNotes(memory)
-    if (kinds.length > 0) notes = notes.filter((note) => kinds.includes(note.kind))
-    if (since) notes = notes.filter((note) => note.createdAt >= since)
-    return json(res, 200, { notes })
-  }
+  if (resource === 'notes' && !id && method === 'GET') return json(res, 200, { notes: liveNotes(memory) })
 
   if (resource === 'notes' && id === 'instruction' && method === 'POST') {
     const body = await readBody(req)
