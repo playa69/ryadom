@@ -4,7 +4,7 @@
 # Образ app/api (app/services/api/Dockerfile; build-args VITE_PROD_* и OTA_BUILD_NUMBER —
 # см. k8s/README.md, «Сборка и push образов»). PWA в образ не входит: это отдельный
 # сервис app-pwa. Перед первым rollout должен завершиться Job миграций
-# (db/02-job-migrate.yaml).
+# (db/05-job-migrate-0005.yaml).
 #
 # 1 реплика: ресурсов в кластере впритык. Лимиты запросов считаются в Redis
 # (REDIS_ENABLED=true, общие для реплик), поэтому replicas можно поднимать

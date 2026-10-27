@@ -43,7 +43,7 @@ k8s/
 ├── agent/                          ← упрощённый агент (ns agent): 00-config, 01-service, 02-deployment, README
 ├── app/                            ← сервисы из app/ репозитория (ns prod): см. раздел ниже
 │   ├── 00-app-config.yaml          ← ConfigMap app-config (всё статическое и несекретное)
-│   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 02-job-migrate (drizzle)
+│   ├── db/                         ← 01-job-create-db (роль+БД app, citext), 05-job-migrate-0005 (drizzle)
 │   └── api/ admin/ web/ landing/ pwa/   ← 01-service, 02-httproute, 03-deployment (admin/ ещё 00-config: ADMIN_EMAILS)
 ├── tls/                            ← РЕЗЕРВ: lego DNS-01 runbook (не используется,
 │                                     рабочая схема — cert-manager HTTP-01)
@@ -738,8 +738,8 @@ kubectl -n ryadom-db wait --for=condition=complete job/create-app-db --timeout=1
 # 3. Сеть, конфиг, миграции (DNS и сертификат не нужны: всё на корневом домене)
 kubectl apply -f k8s/namespaces/manifests/07-network-policy-prod-apps.yaml
 kubectl apply -f k8s/app/00-app-config.yaml -f k8s/app/admin/00-config.yaml
-kubectl apply -f k8s/app/db/02-job-migrate.yaml
-kubectl -n prod wait --for=condition=complete job/app-migrate-0001 --timeout=180s
+kubectl apply -f k8s/app/db/05-job-migrate-0005.yaml     # на пустой БД применяет все миграции с 0000
+kubectl -n prod wait --for=condition=complete job/app-migrate-0005 --timeout=180s
 
 # 5. Сервисы — ПО ОДНОМУ, следя за ресурсами (kubectl top nodes / дашборд)
 for s in api landing web admin pwa; do
@@ -769,7 +769,7 @@ kubectl -n prod get httproute                                        # Accepted/
 
 Собрать и отправить нужный образ (раздел ниже) → поправить тег в
 `k8s/app/<svc>/03-deployment.yaml` → `kubectl apply` → `rollout status`. Для
-миграций — Job `app-migrate-0002` с новым образом `app/migrate:<тег>`.
+миграций — новый Job `app-migrate-NNNN` (копия последнего файла в `k8s/app/db/`) с новым образом `app/migrate:<тег>`.
 
 **Перенос PWA на уже работающий стенд** (раньше его раздавал образ api, но наружу он не
 публиковался; теперь это `app-pwa`, а ключ `PUBLIC_PWA_URL` в `app-config` получил новый
@@ -789,7 +789,7 @@ kubectl -n prod get httproute                                        # Accepted/
 
 Образы — `cr.yandex/crpsqeamqpuvrkm5tpr9/app/<name>:<тег>`, платформа `linux/amd64`
 (ноды кластера), контекст сборки у всех — каталог `app/`. Тег в манифестах
-(`k8s/app/*/03-deployment.yaml`, `db/02-job-migrate.yaml`) должен совпадать с
+(`k8s/app/*/03-deployment.yaml`, `db/05-job-migrate-0005.yaml`) должен совпадать с
 отправленным; `latest` не используем. Префиксы публикации — build-arg'и, потому что
 Next и Vite фиксируют их при сборке (см. «Пути и префиксы»):
 
