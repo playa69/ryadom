@@ -37,8 +37,8 @@ services:
       - '${DEV_MAIL_SMTP_PORT:-1026}:1025' # SMTP
       - '${DEV_MAIL_UI_PORT:-8026}:8025' # web UI: http://localhost:8026
 
-  # Shared rate limits. With REDIS_ENABLED=true and REDIS_URL=redis://localhost:56379 in
-  # services/api/.env.local every API process counts in here; without it each one counts for itself.
+  # Shared rate limits. With REDIS_URL=redis://localhost:56379 in services/api/.env.local every API
+  # process counts in here; without an address each one counts for itself.
   redis:
     image: redis:7-alpine
     restart: unless-stopped

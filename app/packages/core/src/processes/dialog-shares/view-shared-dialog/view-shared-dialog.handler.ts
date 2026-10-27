@@ -7,7 +7,7 @@ import {
 } from '../../../managers/dialog-shares-manager'
 import { ensureActiveUser } from '../../dialogs/shared/ensure-active-user'
 import { toDialogDTO } from '../../dialogs/shared/dialog.dto'
-import { isShareDisabled, shareTokenHash } from '../shared/share-token'
+import { shareTokenHash } from '../shared/share-token'
 import { ViewSharedDialogOperation } from './view-shared-dialog.operation'
 import { ViewSharedDialogOperationErrorCode, type ViewSharedDialogResult } from './view-shared-dialog.types'
 
@@ -25,7 +25,6 @@ export class ViewSharedDialogOperationHandler implements RequestHandler<
   ViewSharedDialogResult
 > {
   async handle(operation: ViewSharedDialogOperation): Promise<ViewSharedDialogResult> {
-    if (isShareDisabled()) return NOT_FOUND
     const found = await dialogSharesManager.execute(
       new FindDialogShareByTokenQuery({ tokenHash: shareTokenHash(operation.token), now: new Date() }),
     )

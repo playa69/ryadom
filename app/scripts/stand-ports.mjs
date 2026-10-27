@@ -271,7 +271,6 @@ export function standEnv(stand) {
     DATABASE_URL: stand.databases.dev,
     E2E_DATABASE_URL: stand.databases.e2e,
     TEST_DB_ADMIN_URL: stand.databases.admin,
-    REDIS_URL: `redis://127.0.0.1:${dev.redis}`,
     AGENT_API_URL: u.dev.mock,
     SMTP_HOST: '127.0.0.1',
     SMTP_PORT: String(dev.mailSmtp),

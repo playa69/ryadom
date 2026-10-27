@@ -218,7 +218,6 @@ describe('адреса Sentinel', () => {
 describe('настройка из env', () => {
   const base = {
     ...process.env,
-    REDIS_ENABLED: undefined,
     REDIS_URL: undefined,
     REDIS_SENTINEL_HOST: undefined,
     REDIS_MASTER_NAME: undefined,
@@ -231,36 +230,21 @@ describe('настройка из env', () => {
     expect(parseEnv({ ...base, TRUSTED_PROXY_HOPS: '' }).TRUSTED_PROXY_HOPS).toBe(1)
   })
 
-  it('по умолчанию Redis выключен, клиент не создаётся', async () => {
+  it('без адреса Redis клиент не создаётся, лимиты считаются в памяти', async () => {
     const env = parseEnv(base)
-    expect(env.REDIS_ENABLED).toBeUndefined()
+    expect(env.REDIS_URL).toBeUndefined()
+    expect(env.REDIS_SENTINEL_HOST).toBeUndefined()
     expect(await createRedisClient(env, createLogger('silent'))).toBeNull()
   })
 
-  it('включённому Redis нужен адрес: либо URL, либо Sentinel с именем мастера', () => {
-    expect(() => parseEnv({ ...base, REDIS_ENABLED: 'true' })).toThrow(
-      /REDIS_SENTINEL_HOST[\s\S]*REDIS_MASTER_NAME/,
-    )
-    expect(() => parseEnv({ ...base, REDIS_ENABLED: 'true', REDIS_SENTINEL_HOST: 'redis' })).toThrow(
-      /REDIS_MASTER_NAME/,
-    )
-    expect(parseEnv({ ...base, REDIS_ENABLED: 'true', REDIS_URL: 'redis://localhost:56379' }).REDIS_URL).toBe(
-      'redis://localhost:56379',
-    )
-    const sentinel = parseEnv({
-      ...base,
-      REDIS_ENABLED: 'true',
-      REDIS_SENTINEL_HOST: 'redis',
-      REDIS_MASTER_NAME: 'mymaster',
-    })
+  it('Redis задаётся адресом: либо URL, либо Sentinel с именем мастера', () => {
+    expect(() => parseEnv({ ...base, REDIS_SENTINEL_HOST: 'redis' })).toThrow(/REDIS_MASTER_NAME/)
+    expect(parseEnv({ ...base, REDIS_URL: 'redis://localhost:56379' }).REDIS_URL).toBe('redis://localhost:56379')
+    const sentinel = parseEnv({ ...base, REDIS_SENTINEL_HOST: 'redis', REDIS_MASTER_NAME: 'mymaster' })
     expect(sentinel.REDIS_SENTINEL_PORT).toBe(26379)
   })
 
   it('адрес не redis:// отвергается', () => {
     expect(() => parseEnv({ ...base, REDIS_URL: 'http://localhost:6379' })).toThrow(/REDIS_URL/)
-  })
-
-  it('выключенному Redis адрес не нужен', () => {
-    expect(() => parseEnv({ ...base, REDIS_ENABLED: 'false' })).not.toThrow()
   })
 })

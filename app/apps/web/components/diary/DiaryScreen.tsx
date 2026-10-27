@@ -13,7 +13,6 @@ import JournalScreen from '../JournalScreen'
 import DiaryHome from './DiaryHome'
 import TestsCatalog from '../self-check/TestsCatalog'
 import { SelfCheckProvider } from '../self-check/useSelfCheck'
-import { SELF_CHECK_ENABLED } from '@/lib/self-check'
 
 /**
  * The «Дневник» section: the segments «Дневник · Журнал» under the header and the content
@@ -21,8 +20,8 @@ import { SELF_CHECK_ENABLED } from '@/lib/self-check'
  */
 export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
   const router = useRouter()
-  // The address of a segment that is not switched on leads back to the diary, as if it did not exist.
-  const missing = segment === 'tests' && !SELF_CHECK_ENABLED
+  // The address of a segment that has nothing to show (no test is ready) leads back to the diary, as if it did not exist.
+  const missing = !DIARY_SEGMENTS.some((s) => s.key === segment)
   useEffect(() => {
     if (missing) {
       router.replace('/diary')
@@ -67,7 +66,7 @@ export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
         </Suspense>
       )}
       {segment === 'journal' && <JournalScreen />}
-      {segment === 'tests' && SELF_CHECK_ENABLED && <TestsCatalog />}
+      {segment === 'tests' && <TestsCatalog />}
     </Page>
     </SelfCheckProvider>
   )

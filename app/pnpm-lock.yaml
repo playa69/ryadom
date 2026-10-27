@@ -482,6 +482,9 @@ importers:
       '@ryadom/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
+      '@ryadom/self-check':
+        specifier: workspace:*
+        version: link:../packages/self-check
       '@types/node':
         specifier: ^24.6.0
         version: 24.19.0
