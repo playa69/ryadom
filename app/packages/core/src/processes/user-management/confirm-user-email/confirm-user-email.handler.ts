@@ -27,13 +27,19 @@ export class ConfirmUserEmailOperationHandler implements RequestHandler<ConfirmU
     }
     const user = userResult.user
     if (user.email === null) return { success: false, error: ConfirmUserEmailOperationErrorCode.USER_HAS_NO_EMAIL }
+    const { email } = user
 
     const failure = await inTransaction(async (): Promise<ConfirmUserEmailOperationErrorCode | null> => {
-      const marked = await usersManager.execute(new MarkUserEmailConfirmedCommand({ userId: user.id }))
+      const marked = await usersManager.execute(
+        new MarkUserEmailConfirmedCommand({ userId: user.id, email }),
+      )
       if (!marked.success) {
         switch (marked.error) {
           case MarkUserEmailConfirmedCommandErrorCode.USER_NOT_FOUND:
             return ConfirmUserEmailOperationErrorCode.USER_NOT_FOUND
+          // The address was taken off the account after the admin's page loaded.
+          case MarkUserEmailConfirmedCommandErrorCode.EMAIL_MISMATCH:
+            return ConfirmUserEmailOperationErrorCode.USER_HAS_NO_EMAIL
           default:
             assertNever(marked.error)
         }
