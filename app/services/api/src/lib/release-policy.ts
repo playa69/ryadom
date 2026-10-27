@@ -168,7 +168,8 @@ export function resolveAppStatus(
   let jsUpdate = UpdateAvailability.NotAvailable
   if (client.jsVersion !== null && bundleReachable && latestJs !== null) {
     const cmp = compareVersions(client.jsVersion, latestJs)
-    const belowMin = policy.js.minVersion !== null && compareVersions(client.jsVersion, policy.js.minVersion) < 0
+    const belowMin =
+      policy.js.minVersion !== null && compareVersions(client.jsVersion, policy.js.minVersion) < 0
     // Only a client behind the bundle can be pushed to it: a minimum above the bundle cannot be met,
     // so the client that already runs the bundle is left alone.
     if (cmp < 0) jsUpdate = belowMin ? UpdateAvailability.Required : UpdateAvailability.Available

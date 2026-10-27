@@ -39,12 +39,16 @@
   `local-dev`, `e2e`).
 - Визуальная правка — скриншоты шагов пользовательского сценария на 390 и 1280, без видео: `pnpm evidence <TASK>`,
   по снимку на каждый THEN сценария OpenSpec (скилл `screenshots`).
+- Тронул контракт API (`app/packages/contracts`), маршруты `app/services/api`, `app/apps/mobile` или нативные файлы —
+  до сдачи `node .agents/skills/release-check/scripts/release-check.mjs`: нарушение (код выхода 1) — сдавать нельзя,
+  находки `REVIEW` и `BREAKING` разбери в отчёте (скилл `release-check`).
 - В отчёте прямо перечисляй, что не проверено.
 
 ## Правила кода по папкам
 
-Как устроен код в папке (конфигурация, логи, заголовки, язык комментариев) — во вложенных `AGENTS.md`:
-`agent/AGENTS.md`, `app/AGENTS.md`, `app/packages/core/AGENTS.md`. Рядом с каждым лежит `CLAUDE.md` с одной строкой
+Как устроен код в папке (конфигурация, логи, заголовки, язык комментариев, версии клиента) — во вложенных `AGENTS.md`:
+`agent/AGENTS.md`, `app/AGENTS.md`, `app/packages/core/AGENTS.md`. Рядом с каждым лежит
+`CLAUDE.md` с одной строкой
 `@AGENTS.md`: при корневом `CLAUDE.md` Claude Code вложенные `AGENTS.md` сам не читает. Правило, которое действует
 всегда в папке, — туда; скилл — пошаговая процедура, которую берут по случаю (запустить, проверить, выкатить).
 
@@ -59,7 +63,7 @@
   `.agents/skills/` по скиллу на каждую операцию.
 - Что есть:
   - разработка: `local-dev`, `e2e`, `screenshots`, `commit`, `openspec`;
-  - прод: `deploy`, `logs`, `db`, `analytics`, `backup`;
+  - прод: `release-check`, `deploy`, `logs`, `db`, `analytics`, `backup`;
   - командная память: `ryadom-cognee-mcp`.
 
 Агенты Multica получают ещё правила самой платформы (задачи, статусы, отчёт в задаче) и инструкции своей машины; к

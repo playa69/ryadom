@@ -43,9 +43,20 @@
 # Почта идёт через Unisender Go (EMAIL_TRANSPORT=smtp): egress на :465 открыт
 # политикой prod-allow-egress-smtp-postbox, пароль — Secret app-smtp.
 #
+# Политика версий мобильного приложения (app-updates; как пользоваться — скилл deploy, «Обновления
+# мобильного приложения»). Пока ключей нет, действуют умолчания: ворот и баннера нет, пакет JS каждого
+# выката скачивается тихо. Ключи читаются при старте api, после правки — rollout restart:
+#   MOBILE_ANDROID_LATEST_VERSION_CODE / MOBILE_IOS_LATEST_VERSION_CODE — мягко: сборки ниже номера видят
+#     баннер «Вышла новая версия»;
+#   MOBILE_ANDROID_MIN_VERSION_CODE / MOBILE_IOS_MIN_VERSION_CODE — жёстко: сборки ниже номера получают 426
+#     и экран «Пора обновить «Рядом»»;
+#   MOBILE_ANDROID_STORE_URL, MOBILE_IOS_STORE_URL, MOBILE_ANDROID_DOWNLOAD_URL — куда ведут эти экраны;
+#   MOBILE_JS_MIN_VERSION — жёстко для JS: клиенты с JS ниже версии (вида 0.1.0.N, jsVersion из
+#     /api/app-status) применяют пакет образа сразу.
+#
 # Ключи, значение которых совпадает с умолчанием кода, ниже не повторяются: LOG_LEVEL (info),
 # AGENT_TIMEOUT_MS (10000), DIALOG_OPUS_COMPLEXITY (5), DIALOG_OPUS_BITRATE (24000),
-# REDIS_SENTINEL_PORT (26379), SMTP_SECURE (на порту 465 TLS включается сам).
+# REDIS_SENTINEL_PORT (26379), SMTP_SECURE (на порту 465 TLS включается сам), политика версий (выше).
 # =============================================================================
 
 ---
