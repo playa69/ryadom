@@ -34,6 +34,11 @@ async function main(): Promise<void> {
   } else {
     log(`applied ${result.applied.length} of ${result.total}: ${result.applied.join(', ')} (${took} ms)`)
   }
+  log(
+    result.jobsSchema.changed
+      ? `job queue schema installed or upgraded, version ${result.jobsSchema.version}`
+      : `job queue schema is up to date, version ${result.jobsSchema.version}`,
+  )
 }
 
 main().then(
