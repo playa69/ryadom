@@ -21,7 +21,6 @@ prod.
 k8s/
 ├── README.md                       ← этот файл
 ├── CLOUD-RESOURCES.md              ← инвентарь YC: S3, DNS, registry, SA, ключи
-├── prepare-secrets.sh              ← генератор base64 для секретов
 ├── twc-sber500-config.yaml         ← kubeconfig (в .gitignore!)
 ├── namespaces/manifests/
 │   ├── 00-namespaces.yaml          ← prod (+istio-injection), infra, ryadom-db, monitoring
@@ -35,7 +34,6 @@ k8s/
 │   ├── values-istiod.yaml          ← helm values control plane
 │   ├── values-ingressgateway.yaml  ← helm values gateway (DaemonSet + hostPort)
 │   └── manifests/
-│       ├── 00-example-gateway.yaml ← ШАБЛОН HTTPRoute (path-based)
 │       └── 01-gateway-api-gateway.yaml  ← Gateway ryadom-gateway (manual, GW API)
 ├── cert-manager/manifests/
 │   ├── 00-cluster-issuer.yaml      ← letsencrypt-prod, solver gatewayHTTPRoute
@@ -148,7 +146,7 @@ LoadBalancer в Timeweb managed k8s нет. Схема:
 Домен: **слышу-рядом.рф** (`xn----htbtgjker8b3a2c.xn--p1ai`), делегирован
 с reg.ru на Yandex Cloud DNS (зона `slyshu-ryadom`, см. CLOUD-RESOURCES.md).
 Только корневой домен, поддоменов нет, wildcard нет — маршрутизация
-path-based через HTTPRoute (шаблон `istio/manifests/00-example-gateway.yaml`).
+path-based через HTTPRoute (образец — `app/api/02-httproute.yaml`).
 Так же публикуются сервисы из `app/` (`/`, `/api`, `/app`, `/admin`) — см.
 раздел «Сервисы из app/» ниже. Новых DNS-записей, сертификатов и listener'ов
 для них не нужно.
@@ -177,8 +175,11 @@ TLS — cert-manager + Gateway API:
 
 ```bash
 export KUBECONFIG=~/PycharmProjects/ryadom/k8s/twc-sber500-config.yaml
-cd k8s && ./prepare-secrets.sh   # base64 для подстановки; справка — ~/.config/ryadom/k8s-secrets.env
 ```
+
+Секреты создаются напрямую командой `kubectl create secret generic ... --from-env-file=...`; значения хранятся
+локально у администратора, в git их нет. Шаблоны с плейсхолдерами лежат в `postgres/manifests/00-secrets.yaml`,
+`redis/manifests/00-secret.yaml`, `langfuse/manifests/00-secrets.yaml`.
 
 | Секрет | Namespace | Ключи |
 |---|---|---|
@@ -193,7 +194,7 @@ cd k8s && ./prepare-secrets.sh   # base64 для подстановки; спр�
 | `langfuse-redis-credentials` | infra | `REDIS_PASSWORD` (bundled Redis Langfuse) |
 | `grafana-admin-credentials` | monitoring | `admin-user`, `admin-password` |
 
-S3-ключи и пароли — в `~/.config/ryadom/` (см. CLOUD-RESOURCES.md).
+S3-ключи и пароли хранятся локально у администратора (какие ключи и у каких SA — в CLOUD-RESOURCES.md).
 
 ### 1. Namespaces → NetworkPolicy → Istio → TLS → CNPG → PostgreSQL → Redis → Langfuse
 
@@ -233,8 +234,8 @@ helm install langfuse langfuse/langfuse -n infra \
 
 ```bash
 # ns monitoring уже создан на шаге 1 (namespaces/manifests/00)
-# Секрет grafana-admin-credentials — заранее (kubectl create, пароль из
-# ~/.config/ryadom/k8s-secrets.env, ключ GRAFANA_ADMIN_PASSWORD)
+# Секрет grafana-admin-credentials — заранее (kubectl create; пароль хранится
+# локально у администратора)
 kubectl apply -f monitoring/manifests/   # NetworkPolicy + дашборд (ConfigMap)
 
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -466,9 +467,8 @@ ingressgateway), `cnpg` (инстансы ryadom-db :9187). Grafana datasource L
 `agent/04-servicemonitor.yaml`: расход моделей, задержки голоса, база диалогов).
 
 Доступ к Grafana: `kubectl port-forward -n monitoring svc/prometheus-grafana
-3000:80` → http://localhost:3000, логин `admin`, пароль — ключ
-`GRAFANA_ADMIN_PASSWORD` в `~/.config/ryadom/k8s-secrets.env`
-(секрет `grafana-admin-credentials`). Prometheus UI: port-forward на
+3000:80` → http://localhost:3000, логин `admin`, пароль — в секрете
+`grafana-admin-credentials` (значение хранится локально у администратора). Prometheus UI: port-forward на
 svc/prometheus-kube-prometheus-prometheus 9090. Loki: svc/loki 3100.
 
 Дашборды — как код: JSON в `monitoring/dashboards/`, ConfigMap с label
@@ -592,7 +592,7 @@ ConfigMap'ах (в git).** Значения секретов хранятся л
 |---|---|---|
 | Статика, несекретное | ConfigMap `app-config` ([00-app-config.yaml](app/00-app-config.yaml)) | `DB_HOST/PORT/NAME/USER`, публичные URL, `TRUSTED_PROXY_HOPS`, `REDIS_*` адреса, флаги |
 | Статика только админки | ConfigMap `app-admin-config` ([admin/00-config.yaml](app/admin/00-config.yaml)) | `ADMIN_EMAILS` (в API он попадать не должен) |
-| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`, `TELEGRAM_BOT_TOKEN` (токен бота Telegram Mini App, необязательный: без него вход через Telegram выключен, см. `app/RUNBOOK-telegram-miniapp.md`); `SMTP_PASSWORD` |
+| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`, `TELEGRAM_BOT_TOKEN` (токен бота Telegram Mini App, необязательный: без него вход через Telegram выключен); `SMTP_PASSWORD` |
 
 `DATABASE_URL` нигде не хранится: Deployment'ы собирают его из `DB_*`
 (ConfigMap) и `DB_PASSWORD` (Secret). `REDIS_PASSWORD` в `app-secrets` — копия
@@ -878,12 +878,12 @@ NVMe (PG 2×10, Redis 3×5, CH 10, Loki 5, Prom 5, Grafana 2, Langfuse-redis).
 
 - Публичная: `https://слышу-рядом.рф` → istio-gateway (нода .5) → HTTPRoute.
   Публикация сервиса = HTTPRoute с parentRef на listener `https`
-  (шаблон `istio/manifests/00-example-gateway.yaml`) + правило ingress в NP
+  (образец — `app/api/02-httproute.yaml`) + правило ingress в NP
   namespace.
 - Сервисы из `app/` — на корневом домене по путям: `/` landing, `/api` api, `/app`
   веб-клиент, `/pwa` PWA, `/admin` админка (HTTPRoute'ы на listener `https`);
   см. раздел «Сервисы из app/».
 - Админские UI (ClusterIP + port-forward): Grafana `:3000`
-  (`svc/prometheus-grafana`, пароль в `~/.config/ryadom/k8s-secrets.env`),
+  (`svc/prometheus-grafana`, пароль хранится у администратора),
   Langfuse `:3000` (`svc/langfuse-web`), Prometheus `:9090`
   (`svc/prometheus-kube-prometheus-prometheus`).

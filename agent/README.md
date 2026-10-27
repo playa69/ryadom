@@ -627,7 +627,7 @@ GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 3, 4;
 `dialogs`; в неё входят паузы и время, когда диалог был открыт без разговора.
 
 В кластере таблица живёт в PostgreSQL (база `agent` в CNPG ryadom-db); запрос — через psql из пода с образом postgres
-(например Job по образцу `k8s/agent/db/01-job-create-role.yaml`) или `kubectl exec` под admin-kubeconfig, только на чтение и
+(например одноразовый Job с образом postgres) или `kubectl exec` под admin-kubeconfig, только на чтение и
 только по расходу и времени, тексты разговоров без причины не читать:
 
 ```bash
