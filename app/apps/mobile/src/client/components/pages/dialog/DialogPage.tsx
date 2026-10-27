@@ -609,9 +609,13 @@ export default function DialogPage({
     ) {
       void watchMemoryCard(dialogId, user.id)
     }
-    const text = summary?.title
-      ? `Забираешь с собой: ${summary.title}`
-      : 'Разговор завершён. Я рядом, когда понадоблюсь.'
+    const text =
+      (summary?.title ? `Забираешь с собой: ${summary.title}` : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
+      (summary?.recapStatus === 'pending'
+        ? ' Итог разговора появится в журнале через минуту.'
+        : summary?.recapStatus === 'ready'
+          ? ' Итог разговора сохранён в журнале.'
+          : '')
     const keepsConversations = user?.email === null || user?.isEmailConfirmed === false
     if (!keepsConversations) {
       f7.dialog.alert(text, 'Спасибо, что поговорил(а)', () => f7router.back())
@@ -830,15 +834,16 @@ export default function DialogPage({
 
       <DialogEndSheet
         opened={endOpened}
+        dialogId={dialogId}
         onClose={() => setEndOpened(false)}
-        onSubmit={(takeaway, tension) => {
+        onSubmit={(takeaway, tension, recapSource) => {
           // Neither the takeaway nor the value on the scale is reported, only whether each was given.
           track(AnalyticsEvent.DialogEndSubmitted, {
             has_takeaway: takeaway !== null,
             gave_tension: tension !== null,
             skipped: takeaway === null && tension === null,
           })
-          socket.current?.end(takeaway, tension)
+          socket.current?.end(takeaway, tension, recapSource)
           // The summary arrives as an `ended` frame. If the agent stays silent or the socket is
           // already closed, we end it ourselves after two seconds: nobody should get stuck here.
           setTimeout(() => setSummary((current) => (current === undefined ? null : current)), 2000)

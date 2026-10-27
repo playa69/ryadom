@@ -238,11 +238,17 @@ export class DialogSocket {
     if (this.isConnected()) this.sendPending()
   }
 
-  end(takeaway: string | null, tensionAfter: number | null): void {
+  end(
+    takeaway: string | null,
+    tensionAfter: number | null,
+    /** `draft`: the takeaway (which is the recap) was pre-filled with «Предзаполнить». */
+    recapSource?: 'manual' | 'draft',
+  ): void {
     this.send({
       type: DialogClientFrame.End,
       ...(takeaway ? { takeaway } : {}),
       ...(tensionAfter !== null ? { tensionAfter } : {}),
+      ...(takeaway && recapSource === 'draft' ? { recapSource } : {}),
     })
   }
 

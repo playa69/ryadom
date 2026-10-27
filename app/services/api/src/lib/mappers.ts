@@ -1,7 +1,12 @@
 import type { SessionDTO } from '@ryadom/core/managers/refresh-tokens-manager'
 import type { UserDTO } from '@ryadom/core/processes/authentication'
 import type { ConsentStatusDTO } from '@ryadom/core/processes/consents'
-import type { DialogDTO, DialogListItemDTO, DialogSummaryDTO } from '@ryadom/core/processes/dialogs'
+import type {
+  DialogDTO,
+  DialogListItemDTO,
+  DialogRecapItemDTO,
+  DialogSummaryDTO,
+} from '@ryadom/core/processes/dialogs'
 import type {
   MemoryChangesDTO,
   MemoryDTO,
@@ -18,6 +23,7 @@ import {
   DialogMode,
   type DialogApiResponse,
   type DialogListItemApiResponse,
+  type DialogRecapItemApiResponse,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import {
@@ -58,6 +64,7 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     consentVersion: consent.offerVersion,
     voice: user.agentVoice,
     analyticsOptOut: user.analyticsOptOut,
+    timezone: user.timezone,
   }
 }
 
@@ -94,6 +101,20 @@ export function toDialogSummary(summary: DialogSummaryDTO | null): DialogSummary
     themes: summary.themes,
     tensionBefore: summary.tensionBefore,
     tensionAfter: summary.tensionAfter,
+    recap: summary.recap,
+    recapStatus: summary.recapStatus,
+    recapSource: summary.recapSource,
+    ...(summary.recapAvailable === null ? {} : { recapAvailable: summary.recapAvailable }),
+  }
+}
+
+export function toRecapItem(item: DialogRecapItemDTO): DialogRecapItemApiResponse {
+  return {
+    dialogId: item.dialogId,
+    startedAt: item.startedAt.toISOString(),
+    title: item.title,
+    recap: item.recap,
+    recapSource: item.recapSource,
   }
 }
 
@@ -106,6 +127,7 @@ export function toDialogListItem(item: DialogListItemDTO): DialogListItemApiResp
     endedAt: item.endedAt?.toISOString() ?? null,
     summary: toDialogSummary(item.summary),
     memoryMode: toDialogMemoryMode(item.memoryMode),
+    saved: item.saved,
   }
 }
 

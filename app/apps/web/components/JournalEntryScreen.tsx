@@ -1,11 +1,12 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Share2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { DialogApiErrorCode, type DialogApiResponse } from '@ryadom/contracts/api/dialogs'
+import { DialogApiErrorCode, type DialogApiResponse, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { Button } from '@ryadom/ui/components/button'
 import { Skeleton } from '@ryadom/ui/components/skeleton'
@@ -62,10 +63,28 @@ function EntrySkeleton() {
  */
 export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
   const client = useClient()
-  const { items } = useJournal()
+  const { items, refresh: refreshJournal } = useJournal()
   const [load, setLoad] = useState<Load>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [sharing, setSharing] = useState(false)
+  const router = useRouter()
+
+  /** Reads the conversation again without the loading state: the recap that was pending may be ready now. */
+  const reload = useCallback(() => {
+    void client.getDialog(dialogId).then((result) => {
+      if (result.ok) setLoad({ status: 'ready', dialog: result.data })
+    }).catch(() => undefined)
+  }, [client, dialogId])
+
+  function summaryChanged(summary: DialogSummaryApiResponse) {
+    setLoad((current) => (current.status === 'ready' ? { status: 'ready', dialog: { ...current.dialog, summary } } : current))
+  }
+
+  function deleted() {
+    // The list and the sidebar read the same state: refresh it, then leave the page of a conversation that is gone.
+    void refreshJournal()
+    router.replace('/diary/journal')
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -110,8 +129,8 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
 
   return (
     <Page
-      title={head?.summary?.title || 'Разговор'}
-      back={{ href: '/journal', label: 'Все разговоры' }}
+      title={head?.saved === false ? 'Разговор не сохранён' : head?.summary?.title || 'Разговор'}
+      back={{ href: '/diary/journal', label: 'Все разговоры' }}
       measure="reading"
       actions={
         // Only a conversation with something in it can be shared.
@@ -137,13 +156,13 @@ export default function JournalEntryScreen({ dialogId }: { dialogId: string }) {
             <RetryButton onClick={retry} />
           ) : (
             <Button asChild variant="outline" size="sm" className={cn(BUTTON, 'px-4')}>
-              <Link href="/journal">К списку разговоров</Link>
+              <Link href="/diary/journal">К списку разговоров</Link>
             </Button>
           )}
         </StatePanel>
       )}
 
-      {dialog && <JournalEntry dialog={dialog} />}
+      {dialog && <JournalEntry dialog={dialog} onSummary={summaryChanged} onRefresh={reload} onDeleted={deleted} />}
       {dialog && <ShareDialogModal dialogId={dialogId} open={sharing} onClose={() => setSharing(false)} />}
     </Page>
   )

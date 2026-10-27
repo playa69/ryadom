@@ -12,6 +12,13 @@ import './delete-memory-fact/delete-agent-memory-fact.handler'
 import './forget-memory/forget-agent-memory.handler'
 import './get-memory-changes/get-agent-memory-changes.handler'
 import './export-memory/export-agent-memory.handler'
+import './create-digest/create-agent-digest.handler'
+import './delete-dialog/delete-agent-dialog.handler'
+import './list-recaps/list-agent-recaps.handler'
+import './draft-recap/draft-agent-recap.handler'
+import './put-recap/put-agent-recap.handler'
+import './get-dialog-settings/get-agent-dialog-settings.handler'
+import './put-dialog-settings/put-agent-dialog-settings.handler'
 
 import type { RequestData } from 'mediatr-ts'
 import { mediatr } from '../../shared'
@@ -44,7 +51,33 @@ export type { GetAgentMemoryChangesRequestData } from './get-memory-changes/get-
 export { ExportAgentMemoryRequest } from './export-memory/export-agent-memory.request'
 export type { ExportAgentMemoryRequestData } from './export-memory/export-agent-memory.request'
 
+export { CreateAgentDigestRequest } from './create-digest/create-agent-digest.request'
+export type { AgentDigestMark, AgentDigestRecap, CreateAgentDigestRequestData } from './create-digest/create-agent-digest.request'
+export { DeleteAgentDialogRequest } from './delete-dialog/delete-agent-dialog.request'
+export type { DeleteAgentDialogRequestData } from './delete-dialog/delete-agent-dialog.request'
+export { ListAgentRecapsRequest } from './list-recaps/list-agent-recaps.request'
+export type { ListAgentRecapsRequestData } from './list-recaps/list-agent-recaps.request'
+export { DraftAgentRecapRequest } from './draft-recap/draft-agent-recap.request'
+export type { DraftAgentRecapRequestData } from './draft-recap/draft-agent-recap.request'
+export { PutAgentRecapRequest } from './put-recap/put-agent-recap.request'
+export type { PutAgentRecapRequestData } from './put-recap/put-agent-recap.request'
+export { GetAgentDialogSettingsRequest } from './get-dialog-settings/get-agent-dialog-settings.request'
+export type { GetAgentDialogSettingsRequestData } from './get-dialog-settings/get-agent-dialog-settings.request'
+export { PutAgentDialogSettingsRequest } from './put-dialog-settings/put-agent-dialog-settings.request'
+export type { PutAgentDialogSettingsRequestData } from './put-dialog-settings/put-agent-dialog-settings.request'
+
 // 3. Type re-exports
+export type { CreateAgentDigestResult } from './create-digest/create-agent-digest.types'
+export type { DeleteAgentDialogResult } from './delete-dialog/delete-agent-dialog.types'
+export { DeleteAgentDialogRequestErrorCode } from './delete-dialog/delete-agent-dialog.types'
+export type { ListAgentRecapsResult } from './list-recaps/list-agent-recaps.types'
+export type { DraftAgentRecapResult } from './draft-recap/draft-agent-recap.types'
+export { DraftAgentRecapRequestErrorCode } from './draft-recap/draft-agent-recap.types'
+export type { PutAgentRecapResult } from './put-recap/put-agent-recap.types'
+export { PutAgentRecapRequestErrorCode } from './put-recap/put-agent-recap.types'
+export type { GetAgentDialogSettingsResult } from './get-dialog-settings/get-agent-dialog-settings.types'
+export type { PutAgentDialogSettingsResult } from './put-dialog-settings/put-agent-dialog-settings.types'
+export { CreateAgentDigestRequestErrorCode } from './create-digest/create-agent-digest.types'
 export type { StartAgentDialogResponse } from './start-dialog/start-agent-dialog.types'
 export type { ListAgentDialogsResponse } from './list-dialogs/list-agent-dialogs.types'
 export type { GetAgentDialogResult } from './get-dialog/get-agent-dialog.types'
@@ -71,6 +104,7 @@ export {
   type AgentDialogResponse,
   type AgentDialogSummaryResponse,
   type AgentMessageResponse,
+  type AgentRecapItemResponse,
 } from './shared/agent-api.types'
 export type {
   AgentDialogMemoryMode,
@@ -105,6 +139,13 @@ import type { DeleteAgentMemoryFactRequest } from './delete-memory-fact/delete-a
 import type { ForgetAgentMemoryRequest } from './forget-memory/forget-agent-memory.request'
 import type { GetAgentMemoryChangesRequest } from './get-memory-changes/get-agent-memory-changes.request'
 import type { ExportAgentMemoryRequest } from './export-memory/export-agent-memory.request'
+import type { CreateAgentDigestRequest } from './create-digest/create-agent-digest.request'
+import type { DeleteAgentDialogRequest } from './delete-dialog/delete-agent-dialog.request'
+import type { ListAgentRecapsRequest } from './list-recaps/list-agent-recaps.request'
+import type { DraftAgentRecapRequest } from './draft-recap/draft-agent-recap.request'
+import type { PutAgentRecapRequest } from './put-recap/put-agent-recap.request'
+import type { GetAgentDialogSettingsRequest } from './get-dialog-settings/get-agent-dialog-settings.request'
+import type { PutAgentDialogSettingsRequest } from './put-dialog-settings/put-agent-dialog-settings.request'
 
 export type AgentApiIntegrationRequests =
   | StartAgentDialogRequest
@@ -120,6 +161,13 @@ export type AgentApiIntegrationRequests =
   | ForgetAgentMemoryRequest
   | GetAgentMemoryChangesRequest
   | ExportAgentMemoryRequest
+  | CreateAgentDigestRequest
+  | DeleteAgentDialogRequest
+  | ListAgentRecapsRequest
+  | DraftAgentRecapRequest
+  | PutAgentRecapRequest
+  | GetAgentDialogSettingsRequest
+  | PutAgentDialogSettingsRequest
 
 // 5. Facade
 export class AgentApiIntegration implements IAgentApiIntegration {

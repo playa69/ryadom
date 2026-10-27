@@ -586,7 +586,9 @@ class DialogSession:
         takeaway = frame.get("takeaway") if isinstance(frame.get("takeaway"), str) else None
         tension = frame.get("tensionAfter")
         tension_after = tension if isinstance(tension, int) and not isinstance(tension, bool) and 1 <= tension <= 10 else None
-        summary = self._store.end(self._dialog, takeaway, tension_after)
+        # Поле «Что забираешь с собой» и есть итог: заполнено — сохраняется сразу; пусто — итог подведётся в фоне.
+        source = "draft" if frame.get("recapSource") == "draft" else "manual"
+        summary = self._store.end(self._dialog, takeaway, tension_after, source)
         await self._send({"type": "ended", "summary": summary})
         self._closed = True
         try:

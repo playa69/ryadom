@@ -26,6 +26,7 @@ class _File:
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
         self.memory_settings: dict[str, tuple[bool, str | None, str | None]] = {}  # user_id -> (enabled, version, at)
+        self.settings: dict[str, bool] = {}  # user_id -> recap_enabled
         self.usage: list[tuple] = []
         # Мягкое стирание, как deleted_at в PostgreSQL: строки остаются, чтения их не видят, запись не воскрешает.
         self.deleted_dialogs: set[str] = set()
@@ -118,6 +119,26 @@ class FakeDialogDatabase:
                 )
             return dialogs, None if user_id in state.deleted_prefs else state.prefs.get(user_id)
 
+    def load_settings(self, user_id: str) -> bool | None:
+        with self._lock:
+            return self._state().settings.get(user_id)
+
+    def save_settings(self, user_id: str, recap_enabled: bool) -> None:
+        with self._lock:
+            self._state().settings[user_id] = recap_enabled
+
+    def expired_dialogs(self, cutoff: str) -> list[tuple[str, str]]:
+        with self._lock:
+            state = self._state()
+            result = []
+            for dialog_id, row in state.dialogs.items():
+                if dialog_id in state.deleted_dialogs:
+                    continue
+                stamps = [m[5] for m in state.messages.values() if m[1] == dialog_id]
+                if (max(stamps) if stamps else row[2]) < cutoff:
+                    result.append((row[1], dialog_id))
+            return result
+
     def apply(self, writes: list[DialogWrite]) -> None:
         with self._lock:
             state = self._state()
@@ -154,6 +175,7 @@ class FakeDialogDatabase:
             if user_id in state.prefs:
                 state.deleted_prefs.add(user_id)
             state.memory_settings.pop(user_id, None)
+            state.settings.pop(user_id, None)
             state.memory_deletions.setdefault(user_id, "erased")
 
     def mark_memory_deleted(self, user_id: str) -> None:

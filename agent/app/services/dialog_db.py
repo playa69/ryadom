@@ -80,6 +80,11 @@ DDL = (
     user_id TEXT PRIMARY KEY,
     voice   TEXT NOT NULL
 )""",
+    """CREATE TABLE IF NOT EXISTS dialog_settings (
+    user_id        TEXT PRIMARY KEY,
+    recap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at     TEXT NOT NULL
+)""",
     """CREATE TABLE IF NOT EXISTS model_usage (
     dialog_id  TEXT NOT NULL REFERENCES dialogs (id) ON DELETE CASCADE,
     message_id TEXT,
@@ -298,6 +303,31 @@ class DialogDatabase:
             ).fetchone()
         return list(dialogs.values()), (pref[0] if pref else None)
 
+    def load_settings(self, user_id: str) -> bool | None:
+        """«Подводить итог автоматически» человека; None, если он ещё ничего не выбирал (по умолчанию включено)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute("SELECT recap_enabled FROM dialog_settings WHERE user_id = %s", (user_id,)).fetchone()
+        return None if row is None else bool(row[0])
+
+    def save_settings(self, user_id: str, recap_enabled: bool) -> None:
+        with self._lock, self._connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO dialog_settings (user_id, recap_enabled, updated_at) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET recap_enabled = EXCLUDED.recap_enabled, updated_at = EXCLUDED.updated_at",
+                (user_id, recap_enabled, datetime.now(UTC).isoformat(timespec="milliseconds")),
+            )
+
+    def expired_dialogs(self, cutoff: str) -> list[tuple[str, str]]:
+        """(user_id, dialog_id) разговоров, чьё последнее сообщение (без сообщений — старт) старше `cutoff` (ISO, как в базе).
+        Мягко удалённые (`deleted_at`) не возвращаются: иначе каждый проход «удалял» бы их заново."""
+        with self._lock, self._connection() as conn:
+            rows = conn.execute(
+                "SELECT d.user_id, d.id FROM dialogs d WHERE d.deleted_at IS NULL AND COALESCE("
+                "(SELECT MAX(m.created_at) FROM messages m WHERE m.dialog_id = d.id), d.started_at) < %s",
+                (cutoff,),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
     def apply(self, writes: list[DialogWrite]) -> None:
         """Записать пачку одной транзакцией: либо всё, либо ничего."""
         with (
@@ -349,7 +379,7 @@ class DialogDatabase:
 
     def erase_user(self, user_id: str) -> None:
         """Мягко стереть всё о человеке одной транзакцией: диалоги и выбор голоса получают `deleted_at` (дочерние
-        строки — сообщения, расход, идентификаторы — остаются вместе с ними), настройки памяти удаляются, в
+        строки — сообщения, расход, идентификаторы — остаются вместе с ними), настройки памяти и разговоров удаляются, в
         `memory_deletions` вставляется метка для джобы, которая физически удалит датасет Cognee. Идемпотентно: повтор
         не переписывает первые отметки. Для чтений человека больше нет (см. `load_user`)."""
         at = _now_iso()
@@ -361,6 +391,7 @@ class DialogDatabase:
                 "UPDATE voice_prefs SET deleted_at = %s WHERE user_id = %s AND deleted_at IS NULL", (at, user_id)
             )
             conn.execute("DELETE FROM memory_settings WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM dialog_settings WHERE user_id = %s", (user_id,))
             conn.execute(
                 "INSERT INTO memory_deletions (user_id, deleted_at) VALUES (%s, %s) "
                 "ON CONFLICT (user_id) DO NOTHING",

@@ -5,7 +5,9 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { SidebarInset, SidebarProvider } from '@ryadom/ui/components/sidebar'
 import { TooltipProvider } from '@ryadom/ui/components/tooltip'
+import { deviceTimezone } from '@ryadom/client-core/diary'
 import { useAuth, useClient } from '@/lib/auth'
+import { WEB_STORAGE_PREFIX } from '@/lib/storage-keys'
 import AppSidebar from './AppSidebar'
 import BootSplash from './BootSplash'
 import OfflineBar from './OfflineBar'
@@ -54,6 +56,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
       cancelled = true
     }
   }, [status, userId, agreed, client, updateUser, router])
+
+  // The person's time zone goes to the account when this browser's differs from the one it reported
+  // last: the diary day, the reminder and the weekly summary follow it (`REQ-WELL-01`).
+  useEffect(() => {
+    if (status !== 'authenticated' || !userId) return
+    const zone = deviceTimezone()
+    if (!zone) return
+    const key = `${WEB_STORAGE_PREFIX}timezone.${userId}`
+    try {
+      if (window.localStorage.getItem(key) === zone) return
+    } catch {
+      return
+    }
+    client
+      .updateProfile({ timezone: zone })
+      .then(() => window.localStorage.setItem(key, zone))
+      .catch(() => undefined)
+  }, [status, userId, client])
 
   if (status !== 'authenticated' || !(agreed || unchecked)) return <BootSplash />
 

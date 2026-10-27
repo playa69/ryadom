@@ -1,4 +1,17 @@
+import { recomputeSummariesAfterDialogDeleted } from '@ryadom/core/processes/diary'
 import {
+  DeleteDialogOperation,
+  DeleteDialogOperationErrorCode,
+  DraftRecapOperation,
+  DraftRecapOperationErrorCode,
+  GetDialogSettingsOperation,
+  GetDialogSettingsOperationErrorCode,
+  ListRecapsOperation,
+  ListRecapsOperationErrorCode,
+  PutDialogSettingsOperation,
+  PutDialogSettingsOperationErrorCode,
+  PutRecapOperation,
+  PutRecapOperationErrorCode,
   dialogsProcess,
   EndDialogOperation,
   EndDialogOperationErrorCode,
@@ -15,8 +28,15 @@ import { z } from 'zod'
 import {
   DialogApiErrorCode,
   DialogMode,
+  DialogRecapApiErrorCode,
+  RECAP_MAX,
   StartDialogApiErrorCode,
+  type DeleteDialogApiResponse,
+  type DialogSettingsApiResponse,
+  type DraftDialogRecapApiResponse,
   type EndDialogApiResponse,
+  type ListDialogRecapsApiResponse,
+  type PutDialogRecapApiResponse,
   type ListDialogsApiResponse,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
@@ -25,6 +45,7 @@ import { InputLimit } from '@ryadom/contracts/api/limits'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { dialogIdProperty, messageCounts, tensionOutcome } from '../../lib/analytics'
+import { createLogger } from '@ryadom/core/shared'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
 import { authUser, requireActiveSession, requireAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
@@ -34,6 +55,7 @@ import {
   toDialogListItem,
   toDialogMemoryMode,
   toDialogSummary,
+  toRecapItem,
 } from '../../lib/mappers'
 import { RATE_LIMITS } from '../../lib/rate-limit'
 import { jsonBody, queryParams } from '../../lib/request'
@@ -62,7 +84,14 @@ const listQuery = z.object({
 const endBody = z.object({
   takeaway: z.string().max(InputLimit.TakeawayMax).optional(),
   tensionAfter: z.coerce.number().int().min(1).max(10).optional(),
+  recapSource: z.enum(['manual', 'draft']).optional(),
 })
+
+const putRecapBody = z.object({
+  recap: z.string().trim().min(1).max(RECAP_MAX),
+  source: z.enum(['manual', 'draft']).optional(),
+})
+const settingsBody = z.object({ recapEnabled: z.boolean() })
 
 export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, analytics }: RouteDeps): void {
   // Starting a conversation is what an ended session must not be able to do on the access token it
@@ -166,6 +195,7 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
         dialogId: c.req.param('dialogId'),
         takeaway: body.takeaway ?? null,
         tensionAfter: body.tensionAfter ?? null,
+        recapSource: body.recapSource ?? 'manual',
       }),
     )
     if (!result.success) {
@@ -188,6 +218,148 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
       has_takeaway: body.takeaway !== undefined && body.takeaway !== '',
       ...tensionOutcome(response.summary),
     })
+    return apiOk(c, response)
+  })
+
+  // «Удалить разговор» in the journal: the agent deletes the conversation with its recap, the share link goes out, and the
+  // week summary of that week is dropped at once (the diary writes it again from what is left). The facts of memory stay.
+  app.delete(`${ApiPath.Dialogs}/:dialogId`, requireAuth(jwt), requireActiveSession(sessions), async (c) => {
+    const { userId } = authUser(c)
+    if (!(await rateLimiter.hit(`user:dialog-delete:${userId}`, RATE_LIMITS.dialogRecap.perUser))) {
+      return apiError(c, 429, 'Too many requests')
+    }
+    const result = await dialogsProcess.execute(
+      new DeleteDialogOperation({ userId, dialogId: c.req.param('dialogId') }),
+    )
+    if (!result.success) {
+      switch (result.error) {
+        case DeleteDialogOperationErrorCode.USER_NOT_FOUND:
+          return apiRefused(c, DialogApiErrorCode.USER_NOT_FOUND, 'User not found')
+        case DeleteDialogOperationErrorCode.USER_INACTIVE:
+          return apiRefused(c, DialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
+        case DeleteDialogOperationErrorCode.DIALOG_NOT_FOUND:
+          return apiRefused(c, DialogApiErrorCode.DIALOG_NOT_FOUND, 'Dialog not found')
+        default:
+          return assertNever(result.error)
+      }
+    }
+    // The conversation is gone for good: a failure of the diary must not undo that, the tick catches the week up by the text.
+    try {
+      await recomputeSummariesAfterDialogDeleted({ userId, dialogAt: result.startedAt })
+    } catch (error) {
+      createLogger('dialogs').error('Week summary reset after a deleted dialog failed', error)
+    }
+    const response: DeleteDialogApiResponse = { deleted: true }
+    return apiOk(c, response)
+  })
+
+  app.get(ApiPath.DialogRecaps, requireAuth(jwt), queryParams(listQuery), async (c) => {
+    const { limit, before } = c.req.valid('query')
+    const result = await dialogsProcess.execute(
+      new ListRecapsOperation({ userId: authUser(c).userId, limit: limit ?? 20, before: before ?? null }),
+    )
+    if (!result.success) {
+      switch (result.error) {
+        case ListRecapsOperationErrorCode.USER_NOT_FOUND:
+          return apiRefused(c, DialogApiErrorCode.USER_NOT_FOUND, 'User not found')
+        case ListRecapsOperationErrorCode.USER_INACTIVE:
+          return apiRefused(c, DialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
+        default:
+          return assertNever(result.error)
+      }
+    }
+    const response: ListDialogRecapsApiResponse = { items: result.items.map(toRecapItem), next: result.next }
+    return apiOk(c, response)
+  })
+
+  // «Предзаполнить»: the model writes a draft, nothing is saved. It costs a model call, hence its own limit.
+  app.post(`${ApiPath.Dialogs}/:dialogId/recap/draft`, requireAuth(jwt), requireActiveSession(sessions), async (c) => {
+    const { userId } = authUser(c)
+    if (!(await rateLimiter.hit(`user:dialog-recap-draft:${userId}`, RATE_LIMITS.dialogRecapDraft.perUser))) {
+      return apiError(c, 429, 'Too many requests')
+    }
+    const result = await dialogsProcess.execute(new DraftRecapOperation({ userId, dialogId: c.req.param('dialogId') }))
+    if (!result.success) {
+      switch (result.error) {
+        case DraftRecapOperationErrorCode.USER_NOT_FOUND:
+          return apiRefused(c, DialogRecapApiErrorCode.USER_NOT_FOUND, 'User not found')
+        case DraftRecapOperationErrorCode.USER_INACTIVE:
+          return apiRefused(c, DialogRecapApiErrorCode.USER_INACTIVE, 'Account is inactive')
+        case DraftRecapOperationErrorCode.DIALOG_NOT_FOUND:
+          return apiRefused(c, DialogRecapApiErrorCode.DIALOG_NOT_FOUND, 'Dialog not found')
+        case DraftRecapOperationErrorCode.RECAP_NOT_AVAILABLE:
+          return apiRefused(c, DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE, 'No recap for this conversation')
+        case DraftRecapOperationErrorCode.UNAVAILABLE:
+          return apiRefused(c, DialogRecapApiErrorCode.RECAP_UNAVAILABLE, 'The draft could not be written')
+        default:
+          return assertNever(result.error)
+      }
+    }
+    const response: DraftDialogRecapApiResponse = { recap: result.recap }
+    return apiOk(c, response)
+  })
+
+  app.put(
+    `${ApiPath.Dialogs}/:dialogId/recap`,
+    requireAuth(jwt),
+    requireActiveSession(sessions),
+    jsonBody(putRecapBody),
+    async (c) => {
+      const { userId } = authUser(c)
+      const { source, recap } = c.req.valid('json')
+      const result = await dialogsProcess.execute(
+        new PutRecapOperation({ userId, dialogId: c.req.param('dialogId'), recap, source: source ?? 'manual' }),
+      )
+      if (!result.success) {
+        switch (result.error) {
+          case PutRecapOperationErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, DialogRecapApiErrorCode.USER_NOT_FOUND, 'User not found')
+          case PutRecapOperationErrorCode.USER_INACTIVE:
+            return apiRefused(c, DialogRecapApiErrorCode.USER_INACTIVE, 'Account is inactive')
+          case PutRecapOperationErrorCode.DIALOG_NOT_FOUND:
+            return apiRefused(c, DialogRecapApiErrorCode.DIALOG_NOT_FOUND, 'Dialog not found')
+          case PutRecapOperationErrorCode.RECAP_NOT_AVAILABLE:
+            return apiRefused(c, DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE, 'No recap for this conversation')
+          default:
+            return assertNever(result.error)
+        }
+      }
+      const response: PutDialogRecapApiResponse = { summary: toDialogSummary(result.summary) }
+      return apiOk(c, response)
+    },
+  )
+
+  app.get(ApiPath.DialogSettings, requireAuth(jwt), async (c) => {
+    const result = await dialogsProcess.execute(new GetDialogSettingsOperation({ userId: authUser(c).userId }))
+    if (!result.success) {
+      switch (result.error) {
+        case GetDialogSettingsOperationErrorCode.USER_NOT_FOUND:
+          return apiRefused(c, DialogApiErrorCode.USER_NOT_FOUND, 'User not found')
+        case GetDialogSettingsOperationErrorCode.USER_INACTIVE:
+          return apiRefused(c, DialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
+        default:
+          return assertNever(result.error)
+      }
+    }
+    const response: DialogSettingsApiResponse = { recapEnabled: result.recapEnabled }
+    return apiOk(c, response)
+  })
+
+  app.put(ApiPath.DialogSettings, requireAuth(jwt), requireActiveSession(sessions), jsonBody(settingsBody), async (c) => {
+    const result = await dialogsProcess.execute(
+      new PutDialogSettingsOperation({ userId: authUser(c).userId, recapEnabled: c.req.valid('json').recapEnabled }),
+    )
+    if (!result.success) {
+      switch (result.error) {
+        case PutDialogSettingsOperationErrorCode.USER_NOT_FOUND:
+          return apiRefused(c, DialogApiErrorCode.USER_NOT_FOUND, 'User not found')
+        case PutDialogSettingsOperationErrorCode.USER_INACTIVE:
+          return apiRefused(c, DialogApiErrorCode.USER_INACTIVE, 'Account is inactive')
+        default:
+          return assertNever(result.error)
+      }
+    }
+    const response: DialogSettingsApiResponse = { recapEnabled: result.recapEnabled }
     return apiOk(c, response)
   })
 }

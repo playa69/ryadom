@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
-from app.api import dev, dialog_ws, dialogs, health, memory
+from app.api import dev, dialog_ws, dialogs, digests, health, memory
 from app.clients.cognee import CogneeClient, build_cognee_client
 from app.clients.llm import ChatModel, Recognizer, build_models
 from app.clients.speech import CachedTts, TextToSpeech, build_tts
@@ -199,6 +199,21 @@ def create_app(
             app.state.chat, app.state.recognizer = None, None  # речь в речь: чат и распознавание не нужны
         else:
             app.state.chat, app.state.recognizer = models()
+        # Итоги разговоров пишет текстовая модель: в речи в речь её нет у сессии, но есть у запасного каскада.
+        recap_owned: Any = None  # собственная модель итогов (закрывается при остановке), если у сессии текстовой нет
+        store.recap_chat = app.state.chat or (fallback.chat if fallback is not None else None)
+        if store.recap_chat is None and live is not None:
+            try:
+                recap_owned, extra_stt = models()
+                store.recap_chat = recap_owned
+                if extra_stt is not None:
+                    await extra_stt.aclose()
+            except RuntimeError:
+                logger.warning("recaps: no text model is configured, automatic recaps are off in this mode")
+        store.recap_template = APP_CONFIG.llm.mode == "template"
+        store.recap_timeout_seconds = APP_CONFIG.dialog.recap_timeout_seconds
+        store.retention_days = APP_CONFIG.dialog.retention_days
+        store.retention_dry_run = APP_CONFIG.dialog.retention_dry_run
         logger.info(
             "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s memory=%s tracing=%s",
             live.name if live else "cascade",
@@ -243,7 +258,7 @@ def create_app(
                 await cognee_client.aclose()
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
             store.memory = None
-            for client in (app.state.tts, app.state.chat, app.state.recognizer, live):
+            for client in (app.state.tts, app.state.chat, app.state.recognizer, live, recap_owned):
                 if client is not None:
                     await client.aclose()
             if fallback_warm_up is not None:
@@ -276,6 +291,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(dialogs.router)
     app.include_router(memory.router)
+    app.include_router(digests.router)
     app.include_router(dialog_ws.router)
     app.include_router(dev.router)
     return app

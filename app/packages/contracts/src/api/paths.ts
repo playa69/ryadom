@@ -29,6 +29,10 @@ export enum ApiPath {
   ResetPassword = '/api/auth/reset-password',
 
   Dialogs = '/api/dialogs',
+  /** Conversations with their recaps (`GET`), for the journal. */
+  DialogRecaps = '/api/recaps',
+  /** "Write the recap automatically" (`GET`, `PUT`). */
+  DialogSettings = '/api/dialog-settings',
   /** WebSocket: the stream of a single dialog. */
   DialogsWs = '/api/dialogs/ws',
 
@@ -45,6 +49,17 @@ export enum ApiPath {
   MemoryChanges = '/api/memory/changes',
   /** "Download my memory". */
   MemoryExport = '/api/memory/export',
+
+  /** The mood diary (`REQ-WELL-01`): the rest are under it. */
+  Diary = '/api/diary',
+  DiaryCheckinToday = '/api/diary/checkins/today',
+  DiarySummaries = '/api/diary/summaries',
+  DiaryWeekSummary = '/api/diary/summaries/week',
+  /** Creates (`POST`) and revokes (`DELETE`) the token of the Android widget. */
+  DiaryWidgetToken = '/api/diary/widget-token',
+  /** Widget token only (`Authorization: Widget <token>`). */
+  DiaryWidgetToday = '/api/diary/widget/today',
+  DiaryWidgetCheckin = '/api/diary/widget/checkin',
 
   /** Open: which analytics features are on and the (public) PostHog project token. */
   AnalyticsConfig = '/api/analytics/config',
@@ -74,6 +89,11 @@ export function dialogEndPath(dialogId: string): string {
   return `${dialogPath(dialogId)}/end`
 }
 
+/** `/api/dialogs/:id/recap`: the recap of an ended conversation (`PUT`); `…/recap/draft` is the «Pre-fill» draft (`POST`). */
+export function dialogRecapPath(dialogId: string): string {
+  return `${dialogPath(dialogId)}/recap`
+}
+
 /** `/api/memory/facts/:id`: one remembered fact of the person. */
 export function memoryFactPath(factId: string): string {
   return `${ApiPath.MemoryFacts}/${encodeURIComponent(factId)}`
@@ -88,3 +108,4 @@ export function sessionPath(sessionId: string): string {
 export function otaBundlePath(file: string): string {
   return `${ApiPath.OtaBundle}/${encodeURIComponent(file)}`
 }
+

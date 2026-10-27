@@ -313,6 +313,8 @@ class DialogSession {
           type: 'end',
           takeaway: typeof frame.takeaway === 'string' ? frame.takeaway : undefined,
           tensionAfter: typeof frame.tensionAfter === 'number' ? frame.tensionAfter : undefined,
+          // The takeaway is the recap; `draft` marks one pre-filled by the model (add-mood-diary D13).
+          recapSource: frame.recapSource === 'draft' ? 'draft' : 'manual',
         })
         return
       case DialogClientFrame.AudioStart:
@@ -652,7 +654,12 @@ class DialogSession {
         // (DialogSummary).
         const raw = (frame.summary ?? null) as (DialogSummaryApiResponse & AgentSummaryCounts) | null
         // The counts of the whole dialog are for analytics only: they are not part of the contract with clients.
-        const { userMessages: _user, assistantMessages: _assistant, ...publicSummary } = raw ?? {}
+        const {
+          userMessages: _user,
+          assistantMessages: _assistant,
+          recapAt: _recapAt,
+          ...publicSummary
+        } = (raw ?? {}) as DialogSummaryApiResponse & AgentSummaryCounts & { recapAt?: unknown }
         const summary = raw ? (publicSummary as DialogSummaryApiResponse) : null
         if (this.userId && !this.outcomeReported) {
           this.outcomeReported = true

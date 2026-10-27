@@ -59,6 +59,8 @@ function effectiveTts() {
  * Texts of facts and messages never reach the log here either: ids and counts only.
  */
 const MEMORY_MODES = ['on', 'shadow', 'off']
+/** `POST /dev/digests {"fail": true}` makes `/digests` answer 502, as an agent whose model is down. */
+let digestsFail = false
 let memoryMode = MEMORY_MODES.includes(process.env.MOCK_MEMORY_MODE) ? process.env.MOCK_MEMORY_MODE : 'on'
 const MEMORY_ALLOWLIST = (process.env.MOCK_MEMORY_ALLOWLIST ?? '')
   .split(',')
@@ -86,8 +88,46 @@ const REPLIES = [
 const CRISIS_WORDS = ['не хочу жить', 'покончить', 'убить себя', 'умереть', 'нет смысла жить']
 
 function userState(userId) {
-  if (!users.has(userId)) users.set(userId, { dialogs: new Map(), memory: newMemory() })
+  if (!users.has(userId)) users.set(userId, { dialogs: new Map(), memory: newMemory(), recapEnabled: true })
   return users.get(userId)
+}
+
+// ─── Recaps of conversations (add-mood-diary D13) ─────────────────────────────
+// A recap is one free-form text in the second person (the «Что забираешь с собой» field is the recap). The mock follows the real agent's rules: none for a conversation where the
+// person said under 40 characters, for one with a crisis, or one held «without memory»; a recap the person wrote is kept
+// as it is and the automatic one never replaces it; the automatic one is ready after MOCK_RECAP_DELAY_MS (pending until then).
+const RECAP_DELAY_MS = Number(process.env.MOCK_RECAP_DELAY_MS ?? 3000)
+const RECAP_MIN_USER_CHARS = 40
+
+function userChars(dialog) {
+  return dialog.messages.filter((m) => m.role === 'user').reduce((sum, m) => sum + m.text.trim().length, 0)
+}
+
+function recapEligible(dialog) {
+  return dialog.memoryMode !== 'off' && !dialog.crisisSeen && userChars(dialog) >= RECAP_MIN_USER_CHARS
+}
+
+function templateRecap(dialog) {
+  const said = dialog.messages.filter((m) => m.role === 'user').map((m) => m.text.trim())
+  const snippet = (said[0] ?? '').replace(/[.!?…]+$/, '').slice(0, 120)
+  const agreement = said.map((t) => /давай так:?\s*(.+)/i.exec(t)?.[1]).find(Boolean)
+  return (
+    `Ты рассказал, что у тебя на душе${snippet ? `: ${snippet}` : ''}. Тебе важно, чтобы тебя услышали.` +
+    (agreement ? ` Ты решил: ${agreement.replace(/[.!?…]+$/, '').slice(0, 120)}.` : '')
+  )
+}
+
+function cleanRecap(value) {
+  if (typeof value !== 'string') return null
+  const text = value.trim().replace(/\s+/g, ' ')
+  return text && text.length <= 500 ? text : null
+}
+
+function storeRecap(dialog, recap, source) {
+  dialog.summary.recap = recap
+  dialog.summary.recapStatus = 'ready'
+  dialog.summary.recapSource = source
+  dialog.summary.recapAt = new Date().toISOString()
 }
 
 function openDialogOf(userId) {
@@ -114,9 +154,26 @@ function createDialog(userId, memory = 'on') {
 }
 
 /** Ends the dialog and, when it was held with memory, starts the "extraction" (see `extractMemory`). */
-function endDialog(dialog, takeaway, tensionAfter) {
+function endDialog(dialog, takeaway, tensionAfter, recapSource = 'manual') {
   dialog.endedAt = new Date().toISOString()
-  dialog.summary = buildSummary(dialog, takeaway, tensionAfter)
+  dialog.summary = {
+    ...buildSummary(dialog, takeaway, tensionAfter),
+    recap: null,
+    recapStatus: 'none',
+    recapSource: null,
+    recapAvailable: recapEligible(dialog),
+  }
+  const written = cleanRecap(takeaway)
+  if (recapEligible(dialog)) {
+    if (written) storeRecap(dialog, written, recapSource === 'draft' ? 'draft' : 'manual')
+    else if (userState(dialog.userId).recapEnabled) {
+      dialog.summary.recapStatus = 'pending'
+      setTimeout(() => {
+        // The person may have written one meanwhile, or deleted the conversation.
+        if (dialog.summary?.recapStatus === 'pending') storeRecap(dialog, templateRecap(dialog), 'auto')
+      }, RECAP_DELAY_MS)
+    }
+  }
   extractMemory(dialog)
 }
 
@@ -148,6 +205,8 @@ function listItem(dialog) {
     endedAt: dialog.endedAt,
     summary: dialog.summary,
     memoryMode: dialog.memoryMode ?? 'on',
+    // `saved: false` marks a conversation the person asked not to keep: only the mark is listed (add-unsaved-dialog).
+    saved: dialog.saved !== false,
   }
 }
 
@@ -672,10 +731,63 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { mode: memoryMode, available: memoryAvailable(), delayMs: MEMORY_DELAY_MS })
   }
 
+  // Dev only: switch the digests route into failure and back.
+  if (path === '/dev/digests' && method === 'POST') {
+    const body = await readBody(req)
+    digestsFail = body.fail === true
+    return json(res, 200, { fail: digestsFail })
+  }
+
   // /v1/users/{userId}...
   const parts = path.split('/').filter(Boolean)
   if (parts[0] !== 'v1' || parts[1] !== 'users' || !parts[2]) return json(res, 404, { error: 'not_found' })
   const userId = decodeURIComponent(parts[2])
+
+  // POST /v1/users/{userId}/digests - the text of a week summary or a year story. The real agent asks the
+  // model; the mock writes a fixed text from the marks, in the shape the spec asks for (the person's own
+  // "ты", no scores, no "надо", no count of days in a row). It keeps nothing. `POST /dev/digests {fail: true}`
+  // makes it answer 502 once more, for the "agent is down" screen.
+  if (parts.length === 4 && parts[3] === 'digests' && method === 'POST') {
+    const body = await readBody(req)
+    if (digestsFail) return json(res, 502, { error: { code: 'DIGEST_UNAVAILABLE', message: 'mock: digests are down' } })
+    const marks = Array.isArray(body.marks) ? body.marks : []
+    const levels = ['тяжело', 'так себе', 'нормально', 'хорошо', 'отлично']
+    const counts = [0, 0, 0, 0, 0]
+    for (const mark of marks) if (mark?.mood >= 1 && mark.mood <= 5) counts[mark.mood - 1] += 1
+    let top = 2
+    counts.forEach((count, i) => { if (count > 0 && count >= counts[top]) top = i })
+    const hard = counts[0]
+    if (body.kind === 'year') {
+      const weekly = Array.isArray(body.weekly) ? body.weekly.length : 0
+      const text =
+        `Этот год ты отмечал настроение ${marks.length} раз, и чаще всего оно было «${levels[top]}». ` +
+        `За это время я собрал для тебя ${weekly} итогов недель. Были дни полегче и дни потяжелее, и это нормально. ` +
+        'Рядом с тобой всегда можно поговорить, когда захочется.'
+      return json(res, 200, { text, stats: { markedDays: marks.length } })
+    }
+    const recaps = Array.isArray(body.recaps) ? body.recaps : []
+    // A general overview, no quotes and no tie to a dialog: only the names of the themes the recaps touch (as in agent/app/services/digests.py).
+    const texts = recaps.map((r) => (typeof r?.text === 'string' ? r.text.trim() : '')).filter(Boolean)
+    const joined = texts.join(' ').toLowerCase()
+    const THEMES = [
+      ['работа и дела', /работ|руковод|начальн|коллег|офис|проект|дедлайн|карьер|увольн/],
+      ['близкие и отношения', /мам[аыуе]|пап|семь|друг|подруг|отношени|партн[её]р|муж|жена|девушк|парень|дет[иейям]/],
+      ['здоровье и сон', /здоровь|сон\b|сна\b|бессонн|усталост|болезн|врач|тревог|паник/],
+      ['деньги', /деньг|долг|зарплат|кредит|финанс/],
+    ]
+    const themes = THEMES.filter(([, re]) => re.test(joined)).map(([name]) => name).slice(0, 2)
+    const text =
+      (themes.length
+        ? `На этой неделе в твоих мыслях заметное место занимало: ${themes.join(' и ')}. `
+        : texts.length
+          ? 'На этой неделе ты не раз возвращался к тому, что у тебя на душе. '
+          : // Without recaps the mock states the counts, so that the e2e specs can tell a rewritten text from the old one.
+            `Тяжёлых дней было ${hard}, лёгких — ${marks.filter((m) => m.mood >= 3).length}. `) +
+      (hard >= 3
+        ? 'Неделя выдалась непростой. Рядом могут быть люди, с которыми можно поговорить, и я тоже здесь.'
+        : 'Спасибо, что делишься со мной тем, как ты.')
+    return json(res, 200, { text, stats: { markedDays: marks.length, hardDays: hard } })
+  }
 
   // DELETE /v1/users/{userId} - erase everything
   if (parts.length === 3 && method === 'DELETE') {
@@ -729,7 +841,10 @@ const server = createServer(async (req, res) => {
         })),
         replyIndex: 0,
         memoryMode: item.memoryMode === 'off' ? 'off' : 'on',
+        // A conversation the person asked not to keep: only the mark exists, with no text and no recap.
+        saved: item.saved === false ? false : undefined,
       }
+      if (dialog.saved === false) dialog.messages = []
       state.dialogs.set(dialog.dialogId, dialog)
     }
     return json(res, 200, { count: state.dialogs.size, facts: state.memory.facts.size })
@@ -738,6 +853,36 @@ const server = createServer(async (req, res) => {
   purgeIncognito(userId)
 
   if (parts[3] === 'memory') return handleMemory(req, res, url, userId, parts, method)
+
+  // GET /v1/users/{userId}/recaps - conversations with a ready recap, newest first
+  if (parts.length === 4 && parts[3] === 'recaps' && method === 'GET') {
+    const limit = Number(url.searchParams.get('limit') ?? 20)
+    const items = [...userState(userId).dialogs.values()]
+      .filter((d) => d.summary?.recapStatus === 'ready')
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+      .slice(0, limit)
+      .map((d) => ({
+        dialogId: d.dialogId,
+        startedAt: d.startedAt,
+        endedAt: d.endedAt,
+        title: d.summary.title,
+        recap: d.summary.recap,
+        recapSource: d.summary.recapSource,
+        recapAt: d.summary.recapAt ?? null,
+      }))
+    return json(res, 200, { items, next: null })
+  }
+
+  // GET/PUT /v1/users/{userId}/dialog-settings - «Подводить итог автоматически», apart from the memory settings
+  if (parts.length === 4 && parts[3] === 'dialog-settings') {
+    const state = userState(userId)
+    if (method === 'PUT') {
+      const body = await readBody(req)
+      if (typeof body.recapEnabled !== 'boolean') return agentError(res, 400, 'AGENT_VALIDATION', 'recapEnabled must be a boolean')
+      state.recapEnabled = body.recapEnabled
+    }
+    return json(res, 200, { recapEnabled: state.recapEnabled })
+  }
 
   if (parts[3] !== 'dialogs') return json(res, 404, { error: 'not_found' })
 
@@ -802,8 +947,35 @@ const server = createServer(async (req, res) => {
   if (parts.length === 6 && parts[5] === 'end' && method === 'POST') {
     if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
     const body = await readBody(req)
-    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null)
+    if (dialog.summary) return json(res, 200, { summary: dialog.summary })
+    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null, body.recapSource)
     return json(res, 200, { summary: dialog.summary })
+  }
+
+  // PUT /v1/users/{userId}/dialogs/{dialogId}/recap - the recap the person wrote in the journal
+  if (parts.length === 6 && parts[5] === 'recap' && method === 'PUT') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    const body = await readBody(req)
+    const written = cleanRecap(body.recap)
+    if (!dialog.summary || !written || !recapEligible(dialog)) return agentError(res, 409, 'RECAP_NOT_AVAILABLE', 'Для этого разговора итога нет')
+    storeRecap(dialog, written, body.source === 'draft' ? 'draft' : 'manual')
+    return json(res, 200, { summary: dialog.summary })
+  }
+
+  // POST /v1/users/{userId}/dialogs/{dialogId}/recap/draft - a draft; nothing is stored
+  if (parts.length === 7 && parts[5] === 'recap' && parts[6] === 'draft' && method === 'POST') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    if (!recapEligible(dialog)) return agentError(res, 409, 'RECAP_NOT_AVAILABLE', 'Для этого разговора итога нет')
+    return json(res, 200, { recap: templateRecap(dialog) })
+  }
+
+  // DELETE /v1/users/{userId}/dialogs/{dialogId} - the conversation with its recap; the facts of memory stay
+  if (parts.length === 5 && method === 'DELETE') {
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    userState(userId).dialogs.delete(dialog.dialogId)
+    console.log(`[agent-mock] диалог удалён человеком ${dialog.dialogId}`)
+    res.writeHead(204)
+    return res.end()
   }
 
   return json(res, 404, { error: 'not_found' })
@@ -983,6 +1155,7 @@ wss.on('connection', (socket, request, context) => {
         }
         const text = String(frame.text ?? '')
         const crisis = isCrisis(text)
+        if (crisis) dialog.crisisSeen = true
         const message = addMessage(dialog, 'user', text)
         if (frame.id) dialog.clientIds.set(frame.id, message.id)
         send(socket, { type: 'ack', id: frame.id ?? message.id, messageId: message.id })
@@ -1002,7 +1175,7 @@ wss.on('connection', (socket, request, context) => {
         if (typeof frame.messageId === 'string') socket.cancelledSpeech.add(frame.messageId)
         return
       case 'end': {
-        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null)
+        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null, frame.recapSource)
         send(socket, { type: 'ended', summary: dialog.summary })
         socket.close(1000, 'dialog ended')
         return

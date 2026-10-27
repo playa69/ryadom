@@ -165,6 +165,29 @@ describe('регистрация и вход', () => {
     ).toBe(422)
     expect(await read()).toMatchObject({ name: 'Анна', voice: 'male' })
   })
+
+  it('часовой пояс (REQ-WELL-01): по умолчанию Москва, меняется на известное имя IANA, чужое — 422', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    expect((await read()).timezone).toBe('Europe/Moscow')
+
+    const changed = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { timezone: 'Asia/Yekaterinburg' }, tokens.accessToken),
+    )
+    expect(changed.timezone).toBe('Asia/Yekaterinburg')
+
+    for (const bad of ['Mars/Olympus', '+03:00', '']) {
+      expect((await call(app, 'PATCH', '/api/auth/me', { timezone: bad }, tokens.accessToken)).status).toBe(422)
+    }
+    // A refused zone next to a good name changes nothing.
+    expect(
+      (await call(app, 'PATCH', '/api/auth/me', { name: 'Анна', timezone: 'Mars/Olympus' }, tokens.accessToken))
+        .status,
+    ).toBe(422)
+    expect((await read()).timezone).toBe('Asia/Yekaterinburg')
+  })
 })
 
 describe('пароль', () => {

@@ -58,7 +58,7 @@ export function reportForm(form: AuthForm, outcome: FormOutcome): void {
 
 /**
  * The name of a screen from a route pattern, with every parameter called `:id`
- * (`/journal/:dialogId/` -> `/journal/:id/`), the way the other apps name theirs. The pattern is used
+ * (`/diary/journal/:dialogId/` -> `/diary/journal/:id/`), the way the other apps name theirs. The pattern is used
  * and not the address, so that an identifier cannot get through by being in a shape nobody expected.
  */
 export function screenPath(pattern: string | undefined): string | null {

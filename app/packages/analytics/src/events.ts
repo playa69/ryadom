@@ -114,6 +114,15 @@ export enum AnalyticsEvent {
   MemoryIncognitoToggled = 'memory_incognito_toggled',
   /** A point of the card "Я запомнил" after a conversation was taken off or accepted. */
   MemoryCardAction = 'memory_card_action',
+  // ── Mood diary (REQ-WELL-01…04). Only that an action happened: never a mood, a factor or a text. ──
+  /** Server. A note of the day was saved or replaced. */
+  MoodCheckedIn = 'mood_checked_in',
+  /** Server. A week summary was written by the background pass or re-run by hand («Обновить итоги»). */
+  WeekSummaryGenerated = 'week_summary_generated',
+  /** Client. A diary segment was opened. */
+  DiaryOpened = 'diary_opened',
+  /** Client. A tap on the bridge after a heavy day: «Поговорить» or «Люди рядом». */
+  MoodBridgeClicked = 'mood_bridge_clicked',
 
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
   FaqOpened = 'faq_opened',
@@ -220,6 +229,9 @@ export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confir
 /** A point of the card "Я запомнил": taken off ("убрать") or accepted ("Запомнить"). */
 export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
 
+export type DiaryTab = 'diary' | 'journal'
+export type MoodSourceName = 'app' | 'widget' | 'reminder' | 'telegram'
+
 export type PasswordChangeKind = 'change' | 'reset'
 
 /** Properties that every event of a platform carries are added by the SDK wrapper, not here. */
@@ -312,6 +324,10 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MemoryExport]: NoProperties
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
   [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
+  [AnalyticsEvent.MoodCheckedIn]: { source: MoodSourceName; with_factor: boolean; changed: boolean }
+  [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'button' | 'auto' }
+  [AnalyticsEvent.DiaryOpened]: { tab: DiaryTab }
+  [AnalyticsEvent.MoodBridgeClicked]: { target: 'dialog' | 'people' }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties
