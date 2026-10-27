@@ -68,4 +68,12 @@ export const {
   putMoodCheckin,
   listDiarySummaries,
   createWidgetToken,
+  getSelfCheckConsent,
+  giveSelfCheckConsent,
+  revokeSelfCheckConsent,
+  saveSelfCheckResult,
+  latestSelfCheckResults,
+  listSelfCheckResults,
+  deleteSelfCheckResult,
+  deleteSelfCheckResults,
 } = client

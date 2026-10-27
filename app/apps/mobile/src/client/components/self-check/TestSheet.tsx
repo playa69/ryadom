@@ -15,7 +15,10 @@ import {
 } from '@ryadom/self-check/pass'
 import { band as bandOf, isHigh, retakeAfterDays, score as scoreOf } from '@ryadom/self-check/score'
 import type { SelfCheckTest } from '@ryadom/self-check/types'
+import { getSelfCheckConsent, giveSelfCheckConsent, saveSelfCheckResult } from '../../lib/api'
 import { startTalk } from '../../lib/nav'
+import { notify, refreshLatestResults } from '../../lib/self-check-store'
+import { SELF_CHECK_CONSENT_VERSION, SelfCheckApiErrorCode } from '@ryadom/contracts/api/self-check'
 import { TEST_EVENT, type SelfCheckFrom } from '../../lib/self-check'
 import { openSos } from '../SosSheet'
 import { DISCLAIMER, TONE_COLOR, lengthLine, plural } from './format'
@@ -203,6 +206,8 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
   const weeks = retakeAfterDays(test, result.score) / 7
   const index = level ? test.bands.indexOf(level) : -1
   const [copied, setCopied] = useState(false)
+  const [step, setStep] = useState<'result' | 'consent'>('result')
+  const [saving, setSaving] = useState(false)
 
   async function copy() {
     track(AnalyticsEvent.SelfCheckResultAction, { test_id: test.id, action: 'copy_summary' })
@@ -214,6 +219,73 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
     } catch {
       setCopied(false)
     }
+  }
+
+  /** The server recounts the answers and keeps only the score; without the consent on record the consent step comes first. */
+  async function save(withConsent: boolean) {
+    setSaving(true)
+    try {
+      if (!withConsent) {
+        const { given } = await getSelfCheckConsent()
+        if (!given) {
+          track(AnalyticsEvent.SelfCheckConsentShown)
+          setStep('consent')
+          return
+        }
+      } else {
+        await giveSelfCheckConsent(SELF_CHECK_CONSENT_VERSION)
+        track(AnalyticsEvent.SelfCheckConsentChoice, { action: 'accepted' })
+      }
+      const saved = await saveSelfCheckResult({ testId: test.id, testVersion: test.version, answers })
+      if (!saved.ok) {
+        if (saved.code === SelfCheckApiErrorCode.CONSENT_REQUIRED) {
+          track(AnalyticsEvent.SelfCheckConsentShown)
+          setStep('consent')
+          return
+        }
+        throw new Error(saved.code)
+      }
+      track(AnalyticsEvent.SelfCheckResultAction, { test_id: test.id, action: 'save' })
+      notify('Результат сохранён. Он виден в «Самопроверке» и на экране теста.', 'success')
+      refreshLatestResults()
+      onClose()
+    } catch {
+      // The same toast as the success, in red; the result stays on the screen to try again.
+      track(AnalyticsEvent.SelfCheckSaveFailed, { test_id: test.id })
+      notify('Не получилось сохранить. Повтори ещё раз.', 'error')
+      setStep('result')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (step === 'consent') {
+    return (
+      <div className="rd-test-body" data-testid="test-consent">
+        <h3 className="rd-sheet-title">Сохранить результат?</h3>
+        <p className="rd-muted">Результаты тестов — сведения о самочувствии.</p>
+        <ul className="rd-muted rd-test-checks">
+          {['Хранятся в России', 'Видны только тебе', 'Агент их не читает', 'Можно удалить в любой момент'].map((t) => (
+            <li key={t}>✓ {t}</li>
+          ))}
+        </ul>
+        <p className="rd-muted rd-test-note">Сохраняем только балл, уровень и дату. Ответы на вопросы не хранятся.</p>
+        <Button
+          large
+          outline
+          data-testid="consent-decline"
+          onClick={() => {
+            track(AnalyticsEvent.SelfCheckConsentChoice, { action: 'declined' })
+            setStep('result')
+          }}
+        >
+          Не сохранять
+        </Button>
+        <Button large fill disabled={saving} data-testid="consent-accept" onClick={() => void save(true)}>
+          Сохранить
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -270,6 +342,9 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
         }}
       >
         Закрыть
+      </Button>
+      <Button large fill disabled={saving} data-testid="result-save" onClick={() => void save(false)}>
+        {saving ? 'Сохраняю…' : 'Сохранить'}
       </Button>
       <button type="button" className="rd-link-button" data-testid="result-copy" onClick={copy}>
         {copied ? 'Скопировано' : 'Скопировать итог для специалиста'}

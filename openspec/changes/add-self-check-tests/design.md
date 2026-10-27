@@ -229,11 +229,14 @@ self_check_results(id uuid pk, user_id fk users, test_id text, test_version int,
 
 | Маршрут | Описание |
 |---|---|
-| `GET /api/self-check/results?testId=&before=` | история, новые сверху |
+| `GET /api/self-check/results?testId=&before=&limit=` | история, новые сверху, `nextBefore` для следующей страницы |
 | `GET /api/self-check/latest` | последний результат по каждому тесту, для «Самопроверки» |
-| `POST /api/self-check/results` `{testId, testVersion, answers, takenAt}` | `201 {id, score, subscores, band}`; `403 CONSENT_REQUIRED`, `422` при неверных ответах или неизвестной версии |
-| `DELETE /api/self-check/results/{id}`, `DELETE /api/self-check/results` | `204` |
-| `POST /api/self-check/consent` `{version}`, `DELETE /api/self-check/consent` | согласие; отзыв удаляет результаты |
+| `POST /api/self-check/results` `{testId, testVersion, answers, takenAt?}` | результат `{id, testId, testVersion, score, subscores, band, takenAt}`; без согласия отказ `CONSENT_REQUIRED`; `422` при неверных ответах, неизвестном тесте или версии |
+| `DELETE /api/self-check/results/{id}` | один результат, `404` для чужого или уже удалённого |
+| `DELETE /api/self-check/results[?testId=]` | все результаты теста или все результаты |
+| `GET /api/self-check/consent`, `POST /api/self-check/consent` `{version}`, `DELETE /api/self-check/consent` | состояние согласия, согласие, отзыв (отзыв удаляет результаты) |
+
+Ответы по соглашению API: успех — `200 {status: true, result}`, отказ маршрута (`CONSENT_REQUIRED`) — `200 {status: false, errorCode}`, неверный ввод — `422`. `201` и `204` из первоначального описания не используются (§11 `docs/spec.md`). При `SELF_CHECK_ENABLED` выключенном все маршруты отвечают `404`; `SELF_CHECK_PREVIEW` разрешает сохранять тесты в статусе `review` (dev и staging, не прод). Клиенты читают флаги при сборке: веб `NEXT_PUBLIC_SELF_CHECK_ENABLED`/`NEXT_PUBLIC_SELF_CHECK_PREVIEW`, PWA `VITE_SELF_CHECK_ENABLED`/`VITE_SELF_CHECK_PREVIEW`. Согласие хранится в `user_consents` (вид `self_check`); отзыв удаляет строки этого вида вместе с результатами.
 
 ## Risks / Trade-offs
 

@@ -5,12 +5,12 @@ import { useMemo, useState } from 'react'
 import { Card } from '@ryadom/ui/components/card'
 import { shownTests } from '@/lib/self-check'
 import { BUTTON } from '../controls'
-import { lengthLine } from './ui'
+import SavedLine from './SavedLine'
 import { useSelfCheck } from './useSelfCheck'
 
 /** The segment «Тесты»: every shown test with search over the title, the code and the description. */
 export default function TestsCatalog() {
-  const { start } = useSelfCheck()
+  const { start, openHistory, latest } = useSelfCheck()
   const [query, setQuery] = useState('')
   const all = useMemo(() => shownTests(), [])
   const found = useMemo(() => {
@@ -46,10 +46,19 @@ export default function TestsCatalog() {
           </div>
           <div className="text-sm text-dim">{t.preface}</div>
           <div className="mt-1 flex items-center justify-between">
-            <span className="text-sm text-dim">{lengthLine(t)}</span>
-            <button type="button" className={`${BUTTON} font-semibold text-brand-400`} onClick={() => start(t, 'tests')} data-testid={`tests-start-${t.id}`}>
-              Пройти →
-            </button>
+            <span className="text-sm text-dim">
+              <SavedLine test={t} result={latest[t.id]} />
+            </span>
+            <span className="flex items-center gap-4">
+              {latest[t.id] && (
+                <button type="button" className={`${BUTTON} text-sm font-semibold text-dim`} onClick={() => openHistory(t)} data-testid={`tests-history-${t.id}`}>
+                  История
+                </button>
+              )}
+              <button type="button" className={`${BUTTON} font-semibold text-brand-400`} onClick={() => start(t, 'tests')} data-testid={`tests-start-${t.id}`}>
+                Пройти →
+              </button>
+            </span>
           </div>
         </Card>
       ))}

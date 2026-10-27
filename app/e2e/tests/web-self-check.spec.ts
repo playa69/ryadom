@@ -117,3 +117,94 @@ test('тесты: самопроверка, каталог, прохождени
   await page.getByTestId('result-close').click()
   await page.context().setOffline(false)
 })
+
+/** One pass of a test: a tap per question. */
+async function answerAll(page: import('@playwright/test').Page, values: number[]) {
+  for (const v of values) await page.getByTestId(`test-option-${v}`).click()
+}
+
+test('тесты: согласие, сохранение, история с графиком, удаление, ошибка красным тостом, профиль', async ({ page, shot }) => {
+  test.setTimeout(240_000)
+  await clearMailbox()
+  await openWebApp(page)
+  await registerAndConfirm(page, uniqueEmail('web-self-check-save'))
+  await openWebApp(page, '/diary')
+  const notice = page.getByTestId('notice')
+
+  // ── первое сохранение: лист согласия, «Не сохранять» возвращает к результату ──
+  await page.getByTestId('self-check-start-gad7').click()
+  await answerAll(page, [1, 2, 1, 1, 1, 1, 1])
+  await expect(page.getByTestId('result-score')).toContainText('8')
+  await page.getByTestId('result-save').click()
+  const consent = page.getByTestId('test-consent')
+  await expect(consent).toContainText('Сохранить результат?')
+  await expect(consent).toContainText('Агент их не читает')
+  await shot(page, 'web-self-check-consent')
+  await page.getByTestId('consent-decline').click()
+  await expect(page.getByTestId('test-result')).toBeVisible()
+
+  // ── согласился: результат сохранён, зелёный тост, строка в «Самопроверке» ──
+  await page.getByTestId('result-save').click()
+  await page.getByTestId('consent-accept').click()
+  await expect(notice.filter({ hasText: 'Результат сохранён' })).toHaveAttribute('data-kind', 'success')
+  await expect(page.getByTestId('test-result')).toHaveCount(0)
+  await expect(page.getByTestId('saved-line-gad7')).toContainText('8/21 — лёгкая выраженность')
+  await shot(page, 'web-self-check-saved')
+
+  // ── второй результат: согласие уже есть, лист не показывается ──────────
+  await page.getByTestId('self-check-start-gad7').click()
+  await answerAll(page, [0, 0, 0, 0, 0, 0, 0])
+  await page.getByTestId('result-save').click()
+  await expect(notice.filter({ hasText: 'Результат сохранён' }).last()).toBeVisible()
+  await expect(page.getByTestId('saved-line-gad7')).toContainText('0/21 — минимальная выраженность')
+
+  // ── экран теста: история, график из двух точек, удаление одного результата ──
+  await page.getByTestId('self-check-history-gad7').click()
+  await expect(page.getByTestId('history-row')).toHaveCount(2)
+  await expect(page.getByTestId('history-chart-point')).toHaveCount(2)
+  await shot(page, 'web-self-check-history')
+  await page.getByTestId('history-delete').first().click()
+  await expect(page.getByTestId('history-confirm')).toContainText('исчезнет с сервера')
+  await shot(page, 'web-self-check-delete-one')
+  await page.getByTestId('history-confirm-yes').click()
+  await expect(page.getByTestId('history-row')).toHaveCount(1)
+  await expect(page.getByTestId('history-chart-empty')).toBeVisible()
+  await shot(page, 'web-self-check-history-one')
+  // Все результаты теста: окно закрывается, строка снова с длиной теста.
+  await page.getByTestId('history-delete-test').click()
+  await page.getByTestId('history-confirm-yes').click()
+  await expect(page.getByTestId('test-history')).toHaveCount(0)
+  await expect(page.getByTestId('saved-line-gad7')).toHaveCount(0)
+
+  // ── ошибка сохранения — тот же тост, красный; результат остаётся ─────────
+  await page.route('**/api/self-check/results', (route) => (route.request().method() === 'POST' ? route.abort() : route.continue()))
+  await page.getByTestId('self-check-start-gad7').click()
+  await answerAll(page, [1, 1, 1, 1, 1, 1, 1])
+  await page.getByTestId('result-save').click()
+  await expect(notice.filter({ hasText: 'Не получилось сохранить' })).toHaveAttribute('data-kind', 'error')
+  await expect(page.getByTestId('test-result')).toBeVisible()
+  await shot(page, 'web-self-check-save-error')
+  await page.unroute('**/api/self-check/results')
+  await page.getByTestId('result-save').click()
+  await expect(page.getByTestId('saved-line-gad7')).toContainText('7/21')
+
+  // ── профиль → «Данные»: удалить все результаты, отозвать согласие ─────────
+  await openWebApp(page, '/profile')
+  await expect(page.getByTestId('profile-data')).toBeVisible()
+  await shot(page, 'web-self-check-profile-data')
+  await page.getByTestId('row-delete-self-check').click()
+  await expect(page.getByTestId('self-check-confirm-text')).toContainText('Исчезнут результаты всех тестов')
+  await page.getByTestId('self-check-confirm-yes').click()
+  await expect(notice.filter({ hasText: 'Все результаты тестов удалены' })).toBeVisible()
+  await page.getByTestId('row-revoke-self-check').click()
+  await expect(page.getByTestId('self-check-confirm-text')).toContainText('больше не будем их хранить')
+  await shot(page, 'web-self-check-revoke')
+  await page.getByTestId('self-check-confirm-yes').click()
+  await expect(page.getByTestId('row-revoke-self-check')).toHaveCount(0)
+  // После отзыва следующее сохранение снова спрашивает согласие.
+  await openWebApp(page, '/diary')
+  await page.getByTestId('self-check-start-gad7').click()
+  await answerAll(page, [1, 1, 1, 1, 1, 1, 1])
+  await page.getByTestId('result-save').click()
+  await expect(page.getByTestId('test-consent')).toBeVisible()
+})

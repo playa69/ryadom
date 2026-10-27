@@ -21,6 +21,7 @@ import { Busy, FIELD_FOCUS, ModalActions, ModalText, ProfileButton, SettingsSect
 import { Page } from './Page'
 import ProfileAnalytics from './ProfileAnalytics'
 import ProfileRow from './ProfileRow'
+import ProfileSelfCheck from './ProfileSelfCheck'
 import ProfileHandsFree from './ProfileHandsFree'
 import ProfileVoice from './ProfileVoice'
 
@@ -158,6 +159,8 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           </ProfileButton>
         </CardContent>
       </Card>
+
+      <ProfileSelfCheck />
 
       <SettingsSection
         title="Безопасность"

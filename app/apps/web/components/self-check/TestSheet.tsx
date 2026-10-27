@@ -3,15 +3,19 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { SelfCheckApiErrorCode, SELF_CHECK_CONSENT_VERSION } from '@ryadom/contracts/api/self-check'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, type SelfCheckFrom, type SelfCheckProgress } from '@ryadom/analytics/events'
 import { band as bandOf, hasCrisisAnswer, isHigh, retakeAfterDays, score as scoreOf } from '@ryadom/self-check/score'
 import type { SelfCheckTest } from '@ryadom/self-check/types'
 import { Button } from '@ryadom/ui/components/button'
+import { useClient } from '@/lib/auth'
 import { BUTTON } from '../controls'
 import Modal from '../Modal'
+import { useNotice } from '../Notice'
 import { useSos } from '../Sos'
 import { DISCLAIMER, TONE_COLOR, lengthLine, plural } from './ui'
+import { useSelfCheck } from './useSelfCheck'
 
 /** Answers before «×» asks whether to stop: a couple of taps are not worth a question. */
 const INTERRUPT_FROM = 3
@@ -178,13 +182,20 @@ export default function TestSheet({ test, from, onClose }: { test: SelfCheckTest
   )
 }
 
+type ResultStep = 'result' | 'consent'
+
 function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: number[]; onClose(): void }) {
+  const client = useClient()
+  const notify = useNotice()
+  const { refresh } = useSelfCheck()
   const result = scoreOf(test, answers)
   const level = bandOf(test, result.score)
   const high = isHigh(test, result.score)
   const weeks = retakeAfterDays(test, result.score) / 7
   const index = level ? test.bands.indexOf(level) : -1
   const [copied, setCopied] = useState(false)
+  const [step, setStep] = useState<ResultStep>('result')
+  const [saving, setSaving] = useState(false)
 
   async function copy() {
     track(AnalyticsEvent.SelfCheckResultAction, { test_id: test.id, action: 'copy_summary' })
@@ -196,6 +207,75 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
     } catch {
       setCopied(false)
     }
+  }
+
+  /** The server recounts the answers and keeps only the score; without the consent on record the sheet of consent comes first. */
+  async function save(withConsent: boolean) {
+    setSaving(true)
+    try {
+      if (!withConsent) {
+        const { given } = await client.getSelfCheckConsent()
+        if (!given) {
+          track(AnalyticsEvent.SelfCheckConsentShown)
+          setStep('consent')
+          return
+        }
+      } else {
+        await client.giveSelfCheckConsent(SELF_CHECK_CONSENT_VERSION)
+        track(AnalyticsEvent.SelfCheckConsentChoice, { action: 'accepted' })
+      }
+      const saved = await client.saveSelfCheckResult({ testId: test.id, testVersion: test.version, answers })
+      if (!saved.ok) {
+        if (saved.code === SelfCheckApiErrorCode.CONSENT_REQUIRED) {
+          track(AnalyticsEvent.SelfCheckConsentShown)
+          setStep('consent')
+          return
+        }
+        throw new Error(saved.code)
+      }
+      track(AnalyticsEvent.SelfCheckResultAction, { test_id: test.id, action: 'save' })
+      notify('Результат сохранён. Он виден в «Самопроверке» и на экране теста.', 'success')
+      refresh()
+      onClose()
+    } catch {
+      // The same toast as the success, in red; the result stays on the screen to try again.
+      track(AnalyticsEvent.SelfCheckSaveFailed, { test_id: test.id })
+      notify('Не получилось сохранить. Повтори ещё раз.', 'error')
+      setStep('result')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (step === 'consent') {
+    return (
+      <div className="flex flex-col gap-3" data-testid="test-consent">
+        <h2 className="text-lg font-semibold">Сохранить результат?</h2>
+        <p className="text-dim">Результаты тестов — сведения о самочувствии.</p>
+        <ul className="flex flex-col gap-1 text-[0.9375rem]">
+          {['Хранятся в России', 'Видны только тебе', 'Агент их не читает', 'Можно удалить в любой момент'].map((t) => (
+            <li key={t}>✓ {t}</li>
+          ))}
+        </ul>
+        <p className="text-xs text-faint">Сохраняем только балл, уровень и дату. Ответы на вопросы не хранятся.</p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className={`${BUTTON} flex-1`}
+            data-testid="consent-decline"
+            onClick={() => {
+              track(AnalyticsEvent.SelfCheckConsentChoice, { action: 'declined' })
+              setStep('result')
+            }}
+          >
+            Не сохранять
+          </Button>
+          <Button className={`${BUTTON} flex-1`} disabled={saving} data-testid="consent-accept" onClick={() => void save(true)}>
+            Сохранить
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -250,7 +330,9 @@ function Result({ test, answers, onClose }: { test: SelfCheckTest; answers: numb
         >
           Закрыть
         </Button>
-        {/* «Сохранить» arrives with the server part (migration 0010, /api/self-check): until then a pass stays on the device. */}
+        <Button className={`${BUTTON} flex-1`} disabled={saving} data-testid="result-save" onClick={() => void save(false)}>
+          {saving ? 'Сохраняю…' : 'Сохранить'}
+        </Button>
       </div>
       <button type="button" className={`${BUTTON} text-sm text-dim`} data-testid="result-copy" onClick={copy}>
         {copied ? 'Скопировано' : 'Скопировать итог для специалиста'}
