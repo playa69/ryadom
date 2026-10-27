@@ -522,7 +522,8 @@ async def test_fallback_tts_prefers_the_remembered_phrase_then_the_spare_provide
 def test_live_warm_up_has_the_fixed_phrases_but_not_the_stub_replies() -> None:
     """В режиме gemini_live прогреваются готовые фразы (приветствия, кризисный ответ, просьба повторить). Заглушки режима без
     моделей — нет: в бою они больше не звучат, а прогрев тратил бы квоту Gemini."""
-    connector = FakeConnector()
+    # turn_complete после фразы, как у Google: прогрев ждёт закрытия сессии фразы, прежде чем открыть следующую.
+    connector = FakeConnector(turn_complete=True)
     with TestClient(create_app(None, lambda: (None, None), live_factory=lambda: connector)) as client:
         tts = client.app.state.tts
         assert isinstance(tts, CachedTts)
