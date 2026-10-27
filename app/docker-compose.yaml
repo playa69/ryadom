@@ -6,7 +6,17 @@
 #
 # There are no secrets here: the values are deliberately local, in production the infrastructure
 # supplies them.
+#
+# The published ports are the FULL_* variables that scripts/stand.mjs sets from the worktree's stand
+# (`pnpm stand:run -- node scripts/docker.mjs compose -p $STAND_PROJECT_FULL up --build`); without them the
+# ports are the old fixed ones. The stack shares its ports with the development servers of the same stand,
+# so run one or the other.
 name: ryadom
+
+# Who owns the containers, so that `pnpm stand:gc` can find what a removed worktree left behind.
+x-stand-labels: &stand-labels
+  com.ryadom.stand: ${STAND_ID:-manual}
+  com.ryadom.worktree: ${STAND_WORKTREE:-manual}
 
 x-secrets: &secrets
   AUTH_SECRET: local-only-auth-secret-change-me-0123456789
@@ -22,6 +32,7 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       POSTGRES_USER: ryadom
       POSTGRES_PASSWORD: ryadom
@@ -38,12 +49,14 @@ services:
   mailpit:
     image: axllent/mailpit:v1.27
     restart: unless-stopped
+    labels: *stand-labels
     ports:
-      - '8026:8025' # emails: http://localhost:8026
+      - '${FULL_MAIL_UI_PORT:-8026}:8025' # emails: http://localhost:8026
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    labels: *stand-labels
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -54,6 +67,7 @@ services:
     build:
       context: ./dev/agent-mock
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       PORT: '8080'
     healthcheck:
@@ -73,20 +87,22 @@ services:
       postgres:
         condition: service_healthy
     restart: 'no'
+    labels: *stand-labels
 
   api:
     build:
       context: .
       dockerfile: services/api/Dockerfile
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       <<: [*secrets, *email]
       APP_ENV: local
       LOG_LEVEL: info
       PORT: '3002'
       DATABASE_URL: postgres://ryadom:ryadom@postgres:5432/ryadom
-      PUBLIC_WEB_URL: http://localhost:3000
-      PUBLIC_APP_URL: http://localhost:3002
+      PUBLIC_WEB_URL: http://localhost:${FULL_LANDING_PORT:-3000}
+      PUBLIC_APP_URL: http://localhost:${FULL_API_PORT:-3002}
       AGENT_API_URL: http://agent-mock:8080
       AGENT_TIMEOUT_MS: '10000'
       DIALOG_IDLE_TIMEOUT_SEC: '900'
@@ -95,7 +111,7 @@ services:
       REDIS_ENABLED: 'true'
       REDIS_URL: redis://redis:6379
     ports:
-      - '3002:3002'
+      - '${FULL_API_PORT:-3002}:3002'
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -109,19 +125,20 @@ services:
       context: .
       dockerfile: apps/admin/Dockerfile
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       <<: [*secrets, *email]
       APP_ENV: local
       LOG_LEVEL: info
       PORT: '3001'
       DATABASE_URL: postgres://ryadom:ryadom@postgres:5432/ryadom
-      PUBLIC_WEB_URL: http://localhost:3000
-      PUBLIC_APP_URL: http://localhost:3002
+      PUBLIC_WEB_URL: http://localhost:${FULL_LANDING_PORT:-3000}
+      PUBLIC_APP_URL: http://localhost:${FULL_API_PORT:-3002}
       ADMIN_EMAILS: admin@ryadom.local
       AGENT_API_URL: http://agent-mock:8080
       AGENT_TIMEOUT_MS: '10000'
     ports:
-      - '3001:3001'
+      - '${FULL_ADMIN_PORT:-3001}:3001'
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -131,14 +148,15 @@ services:
       context: .
       dockerfile: apps/landing/Dockerfile
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       PORT: '3000'
       # "Open the app" leads to the web app; the download page also links the PWA.
-      PUBLIC_WEBAPP_URL: http://localhost:3003
-      PUBLIC_PWA_URL: http://localhost:3004/pwa/
+      PUBLIC_WEBAPP_URL: http://localhost:${FULL_WEB_PORT:-3003}
+      PUBLIC_PWA_URL: http://localhost:${FULL_PWA_PORT:-3004}/pwa/
       PUBLIC_SUPPORT_EMAIL: support@ryadom.local
     ports:
-      - '3000:3000'
+      - '${FULL_LANDING_PORT:-3000}:3000'
 
   # The signed-in web app. The browser (not this container) talks to the API, so PUBLIC_API_URL is
   # the address as seen from the host, not the compose-internal name.
@@ -147,12 +165,13 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       PORT: '3003'
-      PUBLIC_API_URL: http://localhost:3002
-      PUBLIC_WEB_URL: http://localhost:3000
+      PUBLIC_API_URL: http://localhost:${FULL_API_PORT:-3002}
+      PUBLIC_WEB_URL: http://localhost:${FULL_LANDING_PORT:-3000}
     ports:
-      - '3003:3003'
+      - '${FULL_WEB_PORT:-3003}:3003'
 
   # The PWA: the browser build of apps/mobile behind nginx, at http://localhost:3004/pwa/ (the prefix
   # mirrors production). In production the gateway routes `/api` of the same host to the API; here
@@ -165,15 +184,21 @@ services:
       args:
         PWA_BASE_PATH: /pwa
     restart: unless-stopped
+    labels: *stand-labels
     environment:
-      PUBLIC_WEB_URL: http://localhost:3000
+      PUBLIC_WEB_URL: http://localhost:${FULL_LANDING_PORT:-3000}
       APP_ENV: local
     volumes:
       - ./dev/pwa-api-proxy.conf:/etc/nginx/dev.d/api.conf:ro
     ports:
-      - '3004:3004'
+      - '${FULL_PWA_PORT:-3004}:3004'
     depends_on:
       - api
 
+networks:
+  default:
+    labels: *stand-labels
+
 volumes:
   pg_data:
+    labels: *stand-labels
