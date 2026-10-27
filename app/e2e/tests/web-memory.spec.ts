@@ -293,7 +293,7 @@ test('память в вебе: разговор «Без памяти» нич�
   await goTo(page, 'Новый разговор')
   await page.getByTestId('incognito-toggle').click()
   await expect(page.getByTestId('incognito-toggle')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('incognito')).toContainText('удалится через сутки')
+  await expect(page.getByTestId('incognito')).toContainText('ничего не запомнит')
   await homeInput(page).fill(INTRO)
   await homeInput(page).press('Enter')
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })

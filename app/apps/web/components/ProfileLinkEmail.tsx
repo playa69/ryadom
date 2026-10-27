@@ -207,7 +207,7 @@ export default function LinkEmailForm({
     <form className="flex flex-col gap-4" noValidate onSubmit={(event) => void linkAddress(event)}>
       <ModalText>
         Без почты аккаунт живёт только на этом устройстве и удаляется через {ANONYMOUS_RETENTION_DAYS} дней
-        без визитов. С почтой и паролем разговоры не потеряются, и в аккаунт можно войти с другого устройства.
+        без визитов. С почтой и паролем аккаунт не удалится, и в него можно войти с другого устройства.
       </ModalText>
       <Field role={undefined}>
         <Label htmlFor={`${fieldId}-email`} className="leading-normal">

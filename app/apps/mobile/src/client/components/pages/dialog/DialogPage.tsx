@@ -7,7 +7,6 @@ import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { reportMicFailure, reportVoiceProblem } from '../../../lib/analytics'
 import {
   createDialogSocket,
@@ -47,6 +46,7 @@ import VoiceOrb, { type OrbState } from '../../VoiceOrb'
 import DialogEndSheet from './DialogEndSheet'
 import ShareSheet, { ShareNavButton } from '../journal/ShareSheet'
 import MemoryNotesSheet from '../profile/MemoryNotesSheet'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 import {
   MEMORY_FORGET_ERRORS,
   MEMORY_NOTICE,
@@ -683,7 +683,7 @@ export default function DialogPage({
       f7.dialog
         .create({
           title: 'Спасибо, что поговорил(а)',
-          text: `${text}<br><br>Без почты разговоры хранятся ${ANONYMOUS_RETENTION_DAYS} дней после последнего визита, и войти с другого телефона нельзя. Привяжи почту, чтобы не потерять их.`,
+          text: `${text}<br><br>${DIALOG_KEEP_NOTE} Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
           buttons: [
             {
               text: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
@@ -779,7 +779,7 @@ export default function DialogPage({
         <div className="rd-incognito-mark" role="note" data-testid="dialog-incognito">
           <Icon f7="eye_slash" size={16} />
           <span>
-            <b>Без памяти.</b> Этот разговор я не запомню, а сам он удалится через сутки
+            <b>Без памяти.</b> Этот разговор я не запомню
           </span>
         </div>
       )}

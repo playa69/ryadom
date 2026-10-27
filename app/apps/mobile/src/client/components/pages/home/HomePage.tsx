@@ -317,7 +317,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                   <span className="rd-incognito-title">Без памяти</span>
                   <span className="rd-caption">
                     {withoutMemory
-                      ? 'Этот разговор я не запомню, а сам он удалится через сутки'
+                      ? 'Этот разговор я не запомню'
                       : 'Следующий разговор не попадёт в память'}
                   </span>
                 </span>

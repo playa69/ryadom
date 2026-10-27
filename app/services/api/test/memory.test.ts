@@ -261,7 +261,7 @@ describe('PUT /api/memory/settings', () => {
 
     ok(await call(app, 'PUT', ApiPath.MemorySettings, { enabled: false }, tokens.accessToken))
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ enabled: false, consentVersion: null })
-    expect((await journal(user.id)).map((row) => row.action)).toEqual(['granted', 'revoked'])
+    expect((await journal(user.id)).map((row) => row.action)).toEqual(['granted', 'paused'])
   })
 
   it('без согласия — CONSENT_REQUIRED; версия не дата — 422; без enabled — 400', async () => {
