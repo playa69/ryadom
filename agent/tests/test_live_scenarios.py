@@ -1,60 +1,24 @@
-"""Паритет каскада и gemini_live: одни и те же сценарии, то, что видит клиент.
+"""Сквозные сценарии клиента через WebSocket против поддельного Gemini Live.
 
-Каждый сценарий прогоняется дважды через WebSocket TestClient: против каскада (FakeChat + FakeRecognizer + FakeTts, как в
-tests/conftest.py) и против gemini_live (FakeConnector/FakeLink из tests/test_live.py). Сравниваются не тексты, а то, что
-клиент способен заметить: последовательность типов JSON-кадров, наличие и границы озвучки (кадры 0x02), обязательные поля,
-склейка assistant_delta против assistant_end.text, история диалога, то, что увидела модель, и ошибки в журнале агента.
+Каждый сценарий — то, что делает клиент приложения: открывает диалог, слушает приветствие, набирает или говорит реплику,
+перебивает, обрывает соединение, завершает разговор. Агент работает на подделке Gemini Live (`tests/fake_live.py`: FakeConnector
+и FakeLink, здесь они отвечают по сценарию и по плану событий хода), фиксированные фразы озвучивает FakeTts из tests/conftest.py
+или настоящая обвязка GeminiLiveTts поверх той же подделки. Проверяется не текст, а то, что клиент способен заметить:
+последовательность типов JSON-кадров, наличие и границы озвучки (кадры 0x02), контракт кадров (`contract()`: обязательные
+поля, склейка assistant_delta против assistant_end.text, порядок tts_start/tts_end), история диалога, то, что увидела модель,
+и ошибки в журнале агента (после сценария их быть не должно).
 
-Тесты не заменяют проверку на живой модели: поведение Gemini моделируется подделкой, и там, где результат зависит от
-порядка событий настоящего Gemini (расшифровка речи идёт отдельным потоком), это сказано в причине xfail.
+Тесты не заменяют проверку на живой модели: поведение Gemini моделируется подделкой, и там, где результат зависит от порядка
+событий настоящего Gemini (расшифровка речи идёт отдельным потоком), это сказано в причине xfail.
 
-ТАБЛИЦА ДОПУСТИМЫХ РАЗЛИЧИЙ (не считаются деградацией и тестами не проверяются)
-
-  1. Скорость ответа: live быстрее (нет STT, чата и синтеза по очереди).
-  2. Тембр голоса, формулировки ответов, нарезка assistant_delta, число и размер кадров 0x02 внутри одной озвучки
-     (Gemini отдаёт звук своими кусками; клиент видит те же 200-мс кадры, это держит общий _speak).
-  3. Транскрипт голоса (final) в live приходит вместе с началом ответа, а не отдельно до него: порядок
-     «transcript раньше assistant_start» сохранён. Кадров transcript с final=false нет ни у каскада, ни у live.
-  4. Тишину перед речью live не пересылает модели (кроме запаса в 500 мс), whisper получает запись целиком.
-  5. Эхо и кризис голосом live всё равно отдаёт модели (речь уходит до расшифровки), а её ответ выбрасывает: клиент этого
-     не видит (расход, не поведение). Каскад в этих случаях чат не вызывает. Тишину не отдаёт ни тот, ни другой.
-  6. Ответы live озвучивает сам Gemini, а не TTS_MODE: при отказе TTS ответы в live всё равно звучат, а приветствие и
-     кризисный ответ идут через TTS (GeminiLiveTts) так же, как в каскаде.
-  7. Gemini один вместо трёх бэкендов: отказ Gemini — это и отказ чата, и отказ голоса, поэтому там, где каскад шлёт
-     `error AGENT_LLM_UNAVAILABLE`, live шлёт один `error VOICE_UNAVAILABLE` (клиент гасит микрофон и пишет «Голос сейчас
-     недоступен»). Шаблона нет ни там, ни там.
-  8. Расход: после обрыва Gemini посреди хода live открывает соединение заново на следующей реплике.
-  9. Модель промолчала (пустой ответ) или соединение оборвалось, а слова человека известны: live просит модель ответить ещё
-     раз в свежей сессии (голосовой реплике — после паузы GEMINI_SILENCE_NUDGE_MS) и отвечает со второй попытки; каскад
-     сообщает `error AGENT_LLM_UNAVAILABLE`. Шаблона нет ни там, ни там.
-
-ИЗВЕСТНЫЕ РАСХОЖДЕНИЯ (xfail(strict=True), причина начинается с «PARITY:»): каждое — настоящая деградация live
-относительно каскада; когда расхождение исправят, strict-xfail упадёт (XPASS) и напомнит снять отметку.
-
-  P1   оборванная на полуслове реплика не удерживается (INCOMPLETE_HOLD_MS игнорируется)
-  P2   продолжение оборванной реплики получает отдельный ответ, а не один на обе части
-  P3a  вторая набранная реплика, пока модель ещё не начала отвечать: ответ на вторую отброшен как «хвост» (окно
-       STALE_SECONDS длиннее задержки модели)
-  P3b  набранная реплика посреди ответа обрывает его (у каскада реплика ждёт в очереди)
-  P4   расшифровка речи кусками, второй после начала ответа: транскрипт и история обрезаны, safety позже ответа модели
-  P5   закрыт: реплика длиннее GEMINI_IDLE_TIMEOUT_SECONDS при молчащей модели (таймер молчания идёт после audio_end)
-  P6   второй отказ Gemini подряд не сообщается клиенту ни error, ни транскриптом
-  P7, P8 закрыты сменой сессии после кризиса (GEMINI_TEXT_CONTEXT): новая сессия получает историю с кризисным ответом агента
-  P9   ограничение длины ответа (MAX_REPLY_CHARS) не действует
-  P10  закрыт: ответ без звука от Gemini агент озвучивает сам (тем же голосом), а если озвучки нет, клиент получает error
-       VOICE_UNAVAILABLE, как у каскада
-  P11  dev-переключатель озвучки (/dev/tts none) не выключает звук ответов
-  P12  расшифровка позже GEMINI_TRANSCRIPT_WAIT_MS: слова человека и ответ теряются молча
-  P13  хвост расшифровки ответа после generation_complete теряется (текст короче звука)
-  P14  при лежащем Gemini и настоящей обвязке (GeminiLiveTts) приходят два error VOICE_UNAVAILABLE вместо одного
-  P15  закрыт: зависшая модель — отказ: на голосовую реплику без расшифровки приходит error VOICE_UNAVAILABLE
-  P16  звук ответа без расшифровки: assistant_start есть, assistant_end не придёт никогда
+xfail(strict=True) с причиной «ИЗВЕСТНО: …» отмечают известные недостатки Live: тест описывает, как должно быть, и падает,
+пока недостаток не исправлен. Когда его исправят, strict-xfail даст XPASS и упадёт: это напоминание снять отметку. Закрытые
+недостатки (P5, P7, P8, P10, P15) оставлены обычными тестами, в комментарии над ними сказано, что именно было не так.
 """
 
 import asyncio
 import json
 import logging
-import re
 import struct
 import time
 import uuid
@@ -69,50 +33,43 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from starlette.testclient import WebSocketDenialResponse
 
-from app.api.dialog_live import PRE_ROLL_FRAMES
-from app.api.dialog_ws import MAX_AUDIO_BYTES, MAX_REPLY_CHARS
+from app.api.dialog_live import MAX_AUDIO_BYTES, PRE_ROLL_FRAMES
 from app.clients.gemini_live import VERBATIM_INSTRUCTIONS, LiveError, LiveEvent, LiveHistory
-from app.clients.llm import ModelError
 from app.core.config import APP_CONFIG
-from app.main import create_app
 from app.services.dialog_store import GREETING_NEW, GREETING_RESUMED
-from app.services.replies import CRISIS_REPLY, CRISIS_SAFETY_TEXT, REPLIES, split_sentences
+from app.services.replies import CRISIS_REPLY, CRISIS_SAFETY_TEXT, split_sentences
 from tests.conftest import (
     AUTH,
     FAKE_PCM,
-    FakeChat,
-    FakeRecognizer,
     FakeTts,
     Frame,
     audio_in_frame,
     has,
-    make_client,
+    make_app,
     ws_url,
 )
-from tests.test_live import FakeConnector, FakeLink, re_split
+from tests.fake_live import FakeConnector, FakeLink, re_split
 
 WAIT = 6.0  # сколько ждать кадр, который должен прийти; дольше — зависание
-HOLD_SECONDS = 0.4  # INCOMPLETE_HOLD_MS в conftest
 BARRIER = "__barrier__"
 REPLY = "Понимаю, это непросто. Что сейчас тревожит больше всего?"
 GREETING_SENTENCES = (*split_sentences(GREETING_NEW), *split_sentences(GREETING_RESUMED))
+GREETING_VOICE = ["tts_start(greeting)", "bin", "tts_end(greeting)"]  # озвучка приветствия: одно сообщение, кадры подряд
+REPLY_VOICE = ["tts_start(#1)", "bin", "tts_end(#1)"]  # озвучка первого ответа на реплику
+ANSWER_TEXT = ["assistant_start", "assistant_delta", "assistant_end"]  # ответ модели (дельты подряд слиты в одну)
 
 
-class ParityGap(AssertionError):
-    """Деградация live относительно каскада. Только такие падения засчитываются как xfail известных расхождений."""
+class KnownGap(AssertionError):
+    """Известный недостаток live. Только такие падения засчитываются как xfail: любое другое падение теста остаётся падением."""
 
 
 def gap(ok: bool, what: str) -> None:
     if not ok:
-        raise ParityGap(what)
-
-
-def same(cascade: Any, live: Any, what: str) -> None:
-    gap(cascade == live, f"{what}: каскад={cascade!r}, live={live!r}")
+        raise KnownGap(what)
 
 
 def known_gap(reason: str):  # noqa: ANN201
-    return pytest.mark.xfail(raises=ParityGap, strict=True, reason="PARITY: " + reason)
+    return pytest.mark.xfail(raises=KnownGap, strict=True, reason="ИЗВЕСТНО: " + reason)
 
 
 @pytest.fixture(autouse=True)
@@ -123,8 +80,6 @@ def pinned_settings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFi
         ("idle_timeout_seconds", 15),
         ("transcript_wait_ms", 1000),
         ("history_messages", 12),
-        ("session_resumption", True),
-        ("text_context", True),  # по умолчанию: прошлые реплики уходят в новую сессию отдельно от промпта
     ):
         monkeypatch.setattr(gemini, name, value)
     yield
@@ -132,12 +87,12 @@ def pinned_settings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFi
     assert not errors, "ошибки в журнале агента: " + "; ".join(f"{r.name}: {r.getMessage()[:160]}" for r in errors)
 
 
-# ─── Подделки: один сценарий текста для обоих конвейеров ─────────────────────────────────────────────────────────
+# ─── Подделки: сценарий текста для Gemini ────────────────────────────────────────────────────────────────────────
 
 
 @dataclass
 class Script:
-    """Что «слышит» распознавание (каскад) / расшифровка Gemini (live) и что отвечает модель, по очереди."""
+    """Что расшифровка Gemini «слышит» в речи человека и что отвечает модель, по очереди."""
 
     heard: list[str] = field(default_factory=lambda: ["мне сегодня тяжело"])
     replies: list[str] = field(default_factory=lambda: [REPLY])
@@ -153,40 +108,6 @@ class Script:
         return self._take(self.replies)
 
 
-class ScriptedChat(FakeChat):
-    def __init__(
-        self, script: Script, fail: bool = False, delay: float = 0.0, piece_delay: float = 0.0, dies_after: int | None = None
-    ) -> None:
-        super().__init__(fail=fail, delay=delay, piece_delay=piece_delay)
-        self.script = script
-        self.dies_after = dies_after
-
-    async def stream(self, messages):  # noqa: ANN001, ANN201
-        self.calls.append(messages)
-        if self.delay:
-            await asyncio.sleep(self.delay)
-        if self.fail:
-            raise ModelError("модель сломана в тесте")
-        for n, piece in enumerate(re.findall(r"\S+\s*", self.script.next_reply())):
-            if self.dies_after is not None and n >= self.dies_after:
-                raise ModelError("связь оборвалась")
-            yield piece
-            if self.piece_delay:
-                await asyncio.sleep(self.piece_delay)
-
-
-class ScriptedStt(FakeRecognizer):
-    def __init__(self, script: Script, fail: bool = False) -> None:
-        super().__init__(fail=fail)
-        self.script = script
-
-    async def transcribe(self, pcm: bytes) -> str:
-        self.calls.append(pcm)
-        if self.fail:
-            raise ModelError("распознавание сломано в тесте")
-        return self.script.next_heard()
-
-
 Plan = Callable[["ScriptedLink", str | None, str], "list[LiveEvent | float]"]
 
 
@@ -198,10 +119,9 @@ class ScriptedLink(FakeLink):
         cfg: "ScriptedConnector",
         voice: str,
         instructions: str,
-        resume_handle: str | None = None,
         history: LiveHistory | None = None,
     ) -> None:
-        super().__init__(voice, "", "", instructions, resume_handle, history)
+        super().__init__(voice, "", "", instructions, history)
         self.cfg = cfg
         self.typed: list[str] = []
         self.heard_log: list[str] = []
@@ -220,7 +140,7 @@ class ScriptedLink(FakeLink):
                     events.append(self.cfg.piece_delay)
             if self.cfg.audio:
                 events += [LiveEvent("audio", data=FAKE_PCM), LiveEvent("audio", data=FAKE_PCM)]
-        events += [LiveEvent("generation_complete"), LiveEvent("resumption", text=self.handle_to_issue)]
+        events += [LiveEvent("generation_complete")]
         if self.instructions == VERBATIM_INSTRUCTIONS:
             # Сессия озвучки фразы: Google присылает turn_complete после звука, и прогрев закрывает её, прежде чем открыть
             # следующую (иначе каждая фраза ждала бы дочитывания расхода до таймаута).
@@ -304,13 +224,13 @@ class ScriptedConnector(FakeConnector):
         self.piece_delay = piece_delay
 
     async def open(  # type: ignore[override]
-        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+        self, voice: str, instructions: str, history: LiveHistory | None = None
     ) -> ScriptedLink:
-        self.open_calls.append((voice, resume_handle))
+        self.open_calls.append(voice)
         self.history_calls.append(history)
         if self.fail:
             raise LiveError("Gemini Live не открылся в тесте")
-        link = ScriptedLink(self, voice, instructions, resume_handle, history)
+        link = ScriptedLink(self, voice, instructions, history)
         self.links.append(link)
         return link
 
@@ -353,11 +273,9 @@ class Conn:
         self.ws = ws
         self.rig = rig
         self.frames: list[Frame] = []
-        self.stamps: list[float] = []
         self.stalled: list[str] = []  # ожидания, которые не дождались
         self.cut = -1
         self.barrier_ok = True
-        self.audio_end_at = 0.0
 
     # отправка
 
@@ -374,7 +292,6 @@ class Conn:
         for n in range(tail):
             self.ws.send_bytes(audio_in_frame(frames + n))
         self.send(type="audio_end")
-        self.audio_end_at = time.monotonic()
 
     def cancel(self, message_id: str) -> None:
         self.send(type="tts_cancel", messageId=message_id)
@@ -392,7 +309,6 @@ class Conn:
         else:
             frame = ("json", json.loads(message["text"]))
         self.frames.append(frame)
-        self.stamps.append(time.monotonic())
 
     def pump(self, stop: Callable[[list[Frame]], bool], start: int = 0, timeout: float = WAIT) -> bool:
         end = time.monotonic() + timeout
@@ -456,25 +372,19 @@ class Conn:
 class Rig:
     def __init__(
         self,
-        kind: str,
         client: TestClient,
         script: Script,
         tts: FakeTts | None,
-        chat: ScriptedChat | None,
-        stt: ScriptedStt | None,
-        connector: ScriptedConnector | None,
+        connector: ScriptedConnector,
         voiced: bool,
     ) -> None:
-        self.kind = kind
         self.client = client
         self.script = script
         self.tts = tts
-        self.chat = chat
-        self.stt = stt
         self.connector = connector
         self.voiced = voiced
         # приветствие озвучивается (иначе клиент прочтёт его сам или придёт error)
-        self.greets = (tts is not None and not tts.fail) or (tts is None and client.app.state.tts is not None and not (connector and connector.fail))
+        self.greets = (tts is not None and not tts.fail) or (tts is None and client.app.state.tts is not None and not connector.fail)
         self.user_id = str(uuid.uuid4())
         self.conns: list[Conn] = []
         self.hung: list[str] = []  # сессии, которые не закончились после закрытия сокета (зависшая уборка)
@@ -513,7 +423,6 @@ class Rig:
             conn.finish(voiced, wait)
         cut = conn.cut if barrier else len(conn.frames)
         return Run(
-            kind=self.kind,
             rig=self,
             conn=conn,
             frames=conn.frames[:cut],
@@ -525,45 +434,30 @@ class Rig:
     # что видела модель
 
     def model_context(self) -> str:
-        """Всё, что модель знала к моменту последнего ответа: история для чата или инструкции, прошлые реплики, загруженные в
-        сессию отдельно от промпта (text_context), реплики и слова сессии Gemini."""
-        if self.chat is not None:
-            return "\n".join(m["content"] for m in self.chat.calls[-1])
-        assert self.connector is not None
+        """Всё, что модель знала к моменту последнего ответа: инструкции, прошлые реплики, загруженные в сессию отдельно от
+        промпта, реплики и слова сессии Gemini."""
         link = self.connector.links[-1]
         loaded = [text for _, text in link.history or []]
         return "\n".join([link.instructions, *loaded, *link.typed, *link.heard_log, *link.reply_log[:-1]])
 
     def model_turns(self) -> int:
         """Сколько раз модель просили ответить."""
-        if self.chat is not None:
-            return len(self.chat.calls)
-        assert self.connector is not None
         return sum(len(link.reply_log) for link in self.connector.links)
 
     def audio_bytes_to_model(self) -> int:
-        if self.stt is not None:
-            return len(self.stt.calls[0]) if self.stt.calls else 0
-        assert self.connector is not None
         return sum(c[1] for link in self.connector.links for c in link.commands if c[0] == "audio")
 
     def model_asked_with_voice(self) -> int:
         """Сколько раз до барьера модели отдали голос человека."""
-        if self.stt is not None:
-            return len(self.stt.calls)
-        assert self.connector is not None
         return sum(1 for link in self.connector.links for c in link.commands if c[0] == "end")
 
 
 @contextmanager
 def rig(
-    kind: str,
     *,
     replies: list[str] | None = None,
     heard: list[str] | None = None,
     tts: Any = "ok",
-    chat_fail: bool = False,
-    stt_fail: bool = False,
     connector_fail: bool = False,
     audio: bool = True,
     plan: Plan | None = None,
@@ -571,23 +465,15 @@ def rig(
     voiced: bool | None = None,
     latency: float = 0.0,
     piece_delay: float = 0.0,
-    chat_dies_after: int | None = None,
 ) -> Iterator[Rig]:
     script = Script(heard=list(heard or ["мне сегодня тяжело"]), replies=list(replies if replies is not None else [REPLY]))
     makers = {"ok": FakeTts, "fail": lambda: FakeTts(fail=True), "none": lambda: None}
     tts_obj = None if real_tts else makers[tts]() if isinstance(tts, str) else tts()
-    if kind == "cascade":
-        chat = ScriptedChat(script, fail=chat_fail, delay=latency, piece_delay=piece_delay, dies_after=chat_dies_after)
-        stt = ScriptedStt(script, fail=stt_fail)
-        client, connector = make_client(tts_obj, chat=chat, recognizer=stt), None
-        speaks = tts_obj is not None and not tts_obj.fail
-    else:
-        chat = stt = None
-        connector = ScriptedConnector(script, fail=connector_fail, audio=audio, plan=plan, latency=latency, piece_delay=piece_delay)
-        client = TestClient(create_app(None if real_tts else (lambda: tts_obj), lambda: (None, None), live_factory=lambda: connector))
-        speaks = (audio and not connector_fail) or (tts_obj is not None and not tts_obj.fail)
+    connector = ScriptedConnector(script, fail=connector_fail, audio=audio, plan=plan, latency=latency, piece_delay=piece_delay)
+    client = TestClient(make_app(connector, tts_obj, real_tts=real_tts))
+    speaks = (audio and not connector_fail) or (tts_obj is not None and not tts_obj.fail)
     with client:
-        yield Rig(kind, client, script, tts_obj, chat, stt, connector, speaks if voiced is None else voiced)
+        yield Rig(client, script, tts_obj, connector, speaks if voiced is None else voiced)
 
 
 # ─── Что видит клиент: проекции и контракт ───────────────────────────────────────────────────────────────────────
@@ -603,8 +489,8 @@ def text_shape(frames: list[Frame]) -> list[str]:
             out.append(f"close:{body}")
             continue
         name = body["type"]
-        # `component` — отчёт шлюзу об обращении к компоненту: каскад и речь в речь зовут разные части, и на
-        # сходство кадров для клиента он не влияет (клиент его не получает, шлюз превращает в событие аналитики).
+        # `component` — отчёт шлюзу об обращении к компоненту: клиент его не получает (шлюз превращает его в событие
+        # аналитики), и на то, что видит человек, он не влияет.
         if name in ("tts_start", "tts_end", "component"):
             continue
         if name == "transcript":
@@ -737,7 +623,6 @@ def contract(frames: list[Frame], closed_ends: bool = True) -> list[str]:
 
 @dataclass
 class Run:
-    kind: str
     rig: Rig
     conn: Conn
     frames: list[Frame]  # всё до барьера
@@ -772,26 +657,19 @@ class Run:
 
 
 def sound(run: Run, closed_ends: bool = True, alive: bool = True) -> None:
-    """Базовая проверка прогона: ничего не зависло, контракт соблюдён, диалог жив после сценария (`alive=False` — бэкенд лежит
+    """Базовая проверка прогона: ничего не зависло, контракт соблюдён, диалог жив после сценария (`alive=False` — Gemini лежит
     и на барьер ответить нечем: проверяется только, что ничего не зависло)."""
-    assert not run.conn.stalled, f"{run.kind}: не дождались {run.conn.stalled}; пришло: {run.conn.dump()}"
-    assert not run.rig.hung, f"{run.kind}: сессия не закончилась после закрытия сокета (зависшая уборка задач)"
-    assert contract(run.conn.frames, closed_ends) == [], f"{run.kind}: {contract(run.conn.frames, closed_ends)}\n{run.conn.dump()}"
+    assert not run.conn.stalled, f"не дождались {run.conn.stalled}; пришло: {run.conn.dump()}"
+    assert not run.rig.hung, "сессия не закончилась после закрытия сокета (зависшая уборка задач)"
+    assert contract(run.conn.frames, closed_ends) == [], f"{contract(run.conn.frames, closed_ends)}\n{run.conn.dump()}"
     if alive:
-        assert run.conn.barrier_ok or run.conn.cut < 0, f"{run.kind}: диалог не ответил после сценария: {run.conn.dump()}"
+        assert run.conn.barrier_ok or run.conn.cut < 0, f"диалог не ответил после сценария: {run.conn.dump()}"
 
 
-def one(kind: str, scenario: Callable[[Rig], Run], **cfg: Any) -> Run:
-    with rig(kind, **cfg) as r:
+def play(scenario: Callable[[Rig], Run], **cfg: Any) -> Run:
+    """Один прогон сценария на новом стенде; `cfg` — настройки `rig(...)`."""
+    with rig(**cfg) as r:
         return scenario(r)
-
-
-def both(scenario: Callable[[Rig], Run], **cfg: Any) -> tuple[Run, Run]:
-    runs = []
-    for kind in ("cascade", "live"):
-        with rig(kind, **cfg) as r:
-            runs.append(scenario(r))
-    return runs[0], runs[1]
 
 
 def metric(name: str) -> float:
@@ -885,110 +763,92 @@ def bins_between(frames: list[Frame], message_id: str) -> int:
 
 @pytest.mark.parametrize("resumed", [False, True], ids=["new", "resumed"])
 def test_greeting_new_and_resumed(resumed: bool) -> None:
-    cascade, live = both(lambda r: sc_greeting(r, resumed))
-    sound(cascade), sound(live)
-    expected = ["tts_start(greeting)", "bin", "tts_end(greeting)"]
-    assert cascade.voice == expected and cascade.text == ["ready"]
-    same(cascade.text, live.text, "кадры приветствия")
-    same(cascade.voice, live.voice, "озвучка приветствия")
-    sentences = list(split_sentences(GREETING_RESUMED if resumed else GREETING_NEW))
-    assert cascade.extra["tts_calls"] == sentences
-    same(cascade.extra["tts_calls"], live.extra["tts_calls"], "что озвучено")
-    same(cascade.extra["greeting"], live.extra["greeting"], "приветствие в ответе POST")
-    for run in (cascade, live):  # в истории только барьер: приветствие сообщением не хранится
-        assert [m["text"] for m in run.history] == ["барьер", REPLY], run.kind
+    run = play(lambda r: sc_greeting(r, resumed))
+    sound(run)
+    assert run.voice == GREETING_VOICE and run.text == ["ready"]
+    greeting = GREETING_RESUMED if resumed else GREETING_NEW
+    assert run.extra["tts_calls"] == list(split_sentences(greeting))
+    assert run.extra["greeting"] == greeting  # приветствие в ответе POST
+    assert [m["text"] for m in run.history] == ["барьер", REPLY]  # в истории только барьер: приветствие сообщением не хранится
 
 
 # ─── Набранная реплика ───────────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_typed_message() -> None:
-    cascade, live = both(sc_text)
-    sound(cascade), sound(live)
-    assert cascade.text == ["ready", "ack", "assistant_start", "assistant_delta", "assistant_end"]
-    same(cascade.text, live.text, "кадры ответа на набранное")
-    same(cascade.voice, live.voice, "озвучка ответа")
-    assert cascade.voice[-3:] == ["tts_start(#1)", "bin", "tts_end(#1)"]
-    for run in (cascade, live):
-        ack, end = run.bodies("ack")[0], run.bodies("assistant_end")[0]
-        assert ack["id"] == "c-1" and end["text"] == REPLY and run.deltas(end["messageId"]) == end["text"], run.kind
-        assert run.roles()[:2] == ["user", "assistant"] and run.history[0]["id"] == ack["messageId"], run.kind
-        assert run.history[0]["text"] == "Мне сегодня тревожно" and run.history[1]["id"] == end["messageId"], run.kind
-        assert run.history[1]["text"] == REPLY, run.kind
-    same(cascade.roles(), live.roles(), "история")
+    run = play(sc_text)
+    sound(run)
+    assert run.text == ["ready", "ack", "assistant_start", "assistant_delta", "assistant_end"]
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
+    ack, end = run.bodies("ack")[0], run.bodies("assistant_end")[0]
+    assert ack["id"] == "c-1" and end["text"] == REPLY and run.deltas(end["messageId"]) == end["text"]
+    assert run.roles()[:2] == ["user", "assistant"] and run.history[0]["id"] == ack["messageId"]
+    assert run.history[0]["text"] == "Мне сегодня тревожно" and run.history[1]["id"] == end["messageId"]
+    assert run.history[1]["text"] == REPLY
 
 
 @pytest.mark.parametrize("settled", [True, False], ids=["after-reply", "before-reply"])
 def test_repeated_typed_message_gives_one_answer_and_second_ack(settled: bool) -> None:
-    cascade, live = both(lambda r: sc_duplicate(r, settled))
-    sound(cascade), sound(live)
-    for run in (cascade, live):
-        acks = run.bodies("ack")
-        assert [a["id"] for a in acks] == ["c-1", "c-1"] and acks[0]["messageId"] == acks[1]["messageId"], run.kind
-        assert len(run.replies) == 1 and run.roles()[:2] == ["user", "assistant"], run.kind
-    same(cascade.roles(), live.roles(), "история после повтора")
-    same(len(cascade.replies), len(live.replies), "число ответов после повтора")
+    run = play(lambda r: sc_duplicate(r, settled))
+    sound(run)
+    acks = run.bodies("ack")
+    assert [a["id"] for a in acks] == ["c-1", "c-1"] and acks[0]["messageId"] == acks[1]["messageId"]
+    assert len(run.replies) == 1 and run.roles()[:2] == ["user", "assistant"]
+    assert run.roles() == ["user", "assistant"] * 2  # история после повтора: одна пара диалога и пара барьера
 
 
 # ─── Голосовая реплика ───────────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_voice_turn() -> None:
-    cascade, live = both(sc_voice)
-    sound(cascade), sound(live)
-    assert cascade.text == ["ready", "transcript:final", "assistant_start", "assistant_delta", "assistant_end"]
-    same(cascade.text, live.text, "кадры голосовой реплики")
-    same(cascade.voice, live.voice, "озвучка ответа")
-    for run in (cascade, live):
-        transcript = run.bodies("transcript")[0]
-        assert transcript["text"] == "мне сегодня тяжело" and transcript["final"] is True, run.kind
-        assert "ack" not in run.text, run.kind  # на голосовую реплику ack не нужен
-        assert run.history[0]["id"] == transcript["messageId"] and run.history[0]["text"] == transcript["text"], run.kind
-        assert run.roles()[:2] == ["user", "assistant"] and run.replies == [REPLY], run.kind
+    run = play(sc_voice)
+    sound(run)
+    assert run.text == ["ready", "transcript:final", "assistant_start", "assistant_delta", "assistant_end"]
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
+    transcript = run.bodies("transcript")[0]
+    assert transcript["text"] == "мне сегодня тяжело" and transcript["final"] is True
+    assert "ack" not in run.text  # на голосовую реплику ack не нужен
+    assert run.history[0]["id"] == transcript["messageId"] and run.history[0]["text"] == transcript["text"]
+    assert run.roles()[:2] == ["user", "assistant"] and run.replies == [REPLY]
 
 
 @pytest.mark.parametrize("how", ["no-frames", "silent-frames"])
 def test_silence_gives_an_empty_final_transcript_and_no_reply(how: str) -> None:
     frames = 0 if how == "no-frames" else 5
-    cascade, live = both(lambda r: sc_voice(r, frames=frames, loud=False, reply=False))
-    sound(cascade), sound(live)
-    assert cascade.text == ["ready", "transcript:empty"]
-    same(cascade.text, live.text, "кадры на тишину")
-    for run in (cascade, live):
-        assert run.bodies("transcript")[0] == {"v": 1, "type": "transcript", "text": "", "final": True}, run.kind
-        assert run.roles() == ["user", "assistant"], f"{run.kind}: история только от барьера"
-        assert run.history[0]["text"] == "барьер", run.kind
-    assert cascade.rig.model_asked_with_voice() == live.rig.model_asked_with_voice() == 0  # тишина модели не достаётся
+    run = play(lambda r: sc_voice(r, frames=frames, loud=False, reply=False))
+    sound(run)
+    assert run.text == ["ready", "transcript:empty"]
+    assert run.bodies("transcript")[0] == {"v": 1, "type": "transcript", "text": "", "final": True}
+    assert run.roles() == ["user", "assistant"], "история только от барьера"
+    assert run.history[0]["text"] == "барьер"
+    assert run.rig.model_asked_with_voice() == 0  # тишина модели не достаётся
 
 
 # ─── Кризис ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_typed_crisis() -> None:
-    cascade, live = both(lambda r: sc_text(r, "я больше не хочу жить"))
-    sound(cascade), sound(live)
-    assert cascade.text == ["ready", "ack", "safety", "assistant_start", "assistant_delta", "assistant_end"]
-    same(cascade.text, live.text, "кадры кризисной реплики")
-    same(cascade.voice, live.voice, "озвучка кризисного ответа")
-    for run in (cascade, live):
-        assert run.bodies("safety")[0]["text"] == CRISIS_SAFETY_TEXT and run.replies == [CRISIS_REPLY], run.kind
-        assert run.history[1]["text"] == CRISIS_REPLY, run.kind
-        assert run.rig.model_turns() == 1, f"{run.kind}: модель просили ответить на кризис (запросов {run.rig.model_turns()}, ждали один: барьер)"
-    assert [t for link in live.rig.connector.links for t in link.typed] == ["барьер"]  # кризисный текст в Gemini не уходил
+    run = play(lambda r: sc_text(r, "я больше не хочу жить"))
+    sound(run)
+    assert run.text == ["ready", "ack", "safety", "assistant_start", "assistant_delta", "assistant_end"]
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
+    assert run.bodies("safety")[0]["text"] == CRISIS_SAFETY_TEXT and run.replies == [CRISIS_REPLY]
+    assert run.history[1]["text"] == CRISIS_REPLY
+    turns = run.rig.model_turns()
+    assert turns == 1, f"модель просили ответить на кризис (запросов {turns}, ждали один: барьер)"
+    assert [t for link in run.rig.connector.links for t in link.typed] == ["барьер"]  # кризисный текст в Gemini не уходил
 
 
 def test_crisis_in_speech_replaces_the_model_answer() -> None:
-    cascade, live = both(sc_voice, heard=["я больше не хочу жить"], replies=["ОТВЕТ-МОДЕЛИ, который человек слышать не должен."])
-    sound(cascade), sound(live)
-    assert cascade.text == ["ready", "transcript:final", "safety", "assistant_start", "assistant_delta", "assistant_end"]
-    same(cascade.text, live.text, "кадры кризиса голосом")
-    same(cascade.voice, live.voice, "озвучка кризисного ответа")
-    for run in (cascade, live):
-        assert run.replies == [CRISIS_REPLY], run.kind
-        assert "ОТВЕТ-МОДЕЛИ" not in json.dumps([b for k, b in run.frames if k == "json"], ensure_ascii=False), run.kind
-        assert run.history[0]["text"] == "я больше не хочу жить" and run.history[1]["text"] == CRISIS_REPLY, run.kind
-        transcript_at, safety_at = run.text.index("transcript:final"), run.text.index("safety")
-        assert transcript_at < safety_at < run.text.index("assistant_start"), run.kind
+    run = play(sc_voice, heard=["я больше не хочу жить"], replies=["ОТВЕТ-МОДЕЛИ, который человек слышать не должен."])
+    sound(run)
+    assert run.text == ["ready", "transcript:final", "safety", "assistant_start", "assistant_delta", "assistant_end"]
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
+    assert run.replies == [CRISIS_REPLY]
+    assert "ОТВЕТ-МОДЕЛИ" not in json.dumps([b for k, b in run.frames if k == "json"], ensure_ascii=False)
+    assert run.history[0]["text"] == "я больше не хочу жить" and run.history[1]["text"] == CRISIS_REPLY
+    transcript_at, safety_at = run.text.index("transcript:final"), run.text.index("safety")
+    assert transcript_at < safety_at < run.text.index("assistant_start")
 
 
 # ─── Перебивание и эхо ───────────────────────────────────────────────────────────────────────────────────────────
@@ -996,36 +856,28 @@ def test_crisis_in_speech_replaces_the_model_answer() -> None:
 
 def test_barge_in_stops_the_voice_and_the_next_voice_turn_is_answered(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(APP_CONFIG.speech, "tts_frame_interval_ms", 120)  # кадры идут не мгновенно: есть что обрывать
-    cascade, live = both(
-        sc_barge_in, replies=["Я рядом, расскажи ещё.", "Слышу, продолжай."], heard=["подожди, я не договорил"]
-    )
-    sound(cascade), sound(live)
-    full = {"cascade": 3, "live": 5}  # кадров озвучки в первом ответе, если бы его не прервали
-    for run in (cascade, live):
-        first = run.extra["first"]
-        assert bins_between(run.frames, first) < full[run.kind], f"{run.kind}: после tts_cancel звук не остановился"
-        assert has(run.frames, "tts_end", messageId=first), run.kind
-        assert run.replies[0] == "Я рядом, расскажи ещё." and run.replies[-1] == "Слышу, продолжай.", run.kind
-        assert run.bodies("transcript")[0]["text"] == "подожди, я не договорил", run.kind
-        assert run.roles()[:4] == ["user", "assistant", "user", "assistant"], run.kind
-    same(cascade.text, live.text, "кадры при перебивании")
-    same(cascade.voice, live.voice, "озвучка при перебивании")
+    run = play(sc_barge_in, replies=["Я рядом, расскажи ещё.", "Слышу, продолжай."], heard=["подожди, я не договорил"])
+    sound(run)
+    first = run.extra["first"]
+    full = 5  # кадров озвучки в первом ответе, если бы его не прервали
+    assert bins_between(run.frames, first) < full, "после tts_cancel звук не остановился"
+    assert has(run.frames, "tts_end", messageId=first)
+    assert run.replies[0] == "Я рядом, расскажи ещё." and run.replies[-1] == "Слышу, продолжай."
+    assert run.bodies("transcript")[0]["text"] == "подожди, я не договорил"
+    assert run.roles()[:4] == ["user", "assistant", "user", "assistant"]
 
 
 def test_echo_of_the_agent_is_not_a_reply_from_the_person() -> None:
     said = "Я слышу тебя. Расскажи, что у тебя на душе?"
-    cascade, live = both(
-        lambda r: sc_barge_in(r, echo=True), replies=[said, "Продолжай, я слушаю."], heard=["расскажи что у тебя на душе"]
-    )
-    sound(cascade), sound(live)
-    for run in (cascade, live):
-        assert run.bodies("transcript") == [{"v": 1, "type": "transcript", "text": "", "final": True}], run.kind
-        assert "assistant_start" not in run.text[run.text.index("transcript:empty") :], f"{run.kind}: ответ на эхо"
-        # в историю до барьера эхо не попало
-        assert [m["text"] for m in run.history if m["role"] == "user"] == ["раз", "барьер"], run.kind
-    same(cascade.text, live.text, "кадры при эхо")
-    # каскад на эхо чат не зовёт (первая реплика и барьер); live отдаёт эхо модели и выбрасывает её ответ (допустимое различие №5)
-    assert cascade.rig.model_turns() == 2 and live.rig.model_turns() == 3
+    run = play(lambda r: sc_barge_in(r, echo=True), replies=[said, "Продолжай, я слушаю."], heard=["расскажи что у тебя на душе"])
+    sound(run)
+    assert run.bodies("transcript") == [{"v": 1, "type": "transcript", "text": "", "final": True}]
+    assert "assistant_start" not in run.text[run.text.index("transcript:empty") :], "ответ на эхо"
+    # в историю до барьера эхо не попало
+    assert [m["text"] for m in run.history if m["role"] == "user"] == ["раз", "барьер"]
+    # Эхо и кризис голосом уходят модели до расшифровки, а её ответ выбрасывается (клиент этого не видит, это только расход):
+    # первая реплика, эхо и барьер.
+    assert run.rig.model_turns() == 3
 
 
 # ─── Выбор голоса, завершение, переподключение ────────────────────────────────────────────────────────────────────
@@ -1037,14 +889,10 @@ def sc_set_voice(r: Rig) -> Run:
         c.wait_greeting()
         c.send(type="set_voice", voice="robot")  # чужое значение игнорируется
         c.send(type="set_voice", voice="female")
-        before = len(r.tts.voices) if r.tts else 0
         m = c.mark()
         c.say("Привет", "c-1")
         c.wait_reply(m)
-        if r.chat is not None:
-            voices = set(r.tts.voices[before:])
-        else:
-            voices = {link.voice for link in r.connector.links if "Привет" in link.typed}
+        voices = {link.voice for link in r.connector.links if "Привет" in link.typed}
         run = r.done(c, dialog, voices=voices)
     r.client.post(f"/v1/users/{r.user_id}/dialogs/{dialog['dialogId']}/end", headers=AUTH)
     run.extra["next_voice"] = r.start()["voice"]
@@ -1052,14 +900,13 @@ def sc_set_voice(r: Rig) -> Run:
 
 
 def test_set_voice_applies_to_the_next_reply_and_is_remembered() -> None:
-    cascade, live = both(sc_set_voice)
-    sound(cascade), sound(live)
-    for run in (cascade, live):
-        assert run.extra["voices"] == {"female"}, run.kind
-        assert run.extra["next_voice"] == "female", run.kind
-    same(cascade.text, live.text, "кадры после set_voice")
-    same(cascade.voice, live.voice, "озвучка после set_voice")
-    assert live.rig.connector.open_calls[-1][0] == "female"  # у Gemini голос один на соединение: новая сессия
+    run = play(sc_set_voice)
+    sound(run)
+    assert run.extra["voices"] == {"female"}
+    assert run.extra["next_voice"] == "female"
+    assert run.text == ["ready", "ack", "assistant_start", "assistant_delta", "assistant_end"]
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
+    assert run.rig.connector.open_calls[-1] == "female"  # у Gemini голос один на соединение: новая сессия
 
 
 def sc_end(r: Rig) -> Run:
@@ -1076,15 +923,12 @@ def sc_end(r: Rig) -> Run:
 
 
 def test_end_gives_summary_and_closes_with_1000() -> None:
-    cascade, live = both(sc_end)
-    sound(cascade), sound(live)
-    assert cascade.text[-2:] == ["ended", "close:1000"]
-    same(cascade.text, live.text, "кадры завершения")
-    same(cascade.bodies("ended")[0]["summary"], live.bodies("ended")[0]["summary"], "сводка")
-    for run in (cascade, live):
-        summary = run.bodies("ended")[0]["summary"]
-        assert summary["title"] == "Стало легче" and summary["tensionAfter"] == 3, run.kind
-        assert run.extra["item"]["endedAt"] and run.extra["item"]["summary"] == summary, run.kind
+    run = play(sc_end)
+    sound(run)
+    assert run.text == ["ready", "ack", "assistant_start", "assistant_delta", "assistant_end", "ended", "close:1000"]
+    summary = run.bodies("ended")[0]["summary"]
+    assert summary["title"] == "Стало легче" and summary["tensionAfter"] == 3
+    assert run.extra["item"]["endedAt"] and run.extra["item"]["summary"] == summary
 
 
 def sc_reconnect(r: Rig, post_again: bool) -> Run:
@@ -1109,71 +953,19 @@ def sc_reconnect(r: Rig, post_again: bool) -> Run:
 
 @pytest.mark.parametrize("post_again", [False, True], ids=["socket-only", "post-again"])
 def test_reconnect_keeps_history_and_greets_only_on_a_new_start(post_again: bool) -> None:
-    cascade, live = both(lambda r: sc_reconnect(r, post_again))
-    sound(cascade), sound(live)
-    expected_voice = ["tts_start(greeting)", "bin", "tts_end(greeting)"] if post_again else []
-    assert cascade.voice[: len(expected_voice)] == expected_voice
-    same(cascade.text, live.text, "кадры второго сокета")
-    same(cascade.voice, live.voice, "озвучка второго сокета")
-    for run in (cascade, live):
-        assert [m["text"] for m in run.extra["history_on_return"]] == ["Первая реплика", REPLY], run.kind
-        assert run.roles() == ["user", "assistant"] * 3, run.kind  # две пары диалога и пара барьера
-        # модель видит прежний разговор: и слова человека, и свой ответ
-        assert "Первая реплика" in run.extra["context"] and "непросто" in run.extra["context"], f"{run.kind}: {run.extra['context']!r}"
-    for run in (cascade, live):
-        calls = run.extra["tts_calls"]
-        assert calls.count(GREETING_SENTENCES[0]) == 1 and (GREETING_RESUMED in calls) is post_again, f"{run.kind}: озвучено {calls}"
+    run = play(lambda r: sc_reconnect(r, post_again))
+    sound(run)
+    greeting_voice = GREETING_VOICE if post_again else []
+    assert run.text == ["ready", "ack", "assistant_start", "assistant_delta", "assistant_end"]
+    assert run.voice == greeting_voice + REPLY_VOICE
+    assert [m["text"] for m in run.extra["history_on_return"]] == ["Первая реплика", REPLY]
+    assert run.roles() == ["user", "assistant"] * 3  # две пары диалога и пара барьера
+    # модель видит прежний разговор: и слова человека, и свой ответ
+    assert "Первая реплика" in run.extra["context"] and "непросто" in run.extra["context"], run.extra["context"]
+    calls = run.extra["tts_calls"]
+    assert calls.count(GREETING_SENTENCES[0]) == 1 and (GREETING_RESUMED in calls) is post_again, f"озвучено {calls}"
     if not post_again:
-        assert not has(cascade.conn.frames, "tts_start", messageId="greeting")
-
-
-# ─── Оборванная на полуслове реплика ──────────────────────────────────────────────────────────────────────────────
-
-
-def sc_unfinished(r: Rig) -> Run:
-    dialog = r.start()
-    with r.socket(dialog) as c:
-        c.wait_greeting()
-        m = c.mark()
-        c.speak(4)
-        c.wait_type("transcript", m)
-        c.wait_reply(m)
-        start = next(c.stamps[i] for i, (k, b) in enumerate(c.frames) if k == "json" and b["type"] == "assistant_start")
-        return r.done(c, dialog, waited=start - c.audio_end_at)
-
-
-@known_gap("P1 оборванная на полуслове реплика не удерживается: live отвечает сразу, INCOMPLETE_HOLD_MS не действует (_open_gate)")
-def test_unfinished_phrase_waits_for_the_person_to_finish() -> None:
-    cascade, live = both(sc_unfinished, heard=["мне кажется, что…"])
-    sound(cascade), sound(live)
-    assert cascade.extra["waited"] >= HOLD_SECONDS * 0.8, "каскад должен держать ответ на оборванной реплике"
-    gap(live.extra["waited"] >= HOLD_SECONDS * 0.8, f"live ответил через {live.extra['waited']:.2f} с, каскад ждёт {HOLD_SECONDS} с")
-
-
-def sc_continuation(r: Rig) -> Run:
-    dialog = r.start()
-    with r.socket(dialog) as c:
-        c.wait_greeting()
-        m = c.mark()
-        c.speak(4)
-        c.wait_type("transcript", m)
-        c.speak(4)  # договорил в пределах паузы
-        c.wait_reply(m)
-        time.sleep(HOLD_SECONDS * 2)  # второго ответа по таймеру быть не должно
-        return r.done(c, dialog)
-
-
-@known_gap("P2 продолжение оборванной реплики получает отдельный ответ: у каскада один ответ на обе части, у live два")
-def test_continuation_of_an_unfinished_phrase_gets_one_answer() -> None:
-    cascade, live = both(sc_continuation, heard=["мне кажется, что…", "я просто устал."], replies=["Слышу тебя.", "Лишний ответ."])
-    sound(cascade), sound(live)
-    assert len(cascade.replies) == 1 and [m["text"] for m in cascade.history if m["role"] == "user"][:2] == [
-        "мне кажется, что…",
-        "я просто устал.",
-    ]
-    seen = re.sub(r"\[\d{4}-[^\]]*Z\] ", "", cascade.rig.chat.calls[0][-1]["content"])  # время реплик в контексте не важно
-    assert "мне кажется, что… я просто устал." in seen  # модель видит обе части как одну реплику
-    gap(len(live.replies) == 1, f"live ответил {len(live.replies)} раза(ов) на две части одной мысли: {live.replies}")
+        assert not has(run.conn.frames, "tts_start", messageId="greeting")
 
 
 # ─── Очередь набранных реплик ────────────────────────────────────────────────────────────────────────────────────
@@ -1198,23 +990,19 @@ def sc_two_typed(r: Rig, streaming: bool) -> Run:
     "GEMINI_IDLE_TIMEOUT_SECONDS повторной просьбой к модели; спека требует очередь («Реплика во время ответа»)"
 )
 def test_second_typed_message_waits_in_the_queue_before_the_first_answer_starts() -> None:
-    cascade, live = both(lambda r: sc_two_typed(r, False), replies=["Ответ на первое.", "Ответ на второе."], latency=0.3)
-    sound(cascade)
-    assert cascade.replies == ["Ответ на первое.", "Ответ на второе."]
-    assert cascade.text.count("ack") == 2
-    same(cascade.replies, live.replies, "ответы на две подряд набранные реплики")
+    run = play(lambda r: sc_two_typed(r, False), replies=["Ответ на первое.", "Ответ на второе."], latency=0.3)
+    gap(run.replies == ["Ответ на первое.", "Ответ на второе."], f"ответы на две подряд набранные реплики: {run.replies}")
+    assert run.text.count("ack") == 2
 
 
 @known_gap(
     "P3b набранная реплика посреди ответа обрывает его: assistant_end с недописанным текстом, в истории огрызок "
-    "(_begin завершает идущий ход); у каскада предыдущий ответ дописывается, следующая реплика ждёт в очереди"
+    "(_begin завершает идущий ход); спека требует дописать предыдущий ответ, а следующую реплику поставить в очередь"
 )
 def test_second_typed_message_waits_in_the_queue_while_the_first_answer_is_written() -> None:
     first = "Первое предложение ответа. Второе предложение ответа. Третье предложение ответа."
-    cascade, live = both(lambda r: sc_two_typed(r, True), replies=[first, "Ответ на второе."], piece_delay=0.08)
-    sound(cascade)
-    assert cascade.replies == [first, "Ответ на второе."]
-    same(cascade.replies, live.replies, "ответы, когда вторая реплика пришла посреди первого")
+    run = play(lambda r: sc_two_typed(r, True), replies=[first, "Ответ на второе."], piece_delay=0.08)
+    gap(run.replies == [first, "Ответ на второе."], f"ответы, когда вторая реплика пришла посреди первого: {run.replies}")
 
 
 # ─── Расшифровка кусками: кризис, опоздавшая расшифровка, хвост ответа ──────────────────────────────────────────────
@@ -1231,7 +1019,7 @@ def split_heard_plan(first_words: int) -> Plan:
         events: list[LiveEvent | float] = [LiveEvent("input_text", text=head)]
         events += [LiveEvent("output_text", text=piece) for piece in re_split(reply)]
         events += [LiveEvent("audio", data=FAKE_PCM), LiveEvent("input_text", text=rest), LiveEvent("audio", data=FAKE_PCM)]
-        events += [LiveEvent("generation_complete"), LiveEvent("resumption", text=link.handle_to_issue)]
+        events += [LiveEvent("generation_complete")]
         return events
 
     return plan
@@ -1243,14 +1031,11 @@ def split_heard_plan(first_words: int) -> Plan:
 )
 def test_crisis_in_the_second_chunk_of_the_transcription() -> None:
     said = "я думаю что не хочу жить"
-    cascade, live = both(lambda r: sc_voice(r, wait=2.0), heard=[said], replies=["ОТВЕТ-МОДЕЛИ про что-то другое."], plan=split_heard_plan(2))
-    sound(cascade, closed_ends=True)
-    assert cascade.bodies("transcript")[0]["text"] == said and cascade.replies == [CRISIS_REPLY]
-    assert cascade.text.index("safety") < cascade.text.index("assistant_start")
-    transcript = live.bodies("transcript")
-    gap(bool(transcript) and transcript[0]["text"] == said, f"live показал и сохранил реплику {transcript[0]['text'] if transcript else None!r}, а не {said!r}")
-    gap("assistant_start" not in live.text[: live.text.index("safety")] if "safety" in live.text else False, "ответ модели показан раньше safety или safety нет")
-    gap("ОТВЕТ-МОДЕЛИ" not in json.dumps([b for k, b in live.frames if k == "json"], ensure_ascii=False), "ответ модели на кризис попал к человеку")
+    run = play(lambda r: sc_voice(r, wait=2.0), heard=[said], replies=["ОТВЕТ-МОДЕЛИ про что-то другое."], plan=split_heard_plan(2))
+    transcript = run.bodies("transcript")
+    gap(bool(transcript) and transcript[0]["text"] == said, f"показана и сохранена реплика {transcript[0]['text'] if transcript else None!r}, а не {said!r}")
+    gap("assistant_start" not in run.text[: run.text.index("safety")] if "safety" in run.text else False, "ответ модели показан раньше safety или safety нет")
+    gap("ОТВЕТ-МОДЕЛИ" not in json.dumps([b for k, b in run.frames if k == "json"], ensure_ascii=False), "ответ модели на кризис попал к человеку")
 
 
 def late_transcript_plan(delay: float) -> Plan:
@@ -1270,11 +1055,9 @@ def late_transcript_plan(delay: float) -> Plan:
 )
 def test_a_late_transcription_does_not_lose_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(APP_CONFIG.gemini, "transcript_wait_ms", 100)
-    cascade, live = both(lambda r: sc_voice(r, wait=2.0), plan=late_transcript_plan(0.5))
-    sound(cascade, closed_ends=True)
-    assert cascade.text == ["ready", "transcript:final", "assistant_start", "assistant_delta", "assistant_end"]
-    gap("transcript:final" in live.text, f"live не показал слов человека: {live.text}")
-    same(cascade.text, live.text, "кадры при опоздавшей расшифровке")
+    run = play(lambda r: sc_voice(r, wait=2.0), plan=late_transcript_plan(0.5))
+    gap("transcript:final" in run.text, f"не показаны слова человека: {run.text}")
+    gap(run.text == ["ready", "transcript:final", *ANSWER_TEXT], f"кадры при опоздавшей расшифровке: {run.text}")
 
 
 def tail_after_complete_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
@@ -1291,10 +1074,8 @@ def tail_after_complete_plan(link: ScriptedLink, heard: str | None, reply: str) 
     "(premise: у настоящего Gemini последний кусок output_transcription может прийти после generation_complete)"
 )
 def test_the_tail_of_the_reply_text_after_generation_complete_is_kept() -> None:
-    cascade, live = both(sc_text, plan=tail_after_complete_plan)
-    sound(cascade, closed_ends=True)
-    assert cascade.replies == [REPLY]
-    same(cascade.replies, live.replies, "текст ответа")
+    run = play(sc_text, plan=tail_after_complete_plan)
+    gap(run.replies == [REPLY], f"текст ответа: {run.replies}")
 
 
 # ─── Долгая реплика ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -1320,11 +1101,9 @@ def sc_long_speech(r: Rig, pause: float) -> Run:
 # P5 закрыт: таймер молчания модели не идёт, пока человек ещё говорит (ходом считается время после audio_end).
 def test_a_long_utterance_survives_the_idle_timeout_of_a_silent_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)  # в бою 15 с
-    cascade, live = both(lambda r: sc_long_speech(r, 1.6))
-    sound(cascade)
-    assert cascade.text == ["ready", "transcript:final", "assistant_start", "assistant_delta", "assistant_end"]
-    gap(not live.conn.stalled, f"live не дождался: {live.conn.stalled}; пришло: {live.conn.dump()}")
-    same(cascade.text, live.text, "кадры длинной реплики")
+    run = play(lambda r: sc_long_speech(r, 1.6))
+    sound(run)
+    assert run.text == ["ready", "transcript:final", *ANSWER_TEXT]
 
 
 def sc_limit(r: Rig) -> Run:
@@ -1338,32 +1117,18 @@ def sc_limit(r: Rig) -> Run:
         return r.done(c, dialog, bytes=r.audio_bytes_to_model(), truncated=metric("agent_voice_turns_truncated_total") - before)
 
 
-def test_five_minute_limit_is_the_same() -> None:
-    cascade, live = both(sc_limit)
-    sound(cascade), sound(live)
-    for run in (cascade, live):
-        assert run.extra["bytes"] == MAX_AUDIO_BYTES and run.extra["truncated"] == 1, run.kind
-    same(cascade.text, live.text, "кадры после предельной реплики")
-
-
-# ─── Длина ответа ────────────────────────────────────────────────────────────────────────────────────────────────
-
-
-@known_gap("P9 ограничение длины ответа не действует: у каскада ответ режется на MAX_REPLY_CHARS, у live приходит целиком")
-def test_a_runaway_reply_is_cut_to_the_limit() -> None:
-    wall = " ".join(f"Это предложение номер {n}, и оно довольно длинное." for n in range(40))
-    assert len(wall) > MAX_REPLY_CHARS * 1.5
-    cascade, live = both(sc_text, replies=[wall])
-    sound(cascade), sound(live)
-    assert len(cascade.replies[0]) <= MAX_REPLY_CHARS
-    gap(len(live.replies[0]) <= MAX_REPLY_CHARS, f"ответ live {len(live.replies[0])} символов при пределе {MAX_REPLY_CHARS}")
+def test_five_minute_limit() -> None:
+    run = play(sc_limit)
+    sound(run)
+    assert run.extra["bytes"] == MAX_AUDIO_BYTES and run.extra["truncated"] == 1
+    assert run.text == ["ready", "transcript:final", *ANSWER_TEXT]
 
 
 # ─── Модель молчит: без шаблона ──────────────────────────────────────────────────────────────────────────────────
 
 
 def sc_answer_or_error(r: Rig, typed: bool) -> Run:
-    """Реплика, на которую модель промолчит: ждём либо ответ (live со второй попытки), либо error (каскад)."""
+    """Реплика, на которую модель промолчит: ждём либо ответ (со второй попытки), либо error."""
     dialog = r.start()
     with r.socket(dialog) as c:
         c.wait_greeting()
@@ -1378,16 +1143,13 @@ def sc_answer_or_error(r: Rig, typed: bool) -> Run:
 
 @pytest.mark.parametrize("typed", [True, False], ids=["typed", "voice"])
 def test_an_empty_model_answer_is_not_covered_with_a_template(typed: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Различие №9: модель промолчала. Каскад сообщает об этом (error), live просит модель ответить ещё раз в свежей сессии
-    и отвечает. Шаблона, не знающего сказанного, нет ни там, ни там."""
+    """Модель промолчала (пустой ответ): агент просит её ответить ещё раз в свежей сессии (голосовой реплике — после паузы
+    GEMINI_SILENCE_NUDGE_MS) и отвечает со второй попытки. Шаблона, не знающего сказанного, нет: в ответе только слова модели."""
     monkeypatch.setattr(APP_CONFIG.gemini, "silence_nudge_ms", 50)
-    cascade, live = both(lambda r: sc_answer_or_error(r, typed), replies=["", REPLY])
-    sound(cascade), sound(live)
-    assert cascade.errors == ["AGENT_LLM_UNAVAILABLE"] and cascade.replies == [] and cascade.roles()[:1] == ["user"]
-    assert live.errors == [] and live.replies == [REPLY]
-    assert live.roles()[:2] == ["user", "assistant"] and live.history[1]["text"] == REPLY
-    for run in (cascade, live):
-        assert not set(run.replies) & set(REPLIES), run.kind
+    run = play(lambda r: sc_answer_or_error(r, typed), replies=["", REPLY])
+    sound(run)
+    assert run.errors == [] and run.replies == [REPLY]
+    assert run.roles()[:2] == ["user", "assistant"] and run.history[1]["text"] == REPLY
 
 
 # ─── Отказ бэкенда ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -1407,13 +1169,11 @@ def sc_text_down(r: Rig) -> Run:
 
 
 def test_model_down_typed_message_gets_one_error_and_no_template() -> None:
-    cascade, live = both(sc_text_down, chat_fail=True, connector_fail=True)
-    sound(cascade), sound(live)
-    assert cascade.text == ["ready", "ack", "error:AGENT_LLM_UNAVAILABLE"]
-    # допустимое различие №7: единственный бэкенд лёг, live сообщает об этом одним error своего кода, остальное то же
-    assert live.text == ["ready", "ack", "error:VOICE_UNAVAILABLE"], live.text
-    for run in (cascade, live):
-        assert run.replies == [] and run.roles() == ["user"], run.kind
+    run = play(sc_text_down, connector_fail=True)
+    sound(run)
+    # Gemini один на весь голосовой путь: его отказ — это один error VOICE_UNAVAILABLE, своего кода у чата нет
+    assert run.text == ["ready", "ack", "error:VOICE_UNAVAILABLE"], run.text
+    assert run.replies == [] and run.roles() == ["user"]
 
 
 def sc_voice_down(r: Rig, turns: int) -> Run:
@@ -1426,24 +1186,21 @@ def sc_voice_down(r: Rig, turns: int) -> Run:
         return r.done(c, dialog)
 
 
-def test_voice_turn_with_the_recognition_down_reports_one_error_and_nothing_else() -> None:
-    cascade, live = both(lambda r: sc_voice_down(r, 1), stt_fail=True, connector_fail=True)
-    # Барьер — набранная реплика: каскаду отвечает чат, а у live Gemini лежит целиком, и ответить на неё нечем (шаблона нет).
-    sound(cascade), sound(live, alive=False)
-    assert cascade.text[:2] == ["ready", "error:VOICE_UNAVAILABLE"] and "assistant_start" not in cascade.text
-    same(cascade.text, live.text[: len(cascade.text)], "кадры при отказе распознавания")
-    for run in (cascade, live):
-        assert "transcript:final" not in run.text and run.history[0]["text"] == "барьер", run.kind
+def test_voice_turn_with_the_model_down_reports_one_error_and_nothing_else() -> None:
+    run = play(lambda r: sc_voice_down(r, 1), connector_fail=True)
+    # Барьер — набранная реплика: Gemini лежит целиком, и ответить на неё нечем (шаблона нет).
+    sound(run, alive=False)
+    assert run.text[:2] == ["ready", "error:VOICE_UNAVAILABLE"] and "assistant_start" not in run.text
+    assert "transcript:final" not in run.text and run.history[0]["text"] == "барьер"
 
 
 @known_gap(
-    "P6 второй отказ Gemini подряд молчит: ни error, ни транскрипта (флаг _unavailable_sent на всё соединение); "
-    "у каскада каждый отказ распознавания даёт error, а клиент ждёт ответ 20 с"
+    "P6 второй отказ Gemini подряд молчит: ни error, ни транскрипта (флаг _unavailable_sent на всё соединение), "
+    "а клиент ждёт ответ 20 с"
 )
 def test_every_failed_voice_turn_is_reported() -> None:
-    cascade, live = both(lambda r: sc_voice_down(r, 2), stt_fail=True, connector_fail=True)
-    assert cascade.errors == ["VOICE_UNAVAILABLE"] * 2
-    gap(live.errors == ["VOICE_UNAVAILABLE"] * 2, f"live сообщил об отказах: {live.errors} (кадры: {live.conn.dump()})")
+    run = play(lambda r: sc_voice_down(r, 2), connector_fail=True)
+    gap(run.errors == ["VOICE_UNAVAILABLE"] * 2, f"об отказах сообщено: {run.errors} (кадры: {run.conn.dump()})")
 
 
 @known_gap(
@@ -1452,14 +1209,12 @@ def test_every_failed_voice_turn_is_reported() -> None:
     "и показывает уведомление"
 )
 def test_model_down_with_the_real_live_voice_reports_one_error() -> None:
-    """Gemini лёг целиком, голос тоже Gemini (GeminiLiveTts): отказывают и озвучка, и разговор. Каскад сообщает об отказе
-    озвучки одним VOICE_UNAVAILABLE (и об отказе чата своим кодом), ответов нет ни там, ни там (шаблона нет)."""
-    cascade = one("cascade", sc_text_down, chat_fail=True, tts="fail")
-    real = one("live", sc_text_down, connector_fail=True, real_tts=True, voiced=False)
-    sound(cascade), sound(real)
-    assert cascade.errors.count("VOICE_UNAVAILABLE") == 1 and "AGENT_LLM_UNAVAILABLE" in cascade.errors, cascade.errors
-    assert real.replies == cascade.replies == []
-    gap(real.errors.count("VOICE_UNAVAILABLE") == 1, f"live с настоящей озвучкой прислал {real.errors}, каскад {cascade.errors}")
+    """Gemini лёг целиком, голос тоже Gemini (GeminiLiveTts): отказывают и озвучка, и разговор. Ответов нет (шаблона нет),
+    а клиент должен получить об отказе один error VOICE_UNAVAILABLE."""
+    run = play(sc_text_down, connector_fail=True, real_tts=True, voiced=False)
+    sound(run)
+    assert run.replies == []
+    gap(run.errors.count("VOICE_UNAVAILABLE") == 1, f"с настоящей озвучкой пришло {run.errors}")
 
 
 def plan_dies_mid_reply(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
@@ -1468,63 +1223,37 @@ def plan_dies_mid_reply(link: ScriptedLink, heard: str | None, reply: str) -> li
 
 
 def test_a_connection_dying_mid_reply_keeps_what_was_said() -> None:
-    with rig("cascade", chat_dies_after=3) as r:
-        cascade = sc_text(r)
-    with rig("live", plan=plan_dies_mid_reply, voiced=False) as r:  # звук не успел начаться
-        live = sc_text(r)
-    sound(cascade), sound(live)
-    assert cascade.replies == ["Понимаю, это непросто."] and cascade.errors == []
-    assert live.replies and live.replies[0].startswith("Понимаю") and "assistant_start" in live.text
-    # допустимое различие №7: единственный бэкенд оборвался, live вправе сообщить об этом одним error
-    assert set(live.errors) <= {"VOICE_UNAVAILABLE"} and len(live.errors) <= 1, live.errors
-    assert len(live.rig.connector.links) == 2, "следующая реплика (барьер) должна открыть соединение заново"  # различие №8
-    assert [m["text"] for m in live.history if m["role"] == "assistant"][0] == live.replies[0]  # в истории то, что показано
-    assert REPLIES[0] not in live.replies  # шаблон поверх начатого ответа не добавляется
+    run = play(sc_text, plan=plan_dies_mid_reply, voiced=False)  # звук не успел начаться
+    sound(run)
+    assert run.replies and run.replies[0].startswith("Понимаю") and "assistant_start" in run.text
+    # единственный бэкенд оборвался: клиент вправе узнать об этом одним error
+    assert set(run.errors) <= {"VOICE_UNAVAILABLE"} and len(run.errors) <= 1, run.errors
+    assert len(run.rig.connector.links) == 2, "следующая реплика (барьер) должна открыть соединение заново"
+    assert [m["text"] for m in run.history if m["role"] == "assistant"][0] == run.replies[0]  # в истории то, что показано
+    assert len(run.replies) == 1  # шаблон поверх начатого ответа не добавляется
 
 
 # ─── Отказ озвучки ───────────────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_failing_tts_leaves_the_text_and_reports_one_error() -> None:
-    cascade, live = both(sc_voice, tts="fail")
-    sound(cascade), sound(live)
-    assert cascade.errors == ["VOICE_UNAVAILABLE"] and not [t for t in cascade.voice if t.startswith("tts_start(#")]
-    assert live.errors == ["VOICE_UNAVAILABLE"]  # приветствие не озвучилось и в live
-    same(cascade.replies, live.replies, "текст ответа при отказе озвучки")
-    same(cascade.text, live.text, "кадры при отказе озвучки")
-    # допустимое различие №6: ответы в live звучат голосом Gemini, TTS им не нужен
-    assert any(t.startswith("tts_start(#") for t in live.voice)
+    run = play(sc_voice, tts="fail")
+    sound(run)
+    assert run.errors == ["VOICE_UNAVAILABLE"]  # приветствие не озвучилось
+    assert run.replies == [REPLY]
+    assert run.text == ["ready", "error:VOICE_UNAVAILABLE", "transcript:final", *ANSWER_TEXT], run.text
+    # ответы звучат голосом Gemini, TTS_MODE им не нужен
+    assert any(t.startswith("tts_start(#") for t in run.voice)
 
 
 def test_a_reply_without_sound_is_reported_like_a_failed_voice() -> None:
     """P10 (закрыт): Gemini прислал текст ответа без звука. Агент пробует озвучить его сам; озвучки нет, и клиент получает
-    error VOICE_UNAVAILABLE, как у каскада, а не молча остаётся с текстом."""
-    cascade, live = both(sc_voice, audio=False, tts=SelectiveTts, voiced=False)
-    sound(cascade), sound(live)
-    assert cascade.errors == ["VOICE_UNAVAILABLE"] and "tts_start(#1)" not in cascade.voice
-    same(cascade.replies, live.replies, "текст без звука")
-    assert "tts_start(#1)" not in live.voice
-    gap(live.errors == cascade.errors, f"live не сообщил о том, что ответ не озвучен: {live.errors}")
-
-
-@known_gap(
-    "P11 dev-переключатель озвучки POST /dev/tts {mode: none} не выключает звук ответов в live (_start_live_speech не смотрит на "
-    "tts_source); e2e приложения полагаются на него (dev, не пользовательское)"
-)
-def test_switching_speech_off_applies_to_a_live_socket() -> None:
-    def scenario(r: Rig) -> Run:
-        dialog = r.start()
-        with r.socket(dialog) as c:
-            c.wait_greeting()
-            r.client.post("/dev/tts", json={"mode": "none"}, headers=AUTH)
-            m = c.mark()
-            c.say("раз", "c-1")
-            c.wait("ответ без звука", lambda fs: reply_done(fs, False), m)
-            return r.done(c, dialog, voiced=False)
-
-    cascade, live = both(scenario)
-    assert not [t for t in cascade.voice if t.startswith("tts_start(#")], "каскад без озвучки не должен озвучивать"
-    gap(not [t for t in live.voice if t.startswith("tts_start(#")], f"live озвучил ответ при выключенной озвучке: {live.voice}")
+    error VOICE_UNAVAILABLE, а не молча остаётся с текстом."""
+    run = play(sc_voice, audio=False, tts=SelectiveTts, voiced=False)
+    sound(run)
+    assert run.replies == [REPLY]
+    assert "tts_start(#1)" not in run.voice
+    assert run.errors == ["VOICE_UNAVAILABLE"], f"не сообщено о том, что ответ не озвучен: {run.errors}"
 
 
 # ─── Что знает модель после кризиса ──────────────────────────────────────────────────────────────────────────────
@@ -1552,25 +1281,24 @@ def sc_crisis_then_followup(r: Rig, voice: bool) -> Run:
 
 # P7 закрыт: после кризиса сессия открывается заново (GEMINI_TEXT_CONTEXT), и история в ней содержит кризисную реплику и ответ агента.
 def test_the_model_knows_about_a_typed_crisis_in_the_next_answer() -> None:
-    cascade, live = both(lambda r: sc_crisis_then_followup(r, voice=False), replies=["Я рядом. Расскажи, что случилось."])
-    sound(cascade, closed_ends=True)
-    assert "не хочу жить" in cascade.extra["context"] and "Я слышу, что тебе очень тяжело" in cascade.extra["context"]
-    gap("не хочу жить" in live.extra["context"], "модель не видела кризисной реплики человека")
-    gap("Я слышу, что тебе очень тяжело" in live.extra["context"], "модель не знает, что агент ответил кризисным текстом")
+    run = play(lambda r: sc_crisis_then_followup(r, voice=False), replies=["Я рядом. Расскажи, что случилось."])
+    sound(run, closed_ends=True)
+    assert "не хочу жить" in run.extra["context"], "модель не видела кризисной реплики человека"
+    assert "Я слышу, что тебе очень тяжело" in run.extra["context"], "модель не знает, что агент ответил кризисным текстом"
 
 
 # P8 закрыт: новая сессия не помнит выброшенного ответа модели, в её истории то, что человек услышал на самом деле.
 def test_the_model_knows_what_the_agent_said_after_a_voice_crisis() -> None:
-    cascade, live = both(
+    run = play(
         lambda r: sc_crisis_then_followup(r, voice=True),
         heard=["я больше не хочу жить", "не знаю, мне просто плохо"],
         replies=["МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ.", "Я рядом."],
     )
-    sound(cascade, closed_ends=True)
-    assert "не хочу жить" in live.extra["context"]  # слова человека модель слышала сама
-    assert "Я слышу, что тебе очень тяжело" in cascade.extra["context"]
-    gap("Я слышу, что тебе очень тяжело" in live.extra["context"], "в контексте модели нет кризисного ответа агента")
-    gap("МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ" not in live.extra["context"], "в контексте модели лежит ответ, которого человек не слышал")
+    sound(run, closed_ends=True)
+    context = run.extra["context"]
+    assert "не хочу жить" in context  # слова человека модель слышала сама
+    assert "Я слышу, что тебе очень тяжело" in context, "в контексте модели нет кризисного ответа агента"
+    assert "МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ" not in context, "в контексте модели лежит ответ, которого человек не слышал"
 
 
 # ─── Разбиение расшифровки ответа на куски ────────────────────────────────────────────────────────────────────────
@@ -1611,15 +1339,13 @@ CHUNKINGS: dict[str, Callable[[str], list[str]]] = {
 @pytest.mark.parametrize("chunking", list(CHUNKINGS))
 def test_deltas_add_up_to_the_final_text_whatever_the_chunking(chunking: str) -> None:
     """Gemini режет расшифровку как угодно: сумма дельт всё равно равна assistant_end.text, пробелы не теряются и не двоятся."""
-    cascade = one("cascade", sc_text)
-    live = one("live", sc_text, plan=chunked_plan(CHUNKINGS[chunking]))
-    sound(cascade), sound(live)
-    assert cascade.replies == [REPLY]
+    run = play(sc_text, plan=chunked_plan(CHUNKINGS[chunking]))
+    sound(run)
     # перенос строки внутри куска сохраняется как есть (клиенту это один абзац текста), остальное совпадает дословно
     expected = REPLY.replace("Понимаю, ", "Понимаю,\n", 1) if chunking == "newline-chunk" else REPLY
-    assert live.replies == [expected], f"{chunking}: {live.replies!r}"
-    assert live.history[1]["text"] == expected  # в истории ровно то, что показано
-    same(cascade.text, live.text, "кадры ответа")
+    assert run.replies == [expected], f"{chunking}: {run.replies!r}"
+    assert run.history[1]["text"] == expected  # в истории ровно то, что показано
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
 
 
 # ─── Обрыв реплики, завершение посреди ответа, голос при старте ───────────────────────────────────────────────────
@@ -1635,9 +1361,9 @@ def sc_dropped_turn(r: Rig) -> Run:
         # экран закрыт: сокет рвётся без audio_end
     after_drop = r.history(dialog)
     deadline = time.monotonic() + 2
-    while r.connector and not all(link.closed for link in r.connector.links) and time.monotonic() < deadline:
+    while not all(link.closed for link in r.connector.links) and time.monotonic() < deadline:
         time.sleep(0.02)
-    leaked = [link for link in r.connector.links if not link.closed] if r.connector else []
+    leaked = [link for link in r.connector.links if not link.closed]
     with r.socket(dialog) as c:
         c.wait_type("ready", 0)
         m = c.mark()
@@ -1647,13 +1373,12 @@ def sc_dropped_turn(r: Rig) -> Run:
 
 
 def test_a_voice_turn_without_audio_end_is_dropped_and_leaves_nothing_open() -> None:
-    cascade, live = both(sc_dropped_turn)
-    sound(cascade), sound(live)
-    for run in (cascade, live):
-        assert run.extra["after_drop"] == [], f"{run.kind}: недоговорённая реплика попала в историю"
-        assert run.roles()[:2] == ["user", "assistant"] and run.history[0]["text"] == "я тут", run.kind
-        assert run.extra["leaked"] == 0, f"{run.kind}: после обрыва остались открытые соединения Gemini"
-    same(cascade.text, live.text, "кадры на новом сокете")
+    run = play(sc_dropped_turn)
+    sound(run)
+    assert run.extra["after_drop"] == [], "недоговорённая реплика попала в историю"
+    assert run.roles()[:2] == ["user", "assistant"] and run.history[0]["text"] == "я тут"
+    assert run.extra["leaked"] == 0, "после обрыва остались открытые соединения Gemini"
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
 
 
 def sc_drop_midreply(r: Rig) -> Run:
@@ -1676,14 +1401,13 @@ def sc_drop_midreply(r: Rig) -> Run:
 def test_a_socket_dropped_mid_reply_leaves_the_shown_part_in_the_history() -> None:
     """specs/agent-api «Обрыв посреди ответа»: клиент перечитывает историю и находит там то, что успело показаться."""
     full = "Первое предложение ответа. Второе предложение ответа. Третье предложение ответа."
-    cascade, live = both(sc_drop_midreply, replies=[full, "Я рядом."], piece_delay=0.08)
-    sound(cascade), sound(live)
-    for run in (cascade, live):
-        dropped = run.extra["after_drop"]
-        assert [m["role"] for m in dropped] == ["user", "assistant"], f"{run.kind}: {dropped}"
-        assert dropped[1]["text"] and full.startswith(dropped[1]["text"]), f"{run.kind}: {dropped[1]['text']!r}"
-        assert run.replies == ["Я рядом."], run.kind  # после обрыва агент ничего не досылает на новый сокет
-    same(cascade.text, live.text, "кадры нового сокета после обрыва")
+    run = play(sc_drop_midreply, replies=[full, "Я рядом."], piece_delay=0.08)
+    sound(run)
+    dropped = run.extra["after_drop"]
+    assert [m["role"] for m in dropped] == ["user", "assistant"], dropped
+    assert dropped[1]["text"] and full.startswith(dropped[1]["text"]), f"{dropped[1]['text']!r}"
+    assert run.replies == ["Я рядом."]  # после обрыва агент ничего не досылает на новый сокет
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
 
 
 def sc_end_midreply(r: Rig) -> Run:
@@ -1698,11 +1422,9 @@ def sc_end_midreply(r: Rig) -> Run:
 
 
 def test_end_during_a_reply_closes_cleanly() -> None:
-    cascade, live = both(sc_end_midreply)
-    sound(cascade, closed_ends=False), sound(live, closed_ends=False)
-    for run in (cascade, live):
-        assert run.text[-2:] == ["ended", "close:1000"] and run.text.count("ended") == 1, run.kind
-    same(cascade.bodies("ended")[0]["summary"]["themes"], live.bodies("ended")[0]["summary"]["themes"], "сводка")
+    run = play(sc_end_midreply)
+    sound(run, closed_ends=False)
+    assert run.text[-2:] == ["ended", "close:1000"] and run.text.count("ended") == 1
 
 
 def sc_voice_at_start(r: Rig) -> Run:
@@ -1713,15 +1435,15 @@ def sc_voice_at_start(r: Rig) -> Run:
         m = c.mark()
         c.say("Привет", "c-1")
         c.wait_reply(m)
-        voices = set(r.tts.voices) if r.chat is not None else set(r.tts.voices) | {link.voice for link in r.connector.links}
+        voices = set(r.tts.voices) | {link.voice for link in r.connector.links}
         return r.done(c, dialog, voices=voices)
 
 
 def test_voice_chosen_at_start_is_used_for_the_greeting_and_the_reply() -> None:
-    cascade, live = both(sc_voice_at_start)
-    sound(cascade), sound(live)
-    assert cascade.extra["voices"] == live.extra["voices"] == {"female"}
-    same(cascade.voice, live.voice, "озвучка")
+    run = play(sc_voice_at_start)
+    sound(run)
+    assert run.extra["voices"] == {"female"}
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
 
 
 # ─── Тишина перед речью, второй сокет, молчащая модель, ответ без текста ───────────────────────────────────────────
@@ -1746,20 +1468,20 @@ def sc_leading_silence(r: Rig) -> Run:
 
 
 def test_silence_before_speech_does_not_change_what_the_person_sees() -> None:
-    cascade, live = both(sc_leading_silence)
-    sound(cascade), sound(live)
-    same(cascade.text, live.text, "кадры реплики с тишиной впереди")
-    same(cascade.bodies("transcript")[0]["text"], live.bodies("transcript")[0]["text"], "транскрипт")
+    run = play(sc_leading_silence)
+    sound(run)
+    assert run.text == ["ready", "transcript:final", *ANSWER_TEXT]
+    assert run.bodies("transcript")[0]["text"] == "мне сегодня тяжело"
     frame = 3200
-    assert cascade.extra["audio"] == 15 * frame  # whisper получает запись целиком
-    assert live.extra["audio"] == (PRE_ROLL_FRAMES + 4 + 3) * frame  # допустимое различие №4: до речи Gemini видит 500 мс запаса
+    # тишину перед речью Gemini не получает, кроме запаса в 500 мс; хвост после речи уходит как есть
+    assert run.extra["audio"] == (PRE_ROLL_FRAMES + 4 + 3) * frame
 
 
 def sc_second_socket(r: Rig) -> Run:
     dialog = r.start()
     with r.socket(dialog) as c:
         c.wait_greeting()
-        opened = len(r.connector.open_calls) if r.connector else 0
+        opened = len(r.connector.open_calls)
         status = None
         try:
             with r.client.websocket_connect(ws_url(r.user_id, dialog["dialogId"]), headers=AUTH):
@@ -1769,15 +1491,15 @@ def sc_second_socket(r: Rig) -> Run:
         m = c.mark()
         c.say("я тут", "c-1")
         c.wait_reply(m)
-        return r.done(c, dialog, status=status, opened=(len(r.connector.open_calls) - opened) if r.connector else 0)
+        return r.done(c, dialog, status=status, opened=len(r.connector.open_calls) - opened)
 
 
 def test_a_second_socket_is_refused_and_the_first_keeps_working() -> None:
-    cascade, live = both(sc_second_socket)
-    sound(cascade), sound(live)
-    assert cascade.extra["status"] == live.extra["status"] == 409
-    assert live.extra["opened"] == 0  # отказ не трогает Gemini: ни нового соединения, ни закрытия живого
-    same(cascade.text, live.text, "кадры первого сокета")
+    run = play(sc_second_socket)
+    sound(run)
+    assert run.extra["status"] == 409
+    assert run.extra["opened"] == 0  # отказ не трогает Gemini: ни нового соединения, ни закрытия живого
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
 
 
 def hang_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
@@ -1785,23 +1507,20 @@ def hang_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEve
 
 
 def test_a_hung_model_gets_one_error_for_a_typed_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Модель зависла (ни одного события): каскад по таймауту чата шлёт error; live по GEMINI_IDLE_TIMEOUT_SECONDS просит
-    модель ответить ещё раз в свежей сессии, та тоже висит — error. Шаблона нет."""
-    monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)  # в бою 15 с, как LLM_TIMEOUT_SECONDS каскада
-    cascade = one("cascade", sc_text_down, latency=5.0)  # дольше LLM_TIMEOUT_SECONDS=1 в тестах
-    live = one("live", sc_text_down, plan=hang_plan)
-    sound(cascade), sound(live)
-    assert cascade.text == ["ready", "ack", "error:AGENT_LLM_UNAVAILABLE"]
-    assert live.text == ["ready", "ack", "error:VOICE_UNAVAILABLE"], live.text  # различие №7
-    assert len(live.rig.connector.links) == 2  # повторная просьба ушла в свежую сессию
-    for run in (cascade, live):
-        assert run.replies == [], run.kind
+    """Модель зависла (ни одного события): по GEMINI_IDLE_TIMEOUT_SECONDS агент просит модель ответить ещё раз в свежей
+    сессии, та тоже висит — один error. Шаблона нет."""
+    monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)  # в бою 15 с
+    run = play(sc_text_down, plan=hang_plan)
+    sound(run)
+    assert run.text == ["ready", "ack", "error:VOICE_UNAVAILABLE"], run.text
+    assert len(run.rig.connector.links) == 2  # повторная просьба ушла в свежую сессию
+    assert run.replies == []
 
 
 def test_a_hung_model_does_not_leave_a_voice_turn_unreported(monkeypatch: pytest.MonkeyPatch) -> None:
     """P15 закрыт: модель промолчала после голосовой реплики (ни расшифровки, ни ответа). Раньше через
     GEMINI_IDLE_TIMEOUT_SECONDS приходил пустой transcript и больше ничего; теперь зависание — отказ: error VOICE_UNAVAILABLE.
-    Каскад сообщает о зависшем чате своим error. Шаблона нет."""
+    Шаблона нет."""
     monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)
 
     def voice_down(r: Rig) -> Run:
@@ -1813,12 +1532,9 @@ def test_a_hung_model_does_not_leave_a_voice_turn_unreported(monkeypatch: pytest
             c.wait("error", lambda fs: has(fs, "error"), m)
             return r.done(c, dialog, barrier=False)
 
-    cascade = one("cascade", voice_down, latency=5.0)
-    live = one("live", voice_down, plan=hang_plan)
-    assert "transcript:final" in cascade.text and cascade.errors == ["AGENT_LLM_UNAVAILABLE"]
-    assert live.errors == ["VOICE_UNAVAILABLE"], live.text
-    for run in (cascade, live):
-        assert run.replies == [], run.kind
+    run = play(voice_down, plan=hang_plan)
+    assert run.errors == ["VOICE_UNAVAILABLE"], run.text
+    assert run.replies == []
 
 
 def audio_only_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
@@ -1842,21 +1558,19 @@ def sc_text_wait(r: Rig, wait: float) -> Run:
     "расшифровка ответа бывает пустой)"
 )
 def test_a_reply_with_sound_but_no_transcription_is_closed() -> None:
-    cascade = one("cascade", sc_text)
-    live = one("live", lambda r: sc_text_wait(r, 2.0), plan=audio_only_plan)
-    sound(cascade)
-    problems = contract(live.conn.frames)
-    gap(not problems, f"контракт нарушен: {problems}; кадры: {live.conn.dump()}")
+    run = play(lambda r: sc_text_wait(r, 2.0), plan=audio_only_plan)
+    problems = contract(run.conn.frames)
+    gap(not problems, f"контракт нарушен: {problems}; кадры: {run.conn.dump()}")
 
 
 def test_a_crisis_transcription_that_arrives_a_moment_after_the_first_sound_is_still_caught() -> None:
     """Расшифровка приходит позже первого звука ответа, но в пределах GEMINI_TRANSCRIPT_WAIT_MS: ответ ждёт, кризис ловится."""
     said = "я больше не хочу жить"
-    cascade, live = both(sc_voice, heard=[said], replies=["ОТВЕТ-МОДЕЛИ, который человек слышать не должен."], plan=late_transcript_plan(0.3))
-    sound(cascade), sound(live)
-    same(cascade.text, live.text, "кадры кризиса с опоздавшей расшифровкой")
-    assert live.replies == [CRISIS_REPLY] and live.bodies("transcript")[0]["text"] == said
-    assert "ОТВЕТ-МОДЕЛИ" not in json.dumps([b for k, b in live.frames if k == "json"], ensure_ascii=False)
+    run = play(sc_voice, heard=[said], replies=["ОТВЕТ-МОДЕЛИ, который человек слышать не должен."], plan=late_transcript_plan(0.3))
+    sound(run)
+    assert run.text == ["ready", "transcript:final", "safety", *ANSWER_TEXT]
+    assert run.replies == [CRISIS_REPLY] and run.bodies("transcript")[0]["text"] == said
+    assert "ОТВЕТ-МОДЕЛИ" not in json.dumps([b for k, b in run.frames if k == "json"], ensure_ascii=False)
 
 
 # ─── Настоящая обвязка live: приветствие и кризис через GeminiLiveTts + CachedTts ─────────────────────────────────
@@ -1869,24 +1583,21 @@ def wait_warm(r: Rig, items: int = 12) -> None:
 
 
 def sc_real_wiring(r: Rig) -> Run:
-    if r.kind == "live":
-        wait_warm(r)
-    opened = len(r.connector.open_calls) if r.connector else 0
+    wait_warm(r)
+    opened = len(r.connector.open_calls)
     dialog = r.start()
     with r.socket(dialog) as c:
         c.wait_greeting()
         m = c.mark()
         c.say("я больше не хочу жить", "c-1")
         c.wait_reply(m)
-        extra = {"opened": (len(r.connector.open_calls) - opened) if r.connector else 0}
-        return r.done(c, dialog, **extra)
+        return r.done(c, dialog, opened=len(r.connector.open_calls) - opened)
 
 
 def test_greeting_and_crisis_reply_through_the_real_live_voice_are_served_from_the_cache() -> None:
-    cascade = one("cascade", sc_real_wiring)
-    real = one("live", sc_real_wiring, real_tts=True)
-    sound(cascade), sound(real)
-    same(cascade.text, real.text, "кадры приветствия и кризиса")
-    same(cascade.voice, real.voice, "озвучка приветствия и кризиса")
+    run = play(sc_real_wiring, real_tts=True)
+    sound(run)
+    assert run.text == ["ready", "ack", "safety", *ANSWER_TEXT]
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
     # на диалог открыто ровно одно новое соединение Gemini (для самих реплик): фразы взяты из прогретой памяти
-    assert real.extra["opened"] == 1, f"приветствие или кризисный ответ открыли лишние соединения Gemini: {real.extra['opened']}"
+    assert run.extra["opened"] == 1, f"приветствие или кризисный ответ открыли лишние соединения Gemini: {run.extra['opened']}"

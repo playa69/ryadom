@@ -1,17 +1,17 @@
-"""WebSocket диалога в режиме `VOICE_PIPELINE=gemini_live`: речь в речь через Gemini Live.
+"""WebSocket диалога: речь в речь через Gemini Live (specs/agent-api «Разговор по WebSocket», «Голос»).
 
-Тот же протокол с клиентом, что у каскада (app/api/dialog_ws.py), но голос человека уходит прямо в Gemini Live, а ответ
-(текст и звук) приходит от него же. Распознавания и чат-модели здесь нет. Остаётся общим: приветствие и кризисный ответ
-(фиксированные фразы озвучивает тот же голос Gemini, дословно), перебивание, выбор голоса, сохранение диалога.
+Один сокет на диалог (`DialogSession`). Голос человека уходит прямо в Gemini Live, а ответ (текст и звук) приходит от него же:
+отдельных распознавания, чат-модели и озвучки ответов нет. Реплики текстом идут той же моделью; `tts_cancel` действует сразу.
+Приветствие, кризисный ответ и просьба повторить — фиксированные фразы: их озвучивает тот же голос Gemini, дословно, из
+памяти фраз (`GeminiLiveTts` в `CachedTts`, прогрев при старте).
 
 Границы реплики задаёт клиент (`audio_start`/`audio_end`): агент передаёт их модели как начало и конец активности.
 Кризис проверяется на расшифровке реплики до того, как человек услышит или увидит хоть слово ответа: пока расшифровки
 нет, ответ модели ждёт (`GEMINI_TRANSCRIPT_WAIT_MS`); при кризисе ответ модели выбрасывается, говорит фиксированный текст.
 
-Нагрузка на Gemini (`GEMINI_TPM_*`, app/services/gemini_budget.py): ход ставит резерв в окно токенов перед тем, как модель
-начнёт отвечать, usage хода заменяет его фактом; после отказа Google по квоте (1011) новые сессии не открываются, смена сессии
-откладывается. При `GEMINI_TPM_ENFORCE` новый разговор при исчерпанном бюджете идёт в каскад (`admit_session`), а на ход, которому
-не хватило бюджета, отвечает чат-модель каскада, озвученная без Gemini (`FallbackTurn`).
+Нагрузка на Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py): ход ставит резерв в окно токенов перед тем, как модель
+начнёт отвечать, usage хода заменяет его фактом (окно только измеряется); после отказа Google по квоте (1011) новые сессии не
+открываются, смена сессии откладывается.
 
 Шаблонных ответов нет. Если модель промолчала (ход без звука и текста), агент ждёт `GEMINI_SILENCE_NUDGE_MS`, не продолжит ли
 человек: часто он просто сделал паузу посреди мысли. Не продолжил — агент открывает свежую сессию, где последней лежит его
@@ -20,74 +20,63 @@
 """
 
 import asyncio
+import json
 import logging
+import math
 import re
 import time
 import uuid
+from array import array
 from collections import deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
-from app.api.deps import active_tts
-from app.api.dialog_ws import (
-    AUDIO_FRAME_SECONDS,
-    FRAME_KIND_AUDIO_IN,
-    MAX_AUDIO_BYTES,
-    MAX_USER_TEXT,
-    DialogSession,
-    SpeechFeed,
-    Turn,
-    is_silence,
-)
 from app.clients.gemini_live import (
     LiveConnector,
     LiveEvent,
     LiveHistory,
     LiveLink,
-    is_explicit_quota_error,
     is_quota_error,
     record_usage,
     session_closed,
     session_opened,
 )
 from app.clients.mood_classifier import MoodClassifier
-from app.clients.speech import CachedTts, TextToSpeech, TtsError, Voice, pcm_stream
+from app.clients.speech import FRAME_BYTES, TTS_RATE, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
-    GEMINI_ADMISSION_TOTAL,
     GEMINI_CONTEXT_REFRESH_SECONDS,
     GEMINI_CONTEXT_REFRESH_TOTAL,
     GEMINI_MOOD_DELAY_SECONDS,
     GEMINI_MOOD_TOTAL,
     GEMINI_OPENS_TOTAL,
-    GEMINI_TURNS_DEGRADED_TOTAL,
     LIVE_FOREIGN_SCRIPT_TOTAL,
     LIVE_RECOVERIES_TOTAL,
     LIVE_REPEAT_REQUESTS_TOTAL,
     LIVE_UNANSWERED_TURNS_TOTAL,
     LIVE_VOICELESS_ANSWERS_TOTAL,
+    VOICE_ECHO_TOTAL,
+    VOICE_FALSE_INTERRUPTIONS_TOTAL,
+    VOICE_INTERRUPTIONS_TOTAL,
+    VOICE_LATENCY_SECONDS,
     VOICE_TURN_END_DELAY_SECONDS,
     VOICE_TURNS_TRUNCATED_TOTAL,
 )
+from app.core.reclaim import forget_cancellation
+from app.core.tracing import NullTracer, Observation, Tracer
 from app.services import usage as model_usage
-from app.core.tracing import Observation, Tracer
 from app.services.dialog_store import Dialog, DialogStore, Message
-from app.services.gemini_budget import (
-    ADMIT_OFF_LEVELS,
-    DEFAULT_TURN_TOKENS,
-    PCM_BYTES_PER_SECOND,
-    CascadeFallback,
-    TokenBudget,
-    estimate_turn,
-)
+from app.services.gemini_budget import DEFAULT_TURN_TOKENS, PCM_BYTES_PER_SECOND, TokenBudget, estimate_turn
 from app.services.replies import (
+    CRISIS_REPLY,
     CRISIS_SAFETY_TEXT,
     NOISE_CHECK_CHARS,
     REPEAT_REQUEST,
     is_crisis,
+    is_echo,
     is_foreign_noise,
     is_language_lecture,
     memory_block,
@@ -98,6 +87,21 @@ from app.services.replies import (
 
 logger = logging.getLogger("agent.live")
 
+# Тег трасс Langfuse: тот же, что у трасс до удаления каскада, чтобы их можно было искать одним фильтром.
+PIPELINE_TAG = "gemini_live"
+FRAME_KIND_AUDIO_IN = 0x01
+# Набранный текст шлюз приложения ограничивает 4000 символов сам; запас здесь — для голоса:
+# пять минут речи (VOICE_TURN_MAX_SECONDS) — это 4-5 тысяч символов расшифровки.
+MAX_USER_TEXT = 8000
+# Один кадр голоса человека — 100 мс (specs/agent-api «Голос — формат и ввод»); вход — PCM16 моно, 16 кГц.
+AUDIO_FRAME_SECONDS = 0.1
+AUDIO_IN_RATE = 16_000
+# Одна голосовая реплика — не длиннее VOICE_TURN_MAX_SECONDS: остальное отбрасывается, память не растёт без предела.
+MAX_AUDIO_BYTES = AUDIO_IN_RATE * 2 * APP_CONFIG.dialog.voice_turn_max_seconds
+# Тише этого (среднеквадратичное по PCM16, около -50 дБ) — тишина: в модель она не идёт.
+SILENCE_RMS = 100
+# Сколько предложений фиксированной фразы синтезируется одновременно: звучащее и следующее. Больше не надо.
+SPEECH_PREFETCH = 2
 # Сколько мс тишины перед началом речи уходит модели вместе с ней (кадры по 100 мс): начало слова не обрезается.
 PRE_ROLL_FRAMES = 5
 # Хвост ответа прерванной модели, которая ещё может прислать события, считается чужим столько секунд.
@@ -105,11 +109,103 @@ STALE_SECONDS = 1.0
 # Сколько открытие сессии ждёт сводку памяти. Поиск в Cognee бывает дольше минуты, и человек всё это время говорил бы
 # в пустоту; сводка, не успевшая к открытию, догружается в фоне и попадает в сессию при её плановой смене.
 MEMORY_WAIT_SECONDS = 1.5
+# Сколько ходу, которому нужна новая сессия, можно ждать конца паузы после 1011 (от конца реплики или набранного сообщения):
+# дольше человек ждать не будет, а пауза обычно короче (5 с и растёт, но открытие в паузе всё равно получило бы тот же отказ).
+COOLDOWN_WAIT_SECONDS = 1.5
+# Пауза без новых слов расшифровки, после которой реплика уходит на классификатор тона (цвет шарика).
+MOOD_DEBOUNCE_SECONDS = 0.3
 
 LIVE_ADDENDUM = (
     "\n- Ты говоришь вслух живым голосом, как в разговоре: сказанное человеком не пересказывай."
     "\n- Если тебя просят произнести фразу дословно, произноси ровно её."
 )
+
+
+def is_silence(pcm: bytes) -> bool:
+    """Нет ли в записи речи: меряем каждый 16-й сэмпл, этого хватает и не держит цикл событий."""
+    samples = array("h")
+    samples.frombytes(pcm[: len(pcm) // 2 * 2])
+    picked = samples[::16]
+    if not picked:
+        return True
+    return math.sqrt(sum(x * x for x in picked) / len(picked)) < SILENCE_RMS
+
+
+@dataclass
+class Turn:
+    """Ход ответа фиксированной фразой: от чего считать задержку. `started` — конец реплики человека или его набранное
+    сообщение (monotonic)."""
+
+    started: float | None = None
+    # Трасса хода в Langfuse (app/core/tracing.py); None — ход без трейсинга (например, приветствие).
+    trace: Observation | None = None
+
+
+class SpeechFeed:
+    """Куски текста фиксированной фразы для озвучки: `add` по мере появления предложений, `close` в конце. Кусок — одно
+    предложение."""
+
+    def __init__(self) -> None:
+        self.chunks: asyncio.Queue[str | None] = asyncio.Queue()
+
+    def add(self, sentence: str) -> None:
+        self.chunks.put_nowait(sentence)
+
+    def close(self) -> None:
+        self.chunks.put_nowait(None)
+
+
+class Synthesis:
+    """Синтез одного куска текста, который наполняет `pieces` звуком по мере прихода от провайдера.
+
+    В очереди куски PCM, затем `None` (конец) или исключение (отказ провайдера). Читает тот, кто озвучивает.
+    """
+
+    def __init__(
+        self,
+        tts: TextToSpeech,
+        text: str,
+        voice: Voice,
+        first: bool,
+        memory: str = "off",
+        tracer: Tracer | None = None,
+        trace: Observation | None = None,
+    ) -> None:
+        self.pieces: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+        self._memory = memory
+        self.task = asyncio.create_task(self._run(tts, text, voice, first, tracer or NullTracer(), trace))
+        # Синтез перебитой озвучки отменяется: без этого он держал бы себя (и недозвученный звук) циклом через свою задачу.
+        self.task.add_done_callback(forget_cancellation)
+
+    async def _run(
+        self, tts: TextToSpeech, text: str, voice: Voice, first: bool, tracer: Tracer, trace: Observation | None
+    ) -> None:
+        began = time.monotonic()
+        seen = False
+        span = tracer.start_span(
+            trace,
+            name="tts",
+            input=text,
+            metadata={"model": getattr(tts, "name", "?"), "voice": voice, "first": first, "chars": len(text)},
+        )
+        try:
+            async for piece in pcm_stream(tts, text, voice):
+                if first and not seen:
+                    VOICE_LATENCY_SECONDS.labels("tts_first", self._memory).observe(time.monotonic() - began)
+                seen = True
+                self.pieces.put_nowait(piece)
+            self.pieces.put_nowait(None)
+        except asyncio.CancelledError:
+            span.update(metadata={"cancelled": True})
+            raise
+        except Exception as error:
+            span.update(level="ERROR", status=str(error)[:160])
+            self.pieces.put_nowait(error)
+        finally:
+            span.end()
+
+    def cancel(self) -> None:
+        self.task.cancel()
 
 
 @dataclass(eq=False)
@@ -141,12 +237,9 @@ class LiveTurn:
     timers: dict[str, asyncio.TimerHandle] = field(default_factory=dict)
     # Метки времени хода (monotonic) для журнала задержек: только имена этапов и миллисекунды, без текстов.
     marks: dict[str, float] = field(default_factory=dict)
-    # Бюджет токенов Gemini (GEMINI_TPM_*):
-    spoken: bool = False  # человек договорил (audio_end): с этого момента ход ждёт бюджет не дольше GEMINI_TPM_WAIT_MS
+    # Учёт токенов Gemini (GEMINI_TPM_LIMIT):
+    spoken: bool = False  # человек договорил (audio_end): с этого момента ход ждёт конца паузы после 1011 не дольше COOLDOWN_WAIT_SECONDS
     sent_audio: int = 0  # байт звука реплики, ушедших модели (по ним оценка токенов хода)
-    recording: bytearray | None = None  # звук реплики на случай, если её придётся разобрать каскадом (GEMINI_TPM_ENFORCE)
-    offline: bool = False  # в начале реплики сессию открыть не дали (пауза после 1011): её разберёт каскад
-    degraded: bool = False  # ход отдан каскаду без Gemini (GEMINI_TPM_ENFORCE)
     # Повторная просьба к модели ответить на реплику, оставшуюся без ответа (`_recover`): своего ввода у хода нет.
     recovery: bool = False
     # Текст реплики человека для текстового хода (для голосового текст появляется в `heard`) и id её сообщения в истории.
@@ -182,7 +275,7 @@ async def _close_link(reader: "asyncio.Task[None] | None", link: LiveLink | None
 
 
 class _QueueTts:
-    """Источник звука для `DialogSession._speak`: куски PCM, которые кладёт в очередь Gemini Live."""
+    """Источник звука для `DialogSession._speak`: куски PCM ответа модели, которые кладёт в очередь Gemini Live."""
 
     name = "gemini-live"
 
@@ -200,104 +293,51 @@ class _QueueTts:
         return None
 
 
-@dataclass
-class FallbackTurn(Turn):
-    """Ход, ответ на который озвучивается без новой сессии Gemini (`_FallbackTts`): бюджет исчерпан или Gemini отказал при
-    `GEMINI_TPM_ENFORCE`."""
-
-
-class _FallbackTts:
-    """Озвучка без Gemini: фраза из памяти основной озвучки (прогретые приветствия и кризисный ответ тем же голосом Gemini),
-    иначе запасной провайдер каскада (Qwen TTS)."""
-
-    name = "fallback"
-
-    def __init__(self, cached: CachedTts | None, spare: TextToSpeech | None) -> None:
-        self._cached = cached
-        self._spare = spare
-
-    async def stream(self, text: str, voice: Voice) -> AsyncIterator[bytes]:
-        pcm = self._cached.remembered(text, voice) if self._cached is not None else None
-        if pcm is not None:
-            yield pcm
-            return
-        if self._spare is None:
-            raise TtsError("фразы нет в памяти, а озвучить её без Gemini нечем")
-        async for piece in pcm_stream(self._spare, text, voice):
-            yield piece
-
-    async def synthesize(self, text: str, voice: Voice) -> bytes:
-        return b"".join([piece async for piece in self.stream(text, voice)])
-
-    async def aclose(self) -> None:
-        return None
-
-
-def admit_session(websocket: WebSocket, store: DialogStore, dialog: Dialog) -> DialogSession:
-    """Сессия нового сокета в режиме gemini_live.
-
-    При `GEMINI_TPM_ENFORCE` и бюджете на уровне admit_off и выше (или в паузе после 1011) весь разговор идёт в каскаде, если
-    он собран целиком (чат, распознавание, озвучка): голос у человека не меняется посреди беседы, а идущие разговоры в Gemini
-    не теряют бюджет. Каскада нет — разговор в Gemini, а на ходы, которым не хватит бюджета, отвечает чат-модель каскада
-    (если она собрана; иначе человек получает ошибку, а не шаблон).
-    """
-    app = websocket.app
-    budget: TokenBudget | None = app.state.budget
-    fallback: CascadeFallback | None = app.state.fallback
-
-    def spare_tts() -> TextToSpeech | None:
-        return fallback.tts if fallback is not None and app.state.tts_mode == "auto" else None
-
-    if budget is not None and budget.enabled:
-        level = budget.level()
-        if not budget.admits_live() and fallback is not None and fallback.can_converse:
-            GEMINI_ADMISSION_TOTAL.labels("cascade").inc()
-            logger.info("dialog admitted to cascade: gemini budget level=%s window=%d dialog=%s", level, budget.window_tokens(), dialog.id)
-            return DialogSession(websocket, store, dialog, spare_tts, fallback.chat, fallback.recognizer, app.state.tracer)
-        GEMINI_ADMISSION_TOTAL.labels("live").inc()
-        if level in ADMIT_OFF_LEVELS:
-            why = "no cascade fallback" if budget.enforcing else "measure only"
-            logger.info("dialog admitted to gemini at budget level=%s (%s) dialog=%s", level, why, dialog.id)
-    return LiveDialogSession(
-        websocket,
-        store,
-        dialog,
-        lambda: active_tts(app),
-        app.state.live,
-        budget=budget,
-        fallback=fallback,
-        spare_tts_source=spare_tts,
-        tracer=app.state.tracer,
-    )
-
-
-class LiveDialogSession(DialogSession):
+class DialogSession:
     def __init__(
         self,
         websocket: WebSocket,
         store: DialogStore,
         dialog: Dialog,
-        tts_source,  # noqa: ANN001
+        tts_source: Callable[[], TextToSpeech | None],
         connector: LiveConnector,
         budget: TokenBudget | None = None,
-        fallback: CascadeFallback | None = None,
-        spare_tts_source: Callable[[], TextToSpeech | None] | None = None,
         tracer: Tracer | None = None,
     ) -> None:
-        super().__init__(websocket, store, dialog, tts_source, None, None, tracer)
-        self._pipeline = "gemini_live"
+        self._ws = websocket
+        self._store = store
+        self._dialog = dialog
+        # Озвучка фиксированных фраз берётся при каждой фразе; None — фразы не звучат, а читаются (приложение прочтёт сам).
+        self._tts_source = tts_source
+        # Трейсинг LLM-ходов (app/core/tracing.py); по умолчанию выключен (NullTracer).
+        self._tracer = tracer or NullTracer()
         self._connector = connector
         self._cfg = APP_CONFIG.gemini
-        # Бюджет токенов Gemini (выключен, если сессию создали без приложения или GEMINI_TPM_LIMIT=0).
+        # Учёт токенов Gemini (выключен, если сессию создали без приложения или GEMINI_TPM_LIMIT=0).
         self._budget = budget or TokenBudget.disabled()
-        # Каскад как запасной путь (GEMINI_TPM_ENFORCE): распознаёт и отвечает на ход, которому не хватило бюджета Gemini;
-        # озвучка — для таких ответов без Gemini. Шаблонной заглушки в этом режиме нет: нечем ответить — ошибка.
-        self._recognizer = fallback.recognizer if fallback is not None else None
-        self._chat = fallback.chat if fallback is not None else None
-        self._stub_replies = False
-        self._spare_tts_source = spare_tts_source or (lambda: None)
-        # Смена сессии ждёт следующего хода: ленивое открытие (GEMINI_LAZY_OPEN), пауза после 1011, нет места в бюджете или
-        # новая сессия не открылась.
+        self._stream_delay = APP_CONFIG.dialog.stream_delay_ms / 1000
+        self._frame_interval = APP_CONFIG.speech.tts_frame_interval_ms / 1000
+
+        self._closed = False
+        self._replace_task: asyncio.Task[None] | None = None
+        self._send_lock = asyncio.Lock()
+        # Озвучки двух сообщений не перемежаются: каждая берёт замок целиком.
+        self._speech_lock = asyncio.Lock()
+        self._jobs: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue()  # фиксированные фразы: кризис, повтор
+        self._speech_tasks: set[asyncio.Task[None]] = set()
+        # Озвучка, которая идёт или ждёт своей очереди, по сообщению: её можно оборвать, не дожидаясь провайдера.
+        self._speeches: dict[str, asyncio.Task[None]] = {}
+        self._cancelled: set[str] = set()
+        self._voice_error_sent = False
+        self._audio_open = False
+        self._audio_frames = 0
+        # Когда пришёл последний кадр с речью (monotonic): по нему видно, сколько тишины ждал детектор конца реплики.
+        self._last_voiced: float | None = None
+        # Озвучку перебили, и следующая голосовая реплика — ответ на это перебивание.
+        self._interrupted = False
+        self._turn_interrupts = False
+        self._component_tasks: set[asyncio.Task[None]] = set()  # кадры `component` в полёте
+        # Смена сессии ждёт следующего хода: пауза после 1011 или новая сессия не открылась.
         self._rotate_pending = False
         self._preparing: asyncio.Task[Any] | None = None  # открытие, начатое, как только человек заговорил
         self._opened = 0  # сессий открыто за этот сокет: первая — purpose=start в метрике
@@ -320,11 +360,9 @@ class LiveDialogSession(DialogSession):
         self._sent_bytes = 0
         self._voice_turn: LiveTurn | None = None
         self._unavailable_sent = False
-        # Handle последней сессии Gemini: по нему соединение возобновляется с тем же контекстом разговора.
-        self._resume_handle: str | None = None
         # Google предупредил, что скоро закроет соединение: между репликами переоткрываем его заранее.
         self._refresh = False
-        self._rotation: asyncio.Task[None] | None = None  # смена сессии после ответа (GEMINI_TEXT_CONTEXT)
+        self._rotation: asyncio.Task[None] | None = None  # смена сессии после ответа
         self._link_used = False  # на текущем соединении уже начат ход (иначе в нём нет аудио, которое стоило бы убрать)
         self._speech_turns: dict[str, LiveTurn] = {}
         # Последний ход, отправленный модели целиком (конец реплики или текст): на его ответ пишется пришедший usage.
@@ -334,6 +372,11 @@ class LiveDialogSession(DialogSession):
         # контекста, а сводку возьмёт плановая смена сессии. Пропала сводка целиком (человек выключил память, забыл всё,
         # стёр аккаунт) — к следующему ходу сессия открывается заново без неё (MEM-13.3).
         self._brief_used = ""
+        # Сколько раз человек убирал что-то из сводки к открытию текущей сессии (`DialogStore.memory_removals`). Выросло — человек
+        # удалил или поправил заметку, удалил память, выключил память или переключатель, удалил разговор: убранное ещё лежит в
+        # контексте сессии, и к следующему ходу она открывается заново (`_note_memory_removal`).
+        self._removals_seen = 0
+        self._privacy_reopen = False  # следующее открытие — по этой причине (purpose=privacy в журнале и метрике)
         self._memory_load: asyncio.Task[None] | None = None  # загрузка памяти к открытию сессии (`_await_memory`)
         self._socket_at = time.monotonic()  # сессию создают сразу после accept сокета: от этого момента считаем ожидание
         self._open_logged = False  # строка о задержке первой сессии уже в журнале
@@ -347,6 +390,382 @@ class LiveDialogSession(DialogSession):
         # Набранное сообщение уже в истории диалога, но ещё не ушло модели: в историю новой сессии его не кладём, оно придёт
         # следующим вводом. Остальные реплики человека без ответа в истории остаются (раньше их срезало вместе с ним).
         self._pending_text_ids: set[str] = set()
+
+    def _memory_label(self) -> str:
+        """Метка `memory` задержек: подмешана ли в этот разговор сводка памяти (чтение кэша, без диска и сети)."""
+        return "on" if self._store.memory_brief(self._dialog, count=False) else "off"
+
+    # ─── отправка ─────────────────────────────────────────────────────────────
+
+    def bind_component_calls(self) -> None:
+        """Обращения к компонентам внутри этого сокета (и задач, которые он породит) уходят шлюзу кадром `component`.
+        Звать в задаче сокета до `run`: контекст наследуют только задачи, созданные после."""
+        model_usage.bind_calls(self._component_called)
+
+    def _component_called(self, component: str, outcome: str, cached: bool) -> None:
+        if self._closed:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self._send({"type": "component", "component": component, "outcome": outcome, "cached": cached})
+            )
+        except RuntimeError:  # вне цикла событий (синхронный тест): отправлять некому
+            return
+        self._component_tasks.add(task)
+        task.add_done_callback(self._component_tasks.discard)
+
+    async def _send(self, frame: dict[str, Any]) -> None:
+        if self._closed:
+            return
+        async with self._send_lock:
+            try:
+                await self._ws.send_text(json.dumps({"v": 1, **frame}, ensure_ascii=False))
+            except (RuntimeError, WebSocketDisconnect, OSError):
+                self._closed = True
+
+    async def _send_audio(self, data: bytes) -> None:
+        if self._closed:
+            return
+        async with self._send_lock:
+            try:
+                await self._ws.send_bytes(data)
+            except (RuntimeError, WebSocketDisconnect, OSError):
+                self._closed = True
+
+    # ─── входящие кадры ───────────────────────────────────────────────────────
+
+    def _replaced(self, summary: dict[str, Any] | None) -> None:
+        """Диалог завершён снаружи (человек начал новый разговор с другого экрана): сообщить и закрыть сокет."""
+        if not self._closed:
+            self._replace_task = asyncio.get_running_loop().create_task(self._close_replaced(summary))
+
+    async def _close_replaced(self, summary: dict[str, Any] | None) -> None:
+        await self._send({"type": "ended", "summary": summary})
+        self._closed = True
+        try:
+            await self._ws.close(code=1000)
+        except (RuntimeError, WebSocketDisconnect, OSError):
+            pass
+
+    async def _serve(self) -> None:
+        """Приём кадров клиента до закрытия сокета."""
+        await self._send({"type": "ready"})
+        dialog = self._dialog
+        dialog.on_replaced = self._replaced
+        if dialog.greeting_pending:
+            dialog.greeting_pending = False  # один раз на каждый POST …/dialogs, не на каждый сокет
+            if dialog.greeting:
+                self._speak_in_background("greeting", dialog.greeting)
+
+        worker = asyncio.create_task(self._worker())
+        try:
+            while not self._closed:
+                message = await self._ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                if message.get("bytes") is not None:
+                    self._on_audio_frame(message["bytes"])
+                elif message.get("text") is not None and await self._on_text(message["text"]):
+                    break
+        finally:
+            self._closed = True
+            dialog.on_replaced = None
+            worker.cancel()
+            for task in self._speech_tasks:
+                task.cancel()
+            await asyncio.gather(worker, *self._speech_tasks, return_exceptions=True)
+
+    async def _worker(self) -> None:
+        """Фиксированные фразы (кризисный ответ, просьба повторить) по одной, в порядке постановки."""
+        while True:
+            job = await self._jobs.get()
+            try:
+                await job()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("reply failed dialog=%s", self._dialog.id)
+                await self._send({"type": "error", "code": "AGENT_INTERNAL", "message": "Не удалось ответить"})
+
+    async def _on_text(self, raw: str) -> bool:
+        """Обрабатывает JSON-кадр. True — сокет надо закрыть (диалог завершён)."""
+        try:
+            frame = json.loads(raw)
+        except ValueError:
+            return False
+        if not isinstance(frame, dict):
+            return False
+        # Неизвестные кадры и поля игнорируются в обе стороны (specs/agent-api «Идентификаторы…»).
+        match frame.get("type"):
+            case "user_message":
+                await self._on_user_message(frame)
+            case "audio_start":
+                self._audio_open = True
+                self._audio_frames = 0
+                self._last_voiced = None
+                # tts_cancel прямо перед audio_start — перебивание голосом: реплику начинаем с чистого листа.
+                self._turn_interrupts, self._interrupted = self._interrupted, False
+                self._audio_started()
+            case "audio_end":
+                await self._on_audio_end()
+            case "set_voice":
+                voice = frame.get("voice")
+                if voice in VOICES:  # чужие значения игнорируются, как любое неизвестное поле
+                    self._store.set_voice(self._dialog, voice)
+            case "tts_cancel":
+                message_id = frame.get("messageId")
+                if isinstance(message_id, str):
+                    self._cancel_speech(message_id)
+                    VOICE_INTERRUPTIONS_TOTAL.inc()
+                    # Перебили посреди реплики (она началась, пока агент думал) — это перебивание той же реплики.
+                    if self._audio_open:
+                        self._turn_interrupts = True
+                    else:
+                        self._interrupted = True
+            case "end":
+                return await self._on_end(frame)
+        return False
+
+    async def _on_user_message(self, frame: dict[str, Any]) -> None:
+        text = frame.get("text")
+        client_id = frame.get("id") if isinstance(frame.get("id"), str) and frame.get("id") else None
+        if not isinstance(text, str) or not text.strip():
+            return
+        self._interrupted = False  # перебили, чтобы написать: это не голосовая реплика
+        dialog = self._dialog
+        # Клиент повторяет реплику, пока нет ack: тот же id — то же сообщение, без второго ответа.
+        if client_id and client_id in dialog.client_ids:
+            await self._send({"type": "ack", "id": client_id, "messageId": dialog.client_ids[client_id]})
+            return
+        self._supersede_speech()
+        message = self._store.add_message(dialog, "user", text[:MAX_USER_TEXT])
+        if client_id:
+            dialog.client_ids[client_id] = message.id
+        await self._send({"type": "ack", "id": client_id or message.id, "messageId": message.id})
+        crisis = is_crisis(text)
+        model_usage.call("safety")
+        if crisis:
+            self._store.mark_crisis(dialog)  # извлечение памяти из такого разговора пропускается (I13)
+            await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
+        turn = Turn(started=time.monotonic())
+        self._dispatch_text_turn(text, crisis, turn)
+
+    def _count_false_interruption(self, interrupts: bool) -> None:
+        """Перебили, а сказать нечего: детектор принял за речь эхо голоса агента или шум. Текст не пишется."""
+        if interrupts:
+            VOICE_FALSE_INTERRUPTIONS_TOTAL.inc()
+            logger.info("false interruption dialog=%s", self._dialog.id)
+
+    def _is_echo(self, heard: str) -> bool:
+        """Услышанное при перебивании — слова самого агента (последний ответ или приветствие), а не человека."""
+        spoken = [m.text for m in reversed(self._dialog.messages) if m.role == "assistant"][:1]
+        if self._dialog.greeting:
+            spoken.append(self._dialog.greeting)
+        if not any(is_echo(heard, text) for text in spoken):
+            return False
+        VOICE_ECHO_TOTAL.inc()
+        logger.info("echo of the agent heard as speech dialog=%s", self._dialog.id)
+        return True
+
+    async def _on_end(self, frame: dict[str, Any]) -> bool:
+        takeaway = frame.get("takeaway") if isinstance(frame.get("takeaway"), str) else None
+        tension = frame.get("tensionAfter")
+        tension_after = tension if isinstance(tension, int) and not isinstance(tension, bool) and 1 <= tension <= 10 else None
+        # Поле «Что забираешь с собой» и есть итог: заполнено — сохраняется сразу; пусто — итог подведётся в фоне.
+        source = "draft" if frame.get("recapSource") == "draft" else "manual"
+        summary = self._store.end(self._dialog, takeaway, tension_after, source)
+        await self._send({"type": "ended", "summary": summary})
+        self._closed = True
+        try:
+            await self._ws.close(code=1000)
+        except (RuntimeError, WebSocketDisconnect, OSError):
+            pass
+        return True
+
+    # ─── фиксированные фразы ──────────────────────────────────────────────────
+
+    async def _say(self, text: str, turn: Turn, *, crisis: bool = False) -> None:
+        """Фиксированная фраза агента ответом (кризисный ответ, просьба повторить): первое предложение уходит в текст и в озвучку
+        фраз сразу, остальные следом. Ответ лежит в истории с первого предложения и дописывается: порядок сообщений тот, что
+        видит человек, а после обрыва клиент найдёт там всё, что успело прозвучать и показаться."""
+        dialog = self._dialog
+        message_id = str(uuid.uuid4())
+        sentences: list[str] = []
+        speech: SpeechFeed | None = None
+        message: Message | None = None
+        try:
+            for sentence in split_sentences(text):
+                if self._closed:
+                    return
+                prefix = " " if sentences else ""
+                if not sentences:
+                    await self._send({"type": "assistant_start", "messageId": message_id})
+                    speech = self._start_speech(message_id, turn)
+                sentences.append(sentence)
+                if message is None:
+                    message = self._store.add_message(dialog, "assistant", sentence, message_id)
+                else:
+                    message.text = " ".join(sentences)
+                if speech is not None:
+                    speech.add(sentence)
+                # Дельты в сумме дают ровно текст ответа: предложения через пробел, как в assistant_end.text.
+                for piece in re.findall(r"\S+\s*", sentence):
+                    if self._closed:
+                        return
+                    if self._stream_delay:
+                        await asyncio.sleep(self._stream_delay)
+                    await self._send({"type": "assistant_delta", "messageId": message_id, "text": prefix + piece})
+                    prefix = ""
+        finally:
+            if speech is not None:
+                speech.close()
+            if turn.trace is not None:
+                turn.trace.update(output=" ".join(sentences) or None, metadata={"crisis": crisis})
+                turn.trace.end()
+                turn.trace = None
+        if sentences and not self._closed:
+            await self._send({"type": "assistant_end", "messageId": message_id, "text": " ".join(sentences)})
+
+    # ─── озвучка фраз ─────────────────────────────────────────────────────────
+
+    def _forget_speech(self, message_id: str, task: asyncio.Task[None]) -> None:
+        if self._speeches.get(message_id) is task:  # той же озвучки, а не новой под тем же id
+            del self._speeches[message_id]
+
+    def _cancel_speech(self, message_id: str) -> None:
+        """Озвучку сообщения прекратить сразу: флаг для кадров в пути и отмена задачи, которая могла застрять на провайдере."""
+        self._cancelled.add(message_id)
+        task = self._speeches.get(message_id)
+        if task is not None:
+            task.cancel()
+
+    def _supersede_speech(self) -> None:
+        """Человек сказал новое: недоговорённое агентом больше не нужно. Новая озвучка не ждёт, пока доиграет прошлая."""
+        for message_id in list(self._speeches):
+            self._cancel_speech(message_id)
+
+    def _begin_speech(
+        self, tts: TextToSpeech, message_id: str, chunks: "asyncio.Queue[str | None]", voice: str, turn: Turn | None
+    ) -> None:
+        """Озвучка сообщения идёт отдельной задачей; её можно оборвать (`_cancel_speech`)."""
+        task = asyncio.create_task(self._speak(tts, message_id, chunks, voice, turn))  # type: ignore[arg-type]
+        self._speech_tasks.add(task)
+        self._speeches[message_id] = task
+        task.add_done_callback(self._speech_tasks.discard)
+        task.add_done_callback(lambda done: self._forget_speech(message_id, done))
+
+    def _start_speech(self, message_id: str, turn: Turn | None) -> SpeechFeed | None:
+        """Озвучка фиксированной фразы: куски текста подаются в `SpeechFeed.add`, `close` — конец. Голос — выбранный человеком
+        голос Gemini, иначе голос рода."""
+        tts = self._tts_source()
+        if tts is None:
+            return None
+        feed = SpeechFeed()
+        self._begin_speech(tts, message_id, feed.chunks, self._dialog.voice_key, turn)
+        return feed
+
+    def _speak_in_background(self, message_id: str, text: str) -> None:
+        """Озвучка готового текста (приветствие)."""
+        feed = self._start_speech(message_id, None)
+        if feed is None:
+            return
+        for sentence in split_sentences(text):
+            feed.add(sentence)
+        feed.close()
+
+    async def _speak(
+        self,
+        tts: TextToSpeech,
+        message_id: str,
+        chunks: asyncio.Queue[str | None],
+        voice: Voice,
+        turn: Turn | None = None,
+    ) -> None:
+        """tts_start → кадры 0x02 → tts_end, по кускам текста. `tts_start` уходит с первым готовым кадром.
+
+        Источник звука — озвучка фраз (`GeminiLiveTts` с памятью) или очередь звука ответа модели (`_QueueTts`). Звук каждого
+        куска читается потоком (если источник так умеет): кадр по 200 мс уходит, как только набрался, не дожидаясь конца
+        фразы. Синтез идёт с опережением (`SPEECH_PREFETCH`): пока звучит один кусок, следующий уже готовится, и между ними нет
+        паузы. Кадры идут строго по порядку.
+
+        Расход синтеза пишется на озвучиваемое сообщение (приветствие сообщением не является: его расход — на диалог), а в
+        сообщение — сколько секунд звука ушло клиенту.
+        """
+        model_usage.bind(lambda item: self._store.add_usage(self._dialog, message_id, [item]))  # своя задача (`_begin_speech`)
+        async with self._speech_lock:
+            if message_id in self._cancelled:
+                return
+            started = False
+            sequence = 0
+            sent_bytes = 0
+            slots = asyncio.Semaphore(SPEECH_PREFETCH)
+            syntheses: asyncio.Queue[Synthesis | None] = asyncio.Queue()
+            planned: list[Synthesis] = []
+
+            async def plan() -> None:
+                first = True
+                turn_trace = turn.trace if turn is not None else None
+                while (text := await chunks.get()) is not None:
+                    await slots.acquire()
+                    synthesis = Synthesis(tts, text, voice, first, self._memory_label(), self._tracer, turn_trace)
+                    first = False
+                    planned.append(synthesis)
+                    syntheses.put_nowait(synthesis)
+                syntheses.put_nowait(None)
+
+            async def send_frame(pcm: bytes) -> bool:
+                """Отправить кадр; False, если озвучку прервали или сокет закрыт."""
+                nonlocal started, sequence, sent_bytes
+                if self._closed or message_id in self._cancelled:
+                    return False
+                if not started:
+                    await self._send({"type": "tts_start", "messageId": message_id})
+                    started = True
+                    self._first_sound(message_id, turn)
+                await self._send_audio(tts_frame(sequence, pcm))
+                sequence += 1
+                sent_bytes += len(pcm)
+                if self._frame_interval:
+                    await asyncio.sleep(self._frame_interval)
+                return True
+
+            planner = asyncio.create_task(plan())
+            try:
+                while (synthesis := await syntheses.get()) is not None:
+                    pending = bytearray()
+                    interrupted = False
+                    while (piece := await synthesis.pieces.get()) is not None:
+                        if isinstance(piece, Exception):
+                            raise piece
+                        pending += piece
+                        while len(pending) >= FRAME_BYTES:
+                            frame = bytes(pending[:FRAME_BYTES])
+                            del pending[:FRAME_BYTES]
+                            if not await send_frame(frame):
+                                interrupted = True
+                                break
+                        if interrupted:
+                            break
+                    if interrupted or (pending and not await send_frame(bytes(pending))):
+                        break
+                    slots.release()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                # Озвучка упала: текст дойдёт, а человек увидит, что голос недоступен.
+                logger.warning("tts failed dialog=%s message=%s: %s", self._dialog.id, message_id, error)
+                if not self._voice_error_sent:
+                    self._voice_error_sent = True
+                    await self._send({"type": "error", "code": "VOICE_UNAVAILABLE", "message": "Озвучка недоступна"})
+            finally:
+                # Недозвученное (перебили, обрыв, отказ) не синтезируем дальше. Отменённые задачи не ждём: их отказы
+                # уже лежат в очередях звука, а ожидание затягивало завершение сессии (см. `_serve`).
+                planner.cancel()
+                for synthesis in planned:
+                    synthesis.cancel()
+                self._store.set_audio_seconds(self._dialog, message_id, sent_bytes / (2 * TTS_RATE))
+                if started:
+                    await self._send({"type": "tts_end", "messageId": message_id})
 
     # ─── трейсинг (Langfuse) ──────────────────────────────────────────────────
 
@@ -365,7 +784,7 @@ class LiveDialogSession(DialogSession):
         }
         for name, at in turn.marks.items():
             metadata[f"ms_{name}"] = round((at - turn.started) * 1000)
-        # Сами тексты в трассу не идут (LANGFUSE_TRACE_TEXT=false): остаются размеры реплик и длительность речи.
+        # Сами тексты в трассу не идут никогда: остаются размеры реплик и длительность речи.
         said = turn.heard.strip() or turn.input_text
         metadata.update(
             user_chars=len(said), user_words=len(said.split()), reply_chars=len(turn.sent_text), reply_words=len(turn.sent_text.split())
@@ -404,8 +823,12 @@ class LiveDialogSession(DialogSession):
             self._end_turn_trace(target)
 
     def _first_sound(self, message_id: str, turn: Turn | None) -> None:
-        """Первый звук ответа ушёл клиенту: кроме общей задержки пишем, из каких этапов она сложилась."""
-        super()._first_sound(message_id, turn)
+        """Первый звук ответа ушёл клиенту: сколько человек ждал с конца своей реплики (метрика без текстов и без id) и, из
+        каких этапов сложилась задержка ответа модели."""
+        if turn is not None and turn.started is not None:
+            seconds = time.monotonic() - turn.started
+            VOICE_LATENCY_SECONDS.labels("first_sound", self._memory_label()).observe(seconds)
+            logger.info("first sound dialog=%s message=%s ms=%d", self._dialog.id, message_id, seconds * 1000)
         live_turn = self._speech_turns.pop(message_id, None)
         if live_turn is not None:
             live_turn.mark("tts_start")
@@ -420,12 +843,11 @@ class LiveDialogSession(DialogSession):
             asyncio.create_task(self._send_loop()),
             asyncio.create_task(self._pump()),
         ]
-        if self._cfg.mood_classifier and self._cfg.api_key is not None:
+        if self._cfg.api_key is not None:
             self._tasks.append(asyncio.create_task(self._warm_mood_classifier()))  # первый запрос иначе ждёт TLS и релей
-        if not self._cfg.lazy_open:  # соединение готово к первой реплике (лениво — откроется по audio_start или сообщению)
-            self._tasks.append(asyncio.create_task(self._ensure_link()))
+        self._tasks.append(asyncio.create_task(self._ensure_link()))  # соединение готово к первой реплике
         try:
-            await super().run()
+            await self._serve()
         finally:
             # Отменённая задача держит CancelledError, а его traceback — кадр с self: ссылка сеанса на свои задачи замыкается в цикл,
             # и сеанс со всем, что в нём (сокет, очереди звука, ходы), ждал бы полной сборки мусора. Поэтому ссылки на задачи
@@ -462,9 +884,6 @@ class LiveDialogSession(DialogSession):
         бы его дважды. Реплика, на которую модель промолчала, остаётся последней: на неё свежая сессия и отвечает (`_recover`)."""
         messages = [m for m in self._dialog.messages if m.id not in self._pending_text_ids]
         limit = self._cfg.history_messages
-        tight = self._cfg.history_messages_tight
-        if tight and self._budget.trims_history():  # окно токенов подходит к лимиту: история короче
-            limit = min(limit, tight) if limit else tight
         if limit:
             messages = messages[-limit:]
         history: list[tuple[Literal["user", "model"], str]] = []
@@ -478,30 +897,23 @@ class LiveDialogSession(DialogSession):
                 history.append((role, message.text))
         return history
 
-    def _instructions(self, resumed: bool = False) -> str:
-        """Промпт агента и, если история не уходит отдельными репликами, последние сообщения текстом: модель не начинает
-        с чистого листа.
-
-        Возобновлённая по handle сессия помнит разговор сама (в том числе сжатый Google): текст ей не дублируем.
-        При GEMINI_TEXT_CONTEXT история загружается в сессию настоящими репликами (`_history`), в промпт её не кладём.
-        """
-        history = [] if resumed or self._cfg.text_context else self._history()
-        # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока.
+    def _instructions(self) -> str:
+        """Промпт агента, правила памяти и сводка. Прошлые реплики в промпт не входят: они загружаются в сессию настоящими
+        репликами при открытии (`_history`)."""
+        # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока. Число удалений читается раньше
+        # сводки: убранное между этими двумя чтениями увидит следующий ход.
+        self._removals_seen = self._store.memory_removals(self._dialog.user_id)
         self._brief_used = self._store.memory_brief(self._dialog)
-        text = system_prompt(self._dialog.voice) + LIVE_ADDENDUM + memory_block(self._brief_used)
-        if history:
-            lines = [("Человек" if role == "user" else "Ты") + ": " + message for role, message in history]
-            text += "\n\nУже сказано в этом разговоре (продолжай, не здоровайся заново):\n" + "\n".join(lines)
-        return text
+        return system_prompt(self._dialog.voice) + LIVE_ADDENDUM + memory_block(self._brief_used)
 
     # ─── соединение ───────────────────────────────────────────────────────────
 
     async def _ensure_link(self, rotate: bool = False) -> LiveLink | None:
         """Живое соединение с моделью. `rotate`: сменить его на свежее с текстовой историей, если человек ещё не заговорил.
 
-        С бюджетом (`GEMINI_TPM_LIMIT`): в паузе после 1011 (и при ENFORCE без места в окне) смена откладывается до следующего
-        хода, а живая прежняя сессия закрывается только после того, как открылась новая (не открылась — ход идёт на прежней,
-        смена повторится позже). Отложенная или ленивая (`GEMINI_LAZY_OPEN`) смена делается здесь же, в начале хода.
+        С учётом токенов (`GEMINI_TPM_LIMIT`): в паузе после 1011 смена откладывается до следующего хода, а живая прежняя
+        сессия закрывается только после того, как открылась новая (не открылась — ход идёт на прежней, смена повторится
+        позже). Отложенная смена делается здесь же, в начале хода.
         """
         async with self._link_lock:
             link = self._link
@@ -513,18 +925,20 @@ class LiveDialogSession(DialogSession):
                 if not self._link_used:
                     return link  # на этой сессии ход ещё не вёлся: менять нечего (и цепочка смен невозможна)
                 if not self._may_open():
-                    # Пауза после 1011 (или нет места в окне): новую сессию сейчас не открывать, смена ждёт следующего хода,
-                    # а пока работает прежняя.
+                    # Пауза после 1011: новую сессию сейчас не открывать, смена ждёт следующего хода, а пока работает прежняя.
                     self._rotate_pending = True
                     GEMINI_CONTEXT_REFRESH_TOTAL.labels("deferred").inc()
-                    logger.info("live context refresh deferred: level=%s dialog=%s", budget.level(), self._dialog.id)
+                    logger.info(
+                        "live context refresh deferred: cooldown_ms=%d dialog=%s", budget.cooldown_left() * 1000, self._dialog.id
+                    )
                     return link
                 self._refresh = True
             if self._brief_used and not self._store.memory_brief(self._dialog, count=False):
                 self._refresh = True  # сводку отозвали (см. `_brief_used`): следующий ход уже без неё
+            self._note_memory_removal()
             alive = link is not None and not link.closed and link.voice == voice
             if alive and self._rotate_pending and not self._refresh and self._may_open():
-                self._refresh = True  # отложенная (или ленивая) смена сессии: теперь можно
+                self._refresh = True  # отложенная смена сессии: теперь можно
             # Сюда приходят в начале нового хода (прошлый ответ к этому моменту уже закрыт `_begin`).
             if alive and not self._refresh:
                 return link
@@ -532,6 +946,8 @@ class LiveDialogSession(DialogSession):
             purpose = (
                 "voice"
                 if voice_changed
+                else "privacy"
+                if self._privacy_reopen
                 else "recover"
                 if self._recovering
                 else "rotate"
@@ -541,19 +957,13 @@ class LiveDialogSession(DialogSession):
                 else "start"
             )
             self._recovering = False
+            self._privacy_reopen = False
             keep = budget.enabled and alive  # с бюджетом прежнюю сессию закрываем, только когда откроется новая
             if not keep:
                 await self._drop_link()
             self._refresh = False
-            if voice_changed:
-                self._resume_handle = None  # голос у сессии один на всё соединение: новый голос — новая сессия
-            # При text_context контекст приходит текстом, возобновлять сессию по handle (вместе с её аудио) не нужно.
-            handle = self._resume_handle if self._cfg.session_resumption and not self._cfg.text_context else None
-            new = await self._open(voice, handle, purpose)
-            if new is None and handle is not None:
-                # Handle не принят (устарел, сессия закрыта): начинаем заново, а контекст даём последними сообщениями.
-                self._resume_handle = None
-                new = await self._open(voice, None, purpose)
+            # Голос у сессии один на всё соединение: новый голос — новая сессия; контекст приходит текстом (`_history`).
+            new = await self._open(voice, purpose)
             if new is None:
                 if keep:
                     self._rotate_pending = True  # новая не открылась: ход идёт на прежней, смена повторится к следующему
@@ -568,6 +978,16 @@ class LiveDialogSession(DialogSession):
             self._session_audio = 0
             self._reader = asyncio.create_task(self._read(new))
             return new
+
+    def _note_memory_removal(self) -> None:
+        """Правило приватности: человек убрал что-то из памяти, пока шёл разговор. Сессия Gemini держит сводку в контексте и сама её
+        не забудет, поэтому к следующему ходу она открывается заново (с актуальной сводкой и историей текстом). Добавления в
+        сводку этого не вызывают: их берёт плановая смена сессии (`GEMINI_ROTATE_EVERY`)."""
+        if self._store.memory_removals(self._dialog.user_id) != self._removals_seen:
+            if not self._privacy_reopen:
+                logger.info("memory removal: the session is reopened for the next turn dialog=%s", self._dialog.id)
+            self._refresh = True
+            self._privacy_reopen = True
 
     async def _await_memory(self) -> float:
         """Загрузить сводку памяти к открытию сессии, но ждать её не дольше MEMORY_WAIT_SECONDS. Загрузка не отменяется:
@@ -590,19 +1010,18 @@ class LiveDialogSession(DialogSession):
             logger.info("memory not ready for gemini open dialog=%s waited_ms=%.0f", self._dialog.id, waited * 1000)
         return waited
 
-    async def _open(self, voice: Voice, handle: str | None, purpose: str = "start") -> LiveLink | None:
+    async def _open(self, voice: Voice, purpose: str = "start") -> LiveLink | None:
         budget = self._budget
-        history: LiveHistory | None = self._history() if self._cfg.text_context and handle is None else None
+        history: LiveHistory = self._history()
         memory_wait = await self._await_memory()
-        instructions = self._instructions(resumed=handle is not None)
-        cost = budget.open_estimate([instructions, *(text for _, text in history or ())])
-        if not self._may_open(cost):
-            # Пауза после 1011 (открытие заведомо получит тот же отказ) или, при ENFORCE, открытие не помещается в окно.
+        instructions = self._instructions()
+        cost = budget.open_estimate([instructions, *(text for _, text in history)])
+        if not self._may_open():
+            # Пауза после 1011: открытие заведомо получит тот же отказ.
             logger.info(
-                "gemini live open skipped dialog=%s purpose=%s level=%s cost=%d cooldown_ms=%d",
+                "gemini live open skipped dialog=%s purpose=%s cost=%d cooldown_ms=%d",
                 self._dialog.id,
                 purpose,
-                budget.level(),
                 cost,
                 budget.cooldown_left() * 1000,
             )
@@ -613,12 +1032,11 @@ class LiveDialogSession(DialogSession):
             user_id=self._dialog.user_id,
             model=self._cfg.live_model,
             metadata={
-                "resumed": handle is not None,
-                "history_messages": len(history or []),
+                "history_messages": len(history),
                 "voice": voice,
                 "purpose": purpose,
             },
-            tags=[self._pipeline],
+            tags=[PIPELINE_TAG],
         )
         rid = budget.opening(cost)  # Google считает открытие сразу, по размеру контекста
         began = time.monotonic()
@@ -633,7 +1051,7 @@ class LiveDialogSession(DialogSession):
                 memory_wait * 1000,
             )
         try:
-            link = await self._connector.open(voice, instructions, handle, history or None)
+            link = await self._connector.open(voice, instructions, history or None)
         except BaseException as error:
             budget.cancel(rid)
             if not isinstance(error, Exception):
@@ -647,15 +1065,14 @@ class LiveDialogSession(DialogSession):
             trace.update(level="ERROR", status=text[:200])
             trace.end()
             logger.warning(
-                "gemini live not available dialog=%s purpose=%s voice=%s resume=%s: %s",
+                "gemini live not available dialog=%s purpose=%s voice=%s: %s",
                 self._dialog.id,
                 purpose,
                 voice,
-                handle is not None,
                 error,
             )
             if quota:
-                budget.on_quota_error("open", self._dialog.id, calibrate=is_explicit_quota_error(text))
+                budget.on_quota_error("open", self._dialog.id)
             return None
         trace.end()
         budget.opened(link, rid)
@@ -665,18 +1082,15 @@ class LiveDialogSession(DialogSession):
         # Какой голос запрошен у Google в каждой сессии: если человеку показалось, что голос сменился, это видно здесь
         # (purpose: start, rotate, reconnect, voice). Тексты реплик в строку не попадают.
         logger.info(
-            "gemini live opened dialog=%s purpose=%s voice=%s voice_name=%s model=%s resumed=%s history_messages=%d ms=%.0f",
+            "gemini live opened dialog=%s purpose=%s voice=%s voice_name=%s model=%s history_messages=%d ms=%.0f",
             self._dialog.id,
             purpose,
             voice,
             getattr(link, "voice_name", ""),
             self._cfg.live_model,
-            handle is not None,
-            len(history or ()),
+            len(history),
             (time.monotonic() - began) * 1000,
         )
-        if handle is not None:
-            logger.info("gemini live session resumed dialog=%s", self._dialog.id)
         return link
 
     def _rotation_due(self) -> bool:
@@ -689,16 +1103,6 @@ class LiveDialogSession(DialogSession):
     def _schedule_rotation(self) -> None:
         if self._rotation is None or self._rotation.done():
             self._rotation = asyncio.create_task(self._rotate())
-
-    def _defer_rotation(self) -> None:
-        """Ленивое открытие (GEMINI_LAZY_OPEN): ответ дозвучал, но новую сессию не открываем сразу. Она нужна, только если человек
-        заговорит или напишет, а открытие стоит квоты (Google считает его при подключении). Смена — по audio_start (за его речью)
-        или по набранному сообщению (`_ensure_link` увидит `_rotate_pending`)."""
-        if not self._link_used:
-            return
-        self._rotate_pending = True
-        if self._audio_open and self._may_open():
-            self._prepare_link()  # человек заговорил, пока дозвучивал прошлый ответ
 
     async def _rotate(self) -> None:
         """Ответ договорён и озвучен (turn_complete): меняем сессию на свежую, где прошлые реплики лежат текстом, а не
@@ -755,7 +1159,7 @@ class LiveDialogSession(DialogSession):
             self._last_response = total["output"] - usage.get("output_thinking", 0)
             self._last_prompt = total["input"]
 
-    # ─── бюджет токенов ───────────────────────────────────────────────────────
+    # ─── учёт токенов ─────────────────────────────────────────────────────────
 
     def _estimate(self, turn: LiveTurn | None = None, text: str | None = None, opening: bool = False) -> int:
         """Резерв хода. Открытие сессии считается отдельно, поэтому ход резервирует только приращение: надбавку Google, текст
@@ -769,26 +1173,13 @@ class LiveDialogSession(DialogSession):
         reused = self._link_turns > 0 and not opening
         return estimate_turn(text, seconds, self._last_response if reused else 0)
 
-    def _open_estimate(self) -> int:
-        """Сколько квоты съест новая сессия этого диалога сейчас: промпт и история, байты / 4 × GEMINI_TPM_OPEN_FACTOR."""
-        if not self._budget.enabled:
-            return 0
-        brief = memory_block(self._store.memory_brief(self._dialog, count=False))  # сводка памяти тоже уходит в сессию
-        prompt = system_prompt(self._dialog.voice) + LIVE_ADDENDUM + brief
-        return self._budget.open_estimate([prompt, *(text for _, text in self._history())])
-
-    def _may_open(self, cost: int | None = None) -> bool:
-        """Новую сессию можно открывать: нет паузы после 1011 и, при ENFORCE, открытие помещается в окно."""
-        budget = self._budget
-        if not budget.enabled:
-            return True
-        if budget.cooling():
-            return False
-        return not budget.enforcing or budget.fits(self._open_estimate() if cost is None else cost)
+    def _may_open(self) -> bool:
+        """Новую сессию можно открывать: нет паузы после 1011 (открытие в паузе заведомо получит тот же отказ)."""
+        return not self._budget.cooling()
 
     def _wait_left(self, turn: LiveTurn) -> float:
-        """Сколько ещё ход может ждать бюджет: GEMINI_TPM_WAIT_MS от конца реплики или от набранного сообщения."""
-        return max(0.0, turn.started + self._cfg.tpm_wait_ms / 1000 - time.monotonic())
+        """Сколько ещё ход может ждать конца паузы после 1011: COOLDOWN_WAIT_SECONDS от конца реплики или от набранного сообщения."""
+        return max(0.0, turn.started + COOLDOWN_WAIT_SECONDS - time.monotonic())
 
     def _needs_open(self) -> bool:
         """Ходу не обойтись без новой сессии: живой нет или голос сменился."""
@@ -796,14 +1187,14 @@ class LiveDialogSession(DialogSession):
         return link is None or link.closed or link.voice != self._dialog.voice_key
 
     def _will_open(self) -> bool:
-        """Ход откроет новую сессию: без неё не обойтись или ждёт смена (GoAway, кризис, отложенная, ленивая), которую сейчас
+        """Ход откроет новую сессию: без неё не обойтись или ждёт смена (GoAway, кризис, отложенная), которую сейчас
         можно сделать (иначе ход пойдёт на прежней)."""
         return self._needs_open() or ((self._refresh or self._rotate_pending) and self._may_open())
 
     async def _wait_open(self, turn: LiveTurn) -> bool:
-        """Ходу нужна новая сессия, а открывать её нельзя (пауза после 1011, при ENFORCE — нет места в окне): пока человек
-        говорит, ждём (этого не слышно, сказанное копится в очереди), после конца реплики или набранного сообщения — ещё не
-        дольше GEMINI_TPM_WAIT_MS. True — можно открывать."""
+        """Ходу нужна новая сессия, а открывать её нельзя (пауза после 1011): пока человек говорит, ждём (этого не слышно,
+        сказанное копится в очереди), после конца реплики или набранного сообщения — ещё не дольше COOLDOWN_WAIT_SECONDS.
+        True — можно открывать."""
         while not self._may_open():
             if (turn.kind == "text" or turn.spoken) and self._wait_left(turn) <= 0:
                 return False
@@ -823,64 +1214,11 @@ class LiveDialogSession(DialogSession):
                 return rid
         return None
 
-    def _reply_turn(self, started: float | None, degraded: bool = False) -> Turn:
-        """Ход ответа не от Gemini Live (кризисный, просьба повторить, ответ каскада): отданный каскаду и, при ENFORCE, любой
-        такой ответ звучит без Gemini."""
-        if degraded or self._budget.enforcing:
-            return FallbackTurn(started=started)
+    @staticmethod
+    def _reply_turn(started: float | None) -> Turn:
+        """Ход ответа не от Gemini Live (кризисный, просьба повторить, озвучка текстового ответа): озвучивается фиксированной
+        фразой из памяти озвучки."""
         return Turn(started=started)
-
-    def _main_voice(self) -> str:
-        return self._dialog.voice_key  # озвучка Gemini Live: выбранный человеком голос, иначе голос рода
-
-    def _fallback_tts(self) -> TextToSpeech | None:
-        main = self._tts_source()  # None, если озвучку выключили (dev-переключатель)
-        cached = main if isinstance(main, CachedTts) else None
-        spare = self._spare_tts_source()
-        if cached is None and spare is None:
-            return None
-        return _FallbackTts(cached, spare)
-
-    def _start_speech(self, message_id: str, turn: Turn | None) -> SpeechFeed | None:
-        if isinstance(turn, FallbackTurn):
-            tts = self._fallback_tts()
-            return None if tts is None else self._speech_with(tts, message_id, turn)
-        return super()._start_speech(message_id, turn)
-
-    async def _degrade(self, turn: LiveTurn) -> None:
-        """Ход отдаётся каскаду без Gemini (GEMINI_TPM_ENFORCE): окно у лимита или пауза после 1011, ждать дольше нельзя."""
-        reason = "cooldown" if self._budget.cooling() else "hard"
-        GEMINI_TURNS_DEGRADED_TOTAL.labels(reason).inc()
-        logger.warning(
-            "live turn degraded dialog=%s kind=%s reason=%s window=%d reserved=%d limit=%d",
-            self._dialog.id,
-            turn.kind,
-            reason,
-            self._budget.window_tokens(),
-            self._budget.reserved_tokens(),
-            self._budget.limit(),
-        )
-        if turn.kind == "voice" and not turn.offline:
-            # В сессии осталась начатая реплика без конца: такая сессия не нужна, следующий ход откроет новую.
-            async with self._link_lock:
-                self._release_link()
-        self._events.put_nowait(("degraded", turn))
-
-    async def _on_degraded(self, turn: LiveTurn) -> None:
-        """Ход без Gemini: на набранное сообщение отвечает чат-модель каскада; голосовую реплику каскад разбирает целиком
-        (распознавание, кризис, ответ). Нет чат-модели — ошибка, а не шаблон."""
-        if not turn.generating:
-            return  # ход уже закрыт: его перебила новая реплика
-        turn.degraded = True
-        await self._finish(turn)
-        reply_turn = self._reply_turn(turn.started, degraded=True)
-        if turn.kind == "voice":
-            pcm = bytes(turn.recording or b"")
-            frames = max(1, round(len(pcm) / PCM_BYTES_PER_SECOND / AUDIO_FRAME_SECONDS))
-            # Метод каскада, а не `self._voice_turn`: это имя здесь занято текущей голосовой репликой.
-            self._jobs.put_nowait(lambda: DialogSession._voice_turn(self, frames, pcm, turn.interrupts, reply_turn))
-        else:  # набранное сообщение или повторная просьба: реплика уже в истории, каскад отвечает на неё
-            self._jobs.put_nowait(lambda: self._reply(False, reply_turn))
 
     def _prepare_link(self) -> None:
         """Отложенная смена сессии начинается, как только человек заговорил: открытие прячется за его речью."""
@@ -913,9 +1251,8 @@ class LiveDialogSession(DialogSession):
     async def _send_loop(self) -> None:
         """Команды модели строго по порядку: начало активности, кадры звука, конец активности, текст.
 
-        С бюджетом (GEMINI_TPM_LIMIT) ход ставит резерв в окно токенов перед тем, как модель начнёт отвечать: набранное
-        сообщение — перед отправкой, голос — перед концом реплики (пока человек говорит, модель не отвечает). При ENFORCE ход
-        ждёт места в окне не дольше GEMINI_TPM_WAIT_MS, иначе отдаётся шаблону без Gemini.
+        С учётом токенов (GEMINI_TPM_LIMIT) ход ставит резерв в окно перед тем, как модель начнёт отвечать: набранное
+        сообщение — перед отправкой, голос — перед концом реплики (пока человек говорит, модель не отвечает).
         """
         while True:
             command = await self._out.get()
@@ -929,9 +1266,6 @@ class LiveDialogSession(DialogSession):
                     await self._start_activity(command[1])
                 else:
                     link = self._link
-                    if kind == "end" and command[1].offline:
-                        await self._degrade(command[1])  # реплика так и не дошла до Gemini: её разберёт каскад
-                        continue
                     if link is None or link.closed:
                         continue
                     if kind == "audio":
@@ -949,20 +1283,13 @@ class LiveDialogSession(DialogSession):
         rid = None
         try:
             if self._budget.enabled:
-                if not self._budget.enforcing and self._needs_open():
-                    await self._wait_open(turn)  # пауза после 1011: без сессии ход не обойдётся, ждём не дольше GEMINI_TPM_WAIT_MS
-                opening = self._will_open()  # ход потянет за собой открытие сессии, и его квота тоже должна поместиться
-                extra = self._open_estimate() if opening else 0
-                rid = await self._budget.acquire(self._estimate(text=text or "", opening=opening), self._wait_left(turn), extra)
-                if rid is None:  # только при ENFORCE: бюджета так и не нашлось
-                    await self._degrade(turn)
-                    return
+                if self._needs_open():
+                    await self._wait_open(turn)  # пауза после 1011: без сессии ход не обойдётся, ждём не дольше COOLDOWN_WAIT_SECONDS
+                opening = self._will_open()  # ход потянет за собой открытие сессии: прошлый ответ в её контекст не входит
+                rid = self._budget.reserve(self._estimate(text=text or "", opening=opening))
             link = await self._ensure_link()
             if link is None:
                 self._budget.cancel(rid)
-                if self._budget.enforcing and not self._may_open():
-                    await self._degrade(turn)  # сессию открыть не дали (окно или пауза после 1011): ответит каскад
-                    return
                 self._events.put_nowait((None, LiveEvent("closed", text="не удалось открыть Gemini Live")))
                 return
             self._link_used = True  # с этого момента на соединении есть ход
@@ -974,7 +1301,7 @@ class LiveDialogSession(DialogSession):
                 raise
         finally:
             if turn.input_message_id is not None:
-                self._pending_text_ids.discard(turn.input_message_id)  # ушло (или отдано каскаду): дальше обычная история
+                self._pending_text_ids.discard(turn.input_message_id)  # ушло: дальше обычная история
         self._link_turns += 1
         self._track(link, rid)
         turn.mark("sent")
@@ -984,24 +1311,13 @@ class LiveDialogSession(DialogSession):
             await self._wait_open(turn)
         link = await self._ensure_link()
         if link is None:
-            if self._budget.enforcing and not self._may_open():
-                turn.offline = True  # сессию открыть не дали: на конце реплики её разберёт каскад
-                return
             self._events.put_nowait((None, LiveEvent("closed", text="не удалось открыть Gemini Live")))
             return
         self._link_used = True  # с этого момента на соединении есть ход
         await link.activity_start()
 
     async def _end_activity(self, link: LiveLink, turn: LiveTurn) -> None:
-        rid = None
-        if self._budget.enabled:
-            rid = await self._budget.acquire(self._estimate(turn), self._wait_left(turn))
-            if rid is None:  # только при ENFORCE
-                await self._degrade(turn)
-                return
-            if link is not self._link or link.closed:  # пока ход ждал, сессия закрылась: ход уже отказал (_on_closed)
-                self._budget.cancel(rid)
-                return
+        rid = self._budget.reserve(self._estimate(turn))  # None, если учёт выключен
         self._usage_turn = turn  # на его ответ пишется пришедший usage
         try:
             await link.activity_end()
@@ -1022,8 +1338,6 @@ class LiveDialogSession(DialogSession):
                         await self._begin(item[1])
                     case "ended":
                         self._on_ended(item[1])
-                    case "degraded":
-                        await self._on_degraded(item[1])
                     case "timer":
                         await self._on_timer(item[1], item[2])
                     case "recover":
@@ -1039,15 +1353,15 @@ class LiveDialogSession(DialogSession):
     # ─── вход: голос и текст человека ─────────────────────────────────────────
 
     def _audio_started(self) -> None:
+        """Началась голосовая реплика."""
         self._act_started = False
         self._pre = []
         self._sent_bytes = 0
         self._voice_turn = None
-        if self._cfg.lazy_open or self._budget.enabled:
-            # Человек заговорил: отложенную (ленивую) смену сессии или первое открытие делаем сейчас, за его речью.
-            wanted = self._rotate_pending or self._refresh or (self._cfg.lazy_open and self._needs_open())
-            if wanted and self._may_open():
-                self._prepare_link()
+        # Человек заговорил: отложенную смену сессии или нужное переоткрытие делаем сейчас, за его речью.
+        self._note_memory_removal()
+        if (self._rotate_pending or self._refresh) and self._may_open():
+            self._prepare_link()
 
     def _on_audio_frame(self, data: bytes) -> None:
         if not (self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN):
@@ -1063,8 +1377,6 @@ class LiveDialogSession(DialogSession):
                 return
             self._act_started = True
             turn = LiveTurn(kind="voice", interrupts=self._turn_interrupts)
-            if self._budget.enforcing:
-                turn.recording = bytearray()  # реплику, возможно, придётся разобрать каскадом
             self._voice_turn = turn
             self._events.put_nowait(("begin", turn))
             self._out.put_nowait(("start", turn))
@@ -1080,8 +1392,6 @@ class LiveDialogSession(DialogSession):
         turn = self._voice_turn
         if turn is not None:
             turn.sent_audio += len(pcm)
-            if turn.recording is not None:
-                turn.recording += pcm
         if self._sent_bytes >= MAX_AUDIO_BYTES:
             VOICE_TURNS_TRUNCATED_TOTAL.inc()
             logger.warning("voice turn reached the limit dialog=%s", self._dialog.id)
@@ -1096,7 +1406,7 @@ class LiveDialogSession(DialogSession):
         turn = self._voice_turn
         if turn is not None:
             turn.audio_seconds = round(self._audio_frames * AUDIO_FRAME_SECONDS, 3)
-        self._audio_open, self._audio_frames, self._audio = False, 0, bytearray()
+        self._audio_open, self._audio_frames = False, 0
         self._last_voiced, self._turn_interrupts = None, False
         self._voice_turn, self._pre, self._act_started = None, [], False
         if turn is None:  # речи в записи не было
@@ -1109,9 +1419,18 @@ class LiveDialogSession(DialogSession):
         self._out.put_nowait(("end", turn))
 
     def _dispatch_text_turn(self, text: str, crisis: bool, turn: Turn) -> None:
+        """Ответ на набранное сообщение: кризис — фиксированный текст, иначе реплика уходит модели."""
         if crisis:  # кризис говорит фиксированный текст, модель в этот путь не входит
             self._refresh_after_crisis()
-            super()._dispatch_text_turn(text, crisis, turn)
+            turn.trace = self._tracer.start_turn(
+                name="text_turn",
+                session_id=self._dialog.id,
+                user_id=self._dialog.user_id,
+                input=text,
+                metadata={"crisis": True},
+                tags=[PIPELINE_TAG],
+            )
+            self._jobs.put_nowait(lambda: self._say(CRISIS_REPLY, turn, crisis=True))
             return
         self._repeat_pending = False  # человек написал сам: просьба повторить больше не в силе
         live_turn = LiveTurn(kind="text", opened=True, started=turn.started)
@@ -1148,7 +1467,7 @@ class LiveDialogSession(DialogSession):
             model=self._cfg.live_model,
             input=turn.input_text or None,
             metadata={"kind": turn.kind, "interrupts": turn.interrupts, "recovery": turn.recovery},
-            tags=[self._pipeline, f"v{APP_CONFIG.app.version}"],
+            tags=[PIPELINE_TAG, f"v{APP_CONFIG.app.version}"],
         )
         self._turn = turn
         self._touch(turn)
@@ -1219,12 +1538,9 @@ class LiveDialogSession(DialogSession):
         if kind == "usage":
             self._attribute_usage(event.usage or {})
             return
-        if kind == "resumption":
-            self._resume_handle = event.text
-            return
         if kind == "go_away":
             logger.info("gemini live go_away dialog=%s time_left=%s", self._dialog.id, event.text)
-            self._refresh = True  # переоткроем между репликами, с возобновлением сессии
+            self._refresh = True  # переоткроем между репликами
             return
         if kind == "interrupted":
             self._stale_until = 0.0
@@ -1235,13 +1551,10 @@ class LiveDialogSession(DialogSession):
             if kind in ("generation_complete", "turn_complete"):
                 self._stale_until = 0.0
             return  # хвост прерванного ответа
-        if kind == "turn_complete" and turn is None and self._cfg.text_context:
+        if kind == "turn_complete" and turn is None:
             if not self._rotation_due():
                 return  # сессия поживёт ещё: следующий ход пойдёт на ней
-            if self._cfg.lazy_open:
-                self._defer_rotation()  # ленивое открытие: новую сессию открываем, когда она понадобится
-            else:
-                self._schedule_rotation()  # ответ дозвучал, человек ещё молчит: самое время сменить сессию
+            self._schedule_rotation()  # ответ дозвучал, человек ещё молчит: самое время сменить сессию
             return
         if turn is None:
             return
@@ -1280,7 +1593,7 @@ class LiveDialogSession(DialogSession):
 
     def _classify_mood_soon(self, turn: LiveTurn) -> None:
         """Прототип PROTEUS-168: когда слова расшифровки перестали приходить, реплика уходит на классификатор тона."""
-        if not self._cfg.mood_classifier or self._cfg.api_key is None:
+        if self._cfg.api_key is None:
             return
         previous = self._mood_task
         if previous is not None:
@@ -1298,7 +1611,7 @@ class LiveDialogSession(DialogSession):
         await self._mood_classifier.classify("привет")
 
     async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
-        await asyncio.sleep(self._cfg.mood_debounce_ms / 1000)
+        await asyncio.sleep(MOOD_DEBOUNCE_SECONDS)
         if self._mood_classifier is None:
             self._mood_classifier = MoodClassifier(self._cfg)
         mood = await self._mood_classifier.classify(heard)
@@ -1354,7 +1667,6 @@ class LiveDialogSession(DialogSession):
             if is_crisis(heard):
                 await self._crisis(turn)
                 return
-            self._drop_hold()
             self._supersede_speech()
             await self._save_voice(turn, heard)
         self._repeat_pending = False
@@ -1376,7 +1688,7 @@ class LiveDialogSession(DialogSession):
         self._refresh_after_crisis()  # следующая сессия строится из истории без этой реплики
         await self._send({"type": "transcript", "text": "", "final": True})
         reply_turn = self._reply_turn(turn.started)
-        self._jobs.put_nowait(lambda: self._reply(False, reply_turn, REPEAT_REQUEST))
+        self._jobs.put_nowait(lambda: self._say(REPEAT_REQUEST, reply_turn))
 
     async def _save_voice(self, turn: LiveTurn, heard: str) -> None:
         message = self._store.add_message(self._dialog, "user", heard[:MAX_USER_TEXT], audio_seconds=turn.audio_seconds)
@@ -1386,11 +1698,10 @@ class LiveDialogSession(DialogSession):
     def _refresh_after_crisis(self) -> None:
         """Кризисный обмен идёт без модели (или с выброшенным ответом): к следующему ходу сессия открывается заново, и в её
         истории лежит то, что человек услышал на самом деле, то есть кризисный ответ агента, а не ответ модели."""
-        if self._cfg.text_context:
-            self._refresh = True
+        self._refresh = True
 
     async def _crisis(self, turn: LiveTurn) -> None:
-        """Кризис: ответ модели не звучит и не показывается, вместо него фиксированный текст (как в каскаде)."""
+        """Кризис: ответ модели не звучит и не показывается, вместо него фиксированный текст."""
         if turn.discarded:
             return
         self._refresh_after_crisis()
@@ -1406,7 +1717,7 @@ class LiveDialogSession(DialogSession):
         await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
         self._supersede_speech()
         reply_turn = self._reply_turn(turn.started)
-        self._jobs.put_nowait(lambda: self._reply(True, reply_turn))
+        self._jobs.put_nowait(lambda: self._say(CRISIS_REPLY, reply_turn, crisis=True))
 
     # ─── выход: ответ модели человеку ─────────────────────────────────────────
 
@@ -1447,20 +1758,14 @@ class LiveDialogSession(DialogSession):
         await self._send({"type": "assistant_delta", "messageId": turn.message_id, "text": core})
 
     def _start_live_speech(self, turn: LiveTurn) -> None:
-        """Звук ответа: тот же конвейер кадров, что у каскада (темп, перебивание, tts_start/tts_end), источник — Gemini."""
+        """Звук ответа: тот же конвейер кадров, что у фраз (темп, перебивание, tts_start/tts_end), источник — Gemini."""
         turn.audio = asyncio.Queue()
         feed = SpeechFeed()
         feed.add("gemini-live")
         feed.close()
         message_id = turn.message_id
         self._speech_turns[message_id] = turn
-        task = asyncio.create_task(
-            self._speak(_QueueTts(turn.audio), message_id, feed.chunks, self._dialog.voice, Turn(started=turn.started))  # type: ignore[arg-type]
-        )
-        self._speech_tasks.add(task)
-        self._speeches[message_id] = task
-        task.add_done_callback(self._speech_tasks.discard)
-        task.add_done_callback(lambda done: self._forget_speech(message_id, done))
+        self._begin_speech(_QueueTts(turn.audio), message_id, feed.chunks, self._dialog.voice_key, Turn(started=turn.started))
 
     def _count_safety(self, turn: LiveTurn) -> None:
         """Реплику проверяют по мере расшифровки, много раз; обращением засчитывается проверка хода, один раз."""
@@ -1500,9 +1805,9 @@ class LiveDialogSession(DialogSession):
         self._disarm_all(turn)
         if self._turn is turn:
             self._turn = None
-        if not turn.opened and not turn.discarded and not turn.degraded:
+        if not turn.opened and not turn.discarded:
             # Ответа от модели не было: реплику всё равно надо сохранить, а на неё ответит повторная просьба (`_recover`), даже
-            # если соединение оборвалось: расшифровка уже проверена на кризис. (Реплику, отданную каскаду, сохранит он сам.)
+            # если соединение оборвалось: расшифровка уже проверена на кризис.
             heard = turn.heard.strip()
             if turn.kind == "voice":
                 if heard:
@@ -1519,7 +1824,7 @@ class LiveDialogSession(DialogSession):
             # Реплика, перебившая ход без ответа, получила ответ — он и на прежнюю: переспрашивать не нужно.
             LIVE_RECOVERIES_TOTAL.labels("continued").inc()
             self._cancel_recovery()
-        if turn.recovery and not turn.degraded:
+        if turn.recovery:
             outcome = "answered" if turn.assistant_started else "continued" if superseded else "unavailable" if turn.failed else "unanswered"
             LIVE_RECOVERIES_TOTAL.labels(outcome).inc()
             if outcome == "unanswered":
@@ -1539,7 +1844,7 @@ class LiveDialogSession(DialogSession):
     @staticmethod
     def _recoverable(turn: LiveTurn) -> bool:
         """Слова человека известны и в истории, а модель на них не ответила: можно попросить ответить ещё раз."""
-        if turn.recovery or turn.discarded or turn.degraded:
+        if turn.recovery or turn.discarded:
             return False
         return turn.kind == "text" or turn.user_saved or bool(turn.heard.strip())
 
@@ -1622,7 +1927,7 @@ class LiveDialogSession(DialogSession):
             link.closed = True
             session_closed(link)
         if is_quota_error(reason):
-            self._budget.on_quota_error("session", self._dialog.id, calibrate=is_explicit_quota_error(reason))
+            self._budget.on_quota_error("session", self._dialog.id)
         turn = self._turn
         if turn is None or not turn.generating:
             return  # соединение закрылось между репликами (в том числе по GoAway): к следующей реплике откроем заново

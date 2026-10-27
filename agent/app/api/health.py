@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api.deps import active_tts
 from app.core.config import APP_CONFIG
 
 router = APIRouter()
@@ -16,17 +15,16 @@ async def health() -> dict[str, str]:
 
 @router.get("/health/ready", include_in_schema=False)
 async def ready(request: Request) -> dict[str, str]:
-    # Модели и озвучка не обязательны для готовности: при их отказе агент отвечает шаблоном и текстом.
-    tts = active_tts(request.app)
-    chat, recognizer = request.app.state.chat, request.app.state.recognizer
+    # Модели и озвучка не обязательны для готовности: при их отказе агент отвечает текстом, а итоги и заметки откладываются.
+    tts = request.app.state.tts
+    background = request.app.state.background
     live = request.app.state.live
     memory = getattr(request.app.state, "memory", None)
     return {
         "status": "ok",
-        "pipeline": live.name if live else "cascade",
-        "tts": tts.name if tts else "none",
-        "llm": chat.name if chat else "none",
-        "stt": recognizer.name if recognizer else "none",
+        "pipeline": live.name if live else "none",  # голос: Gemini Live (имя соединителя с моделью)
+        "tts": tts.name if tts else "none",  # озвучка фраз
+        "llm": background.name if background else "none",  # фоновая модель итогов и заметок
         # postgres: диалоги в PostgreSQL и переживают перезапуск; memory: только в памяти (не задано или не открылось)
         "dialogs": request.app.state.store.persistence,
         # Память агента: on | unavailable (Cognee не настроен); off — пока память не создана (приложение не запущено)

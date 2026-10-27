@@ -1,5 +1,5 @@
 # =============================================================================
-# Deployment agent — упрощённый агент: шаблонные ответы + озвучка (ns agent)
+# Deployment agent — агент «Слышу Рядом»: голос Gemini Live, диалоги в PostgreSQL, память (ns agent)
 # =============================================================================
 # Образ cr.yandex/crpsqeamqpuvrkm5tpr9/agent/agent:<тег> (agent/Dockerfile; сборка и push —
 # k8s/agent/README.md). Тег в манифесте должен совпадать с отправленным; latest не используем.
@@ -69,40 +69,31 @@ spec:
                 secretKeyRef:
                   name: agent-secrets
                   key: AGENT_INTERNAL_TOKEN
-            # Ключ прокси Qwen TTS (принадлежит только агенту; не общий токен между сервисами)
+            # Ключ прокси программы для фоновой модели (итоги разговоров и недели, заметки памяти); принадлежит только агенту,
+            # не общий токен между сервисами
             - name: AGENT_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: agent-secrets
                   key: AGENT_API_TOKEN
-            # Ключ SaluteSpeech: пока его нет, ключа в Secret'е тоже нет, и озвучка идёт через Qwen
-            - name: SALUTE_SPEECH_AUTH_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: agent-secrets
-                  key: SALUTE_SPEECH_AUTH_KEY
-                  optional: true
-            # Режим gemini_live (VOICE_PIPELINE в ConfigMap): Secret agent-gemini создаётся отдельно и нужен только в этом
-            # режиме. optional: пока Secret'а нет, каскад стартует как раньше, а в режиме gemini_live без ключа сервис не
-            # стартует (fail-fast). Адрес релея и его токен лежат в Secret'е, в git их нет.
+            # Голос агента — Gemini Live: Secret agent-gemini обязателен (создаётся отдельно). Нет Secret'а или ключа в нём — под не
+            # запускается (CreateContainerConfigError), а без GEMINI_API_KEY сервис не стартует (fail-fast). Адрес релея и его
+            # токен лежат в Secret'е, в git их нет.
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: agent-gemini
                   key: GEMINI_API_KEY
-                  optional: true
             - name: GEMINI_BASE_URL
               valueFrom:
                 secretKeyRef:
                   name: agent-gemini
                   key: GEMINI_BASE_URL
-                  optional: true
             - name: GEMINI_RELAY_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: agent-gemini
                   key: GEMINI_RELAY_TOKEN
-                  optional: true
             # DSN PostgreSQL диалогов (база agent в CNPG ryadom-db). Secret agent-db: kubectl create secret generic agent-db \
             #   --from-literal=DIALOG_DATABASE_URL="postgresql://agent:<пароль agent-db-credentials>@ryadom-db-rw.ryadom-db:5432/agent"
             - name: DIALOG_DATABASE_URL
@@ -122,8 +113,8 @@ spec:
                 secretKeyRef:
                   name: cognee-service-account
                   key: COGNEE_SERVICE_PASSWORD
-            # Ключи проекта ryadom в Langfuse (LANGFUSE_ENABLED в ConfigMap). optional: без них при
-            # выключенном трейсинге агент стартует как раньше; при включённом без ключей — не стартует (fail-fast).
+            # Ключи проекта ryadom в Langfuse: заданы оба — трейсинг включён, нет ни одного — выключен (один без второго —
+            # сервис не стартует, fail-fast). optional: без ключей агент стартует и работает без трейсинга.
             - name: LANGFUSE_PUBLIC_KEY
               valueFrom:
                 secretKeyRef:

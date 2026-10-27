@@ -12,10 +12,6 @@ class MemoryUnavailable(MemoryServiceError):
     status, code, message = 503, "MEMORY_UNAVAILABLE", "Память сейчас недоступна"
 
 
-class MemoryNotAllowed(MemoryServiceError):
-    status, code, message = 403, "MEMORY_NOT_ALLOWED", "Память пока доступна не всем"
-
-
 class MemoryDisabled(MemoryServiceError):
     status, code, message = 409, "MEMORY_DISABLED", "Память выключена"
 

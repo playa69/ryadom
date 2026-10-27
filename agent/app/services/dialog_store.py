@@ -40,7 +40,6 @@ from app.core.metrics import (
     DIALOG_MESSAGES_IN_MEMORY,
     DIALOG_USERS_IN_MEMORY,
     DIALOG_RETENTION_DELETED_TOTAL,
-    DIALOG_RETENTION_WOULD_DELETE,
     DIALOGS_TOTAL,
     SPEECH_SECONDS_TOTAL,
 )
@@ -155,6 +154,11 @@ class MemoryLink(Protocol):
         """Загрузить состояние памяти и блок памяти перед открытием модельной сессии."""
         ...
 
+    def removals(self, user_id: str) -> int:
+        """Сколько раз человек убрал что-то из своей сводки (заметка, вся память, переключатели, разговор). Сессия модели держит
+        сводку в контексте: когда число выросло, к следующему ходу она открывается заново без убранного."""
+        ...
+
     def enabled(self, user_id: str) -> bool:
         """Включена ли память у человека (по кэшу; человек уже загружен `user_loaded`)."""
         ...
@@ -185,14 +189,6 @@ class MemoryLink(Protocol):
 
     def user_message(self, dialog: Dialog, text: str) -> None:
         """Реплика человека сохранена: бэкенд может в фоне поискать по ней в памяти (к следующему ходу сводка точнее)."""
-        ...
-
-    def recall_supported(self, dialog: Dialog) -> bool:
-        """Доступен ли инструмент recall_memory для этого разговора (включённая память + бэкенд с поиском)."""
-        ...
-
-    async def recall_now(self, dialog: Dialog, query: str) -> str:
-        """Поиск в памяти по запросу модели (инструмент recall_memory): прямой вызов, может идти десятки секунд."""
         ...
 
 
@@ -255,16 +251,15 @@ class DialogStore:
         self._background: set[asyncio.Task[Any]] = set()
         # Память агента; None — память не подключена (нет диска или тесты без неё).
         self.memory: MemoryLink | None = None
-        # Модель для итогов разговоров (add-mood-diary, D13): ставит приложение; None — шаблонные итоги (`LLM_MODE=template`).
-        self.recap_chat: Any = None
-        self.recap_template = False  # без модели допустим шаблонный итог (`LLM_MODE=template`, разработка и тесты)
+        # Фоновая модель для итогов разговоров (add-mood-diary, D13): ставит приложение; None — автоматических итогов нет (человек заводит
+        # итог сам, а черновика «Предзаполнить» нет).
+        self.recap_model: Any = None
         self.recap_timeout_seconds = 20.0
         # Настройка «Подводить итог автоматически» (`dialog_settings`): человек → включено; нет записи — включено.
         self._recap_enabled: dict[str, bool] = {}
         self._persisted_settings: dict[str, bool] = {}
-        # Срок хранения разговоров (D14): сколько дней после последнего сообщения; 0 — бессрочно. Сухой прогон только считает.
-        self.retention_days = 0
-        self.retention_dry_run = True
+        # Срок хранения разговоров (D14): сколько дней после последнего сообщения разговор помечается удалённым.
+        self.retention_days = 21
         self.retention_interval_seconds = 3600.0
         self._last_retention = 0.0
 
@@ -496,7 +491,7 @@ class DialogStore:
 
     async def _auto_recap(self, dialog: Dialog) -> None:
         """Автоматический итог в фоне: не заменяет ручной и не пишет текст итога в журнал."""
-        recap = await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds, self.recap_template)
+        recap = await recaps.make_recap(self.recap_model, dialog, self.recap_timeout_seconds)
         summary = dialog.summary
         if summary is None or summary.get("recapStatus") != "pending":
             return  # пока считалось, человек написал итог сам или разговор удалили
@@ -518,7 +513,7 @@ class DialogStore:
 
     async def draft_recap(self, dialog: Dialog) -> str | None:
         """Черновик итога для «Предзаполнить»: ничего не сохраняется. None — модель не ответила."""
-        return await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds, self.recap_template)
+        return await recaps.make_recap(self.recap_model, dialog, self.recap_timeout_seconds)
 
     def can_recap(self, dialog: Dialog) -> bool:
         return recaps.eligible(dialog)
@@ -572,6 +567,17 @@ class DialogStore:
             logger.exception("memory brief failed dialog=%s", dialog.id)
             return ""
 
+    def memory_removals(self, user_id: str) -> int:
+        """Сколько раз человек убрал что-то из сводки памяти; 0, если памяти нет или она сбоит (I3)."""
+        memory = self.memory
+        if memory is None:
+            return 0
+        try:
+            return memory.removals(user_id)
+        except Exception:  # noqa: BLE001 - любая ошибка памяти не должна мешать разговору
+            logger.exception("memory removals failed")
+            return 0
+
     async def memory_prepare(self, dialog: Dialog) -> None:
         """Подготовить память до ответа; сбой не роняет разговор."""
         memory = self.memory
@@ -591,28 +597,6 @@ class DialogStore:
         except Exception:  # noqa: BLE001
             logger.exception("memory enabled check failed")
             return False
-
-    def memory_recall_supported(self, dialog: Dialog) -> bool:
-        """Доступен ли разговору инструмент recall_memory; любая ошибка памяти — «нет», разговор идёт без инструмента (I3)."""
-        memory = self.memory
-        if memory is None or dialog.memory_mode != "on":
-            return False
-        try:
-            return memory.recall_supported(dialog)
-        except Exception:  # noqa: BLE001
-            logger.exception("memory recall_supported failed dialog=%s", dialog.id)
-            return False
-
-    async def memory_recall_now(self, dialog: Dialog, query: str) -> str:
-        """Поиск в памяти по запросу модели; любая ошибка — пустой результат, модель отвечает без него (I3)."""
-        memory = self.memory
-        if memory is None or dialog.memory_mode != "on":
-            return ""
-        try:
-            return await memory.recall_now(dialog, query) or ""
-        except Exception:  # noqa: BLE001
-            logger.exception("memory recall_now failed dialog=%s", dialog.id)
-            return ""
 
     def _discard_empty(self, dialog: Dialog) -> None:
         """Убрать открытый диалог без сообщений: из памяти сразу, с диска в фоне. Его сокет (если есть) получает `ended`."""
@@ -1125,10 +1109,8 @@ class DialogStore:
 
     async def retention_pass(self, now: datetime) -> tuple[int, int]:
         """Срок хранения разговоров (D14): разговор, чьё последнее сообщение старше `retention_days` дней, удаляется вместе с итогом.
-        Возвращает (сколько просрочено, сколько удалено). В сухом прогоне только считает (`agent_dialogs_retention_would_delete`).
+        Возвращает (сколько просрочено, сколько удалено). Удаление мягкое: строки с пометкой убирает очистка.
         Заметки, отметки и итоги недели не затрагиваются, итоги недели из-за чистки не пересчитываются."""
-        if self.retention_days <= 0:
-            return 0, 0
         cutoff = (now - timedelta(days=self.retention_days)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         expired: dict[str, str] = {}  # dialog_id -> user_id
         for user_id, dialogs in self._users.items():
@@ -1146,11 +1128,6 @@ class DialogStore:
             except Exception:  # noqa: BLE001 - чистка подождёт следующего прохода
                 DIALOG_DB_ERRORS_TOTAL.labels("load").inc()
                 logger.exception("dialog retention scan failed")
-        DIALOG_RETENTION_WOULD_DELETE.set(len(expired))
-        if self.retention_dry_run:
-            if expired:
-                logger.info("dialog retention dry run would_delete=%d", len(expired))
-            return len(expired), 0
         deleted = 0
         for dialog_id, user_id in expired.items():
             try:
@@ -1174,7 +1151,7 @@ class DialogStore:
                 self.evict_idle(time.monotonic())
             except Exception:  # noqa: BLE001 - проход не должен останавливать выгрузку: без неё память пода только растёт
                 logger.exception("dialog eviction pass failed")
-            if self.retention_days > 0 and time.monotonic() - self._last_retention >= self.retention_interval_seconds:
+            if time.monotonic() - self._last_retention >= self.retention_interval_seconds:
                 self._last_retention = time.monotonic()
                 try:
                     await self.retention_pass(datetime.now(UTC))

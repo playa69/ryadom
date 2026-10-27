@@ -15,7 +15,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.clients.cognee import CogneeClient
-from app.main import create_app
 from app.memory.cognee_backend import CogneeMemoryBackend, dataset_name
 from app.memory.errors import MemoryDisabled, MemoryServiceError, MemoryValidation
 from app.services.dialog_store import Dialog, Message, now_iso
@@ -25,11 +24,7 @@ from app.core.config import MemorySettings
 
 def memory_settings(**values: object) -> MemorySettings:
     """Настройки памяти для теста (без чтения окружения), без чтения окружения."""
-    defaults: dict[str, object] = {
-        "MEMORY_ALLOWLIST": "",
-    }
-    defaults.update(values)
-    return MemorySettings(**defaults)  # type: ignore[arg-type]
+    return MemorySettings(**values)  # type: ignore[arg-type]
 
 CONSENT = "2026-10-21"
 
@@ -497,7 +492,7 @@ def test_dataset_name_sanitized() -> None:
 
 def test_app_cognee_mode(monkeypatch: Any) -> None:
     """Приложение с памятью Cognee: клиент подменён фейком, диалоги в памяти процесса."""
-    from tests.conftest import AUTH
+    from tests.conftest import AUTH, make_app
 
     fake = FakeCognee()
     monkeypatch.setattr("app.main.build_cognee_client", lambda cfg: fake)
@@ -507,7 +502,7 @@ def test_app_cognee_mode(monkeypatch: Any) -> None:
         COGNEE_SERVICE_PASSWORD="test-password",
     )
     FakeDialogDatabase.reset()
-    app = create_app(lambda: None, lambda: (None, None), memory_settings=settings, database_factory=lambda: FakeDialogDatabase("app-cognee"))
+    app = make_app(memory_settings=settings, database_factory=lambda: FakeDialogDatabase("app-cognee"))
     with TestClient(app) as client:
         assert fake.connected is True  # логин при старте
         ready = client.get("/health/ready").json()
@@ -556,50 +551,6 @@ async def test_user_message_without_memory_does_not_search() -> None:
     service.user_message(dialog(user), "привет")
     await service.drain()
     assert fake.recalls == []
-
-
-async def test_recall_now_tool_flow() -> None:
-    """Инструмент recall_memory: прямой recall по запросу модели, находка возвращается и оседает в сводке."""
-    fake = FakeCognee()
-    service = backend(fake)
-    user = uid()
-    await service.update_settings(user, True, CONSENT)
-    await service.drain()
-    fake.recalls.clear()
-    assert service.recall_supported(dialog(user)) is True
-    found = await service.recall_now(dialog(user), "имя сына")
-    assert found == fake.recall_text
-    assert fake.recalls == [("имя сына", dataset_name(user))]
-    assert fake.recall_text in service.brief(dialog(user))  # и следующие ходы её видят (находка из прошлых разговоров)
-
-
-async def test_recall_now_unsupported_when_disabled() -> None:
-    fake = FakeCognee()
-    service = backend(fake)
-    user = uid()
-    assert service.recall_supported(dialog(user)) is False
-    assert await service.recall_now(dialog(user), "что-нибудь") == ""
-    assert fake.recalls == []
-
-
-async def test_recall_now_reuses_the_inflight_turn_recall() -> None:
-    """Модель позвала recall_memory по реплике, фоновый поиск по которой ещё идёт: второй запрос в Cognee не делается."""
-    fake = FakeCognee()
-    service = backend(fake)
-    user = uid()
-    await service.update_settings(user, True, CONSENT)
-    await service.drain()
-    fake.recalls.clear()
-    fake.recall_gate = asyncio.Event()  # дальше любой recall ждёт гейт (после включения, иначе встанет prefetch)
-    service.user_message(dialog(user), "помнишь, где я работаю?")
-    await asyncio.sleep(0)  # фоновый recall ушёл в работу и ждёт гейт
-    call = asyncio.create_task(service.recall_now(dialog(user), "место работы"))
-    await asyncio.sleep(0.1)  # инструмент встал на ожидание фонового поиска
-    fake.recall_gate.set()
-    found = await call
-    await service.drain()
-    assert found == fake.recall_text
-    assert len(fake.recalls) == 1  # один поиск на двоих: фоновый и инструмент
 
 
 # ─── настройки памяти в базе: пауза и согласие переживают перезапуск (PROTEUS-242, 0.4) ─────

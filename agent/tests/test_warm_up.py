@@ -8,11 +8,11 @@ from fastapi.testclient import TestClient
 from app.clients.gemini_live import GeminiLiveTts, LiveError, LiveEvent, LiveHistory
 from app.clients.speech import CachedTts, Voice
 from app.core.config import GeminiSettings
-from app.main import SPOKEN_PHRASES, WARM_UP_GEMINI_SESSIONS, create_app
+from app.main import SPOKEN_PHRASES, WARM_UP_GEMINI_SESSIONS
 from app.services.gemini_budget import TokenBudget
 from app.services.replies import split_sentences
-from tests.conftest import FakeTts
-from tests.test_live import FakeConnector, FakeLink
+from tests.conftest import FakeTts, make_app
+from tests.fake_live import FakeConnector, FakeLink
 
 SENTENCES = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
 WANTED = [(voice, part) for part in SENTENCES for voice in ("male", "female")]
@@ -32,15 +32,15 @@ class CountingConnector(FakeConnector):
         self.peak = 0
 
     async def open(
-        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+        self, voice: str, instructions: str, history: LiveHistory | None = None
     ) -> FakeLink:
         self.now += 1
         self.peak = max(self.peak, self.now)
         try:
             if len(self.open_calls) + 1 in self.refuse:
-                self.open_calls.append((voice, resume_handle))
+                self.open_calls.append(voice)
                 raise LiveError(f"Gemini Live не открылся: ConnectionClosedError: {INTERNAL_1011}")
-            link = await super().open(voice, instructions, resume_handle, history)
+            link = await super().open(voice, instructions, history)
         except BaseException:
             self.now -= 1
             raise
@@ -62,7 +62,7 @@ class CountingConnector(FakeConnector):
 def test_every_spoken_phrase_is_synthesized_at_startup_in_both_voices():
     fake = FakeTts()
     expected = {(voice, part) for voice in ("male", "female") for g in SPOKEN_PHRASES for part in split_sentences(g)}
-    with TestClient(create_app(lambda: CachedTts(fake, max_items=64))):
+    with TestClient(make_app(tts=CachedTts(fake, max_items=64))):
         deadline = time.monotonic() + 3
         while len(fake.calls) < len(expected) and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -71,7 +71,7 @@ def test_every_spoken_phrase_is_synthesized_at_startup_in_both_voices():
 
 def test_a_provider_without_the_phrase_cache_is_not_warmed_up():
     fake = FakeTts()
-    with TestClient(create_app(lambda: fake)):
+    with TestClient(make_app(tts=fake)):
         time.sleep(0.1)
     assert fake.calls == []
 
@@ -80,7 +80,7 @@ def test_gemini_warm_up_keeps_at_most_three_sessions_open() -> None:
     """Фраза — сессия Gemini: 16 открытий разом Google встречал отказами. Прогрев держит открытыми не больше
     WARM_UP_GEMINI_SESSIONS, считая и сессии, которые ещё дочитывают расход."""
     connector = CountingConnector()
-    with TestClient(create_app(None, lambda: (None, None), live_factory=lambda: connector)) as client:
+    with TestClient(make_app(connector, real_tts=True)) as client:
         tts = client.app.state.tts
         deadline = time.monotonic() + 10
         while not all(tts.remembered(part, voice) for voice, part in WANTED) and time.monotonic() < deadline:

@@ -20,6 +20,7 @@ from app.services.dialog_db import DialogWrite, PurgeStats, iso_utc
 from app.services.dialog_purge import purge_loop, purge_pass
 from app.services.dialog_store import DialogStore
 from app.services.usage import Usage
+from tests.conftest import make_app
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 HOUR_AND_A_BIT = timedelta(minutes=61)
@@ -292,7 +293,7 @@ def test_app_starts_the_loop_on_the_opened_database_and_stops_it(tmp_path: Path,
 
     monkeypatch.setattr(app_main, "purge_loop", spy)
     path = str(tmp_path / "d.db")
-    app = app_main.create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(path))
+    app = make_app(database_factory=lambda: DialogDatabase(path))
     with TestClient(app) as client:
         assert client.get("/health/ready").status_code == 200
         for _ in range(100):

@@ -1,4 +1,4 @@
-"""Gemini Live: речь в речь по WebSocket (SDK google-genai). Режим `VOICE_PIPELINE=gemini_live`.
+"""Gemini Live: речь в речь по WebSocket (SDK google-genai), единственный голосовой путь агента.
 
 Одна модель слушает, отвечает и говорит. Агент управляет границами реплики сам (ручной режим активности): начало и
 конец реплики ему сообщает клиент (`audio_start` / `audio_end`), поэтому серверный VAD Google выключен.
@@ -43,7 +43,6 @@ EventKind = Literal[
     "generation_complete",
     "turn_complete",
     "interrupted",
-    "resumption",  # text — handle, по которому сессию можно возобновить после обрыва
     "go_away",  # Google скоро закроет соединение: пора переоткрыть его между репликами
     "usage",  # usage — токены хода (usage_metadata, ключи `_usage`); приходит вместе с turn_complete
     "closed",
@@ -66,12 +65,6 @@ def is_quota_error(text: str) -> bool:
     encountered», и пауза после такой ошибки только задерживала ответы и прогрев озвучки."""
     lower = text.lower()
     return "quota" in lower or "resource_exhausted" in lower or _HTTP_429.search(lower) is not None
-
-
-def is_explicit_quota_error(text: str) -> bool:
-    """В тексте прямо сказано про квоту: по такой ошибке можно калибровать лимит (голый 429 не говорит, какой лимит исчерпан)."""
-    lower = text.lower()
-    return "quota" in lower or "resource_exhausted" in lower
 
 
 _OPEN_SESSIONS: "weakref.WeakSet[object]" = weakref.WeakSet()
@@ -134,11 +127,9 @@ class LiveConnector(Protocol):
     name: str
     model: str  # имя модели для учёта расхода
 
-    async def open(
-        self, voice: Voice, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
-    ) -> LiveLink:
-        """Новое соединение; с `resume_handle` — продолжение прежней сессии (контекст разговора остаётся у Google),
-        с `history` — свежая сессия, в которую сразу загружены прошлые реплики текстом (модель на них не отвечает)."""
+    async def open(self, voice: Voice, instructions: str, history: LiveHistory | None = None) -> LiveLink:
+        """Новое соединение; с `history` — свежая сессия, в которую сразу загружены прошлые реплики текстом (модель на них
+        не отвечает)."""
         ...
 
     async def aclose(self) -> None: ...
@@ -213,17 +204,17 @@ def live_config(
     settings: GeminiSettings,
     voice_name: str,
     instructions: str,
-    resume_handle: str | None = None,
     history: bool = False,
     language_hint: bool = True,
 ):  # noqa: ANN201
-    """Настройки сессии Gemini Live: голос, промпт, расшифровки, ручные границы реплик, сжатие контекста, возобновление.
+    """Настройки сессии Gemini Live: голос, промпт, расшифровки, ручные границы реплик, сжатие контекста.
 
     `language_hint`: подсказка языка расшифровки речи человека (`GEMINI_INPUT_LANGUAGES`); короткое слово без неё
     расшифровывается чужим языком. Отключается только повтором открытия, если Google отверг само поле.
 
     `history`: сессия начинается с загрузки прошлых реплик текстом (client_content до первого ввода, без ответа модели).
-    При `text_context` сессия живёт один ход и возобновлять её по handle незачем: контекст приходит текстом.
+    Сессия живёт несколько ходов, а контекст новой приходит текстом, поэтому возобновлять её по handle незачем: handle вернул
+    бы накопленное аудио.
     """
     from google.genai import types as t
 
@@ -243,13 +234,10 @@ def live_config(
     )
     if settings.thinking_budget >= 0:
         config.thinking_config = t.ThinkingConfig(thinking_budget=settings.thinking_budget)
-    if settings.compression:
-        config.context_window_compression = t.ContextWindowCompressionConfig(
-            trigger_tokens=settings.compression_trigger_tokens or None,
-            sliding_window=t.SlidingWindow(target_tokens=settings.compression_target_tokens or None),
-        )
-    if settings.session_resumption and not settings.text_context:
-        config.session_resumption = t.SessionResumptionConfig(handle=resume_handle)
+    config.context_window_compression = t.ContextWindowCompressionConfig(
+        trigger_tokens=settings.compression_trigger_tokens or None,
+        sliding_window=t.SlidingWindow(target_tokens=settings.compression_target_tokens or None),
+    )
     if history:
         config.history_config = t.HistoryConfig(initial_history_in_client_content=True)
     return config
@@ -301,9 +289,6 @@ def _translate(message) -> list[LiveEvent]:  # noqa: ANN001
         usage = _usage(message.usage_metadata)
         if usage:
             events.append(LiveEvent("usage", usage=usage))
-    update = message.session_resumption_update
-    if update is not None and update.resumable and update.new_handle:
-        events.append(LiveEvent("resumption", text=update.new_handle))
     if message.go_away is not None:
         events.append(LiveEvent("go_away", text=str(message.go_away.time_left or "")))
     content = message.server_content
@@ -330,7 +315,7 @@ class GeminiLiveConnector:
         from google.genai import types
 
         if settings.api_key is None:
-            raise RuntimeError("VOICE_PIPELINE=gemini_live, но GEMINI_API_KEY не задан")
+            raise RuntimeError("GEMINI_API_KEY не задан: голос агента — Gemini Live")
         self._types = types
         self._settings = settings
         self._model = settings.live_model
@@ -346,23 +331,20 @@ class GeminiLiveConnector:
         # Google может не принять подсказку языка (поле новое): тогда сессия открывается без неё, и голос не пропадает.
         self._language_hint = bool(settings.input_language_codes)
 
-    async def open(
-        self, voice: Voice, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
-    ) -> GeminiLiveLink:
+    async def open(self, voice: Voice, instructions: str, history: LiveHistory | None = None) -> GeminiLiveLink:
         try:
-            return await self._open(voice, instructions, resume_handle, history, self._language_hint)
+            return await self._open(voice, instructions, history, self._language_hint)
         except LiveError as error:
             if not self._language_hint or "language" not in str(error).lower():
                 raise
             logger.warning("Gemini Live отверг подсказку языка расшифровки, сессии открываются без неё: %s", error)
             self._language_hint = False
-            return await self._open(voice, instructions, resume_handle, history, False)
+            return await self._open(voice, instructions, history, False)
 
     async def _open(
         self,
         voice: Voice,
         instructions: str,
-        resume_handle: str | None,
         history: LiveHistory | None,
         language_hint: bool,
     ) -> GeminiLiveLink:
@@ -371,7 +353,7 @@ class GeminiLiveConnector:
         voice_name = self._voices[voice] if voice in self._voices else voice
         if voice not in self._voices and voice not in GEMINI_VOICE_NAMES:
             raise KeyError(voice)  # не род и не голос из списка: к Google не идём
-        config = live_config(self._settings, voice_name, instructions, resume_handle, bool(history), language_hint)
+        config = live_config(self._settings, voice_name, instructions, bool(history), language_hint)
         stack = AsyncExitStack()
         try:
             session = await asyncio.wait_for(
@@ -425,7 +407,7 @@ class GeminiLiveTts:
 
     def _quota(self, text: str) -> None:
         if self._budget is not None and is_quota_error(text):
-            self._budget.on_quota_error("tts", calibrate=is_explicit_quota_error(text))
+            self._budget.on_quota_error("tts")
 
     async def synthesize(self, text: str, voice: Voice) -> bytes:
         budget = self._budget

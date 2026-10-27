@@ -106,12 +106,16 @@ class NotesService:
         max_notes: int = 200,
         on_change: Callable[[str], None] | None = None,
         on_suppress: Callable[[str, list[str]], None] | None = None,
+        on_remove: Callable[[str], None] | None = None,
     ) -> None:
         self._database = database
         self._max = max_notes
         self._on_change = on_change or (lambda user_id: None)  # заметки человека изменились (кэш блока памяти)
         # Реплики-источники убранных заметок подавлены в этих разговорах: документы в Cognee нужно пересобрать (D15).
         self._on_suppress = on_suppress or (lambda user_id, dialog_ids: None)
+        # Человек убрал что-то из сводки (удалил или поправил заметку, удалил всё, выключил чувствительное): открытые сессии модели
+        # пересоберут контекст к следующему ходу (`DialogSession._note_memory_removal`). Добавления сюда не попадают.
+        self._on_remove = on_remove or (lambda user_id: None)
 
     @property
     def max_notes(self) -> int:
@@ -152,6 +156,8 @@ class NotesService:
             self._on_suppress(user_id, dialogs)
             logger.info("sensitive notes removed user=%s count=%d", user_id, removed)
         self._on_change(user_id)
+        if old_sensitive and not new_sensitive:
+            self._on_remove(user_id)
         return new_sensitive, new_chat
 
     # ─── чтение ───────────────────────────────────────────────────────────────
@@ -225,6 +231,7 @@ class NotesService:
             raise NoteNotFound()
         self._on_suppress(user_id, dialogs)
         self._on_change(user_id)
+        self._on_remove(user_id)  # прежний текст заметки из сводки убран
         return note_json((current[0], current[1], cleaned, current[3], current[4], current[5], current[6], now))
 
     async def delete(self, user_id: str, note_id: str) -> None:
@@ -234,6 +241,7 @@ class NotesService:
             raise NoteNotFound()
         self._on_suppress(user_id, dialogs)
         self._on_change(user_id)
+        self._on_remove(user_id)
 
     async def delete_all(self, user_id: str) -> int:
         """«Удалить всю память» (заметки). Настройки и согласие не трогаются."""
@@ -244,6 +252,7 @@ class NotesService:
             removed = await self._call(db.delete_notes, user_id, False)
             self._on_suppress(user_id, dialogs)
         self._on_change(user_id)
+        self._on_remove(user_id)
         return removed
 
 

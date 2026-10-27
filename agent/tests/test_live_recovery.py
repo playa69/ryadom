@@ -9,10 +9,9 @@ from prometheus_client import REGISTRY
 
 from app.clients.gemini_live import LiveError, LiveEvent, LiveHistory
 from app.core.config import APP_CONFIG
-from app.services.replies import REPLIES
 from tests.conftest import FakeTts, has, read_frames, send_user_message, start_dialog
 from tests.test_gemini_budget import connect
-from tests.test_live import FakeConnector, FakeLink, speak_turn
+from tests.fake_live import FakeConnector, FakeLink, speak_turn
 from tests.test_live_feedback import history_of, make_client
 
 HEARD = "мне сегодня тяжело"
@@ -23,8 +22,6 @@ REPLY = "Похоже, день выдался тяжёлым. Что сильн
 def pinned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Как в проде: контекст текстом, сессия на несколько ходов; пауза перед повторной просьбой короткая, чтобы тест не ждал."""
     for name, value in (
-        ("text_context", True),
-        ("session_resumption", True),
         ("history_messages", 40),
         ("rotate_every", 4),
         ("silence_nudge_ms", 50),
@@ -84,14 +81,14 @@ class QuietConnector(FakeConnector):
         self.first, self.rest = first, rest
 
     async def open(  # type: ignore[override]
-        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+        self, voice: str, instructions: str, history: LiveHistory | None = None
     ) -> FakeLink:
-        self.open_calls.append((voice, resume_handle))
+        self.open_calls.append(voice)
         self.history_calls.append(history)
         if self.fail_from is not None and len(self.open_calls) >= self.fail_from:
             raise LiveError("Gemini Live не открылся в тесте")
         cls = self.first if not self.links else self.rest
-        link = cls(voice, self.reply, self.heard, instructions, resume_handle, history)
+        link = cls(voice, self.reply, self.heard, instructions, history)
         self.links.append(link)
         return link
 
@@ -127,7 +124,6 @@ def test_silent_model_is_asked_again_in_a_fresh_session_instead_of_a_template(us
     assert connector.history_calls[-1] == [("user", HEARD)]  # в ней реплика без ответа — последней
     assert ("nudge",) in connector.links[1].commands
     assert [(m["role"], m["text"]) for m in messages] == [("user", HEARD), ("assistant", REPLY)]
-    assert not any(m["text"] in REPLIES for m in messages)
     assert has(frames, "transcript", text=HEARD, final=True)
     assert not has(frames, "error")
     assert counter("agent_live_unanswered_turns_total", reason="silent") == silent + 1
@@ -177,7 +173,6 @@ def test_when_the_model_stays_silent_again_there_is_no_template_and_no_loop(user
     assert counter("agent_live_recoveries_total", outcome="unanswered") == unanswered + 1
     assert sum(1 for command in all_commands(connector) if command == ("nudge",)) == 1
     assert [m["role"] for m in messages] == ["user", "user", "assistant"]
-    assert not any(m["text"] in REPLIES for m in messages)
     assert [f[1]["type"] for f in frames if f[0] == "json"].count("assistant_end") == 1
 
 

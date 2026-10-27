@@ -25,9 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("AGENT_INTERNAL_TOKEN", "harness")
 
 from app.clients.cognee import CogneeClient  # noqa: E402
-from app.clients.llm import ProxyChat  # noqa: E402
+from app.clients.background_model import ProxyBackgroundModel  # noqa: E402
 from app.core.config import MemorySettings  # noqa: E402
-from app.memory.cognee_backend import CogneeMemoryBackend  # noqa: E402
+from app.memory.cognee_backend import CogneeMemoryBackend, _dialog_chunks  # noqa: E402
 from app.memory.extractor import NotesExtractor  # noqa: E402
 from app.memory.indexer import dataset_name  # noqa: E402
 from app.memory.notes import build_notes_block  # noqa: E402
@@ -94,7 +94,7 @@ async def show_notes(memory: CogneeMemoryBackend, user: str, report: Report, tit
     report.add()
 
 
-async def run_scenario(scn: dict, memory: CogneeMemoryBackend, store: DialogStore, client: CogneeClient, chat: ProxyChat, answers: bool, report: Report) -> str:
+async def run_scenario(scn: dict, memory: CogneeMemoryBackend, store: DialogStore, client: CogneeClient, chat: ProxyBackgroundModel, answers: bool, report: Report) -> str:
     user = str(uuid.uuid4())
     await store.ensure_user(user)
     await memory.update_settings(user, True, CONSENT)
@@ -126,7 +126,8 @@ async def run_scenario(scn: dict, memory: CogneeMemoryBackend, store: DialogStor
         for probe in step.get("probes", []):
             found_any = True
             dialog, _, _ = store.start(user, new=True)
-            found = await memory.recall_now(dialog, probe)
+            # те же находки, что подмешиваются в сводку по реплике (CHUNKS и фильтр подавленных реплик)
+            found = await memory._visible(user, _dialog_chunks(await client.recall_chunks(probe, dataset_name(user))))
             notes = await memory.notes.list(user)
             notes_block = build_notes_block(notes, settings_tokens)
             found_block = "Из прошлых разговоров (слова человека, дословно):\n" + found if found.strip() else ""
@@ -178,8 +179,8 @@ async def main() -> int:
     base = os.environ.get("LLM_BASE_URL", "https://shared1.multitool.works:4000/v1")
     model = os.environ.get("MEMORY_NOTES_MODEL", "gigachat3.5-432b-a28b")
     chat_model = os.environ.get("HARNESS_CHAT_MODEL", model)
-    notes_chat = ProxyChat(base, token(), model, max_tokens=600, temperature=0.0, timeout_seconds=60)
-    answer_chat = ProxyChat(base, token(), chat_model, max_tokens=400, temperature=0.3, timeout_seconds=60)
+    notes_chat = ProxyBackgroundModel(base, token(), model, max_tokens=600, temperature=0.0, timeout_seconds=60)
+    answer_chat = ProxyBackgroundModel(base, token(), chat_model, max_tokens=400, temperature=0.3, timeout_seconds=60)
 
     db = DialogDatabase(os.environ["DIALOG_DATABASE_URL"])
     db.open()
@@ -187,7 +188,7 @@ async def main() -> int:
     await store.attach(db, 0.2)
     client = CogneeClient(os.environ["COGNEE_URL"], os.environ.get("COGNEE_EMAIL", "spike@example.com"), os.environ.get("COGNEE_PASSWORD", "spike-password-123"))
     await client.connect()
-    settings = MemorySettings(MEMORY_ALLOWLIST="", MEMORY_NOTES_ENABLED="true")
+    settings = MemorySettings()
     memory = CogneeMemoryBackend(client, settings, lambda: store.database)
     store.memory = memory
     memory.set_extractor(NotesExtractor(notes_chat, memory.notes))

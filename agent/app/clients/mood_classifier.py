@@ -1,7 +1,8 @@
 """Тон и риск реплики человека отдельным быстрым запросом к текстовой модели (прототип PROTEUS-168).
 
 Разговорную сессию Gemini Live не трогает: вызов функции внутри неё подменял или задерживал ответ (замеры в задаче),
-поэтому классификатор живёт рядом и ответу не мешает. Результат — тот же словарь, что у `parse_mood`.
+поэтому классификатор живёт рядом и ответу не мешает. Результат — тот же словарь, что у `parse_mood`. Классификатор работает
+всегда, когда есть ключ Gemini; модель и таймаут — константы.
 """
 
 import asyncio
@@ -12,6 +13,10 @@ from app.core.config import GeminiSettings
 from app.services import usage as model_usage
 
 logger = logging.getLogger("agent.gemini")
+
+# Быстрая текстовая модель Gemini: ответ нужен раньше, чем человек дочитает реплику, поэтому лёгкая модель и короткий таймаут.
+MOOD_MODEL = "gemini-3.5-flash-lite"
+MOOD_TIMEOUT_SECONDS = 2.5
 
 MOOD_TONES = ("neutral", "sleepy", "angry", "afraid", "sad", "calm")
 
@@ -46,8 +51,8 @@ class MoodClassifier:
         from google.genai import types
 
         self._types = types
-        self._model = settings.mood_classifier
-        self._timeout = settings.mood_classifier_timeout_seconds
+        self._model = MOOD_MODEL
+        self._timeout = MOOD_TIMEOUT_SECONDS
         options = None
         if settings.base_url:
             headers = {"X-Relay-Token": settings.relay_token.get_secret_value()} if settings.relay_token else None

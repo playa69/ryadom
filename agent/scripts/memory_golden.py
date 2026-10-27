@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.clients.llm import ProxyChat  # noqa: E402
+from app.clients.background_model import ProxyBackgroundModel  # noqa: E402
 from app.memory.extractor import NotesExtractor  # noqa: E402
 from app.memory.notes import NotesService  # noqa: E402
 from scripts.memory_golden_data import CASES  # noqa: E402
@@ -35,7 +35,7 @@ def token() -> str:
 async def run() -> int:
     base = os.environ.get("LLM_BASE_URL", "https://shared1.multitool.works:4000/v1")
     model = os.environ.get("MEMORY_NOTES_MODEL", "gigachat3.5-432b-a28b")
-    chat = ProxyChat(base, token(), model, max_tokens=600, temperature=0.0, timeout_seconds=60)
+    chat = ProxyBackgroundModel(base, token(), model, max_tokens=600, temperature=0.0, timeout_seconds=60)
     FakeDialogDatabase.reset()
     db = FakeDialogDatabase("golden")
     db.open()

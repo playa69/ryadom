@@ -1,6 +1,6 @@
 ---
 name: local-dev
-description: Поднять «Рядом» локально и прогнать проверки — свой стенд worktree (слот портов, PostgreSQL, Redis, Mailpit и мок агента в Docker, dev-серверы api, web, landing, admin и PWA), настоящий агент на Python (шаблоны или модели), вход анонимно, по коду из письма и в админку, typecheck, тесты app со своей базой на прогон, pytest агента, ruff. Использовать при просьбах «запусти локально», «подними стенд», «проверь, что работает», «прогони тесты», «почему тесты падают», «порт занят», перед коммитом и перед e2e.
+description: Поднять «Рядом» локально и прогнать проверки — свой стенд worktree (слот портов, PostgreSQL, Redis, Mailpit и мок агента в Docker, dev-серверы api, web, landing, admin и PWA), настоящий агент на Python (нужен ключ Gemini), вход анонимно, по коду из письма и в админку, typecheck, тесты app со своей базой на прогон, pytest агента, ruff. Использовать при просьбах «запусти локально», «подними стенд», «проверь, что работает», «прогони тесты», «почему тесты падают», «порт занят», перед коммитом и перед e2e.
 ---
 
 # Локальный запуск и проверки
@@ -99,23 +99,26 @@ pnpm dev                         # landing :3000, admin :3001, api :3002, web :3
 
 ## Настоящий агент
 
-Без ключей моделей — шаблонные ответы и локальная озвучка (нужен `espeak-ng`):
+Для разработки приложения настоящий агент не нужен: стенд поднимает мок агента (`mock` в `--only`, порт 5 карты портов), он
+повторяет контракт агента без моделей. Режима «агент без ключей» нет: настоящему агенту нужен `GEMINI_API_KEY`, без него сервис не
+стартует. Из России Google напрямую недоступен, поэтому добавляются `GEMINI_BASE_URL` и `GEMINI_RELAY_TOKEN` (релей); ключи выдаёт
+администратор, и каждый ход тратит деньги программы.
 
 ```bash
 cd agent && uv sync
-AGENT_INTERNAL_TOKEN=local TTS_MODE=espeak LLM_MODE=template uv run uvicorn app.main:app --port 8001   # порт слота: DEV_AGENT_PORT
+AGENT_INTERNAL_TOKEN=local GEMINI_API_KEY=<ключ> GEMINI_BASE_URL=<релей> GEMINI_RELAY_TOKEN=<токен релея> \
+  uv run uvicorn app.main:app --port 8001   # порт слота: DEV_AGENT_PORT
 ```
 
-api направить на него: `AGENT_API_URL=http://127.0.0.1:8001`, `AGENT_API_TOKEN=local`. С моделями —
-`LLM_MODE=proxy` с `LLM_BASE_URL` и `AGENT_API_TOKEN`, речь в речь — `VOICE_PIPELINE=gemini_live` с `GEMINI_*` (через
-релей); ключи выдаёт администратор, и каждый ход тратит деньги программы. Все настройки — `agent/.env.example` и
-`agent/README.md`.
+api направить на него: `AGENT_API_URL=http://127.0.0.1:8001`, `AGENT_API_TOKEN=local`. Итоги разговоров и недели и заметки памяти
+делает фоновая модель прокси: у агента для неё `LLM_BASE_URL` и `AGENT_API_TOKEN` (ключ прокси, не токен выше); без них разговор идёт,
+а итоги и заметки не появляются. Все настройки — `agent/.env.example` и `agent/README.md`.
 
 Голос без браузера:
 
 ```bash
 uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token local --voice female --wav reply.wav
-uv run python scripts/live_smoke.py --url http://127.0.0.1:8001 --token <токен> --pcm-dir <PCM 16 кГц> --wav-dir <куда>   # gemini_live
+uv run python scripts/live_smoke.py --url http://127.0.0.1:8001 --token <токен> --pcm-dir <PCM 16 кГц> --wav-dir <куда>
 ```
 
 ## Проверки перед PR

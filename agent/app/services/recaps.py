@@ -13,7 +13,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any, Literal
 
-from app.clients.llm import ChatModel, ModelError
+from app.clients.background_model import BackgroundModel, ModelError
 
 if TYPE_CHECKING:
     from app.services.dialog_store import Dialog
@@ -48,11 +48,6 @@ def user_chars(dialog: "Dialog") -> int:
 def eligible(dialog: "Dialog") -> bool:
     """Подводится ли итог для разговора: человек сказал не меньше 40 знаков, кризиса не было, разговор сохраняется."""
     return dialog.memory_mode == "on" and not dialog.crisis_seen and user_chars(dialog) >= MIN_USER_CHARS
-
-
-def template_recap(dialog: "Dialog") -> str:
-    """Детерминированный итог без модели: для `LLM_MODE=template` и разработки. Содержания разговора в нём нет."""
-    return "Ты рассказал, что у тебя на душе, и мы поговорили об этом. Тебе важно, чтобы тебя услышали."
 
 
 def build_messages(dialog: "Dialog") -> list[dict[str, str]]:
@@ -90,15 +85,13 @@ def parse_model_reply(reply: str) -> str | None:
     return clean_model_recap(reply.strip().strip('"«»').strip())
 
 
-async def make_recap(
-    chat: ChatModel | None, dialog: "Dialog", timeout: float, template: bool = False
-) -> str | None:
-    """Итог разговора от модели; шаблонный — только в режиме `LLM_MODE=template` (`template`). None, если модели нет или она не
-    ответила, или ответ не годится: тогда итог можно завести вручную."""
-    if chat is None:
-        return template_recap(dialog) if template else None
+async def make_recap(model: BackgroundModel | None, dialog: "Dialog", timeout: float) -> str | None:
+    """Итог разговора от модели. None, если модели нет или она не ответила, или ответ не годится: тогда итог можно завести
+    вручную."""
+    if model is None:
+        return None
     try:
-        reply = await asyncio.wait_for(chat.complete(build_messages(dialog)), timeout)
+        reply = await asyncio.wait_for(model.complete(build_messages(dialog)), timeout)
     except (ModelError, TimeoutError):
         logger.warning("recap model failed dialog=%s", dialog.id)
         return None

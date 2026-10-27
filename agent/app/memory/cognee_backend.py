@@ -29,7 +29,6 @@ from app.memory.errors import (
     MemoryDisabled,
     FactNotFound,
     FactRejected,
-    MemoryNotAllowed,
     MemoryUnavailable,
     MemoryValidation,
 )
@@ -45,8 +44,6 @@ logger = logging.getLogger("agent.memory")
 
 # Фоновая находка по реплике (CHUNKS) режется: это контекст следующего хода, а не весь транскрипт.
 TURN_RECALL_MAX_CHARS = 800
-# Находка инструмента recall_memory в tool-сообщении: модели хватает пары чанков, длинное только раздувает контекст.
-TOOL_RECALL_MAX_CHARS = 2000
 _CONSENT_RE = re.compile(r"CONSENT memory v(\S+) (\S+)")
 
 
@@ -89,7 +86,9 @@ class CogneeMemoryBackend:
         # База диалогов (PostgreSQL), если подключена: в ней живут настройки памяти («включена или пауза», согласие).
         # Без неё (разработка) настройки хранятся только в памяти процесса.
         self._database = database or (lambda: None)
-        self.notes = NotesService(self._database, config.notes_max, self._notes_changed, self._sources_suppressed)
+        self.notes = NotesService(
+            self._database, config.notes_max, self._notes_changed, self._sources_suppressed, self._removed_by_person
+        )
         self.outbox = CogneeOutbox(self._database, lambda: self._client)  # индекс разговоров в Cognee: очередь с повторами
         self._outbox_task: asyncio.Task[None] | None = None
         self._notes_cache: dict[str, list[dict[str, Any]]] = {}  # user_id → заметки для блока памяти (без обращений к базе на ходу)
@@ -100,7 +99,9 @@ class CogneeMemoryBackend:
         self._extracting: set[str] = set()
         self._datasets: dict[str, bool] = {}  # user_id → память включена (датасет существует)
         self._turn_recalls: dict[str, str] = {}  # user_id → находка recall по последней реплике человека
-        self._turn_tasks: dict[str, asyncio.Task[str]] = {}  # user_id → идущий фоновый recall по последней реплике
+        # user_id → сколько раз человек убрал что-то из своей сводки с момента загрузки (счётчик только растёт). Открытая сессия
+        # модели держит сводку в контексте и по смене счётчика переоткрывается к следующему ходу (`removals`).
+        self._removals: dict[str, int] = {}
         self._consents: dict[str, tuple[str | None, str | None]] = {}  # user_id → (версия согласия, когда)
         self._loading: set[str] = set()
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -144,7 +145,16 @@ class CogneeMemoryBackend:
         self._datasets.pop(user_id, None)
         self._consents.pop(user_id, None)
         self._turn_recalls.pop(user_id, None)
-        self._turn_tasks.pop(user_id, None)
+        self._removals.pop(user_id, None)
+
+    def removals(self, user_id: str) -> int:
+        """Сколько раз человек убрал что-то из своей сводки: удалил или поправил заметку, удалил всю память, выключил память,
+        «Запоминать чувствительное» или «Опираться на прошлые разговоры», удалил разговор. Добавления (новая заметка, находка
+        поиска, догрузка сводки) не считаются: их берёт плановая смена сессии."""
+        return self._removals.get(user_id, 0)
+
+    def _removed_by_person(self, user_id: str) -> None:
+        self._removals[user_id] = self._removals.get(user_id, 0) + 1
 
     async def _read_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         """Сохранённые настройки памяти человека; None — база не подключена, не ответила или строки нет."""
@@ -263,12 +273,7 @@ class CogneeMemoryBackend:
         self._extractor = extractor
 
     def _notes_active(self, dialog: Dialog) -> bool:
-        return (
-            self._cfg.notes_enabled
-            and self._extractor is not None
-            and dialog.memory_mode == "on"
-            and self._effective_enabled(dialog.user_id)
-        )
+        return self._extractor is not None and dialog.memory_mode == "on" and self._effective_enabled(dialog.user_id)
 
     def _sources_suppressed(self, user_id: str, dialog_ids: list[str]) -> None:
         """Заметка убрана: документы её разговоров в Cognee пересобираются без реплик-источников (D15)."""
@@ -355,9 +360,7 @@ class CogneeMemoryBackend:
             or not self._chat_search_cache.get(dialog.user_id, True)
         ):
             return
-        task = self._spawn(self._recall_turn(dialog.user_id, text))
-        if task is not None:
-            self._turn_tasks[dialog.user_id] = task  # инструмент модели дождётся этого же поиска, а не пойдёт вторым
+        self._spawn(self._recall_turn(dialog.user_id, text))
 
     async def _recall_turn(self, user_id: str, text: str) -> str:
         assert self._client is not None
@@ -370,38 +373,6 @@ class CogneeMemoryBackend:
         if found:
             self._turn_recalls[user_id] = found[:TURN_RECALL_MAX_CHARS]
         return found
-
-    def recall_supported(self, dialog: Dialog) -> bool:
-        """Инструмент recall_memory доступен, когда память человека включена и клиент настроен."""
-        return (
-            self._client is not None
-            and self._effective_enabled(dialog.user_id)
-            and self._chat_search_cache.get(dialog.user_id, True)
-        )
-
-    async def recall_now(self, dialog: Dialog, query: str) -> str:
-        """Прямой recall по запросу модели (инструмент recall_memory); находка также попадает в сводку следующих ходов.
-
-        CHUNKS, а не GRAPH_COMPLETION: синтез из найденного сделает сама чат-модель вторым проходом,
-        а Cognee без LLM-синтеза отвечает втрое быстрее — иначе в голосовой ход не влезаем.
-        """
-        if not self.recall_supported(dialog):
-            return ""
-        # Фоновый поиск по этой же реплике уже идёт (см. user_message) — дожидаемся его, а не делаем второй запрос.
-        pending = self._turn_tasks.get(dialog.user_id)
-        if pending is not None and not pending.done():
-            found = await pending
-        else:
-            try:
-                found = await self._visible(
-                    dialog.user_id, _dialog_chunks(await self._require_client().recall_chunks(query, dataset_name(dialog.user_id)))
-                )
-            except Exception:  # noqa: BLE001 - сбой поиска — модель отвечает без находки, разговор не рвём
-                logger.exception("cognee tool recall failed user=%s", dialog.user_id)
-                return ""
-        if found:
-            self._turn_recalls[dialog.user_id] = found[:TURN_RECALL_MAX_CHARS]
-        return found[:TOOL_RECALL_MAX_CHARS]
 
     def enabled(self, user_id: str) -> bool:
         """По кэшу процесса; неизвестный человек — фоновая проверка датасета."""
@@ -530,6 +501,7 @@ class CogneeMemoryBackend:
                 await self.outbox.drop(user_id, ("index_dialog", "reindex_dialog", "rebuild", "delete_document"))
                 await self.outbox.add(user_id, "delete_dataset")
                 self._turn_recalls.pop(user_id, None)
+                self._removed_by_person(user_id)
                 self._spawn(self.outbox.tick())
             elif after and not before:
                 await self.outbox.add(user_id, "rebuild")  # включили: индекс пересобирается в фоне из журнала
@@ -555,9 +527,6 @@ class CogneeMemoryBackend:
                 raise MemoryUnavailable()  # настройки и заметки хранятся в базе агента: без неё включать нечего
             if not consent_version:
                 raise MemoryValidation("consentVersion обязателен при включении")
-            allowed = self._cfg.allowed_users
-            if allowed and user_id.lower() not in allowed:
-                raise MemoryNotAllowed()
             at = iso(datetime.now(UTC))
             await self._write_settings(user_id, True, consent_version, at)
             self._datasets[user_id] = True
@@ -567,6 +536,7 @@ class CogneeMemoryBackend:
         version, at = await self._consent_of(user_id)  # пауза не отзывает согласие: оно остаётся в строке настроек
         await self._write_settings(user_id, False, version, at)
         self._datasets[user_id] = False
+        self._removed_by_person(user_id)
         logger.info("cognee memory disabled (данные сохранены) user=%s", user_id)
         return {"enabled": False, "consentVersion": None, "consentAt": None}
 
@@ -618,7 +588,6 @@ class CogneeMemoryBackend:
             await self._load_state(user_id)  # прежней памяти без строки настроек иначе после удаления датасета не стало бы
         await self.notes.delete_all(user_id)
         self._turn_recalls.pop(user_id, None)
-        self._turn_tasks.pop(user_id, None)
         if self._client is not None:
             await self.outbox.drop(user_id, ("index_dialog", "reindex_dialog", "rebuild", "delete_document"))
             await self.outbox.add(user_id, "delete_dataset")
@@ -629,6 +598,8 @@ class CogneeMemoryBackend:
         """Разговор удаляется (вручную или по сроку): его документ в Cognee удаляется жёстко через очередь. Вызывается до удаления
         строки из базы, пока известен `cognee_data_id`. Заметки из разговора остаются."""
         self._pending.pop(dialog_id, None)  # неразобранные реплики удаляемого разговора в заметки уже не идут
+        self._turn_recalls.pop(user_id, None)  # находка по прошлым разговорам могла цитировать этот: пересоберётся по реплике
+        self._removed_by_person(user_id)
         if self._client is None:
             return
         db = self._database()

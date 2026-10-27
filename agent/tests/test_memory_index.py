@@ -6,8 +6,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
-from tests.conftest import AUTH, start_dialog
+from tests.conftest import AUTH, make_app as make_live_app
 from tests.fake_db import FakeDialogDatabase
 from tests.test_memory_cognee_backend import CONSENT, FakeCognee, backend, dataset_name, dialog, memory_settings, stored_dialog, uid
 
@@ -133,7 +132,7 @@ def make_app(monkeypatch: pytest.MonkeyPatch, fake: FakeCognee):
     FakeDialogDatabase.reset()
     monkeypatch.setattr("app.main.build_cognee_client", lambda cfg: fake)
     settings = memory_settings(COGNEE_BASE_URL="http://cognee.test", COGNEE_SERVICE_EMAIL="a@b.c", COGNEE_SERVICE_PASSWORD="x")
-    return create_app(lambda: None, lambda: (None, None), memory_settings=settings, database_factory=lambda: FakeDialogDatabase("index-app"))
+    return make_live_app(memory_settings=settings, database_factory=lambda: FakeDialogDatabase("index-app"))
 
 
 def test_delete_dialog_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,7 +220,6 @@ async def test_found_chunks_hide_the_reply_of_a_deleted_note_before_the_document
     await service.notes.delete(user, note_id)
     seen = await service._visible(user, fake.recall_text)
     assert FATHER not in seen and "продажах" in seen
-    assert await service.recall_now(current, "расскажи про семью") == "" or FATHER not in await service.recall_now(current, "семья")
 
 
 async def test_clearing_all_notes_and_editing_one_suppress_their_sources_too() -> None:

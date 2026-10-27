@@ -1,13 +1,15 @@
 # Агент в Kubernetes (ns `agent`)
 
-Манифесты упрощённого агента из `agent/` (шаблонные ответы + озвучка Qwen TTS, диалоги в памяти). **Ничего из этого
-ещё не применялось в кластере**: файлы подготовлены к выкату, который делает администратор вручную.
+Манифесты агента из `agent/`: голос ведёт Gemini Live (через релей, `agent/relay/README.md`), диалоги хранятся в PostgreSQL,
+память человека — Cognee и заметки в базе агента, фоновая модель прокси программы подводит итоги разговоров и недели и извлекает
+заметки. Выкат делает администратор вручную; что именно лежит в кластере сейчас, смотреть по `kubectl -n agent get deploy agent`
+(тег образа в `02-deployment.yaml` и `APP_VERSION` в ConfigMap держатся равными).
 
 | Файл | Что делает |
 |---|---|
-| `00-config.yaml` | ConfigMap `agent-config`: озвучка, голос по умолчанию, адрес прокси Qwen TTS, голосовой конвейер `VOICE_PIPELINE` (`cascade` по умолчанию) |
+| `00-config.yaml` | ConfigMap `agent-config`: только значения, которые отличаются от умолчаний кода (порт, версия, адрес прокси фоновой модели, адрес Cognee, лимит токенов Gemini в минуту и несколько настроек памяти процесса) |
 | `01-service.yaml` | Service `agent:8001` (адрес `http://agent.agent.svc.cluster.local:8001` уже стоит в `app-config` как `AGENT_API_URL`) |
-| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`; диалоги — в PostgreSQL (Secret `agent-db`) |
+| `02-deployment.yaml` | Deployment: 1 реплика, `Recreate`, non-root, read-only rootfs, пробы `/health`, `/health/ready`; диалоги — в PostgreSQL (Secret `agent-db`), голос — Secret `agent-gemini` |
 | `04-servicemonitor.yaml` | ServiceMonitor: Prometheus собирает `/metrics` агента (расход моделей, задержки голоса, база диалогов). Применяет admin |
 | `10-cognee-config.yaml` | ConfigMap `cognee-config`: Cognee API (память агента) — БД cognee_db в CNPG, модели LiteLLM-прокси, multi-user access control (Bearer) |
 | `11-cognee-pvc.yaml` | PVC `cognee-storage` (10 ГБ, сетевой диск Timeweb): граф Kuzu и сырые документы Cognee. Применять до Deployment'а |
@@ -24,8 +26,8 @@
 
 | Secret | Namespace | Ключи |
 |---|---|---|
-| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси), необязательно `SALUTE_SPEECH_AUTH_KEY`, `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (ключи проекта в Langfuse, нужны при `LANGFUSE_ENABLED=true`) |
-| `agent-gemini` | `agent` | только для режима `gemini_live`: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`; Deployment читает их как необязательные |
+| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси для фоновой модели), необязательно `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (ключи проекта в Langfuse: заданы оба — трейсинг включён, нет ни одного — выключен, один — агент не стартует) |
+| `agent-gemini` | `agent` | **обязателен**: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`. Без Secret'а или любого из трёх ключей под не запускается (`CreateContainerConfigError`), а без `GEMINI_API_KEY` агент не стартует |
 | `agent-db` | `agent` | `DIALOG_DATABASE_URL` — DSN PostgreSQL диалогов (пароль роли `agent` из `agent-db-credentials`, ns ryadom-db); создание — «Хранилище диалогов (PostgreSQL…)» |
 | `agent-db-credentials` | `ryadom-db` | `password` роли `agent` |
 | `app-secrets` | `prod` | уже есть; ключ `AGENT_INTERNAL_TOKEN` с тем же значением, что у агента |
@@ -36,12 +38,13 @@
   например `openssl rand -hex 32`): им `app-api` и `app-admin` представляются агенту. Внутри самого приложения эта
   переменная исторически называется `AGENT_API_TOKEN`, поэтому в Deployment `app-api` и `app-admin` ключ
   `AGENT_INTERNAL_TOKEN` из `app-secrets` подставляется в переменную `AGENT_API_TOKEN`.
-- `AGENT_API_TOKEN` у агента — ключ прокси программы для Qwen TTS. Принадлежит только агенту, в `app-secrets` его нет.
+- `AGENT_API_TOKEN` у агента — ключ прокси программы для фоновой модели (итоги разговоров и недели, заметки памяти). Принадлежит
+  только агенту, в `app-secrets` его нет. Голос ведёт не он, а Gemini (Secret `agent-gemini`). Нет ключа — итоги не подводятся,
+  заметки не извлекаются, итоги недели отвечают `502 DIGEST_UNAVAILABLE`, разговор идёт как обычно. Тот же ключ использует Cognee
+  (см. «Память агента: Cognee»).
 
-Режим озвучки (`TTS_MODE: qwen`) — не секрет, он в ConfigMap `agent-config`. Ключ SaluteSpeech появится позже: добавить
-`SALUTE_SPEECH_AUTH_KEY` в `agent-secrets`, сменить `TTS_MODE` на `salutespeech` в `00-config.yaml` и перезапустить агента.
-Сертификаты Сбера подписаны российским корневым УЦ: если системного хранилища образа не хватит, положить пакет в
-ConfigMap, смонтировать и задать `SALUTE_SPEECH_CA_BUNDLE` (живой проверки SaluteSpeech не было, ключа нет).
+Голос человека выбирает в профиле, `api` передаёт его агенту при старте разговора; для тех, кто не выбирал, действует
+`TTS_DEFAULT_VOICE` (в коде `male`). В ConfigMap голос не задаётся.
 
 **Если `app-secrets` создан по старой схеме** (ключ `AGENT_API_TOKEN` с общим токеном или, хуже, с ключом прокси): добавить ключ
 `AGENT_INTERNAL_TOKEN` с общим токеном (`kubectl -n prod patch secret app-secrets -p '{"stringData":{"AGENT_INTERNAL_TOKEN":"<токен>"}}'`),
@@ -60,17 +63,18 @@ kubectl -n agent get secret registry-pull                   # есть: он н�
 
 # 1. Образ: платформа linux/amd64, контекст — каталог agent/ (префикс cr.yandex/.../agent/ — как у app/)
 REG=cr.yandex/crpsqeamqpuvrkm5tpr9/agent
-TAG=0.1.2                                                   # тот же тег в 02-deployment.yaml
+TAG=<тег из 02-deployment.yaml>                             # тот же тег, что в манифесте и в APP_VERSION
 cd agent
 docker buildx build --platform linux/amd64 --provenance=false --sbom=false --load -t $REG/agent:$TAG .
 cat ../registry-pusher-key.json | docker login --username json_key --password-stdin cr.yandex
 docker push $REG/agent:$TAG
 cd ..
 
-# 2. Секрет агента (значения у администратора) и внутренний токен в app-secrets (см. выше)
-kubectl -n agent create secret generic agent-secrets --from-env-file=<файл: AGENT_INTERNAL_TOKEN, AGENT_API_TOKEN (ключ прокси)>
+# 2. Секреты агента (значения у администратора) и внутренний токен в app-secrets (см. выше). Без agent-gemini и agent-db под не
+#    запустится: agent-gemini обязателен (три ключа, «Gemini Live: релей и Secret»), agent-db — «Хранилище диалогов»
+kubectl -n agent create secret generic agent-secrets --from-env-file=<файл: AGENT_INTERNAL_TOKEN, AGENT_API_TOKEN (ключ прокси фоновой модели), при трейсинге LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY>
 
-# 3. Сеть: без неё api не достучится до агента, а агент — до прокси
+# 3. Сеть: без неё api не достучится до агента, а агент — до прокси фоновой модели (релей Gemini идёт по :443, он в 05-network-policy-agent.yaml)
 kubectl apply -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml
 
 # 4. Агент
@@ -84,61 +88,80 @@ kubectl -n agent rollout status deploy/agent --timeout=180s
 # Изнутри кластера, тем же путём, каким ходит api (проверяет NetworkPolicy и DNS):
 kubectl -n prod exec deploy/app-api -- wget -qO- http://agent.agent.svc.cluster.local:8001/health      # {"status":"ok"}
 
-# Сам агент: провайдер озвучки должен быть qwen, конвейер cascade
+# Сам агент: pipeline — имя соединителя Gemini, tts — озвучка фиксированных фраз, llm — фоновая модель (none, если ключа прокси нет)
 kubectl -n agent port-forward svc/agent 18001:8001 &
-curl -s http://127.0.0.1:18001/health/ready          # {"status":"ok","pipeline":"cascade","tts":"qwen","llm":"proxy:…","stt":"proxy:…"}
+curl -s http://127.0.0.1:18001/health/ready          # {"status":"ok","pipeline":"gemini-live:gemini-3.8-live","tts":"gemini-live:gemini-3.8-live","llm":"proxy:…","dialogs":"postgres","memory":"on"}
 
 # Весь контракт по REST + WebSocket, с голосом (нужен внутренний токен; wav сохраняется для прослушивания)
 AGENT_INTERNAL_TOKEN=<токен> python agent/scripts/smoke.py --url http://127.0.0.1:18001 --voice female --wav reply.wav
 
-# Логи: прогрев озвучки на старте (32 запроса к прокси, около минуты) и старты диалогов с голосом
-kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts failed|WARNING"        # «закончен: озвучено 32, не удалось 0»
+# Логи: прогрев озвучки фиксированных фраз на старте и старты диалогов с голосом
+kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts failed|WARNING"        # «прогрев озвучки закончен: озвучено N, не удалось 0»
 ```
+
+Прогрев идёт сессиями Gemini (не больше трёх одновременно): около 16 фраз для каждого из двух голосов, занимает около
+полуминуты. Пока он идёт, приветствие может прочитать приложение своим голосом. «Не удалось» больше нуля — смотреть
+`прогрев озвучки не удался` выше в журнале (релей, ключ, `GEMINI_BASE_URL`).
 
 Затем на сайте: `https://слышу-рядом.рф/app/` → начать разговор → ответ должен прийти и **прозвучать** (индикатор шара),
-в логах агента — `dialog started … voice=male`. После мёржа PR агента с выбором голоса: Профиль → «Голос агента» →
-«Женский» → новый разговор → в логах `voice=female`.
+в логах агента — `dialog started … voice=male`. Профиль → «Голос агента» → «Женский» → новый разговор → в логах `voice=female`.
+Переключатель голоса в профиле и передача голоса агенту — код `app/` (колонка `users.agent_voice`, миграция `0005_agent_voice`);
+миграцию накатывает образ `migrate` из Job `k8s/app/db/05-job-migrate-0005.yaml` вместе со всеми остальными (порядок выката app —
+`k8s/README.md`, «Новая версия»), отдельных шагов для голоса не нужно.
 
-## Выбор голоса на сайте: нужны новые образы app
+## Выкат версии после уборки режимов: что смотреть
 
-Сам агент работает и без этого (поле `voice` необязательно, по умолчанию мужской голос), но переключатель в профиле и
-передача голоса агенту — это код `app/` из того же PR. Чтобы он заработал на сайте, после мёржа нужно собрать и выкатить
-новые образы `api`, `web` и `migrate` (миграция `0005_agent_voice` добавляет колонку `users.agent_voice`, по умолчанию
-`male`), поправить теги в `k8s/app/*/03-deployment.yaml` и `k8s/app/db/02-job-migrate.yaml` и применить как обычно:
-сначала Job миграции `app-migrate-0002`, затем Deployment'ы (см. `k8s/README.md`, «Новая версия»).
+Эта версия убирает голосовой каскад и флаги фич: голос ведёт только Gemini Live, а поведение «включено» закреплено в коде.
+Теги образов и `APP_VERSION` в манифестах пока прежние (образ 0.8.8), новую версию собирает и выкатывает владелец. При выкате
+смотреть именно это:
 
-## Режим gemini_live (речь в речь): подготовка и включение
+1. **Заметки памяти начинают извлекаться.** Раньше флаг `MEMORY_NOTES_ENABLED` в проде был `false`; теперь заметки извлекаются
+   всегда, у людей с включённой памятью и при заданном ключе прокси (`AGENT_API_TOKEN`, `LLM_BASE_URL`). Расход фоновой модели
+   вырастет; следить за `agent_model_usage_total` и за `memory_notes` в базе агента.
+2. **Срок хранения начинает работать по-настоящему.** Раньше `DIALOG_RETENTION_DRY_RUN` в проде был `true` (только счёт). Теперь
+   проход раз в час помечает удалёнными разговоры старше `DIALOG_RETENTION_DAYS` (21 день), а помеченное физически убирает очистка
+   (`app/services/dialog_purge.py`). Первый проход после выката самый большой: он пометит всё накопленное старше 21 дня.
+   **Перед выкатом сделать копию базы `agent`**; значения 0 («не удалять») нет. Метрика `agent_dialogs_retention_would_delete`
+   удалена.
+3. **Secret `agent-gemini` должен содержать все три ключа** (`GEMINI_API_KEY`, `GEMINI_BASE_URL`, `GEMINI_RELAY_TOKEN`): `optional`
+   у них снят, без любого под не запустится. Проверить до `kubectl apply` можно по списку ключей без значений:
+   `kubectl -n agent describe secret agent-gemini` (показывает имена ключей и размеры, не значения).
+4. **Образ без espeak-ng.** Слой с `espeak-ng` из Dockerfile убран, образ меньше. Озвучка фиксированных фраз идёт через Gemini:
+   после выката в `/health/ready` поле `tts` должно быть `gemini-live:…`, а в журнале `прогрев озвучки закончен: озвучено N,
+   не удалось 0`.
+5. **Трейсинг Langfuse включается самими ключами.** Флага `LANGFUSE_ENABLED` нет: заданы оба ключа
+   (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) в `agent-secrets` — трейсинг включён, нет ни одного — выключен, один — агент не
+   стартует. До выката убедиться, что оба ключа в `agent-secrets` на месте, иначе трейсинг тихо выключится. Тексты реплик в
+   Langfuse не уходят никогда, отдельного приёмника расхода (`LANGFUSE_USAGE_SINK`) нет.
+6. **Новая метка `purpose=privacy`** в метрике `agent_gemini_opens_total` и в журнале (`gemini live opened … purpose=privacy`):
+   то, что человек убрал из памяти (заметку, всю память, паузу, переключатели «Запоминать чувствительное» и «Опираться на прошлые
+   разговоры», удаление разговора), переоткрывает сессию Gemini к следующему ходу, чтобы убранное не оставалось в её контексте.
+   Рост таких открытий нормален; они входят в `agent_gemini_tpm_window_tokens` как любые открытия.
+7. **ConfigMap стал короче.** В `00-config.yaml` остались только значения, отличающиеся от умолчаний кода. Ключи прежнего
+   ConfigMap, которых там уже нет (`VOICE_PIPELINE`, `TTS_MODE`, `QWEN_TTS_*` и другие), агент не читает; после `kubectl apply`
+   сверить результат `kubectl -n agent get cm agent-config -o yaml` с манифестом.
+8. Выкат обрывает текущие диалоги (одна реплика, `Recreate`): делать в тихое время, клиент переподключится к тому же диалогу.
 
-Режим добавляет PR «feat(agent): режим gemini_live». **С 2026-10-12 в кластере включён** (`VOICE_PIPELINE: "gemini_live"`, образ 0.2.0,
-Secret `agent-gemini` создан). С `VOICE_PIPELINE: "cascade"` тот же образ ведёт себя как прежний каскад. Gemini API из России недоступен (из кластера проверено:
-`User location is not supported`), поэтому агент ходит через релей в Hetzner (`agent/relay/README.md`); из кластера релей
-доступен (проверено временным подом: DNS `sslip.io` резолвится, `/_relay_health` 200, без токена 403). Egress `:443` в ns `agent`
-уже разрешён (`05-network-policy-agent.yaml`), новые сетевые правила не нужны.
+## Gemini Live: релей и Secret `agent-gemini`
 
-Значения лежат в Yandex Lockbox, в общем секрете `ryadom-app-secrets` (профиль `sber500-ryadom`), новыми ключами: `GEMINI_API_KEY`,
-`GEMINI_BASE_URL`, `GEMINI_RELAY_TOKEN` и `GEMINI_RELAY_SSH_PRIVATE_KEY` (доступ на сервер релея, в кластер не уходит). Остальные
-ключи этого секрета не менялись. Kubernetes-секрет `agent-secrets` не трогается: для режима создаётся отдельный `agent-gemini`.
+Голос агента ведёт Gemini Live (речь в речь). Другого голосового пути нет: без `GEMINI_API_KEY` агент не стартует. Gemini API из
+России недоступен (из кластера проверено: `User location is not supported`), поэтому агент ходит через релей на отдельном сервере
+в поддерживаемой стране (`agent/relay/README.md`: устройство, проверки, смена токена). Из кластера релей доступен (проверено
+временным подом: DNS `sslip.io` резолвится, `/_relay_health` 200, без токена 403). Egress `:443` в ns `agent` уже разрешён
+(`05-network-policy-agent.yaml`), новые сетевые правила не нужны.
 
-Порядок, каждый шаг отдельным решением администратора:
+Secret `agent-gemini` обязателен. Deployment читает из него три ключа без `optional`: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес
+релея, `https://<хост>` без слэша на конце и без пути) и `GEMINI_RELAY_TOKEN`. Значения хранятся локально у администратора, в git их
+нет. Создаётся командой `create` (не `apply`), нужен админский kubeconfig, значения не печатать:
 
-```powershell
-# 1. Образ ≥ 0.2.0 (в нём google-genai; сборка проверена локально: 343 МБ, не root, read-only rootfs, без capabilities).
-#    Сборка и push как в «Первом выкате», TAG=0.2.0; затем тег в 02-deployment.yaml отдельным коммитом deploy(agent).
-
-# 2. Secret agent-gemini из Lockbox (создаётся командой create, не apply; нужен admin kubeconfig и явное «да» пользователя):
-. "$env:USERPROFILE\.config\ryadom\bin\ryadom-secrets.ps1"
-New-RyadomK8sSecret -Namespace agent -Name agent-gemini `
-  -Map @{ GEMINI_API_KEY = 'GEMINI_API_KEY'; GEMINI_BASE_URL = 'GEMINI_BASE_URL'; GEMINI_RELAY_TOKEN = 'GEMINI_RELAY_TOKEN' } -DryRun
-#    проверить и повторить без -DryRun, добавив -UserConfirmedAdmin
-
-# 3. Сначала выкатить новый образ в режиме cascade (ConfigMap без изменений) и убедиться, что агент здоров:
-#    kubectl apply -f k8s/agent/00-config.yaml -f k8s/agent/02-deployment.yaml ; rollout status ; /health/ready → "pipeline":"cascade"
-
-# 4. Включить режим: в 00-config.yaml VOICE_PIPELINE: "gemini_live", применить ConfigMap, перезапустить:
-#    kubectl apply -f k8s/agent/00-config.yaml ; kubectl -n agent rollout restart deploy/agent ; kubectl -n agent rollout status deploy/agent
+```bash
+kubectl -n agent create secret generic agent-gemini --from-env-file=<файл: GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_RELAY_TOKEN>
+# заменить значения у существующего (в консоль идёт только «configured»), затем перезапустить агента:
+kubectl -n agent create secret generic agent-gemini --from-env-file=<файл> --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n agent rollout restart deploy/agent && kubectl -n agent rollout status deploy/agent --timeout=180s
 ```
 
-Проверка после включения (порт-форвард как выше):
+Проверка (порт-форвард как выше):
 
 ```bash
 curl -s http://127.0.0.1:18001/health/ready      # "pipeline":"gemini-live:gemini-3.8-live", "tts":"gemini-live:gemini-3.8-live"
@@ -146,55 +169,43 @@ python agent/scripts/live_smoke.py --url http://127.0.0.1:18001 --token <ток�
 kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live timeline|live usage|live context|first sound|WARNING"
 ```
 
-В журнале агента: `прогрев озвучки закончен: озвучено 28, не удалось 0` (около полуминуты; пока идёт прогрев, приветствие может прочитать
+В журнале агента: `прогрев озвучки закончен: озвучено N, не удалось 0` (около полуминуты; пока идёт прогрев, приветствие может прочитать
 приложение своим голосом), строки `live timeline … ms: sent=… in_first=… out_first=… tts_start=…` (этапы хода в мс от конца реплики,
-без текстов) и `first sound … ms=` (на стенде 0,9-1,2 с против 2,6 с у каскада).
+без текстов) и `first sound … ms=` (на стенде 0,9-1,2 с).
 
-**Откат:** вернуть `VOICE_PIPELINE: "cascade"`, применить ConfigMap, `kubectl -n agent rollout restart deploy/agent`. Secret `agent-gemini` может остаться.
-Образ с google-genai можно оставить: в режиме cascade он не используется.
+**Если релей, ключ или `GEMINI_BASE_URL` не работают,** голоса нет совсем: запасного пути нет. Агент отвечает `error
+VOICE_UNAVAILABLE`, а в журнале `gemini live not available`. Порядок: проверки 1 и 2 в `agent/relay/README.md` («Проверка»), затем
+ключ Gemini и `GEMINI_BASE_URL` в Secret'е `agent-gemini`, затем сервер релея. Откатывать образ незачем: чинится релей или
+Secret (смена токена и пересоздание сервера описаны там же).
 
-Что учесть до включения (подробности: `agent/relay/README.md`, «Ёмкость и лимиты»):
+Что учесть (подробности: `agent/relay/README.md`, «Ёмкость и лимиты»):
 
-- В PR #28 известны расхождения с каскадом (P1-P16 в `agent/tests/test_parity.py`, strict xfail), часть из них до включения в бою нужно закрыть.
-- Постоплата Gemini: контекст сессии оплачивается на каждый ход. С образом ≥ 0.3.0 по умолчанию включена оптимизация
-  `GEMINI_TEXT_CONTEXT` (после каждого ответа свежая сессия с историей текстом: на стенде -53% входных токенов за 12 ходов и цена хода
-  почти не растёт; скорость первого звука при нормальной паузе та же, схема и замеры в `agent/README.md`). Образ 0.2.0 её не содержит. Поставить бюджет
-  Cloud Billing и ограничить ключ по IP релея.
-- Агент в памяти (Recreate): выкат и переключение режима обрывают текущие диалоги. Память пода в режиме Gemini на стенде около 100 МБ при лимите 384 МиБ.
+- Постоплата Gemini: контекст сессии оплачивается на каждый ход. Чтобы аудио не копилось в контексте, агент меняет сессию на
+  свежую и кладёт в неё прошлые реплики текстом (раз в `GEMINI_ROTATE_EVERY` ходов; на стенде -53% входных токенов за 12 ходов;
+  схема и замеры в `agent/README.md`). Поставить бюджет Cloud Billing и ограничить ключ по IP релея.
+- Агент в памяти (Recreate): выкат и перезапуск обрывают текущие диалоги. Память пода: `agent/README.md`, «Память процесса».
+- Сценарии, на которых сверяется поведение Gemini Live (известные расхождения помечены strict xfail «ИЗВЕСТНО: …»):
+  `agent/tests/test_live_scenarios.py`.
 
-## Бюджет токенов Gemini (GEMINI_TPM_*)
+## Учёт токенов в минуту (GEMINI_TPM_*)
 
 У проекта Google на Gemini один лимит на всех: 400 000 входных токенов в минуту (Tier 2; запросов в минуту и в сутки, числа сессий лимита нет).
 Сверх него Google закрывает соединение кодом 1011 «You exceeded your current quota», и при открытии сессии, и посреди хода. В нагрузочном тесте
-(150 диалогов) пик был 449 тыс. при лимите 400 тыс. Агент теперь сам ведёт окно в 60 секунд, после 1011 держит паузу и при желании переводит
-новые разговоры в каскад (устройство, уровни и метрики: `agent/README.md`, «Бюджет токенов в минуту»).
+(150 диалогов) пик был 449 тыс. при лимите 400 тыс. Агент ведёт окно в 60 секунд и после 1011 держит паузу; новые разговоры не
+отсекаются, ходы отказа не получают (устройство и метрики: `agent/README.md`, «Учёт токенов в минуту»).
 
-Настройки (`agent-config`, `00-config.yaml`, новый образ агента с этим изменением, текущий прод 0.4.0 его не содержит; в кластер не применялось):
+Настройки (`agent-config`, `00-config.yaml`):
 
 | Ключ | В ConfigMap | Что |
 |---|---|---|
-| `GEMINI_TPM_LIMIT` | `400000` | лимит проекта; `0` выключает учёт целиком |
-| `GEMINI_TPM_ENFORCE` | `false` | `false` — только мерить и держать паузу после 1011; `true` — ещё и каскад для новых разговоров, шаблон вместо хода без бюджета |
-| `GEMINI_LAZY_OPEN` | `false` | `true` — сессия Gemini открывается по `audio_start` или набранному сообщению, а не заранее (экономит квоту; +около 1 с к первому звуку на набранный текст) |
-| `GEMINI_TPM_TRIM_AT`, `_ADMIT_AT`, `_HARD_AT` | не заданы (`0.6`, `0.7`, `0.9`) | пороги доли окна |
-| `GEMINI_HISTORY_MESSAGES_TIGHT` | не задан (`16`) | история новой сессии на уровне trim и выше |
-| `GEMINI_TPM_WAIT_MS` | не задан (`1500`) | сколько ход ждёт места в окне |
-| `GEMINI_QUOTA_COOLDOWN_SECONDS` | не задан (`5`) | начальная пауза после 1011, растёт вдвое до 60 с; `0` выключает |
-| `GEMINI_TPM_OPEN_FACTOR` | не задан (`1.0`) | оценка открытия = байты UTF-8 промпта и истории / 4 × коэффициент; подбирается по графику AI Studio |
+| `GEMINI_TPM_LIMIT` | `400000` | лимит проекта; `0` выключает учёт целиком (в коде умолчание `0`) |
+| `GEMINI_QUOTA_COOLDOWN_SECONDS` | в коде: `5` | начальная пауза после 1011, в ней новые сессии Gemini не открываются; растёт вдвое до 60 с; `0` выключает |
+| `GEMINI_TPM_OPEN_FACTOR` | в коде: `1.0` | оценка открытия = байты UTF-8 промпта и истории / 4 × коэффициент; подбирается по графику AI Studio |
 
-Порядок включения (каждый шаг отдельным решением администратора, ConfigMap применяется как обычно: `kubectl apply -f k8s/agent/00-config.yaml`,
-затем `kubectl -n agent rollout restart deploy/agent`):
-
-1. Новый образ агента и ConfigMap с `GEMINI_TPM_ENFORCE: "false"`. Сутки-двое сравнивать метрику `agent_gemini_tpm_window_tokens` с графиком
-   «Peak input tokens per minute» в AI Studio; если метрика ниже графика, поднять `GEMINI_TPM_OPEN_FACTOR`. Алерты: `agent_gemini_quota_errors_total`
-   растёт, `agent_gemini_budget_level` ≥ 2 дольше минуты.
-2. `GEMINI_TPM_ENFORCE: "true"`. До этого убедиться в журнале старта, что каскад собран: строка `gemini budget: limit=400000 enforce=True fallback:
-   llm=… stt=… tts=…` (в кластере `AGENT_API_TOKEN` и `LLM_*`/`QWEN_TTS_*` уже есть, `none` значит, чего-то не хватает: тогда новые разговоры останутся в
-   Gemini, а ходы без бюджета получат шаблон). Каскад тоже тратит прокси программы, не Google.
-3. `GEMINI_LAZY_OPEN: "true"` отдельно.
-
-**Откат:** вернуть значения (`GEMINI_TPM_ENFORCE: "false"`, `GEMINI_LAZY_OPEN: "false"`, при необходимости `GEMINI_TPM_LIMIT: "0"`), применить ConfigMap и
-перезапустить агент.
+Что смотреть: метрика `agent_gemini_tpm_window_tokens` против графика «Peak input tokens per minute» в AI Studio; если метрика ниже графика,
+поднять `GEMINI_TPM_OPEN_FACTOR`. Алерт: `agent_gemini_quota_errors_total` растёт. Изменение: правка `00-config.yaml`, `kubectl apply`, затем
+`kubectl -n agent rollout restart deploy/agent`. **Откат:** вернуть значения (при необходимости `GEMINI_TPM_LIMIT: "0"`), применить ConfigMap и
+перезапустить агента.
 
 ## Хранилище диалогов (PostgreSQL, база `agent` в CNPG ryadom-db)
 
@@ -304,74 +315,6 @@ unset SVC_PASS
 (данные графа стираются) и в CNPG `DROP DATABASE cognee_db; DROP ROLE cognee;` (per-tenant БД вида `"<uuid>"` —
 тоже вручную). Правила NetworkPolicy можно оставить.
 
-## Память агента: Cognee (Deployment `cognee`)
-
-Cognee — граф знаний и векторный поиск для памяти агента (REST `/api/v1`). Живёт в том же ns `agent`, наружу не
-публикуется (ни ingress, ни HTTPRoute). Единственный потребитель — под agent по адресу
-`http://cognee.agent.svc.cluster.local:8000`. Для ручной отладки:
-`kubectl -n agent port-forward svc/cognee 18000:8000`.
-
-**Auth ВКЛЮЧЁН (multi-user access control, `ENABLE_BACKEND_ACCESS_CONTROL=true`).** Это не украшение, а требование
-per-user памяти: в режиме `multi_tenant=disabled` `/api/v1/search` НЕ фильтрует по датасетам — recall одного
-человека возвращал факты другого (проверено 2026-10-21). Агент логинится сервисным пользователем
-`agent-service@cognee.dev` (email/пароль — Secret `cognee-service-account`) и ходит с Bearer JWT
-(`POST /api/v1/auth/login`, токен живёт `JWT_LIFETIME_SECONDS`=12 ч). Подпись JWT — Secret `cognee-auth`.
-В multi-tenant режиме Cognee заводит ОТДЕЛЬНУЮ БД на тенанта (`CREATE DATABASE "<uuid>"` + `CREATE EXTENSION
-vector`), поэтому роль `cognee` — SUPERUSER (компромисс: роль выделенная, только для Cognee; без суперпользователя
-per-tenant БД не создаются). Пользователь регистрируется один раз через port-forward (`/api/v1/auth/register`
-снаружи недоступен — ingress'а нет).
-
-Устройство (манифесты `10-…`-`13-…` в этом каталоге):
-
-- **Образ** — официальный `cognee/cognee` с Docker Hub (проверенная версия указана в `12-cognee-deployment.yaml`),
-  1 реплика, `Recreate` (том RWO). Прогрев 3–5 минут — проба `/health` с запасом.
-- **Хранение** — реляционные таблицы и векторы в БД `cognee_db` общего CNPG `ryadom-db` (расширение `vector`),
-  граф Kuzu и сырые документы на PVC `cognee-storage` (сетевой диск, НЕ local-path: нодный диск теряется вместе
-  с нодой). Удаление PVC стирает граф безвозвратно; PostgreSQL-часть покрыта бэкапами CNPG.
-- **LLM и эмбеддинги** — через LiteLLM-прокси программы (`LLM_ENDPOINT`/`EMBEDDING_ENDPOINT` в ConfigMap), ключ
-  переиспользуется из `agent-secrets` (`AGENT_API_TOKEN`), своего ключа у Cognee нет. Если модель недоступна,
-  Cognee стартует, но cognify падает — смотреть логи и список моделей прокси (`GET $LLM_ENDPOINT/models`).
-
-Создание с нуля (каждый шаг отдельным решением администратора, значения секретов не печатать):
-
-```bash
-# 1. Роль и БД в CNPG (идемпотентно в части extension; пароль сразу уходит в Secret).
-#    SUPERUSER обязателен: в multi-tenant режиме Cognee создаёт БД и extension vector на тенанта.
-DBPASS=$(openssl rand -hex 24)
-kubectl -n agent create secret generic cognee-db-credentials --from-literal=DB_PASSWORD="$DBPASS"
-kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -c "CREATE ROLE cognee LOGIN PASSWORD '$DBPASS' SUPERUSER;"
-kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -c "CREATE DATABASE cognee_db OWNER cognee;"
-kubectl exec -n ryadom-db <primary-pod> -- psql -U postgres -d cognee_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-# 1.1. Секреты auth: подпись JWT и сервисный пользователь агента
-kubectl -n agent create secret generic cognee-auth --from-literal=FASTAPI_USERS_JWT_SECRET="$(openssl rand -hex 32)"
-kubectl -n agent create secret generic cognee-service-account \
-  --from-literal=COGNEE_SERVICE_EMAIL="agent-service@cognee.dev" \
-  --from-literal=COGNEE_SERVICE_PASSWORD="$(openssl rand -hex 16)"
-
-# 2. Сеть: ingress ns agent → CNPG (:5432) в postgres/manifests/03-network-policy.yaml,
-#    egress cognee → прокси :4000 в namespaces/manifests/08-network-policy-agent-service.yaml
-kubectl apply -f k8s/postgres/manifests/03-network-policy.yaml -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml
-
-# 3. Манифесты и проверка
-kubectl apply -f k8s/agent/10-cognee-config.yaml -f k8s/agent/11-cognee-pvc.yaml \
-              -f k8s/agent/12-cognee-deployment.yaml -f k8s/agent/13-cognee-service.yaml
-kubectl -n agent rollout status deploy/cognee --timeout=10m
-kubectl -n agent port-forward svc/cognee 8000:8000 &
-curl -s localhost:8000/health      # 200
-
-# 4. Регистрация сервисного пользователя (один раз; пароль из Secret не печатать)
-SVC_PASS=$(kubectl -n agent get secret cognee-service-account -o jsonpath='{.data.COGNEE_SERVICE_PASSWORD}' | base64 -d)
-curl -X POST localhost:8000/api/v1/auth/register -H 'Content-Type: application/json' \
-  -d "{\"email\":\"agent-service@cognee.dev\",\"password\":\"$SVC_PASS\"}"
-unset SVC_PASS
-```
-
-Откат: `kubectl delete -f` этих четырёх манифестов, затем Secret'ы `cognee-db-credentials`, `cognee-auth`,
-`cognee-service-account`, PVC `cognee-storage`
-(данные графа стираются) и в CNPG `DROP DATABASE cognee_db; DROP ROLE cognee;` (per-tenant БД вида `"<uuid>"` —
-тоже вручную). Правила NetworkPolicy можно оставить.
-
 ## Расход моделей: база и Prometheus
 
 Что и как считается, запросы SQL и PromQL — `agent/README.md`, «Расход моделей». В базе расход лежит в таблице `model_usage` того же
@@ -393,41 +336,47 @@ helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring
 `agent_model_usage_total` отдаёт ряды после первого диалога. Хватает ли диска на 14 дней: `prometheus_tsdb_storage_blocks_bytes`
 через пару дней, умноженный на 14/дни, должен быть меньше `retentionSize` (3GB), иначе старые блоки уйдут раньше срока.
 
-Тот же расход может уходить в Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, трейс `model-usage`, без текстов).
-Это отдельный приёмник: `LANGFUSE_USAGE_SINK: "true"` в `agent-config` (по умолчанию `"false"`) и `LANGFUSE_ENABLED=true` с ключами в
-Secret `agent-secrets`. Расход ходов уже идёт в трассах трейсинга, поэтому оба сразу не включать: в Langfuse он задвоится. Сеть —
-отдельным решением:
+## Трейсинг Langfuse
+
+Трейсинг LLM-ходов идёт в self-hosted Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, адрес в коде `LANGFUSE_HOST`): трасса
+на ход диалога (расшифровка, ответ, токены Gemini, задержки этапов), сессия Langfuse = диалог. Включается ключами проекта в Secret
+`agent-secrets` (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`): заданы оба — трейсинг включён, нет ни одного — выключен, один без
+второго — агент не стартует. Отдельных флагов нет. **Тексты реплик в Langfuse не уходят никогда**: вместо них число символов и
+слов, длительность речи, токены и задержки. Расход ходов лежит в самих трассах; отдельного приёмника расхода в Langfuse нет, расход
+моделей по-прежнему считается в базе и в Prometheus (раздел выше). В журнале агента при старте `tracing=` в строке `agent started`.
+
+Сеть — отдельным решением администратора:
 
 ```bash
 kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml   # egress agent → infra:3000
 kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingress infra:3000 от ns agent
 ```
 
-Ключи в Secret кладёт администратор (в git их нет), затем `kubectl -n agent rollout restart deploy/agent`. В журнале агента
-строка `langfuse usage sink on` или `off`.
+Ключи в Secret кладёт администратор (в git их нет), затем `kubectl -n agent rollout restart deploy/agent`. **Откат:** убрать оба
+ключа из Secret и перезапустить агента.
 
 ## Память агента (`MEMORY_*`)
 
-Память — Cognee (Deployment `cognee`, раздел выше): датасет `ryadom_user_<user_id>` на человека. Агент ходит в Cognee
-по REST (`COGNEE_BASE_URL: "http://cognee:8000"` в `agent-config`) с Bearer сервисного пользователя (Secret
-`cognee-service-account`, ключи подключены в `02-deployment.yaml`). Извлечение фактов делает сам Cognee, модели
-извлечения и воркера у агента нет. Устройство — `agent/README.md`, раздел «Память». Общего режима памяти (`MEMORY_MODE`:
-`off` / `shadow` / `on`) больше нет: включена ли память у человека, хранится в базе агента (`memory_settings`), а API всегда отвечает
-`"mode": "on"` ради старых клиентов. Согласия и факты SQLite-памяти образов < 0.8.0 в Cognee не
-мигрируют (решение владельца): человек включает память заново в профиле.
+Память — два слоя: заметки о человеке в PostgreSQL агента (`memory_notes`) и поиск по прошлым разговорам в Cognee (Deployment
+`cognee`, раздел выше; датасет `ryadom_user_<user_id>` на человека). Агент ходит в Cognee по REST (`COGNEE_BASE_URL:
+"http://cognee:8000"` в `agent-config`) с Bearer сервисного пользователя (Secret `cognee-service-account`, ключи подключены в
+`02-deployment.yaml`). Заметки извлекает фоновая модель прокси по ходу разговора, поэтому им нужны ключ и адрес прокси
+(`AGENT_API_TOKEN`, `LLM_BASE_URL`); граф по прошлым разговорам Cognee строит сам (модели прокси из `10-cognee-config.yaml`). Устройство — `agent/README.md`, раздел «Память». Общего режима
+памяти (`MEMORY_MODE`) и флагов функции нет: включена ли память у человека, хранится в базе агента (`memory_settings`), API всегда отвечает
+`"mode": "on"` ради старых клиентов, а доступ к памяти есть у всех (списка допущенных нет). Согласия и факты SQLite-памяти образов
+< 0.8.0 в Cognee не мигрируют (решение владельца): человек включает память заново в профиле.
 
-| Переменная | По умолчанию | Смысл |
+| Переменная | В ConfigMap / в коде | Смысл |
 |---|---|---|
-| `COGNEE_BASE_URL` | — | адрес Cognee API; без него (и без email/пароля) память `unavailable` |
-| `MEMORY_BRIEF_LEVEL` | `minimal` | что уходит в голосовую модель: `minimal` (как говорить, о чём не говорить) / `standard` / `full` |
-| `MEMORY_COGNIFY_SETTLE_SECONDS` | 90 | пауза перед перечитыванием сводки после записи (cognify асинхронный) |
-| `MEMORY_RECALL_TOOL` | `false` | инструмент `recall_memory` в каскаде (пауза 10–30 с посреди хода; выключен) |
-| `MEMORY_DEFAULT_ENABLED` | `false` | только стенды: память всем без согласия (opt-out). В бою НЕ включать |
-| `MEMORY_ALLOWLIST` | пусто | UUID через запятую: включить память могут только они (бета) |
+| `COGNEE_BASE_URL` | `http://cognee:8000` | адрес Cognee API; без него (и без email/пароля сервисного пользователя) поиск по прошлым разговорам недоступен, заметки работают |
+| `MEMORY_NOTES_MODEL` | в коде: как `LLM_CHAT_MODEL` | модель извлечения заметок |
+| `MEMORY_NOTES_MAX` | в коде: `200` | лимит живых заметок на человека |
+| `MEMORY_BRIEF_MAX_TOKENS` | в коде: `1200` | размер блока памяти в промпте, токены |
 
-**Откат функции:** общего выключателя памяти нет. Остановить извлечение новых заметок — `MEMORY_NOTES_ENABLED: "false"`, применить
-ConfigMap, `kubectl -n agent rollout restart deploy/agent`; данные остаются (человек может прочитать, скачать и стереть их и при
-выключенной памяти).
+**Остановка извлечения.** Флага «откат функции» нет: заметки извлекаются всегда, пока у человека включена память и задан ключ
+прокси. Остановить извлечение для всех можно, убрав ключ прокси (`AGENT_API_TOKEN`) или `LLM_BASE_URL` и перезапустив агента
+(`kubectl -n agent rollout restart deploy/agent`); тогда не подводятся и итоги разговоров и недели. Отдельный человек выключает память
+своим переключателем в профиле. Данные при любой остановке остаются: человек может прочитать, скачать и стереть их и при выключенной памяти.
 
 ## Ограничения (честно)
 
@@ -435,13 +384,13 @@ ConfigMap, `kubectl -n agent rollout restart deploy/agent`; данные ост�
   диалогов») и покрыты общими бэкапами CNPG. Реплика одна, `strategy: Recreate`, поэтому на время выката агент недоступен (около минуты вместе с
   прогревом озвучки); текущие сокеты обрываются, а клиент переподключается к
   тому же диалогу.
-- **Прогрев.** Первую минуту после старта приветствие может прочитать приложение своим голосом: Qwen через прокси отдаёт
-  первый звук за 1-2 с, а клиент ждёт приветствие не больше 0,9 с. Ответы приложение само не читает.
-- **Прокси программы — внешняя зависимость.** Если он недоступен, агент отвечает текстом (`error VOICE_UNAVAILABLE`), а
-  человек видит, что голос недоступен. Адрес прокси лежит в `agent-config`, egress на `:4000` — в `08-…yaml`.
-- **Не проверено вне кластера:** сами манифесты (`kubectl apply` не запускался), NetworkPolicy и сайдкары Istio на пути
-  `app-api → agent`, обращение к прокси из кластера, SaluteSpeech, нагрузка. Образ и поведение агента проверены локально
-  (Docker, read-only rootfs, не root, без capabilities).
+- **Прогрев.** Первые полминуты после старта приветствие может прочитать приложение своим голосом: фиксированные фразы
+  озвучиваются сессиями Gemini (не больше трёх одновременно), а клиент ждёт приветствие не больше 0,9 с. Ответы приложение само не читает.
+- **Gemini и релей — внешняя зависимость без запасного пути.** Если релей, ключ или `GEMINI_BASE_URL` не работают, голоса нет:
+  агент отвечает `error VOICE_UNAVAILABLE`, человек видит, что голосовая модель недоступна (раздел «Gemini Live: релей и Secret»).
+- **Прокси программы нужен только фоновым задачам.** Если он недоступен, разговор идёт как обычно, а итоги разговоров не
+  подводятся, заметки не извлекаются, итоги недели отвечают `502 DIGEST_UNAVAILABLE`. Адрес прокси лежит в `agent-config`, egress на
+  `:4000` — в `08-…yaml`.
 
 ## Откат
 

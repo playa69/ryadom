@@ -9,9 +9,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
 from app.services import recaps
-from tests.conftest import AUTH, make_client, start_dialog
+from tests.conftest import AUTH, make_app, make_client
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 LONG = "Мне сегодня очень тревожно из-за работы, и я не знаю, как поговорить с руководителем."
@@ -75,6 +74,13 @@ class SlowChat:
         return None
 
 
+@pytest.fixture
+def client():
+    """Агент с текстовой моделью, которая пишет годный итог: без модели автоматического итога и черновика нет."""
+    with make_client(background=SlowChat("Ты рассказал про работу, и стало немного легче.")) as c:
+        yield c
+
+
 # ─── три способа завести итог ─────────────────────────────────────────────────
 
 
@@ -100,7 +106,7 @@ def test_automatic_recap_is_pending_then_ready(client, user_id):
 
 
 def test_a_manual_recap_is_not_replaced_by_the_automatic_one(user_id):
-    with make_client(chat=SlowChat("Авто итог.", delay=0.4)) as client:
+    with make_client(background=SlowChat("Авто итог.", delay=0.4)) as client:
         dialog_id = talk(client, user_id)
         assert end(client, user_id, dialog_id)["recapStatus"] == "pending"
         # пока модель думает, человек пишет итог сам в журнале
@@ -113,14 +119,14 @@ def test_a_manual_recap_is_not_replaced_by_the_automatic_one(user_id):
 
 def test_the_model_recap_is_validated_and_a_failed_one_leaves_none(user_id):
     bad = "Тебе надо поговорить."
-    with make_client(chat=SlowChat(bad)) as client:
+    with make_client(background=SlowChat(bad)) as client:
         dialog_id = talk(client, user_id)
         end(client, user_id, dialog_id)
         assert wait_status(client, user_id, dialog_id, "none")["recap"] is None
 
 
 def test_the_model_recap_is_the_free_text(user_id):
-    with make_client(chat=SlowChat("Ты говорил о работе, и стало легче.")) as client:
+    with make_client(background=SlowChat("Ты говорил о работе, и стало легче.")) as client:
         dialog_id = talk(client, user_id)
         end(client, user_id, dialog_id)
         ready = wait_status(client, user_id, dialog_id, "ready")
@@ -180,7 +186,7 @@ def test_the_setting_survives_a_restart(tmp_path: Path):
     path = tmp_path / "dialogs.db"
 
     def app() -> TestClient:
-        return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+        return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
     with app() as first:
         first.put(url(user, "/dialog-settings"), json={"recapEnabled": False}, headers=AUTH)
@@ -274,7 +280,7 @@ def test_the_recap_is_stored_with_the_dialog_on_disk(tmp_path: Path):
     path = tmp_path / "dialogs.db"
 
     def app() -> TestClient:
-        return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+        return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
     with app() as first:
         dialog_id = talk(first, user)
@@ -311,7 +317,7 @@ def retention(client: TestClient) -> tuple[int, int]:
 
 def test_retention_deletes_a_dialog_older_than_the_term_with_its_recap(client, user_id):
     store = store_of(client)
-    store.retention_days, store.retention_dry_run = 21, False
+    store.retention_days = 21
     old, fresh = talk(client, user_id), talk(client, user_id)
     end(client, user_id, old, takeaway=RECAP)
     end(client, user_id, fresh, takeaway=RECAP)
@@ -321,33 +327,12 @@ def test_retention_deletes_a_dialog_older_than_the_term_with_its_recap(client, u
     assert client.get(url(user_id, f"/dialogs/{fresh}"), headers=AUTH).status_code == 200
 
 
-def test_retention_off_keeps_everything(client, user_id):
-    store = store_of(client)
-    store.retention_days, store.retention_dry_run = 0, False
-    dialog_id = talk(client, user_id)
-    age(client, user_id, dialog_id, 400)
-    assert retention(client) == (0, 0)
-    assert client.get(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 200
-
-
-def test_the_dry_run_only_counts(client, user_id):
-    from prometheus_client import REGISTRY
-
-    store = store_of(client)
-    store.retention_days, store.retention_dry_run = 21, True
-    dialog_id = talk(client, user_id)
-    age(client, user_id, dialog_id, 30)
-    assert retention(client) == (1, 0)
-    assert client.get(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 200
-    assert REGISTRY.get_sample_value("agent_dialogs_retention_would_delete") == 1.0
-
-
 def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
     user = str(uuid.uuid4())
     path = tmp_path / "dialogs.db"
 
     def app() -> TestClient:
-        return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+        return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
     with app() as first:
         dialog_id = talk(first, user)
@@ -357,7 +342,7 @@ def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
         time.sleep(0.3)
     with app() as second:  # новый под: человек в памяти не загружен, разговор лежит только на диске
         store = store_of(second)
-        store.retention_days, store.retention_dry_run = 21, False
+        store.retention_days = 21
         assert second.portal.call(store.retention_pass, datetime.now(UTC)) == (1, 1)  # type: ignore[union-attr]
         assert second.get(url(user, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 404
         # Удаление мягкое: строка осталась в базе с пометкой, следующий проход её уже не считает.

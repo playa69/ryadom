@@ -133,8 +133,11 @@ async def test_found_chunks_leave_out_consent_seeds_of_old_datasets() -> None:
     service = backend(fake)
     user = uid()
     await service.update_settings(user, True, CONSENT)
-    found = await service.recall_now(dialog(user, 1), "что я люблю")
-    assert found == "Люблю гулять у воды"
+    current = dialog(user, 1)
+    service.user_message(current, "что я люблю")  # фоновый поиск по реплике: находка ложится в сводку
+    await service.drain()
+    brief = service.brief(current)
+    assert "Люблю гулять у воды" in brief and LEGACY_CONSENT not in brief
 
 
 def test_delete_route_soft_deletes_and_queues_the_document(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,4 +1,4 @@
-"""PROTEUS-168: цвет шарика по тону человека. Классификатор по расшифровке (`GEMINI_MOOD_CLASSIFIER`) присылает клиенту кадр
+"""PROTEUS-168: цвет шарика по тону человека. Классификатор по расшифровке присылает клиенту кадр
 `mood`; ответ модели и кризисный путь он не трогает. Поддельная модель и поддельный классификатор, без сети."""
 
 from typing import Any
@@ -11,7 +11,8 @@ from app.clients.mood_classifier import parse_mood
 from app.core.config import APP_CONFIG
 from app.services.replies import CRISIS_REPLY
 from tests.conftest import AUTH, FakeTts, has, read_frames, start_dialog, ws_url
-from tests.test_live import FakeConnector, make_live_client, reply_done, speak_turn
+from tests.fake_live import FakeConnector, reply_done, speak_turn
+from tests.test_live import make_live_client
 
 
 def moods(frames: list[Any]) -> list[dict[str, Any]]:
@@ -20,7 +21,7 @@ def moods(frames: list[Any]) -> list[dict[str, Any]]:
 
 @pytest.fixture
 def classifier(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Классификатор включён и отвечает заранее заданным тоном; в списке — тексты, которые он получил."""
+    """Есть ключ Gemini, классификатор отвечает заранее заданным тоном; в списке — тексты, которые он получил."""
     seen: list[str] = []
     answer = {"tone": "afraid", "intensity": 0.7}
 
@@ -30,9 +31,8 @@ def classifier(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings: None)
     monkeypatch.setattr(mood_classifier.MoodClassifier, "classify", fake)
-    monkeypatch.setattr(APP_CONFIG.gemini, "mood_classifier", "fake-model")
     monkeypatch.setattr(APP_CONFIG.gemini, "api_key", SecretStr("x"))
-    monkeypatch.setattr(APP_CONFIG.gemini, "mood_debounce_ms", 0)
+    monkeypatch.setattr("app.api.dialog_live.MOOD_DEBOUNCE_SECONDS", 0)
     return seen
 
 
@@ -64,7 +64,7 @@ def test_the_classifier_does_not_touch_the_crisis_path(user_id: str, classifier:
     assert end["text"] == CRISIS_REPLY
 
 
-def test_without_the_classifier_there_is_no_mood_frame(user_id: str) -> None:
+def test_without_a_gemini_key_there_is_no_mood_frame(user_id: str) -> None:
     frames = run_voice_turn(user_id, "мне сегодня тяжело", reply_done)
     assert moods(frames) == [] and has(frames, "assistant_end")
 
