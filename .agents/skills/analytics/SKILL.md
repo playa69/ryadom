@@ -6,8 +6,8 @@ description: Продуктовая аналитика «Рядом» в PostHog
 # Продуктовая аналитика (PostHog)
 
 Проект `Ryadom` в PostHog Cloud EU, id `300786`. Как устроен сбор, что отправляется и чего нет, каталог событий —
-[docs/analytics.md](../../../docs/analytics.md); что считается целевым действием и как цифры сверяются с базами —
-[docs/analytics-proof.md](../../../docs/analytics-proof.md). Типы событий и свойств — `app/packages/analytics/src/events.ts`.
+[docs/analytics.md](../../../docs/analytics.md), там же — что считается целевым действием и как цифры сверяются с
+базами (раздел «Целевое действие, DAU и воронка»). Типы событий и свойств — `app/packages/analytics/src/events.ts`.
 
 ## Доступ
 
@@ -74,7 +74,7 @@ SELECT event, properties.level, count() FROM events
 WHERE event IN ('safety_signal', 'sos_opened', 'hotline_called') AND timestamp > now() - INTERVAL 7 DAY GROUP BY 1, 2
 ```
 
-Целевое действие (`dialog_turn`) и DAU по нему определены в docs/analytics-proof.md: считай по этим определениям, а
+Целевое действие (`dialog_turn`) и DAU по нему определены в docs/analytics.md: считай по этим определениям, а
 если задача просит другое (например, «разговор от трёх реплик»), назови его в отчёте явно. Готовые карточки — дашборды «Рядом — продукт»
 (`https://eu.posthog.com/project/300786/dashboard/1012431`) и «Рядом — воронка и удержание» (`…/dashboard/1020753`).
 

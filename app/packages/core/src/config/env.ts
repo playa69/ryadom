@@ -209,7 +209,7 @@ const appShape = {
    * (`GET /api/analytics/config`). What the clients collect is fixed in their code (`buildSdkConfig`).
    *
    * LEGAL RISKS (Russian law) of every option below, in short. A research summary from 2026-10-10, not a
-   * lawyer's opinion; sources and detail in docs/analytics.md ("Правовые риски"):
+   * lawyer's opinion:
    * - events with an account id stay personal data of the operator (152-FZ art. 3 p. 1, 9, art. 13.1):
    *   "depersonalised" does not mean "not personal data", and they are never "anonymous";
    * - a cloud analytics service abroad is a cross-border transfer (art. 3 p. 11, art. 12): Roskomnadzor must

@@ -1,7 +1,8 @@
 # app/: правила кода
 
 Общие правила репозитория — в корневом `AGENTS.md`. Здесь — как устроен код `app/` (pnpm + Turborepo, Node 24,
-TypeScript); запуск и проверки — скиллы `local-dev` и `e2e`.
+TypeScript); запуск и проверки — скиллы `local-dev` и `e2e`. У ядра (`packages/core`: слои, менеджеры, процессы,
+транзакции) свои правила — `packages/core/AGENTS.md`.
 
 ## Контракты
 

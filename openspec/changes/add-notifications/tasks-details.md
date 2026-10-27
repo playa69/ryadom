@@ -64,7 +64,7 @@
 ### 2.1 Сервер: настройки и подписки устройств
 
 #### Что сделать
-Маршруты `app/services/api/src/routes/notifications/index.ts` за сессией и флагом `NOTIFICATIONS_ENABLED`, процессы в `app/packages/core` (по `rules.md`):
+Маршруты `app/services/api/src/routes/notifications/index.ts` за сессией и флагом `NOTIFICATIONS_ENABLED`, процессы в `app/packages/core` (по `AGENTS.md`):
 - `GET /api/notifications/settings` — значения по умолчанию, если строки нет;
 - `PUT /api/notifications/settings/{kind}` — время 08:00–22:30, шаг 30 минут, иначе `422`; включение снимает паузу;
 - `POST` и `DELETE /api/notifications/subscriptions` — идемпотентно по `endpoint`;
