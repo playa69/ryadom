@@ -31,13 +31,15 @@ import { updateMemorySettingsSchema } from './update-memory-settings.validator'
  * sheet, never by default, and nothing else in the app depends on it.
  *
  * Turning on records the consent first (`user_consents`, kind `memory`, in the version of the sheet;
- * a repeat of the same version keeps the first acceptance) and a `granted` line in the memory consent
- * journal, and only then asks the agent. If the agent refuses or is down, the consent stays on
- * record: it is harmless, the person did accept, and memory is not on until the agent says so.
+ * a repeat of the same version keeps the first acceptance) and a line in the memory consent journal,
+ * and only then asks the agent: `granted` for a new acceptance, `resumed` for the same sheet after a
+ * pause. If the agent refuses or is down, the consent stays on record: it is harmless, the person
+ * did accept, and memory is not on until the agent says so.
  *
- * Turning off writes a `revoked` line, with the version that was in force, before the agent is
- * asked: withdrawing consent counts from the moment the person did it. Turning off what was never
- * on leaves no line. Whether memory is on is the agent's to say; the journal is the evidence.
+ * Turning off is a pause, not a withdrawal: the agent keeps the consent, and so does the journal,
+ * which gets a `paused` line with the version in force, before the agent is asked. Turning off what
+ * was never on leaves no line. Whether memory is on is the agent's to say; the journal is the
+ * evidence of what the person did.
  */
 @requestHandler(UpdateMemorySettingsOperation)
 export class UpdateMemorySettingsOperationHandler implements RequestHandler<
@@ -80,12 +82,13 @@ export class UpdateMemorySettingsOperationHandler implements RequestHandler<
           new GetLatestMemoryConsentEventQuery({ userId }),
         )
         // A double tap or a retry of the same consent is not a new one.
-        if (event?.action !== 'granted' || event.version !== version) {
+        const inForce = event?.action === 'granted' || event?.action === 'resumed'
+        if (!(inForce && event.version === version)) {
           await memoryConsentEventsManager.execute(
             new RecordMemoryConsentEventCommand({
               eventId: randomUUID(),
               userId,
-              action: 'granted',
+              action: event?.action === 'paused' && event.version === version ? 'resumed' : 'granted',
               version,
               at,
             }),
@@ -97,13 +100,13 @@ export class UpdateMemorySettingsOperationHandler implements RequestHandler<
         const { event } = await memoryConsentEventsManager.execute(
           new GetLatestMemoryConsentEventQuery({ userId }),
         )
-        // Only consent in force can be withdrawn, and a repeat withdraws nothing more.
-        if (event?.action === 'granted') {
+        // Only memory that was on can be paused, and a repeat pauses nothing more.
+        if (event?.action === 'granted' || event?.action === 'resumed') {
           await memoryConsentEventsManager.execute(
             new RecordMemoryConsentEventCommand({
               eventId: randomUUID(),
               userId,
-              action: 'revoked',
+              action: 'paused',
               version: event.version,
               at,
             }),

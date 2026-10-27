@@ -144,7 +144,7 @@ describe('согласие на память не обязательное (ло
     expect(USER_CONSENT_KINDS).not.toContain('memory')
     expect(OPTIONAL_CONSENT_KINDS).toEqual(['memory'])
     for (const kind of OPTIONAL_CONSENT_KINDS) expect(USER_CONSENT_KINDS).not.toContain(kind)
-    expect(MEMORY_CONSENT_ACTIONS).toEqual(['granted', 'revoked'])
+    expect(MEMORY_CONSENT_ACTIONS).toEqual(['granted', 'revoked', 'paused', 'resumed'])
   })
 
   it('принятие первого экрана не записывает согласие на память', async () => {
@@ -262,7 +262,7 @@ describe('включение и выключение памяти', () => {
     expect(await journal(user.id)).toHaveLength(1)
   })
 
-  it('выключение оставляет след revoked с датой и версией; повтор и выключение без согласия следа не оставляют', async () => {
+  it('выключение — пауза: след paused с датой и версией, согласие не отзывается; повтор и выключение без согласия следа не оставляют', async () => {
     const { calls } = settingsAgent()
     const user = await registerConfirmedUser()
     const never = await registerConfirmedUser()
@@ -275,7 +275,7 @@ describe('включение и выключение памяти', () => {
     const rows = await journal(user.id)
     expect(rows.map((row) => [row.action, row.version])).toEqual([
       ['granted', MEMORY_VERSION],
-      ['revoked', MEMORY_VERSION],
+      ['paused', MEMORY_VERSION],
     ])
     expect(rows[1]!.at).toBeInstanceOf(Date)
     expect(await journal(never.id)).toHaveLength(0)
@@ -284,7 +284,7 @@ describe('включение и выключение памяти', () => {
     expect((await consentRows(user.id)).filter((row) => row.kind === 'memory')).toHaveLength(1)
   })
 
-  it('включение после выключения — новая строка granted, и с новой версией листа — новое согласие', async () => {
+  it('включение после паузы — строка resumed, а с новой версией листа — новое согласие granted', async () => {
     settingsAgent()
     const user = await registerConfirmedUser()
 
@@ -295,8 +295,8 @@ describe('включение и выключение памяти', () => {
 
     expect((await journal(user.id)).map((row) => [row.action, row.version])).toEqual([
       ['granted', MEMORY_VERSION],
-      ['revoked', MEMORY_VERSION],
-      ['granted', MEMORY_VERSION],
+      ['paused', MEMORY_VERSION],
+      ['resumed', MEMORY_VERSION],
       ['granted', '2027-01-15'],
     ])
     const versions = (await consentRows(user.id))
