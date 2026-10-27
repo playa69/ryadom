@@ -15,7 +15,6 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from app.main import create_app
 from app.services.dialog_db import DialogDbError, DialogWrite
 from app.services.dialog_store import DialogStore
 from tests.conftest import AUTH, make_app, read_frames, send_user_message, start_dialog, ws_url

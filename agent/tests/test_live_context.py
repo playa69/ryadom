@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import LiveDialogSession, LiveTurn
+from app.api.dialog_live import DialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveConnector, LiveError, LiveEvent, _translate, live_config
 from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.dialog_store import DialogStore
@@ -104,13 +104,13 @@ def start_speaking(ws: Any, link: FakeLink) -> None:
     wait_until(lambda: ("start",) in link.commands, "начало речи дошло до модели")
 
 
-def make_session(connector: FakeConnector, *messages: tuple[str, str]) -> LiveDialogSession:
+def make_session(connector: FakeConnector, *messages: tuple[str, str]) -> DialogSession:
     """Сессия без сокета: для проверки внутренних шагов (`_history`, `_ensure_link`, `_read`). Роли: "u" и "a"."""
     store = DialogStore()
     dialog, _, _ = store.start(str(uuid.uuid4()))
     for role, text in messages:
         store.add_message(dialog, "user" if role == "u" else "assistant", text)
-    return LiveDialogSession(None, store, dialog, lambda: None, connector)  # type: ignore[arg-type]
+    return DialogSession(None, store, dialog, lambda: None, connector)  # type: ignore[arg-type]
 
 
 def test_live_instructions_carry_the_russian_only_rule() -> None:
@@ -428,7 +428,7 @@ class Memory:
         self.ready = True
 
 
-def with_memory(memory: Memory, connector: FakeConnector, *messages: tuple[str, str]) -> LiveDialogSession:
+def with_memory(memory: Memory, connector: FakeConnector, *messages: tuple[str, str]) -> DialogSession:
     session = make_session(connector, *messages)
     session._store.memory = memory  # type: ignore[assignment]
     return session

@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
 from app.core.config import APP_CONFIG
-from app.main import create_app
 from app.services.dialog_db import DialogDbError, DialogWrite
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from app.services.dialog_store import DialogStore

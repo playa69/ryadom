@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
 from tests.conftest import AUTH, make_app
 from tests.fake_db import FakeDialogDatabase
 from tests.test_memory_cognee_backend import FakeCognee, memory_settings

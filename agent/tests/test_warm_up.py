@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.clients.gemini_live import GeminiLiveTts, LiveError, LiveEvent, LiveHistory
 from app.clients.speech import CachedTts, Voice
 from app.core.config import GeminiSettings
-from app.main import SPOKEN_PHRASES, WARM_UP_GEMINI_SESSIONS, create_app
+from app.main import SPOKEN_PHRASES, WARM_UP_GEMINI_SESSIONS
 from app.services.gemini_budget import TokenBudget
 from app.services.replies import split_sentences
 from tests.conftest import FakeTts, make_app
@@ -80,7 +80,7 @@ def test_gemini_warm_up_keeps_at_most_three_sessions_open() -> None:
     """Фраза — сессия Gemini: 16 открытий разом Google встречал отказами. Прогрев держит открытыми не больше
     WARM_UP_GEMINI_SESSIONS, считая и сессии, которые ещё дочитывают расход."""
     connector = CountingConnector()
-    with TestClient(create_app(None, lambda: (None, None), live_factory=lambda: connector)) as client:
+    with TestClient(make_app(connector, real_tts=True)) as client:
         tts = client.app.state.tts
         deadline = time.monotonic() + 10
         while not all(tts.remembered(part, voice) for voice, part in WANTED) and time.monotonic() < deadline:

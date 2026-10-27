@@ -50,11 +50,6 @@ def eligible(dialog: "Dialog") -> bool:
     return dialog.memory_mode == "on" and not dialog.crisis_seen and user_chars(dialog) >= MIN_USER_CHARS
 
 
-def template_recap(dialog: "Dialog") -> str:
-    """Детерминированный итог без модели: для `LLM_MODE=template` и разработки. Содержания разговора в нём нет."""
-    return "Ты рассказал, что у тебя на душе, и мы поговорили об этом. Тебе важно, чтобы тебя услышали."
-
-
 def build_messages(dialog: "Dialog") -> list[dict[str, str]]:
     lines: list[str] = []
     size = 0
@@ -90,13 +85,11 @@ def parse_model_reply(reply: str) -> str | None:
     return clean_model_recap(reply.strip().strip('"«»').strip())
 
 
-async def make_recap(
-    chat: ChatModel | None, dialog: "Dialog", timeout: float, template: bool = False
-) -> str | None:
-    """Итог разговора от модели; шаблонный — только в режиме `LLM_MODE=template` (`template`). None, если модели нет или она не
-    ответила, или ответ не годится: тогда итог можно завести вручную."""
+async def make_recap(chat: ChatModel | None, dialog: "Dialog", timeout: float) -> str | None:
+    """Итог разговора от модели. None, если модели нет или она не ответила, или ответ не годится: тогда итог можно завести
+    вручную."""
     if chat is None:
-        return template_recap(dialog) if template else None
+        return None
     try:
         reply = await asyncio.wait_for(chat.complete(build_messages(dialog)), timeout)
     except (ModelError, TimeoutError):

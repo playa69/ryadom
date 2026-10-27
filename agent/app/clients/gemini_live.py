@@ -1,4 +1,4 @@
-"""Gemini Live: речь в речь по WebSocket (SDK google-genai). Режим `VOICE_PIPELINE=gemini_live`.
+"""Gemini Live: речь в речь по WebSocket (SDK google-genai), единственный голосовой путь агента.
 
 Одна модель слушает, отвечает и говорит. Агент управляет границами реплики сам (ручной режим активности): начало и
 конец реплики ему сообщает клиент (`audio_start` / `audio_end`), поэтому серверный VAD Google выключен.
@@ -315,7 +315,7 @@ class GeminiLiveConnector:
         from google.genai import types
 
         if settings.api_key is None:
-            raise RuntimeError("VOICE_PIPELINE=gemini_live, но GEMINI_API_KEY не задан")
+            raise RuntimeError("GEMINI_API_KEY не задан: голос агента — Gemini Live")
         self._types = types
         self._settings = settings
         self._model = settings.live_model

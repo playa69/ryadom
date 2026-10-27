@@ -4,8 +4,9 @@
 доменные Settings с validation_alias, SecretStr для секретов, fail-fast
 валидация, неизменяемый синглтон APP_CONFIG.
 
-Упрощённая версия: токен, озвучка, чат и распознавание через прокси, темп стрима, трейсинг ходов и расход моделей
-в self-hosted Langfuse. Настройки БД и Redis вернутся вместе с полноценным агентом.
+Голос — Gemini Live (`GEMINI_*`); текстовая модель прокси программы (`LLM_*`) пишет только фоновые тексты: итоги разговоров и
+недели, заметки памяти. Дальше: темп стрима фраз, диалоги в PostgreSQL, память (Cognee), трейсинг ходов и расход моделей в
+self-hosted Langfuse.
 """
 
 import logging
@@ -50,15 +51,13 @@ class SecuritySettings(BaseAppSettings):
 
 
 class DialogSettings(BaseAppSettings):
-    """Темп ответа и предел голосовой реплики."""
+    """Темп фиксированных фраз и предел голосовой реплики."""
 
-    # Слова уходят по одному, как стрим настоящей модели.
+    # Слова фиксированных фраз (кризисный ответ, просьба повторить) уходят по одному, как стрим ответа модели.
     stream_delay_ms: int = Field(validation_alias="STREAM_DELAY_MS", default=60, ge=0)
     # Самая длинная голосовая реплика: клиент закрывает её сам на этой же секунде, а всё сверх неё агент
     # отбрасывает, чтобы память соединения не росла без предела (5 минут PCM16 16 кГц — около 9,6 МБ).
     voice_turn_max_seconds: int = Field(validation_alias="VOICE_TURN_MAX_SECONDS", default=300, ge=1, le=600)
-    # Реплика оборвана на полуслове («и…», «потому что»): ответ ждёт столько, не договорит ли человек. 0 — не ждать.
-    incomplete_hold_ms: int = Field(validation_alias="INCOMPLETE_HOLD_MS", default=1500, ge=0, le=10_000)
     # DSN PostgreSQL, в котором живут диалоги (app/services/dialog_db.py): в k8s это база `agent` в CNPG
     # `ryadom-db`, значение — в Secret `agent-db`. Пусто — диалоги только в памяти процесса и пропадают при
     # перезапуске (разработка); агент не падает и громко пишет об этом в журнал.
@@ -101,95 +100,43 @@ class DialogSettings(BaseAppSettings):
 
 
 class SpeechSettings(BaseAppSettings):
-    """Озвучка ответов агента (specs/speech-pipeline).
+    """Озвучка фиксированных фраз и звук клиенту (specs/speech-pipeline).
 
-    `TTS_MODE`, чем озвучивать (недостающий ключ или бинарник — сервис не стартует):
-      qwen          Qwen TTS через OpenAI-совместимый прокси: нужны `AGENT_API_TOKEN` (ключ прокси) и
-                    `QWEN_TTS_BASE_URL` (по умолчанию)
-      salutespeech  SaluteSpeech: нужен `SALUTE_SPEECH_AUTH_KEY` (ключ авторизации Сбера)
-      espeak        локальный espeak-ng, ключей не нужно (для разработки)
-      none          без озвучки: приложение читает ответы своим голосом (для разработки и тестов)
-
-    Голос выбирается по роду, `male` или `female`; у каждого провайдера он отображается на свои голоса.
+    Фразы (приветствие, кризисный ответ, просьба повторить) озвучивает тот же голос Gemini Live (`GeminiLiveTts`, app/clients/
+    gemini_live.py) и запоминает их: клиент ждёт `tts_start` приветствия не дольше 0,9 с, а новая сессия Gemini открывается
+    около секунды. Голос ответов модели — `GEMINI_LIVE_VOICE_*`.
     """
 
-    mode: Literal["qwen", "salutespeech", "espeak", "none"] = Field(validation_alias="TTS_MODE", default="qwen")
+    # Голос по роду, `male` или `female`, у тех, кто ещё не выбирал.
     default_voice: Literal["male", "female"] = Field(validation_alias="TTS_DEFAULT_VOICE", default="male")
     tts_frame_interval_ms: int = Field(validation_alias="TTS_FRAME_INTERVAL_MS", default=100, ge=0)
     # Сколько озвученных фраз помнить (по ним же прогреваются приветствия); 0 выключает память.
     tts_cache_items: int = Field(validation_alias="TTS_CACHE_ITEMS", default=64, ge=0)
 
-    espeak_binary: str = Field(validation_alias="ESPEAK_BINARY", default="espeak-ng")
-    espeak_voice_male: str = Field(validation_alias="ESPEAK_VOICE_MALE", default="ru")
-    espeak_voice_female: str = Field(validation_alias="ESPEAK_VOICE_FEMALE", default="ru+f2")
-    espeak_speed: int = Field(validation_alias="ESPEAK_SPEED", default=150, ge=80, le=450)
-
-    salute_auth_key: SecretStr | None = Field(validation_alias="SALUTE_SPEECH_AUTH_KEY", default=None)
-    salute_scope: str = Field(validation_alias="SALUTE_SPEECH_SCOPE", default="SALUTE_SPEECH_PERS")
-    salute_voice_male: str = Field(validation_alias="SALUTE_SPEECH_VOICE_MALE", default="Bys_24000")
-    salute_voice_female: str = Field(validation_alias="SALUTE_SPEECH_VOICE_FEMALE", default="Nec_24000")
-    salute_timeout_seconds: int = Field(validation_alias="SALUTE_SPEECH_TIMEOUT_SECONDS", default=15, ge=1)
-    # Сертификаты Сбера подписаны российским корневым УЦ: путь к его пакету, если системного хранилища мало.
-    salute_ca_bundle: str | None = Field(validation_alias="SALUTE_SPEECH_CA_BUNDLE", default=None)
-
-    # Qwen TTS через OpenAI-совместимый прокси (POST {base_url}/audio/speech). У модели свои голоса и форматы:
-    # голоса loongjohn и longanhuan_v3.6, форматы mp3 и pcm; агенту нужен pcm (PCM16, 24 кГц, моно).
-    qwen_base_url: str | None = Field(validation_alias="QWEN_TTS_BASE_URL", default=None)
-    # Ключ прокси хранится в AGENT_API_TOKEN: он принадлежит только агенту и наружу не уходит. Не путать с
-    # AGENT_INTERNAL_TOKEN, которым вызывающая сторона (api приложения) представляется самому агенту.
-    qwen_api_key: SecretStr | None = Field(validation_alias="AGENT_API_TOKEN", default=None)
-    qwen_model: str = Field(validation_alias="QWEN_TTS_MODEL", default="qwen/qwen-audio-3.0-tts-flash")
-    qwen_voice_male: str = Field(validation_alias="QWEN_TTS_VOICE_MALE", default="loongjohn")
-    qwen_voice_female: str = Field(validation_alias="QWEN_TTS_VOICE_FEMALE", default="longanhuan_v3.6")
-    qwen_timeout_seconds: int = Field(validation_alias="QWEN_TTS_TIMEOUT_SECONDS", default=30, ge=1)
-    # Читать звук Qwen потоком: прокси отдаёт его кусками, и первый звук идёт раньше (проверено живым замером,
-    # см. scripts/latency_probe.py). false — ждать фразу целиком, как раньше.
-    qwen_stream: bool = Field(validation_alias="QWEN_TTS_STREAM", default=True)
-
 
 class LlmSettings(BaseAppSettings):
-    """Чат и распознавание речи через OpenAI-совместимый прокси программы (LiteLLM).
+    """Текстовая модель прокси программы (LiteLLM, OpenAI-совместимый): только фоновые задачи вне голосового пути — итоги
+    разговоров, итоги недели, заметки памяти. Голос ведёт Gemini Live, этой моделью агент с человеком не говорит.
 
-    `LLM_MODE`:
-      proxy     ответы пишет чат-модель, голос распознаёт whisper: нужны `AGENT_API_TOKEN` (тот же ключ прокси,
-                что у озвучки) и `LLM_BASE_URL` (по умолчанию)
-      template  без моделей: шаблонные ответы, а голосовая реплика превращается в `[голосовая реплика, N с]`
-                (для разработки и тестов)
+    Нужны `AGENT_API_TOKEN` (ключ прокси; принадлежит только агенту) и `LLM_BASE_URL`; без них модели нет: итоги не
+    подводятся, заметки не извлекаются, итоги недели отвечают `DIGEST_UNAVAILABLE`, разговор идёт как обычно.
     """
 
-    mode: Literal["proxy", "template"] = Field(validation_alias="LLM_MODE", default="proxy")
     base_url: str | None = Field(validation_alias="LLM_BASE_URL", default=None)
     api_key: SecretStr | None = Field(validation_alias="AGENT_API_TOKEN", default=None)
-    # Русскоязычная модель Сбера: первый токен за ~0,6 с, ответ короткий и тёплый (сравнение — в README).
+    # Русскоязычная модель Сбера: ответ короткий и тёплый (подходит для итога разговора).
     chat_model: str = Field(validation_alias="LLM_CHAT_MODEL", default="gigachat3.5-432b-a28b")
-    stt_model: str = Field(validation_alias="STT_MODEL", default="whisper-large-v3")
-    # Дольше ждать ответ нет смысла: после таймаута агент отвечает шаблоном.
+    # Дольше ждать ответ нет смысла: после таймаута итог не подводится (его можно завести вручную).
     timeout_seconds: int = Field(validation_alias="LLM_TIMEOUT_SECONDS", default=15, ge=1)
-    # Распознавание ждёт дольше чата: реплика бывает до VOICE_TURN_MAX_SECONDS, и whisper на ней работает заметное время.
-    stt_timeout_seconds: int = Field(validation_alias="STT_TIMEOUT_SECONDS", default=120, ge=1)
-    # Сколько последних сообщений диалога видит модель.
-    history_messages: int = Field(validation_alias="LLM_HISTORY_MESSAGES", default=12, ge=1)
     max_tokens: int = Field(validation_alias="LLM_MAX_TOKENS", default=200, ge=16)
     temperature: float = Field(validation_alias="LLM_TEMPERATURE", default=0.7, ge=0, le=2)
 
 
-class VoiceSettings(BaseAppSettings):
-    """Каким путём идёт голосовой диалог.
-
-    `VOICE_PIPELINE`:
-      cascade      распознавание → чат-модель → озвучка (по умолчанию; настраивается `LLM_MODE` и `TTS_MODE`)
-      gemini_live  речь в речь через Gemini Live: слушает, отвечает и говорит одна модель (настраивается `GEMINI_*`)
-    """
-
-    pipeline: Literal["cascade", "gemini_live"] = Field(validation_alias="VOICE_PIPELINE", default="cascade")
-
-
 class GeminiSettings(BaseAppSettings):
-    """Gemini Live (`VOICE_PIPELINE=gemini_live`): речь в речь по WebSocket через SDK google-genai.
+    """Gemini Live: речь в речь по WebSocket через SDK google-genai, единственный голосовой путь агента.
 
-    Нужен только в этом режиме; без `GEMINI_API_KEY` сервис в нём не стартует. Из России Google отвечает «User location is
-    not supported»: тогда `GEMINI_BASE_URL` указывает на прослойку в поддерживаемой стране (WebSocket-релей к
-    generativelanguage.googleapis.com).
+    Без `GEMINI_API_KEY` сервис не стартует. Из России Google отвечает «User location is not supported»: тогда
+    `GEMINI_BASE_URL` указывает на прослойку в поддерживаемой стране (WebSocket-релей к generativelanguage.googleapis.com).
     """
 
     api_key: SecretStr | None = Field(validation_alias="GEMINI_API_KEY", default=None)
@@ -198,7 +145,7 @@ class GeminiSettings(BaseAppSettings):
     # Токен релея (agent/relay): уходит заголовком X-Relay-Token на GEMINI_BASE_URL, релей без него отвечает 403.
     relay_token: SecretStr | None = Field(validation_alias="GEMINI_RELAY_TOKEN", default=None)
     live_model: str = Field(validation_alias="GEMINI_LIVE_MODEL", default="gemini-3.8-live")
-    # Голос выбирается по роду, как у остальных провайдеров; названия — встроенные голоса Gemini.
+    # Голос выбирается по роду (`male`/`female`) или по имени из профиля (app/core/voices.py); названия — встроенные голоса Gemini.
     voice_male: str = Field(validation_alias="GEMINI_LIVE_VOICE_MALE", default="Charon")
     voice_female: str = Field(validation_alias="GEMINI_LIVE_VOICE_FEMALE", default="Kore")
     connect_timeout_seconds: int = Field(validation_alias="GEMINI_CONNECT_TIMEOUT_SECONDS", default=15, ge=1)
@@ -235,7 +182,7 @@ class GeminiSettings(BaseAppSettings):
     # Кризисы модель не решает: их ловит агент.
     thinking_budget: int = Field(validation_alias="GEMINI_THINKING_BUDGET", default=-1, ge=-1)
     # Цвет шарика по тону человека (REQ-VOICE-10): отдельный запрос к текстовой модели по расшифровке реплики (имя модели).
-    # Включён по умолчанию, работает только в режиме gemini_live с ключом Gemini; пустое имя отключает. Идёт параллельно ответу и
+    # Включён по умолчанию, работает с ключом Gemini; пустое имя отключает. Идёт параллельно ответу и
     # ему не мешает; вызов функции внутри сессии Live замерен и отвергнут (ответ терялся).
     mood_classifier: str = Field(validation_alias="GEMINI_MOOD_CLASSIFIER", default="gemini-3.5-flash-lite")
     mood_classifier_timeout_seconds: float = Field(validation_alias="GEMINI_MOOD_CLASSIFIER_TIMEOUT_SECONDS", default=2.5, gt=0)
@@ -278,14 +225,11 @@ class MemorySettings(BaseAppSettings):
     cognee_base_url: str | None = Field(validation_alias="COGNEE_BASE_URL", default=None)
     cognee_email: str | None = Field(validation_alias="COGNEE_SERVICE_EMAIL", default=None)
     cognee_password: SecretStr | None = Field(validation_alias="COGNEE_SERVICE_PASSWORD", default=None)
-    # Инструмент recall_memory в голосовом контуре: синхронный поиск в Cognee — 10–30 с паузы посреди хода.
-    # По умолчанию выключен: память подтягивается фоном (реплика → поиск к следующему ходу), без пауз в разговоре.
-    recall_tool: bool = Field(validation_alias="MEMORY_RECALL_TOOL", default=False)
     # Заметки о человеке (слой 1, PROTEUS-242): лимит живых заметок на человека. Срока давности у заметок нет.
     notes_max: int = Field(validation_alias="MEMORY_NOTES_MAX", default=200, ge=1)
     # Сколько токенов блока памяти уходит в голосовую модель.
     brief_max_tokens: int = Field(validation_alias="MEMORY_BRIEF_MAX_TOKENS", default=1200, ge=100)
-    # Извлечение заметок по ходу разговора (флаг выката) и модель извлечения (по умолчанию чат-модель прокси).
+    # Извлечение заметок по ходу разговора (флаг выката) и модель извлечения (по умолчанию LLM_CHAT_MODEL).
     notes_enabled: bool = Field(validation_alias="MEMORY_NOTES_ENABLED", default=False)
     notes_model: str | None = Field(validation_alias="MEMORY_NOTES_MODEL", default=None)
     # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
@@ -360,7 +304,6 @@ class Config:
     dialog: DialogSettings = DialogSettings()
     speech: SpeechSettings = SpeechSettings()
     llm: LlmSettings = LlmSettings()
-    voice: VoiceSettings = VoiceSettings()
     gemini: GeminiSettings = GeminiSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
     memory: MemorySettings = MemorySettings()

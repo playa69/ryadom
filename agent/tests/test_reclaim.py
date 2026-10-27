@@ -18,8 +18,7 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import LiveTurn
-from app.api.dialog_ws import DialogSession, Synthesis
+from app.api.dialog_live import DialogSession, LiveTurn, Synthesis
 from app.clients.gemini_live import GeminiLiveLink
 from app.core import reclaim
 from app.core.config import APP_CONFIG

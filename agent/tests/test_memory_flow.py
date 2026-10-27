@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
 from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.extractor import NotesExtractor
 from tests.conftest import AUTH, make_app

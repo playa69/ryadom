@@ -2,7 +2,7 @@
 
 import uuid
 
-from tests.conftest import AUTH, FakeTts, has, make_client, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, has, read_frames, send_user_message, start_dialog, ws_url
 
 
 def url(user_id: str, tail: str = "") -> str:
@@ -224,28 +224,6 @@ def test_erase_user_is_synchronous_and_idempotent(client, user_id):
     assert client.get(url(other, f"/{other_dialog['dialogId']}"), headers=AUTH).status_code == 200
 
 
-def test_dev_tts_returns_wav(voice_client):
-    response = voice_client.get("/dev/tts", params={"text": "Привет. Как дела?"}, headers=AUTH)
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/wav"
-    assert response.headers["x-tts-provider"] == "fake"
-    assert response.content[:4] == b"RIFF"
-
-
-def test_dev_tts_without_speech_says_so():
-    with make_client(None) as client:
-        response = client.get("/dev/tts", params={"text": "Привет"}, headers=AUTH)
-        assert response.status_code == 503
-        assert response.json()["error"]["code"] == "VOICE_UNAVAILABLE"
-
-
-def test_dev_tts_provider_failure_is_503():
-    with make_client(FakeTts(fail=True)) as client:
-        response = client.get("/dev/tts", params={"text": "Привет"}, headers=AUTH)
-        assert response.status_code == 503
-        assert response.json()["error"]["code"] == "VOICE_UNAVAILABLE"
-
-
 # ─── access-лог ───────────────────────────────────────────────────────────────
 
 
@@ -263,7 +241,7 @@ def test_service_endpoints_are_not_written_to_the_access_log():
     keep = SkipServiceEndpoints()
     for path in ("/health", "/health/ready", "/version", "/health?x=1"):
         assert keep.filter(_access_record(path)) is False, path
-    for path in ("/v1/users/u/dialogs", "/dev/tts?text=a", "/"):
+    for path in ("/v1/users/u/dialogs", "/v1/other?x=1", "/"):
         assert keep.filter(_access_record(path)) is True, path
 
 
@@ -276,26 +254,6 @@ def test_access_log_filter_is_installed_once():
     create_app()
     installed = [f for f in logging.getLogger("uvicorn.access").filters if isinstance(f, SkipServiceEndpoints)]
     assert len(installed) == 1
-
-
-# ─── dev-переключатель озвучки (как у dev/agent-mock) ─────────────────────────
-
-
-def test_dev_tts_mode_can_be_switched(voice_client):
-    assert voice_client.get("/dev/tts", headers=AUTH).json() == {"mode": "auto", "provider": "fake", "effective": "fake"}
-
-    off = voice_client.post("/dev/tts", json={"mode": "none"}, headers=AUTH).json()
-    assert off == {"mode": "none", "provider": "fake", "effective": None}
-    assert voice_client.get("/health/ready").json()["tts"] == "none"
-    assert voice_client.get("/dev/tts", params={"text": "Привет"}, headers=AUTH).status_code == 503
-
-    on = voice_client.post("/dev/tts", json={"mode": "auto"}, headers=AUTH).json()
-    assert on["effective"] == "fake"
-
-
-def test_dev_tts_mode_needs_a_valid_mode_and_the_token(voice_client):
-    assert voice_client.post("/dev/tts", json={"mode": "loud"}, headers=AUTH).status_code == 400
-    assert voice_client.post("/dev/tts", json={"mode": "none"}).status_code == 401
 
 
 # ─── голос по роду ────────────────────────────────────────────────────────────
@@ -330,9 +288,3 @@ def test_erasing_a_user_forgets_the_voice_choice(client, user_id):
     assert client.delete(f"/v1/users/{user_id}", headers=AUTH).status_code == 204
     assert start_dialog(client, user_id)["voice"] == "male"
 
-
-def test_dev_tts_takes_the_voice(voice_client, voice):
-    voice_client.get("/dev/tts", params={"text": "Привет", "voice": "female"}, headers=AUTH)
-    voice_client.get("/dev/tts", params={"text": "Привет"}, headers=AUTH)
-    assert voice.voices == ["female", "male"]
-    assert voice_client.get("/dev/tts", params={"text": "Привет", "voice": "robot"}, headers=AUTH).status_code == 400

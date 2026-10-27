@@ -6,7 +6,7 @@ import pytest
 from prometheus_client import REGISTRY
 from pydantic import ValidationError
 
-from app.api.dialog_ws import MAX_AUDIO_BYTES, MAX_USER_TEXT
+from app.api.dialog_live import MAX_AUDIO_BYTES, MAX_USER_TEXT
 from app.core.config import APP_CONFIG, DialogSettings
 from tests.conftest import (
     AUTH,

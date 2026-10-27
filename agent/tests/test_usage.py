@@ -16,16 +16,15 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import LiveDialogSession, LiveTurn
+from app.api.dialog_live import DialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveTts
-from app.main import create_app
 from app.services import usage as model_usage
 from app.services.dialog_db import DialogDbError
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from app.services.dialog_store import GREETING_NEW, DialogStore
 from app.services.replies import CRISIS_REPLY, split_sentences
 from app.services.usage import Usage
-from tests.conftest import AUTH, FakeTts, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, FakeTts, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_live import FakeConnector, reply_done, speak_turn
 from tests.test_models import chat, completion
 
@@ -111,7 +110,7 @@ def chars(text: str) -> int:
 
 def test_phrase_speech_usage_goes_on_the_message_it_voices(tmp_path: Path) -> None:
     path, user = tmp_path / "d.sqlite3", str(uuid.uuid4())
-    app = create_app(lambda: SpendingTts(), lambda: (None, None), live_factory=lambda: FakeConnector(), database_factory=lambda: DialogDatabase(str(path)))
+    app = make_app(tts=SpendingTts(), database_factory=lambda: DialogDatabase(str(path)))
     dialogs = metric("agent_dialogs_total")
     with TestClient(app) as client:
         dialog = start_dialog(client, user)
@@ -143,9 +142,7 @@ def live_tokens(direction: str, modality: str) -> float:
 def test_live_turn_usage_goes_on_the_models_answer_and_speech_on_the_messages(tmp_path: Path) -> None:
     path, user = tmp_path / "d.sqlite3", str(uuid.uuid4())
     connector = FakeConnector(usage=USAGE, turn_complete=True)
-    app = create_app(
-        lambda: FakeTts(), lambda: (None, None), live_factory=lambda: connector, database_factory=lambda: DialogDatabase(str(path))
-    )
+    app = make_app(connector, FakeTts(), database_factory=lambda: DialogDatabase(str(path)))
     before = live_tokens("input", "audio")
     with TestClient(app) as client:
         dialog = start_dialog(client, user)
@@ -169,7 +166,7 @@ async def test_live_usage_without_an_answer_message_goes_on_the_dialog(tmp_path:
     user = str(uuid.uuid4())
     await store.ensure_user(user)
     dialog, _, _ = store.start(user)
-    session = LiveDialogSession(None, store, dialog, lambda: None, FakeConnector())  # type: ignore[arg-type]
+    session = DialogSession(None, store, dialog, lambda: None, FakeConnector())  # type: ignore[arg-type]
     # Обычный порядок: usage приходит с turn_complete, когда ответ уже закончен.
     answered, silent = LiveTurn(kind="text", generating=False), LiveTurn(kind="voice", generating=False)
     store.add_message(dialog, "assistant", "Ответ модели", answered.message_id)

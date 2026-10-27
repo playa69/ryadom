@@ -1,13 +1,8 @@
 # syntax=docker/dockerfile:1
-# Упрощённый агент. Сборка из каталога agent/:
+# Агент «Слышу Рядом». Сборка из каталога agent/:
 #   docker build -t ryadom-agent .
-#   docker run --rm -p 8001:8001 -e AGENT_INTERNAL_TOKEN=<токен> -e TTS_MODE=espeak ryadom-agent
+#   docker run --rm -p 8001:8001 -e AGENT_INTERNAL_TOKEN=<токен> -e GEMINI_API_KEY=<ключ> ryadom-agent
 FROM python:3.12-slim
-
-# espeak-ng: запасной голос, пока у агента нет ключа SaluteSpeech.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends espeak-ng \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

@@ -45,8 +45,6 @@ logger = logging.getLogger("agent.memory")
 
 # Фоновая находка по реплике (CHUNKS) режется: это контекст следующего хода, а не весь транскрипт.
 TURN_RECALL_MAX_CHARS = 800
-# Находка инструмента recall_memory в tool-сообщении: модели хватает пары чанков, длинное только раздувает контекст.
-TOOL_RECALL_MAX_CHARS = 2000
 _CONSENT_RE = re.compile(r"CONSENT memory v(\S+) (\S+)")
 
 
@@ -100,7 +98,6 @@ class CogneeMemoryBackend:
         self._extracting: set[str] = set()
         self._datasets: dict[str, bool] = {}  # user_id → память включена (датасет существует)
         self._turn_recalls: dict[str, str] = {}  # user_id → находка recall по последней реплике человека
-        self._turn_tasks: dict[str, asyncio.Task[str]] = {}  # user_id → идущий фоновый recall по последней реплике
         self._consents: dict[str, tuple[str | None, str | None]] = {}  # user_id → (версия согласия, когда)
         self._loading: set[str] = set()
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -144,7 +141,6 @@ class CogneeMemoryBackend:
         self._datasets.pop(user_id, None)
         self._consents.pop(user_id, None)
         self._turn_recalls.pop(user_id, None)
-        self._turn_tasks.pop(user_id, None)
 
     async def _read_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         """Сохранённые настройки памяти человека; None — база не подключена, не ответила или строки нет."""
@@ -355,9 +351,7 @@ class CogneeMemoryBackend:
             or not self._chat_search_cache.get(dialog.user_id, True)
         ):
             return
-        task = self._spawn(self._recall_turn(dialog.user_id, text))
-        if task is not None:
-            self._turn_tasks[dialog.user_id] = task  # инструмент модели дождётся этого же поиска, а не пойдёт вторым
+        self._spawn(self._recall_turn(dialog.user_id, text))
 
     async def _recall_turn(self, user_id: str, text: str) -> str:
         assert self._client is not None
@@ -370,38 +364,6 @@ class CogneeMemoryBackend:
         if found:
             self._turn_recalls[user_id] = found[:TURN_RECALL_MAX_CHARS]
         return found
-
-    def recall_supported(self, dialog: Dialog) -> bool:
-        """Инструмент recall_memory доступен, когда память человека включена и клиент настроен."""
-        return (
-            self._client is not None
-            and self._effective_enabled(dialog.user_id)
-            and self._chat_search_cache.get(dialog.user_id, True)
-        )
-
-    async def recall_now(self, dialog: Dialog, query: str) -> str:
-        """Прямой recall по запросу модели (инструмент recall_memory); находка также попадает в сводку следующих ходов.
-
-        CHUNKS, а не GRAPH_COMPLETION: синтез из найденного сделает сама чат-модель вторым проходом,
-        а Cognee без LLM-синтеза отвечает втрое быстрее — иначе в голосовой ход не влезаем.
-        """
-        if not self.recall_supported(dialog):
-            return ""
-        # Фоновый поиск по этой же реплике уже идёт (см. user_message) — дожидаемся его, а не делаем второй запрос.
-        pending = self._turn_tasks.get(dialog.user_id)
-        if pending is not None and not pending.done():
-            found = await pending
-        else:
-            try:
-                found = await self._visible(
-                    dialog.user_id, _dialog_chunks(await self._require_client().recall_chunks(query, dataset_name(dialog.user_id)))
-                )
-            except Exception:  # noqa: BLE001 - сбой поиска — модель отвечает без находки, разговор не рвём
-                logger.exception("cognee tool recall failed user=%s", dialog.user_id)
-                return ""
-        if found:
-            self._turn_recalls[dialog.user_id] = found[:TURN_RECALL_MAX_CHARS]
-        return found[:TOOL_RECALL_MAX_CHARS]
 
     def enabled(self, user_id: str) -> bool:
         """По кэшу процесса; неизвестный человек — фоновая проверка датасета."""
@@ -618,7 +580,6 @@ class CogneeMemoryBackend:
             await self._load_state(user_id)  # прежней памяти без строки настроек иначе после удаления датасета не стало бы
         await self.notes.delete_all(user_id)
         self._turn_recalls.pop(user_id, None)
-        self._turn_tasks.pop(user_id, None)
         if self._client is not None:
             await self.outbox.drop(user_id, ("index_dialog", "reindex_dialog", "rebuild", "delete_document"))
             await self.outbox.add(user_id, "delete_dataset")

@@ -1,8 +1,8 @@
 """Проверка итогов разговоров и итогов недели без приложения, базы и сокетов: на вход сценарии, на выходе то, что уходит в модель и что вернулось.
 
-    AGENT_INTERNAL_TOKEN=x AGENT_API_TOKEN=… LLM_BASE_URL=… LLM_MODE=proxy uv run python scripts/digest_check.py --out digests.json
-    AGENT_INTERNAL_TOKEN=x LLM_MODE=template uv run python scripts/digest_check.py --replies scripts/digest_replies.json   # без модели: готовые ответы
-    AGENT_INTERNAL_TOKEN=x LLM_MODE=proxy … uv run python scripts/digest_check.py --scenario work_week --show-prompts --runs 3
+    AGENT_INTERNAL_TOKEN=x AGENT_API_TOKEN=… LLM_BASE_URL=… uv run python scripts/digest_check.py --out digests.json
+    AGENT_INTERNAL_TOKEN=x uv run python scripts/digest_check.py --replies scripts/digest_replies.json   # без модели: готовые ответы
+    AGENT_INTERNAL_TOKEN=x AGENT_API_TOKEN=… LLM_BASE_URL=… uv run python scripts/digest_check.py --scenario work_week --show-prompts --runs 3
 
 Цепочка та же, что в агенте: диалоги → итог каждого (`recaps.make_recap`) → итоги недели (`digests.build_messages` →
 модель → `digests.clean_digest`, при отклонении один повтор). Запасного текста нет: если модель не ответила или оба ответа не прошли
@@ -22,7 +22,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.clients.llm import ModelError, build_models  # noqa: E402
+from app.clients.llm import ModelError, build_chat  # noqa: E402
 from app.core.config import APP_CONFIG  # noqa: E402
 from app.services import digests, recaps  # noqa: E402
 from app.services.dialog_store import Dialog, Message  # noqa: E402
@@ -291,10 +291,10 @@ async def main() -> int:
 
     if args.candidates:
         return run_candidates()
-    chat, _ = build_models(APP_CONFIG.llm)
+    chat = build_chat(APP_CONFIG.llm)
     replies = json.loads(Path(args.replies).read_text(encoding="utf-8")) if args.replies else None
     if chat is None and replies is None:
-        print("Нужна модель (LLM_MODE=proxy, AGENT_API_TOKEN, LLM_BASE_URL) или --replies с готовыми ответами: запасного текста нет.")
+        print("Нужна модель (AGENT_API_TOKEN, LLM_BASE_URL) или --replies с готовыми ответами: запасного текста нет.")
         return 2
     print("режим:", "готовые ответы из " + args.replies if replies is not None and chat is None else "модель " + APP_CONFIG.llm.chat_model)
     names = args.scenario or list(SCENARIOS)

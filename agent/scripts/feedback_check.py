@@ -3,15 +3,14 @@
     uv run python scripts/make_fixtures.py --out fixtures/          # один раз (нужен ключ Gemini)
     uv run python scripts/feedback_check.py --url http://127.0.0.1:8012 --token <токен> --pcm-dir fixtures/ --runs 3
 
-Агент уже запущен в режиме gemini_live (скрипт его не запускает). Каждый сценарий идёт `--runs` раз с новым человеком и
+Агент уже запущен (скрипт его не запускает). Каждый сценарий идёт `--runs` раз с новым человеком и
 диалогом. Исход каждого прогона:
-  ok        ответ по существу (не лекция про язык, не шаблон, не просьба повторить)
+  ok        ответ по существу (не лекция про язык, не просьба повторить)
   repeat    агент попросил повторить («плохо слышно»): допустимо для тихого обрывка, но не идеально
   lecture   агент заговорил о языке («только по-русски»): плохо, из-за этого всё и затевалось
-  template  шаблонный запасной ответ (модель промолчала)
   silence   ответа нет совсем
 Для каждого прогона печатаются расшифровка и ответ: оценку тона и пользы делает человек, автомат ловит только то, что
-можно проверить по тексту. Код возврата 1, если есть лекции про язык, тишина или (при `--strict`) шаблоны.
+можно проверить по тексту. Код возврата 1, если есть лекции про язык или тишина (с `--strict` ещё просьбы повторить, ответы без звука и разбитые ответы).
 """
 
 import argparse
@@ -32,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from live_smoke import Conn, cyrillic_share, first, open_dialog, open_socket, send_voice  # noqa: E402
 
-from app.services.replies import REPEAT_REQUEST, REPLIES, is_language_lecture  # noqa: E402
+from app.services.replies import REPEAT_REQUEST, is_language_lecture  # noqa: E402
 
 TOPIC_SWITCH = re.compile(r"о чём[- ]то другом|о чём ещё|что ещё хочется|как прошёл (твой )?день|что у тебя сейчас на душе", re.IGNORECASE)
 ANSWER_WAIT = 40.0  # сколько ждать ответ после реплики
@@ -146,8 +145,6 @@ def classify(result: dict) -> str:
         return "repeat"
     if is_language_lecture(answer):
         return "lecture"
-    if answer in REPLIES:
-        return "template"
     return "ok"
 
 
@@ -362,7 +359,7 @@ async def scenarios(args: argparse.Namespace) -> Report:
                 finally:
                     await conn.close()
                 first_text = between[0].d.get("text", "") if between else ""
-                kind = "template" if first_text in REPLIES else ("answered" if first_text else "waited")
+                kind = "answered" if first_text else "waited"
                 note = f"  до продолжения: {kind} {first_text[:60]!r}; всего ответов {len(ends)}; первый ответ через {round((between[0].t - first_end) if between else 0, 2)} с"
                 report.add("pause_cut", run, result, kind, note)
 
@@ -432,12 +429,12 @@ if __name__ == "__main__":
     parser.add_argument("--long-dialogs", type=int, default=3, help="long_text: сколько диалогов")
     parser.add_argument("--long-turns", type=int, default=30, help="long_text: сколько реплик в диалоге")
     parser.add_argument("--json", help="куда записать сырые результаты")
-    parser.add_argument("--strict", action="store_true", help="шаблоны и просьбы повторить тоже считать провалом")
+    parser.add_argument("--strict", action="store_true", help="просьбы повторить и ответы без звука тоже считать провалом")
     args = parser.parse_args()
     report = asyncio.run(scenarios(args))
     failed = summary(report)
     if args.json:
         Path(args.json).write_text(json.dumps(report.rows, ensure_ascii=False, indent=1), encoding="utf-8")
     if args.strict:
-        failed += sum(row["outcome"] in ("template", "repeat", "novoice", "split") for row in report.rows)
+        failed += sum(row["outcome"] in ("repeat", "novoice", "split") for row in report.rows)
     raise SystemExit(1 if failed else 0)

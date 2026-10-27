@@ -74,9 +74,8 @@ def test_usage_details_keeps_only_ints() -> None:
 async def test_null_tracer_is_a_noop() -> None:
     tracer = NullTracer()
     turn = tracer.start_turn(name="turn", session_id="d", user_id="u", input="текст")
-    span = tracer.start_span(turn, name="stt")
-    generation = tracer.start_generation(turn, name="chat")
-    for observation in (turn, span, generation):
+    span = tracer.start_span(turn, name="tts")
+    for observation in (turn, span):
         observation.update(input="x", output="y", usage={"prompt_tokens": 1}, level="ERROR")
         observation.end()
     await tracer.aclose()
@@ -181,11 +180,11 @@ async def test_trace_text_off_keeps_sizes_and_no_text_anywhere() -> None:
     tracer, client = make_tracer(trace_text=False)
     secret = "мне очень тяжело сегодня"
     turn = tracer.start_turn(name="t", session_id="d", user_id="u", input=secret, metadata={"user_chars": len(secret)})
-    chat = tracer.start_generation(turn, name="chat", input=[{"role": "user", "content": secret}])
-    chat.update(output=secret, level="ERROR", status=f"Чат-модель ответила 500: {secret}", metadata={"user_words": 4})
-    stt = tracer.start_span(turn, name="stt", input=secret, metadata={"text": secret})
-    stt.update(output=secret)
-    for observation in (stt, chat, turn):
+    first = tracer.start_span(turn, name="tts", input=secret, metadata={"text": secret})
+    first.update(output=secret, level="ERROR", status=f"Озвучка ответила 500: {secret}", metadata={"user_words": 4})
+    second = tracer.start_span(turn, name="tts", input=secret, metadata={"text": secret})
+    second.update(output=secret)
+    for observation in (second, first, turn):
         observation.end()
     root = client.traces[0]
     dump = str(root.kwargs) + str(root.updates) + str([(c.kwargs, c.updates) for c in root.children])
@@ -193,26 +192,26 @@ async def test_trace_text_off_keeps_sizes_and_no_text_anywhere() -> None:
     assert "user_chars" in dump and "user_words" in dump
 
 
-async def test_child_span_and_generation_hang_under_the_turn() -> None:
+async def test_child_spans_hang_under_the_turn() -> None:
     tracer, client = make_tracer()
-    turn = tracer.start_turn(name="voice_turn", session_id="d", user_id="u")
-    stt = tracer.start_span(turn, name="stt", metadata={"audio_bytes": 100})
-    chat = tracer.start_generation(turn, name="chat", model="proxy:gigachat", input=MESSAGES)
-    stt.update(output="расшифровка")
-    stt.end()
-    chat.update(output="ответ", usage={"prompt_tokens": 50})
-    chat.end()
+    turn = tracer.start_turn(name="live_turn_voice", session_id="d", user_id="u")
+    first = tracer.start_span(turn, name="tts", metadata={"first": True, "chars": 8})
+    second = tracer.start_span(turn, name="tts", metadata={"first": False, "chars": 14})
+    first.update(output="Я рядом.")
+    first.end()
+    second.update(output="С чего начнём?")
+    second.end()
     turn.end()
     root = client.traces[0]
-    assert [child.name for child in root.children] == ["stt", "chat"]
-    assert root.children[1].kind == "generation"
+    assert [child.name for child in root.children] == ["tts", "tts"]
+    assert all(child.kind == "span" for child in root.children)
     assert all(child.ended for child in root.children)
 
 
 async def test_orphan_children_are_skipped() -> None:
     tracer, client = make_tracer()
-    assert tracer.start_span(None, name="stt") is NULL_OBSERVATION
-    assert tracer.start_generation(NULL_OBSERVATION, name="chat") is NULL_OBSERVATION
+    assert tracer.start_span(None, name="tts") is NULL_OBSERVATION
+    assert tracer.start_span(NULL_OBSERVATION, name="tts") is NULL_OBSERVATION
     assert client.traces == []
 
 

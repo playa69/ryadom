@@ -1,6 +1,5 @@
 """Режим gemini_live: речь в речь через Gemini Live (поддельная модель, без сети)."""
 
-import asyncio
 import json
 import logging
 from collections.abc import Iterator
@@ -9,14 +8,12 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.clients.gemini_live import LiveError, LiveEvent
 from app.core.config import APP_CONFIG
-from app.main import create_app
 from app.services.replies import CRISIS_REPLY
 from tests.conftest import (
     components,
+    make_app,
     AUTH,
-    FAKE_PCM,
     FakeTts,
     audio_in_frame,
     has,
@@ -26,11 +23,11 @@ from tests.conftest import (
     types,
     ws_url,
 )
-from tests.fake_live import QUOTA_TEXT, FakeConnector, FakeLink, deltas_text, re_split, reply_done, speak_turn
+from tests.fake_live import FakeConnector, deltas_text, reply_done, speak_turn
 
 
 def make_live_client(connector: FakeConnector, tts: Any = None) -> TestClient:
-    return TestClient(create_app(lambda: tts, lambda: (None, None), live_factory=lambda: connector))
+    return TestClient(make_app(connector, tts))
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +51,7 @@ def live_client(connector: FakeConnector) -> Iterator[TestClient]:
 def test_health_shows_pipeline(live_client: TestClient) -> None:
     body = live_client.get("/health/ready").json()
     assert body["pipeline"] == "fake-live"
-    assert body["llm"] == "none" and body["stt"] == "none"
+    assert body["llm"] == "none" and "stt" not in body  # текстовой модели нет, распознавания отдельно нет
 
 
 def test_text_message_is_answered_by_the_model(live_client: TestClient, connector: FakeConnector, user_id: str) -> None:

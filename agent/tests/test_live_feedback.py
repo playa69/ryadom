@@ -13,7 +13,7 @@ from prometheus_client import REGISTRY
 from app.clients.gemini_live import GeminiLiveConnector, LiveError, LiveEvent, LiveHistory, live_config
 from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.replies import NOISE_CHECK_CHARS, REPEAT_REQUEST
-from tests.conftest import AUTH, FakeTts, has, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, FakeTts, has, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_live import FakeConnector, FakeLink, re_split, reply_done, speak_turn
 
 
@@ -58,9 +58,7 @@ class LinkConnector(FakeConnector):
 
 
 def make_client(connector: FakeConnector, tts: FakeTts) -> TestClient:
-    from app.main import create_app
-
-    return TestClient(create_app(lambda: tts, lambda: (None, None), live_factory=lambda: connector))
+    return TestClient(make_app(connector, tts))
 
 
 def history_of(client: TestClient, user_id: str, dialog_id: str) -> list[dict[str, Any]]:
@@ -286,15 +284,12 @@ def test_the_agent_speaks_of_itself_in_the_gender_of_its_voice(user_id: str, voi
     assert rule in instructions and wrong not in instructions
 
 
-def test_cascade_prompt_carries_the_gender_rule_too() -> None:
-    from app.services.dialog_store import Message
-    from app.services.replies import SELF_GENDER, SYSTEM_PROMPT, chat_messages, system_prompt
+def test_the_system_prompt_carries_the_gender_rule_of_the_voice() -> None:
+    from app.services.replies import SELF_GENDER, SYSTEM_PROMPT, system_prompt
 
-    history = [Message("1", "user", "Привет", "t")]
-    assert chat_messages(history, 12, voice="female")[0]["content"].startswith(
-        SYSTEM_PROMPT + "\n" + SELF_GENDER["female"]
-    )
-    assert chat_messages(history, 12)[0]["content"].startswith(SYSTEM_PROMPT)  # без голоса — без правила
+    assert system_prompt("female").startswith(SYSTEM_PROMPT + "\n" + SELF_GENDER["female"])
+    assert system_prompt("male").startswith(SYSTEM_PROMPT + "\n" + SELF_GENDER["male"])
+    assert system_prompt() == SYSTEM_PROMPT  # без голоса — без правила
     assert REPEAT_REQUEST not in system_prompt("male")  # модель не копирует дословно фразу из примера
 
 

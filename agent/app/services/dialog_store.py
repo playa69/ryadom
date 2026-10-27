@@ -187,14 +187,6 @@ class MemoryLink(Protocol):
         """Реплика человека сохранена: бэкенд может в фоне поискать по ней в памяти (к следующему ходу сводка точнее)."""
         ...
 
-    def recall_supported(self, dialog: Dialog) -> bool:
-        """Доступен ли инструмент recall_memory для этого разговора (включённая память + бэкенд с поиском)."""
-        ...
-
-    async def recall_now(self, dialog: Dialog, query: str) -> str:
-        """Поиск в памяти по запросу модели (инструмент recall_memory): прямой вызов, может идти десятки секунд."""
-        ...
-
 
 def _encode_cursor(dialog: Dialog) -> str:
     raw = f"{dialog.started_at}|{dialog.id}".encode()
@@ -255,9 +247,9 @@ class DialogStore:
         self._background: set[asyncio.Task[Any]] = set()
         # Память агента; None — память не подключена (нет диска или тесты без неё).
         self.memory: MemoryLink | None = None
-        # Модель для итогов разговоров (add-mood-diary, D13): ставит приложение; None — шаблонные итоги (`LLM_MODE=template`).
+        # Модель для итогов разговоров (add-mood-diary, D13): ставит приложение; None — автоматических итогов нет (человек заводит
+        # итог сам, а черновика «Предзаполнить» нет).
         self.recap_chat: Any = None
-        self.recap_template = False  # без модели допустим шаблонный итог (`LLM_MODE=template`, разработка и тесты)
         self.recap_timeout_seconds = 20.0
         # Настройка «Подводить итог автоматически» (`dialog_settings`): человек → включено; нет записи — включено.
         self._recap_enabled: dict[str, bool] = {}
@@ -496,7 +488,7 @@ class DialogStore:
 
     async def _auto_recap(self, dialog: Dialog) -> None:
         """Автоматический итог в фоне: не заменяет ручной и не пишет текст итога в журнал."""
-        recap = await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds, self.recap_template)
+        recap = await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds)
         summary = dialog.summary
         if summary is None or summary.get("recapStatus") != "pending":
             return  # пока считалось, человек написал итог сам или разговор удалили
@@ -518,7 +510,7 @@ class DialogStore:
 
     async def draft_recap(self, dialog: Dialog) -> str | None:
         """Черновик итога для «Предзаполнить»: ничего не сохраняется. None — модель не ответила."""
-        return await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds, self.recap_template)
+        return await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds)
 
     def can_recap(self, dialog: Dialog) -> bool:
         return recaps.eligible(dialog)
@@ -591,28 +583,6 @@ class DialogStore:
         except Exception:  # noqa: BLE001
             logger.exception("memory enabled check failed")
             return False
-
-    def memory_recall_supported(self, dialog: Dialog) -> bool:
-        """Доступен ли разговору инструмент recall_memory; любая ошибка памяти — «нет», разговор идёт без инструмента (I3)."""
-        memory = self.memory
-        if memory is None or dialog.memory_mode != "on":
-            return False
-        try:
-            return memory.recall_supported(dialog)
-        except Exception:  # noqa: BLE001
-            logger.exception("memory recall_supported failed dialog=%s", dialog.id)
-            return False
-
-    async def memory_recall_now(self, dialog: Dialog, query: str) -> str:
-        """Поиск в памяти по запросу модели; любая ошибка — пустой результат, модель отвечает без него (I3)."""
-        memory = self.memory
-        if memory is None or dialog.memory_mode != "on":
-            return ""
-        try:
-            return await memory.recall_now(dialog, query) or ""
-        except Exception:  # noqa: BLE001
-            logger.exception("memory recall_now failed dialog=%s", dialog.id)
-            return ""
 
     def _discard_empty(self, dialog: Dialog) -> None:
         """Убрать открытый диалог без сообщений: из памяти сразу, с диска в фоне. Его сокет (если есть) получает `ended`."""

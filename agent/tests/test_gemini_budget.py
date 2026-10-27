@@ -26,10 +26,10 @@ from app.clients.gemini_live import (
 )
 from app.clients.speech import CachedTts, TtsError
 from app.core.config import APP_CONFIG, GeminiSettings
-from app.main import SPOKEN_PHRASES, create_app
+from app.main import SPOKEN_PHRASES
 from app.services.gemini_budget import TokenBudget, estimate_open, estimate_turn, text_tokens
 from app.services.replies import split_sentences
-from tests.conftest import AUTH, FakeTts, audio_in_frame, has, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, FakeTts, audio_in_frame, has, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_live import FakeConnector, FakeLink, reply_done
 from tests.test_live_context import refreshed, say, wait_until
 
@@ -89,7 +89,7 @@ def tune(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
 
 
 def make_client(connector: FakeConnector, tts: Any = None) -> TestClient:
-    return TestClient(create_app(lambda: tts, lambda: (None, None), live_factory=lambda: connector))
+    return TestClient(make_app(connector, tts))
 
 
 @contextmanager
@@ -372,7 +372,7 @@ def test_live_warm_up_has_the_fixed_phrases() -> None:
     """В режиме gemini_live прогреваются готовые фразы (приветствия, кризисный ответ, просьба повторить)."""
     # turn_complete после фразы, как у Google: прогрев ждёт закрытия сессии фразы, прежде чем открыть следующую.
     connector = FakeConnector(turn_complete=True)
-    with TestClient(create_app(None, lambda: (None, None), live_factory=lambda: connector)) as client:
+    with TestClient(make_app(connector, real_tts=True)) as client:
         tts = client.app.state.tts
         assert isinstance(tts, CachedTts)
         wanted = [(voice, part) for phrase in SPOKEN_PHRASES for part in split_sentences(phrase) for voice in ("male", "female")]

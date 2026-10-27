@@ -110,16 +110,6 @@ class Tracer(Protocol):
         tags: list[str] | None = None,
     ) -> Observation: ...
 
-    def start_generation(
-        self,
-        parent: Observation | None,
-        *,
-        name: str,
-        model: str | None = None,
-        input: Any = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> Observation: ...
-
     def start_span(
         self,
         parent: Observation | None,
@@ -140,9 +130,6 @@ class NullTracer:
     name = "null"
 
     def start_turn(self, **kwargs: Any) -> Observation:
-        return NULL_OBSERVATION
-
-    def start_generation(self, parent: Observation | None, **kwargs: Any) -> Observation:
         return NULL_OBSERVATION
 
     def start_span(self, parent: Observation | None, **kwargs: Any) -> Observation:
@@ -251,30 +238,6 @@ class LangfuseTracer:
             return LangfuseObservation(generation, self._trace_text)
         except Exception as error:  # noqa: BLE001
             logger.warning("langfuse trace start failed: %s", error)
-            return NULL_OBSERVATION
-
-    def start_generation(
-        self,
-        parent: Observation | None,
-        *,
-        name: str,
-        model: str | None = None,
-        input: Any = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> Observation:
-        if not isinstance(parent, LangfuseObservation):
-            return NULL_OBSERVATION
-        if parent.ended:
-            # Озвучка может дописываться после закрытия трассы хода: такой ребёнок не создаётся.
-            logger.debug("langfuse child %s skipped: parent trace already ended", name)
-            return NULL_OBSERVATION
-        try:
-            generation = parent.raw.start_generation(
-                name=name, model=model, input=_mask(input, self._trace_text), metadata=_mask_metadata(metadata, self._trace_text)
-            )
-            return LangfuseObservation(generation, self._trace_text)
-        except Exception as error:  # noqa: BLE001
-            logger.warning("langfuse generation start failed: %s", error)
             return NULL_OBSERVATION
 
     def start_span(

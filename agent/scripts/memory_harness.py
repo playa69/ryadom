@@ -27,7 +27,7 @@ os.environ.setdefault("AGENT_INTERNAL_TOKEN", "harness")
 from app.clients.cognee import CogneeClient  # noqa: E402
 from app.clients.llm import ProxyChat  # noqa: E402
 from app.core.config import MemorySettings  # noqa: E402
-from app.memory.cognee_backend import CogneeMemoryBackend  # noqa: E402
+from app.memory.cognee_backend import CogneeMemoryBackend, _dialog_chunks  # noqa: E402
 from app.memory.extractor import NotesExtractor  # noqa: E402
 from app.memory.indexer import dataset_name  # noqa: E402
 from app.memory.notes import build_notes_block  # noqa: E402
@@ -126,7 +126,8 @@ async def run_scenario(scn: dict, memory: CogneeMemoryBackend, store: DialogStor
         for probe in step.get("probes", []):
             found_any = True
             dialog, _, _ = store.start(user, new=True)
-            found = await memory.recall_now(dialog, probe)
+            # те же находки, что подмешиваются в сводку по реплике (CHUNKS и фильтр подавленных реплик)
+            found = await memory._visible(user, _dialog_chunks(await client.recall_chunks(probe, dataset_name(user))))
             notes = await memory.notes.list(user)
             notes_block = build_notes_block(notes, settings_tokens)
             found_block = "Из прошлых разговоров (слова человека, дословно):\n" + found if found.strip() else ""

@@ -9,9 +9,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
 from app.services import recaps
-from tests.conftest import AUTH, make_app, make_client, start_dialog
+from tests.conftest import AUTH, make_app, make_client
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 LONG = "Мне сегодня очень тревожно из-за работы, и я не знаю, как поговорить с руководителем."
@@ -73,6 +72,13 @@ class SlowChat:
 
     async def aclose(self) -> None:
         return None
+
+
+@pytest.fixture
+def client():
+    """Агент с текстовой моделью, которая пишет годный итог: без модели автоматического итога и черновика нет."""
+    with make_client(background=SlowChat("Ты рассказал про работу, и стало немного легче.")) as c:
+        yield c
 
 
 # ─── три способа завести итог ─────────────────────────────────────────────────

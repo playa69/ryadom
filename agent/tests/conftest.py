@@ -3,11 +3,10 @@
 import asyncio
 import json
 import os
-import re
 import struct
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 # Конфиг читается при импорте приложения (fail-fast), поэтому env задаём до него.
@@ -15,13 +14,8 @@ from typing import Any
 os.environ["AGENT_INTERNAL_TOKEN"] = "test-internal-token"
 os.environ["STREAM_DELAY_MS"] = "0"
 os.environ["TTS_FRAME_INTERVAL_MS"] = "0"
-os.environ["TTS_MODE"] = "none"
-os.environ["LLM_MODE"] = "template"
 os.environ["LLM_TIMEOUT_SECONDS"] = "1"  # тест зависшей модели ждёт ровно столько
-os.environ["INCOMPLETE_HOLD_MS"] = "400"  # пауза для оборванной на полуслове реплики: в бою 1500, тесты не ждут столько
-os.environ["GEMINI_TPM_LIMIT"] = "0"  # бюджет токенов Gemini выключен; его тесты (test_gemini_budget.py) включают его сами
-os.environ["GEMINI_LAZY_OPEN"] = "false"  # сессия Gemini открывается заранее, как раньше; ленивое открытие — там же
-os.environ.pop("SALUTE_SPEECH_AUTH_KEY", None)
+os.environ["GEMINI_TPM_LIMIT"] = "0"  # учёт токенов Gemini выключен; его тесты (test_gemini_budget.py) включают его сами
 os.environ.pop("AGENT_API_TOKEN", None)
 
 import pytest  # noqa: E402
@@ -74,13 +68,8 @@ def fake_db_files() -> Iterator[None]:
     FakeDialogDatabase.reset()
 
 # app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
-# чьё отсутствие ждут тесты (умолчания LlmSettings и отказы build_models).
-for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL", "STT_MODEL"):
-    os.environ.pop(leaked, None)
-
-# app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
-# чьё отсутствие ждут тесты (умолчания LlmSettings и отказы build_models).
-for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL", "STT_MODEL"):
+# чьё отсутствие ждут тесты (умолчания LlmSettings и отказ build_chat без ключа).
+for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL"):
     os.environ.pop(leaked, None)
 
 TOKEN = "test-internal-token"
@@ -117,25 +106,14 @@ class FakeTts:
 
 
 class FakeChat:
-    """Чат-модель для тестов: ответ задан заранее, запросы запоминаются."""
+    """Текстовая модель для тестов (итоги разговоров и недели): ответ задан заранее, запросы запоминаются."""
 
     name = "fake-chat"
 
-    def __init__(
-        self,
-        reply: str = "Я рядом, расскажи ещё.",
-        delay: float = 0.0,
-        fail: bool = False,
-        pieces: list[str] | None = None,
-        piece_delay: float = 0.0,
-        truncated: bool = False,
-    ) -> None:
+    def __init__(self, reply: str = "Я рядом, расскажи ещё.", delay: float = 0.0, fail: bool = False) -> None:
         self.reply = reply
         self.delay = delay
         self.fail = fail
-        self.pieces = pieces
-        self.piece_delay = piece_delay
-        self.truncated = truncated
         self.calls: list[list[dict[str, str]]] = []
 
     async def complete(self, messages: list[dict[str, str]]) -> str:
@@ -147,46 +125,6 @@ class FakeChat:
 
             raise ModelError("модель сломана в тесте")
         return self.reply
-
-    async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        """Ответ по словам, как стрим настоящей модели. `pieces` задаёт свою нарезку, `truncated` — обрыв по токенам."""
-        self.calls.append(messages)
-        if self.delay:
-            await asyncio.sleep(self.delay)
-        if self.fail:
-            from app.clients.llm import ModelError
-
-            raise ModelError("модель сломана в тесте")
-        for piece in self.pieces if self.pieces is not None else re.findall(r"\S+\s*", self.reply):
-            yield piece
-            if self.piece_delay:
-                await asyncio.sleep(self.piece_delay)
-        if self.truncated:
-            from app.clients.llm import ReplyTruncated
-
-            raise ReplyTruncated("оборван по токенам в тесте")
-
-    async def aclose(self) -> None:
-        return None
-
-
-class FakeRecognizer:
-    """Распознавание для тестов: возвращает заданный текст и запоминает присланный звук."""
-
-    name = "fake-stt"
-
-    def __init__(self, text: str = "мне сегодня тяжело", fail: bool = False) -> None:
-        self.text = text
-        self.fail = fail
-        self.calls: list[bytes] = []
-
-    async def transcribe(self, pcm: bytes) -> str:
-        self.calls.append(pcm)
-        if self.fail:
-            from app.clients.llm import ModelError
-
-            raise ModelError("распознавание сломано в тесте")
-        return self.text
 
     async def aclose(self) -> None:
         return None
@@ -205,7 +143,10 @@ def make_app(
 
     live = connector or FakeConnector()
     return create_app(
-        None if real_tts else (lambda: tts), lambda: (background, None), live_factory=lambda: live, **create_kwargs
+        live_factory=lambda: live,
+        tts_factory=None if real_tts else (lambda: tts),
+        chat_factory=lambda: background,
+        **create_kwargs,
     )
 
 
