@@ -41,6 +41,9 @@ logger = logging.getLogger("agent")
 # Готовые фразы агента: приветствия, кризисный ответ (он важнее) и просьба повторить. Заглушки режима без моделей не
 # прогреваются: в бою они не звучат, а прогрев в gemini_live тратит квоту Gemini на старте.
 SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, REPEAT_REQUEST)
+# Сколько сессий Gemini прогрев держит открытыми одновременно (фраза — сессия): 16 открытий разом на старте Google встречал
+# отказами, и после них половина фраз оставалась не прогретой.
+WARM_UP_GEMINI_SESSIONS = 3
 
 FallbackParts = tuple[ChatModel | None, Recognizer | None, TextToSpeech | None]
 
@@ -173,6 +176,7 @@ def create_app(
         app.state.budget = budget
         tracer = build_tracer(APP_CONFIG.langfuse)
         app.state.tracer = tracer
+        warm_up_parallel = 1  # по одной фразе за раз; озвучка через Gemini — см. WARM_UP_GEMINI_SESSIONS
         if tts_factory is not None or live is None:
             app.state.tts = factory()
         else:
@@ -181,6 +185,7 @@ def create_app(
             voice_tts = GeminiLiveTts(live, budget=budget)
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
+            warm_up_parallel = WARM_UP_GEMINI_SESSIONS
         fallback = None
         if budget is not None and budget.enforcing:
             parts = (fallback_factory or _build_fallback)()
@@ -216,7 +221,7 @@ def create_app(
         warm_up = None
         if isinstance(app.state.tts, CachedTts):
             sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
-            warm_up = asyncio.create_task(app.state.tts.warm_up(sentences))
+            warm_up = asyncio.create_task(app.state.tts.warm_up(sentences, parallel=warm_up_parallel))
         langfuse = start_langfuse_sink(APP_CONFIG.langfuse)
         fallback_warm_up = None
         if fallback is not None and isinstance(fallback.tts, CachedTts):

@@ -7,6 +7,7 @@ Gemini оплачивает весь контекст сессии на кажд
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -428,6 +429,117 @@ def test_replacement_is_not_triggered_by_a_session_that_has_not_answered_yet(use
         wait_until(lambda: len(connector.links) >= 2, "первая смена сессии")
         time.sleep(0.3)
     assert len(connector.links) == 2, f"смен сессии без единой реплики человека: {len(connector.links) - 1}"
+
+
+# ─── Память в сессии ──────────────────────────────────────────────────────────────────────────────────────────────
+
+BRIEF = "Человека зовут Аня, она работает учительницей."
+FOUND = "По недавнему вопросу человека в памяти нашлось: экзамены в школе."
+
+
+class Memory:
+    """Память человека для сессии без сокета: сводка из кэша (`text`) и загрузка, которая идёт `delay` секунд."""
+
+    def __init__(self, text: str = "", delay: float = 0.0, loaded: str | None = None, fail: bool = False) -> None:
+        self.text = text
+        self.delay = delay
+        self.loaded = loaded  # сводка, которая окажется в кэше, когда загрузка дойдёт
+        self.fail = fail
+        self.ready = False
+        self.calls = 0
+
+    def brief(self, dialog: Any, count: bool = True) -> str:
+        return self.text
+
+    async def prepare(self, dialog: Any) -> None:
+        self.calls += 1
+        if self.ready:
+            return  # уже в кэше: как у Cognee, сразу
+        await asyncio.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("Cognee не ответил в тесте")
+        if self.loaded is not None:
+            self.text = self.loaded
+        self.ready = True
+
+
+def with_memory(memory: Memory, connector: FakeConnector, *messages: tuple[str, str]) -> LiveDialogSession:
+    session = make_session(connector, *messages)
+    session._store.memory = memory  # type: ignore[assignment]
+    return session
+
+
+async def test_slow_memory_does_not_hold_back_the_session(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Поиск в Cognee бывает дольше минуты: сессия открывается через MEMORY_WAIT_SECONDS со сводкой, что есть, загрузка
+    доходит в фоне и при следующем открытии не начинается заново. Задержка первой сессии — одной строкой в журнале."""
+    monkeypatch.setattr("app.api.dialog_live.MEMORY_WAIT_SECONDS", 0.1)
+    caplog.set_level(logging.INFO, logger="agent.live")
+    connector = FakeConnector()
+    memory = Memory(delay=0.6, loaded=BRIEF)
+    session = with_memory(memory, connector, ("u", FIRST), ("a", "Ответ"))
+    began = time.monotonic()
+    link = await session._ensure_link()
+    assert link is not None and time.monotonic() - began < 0.4  # загрузку целиком не ждали
+    assert BRIEF not in link.instructions
+    session._link_used = True
+    second = await session._ensure_link(rotate=True)
+    assert second is not None and second is not link
+    assert memory.calls == 1 and not memory.ready  # ждали ту же загрузку, и её не отменили
+    deadline = time.monotonic() + 3
+    while not memory.ready and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert memory.ready  # дошла в фоне
+    session._link_used = True
+    third = await session._ensure_link(rotate=True)
+    assert third is not None and BRIEF in third.instructions  # плановая смена взяла догрузившуюся сводку
+    first_open = [r.getMessage() for r in caplog.records if r.getMessage().startswith("gemini live first open")]
+    assert len(first_open) == 1 and "purpose=start" in first_open[0] and "since_socket_ms=" in first_open[0]
+    await session._drop_link()
+
+
+async def test_a_memory_failure_does_not_stop_the_session() -> None:
+    session = with_memory(Memory(fail=True), FakeConnector())
+    link = await session._ensure_link()
+    assert link is not None and not link.closed
+    await session._drop_link()
+
+
+async def test_a_new_or_grown_brief_waits_for_the_planned_rotation() -> None:
+    """Сводка догрузилась после открытия, к ней добавилась находка поиска по реплике или её переписало извлечение: сессия не
+    переоткрывается (каждое переоткрытие — пауза в разговоре и потеря звукового контекста), сводку берёт плановая смена."""
+    connector = FakeConnector()
+    memory = Memory()
+    session = with_memory(memory, connector, ("u", FIRST), ("a", "Ответ"))
+    link = await session._ensure_link()
+    assert link is not None and BRIEF not in link.instructions
+    memory.text = BRIEF  # загрузка дошла уже после открытия
+    assert await session._ensure_link() is link
+    session._link_used = True  # на сессии был ход: плановая смена (GEMINI_ROTATE_EVERY)
+    rotated = await session._ensure_link(rotate=True)
+    assert rotated is not None and rotated is not link and BRIEF in rotated.instructions
+    memory.text = BRIEF + "\n\n" + FOUND  # фоновый поиск по реплике что-то нашёл
+    assert await session._ensure_link() is rotated
+    memory.text = "Человека зовут Аня."  # извлечение переписало сводку
+    assert await session._ensure_link() is rotated
+    assert len(connector.links) == 2
+    session._link_used = True
+    latest = await session._ensure_link(rotate=True)
+    assert latest is not None and "Человека зовут Аня." in latest.instructions and FOUND not in latest.instructions
+    await session._drop_link()
+
+
+async def test_a_revoked_brief_reopens_the_session_without_it() -> None:
+    """Человек выключил память, забыл всё или стёр аккаунт посреди разговора: следующий ход уже без сводки (MEM-13.3)."""
+    connector = FakeConnector()
+    memory = Memory(text=BRIEF)
+    session = with_memory(memory, connector)
+    link = await session._ensure_link()
+    assert link is not None and BRIEF in link.instructions
+    memory.text = ""
+    new = await session._ensure_link()
+    assert new is not None and new is not link and link.closed and BRIEF not in new.instructions
+    assert await session._ensure_link() is new  # без сводки дальше не переоткрывается
+    await session._drop_link()
 
 
 # ─── usage ────────────────────────────────────────────────────────────────────────────────────────────────────────
