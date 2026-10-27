@@ -93,7 +93,7 @@ function userState(userId) {
 }
 
 // ─── Recaps of conversations (add-mood-diary D13) ─────────────────────────────
-// A recap is three texts in the second person. The mock follows the real agent's rules: none for a conversation where the
+// A recap is one free-form text in the second person (the «Что забираешь с собой» field is the recap). The mock follows the real agent's rules: none for a conversation where the
 // person said under 40 characters, for one with a crisis, or one held «without memory»; a recap the person wrote is kept
 // as it is and the automatic one never replaces it; the automatic one is ready after MOCK_RECAP_DELAY_MS (pending until then).
 const RECAP_DELAY_MS = Number(process.env.MOCK_RECAP_DELAY_MS ?? 3000)
@@ -109,22 +109,18 @@ function recapEligible(dialog) {
 
 function templateRecap(dialog) {
   const said = dialog.messages.filter((m) => m.role === 'user').map((m) => m.text.trim())
-  const words = (said[0] ?? '').split(/\s+/).slice(0, 4).join(' ')
+  const snippet = (said[0] ?? '').replace(/[.!?…]+$/, '').slice(0, 120)
   const agreement = said.map((t) => /давай так:?\s*(.+)/i.exec(t)?.[1]).find(Boolean)
-  return {
-    about: `Ты рассказал, что у тебя на душе${words ? `, начав с «${words}»` : ''}.`,
-    main: 'Тебе важно, чтобы тебя услышали, и сегодня это получилось.',
-    agreements: agreement ? [agreement.slice(0, 120)] : [],
-  }
+  return (
+    `Ты рассказал, что у тебя на душе${snippet ? `: ${snippet}` : ''}. Тебе важно, чтобы тебя услышали.` +
+    (agreement ? ` Ты решил: ${agreement.replace(/[.!?…]+$/, '').slice(0, 120)}.` : '')
+  )
 }
 
 function cleanRecap(value) {
-  if (!value || typeof value !== 'object') return null
-  const about = typeof value.about === 'string' ? value.about.trim() : ''
-  const main = typeof value.main === 'string' ? value.main.trim() : ''
-  const agreements = Array.isArray(value.agreements) ? value.agreements.filter((a) => typeof a === 'string' && a.trim()) : []
-  if (!about || !main || about.length > 600 || main.length > 600 || agreements.length > 3) return null
-  return { about, main, agreements: agreements.map((a) => a.trim()) }
+  if (typeof value !== 'string') return null
+  const text = value.trim().replace(/\s+/g, ' ')
+  return text && text.length <= 500 ? text : null
 }
 
 function storeRecap(dialog, recap, source) {
@@ -158,7 +154,7 @@ function createDialog(userId, memory = 'on') {
 }
 
 /** Ends the dialog and, when it was held with memory, starts the "extraction" (see `extractMemory`). */
-function endDialog(dialog, takeaway, tensionAfter, recap = null, recapSource = 'manual') {
+function endDialog(dialog, takeaway, tensionAfter, recapSource = 'manual') {
   dialog.endedAt = new Date().toISOString()
   dialog.summary = {
     ...buildSummary(dialog, takeaway, tensionAfter),
@@ -167,7 +163,7 @@ function endDialog(dialog, takeaway, tensionAfter, recap = null, recapSource = '
     recapSource: null,
     recapAvailable: recapEligible(dialog),
   }
-  const written = cleanRecap(recap)
+  const written = cleanRecap(takeaway)
   if (recapEligible(dialog)) {
     if (written) storeRecap(dialog, written, recapSource === 'draft' ? 'draft' : 'manual')
     else if (userState(dialog.userId).recapEnabled) {
@@ -770,16 +766,23 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { text, stats: { markedDays: marks.length } })
     }
     const recaps = Array.isArray(body.recaps) ? body.recaps : []
-    const agreed = recaps.reduce((sum, r) => sum + (Array.isArray(r?.agreements) ? r.agreements.length : 0), 0)
-    // The recaps of the week's conversations are the second input: the text says how many there were.
-    const recapLine = recaps.length
-      ? `Разговоров с итогом на неделе: ${recaps.length}, договорённостей в них: ${agreed}. Главное из них ты сохранил в журнале. `
-      : ''
+    // A general overview, no quotes and no tie to a dialog: only the names of the themes the recaps touch (as in agent/app/services/digests.py).
+    const texts = recaps.map((r) => (typeof r?.text === 'string' ? r.text.trim() : '')).filter(Boolean)
+    const joined = texts.join(' ').toLowerCase()
+    const THEMES = [
+      ['работа и дела', /работ|руковод|начальн|коллег|офис|проект|дедлайн|карьер|увольн/],
+      ['близкие и отношения', /мам[аыуе]|пап|семь|друг|подруг|отношени|партн[её]р|муж|жена|девушк|парень|дет[иейям]/],
+      ['здоровье и сон', /здоровь|сон\b|сна\b|бессонн|усталост|болезн|врач|тревог|паник/],
+      ['деньги', /деньг|долг|зарплат|кредит|финанс/],
+    ]
+    const themes = THEMES.filter(([, re]) => re.test(joined)).map(([name]) => name).slice(0, 2)
     const text =
-      `На этой неделе ты отметил настроение ${marks.length} раз. Чаще всего было «${levels[top]}». ` +
-      `Тяжёлых дней было ${hard}, лёгких — ${counts[3] + counts[4]}. ` +
-      recapLine +
-      'Заметно, что ты находишь минутку, чтобы остановиться и прислушаться к себе. ' +
+      (themes.length
+        ? `На этой неделе в твоих мыслях заметное место занимало: ${themes.join(' и ')}. `
+        : texts.length
+          ? 'На этой неделе ты не раз возвращался к тому, что у тебя на душе. '
+          : // Without recaps the mock states the counts, so that the e2e specs can tell a rewritten text from the old one.
+            `Тяжёлых дней было ${hard}, лёгких — ${marks.filter((m) => m.mood >= 3).length}. `) +
       (hard >= 3
         ? 'Неделя выдалась непростой. Рядом могут быть люди, с которыми можно поговорить, и я тоже здесь.'
         : 'Спасибо, что делишься со мной тем, как ты.')
@@ -945,7 +948,7 @@ const server = createServer(async (req, res) => {
     if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
     const body = await readBody(req)
     if (dialog.summary) return json(res, 200, { summary: dialog.summary })
-    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null, body.recap ?? null, body.recapSource)
+    endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null, body.recapSource)
     return json(res, 200, { summary: dialog.summary })
   }
 
@@ -953,7 +956,7 @@ const server = createServer(async (req, res) => {
   if (parts.length === 6 && parts[5] === 'recap' && method === 'PUT') {
     if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
     const body = await readBody(req)
-    const written = cleanRecap(body)
+    const written = cleanRecap(body.recap)
     if (!dialog.summary || !written || !recapEligible(dialog)) return agentError(res, 409, 'RECAP_NOT_AVAILABLE', 'Для этого разговора итога нет')
     storeRecap(dialog, written, body.source === 'draft' ? 'draft' : 'manual')
     return json(res, 200, { summary: dialog.summary })
@@ -1172,7 +1175,7 @@ wss.on('connection', (socket, request, context) => {
         if (typeof frame.messageId === 'string') socket.cancelledSpeech.add(frame.messageId)
         return
       case 'end': {
-        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null, frame.recap ?? null, frame.recapSource)
+        endDialog(dialog, frame.takeaway ?? null, frame.tensionAfter ?? null, frame.recapSource)
         send(socket, { type: 'ended', summary: dialog.summary })
         socket.close(1000, 'dialog ended')
         return

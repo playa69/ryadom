@@ -60,7 +60,6 @@ export type {
   DialogDTO,
   DialogListItemDTO,
   DialogMessageDTO,
-  DialogRecapDTO,
   DialogRecapItemDTO,
   DialogRecapSource,
   DialogRecapStatus,

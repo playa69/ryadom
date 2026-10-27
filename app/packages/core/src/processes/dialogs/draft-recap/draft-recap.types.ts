@@ -1,5 +1,3 @@
-import type { DialogRecapDTO } from '../shared/dialog.dto'
-
 export enum DraftRecapOperationErrorCode {
   USER_NOT_FOUND = 'USER_NOT_FOUND',
   USER_INACTIVE = 'USER_INACTIVE',
@@ -9,5 +7,5 @@ export enum DraftRecapOperationErrorCode {
 }
 
 export type DraftRecapResult =
-  | { success: true; recap: DialogRecapDTO }
+  | { success: true; recap: string }
   | { success: false; error: DraftRecapOperationErrorCode }

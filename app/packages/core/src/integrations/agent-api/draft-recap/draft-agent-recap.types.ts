@@ -1,5 +1,3 @@
-import type { AgentRecapResponse } from '../shared/agent-api.types'
-
 export enum DraftAgentRecapRequestErrorCode {
   DIALOG_NOT_FOUND = 'DIALOG_NOT_FOUND',
   /** Not saved, crisis or too short: no recap for this conversation. */
@@ -9,5 +7,5 @@ export enum DraftAgentRecapRequestErrorCode {
 }
 
 export type DraftAgentRecapResult =
-  | { success: true; recap: AgentRecapResponse }
+  | { success: true; recap: string }
   | { success: false; error: DraftAgentRecapRequestErrorCode }

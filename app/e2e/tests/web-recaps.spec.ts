@@ -19,6 +19,8 @@ import type { Page } from '@playwright/test'
  * (вручную, «Предзаполнить», автоматически), потом пересобираются итоги недели. Всё внутри дневника, память не участвует.
  * Разговор без итога (мало сказано, кризис) в итоги недели не попадает. Удаление разговора пересобирает неделю.
  */
+const MANUAL_RECAP = 'Тяжёлая неделя на работе, поговорю с руководителем до пятницы.'
+const EDITED_RECAP = 'Ты решил не откладывать разговор с руководителем.'
 const SAID = 'Мне сегодня очень тяжело из-за работы. Давай так: поговорю с руководителем до пятницы'
 const CRISIS = 'не хочу жить, и мне очень тяжело, не знаю, что делать дальше'
 
@@ -73,24 +75,18 @@ test('итог разговора: три способа, разговоры б�
   await openEnd(page)
   // «Подводить итог автоматически» включена по умолчанию, поля итога скрыты.
   await expect(page.getByTestId('recap-auto').locator('input')).toBeChecked()
-  await expect(page.getByTestId('recap-editor')).toHaveCount(0)
-  await page.getByTestId('recap-toggle').click()
-  await page.getByTestId('recap-about').fill('Ты рассказал про тяжёлую неделю на работе.')
-  await page.getByTestId('recap-main').fill('Тебе важно поговорить с руководителем.')
-  await page.getByTestId('recap-agreements').fill('Поговорить с руководителем до пятницы')
+  await page.getByTestId('takeaway-input').fill(MANUAL_RECAP)
   await shot(page, 'web-recap-sheet-manual')
   expect(await submitAndLeave(page)).toContain('Итог разговора сохранён в журнале')
 
   // ── 2. «Предзаполнить»: черновик, правка, сохранение ─────────────────────
   await talk(page, SAID)
   await openEnd(page)
-  await page.getByTestId('recap-toggle').click()
   await page.getByTestId('recap-draft').click()
-  await expect(page.getByTestId('recap-about')).not.toHaveValue('', { timeout: 20_000 })
-  await expect(page.getByTestId('recap-main')).not.toHaveValue('')
+  await expect(page.getByTestId('takeaway-input')).not.toHaveValue('', { timeout: 20_000 })
   // Черновик ничего не сохранил: итогов пока один.
   expect(await recapList()).toHaveLength(1)
-  await page.getByTestId('recap-main').fill('Ты решил не откладывать разговор.')
+  await page.getByTestId('takeaway-input').fill(EDITED_RECAP)
   await shot(page, 'web-recap-sheet-draft')
   expect(await submitAndLeave(page)).toContain('Итог разговора сохранён в журнале')
 
@@ -121,14 +117,13 @@ test('итог разговора: три способа, разговоры б�
   await shot(page, 'web-recap-journal')
   // Список идёт от новых к старым: кризис, «Привет», автоитог, черновик, вручную.
   await rows.nth(4).click()
-  await expect(page.getByTestId('journal-recap-about')).toHaveText('Ты рассказал про тяжёлую неделю на работе.', { timeout: 20_000 })
-  await expect(page.getByTestId('journal-recap-agreements')).toContainText('Поговорить с руководителем до пятницы')
+  await expect(page.getByTestId('journal-recap-text')).toHaveText(MANUAL_RECAP, { timeout: 20_000 })
   await shot(page, 'web-recap-entry-manual')
   await page.goBack()
   await rows.nth(2).click()
   // Автоитог готов через несколько секунд: «Итог появится через минуту» сменяется итогом (запись перечитывает себя).
   await expect(page.getByTestId('journal-recap')).toBeVisible({ timeout: 45_000 })
-  await expect(page.getByTestId('journal-recap-about')).toContainText('Ты рассказал')
+  await expect(page.getByTestId('journal-recap-text')).toContainText('Ты рассказал')
   await shot(page, 'web-recap-entry-auto')
   await page.goBack()
   for (const index of [1, 0]) {
@@ -148,9 +143,10 @@ test('итог разговора: три способа, разговоры б�
   await openWebApp(page, '/diary')
   await expect
     .poll(async () => (await readDiary()).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .toContain('Разговоров с итогом на неделе: 3, договорённостей в них: 3')
+    .toContain('работа и дела')
   await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-week-text')).toContainText('Разговоров с итогом на неделе: 3')
+  await expect(page.getByTestId('diary-week-text')).toContainText('работа и дела')
+  await expect(page.getByTestId('diary-week-text')).not.toContainText('руководителем') // no quotes of a recap
   // На странице дневника нет ни «Памяти», ни событий недели.
   await expect(page.getByRole('main')).not.toContainText(/памят/i)
   await page.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
@@ -164,9 +160,9 @@ test('итог разговора: три способа, разговоры б�
   await ageWeekSummary(session.userId())
   await expect
     .poll(async () => (await readDiary()).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .toContain('Разговоров с итогом на неделе: 4, договорённостей в них: 4')
+    .toContain('работа и дела')
   await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-week-text')).toContainText('Разговоров с итогом на неделе: 4')
+  await expect(page.getByTestId('diary-week-text')).not.toContainText('руководителем')
   await page.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
   await shot(page, 'web-recap-week-4')
 
@@ -188,9 +184,10 @@ test('итог разговора: три способа, разговоры б�
   // Текст недели пропал сразу и пишется заново уже без удалённого разговора.
   await expect
     .poll(async () => (await readDiary()).week.summary?.text ?? '', { timeout: 240_000, intervals: [3_000] })
-    .toContain('Разговоров с итогом на неделе: 3')
+    .toContain('работа и дела')
   await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-week-text')).toContainText('Разговоров с итогом на неделе: 3')
+  await expect(page.getByTestId('diary-week-text')).toContainText('работа и дела')
+  await expect(page.getByTestId('diary-week-text')).not.toContainText('руководителем') // no quotes of a recap
   await page.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
   await shot(page, 'web-recap-week-after-delete')
 })
@@ -215,7 +212,7 @@ test('журнал: пометка о не сохранённом разгово
         themes: ['выговориться'],
         tensionBefore: null,
         tensionAfter: 4,
-        recap: { about: 'Ты говорил о работе.', main: 'Стало легче.', agreements: ['Отдохнуть вечером'] },
+        recap: 'Ты говорил о работе, и после этого стало легче.',
         recapStatus: 'ready',
         recapSource: 'auto',
         recapAvailable: true,

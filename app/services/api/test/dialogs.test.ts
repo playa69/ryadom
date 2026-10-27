@@ -31,7 +31,6 @@ import { eq } from 'drizzle-orm'
 import { diarySummaries } from '@ryadom/db/schema'
 import { getDb } from '@ryadom/core/shared'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
-import { parseRecap } from '../src/dialogs/recap'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
 import { createSessions } from '../src/lib/sessions'
@@ -301,10 +300,10 @@ describe('REST диалогов', () => {
 })
 
 describe('итог разговора, удаление и настройка', () => {
-  const RECAP = { about: 'Ты рассказал про работу.', main: 'Тебе важно, чтобы тебя услышали.', agreements: ['Поговорить с руководителем'] }
+  const RECAP = 'Ты рассказал про работу и решил поговорить с руководителем до пятницы.'
   const dialog = { dialogId: 'd-1', startedAt: '2026-10-20T10:00:00.000Z', endedAt: '2026-10-20T10:10:00.000Z', summary: null, messages: [] }
 
-  it('завершение несёт итог человека агенту; в ответе итог и его статус, без служебного recapAt', async () => {
+  it('завершение несёт «Что забираешь» (оно же итог) агенту; в ответе итог и его статус, без служебного recapAt', async () => {
     resetLimits()
     const { tokens } = await signUpAndIn(app)
     const { calls } = mockAgent({
@@ -312,25 +311,21 @@ describe('итог разговора, удаление и настройка', 
         json({ summary: { title: 'Разговор', themes: [], recap: RECAP, recapStatus: 'ready', recapSource: 'manual', recapAt: '2026-10-20T10:11:00Z' } }),
     })
     const result = ok<EndDialogApiResponse>(
-      await call(app, 'POST', '/api/dialogs/d-1/end', { tensionAfter: 4, recap: RECAP }, tokens.accessToken),
+      await call(app, 'POST', '/api/dialogs/d-1/end', { takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' }, tokens.accessToken),
     )
     expect(result.summary).toMatchObject({ recap: RECAP, recapStatus: 'ready', recapSource: 'manual' })
     expect(JSON.stringify(result)).not.toContain('recapAt')
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ tensionAfter: 4, recap: RECAP, recapSource: 'manual' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' })
   })
 
   it('итог длиннее правил или пустой — 400, агента не трогаем', async () => {
     resetLimits()
     const { tokens } = await signUpAndIn(app)
     const { calls } = mockAgent()
-    for (const recap of [
-      { ...RECAP, about: '' },
-      { ...RECAP, main: 'я'.repeat(601) },
-      { ...RECAP, agreements: ['1', '2', '3', '4'] },
-    ]) {
-      expect((await call(app, 'POST', '/api/dialogs/d-1/end', { recap }, tokens.accessToken)).status).toBe(400)
-      expect((await call(app, 'PUT', '/api/dialogs/d-1/recap', recap, tokens.accessToken)).status).toBe(400)
+    for (const recap of ['', '   ', 'я'.repeat(501)]) {
+      expect((await call(app, 'PUT', '/api/dialogs/d-1/recap', { recap }, tokens.accessToken)).status).toBe(400)
     }
+    expect((await call(app, 'POST', '/api/dialogs/d-1/end', { takeaway: 'я'.repeat(501) }, tokens.accessToken)).status).toBe(400)
     expect(calls).toEqual([])
   })
 
@@ -380,7 +375,7 @@ describe('итог разговора, удаление и настройка', 
       next: null,
     })
     expect(ok<DraftDialogRecapApiResponse>(await call(app, 'POST', '/api/dialogs/d-2/recap/draft', undefined, tokens.accessToken))).toEqual({ recap: RECAP })
-    const saved = ok<PutDialogRecapApiResponse>(await call(app, 'PUT', '/api/dialogs/d-2/recap', { ...RECAP, source: 'draft' }, tokens.accessToken))
+    const saved = ok<PutDialogRecapApiResponse>(await call(app, 'PUT', '/api/dialogs/d-2/recap', { recap: RECAP, source: 'draft' }, tokens.accessToken))
     expect(saved.summary).toMatchObject({ recap: RECAP, recapSource: 'draft' })
   })
 
@@ -392,7 +387,7 @@ describe('итог разговора, удаление и настройка', 
     mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'RECAP_UNAVAILABLE' } }, 502) })
     refusedWith(await call(app, 'POST', '/api/dialogs/d-1/recap/draft', undefined, tokens.accessToken), DialogRecapApiErrorCode.RECAP_UNAVAILABLE)
     mockAgent({ 'PUT http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
-    refusedWith(await call(app, 'PUT', '/api/dialogs/d-1/recap', RECAP, tokens.accessToken), DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE)
+    refusedWith(await call(app, 'PUT', '/api/dialogs/d-1/recap', { recap: RECAP }, tokens.accessToken), DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE)
   })
 
   it('«Подводить итог автоматически»: читается и сохраняется, отдельно от памяти; не булево — 400', async () => {
@@ -408,14 +403,6 @@ describe('итог разговора, удаление и настройка', 
     expect((await call(app, 'PUT', '/api/dialog-settings', { recapEnabled: 'нет' }, tokens.accessToken)).status).toBe(400)
   })
 
-  it('кадр end с итогом: шлюз передаёт его агенту; битый итог отбрасывает', () => {
-    expect(parseRecap(RECAP)).toEqual(RECAP)
-    expect(parseRecap({ about: 'x', main: 'y' })).toEqual({ about: 'x', main: 'y', agreements: [] })
-    expect(parseRecap({ about: ' ', main: 'y', agreements: [] })).toBeNull()
-    expect(parseRecap({ about: 'x', main: 'y', agreements: [1] })).toBeNull()
-    expect(parseRecap({ about: 'x', main: 'y', agreements: ['1', '2', '3', '4'] })).toBeNull()
-    expect(parseRecap('итог')).toBeNull()
-  })
 })
 
 // ─── WebSocket gateway ────────────────────────────────────────────────────────

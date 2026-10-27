@@ -29,9 +29,7 @@ export class PutRecapOperationHandler implements RequestHandler<PutRecapOperatio
       new PutAgentRecapRequest({
         userId: operation.userId,
         dialogId: operation.dialogId,
-        about: operation.recap.about,
-        main: operation.recap.main,
-        agreements: operation.recap.agreements,
+        recap: operation.recap,
         source: operation.source,
       }),
     )

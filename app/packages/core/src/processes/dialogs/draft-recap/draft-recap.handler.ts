@@ -5,7 +5,7 @@ import {
   DraftAgentRecapRequest,
   DraftAgentRecapRequestErrorCode,
 } from '../../../integrations/agent-api'
-import { toRecapDTO } from '../shared/dialog.dto'
+import { toRecapText } from '../shared/dialog.dto'
 import { DialogAccessRefusal, ensureActiveUser } from '../shared/ensure-active-user'
 import { DraftRecapOperation } from './draft-recap.operation'
 import { DraftRecapOperationErrorCode, type DraftRecapResult } from './draft-recap.types'
@@ -40,7 +40,7 @@ export class DraftRecapOperationHandler implements RequestHandler<DraftRecapOper
           return assertNever(drafted.error)
       }
     }
-    const recap = toRecapDTO(drafted.recap)
+    const recap = toRecapText(drafted.recap)
     if (!recap) return { success: false, error: DraftRecapOperationErrorCode.UNAVAILABLE }
     return { success: true, recap }
   }

@@ -5,7 +5,6 @@ import type {
   AgentDialogSummaryResponse,
   AgentMessageResponse,
   AgentRecapItemResponse,
-  AgentRecapResponse,
 } from '../../../integrations/agent-api'
 
 /**
@@ -13,13 +12,6 @@ import type {
  * exposed: their fields can change together with its version, while the application contract
  * cannot change without shipping new mobile builds.
  */
-
-/** «What we talked about», «the main thing», «what we agreed» (0-3 items); written for the person, so personal data. */
-export interface DialogRecapDTO {
-  about: string
-  main: string
-  agreements: string[]
-}
 
 export type DialogRecapStatus = 'pending' | 'ready' | 'none'
 export type DialogRecapSource = 'manual' | 'draft' | 'auto'
@@ -32,7 +24,7 @@ export interface DialogSummaryDTO {
   /** Replies in the whole dialog, over every connection; null when the agent did not say. Not part of the app contract. */
   userMessages: number | null
   assistantMessages: number | null
-  recap: DialogRecapDTO | null
+  recap: string | null
   recapStatus: DialogRecapStatus
   recapSource: DialogRecapSource | null
   /** `false`: no recap can be made for this conversation; null: the agent did not say. */
@@ -46,7 +38,7 @@ export interface DialogRecapItemDTO {
   dialogId: string
   startedAt: Date
   title: string | null
-  recap: DialogRecapDTO
+  recap: string
   recapSource: DialogRecapSource | null
   recapAt: Date | null
 }
@@ -79,13 +71,9 @@ function toDate(value: string | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date
 }
 
-export function toRecapDTO(recap: AgentRecapResponse | null | undefined): DialogRecapDTO | null {
-  if (!recap || typeof recap.about !== 'string' || typeof recap.main !== 'string') return null
-  return {
-    about: recap.about,
-    main: recap.main,
-    agreements: Array.isArray(recap.agreements) ? recap.agreements.filter((x) => typeof x === 'string') : [],
-  }
+/** The recap is one free-form text; anything else (an older agent's three parts) is no recap. */
+export function toRecapText(recap: unknown): string | null {
+  return typeof recap === 'string' && recap.trim() ? recap : null
 }
 
 const RECAP_SOURCES: readonly string[] = ['manual', 'draft', 'auto']
@@ -95,7 +83,7 @@ function toRecapSource(value: string | null | undefined): DialogRecapSource | nu
 }
 
 export function toDialogRecapItemDTO(item: AgentRecapItemResponse): DialogRecapItemDTO | null {
-  const recap = toRecapDTO(item.recap)
+  const recap = toRecapText(item.recap)
   if (!recap) return null
   return {
     dialogId: item.dialogId,
@@ -116,7 +104,7 @@ export function toDialogSummaryDTO(summary: AgentDialogSummaryResponse | null): 
     tensionAfter: summary.tensionAfter ?? null,
     userMessages: summary.userMessages ?? null,
     assistantMessages: summary.assistantMessages ?? null,
-    recap: toRecapDTO(summary.recap),
+    recap: toRecapText(summary.recap),
     // An agent without recaps (an older one) never says `pending` or `ready`.
     recapStatus: summary.recapStatus === 'pending' || summary.recapStatus === 'ready' ? summary.recapStatus : 'none',
     recapSource: toRecapSource(summary.recapSource),

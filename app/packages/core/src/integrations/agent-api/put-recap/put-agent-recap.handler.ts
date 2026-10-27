@@ -11,7 +11,7 @@ export class PutAgentRecapRequestHandler implements RequestHandler<PutAgentRecap
       `${userDialogsPath(request.userId)}/${encodeURIComponent(request.dialogId)}/recap`,
       {
         method: 'PUT',
-        body: { about: request.about, main: request.main, agreements: request.agreements, source: request.source },
+        body: { recap: request.recap, source: request.source },
       },
     )
     if (status === 404) return { success: false, error: PutAgentRecapRequestErrorCode.DIALOG_NOT_FOUND }

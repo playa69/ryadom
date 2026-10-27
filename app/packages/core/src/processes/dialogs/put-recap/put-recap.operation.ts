@@ -1,12 +1,11 @@
 import { RequestData } from 'mediatr-ts'
 import { hasPII } from '../../../shared'
-import type { DialogRecapDTO } from '../shared/dialog.dto'
 import type { PutRecapResult } from './put-recap.types'
 
 export interface PutRecapOperationData {
   userId: string
   dialogId: string
-  recap: DialogRecapDTO
+  recap: string
   source: 'manual' | 'draft'
 }
 
@@ -18,7 +17,7 @@ export class PutRecapOperation extends RequestData<PutRecapResult> {
   public readonly userId: string
   public readonly dialogId: string
   @hasPII(true)
-  public readonly recap: DialogRecapDTO
+  public readonly recap: string
   public readonly source: 'manual' | 'draft'
 
   constructor(data: PutRecapOperationData) {

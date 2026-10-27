@@ -3,20 +3,9 @@
 import Link from 'next/link'
 import { Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { DialogApiResponse, DialogRecapApi, DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
+import type { DialogApiResponse, DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText } from '@ryadom/client-core/errors'
-import {
-  DELETE_DIALOG_CONFIRM,
-  EMPTY_RECAP_FIELDS,
-  RECAP_CHECK_TEXT,
-  RECAP_ERROR_TEXT,
-  RECAP_LABELS,
-  RECAP_PENDING_TEXT,
-  UNSAVED_MARK_TEXT,
-  fieldsFromRecap,
-  recapFromFields,
-  canWriteRecap,
-} from '@ryadom/client-core/recaps'
+import { DELETE_DIALOG_CONFIRM, RECAP_ERROR_TEXT, RECAP_PENDING_TEXT, UNSAVED_MARK_TEXT, canWriteRecap } from '@ryadom/client-core/recaps'
 import { Button } from '@ryadom/ui/components/button'
 import { Card } from '@ryadom/ui/components/card'
 import { cn } from '@ryadom/ui/lib/utils'
@@ -30,41 +19,16 @@ import RecapEditor from './RecapEditor'
 /** While the recap is being written the entry asks again this often. */
 const PENDING_POLL_MS = 8_000
 
-function RecapText({ recap }: { recap: DialogRecapApi }) {
+function RecapText({ recap }: { recap: string }) {
   return (
-    <dl className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1">
-        <dt className="text-[0.8125rem] font-semibold text-faint">{RECAP_LABELS.about}</dt>
-        <dd className="text-base leading-[1.55] wrap-anywhere text-foreground" data-testid="journal-recap-about">
-          {recap.about}
-        </dd>
-      </div>
-      <div className="flex flex-col gap-1">
-        <dt className="text-[0.8125rem] font-semibold text-faint">{RECAP_LABELS.main}</dt>
-        <dd className="text-base leading-[1.55] wrap-anywhere text-foreground" data-testid="journal-recap-main">
-          {recap.main}
-        </dd>
-      </div>
-      {recap.agreements.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <dt className="text-[0.8125rem] font-semibold text-faint">{RECAP_LABELS.agreements}</dt>
-          <dd>
-            <ul className="list-disc pl-5 text-base leading-[1.55] text-foreground" data-testid="journal-recap-agreements">
-              {recap.agreements.map((item) => (
-                <li key={item} className="wrap-anywhere">
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </dd>
-        </div>
-      )}
-    </dl>
+    <p className="text-base leading-[1.55] wrap-anywhere whitespace-pre-line text-foreground" data-testid="journal-recap-text">
+      {recap}
+    </p>
   )
 }
 
 /**
- * «Итог разговора» in the journal entry (add-mood-diary, D13): the three parts when it is ready, «Итог появится через минуту»
+ * «Итог разговора» in the journal entry (add-mood-diary, D13): the free-form text when it is ready, «Итог появится через минуту»
  * while it is being written, and «Написать итог» / «Предзаполнить» for a conversation without one (the automatic recap is off).
  */
 export function RecapBlock({
@@ -82,7 +46,7 @@ export function RecapBlock({
   const summary = dialog.summary
   const status = summary?.recapStatus ?? 'none'
   const [writing, setWriting] = useState(false)
-  const [fields, setFields] = useState(EMPTY_RECAP_FIELDS)
+  const [text, setText] = useState('')
   const [drafted, setDrafted] = useState(false)
   const [drafting, setDrafting] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -122,7 +86,7 @@ export function RecapBlock({
     try {
       const result = await client.draftDialogRecap(dialog.dialogId)
       if (result.ok) {
-        setFields(fieldsFromRecap(result.data.recap))
+        setText(result.data.recap)
         setDrafted(true)
       } else setError(RECAP_ERROR_TEXT[result.code])
     } catch (err) {
@@ -133,12 +97,12 @@ export function RecapBlock({
   }
 
   async function save() {
-    const checked = recapFromFields(fields)
-    if (!checked.ok) return setError(RECAP_CHECK_TEXT[checked.reason])
+    const recap = text.trim()
+    if (recap === '') return setError('Напиши итог или оставь его пустым: тогда я подведу его сам')
     setSaving(true)
     setError('')
     try {
-      const result = await client.putDialogRecap(dialog.dialogId, { ...checked.recap, source: drafted ? 'draft' : 'manual' })
+      const result = await client.putDialogRecap(dialog.dialogId, { recap, source: drafted ? 'draft' : 'manual' })
       if (result.ok && result.data.summary) {
         onSummary(result.data.summary)
         setWriting(false)
@@ -184,7 +148,7 @@ export function RecapBlock({
         </>
       ) : (
         <>
-          <RecapEditor fields={fields} onChange={setFields} onDraft={() => void draft()} drafting={drafting} error={error} />
+          <RecapEditor text={text} onChange={setText} onDraft={() => void draft()} drafting={drafting} error={error} />
           <div className="flex flex-wrap gap-3">
             <Button
               type="button"

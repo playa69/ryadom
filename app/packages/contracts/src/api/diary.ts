@@ -21,8 +21,8 @@ export type MoodSource = (typeof MOOD_SOURCES)[number]
 export const WEEK_SUMMARY_MIN_DAYS = 3
 /** Minutes between two manual re-runs of the week text. */
 export const MANUAL_REFRESH_COOLDOWN_MIN = 10
-/** Days back a note without network may be written for (the offline queue). */
-export const MOOD_BACKFILL_MAX_DAYS = 7
+/** Days back a note without network may be written for (the offline queue): today and yesterday. */
+export const MOOD_BACKFILL_MAX_DAYS = 1
 /** After 3 days of "hard" in a row the bridge to the conversation says more. */
 export const MOOD_HARD_STREAK_DAYS = 3
 
@@ -33,7 +33,7 @@ export enum DiaryApiErrorCode {
   TOO_SOON = 'TOO_SOON',
   /** The agent could not write the text; try again later. */
   SUMMARY_UNAVAILABLE = 'SUMMARY_UNAVAILABLE',
-  /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS`. */
+  /** The date is in the future or older than `MOOD_BACKFILL_MAX_DAYS` days. */
   DATE_OUT_OF_RANGE = 'DATE_OUT_OF_RANGE',
 }
 
@@ -50,7 +50,7 @@ export interface DiarySummaryApi {
   periodStart: string
   text: string
   generatedAt: string
-  /** Days of «Тяжело» in the week the text was written for; 3 or more brings «Люди рядом». */
+  /** Days of «Тяжело» in the week the text was written for; with 3 or more the text ends with a soft line about people nearby. */
   hardDays: number
 }
 

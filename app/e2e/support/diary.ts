@@ -7,7 +7,8 @@ import postgres from 'postgres'
  * background pass waits after the last change is over for them.
  */
 
-const DB_URL = process.env.E2E_DATABASE_URL ?? 'postgres://ryadom:ryadom@127.0.0.1:55434/ryadom'
+const DB_URL =
+  process.env.E2E_DATABASE_URL ?? `postgres://ryadom:ryadom@127.0.0.1:${55434 + Number(process.env.E2E_PORT_OFFSET ?? 0)}/ryadom`
 
 export interface SeedMark {
   date: string
@@ -46,7 +47,7 @@ export async function ageWeekSummary(userId: string): Promise<void> {
 }
 
 /** The agent mock's own address: the `seed` route fills a person's journal with ready-made conversations (dev only). */
-const AGENT_URL = 'http://127.0.0.1:8081'
+const AGENT_URL = `http://127.0.0.1:${8081 + Number(process.env.E2E_PORT_OFFSET ?? 0)}`
 
 export interface SeedDialog {
   startedAt: string

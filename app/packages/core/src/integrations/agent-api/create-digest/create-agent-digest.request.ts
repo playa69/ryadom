@@ -11,9 +11,7 @@ export interface AgentDigestMark {
 /** What a conversation of the week came to (its recap, add-mood-diary D13); the agent reads it with the marks. */
 export interface AgentDigestRecap {
   date: string
-  about: string
-  main: string
-  agreements: string[]
+  text: string
 }
 
 export interface CreateAgentDigestRequestData {
