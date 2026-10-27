@@ -22,7 +22,9 @@ from app.api.dialog_live import _FallbackTts
 from app.clients.gemini_live import (
     VERBATIM_INSTRUCTIONS,
     GeminiLiveTts,
+    LiveError,
     LiveEvent,
+    LiveHistory,
     is_explicit_quota_error,
     is_quota_error,
 )
@@ -53,6 +55,8 @@ from tests.test_live import FakeConnector, FakeLink, reply_done, speak_turn
 from tests.test_live_context import make_session, refreshed, say, start_speaking, wait_until
 
 FIRST, SECOND, THIRD = "Первая реплика", "Вторая реплика", "Третья реплика"
+# Так Google закрывает соединение при своей внутренней ошибке: тот же код 1011, что у отказа по квоте, но без слова «quota».
+INTERNAL_1011 = "received 1011 (internal error) Internal error encountered."
 
 
 # ─── Помощники ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -152,6 +156,24 @@ def cascade(**kwargs: Any) -> CascadeFallback:
     )
 
 
+class RefusingConnector(FakeConnector):
+    """Поддельный Gemini, у которого открытия с номерами из `refusals` (с 1) отказывают заданным текстом."""
+
+    def __init__(self, refusals: dict[int, str], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.refusals = refusals
+
+    async def open(
+        self, voice: str, instructions: str, resume_handle: str | None = None, history: LiveHistory | None = None
+    ) -> FakeLink:
+        text = self.refusals.get(len(self.open_calls) + 1)
+        if text is None:
+            return await super().open(voice, instructions, resume_handle, history)
+        self.open_calls.append((voice, resume_handle))
+        self.history_calls.append(history)
+        raise LiveError(f"Gemini Live не открылся: ConnectionClosedError: {text}")
+
+
 def open_cost(link: FakeLink) -> int:
     """Во сколько квоты оценено открытие этой сессии: промпт и загруженная история."""
     return estimate_open([link.instructions, *(text for _, text in link.history or ())])
@@ -190,8 +212,11 @@ def test_token_estimates() -> None:
     ("text", "quota", "explicit"),
     [
         pytest.param("Gemini Live не открылся: ConnectionClosedError: received 1011 (internal error) You exceeded your current quota", True, True),
-        pytest.param("ConnectionClosedError: received 1011 (internal error) Internal error encountered.", True, False),
+        # Голый 1011 — внутренняя ошибка Google, а не квота: паузы после него нет.
+        pytest.param(f"ConnectionClosedError: {INTERNAL_1011}", False, False),
         pytest.param("429 RESOURCE_EXHAUSTED", True, True),
+        pytest.param("HTTP 429 Too Many Requests", True, False),
+        pytest.param("ошибка 4290", False, False),
         pytest.param("соединение закрыто", False, False),
         pytest.param("Gemini Live не открылся в тесте", False, False),
         pytest.param("received 1000 (OK)", False, False),
@@ -371,7 +396,7 @@ def test_calibration_ignores_the_first_minute_the_pause_does_not_and_the_floor_h
     assert budget.limit() == 1000 and budget.cooling()
     clock.advance(200)
     budget.charge(100)
-    budget.on_quota_error("open", calibrate=False)  # голый 1011 без слова «quota»
+    budget.on_quota_error("open", calibrate=False)  # голый 429 без слова «quota»
     assert budget.limit() == 1000
     clock.advance(100)
     budget.charge(100)
@@ -453,6 +478,20 @@ async def test_tts_quota_error_starts_the_cooldown() -> None:
     with pytest.raises(TtsError):
         await tts.synthesize("Привет", "male")
     assert len(connector.open_calls) == 1  # во время паузы к Google больше не ходим
+
+
+async def test_tts_internal_error_1011_does_not_start_the_cooldown() -> None:
+    connector = RefusingConnector({1: INTERNAL_1011}, turn_complete=True)
+    budget = make_budget(Clock())
+    tts = GeminiLiveTts(connector, budget=budget)
+    errors = sample("agent_gemini_quota_errors_total", where="tts")
+    with pytest.raises(TtsError):
+        await tts.synthesize("Привет", "male")
+    assert not budget.cooling()
+    assert await tts.synthesize("Привет", "male")  # следующая фраза идёт сразу, без паузы
+    await tts.drained()
+    assert len(connector.open_calls) == 2
+    assert sample("agent_gemini_quota_errors_total", where="tts") == errors
 
 
 async def test_tts_open_and_phrase_are_counted_in_the_window() -> None:
@@ -577,6 +616,38 @@ def test_quota_close_in_the_middle_of_a_turn_pauses_the_opens(user_id: str, tune
         frames = say(ws, "c-3", THIRD)
         assert len(connector.open_calls) == 2 and assistant_text(frames) == connector.reply
     assert sample("agent_gemini_quota_errors_total", where="session") == errors + 1
+
+
+def test_internal_error_1011_on_open_does_not_pause_the_opens(user_id: str, tune: Callable[..., None]) -> None:
+    tune(tpm_limit=400_000, quota_cooldown_seconds=5, tpm_wait_ms=100)
+    connector = RefusingConnector({1: INTERNAL_1011})  # первое открытие — внутренняя ошибка Google, не квота
+    errors = sample("agent_gemini_quota_errors_total", where="open")
+    with talk(connector, user_id) as (_, ws, budget):
+        wait_until(lambda: len(connector.open_calls) == 1, "первое открытие отказало")
+        assert not budget.cooling()
+        send_user_message(ws, "c-1", FIRST)
+        frames = read_frames(ws, lambda f: reply_done(f) or has(f, "error"))
+        assert not has(frames, "error") and assistant_text(frames) == connector.reply  # ход открыл сессию сразу
+        assert len(connector.open_calls) == 2
+    assert sample("agent_gemini_quota_errors_total", where="open") == errors
+
+
+def test_internal_error_1011_in_the_middle_of_a_turn_is_answered_without_a_pause(
+    user_id: str, tune: Callable[..., None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tune(tpm_limit=400_000, quota_cooldown_seconds=5, tpm_wait_ms=100)
+    monkeypatch.setattr("tests.test_live.QUOTA_TEXT", INTERNAL_1011)  # сессию посреди хода закрывает внутренняя ошибка
+    connector = FakeConnector()
+    connector.quota_close_links = {1}
+    errors = sample("agent_gemini_quota_errors_total", where="session")
+    with talk(connector, user_id) as (_, ws, budget):
+        send_user_message(ws, "c-1", FIRST)
+        frames = read_frames(ws, lambda f: reply_done(f) or has(f, "error"))
+        assert not budget.cooling()
+        # Повторная просьба ответить ушла в свежую сессию сразу, а не после паузы.
+        assert not has(frames, "error") and assistant_text(frames) == connector.reply
+        assert len(connector.open_calls) == 2
+    assert sample("agent_gemini_quota_errors_total", where="session") == errors
 
 
 def test_rotation_waits_out_the_cooldown(user_id: str, tune: Callable[..., None]) -> None:
