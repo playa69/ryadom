@@ -184,7 +184,7 @@ export function onNetworkChange(listener: (online: boolean) => void): () => void
 }
 
 /** App came back to the foreground. */
-export function onAppResume(listener: () => void): () => void {
+function onAppResume(listener: () => void): () => void {
   if (!isNative()) {
     const handler = () => {
       if (document.visibilityState === 'visible') listener()
