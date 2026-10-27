@@ -6,11 +6,17 @@ import {
   ConfirmUserEmailOperation,
   DeleteUserAccountOperation,
   DeleteUserAccountOperationErrorCode,
+  RevokeUserSessionsOperation,
   ToggleUserActivationOperation,
   ToggleUserActivationOperationErrorCode,
   userManagementProcess,
 } from '../src/processes/user-management'
 import { LoginOperationErrorCode } from '../src/processes/authentication'
+import {
+  getEnqueuedJobs,
+  memoryJobQueueTransport,
+  registerJobQueueTransport,
+} from '../src/services/job-queue-service'
 import { ADMIN_EMAIL, auditRows, getUserRow, login, mockAgent, registerConfirmedUser, registerUser } from './helpers'
 
 const toggle = (userId: string) =>
@@ -92,5 +98,32 @@ describe('удаление аккаунта админом', () => {
         new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
       ),
     ).toEqual({ success: false, error: DeleteUserAccountOperationErrorCode.ALREADY_DELETED })
+  })
+})
+
+describe('админка не ставит задач в очередь', () => {
+  // `openspec/changes/add-job-queue`, design D9: the admin app registers no transport and works no queue; its actions
+  // must neither need one nor queue anything (and, by the spec, they do not erase a profile in analytics).
+  it('блокировка, подтверждение почты, отзыв сессий и удаление админом работают без транспорта и ничего не ставят', async () => {
+    registerJobQueueTransport(undefined)
+    const user = await registerUser()
+    const other = await registerConfirmedUser()
+    mockAgent()
+
+    expect(await toggle(other.id)).toEqual({ success: true, isActive: false })
+    expect(await toggle(other.id)).toEqual({ success: true, isActive: true })
+    expect(
+      await userManagementProcess.execute(new ConfirmUserEmailOperation({ adminEmail: ADMIN_EMAIL, userId: user.id })),
+    ).toEqual({ success: true })
+    expect(
+      await userManagementProcess.execute(new RevokeUserSessionsOperation({ adminEmail: ADMIN_EMAIL, userId: other.id })),
+    ).toMatchObject({ success: true })
+    expect(
+      await userManagementProcess.execute(new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: other.id })),
+    ).toMatchObject({ success: true })
+
+    // Nothing was refused for want of a transport; and with the memory transport nothing would have been queued either.
+    registerJobQueueTransport(memoryJobQueueTransport)
+    expect(getEnqueuedJobs()).toEqual([])
   })
 })
