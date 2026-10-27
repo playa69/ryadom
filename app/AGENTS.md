@@ -21,8 +21,9 @@ TypeScript); запуск и проверки — скиллы `local-dev` и `e
 ## Логи
 
 - Логгер — `createLogger('<компонент>')` из `packages/core` (pino, JSON в stdout; в кластере его собирает Loki).
-- Поля с личными данными в запросах процессов помечаются `@hasPII()` (`packages/core/src/shared/pii-protection.ts`):
-  `LoggingBehavior` маскирует их в логах. Тексты разговоров в лог не пишутся.
+- Поля с личными данными в контрактах запросов ядра помечаются `@hasPII()` (`packages/core/src/shared/pii-protection.ts`):
+  `LoggingBehavior` маскирует их в логах (какую маску выбрать — `packages/core/AGENTS.md`). Тексты разговоров в лог не
+  пишутся.
 
 ## Заголовки трассировки
 
