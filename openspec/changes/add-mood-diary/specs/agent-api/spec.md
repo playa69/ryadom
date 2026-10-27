@@ -6,7 +6,7 @@
 
 Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/end` с телом `{ "takeaway"?: string, "tensionAfter"?: 1..10, "recapSource"?: "manual" | "draft" }` и ответом `200 { "summary" }` либо `404`. `takeaway` — поле «Что забираешь с собой?» и одновременно итог, написанный человеком (способы «вручную» и «предзаполнить»); `recapSource: draft` говорит, что поле было предзаполнено черновиком.
 
-Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": string | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null, "recapAvailable": boolean, "recapAt"?: string }`. `recap` — один текст итога в свободной форме, до 500 знаков, без деления на части. `recapAvailable` равен `false`, когда итог для разговора невозможен (мало сказано, кризис, «Без памяти»); `recapAt` — когда итог сохранён.
+Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": string | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null, "recapAvailable": boolean, "recapAt"?: string }`. `recap` — один текст итога в свободной форме, до 500 знаков, без деления на части. `recapAvailable` равен `false`, когда итог для разговора невозможен (мало сказано, кризис, «Не сохранять этот разговор», `add-unsaved-dialog`); `recapAt` — когда итог сохранён.
 
 Автоматический итог (`recapSource: auto`) считается в фоне после завершения любым путём и готов не позже чем через 60 секунд, если включена настройка `recapEnabled` («Подводить итог автоматически») или у человека её нет в базе (по умолчанию включена). До этого `recapStatus` равен `pending`, а `recap` — `null`. Непустой `takeaway` годного для итога разговора сохраняется как итог сразу (`ready`) и не заменяется автоматическим. Для не сохраняемого разговора, разговора с кризисом и разговора, где человек сказал меньше 40 знаков, `recapStatus` равен `none`.
 
@@ -73,7 +73,7 @@
 
 ### Requirement: Срок хранения разговоров
 
-Агент SHALL удалять разговор, его итог и документ в Cognee через `DIALOG_RETENTION_DAYS` дней (по умолчанию 21) после последнего сообщения, если значение больше нуля. Проход выполняет фоновый цикл агента раз в час. В режиме сухого прогона (`DIALOG_RETENTION_DRY_RUN=true`) агент только считает (метрика `agent_dialogs_retention_would_delete`) и ничего не удаляет. Заметки и настройки память срок не затрагивает.
+Агент SHALL удалять разговор, его итог и (через `add-memory-notes`) документ в Cognee через `DIALOG_RETENTION_DAYS` дней (по умолчанию 21) после последнего сообщения, если значение больше нуля; у разговора без сообщений (пометка о не сохранённом разговоре) срок считается от начала (`started_at`). Проход выполняет фоновый цикл агента раз в час. В режиме сухого прогона (`DIALOG_RETENTION_DRY_RUN=true`) агент только считает (метрика `agent_dialogs_retention_would_delete`) и ничего не удаляет. Заметки и настройки память срок не затрагивает.
 
 #### Scenario: Просроченный разговор
 
