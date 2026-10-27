@@ -22,6 +22,8 @@ description: Закоммитить и оформить pull request в репо
    кодом назови в PR, молча не правь ни то, ни другое.
 2. **Проверки** — скилл `local-dev` (typecheck и тесты app, pytest агента, prettier по изменённым файлам).
    Правил `.agents/skills/` — `node scripts/sync-agent-skills.mjs` и копии в `.claude/skills/` в том же коммите.
+   Тронул контракт API, маршруты `services/api`, `apps/mobile` или нативные файлы — ещё `release-check` (скилл):
+   код выхода 0, вывод — в PR.
 3. **Что попадает в коммит** — `git status` и `git diff --staged` целиком. Никогда:
    - `.playwright-mcp/`, `screenshots/` в корне, `.turbo/`, `app/e2e/report`, `test-results`, выгрузки журналов и баз;
    - файлы с секретами и ключами (`.env*` кроме `.env.example`, kubeconfig, ключи реестра и облака) — даже если git

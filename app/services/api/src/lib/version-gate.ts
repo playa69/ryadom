@@ -17,7 +17,7 @@ import { isClientAllowed, parseJsVersion, parseVersionCode, type PolicySource } 
  * otherwise a client below the minimum could never reach the very bundle that would get it off that
  * version.
  */
-const OPEN_PATHS = new Set<string>([ApiPath.AppStatus, ApiPath.Health])
+const OPEN_PATHS = new Set<string>([ApiPath.AppStatus, ApiPath.Health, '/metrics'])
 const OPEN_PREFIXES = [`${ApiPath.OtaBundle}/`]
 
 function platformOf(raw: string | undefined): AppPlatform | null {

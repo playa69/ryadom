@@ -32,7 +32,8 @@ describe('ответы роутов', () => {
     walk(routesDir, (path, text) => {
       // health returns bare JSON for monitoring, which is the only exception.
       const name = path.slice(routesDir.length + 1)
-      if (name.startsWith('health')) return
+      // `/metrics` is the Prometheus text format for the cluster's own scraper, no envelope either.
+      if (name.startsWith('health') || name.startsWith('metrics')) return
       if (/c\.json\(/.test(text) || /c\.text\(/.test(text)) offenders.push(name)
     })
     expect(offenders).toEqual([])

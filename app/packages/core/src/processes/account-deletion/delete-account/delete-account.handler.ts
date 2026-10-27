@@ -25,6 +25,7 @@ import {
 import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
 import { DeleteUserDialogSharesCommand, dialogSharesManager } from '../../../managers/dialog-shares-manager'
 import { DeleteUserDiaryCommand, diaryManager } from '../../../managers/diary-manager'
+import { DeleteSelfCheckResultsCommand, selfCheckManager } from '../../../managers/self-check-manager'
 import {
   EnqueueJobRequest,
   ERASE_PERSON_DELAY_SECONDS,
@@ -105,6 +106,8 @@ export class DeleteAccountOperationHandler implements RequestHandler<DeleteAccou
       await dialogSharesManager.execute(new DeleteUserDialogSharesCommand({ userId }))
       // Marks, summaries and widget tokens of the diary: before the row is anonymized.
       await diaryManager.execute(new DeleteUserDiaryCommand({ userId }))
+      // Saved results of the tests: gone before the deletion is announced (add-self-check-tests, D5).
+      await selfCheckManager.execute(new DeleteSelfCheckResultsCommand({ userId }))
       // By email, not by userId: codes are not tied to an account. An anonymous account has none.
       if (user.email !== null)
         await emailCodesManager.execute(new DeleteEmailCodesCommand({ email: user.email }))
