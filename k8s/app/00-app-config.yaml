@@ -106,7 +106,6 @@ data:
   # перезапустить app-api — клиенты сами перейдут на mulaw.
   DIALOG_AUDIO_CODECS: "opus,mulaw,pcm16"
   # --- Redis Sentinel (см. шапку): лимиты запросов общие для реплик ---
-  REDIS_ENABLED: "true"
   REDIS_SENTINEL_HOST: "redis.ryadom-db.svc.cluster.local"
   REDIS_MASTER_NAME: "mymaster"
   # (REDIS_PASSWORD — из Secret app-secrets, не из ConfigMap)
