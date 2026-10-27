@@ -79,9 +79,9 @@ http {
     # WebSocket to the same origin; media-src has blob: for playing back speech. Framing is allowed to
     # Telegram Web alone, which shows the Telegram Mini App in a frame (Telegram's phone and desktop apps
     # open it in a webview of their own, outside any frame).
-    # worker-src has blob: for the analytics SDK's session-recording worker (off unless the server turns
-    # replay on); product analytics themselves go to /api/ingest on this origin, so connect-src and
-    # script-src need nothing else. script-src has 'wasm-unsafe-eval' (WebAssembly only, no eval) for the
+    # worker-src has blob: left from the analytics SDK's session-recording worker; replay is off for good
+    # (packages/analytics/src/browser.ts), so nothing here creates one now. Product analytics go to
+    # /api/ingest on this origin, so connect-src and script-src need nothing else. script-src has 'wasm-unsafe-eval' (WebAssembly only, no eval) for the
     # WASM Opus decoder of the agent's voice on browsers without one of their own (iOS before 26,
     # Firefox on Android); without it they get μ-law instead.
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors https://web.telegram.org" always;
