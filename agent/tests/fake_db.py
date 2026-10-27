@@ -18,11 +18,18 @@ from typing import Any
 from app.services.dialog_db import DialogDbError, DialogWrite, PurgeStats, StoredDialog, iso_utc
 
 
+def _is_saved(row: tuple) -> bool:
+    """Колонка `saved` строки диалога: нет её (короткая строка из теста) — разговор сохранён."""
+    return len(row) <= 10 or row[10] is None or bool(row[10])
+
+
 class _File:
     """«Файл»: строки таблиц одного пути."""
 
     def __init__(self) -> None:
-        self.dialogs: dict[str, tuple] = {}  # id -> row (10 колонок, как DialogWrite.row + memory_extracted_at)
+        # id -> row: колонки DialogWrite.row (…, crisis_seen, saved) и в конце memory_extracted_at; руками собранная короткая строка
+        # читается как saved=True и без memory_extracted_at
+        self.dialogs: dict[str, tuple] = {}
         self.messages: dict[tuple[str, str], tuple] = {}  # (dialog_id, id) -> row
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
@@ -131,7 +138,8 @@ class FakeDialogDatabase:
                         reply_index=row[7],
                         memory_mode=row[8],
                         crisis_seen=bool(row[9]),
-                        memory_extracted_at=row[10] if len(row) > 10 else None,
+                        memory_extracted_at=row[11] if len(row) > 11 else None,
+                        saved=_is_saved(row),
                         messages=messages,
                         client_ids=client_ids,
                     )
@@ -174,7 +182,8 @@ class FakeDialogDatabase:
                         new[3], new[4], new[5], new[6], new[7],
                         old[8],  # memory_mode неизменяем после создания
                         max(old[9], new[9]),  # crisis_seen только растёт
-                        old[10],  # memory_extracted_at писатель диалогов не трогает
+                        old[10] if len(old) > 10 else True,  # saved неизменяем после создания
+                        old[11] if len(old) > 11 else None,  # memory_extracted_at писатель диалогов не трогает
                     )
                 for message in write.messages:
                     state.messages[(message[1], message[0])] = message
@@ -332,7 +341,7 @@ class FakeDialogDatabase:
         with self._lock:
             state = self._state()
             row = state.dialogs.get(dialog_id)
-            if row is None or dialog_id in state.deleted_dialogs:
+            if row is None or dialog_id in state.deleted_dialogs or not _is_saved(row):
                 return None
             messages = sorted((m for (d, _), m in state.messages.items() if d == dialog_id), key=lambda m: m[2])
             return row[1], row[2], row[8], [(m[3], m[4]) for m in messages]
@@ -343,7 +352,7 @@ class FakeDialogDatabase:
             rows = [
                 (r[2], r[0])
                 for r in state.dialogs.values()
-                if r[1] == user_id and r[3] is not None and r[8] == "on" and r[0] not in state.deleted_dialogs
+                if r[1] == user_id and r[3] is not None and r[8] == "on" and _is_saved(r) and r[0] not in state.deleted_dialogs
             ]
         return [dialog_id for _, dialog_id in sorted(rows)]
 

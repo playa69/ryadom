@@ -47,11 +47,16 @@ export interface StartDialogApiRequest {
    */
   startNew?: boolean
   /**
-   * `off` holds this conversation unsaved ("Не сохранять этот разговор"): nothing of it is written to the database or to memory.
-   * Only a new dialog takes it; a returned open one keeps
-   * its own (send `startNew` with it). Default `on`.
+   * `off` holds this conversation "without memory" (no memory block, notes or search; the journal, the recap and the retention
+   * stay as for any conversation). Only a new dialog takes it; a returned open one keeps its own (send `startNew` with it). Default `on`.
    */
   memory?: DialogMemoryMode
+  /**
+   * `false` holds this conversation unsaved ("Не сохранять этот разговор"): nothing of it is written to the database, to memory or to
+   * the analytics; after it ends only a mark without text stays in the journal. Independent of `memory`. Only a new dialog takes it, like
+   * `memory`. Default `true`; builds that never send it keep saving.
+   */
+  saved?: boolean
 }
 
 export interface StartDialogApiResponse {
@@ -66,8 +71,13 @@ export interface StartDialogApiResponse {
   messageCount: number
   /** When the returned dialog last moved (its last message or its end), ISO; null when unknown. */
   lastActivityAt: string | null
-  /** The memory mode of the returned dialog: a returned open one keeps the mode it was started with. */
+  /** The memory mode of the returned dialog: a returned open one keeps the mode it was started with. Always `off` for an unsaved one. */
   memoryMode: DialogMemoryMode
+  /**
+   * `false`: the returned dialog is held unsaved. Absent (a gateway older than the client) or `true`: an ordinary one. The client
+   * promises "not saved" only when this field says so, not because it asked.
+   */
+  saved?: boolean
   /** Whether the person has memory turned on: the "without memory" switch is shown only then. */
   memoryEnabled: boolean
 }
@@ -101,7 +111,7 @@ export interface DialogListItemApiResponse {
   startedAt: string
   endedAt: string | null
   summary: DialogSummaryApiResponse | null
-  /** `off`: an unsaved conversation ("Не сохранять этот разговор"): the journal keeps a mark without text. */
+  /** `off`: a conversation "without memory" (or an unsaved one: see `saved`). */
   memoryMode: DialogMemoryMode
   /**
    * `false`: a conversation the person asked not to keep (PROTEUS-246): the journal shows a mark without text,
@@ -256,6 +266,8 @@ export enum DialogCloseCode {
   /** The same person connected again: one active connection per user. */
   Superseded = 4009,
   AgentUnavailable = 4010,
+  /** The agent has no such dialog any more (an unsaved one is lost when the agent restarts): reconnecting is pointless. */
+  DialogGone = 4011,
 }
 
 export interface HelloFrame {

@@ -64,6 +64,7 @@ describe('начать разговор', () => {
         messageCount: 6,
         lastActivityAt: '2026-10-01T20:12:00.000Z',
         memoryMode: 'on',
+        saved: true,
         memoryEnabled: false,
       },
     })
@@ -93,6 +94,7 @@ describe('начать разговор', () => {
         messageCount: 0,
         lastActivityAt: null,
         memoryMode: 'on',
+        saved: true,
         memoryEnabled: false,
       },
     })
@@ -114,6 +116,58 @@ describe('начать разговор', () => {
       dialog: { dialogId: 'd-9', memoryMode: 'off', memoryEnabled: true },
     })
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
+  })
+
+  it('«не сохранять»: saved: false уходит агенту отдельно от memory, в ответе то, что агент подтвердил', async () => {
+    // add-unsaved-dialog, «Старт разговора»: два независимых выбора.
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-10', resumed: false, memoryMode: 'off', saved: false, memoryEnabled: true }),
+    })
+
+    const result = await dialogsProcess.execute(
+      new StartDialogOperation({ userId: user.id, startNew: true, saved: false }),
+    )
+
+    expect(result).toMatchObject({ success: true, dialog: { dialogId: 'd-10', memoryMode: 'off', saved: false } })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, saved: false })
+  })
+
+  it('«без памяти» не значит «не сохранять»: memory: off уходит без saved, в ответе saved: true', async () => {
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-11', resumed: false, memoryMode: 'off', memoryEnabled: true }),
+    })
+
+    const result = await dialogsProcess.execute(
+      new StartDialogOperation({ userId: user.id, startNew: true, memory: 'off' }),
+    )
+
+    expect(result).toMatchObject({ success: true, dialog: { memoryMode: 'off', saved: true } })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
+  })
+
+  it('старый агент не знает saved и не подтверждает его: клиенту уходит saved: true, обещать нечего', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () => json({ dialogId: 'd-12', resumed: false }),
+    })
+    const result = await dialogsProcess.execute(new StartDialogOperation({ userId: user.id, saved: false }))
+    expect(result).toMatchObject({ success: true, dialog: { saved: true } })
+  })
+
+  it('завершение не сохраняемого разговора: агент говорит saved: false, и это доходит до маршрута', async () => {
+    const user = await registerConfirmedUser()
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/end': () =>
+        json({ summary: { title: 'Разговор', themes: [], recapAvailable: false }, saved: false }),
+    })
+    const result = await dialogsProcess.execute(
+      new EndDialogOperation({ userId: user.id, dialogId: 'd-1', takeaway: null, tensionAfter: null }),
+    )
+    expect(result).toMatchObject({ success: true, saved: false })
   })
 
   it('голос из профиля уходит агенту при каждом старте: сменили — следующий диалог говорит иначе', async () => {
@@ -398,6 +452,7 @@ describe('завершение разговора', () => {
         recapAvailable: null,
         recapAt: null,
       },
+      saved: true,
     })
     expect(JSON.parse(calls.at(-1)!.body)).toEqual({ takeaway: 'Позвоню маме', tensionAfter: 5 })
   })

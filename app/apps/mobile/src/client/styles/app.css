@@ -3173,6 +3173,37 @@ p.rd-recap-text {
   cursor: pointer;
 }
 
+/* "Не сохранять этот разговор" under "Без памяти": a tick instead of the switch. */
+.rd-unsaved {
+  cursor: pointer;
+}
+
+.rd-unsaved-check {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--ryadom-brand-400);
+}
+
+.rd-dialog-gone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+  padding-top: var(--ryadom-s-7);
+  text-align: center;
+}
+
+.rd-dialog-gone .rd-sheet-title {
+  margin: 0;
+}
+
+/* One button, not a bar across a wide window. */
+.rd-dialog-gone .button {
+  align-self: center;
+  width: min(100%, 320px);
+}
+
 .rd-dot {
   display: inline-block;
   width: 8px;

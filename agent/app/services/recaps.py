@@ -46,8 +46,9 @@ def user_chars(dialog: "Dialog") -> int:
 
 
 def eligible(dialog: "Dialog") -> bool:
-    """Подводится ли итог для разговора: человек сказал не меньше 40 знаков, кризиса не было, разговор сохраняется."""
-    return dialog.memory_mode == "on" and not dialog.crisis_seen and user_chars(dialog) >= MIN_USER_CHARS
+    """Подводится ли итог для разговора: человек сказал не меньше 40 знаков, кризиса не было, разговор сохраняется. «Без памяти»
+    на итог не влияет: журнальный итог не зависит от памяти."""
+    return dialog.saved and not dialog.crisis_seen and user_chars(dialog) >= MIN_USER_CHARS
 
 
 def build_messages(dialog: "Dialog") -> list[dict[str, str]]:

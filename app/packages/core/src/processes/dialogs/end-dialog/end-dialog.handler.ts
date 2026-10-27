@@ -49,6 +49,6 @@ export class EndDialogOperationHandler implements RequestHandler<EndDialogOperat
       }
     }
     createLogger('dialogs').info('Dialog ended', { userId: operation.userId, dialogId: operation.dialogId })
-    return { success: true, summary: toDialogSummaryDTO(result.summary) }
+    return { success: true, summary: toDialogSummaryDTO(result.summary), saved: result.saved }
   }
 }

@@ -64,6 +64,28 @@ describe('ссылка на разговор', () => {
     expect(counted.viewCount).toBe(1)
   })
 
+  it('у не сохраняемого разговора ссылку создать нельзя: он есть только в памяти агента', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () =>
+        json({
+          dialogId: 'd-1',
+          startedAt: '2026-10-01T20:00:00.000Z',
+          endedAt: null,
+          summary: null,
+          memoryMode: 'off',
+          saved: false,
+          messages: [{ id: 'm2', role: 'user', text: 'Тяжёлый день', createdAt: '2026-10-01T20:01:00.000Z' }],
+        }),
+    })
+    refusedWith(
+      await call(app, 'POST', '/api/dialogs/d-1/share', {}, tokens.accessToken),
+      DialogApiErrorCode.DIALOG_NOT_FOUND,
+    )
+    expect(ok(await call(app, 'GET', '/api/dialogs/d-1/share', undefined, tokens.accessToken))).toBeNull()
+  })
+
   it('одна активная ссылка на разговор, срок только из списка', async () => {
     resetLimits()
     const { tokens } = await signUpAndIn(app)

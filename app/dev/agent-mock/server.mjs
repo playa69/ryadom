@@ -52,9 +52,6 @@ let digestsFail = false
 // Memory, the agent's long-term notes about the person: the person can turn it on, and "запомни, что ..."
 // said in a conversation becomes a note shortly after (`MOCK_NOTE_DELAY_MS`, see `memory-notes.mjs`).
 // Texts of facts and messages never reach the log here either: ids and counts only.
-/** A conversation "without memory" is deleted this long after its last message. */
-const INCOGNITO_TTL_MS = 24 * 60 * 60 * 1000
-
 /** userId → { dialogs: Map<dialogId, dialog>, memory } */
 const users = new Map()
 
@@ -75,7 +72,8 @@ function userState(userId) {
 
 // ─── Recaps of conversations (add-mood-diary D13) ─────────────────────────────
 // A recap is one free-form text in the second person (the «Что забираешь с собой» field is the recap). The mock follows the real agent's rules: none for a conversation where the
-// person said under 40 characters, for one with a crisis, or one held «without memory»; a recap the person wrote is kept
+// person said under 40 characters, for one with a crisis, or one held unsaved («Не сохранять этот разговор»); «without memory» is
+// only memory, so such a conversation has a recap like any other; a recap the person wrote is kept
 // as it is and the automatic one never replaces it; the automatic one is ready after MOCK_RECAP_DELAY_MS (pending until then).
 const RECAP_DELAY_MS = Number(process.env.MOCK_RECAP_DELAY_MS ?? 3000)
 const RECAP_MIN_USER_CHARS = 40
@@ -85,7 +83,7 @@ function userChars(dialog) {
 }
 
 function recapEligible(dialog) {
-  return dialog.memoryMode !== 'off' && !dialog.crisisSeen && userChars(dialog) >= RECAP_MIN_USER_CHARS
+  return dialog.saved !== false && !dialog.crisisSeen && userChars(dialog) >= RECAP_MIN_USER_CHARS
 }
 
 function templateRecap(dialog) {
@@ -118,7 +116,7 @@ function openDialogOf(userId) {
   return null
 }
 
-function createDialog(userId, memory = 'on') {
+function createDialog(userId, memory = 'on', saved = true) {
   const dialog = {
     dialogId: randomUUID(),
     userId,
@@ -127,8 +125,9 @@ function createDialog(userId, memory = 'on') {
     summary: null,
     messages: [],
     replyIndex: 0,
-    // Set once, when the dialog is created: a returned open dialog keeps its own.
-    memoryMode: memory === 'off' ? 'off' : 'on',
+    // Set once, when the dialog is created: a returned open dialog keeps its own. An unsaved one has no memory.
+    memoryMode: memory === 'off' || !saved ? 'off' : 'on',
+    saved: saved ? undefined : false,
   }
   userState(userId).dialogs.set(dialog.dialogId, dialog)
   return dialog
@@ -137,6 +136,22 @@ function createDialog(userId, memory = 'on') {
 /** Ends the dialog and starts its recap: written by the person, or the automatic one after `RECAP_DELAY_MS`. */
 function endDialog(dialog, takeaway, tensionAfter, recapSource = 'manual') {
   dialog.endedAt = new Date().toISOString()
+  if (dialog.saved === false) {
+    // Nothing is kept of an unsaved conversation but the mark: no text, no title, no takeaway, no tension, no recap.
+    dialog.summary = {
+      title: 'Разговор',
+      themes: [],
+      tensionBefore: null,
+      tensionAfter: null,
+      recap: null,
+      recapStatus: 'none',
+      recapSource: null,
+      recapAvailable: false,
+    }
+    dialog.messages = []
+    dialog.clientIds?.clear()
+    return
+  }
   dialog.summary = {
     ...buildSummary(dialog, takeaway, tensionAfter),
     recap: null,
@@ -157,19 +172,6 @@ function endDialog(dialog, takeaway, tensionAfter, recapSource = 'manual') {
   }
 }
 
-/** Conversations "without memory" are deleted 24 hours after their last message, as the agent does. */
-function purgeIncognito(userId) {
-  const { dialogs } = userState(userId)
-  for (const dialog of [...dialogs.values()]) {
-    if (dialog.memoryMode !== 'off') continue
-    const lastAt = dialog.messages.at(-1)?.createdAt ?? dialog.endedAt ?? dialog.startedAt
-    if (Date.now() - Date.parse(lastAt) > INCOGNITO_TTL_MS) {
-      dialogs.delete(dialog.dialogId)
-      console.log(`[agent-mock] удалён диалог без памяти ${dialog.dialogId}`)
-    }
-  }
-}
-
 function hoursSinceLastDialog(userId) {
   const ended = [...userState(userId).dialogs.values()]
     .filter((dialog) => dialog.endedAt)
@@ -183,7 +185,8 @@ function listItem(dialog) {
     dialogId: dialog.dialogId,
     startedAt: dialog.startedAt,
     endedAt: dialog.endedAt,
-    summary: dialog.summary,
+    // A mark has no summary: the one an unsaved conversation ends with exists only for the `ended` frame.
+    summary: dialog.saved === false ? null : dialog.summary,
     memoryMode: dialog.memoryMode ?? 'on',
     // `saved: false` marks a conversation the person asked not to keep: only the mark is listed (PROTEUS-246).
     saved: dialog.saved !== false,
@@ -290,6 +293,22 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { fail: digestsFail })
   }
 
+  // Dev only: the agent restarts. Every socket is cut (1012, as a rolling update does), and a conversation held unsaved that has not
+  // ended is gone, because it lived in the process memory only. Everything else is on disk in the real agent, and here it stays.
+  if (path === '/dev/restart' && method === 'POST') {
+    let lostUnsaved = 0
+    for (const state of users.values()) {
+      for (const [id, dialog] of [...state.dialogs]) {
+        if (dialog.saved === false && !dialog.endedAt) {
+          state.dialogs.delete(id)
+          lostUnsaved += 1
+        }
+      }
+    }
+    for (const client of wss.clients) client.close(1012, 'agent restarting')
+    return json(res, 200, { lostUnsaved })
+  }
+
   // /v1/users/{userId}...
   const parts = path.split('/').filter(Boolean)
   if (parts[0] !== 'v1' || parts[1] !== 'users' || !parts[2]) return json(res, 404, { error: 'not_found' })
@@ -384,8 +403,6 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { count: state.dialogs.size, notes: state.memory.notes.size })
   }
 
-  purgeIncognito(userId)
-
   if (parts[3] === 'memory') return handleMemoryRoute(req, res, url, userId, parts, method)
 
   // GET /v1/users/{userId}/recaps - conversations with a ready recap, newest first
@@ -424,12 +441,20 @@ const server = createServer(async (req, res) => {
   // nothing (the open dialog comes back `resumed`, with its message count and last activity, so the app
   // can ask the person). `{ new: true }` asks for a fresh conversation: the open one is ended first and
   // stays in the journal, unless it is empty, then it is simply reused; the answer is never `resumed`.
-  // `memory: "off"` holds a new dialog "without memory"; a returned open dialog keeps its own mode.
+  // `memory: "off"` holds a new dialog "without memory", `saved: false` holds it unsaved; two choices apart. A returned open
+  // dialog keeps its own.
   if (parts.length === 4 && method === 'POST') {
     const body = await readBody(req)
     // Counted before the open dialog is ended, as the real agent does: "time since the last talk" skips it.
     const sinceLastDialogHours = hoursSinceLastDialog(userId)
     let existing = openDialogOf(userId)
+    const wantsSaved = body.saved !== false
+    const wantsMemory = !wantsSaved || body.memory === 'off' ? 'off' : 'on'
+    // An empty open dialog chosen otherwise is not reused: it is dropped and a new one starts as asked, like the agent does.
+    if (existing && existing.messages.length === 0 && (existing.memoryMode !== wantsMemory || (existing.saved !== false) !== wantsSaved)) {
+      userState(userId).dialogs.delete(existing.dialogId)
+      existing = null
+    }
     const wantsNew = body.new === true
     let resumed = Boolean(existing)
     if (wantsNew && existing) {
@@ -438,11 +463,10 @@ const server = createServer(async (req, res) => {
         endDialog(existing, null, null)
         existing = null
       } else {
-        // An empty one is reused, so it takes the mode asked for now.
-        existing.memoryMode = body.memory === 'off' ? 'off' : 'on'
+        // An empty one is reused as it is: its choices already match (see above).
       }
     }
-    const dialog = existing ?? createDialog(userId, body.memory)
+    const dialog = existing ?? createDialog(userId, body.memory, wantsSaved)
     dialog.greeting = resumed ? 'Продолжим, где остановились.' : 'Я рядом. С чего начнём?'
     // Voiced once, on the first socket after this start: a reconnect must not read it out again.
     dialog.greetingPending = true
@@ -454,6 +478,7 @@ const server = createServer(async (req, res) => {
       messageCount: dialog.messages.length,
       lastActivityAt: dialog.messages.at(-1)?.createdAt ?? dialog.endedAt,
       memoryMode: dialog.memoryMode,
+      saved: dialog.saved !== false,
       memoryEnabled: userState(userId).memory.enabled,
     })
   }
@@ -481,9 +506,9 @@ const server = createServer(async (req, res) => {
   if (parts.length === 6 && parts[5] === 'end' && method === 'POST') {
     if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
     const body = await readBody(req)
-    if (dialog.summary) return json(res, 200, { summary: dialog.summary })
+    if (dialog.summary) return json(res, 200, { summary: dialog.summary, saved: dialog.saved !== false })
     endDialog(dialog, body.takeaway ?? null, body.tensionAfter ?? null, body.recapSource)
-    return json(res, 200, { summary: dialog.summary })
+    return json(res, 200, { summary: dialog.summary, saved: dialog.saved !== false })
   }
 
   // PUT /v1/users/{userId}/dialogs/{dialogId}/recap - the recap the person wrote in the journal
@@ -651,7 +676,7 @@ wss.on('connection', (socket, request, context) => {
   console.log(`[agent-mock] сокет открыт: диалог ${dialog.dialogId}`)
   /** Messages whose speech the client cancelled (it started talking over them). */
   socket.cancelledSpeech = new Set()
-  send(socket, { type: 'ready' })
+  send(socket, { type: 'ready', ...(dialog.saved === false ? { saved: false } : {}) })
   // The greeting came over REST as text; the agent also says it, under the reserved id "greeting".
   if (dialog.greetingPending && dialog.greeting) {
     dialog.greetingPending = false

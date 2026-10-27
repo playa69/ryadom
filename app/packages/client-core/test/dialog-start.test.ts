@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import type { StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
-import { chosenMemoryMode, nextStartStep, shouldAskToResume } from '../src/dialog-start'
+import { chosenMemoryMode, chosenStart, nextStartStep, shouldAskToResume } from '../src/dialog-start'
 
 const start = (patch: Partial<StartDialogApiResponse>): StartDialogApiResponse => ({
   dialogId: 'd-1',
@@ -78,5 +78,42 @@ describe('что делать с ответом старта', () => {
       'resumed' | 'messageCount' | 'memoryMode'
     >
     expect(nextStartStep(legacy, DialogMemoryMode.Off)).toBe('open')
+  })
+})
+
+describe('«Не сохранять этот разговор» на главной (add-unsaved-dialog)', () => {
+  it('отдельный выбор: галочка не зависит от памяти и не просит память; «Без памяти» без галочки не уходит в saved', () => {
+    expect(chosenStart(true, false, true)).toEqual({ memory: undefined, saved: false })
+    expect(chosenStart(false, false, true)).toEqual({ memory: undefined, saved: false })
+    expect(chosenStart(undefined, true, true)).toEqual({ memory: undefined, saved: false })
+    expect(chosenStart(true, true, false)).toEqual({ memory: DialogMemoryMode.Off, saved: true })
+    expect(chosenStart(true, false, false)).toEqual({ memory: DialogMemoryMode.On, saved: true })
+    expect(chosenStart(false, false, false)).toEqual({ memory: undefined, saved: true })
+  })
+
+  it('открытый пустой с другим выбором «сохранять» — завершить и начать новый, не спрашивая', () => {
+    const saved = start({ resumed: true, messageCount: 0, memoryMode: DialogMemoryMode.On, saved: true })
+    expect(nextStartStep(saved, undefined, false)).toBe('restart')
+    const unsaved = start({ resumed: true, messageCount: 0, memoryMode: DialogMemoryMode.Off, saved: false })
+    expect(nextStartStep(unsaved, DialogMemoryMode.On, true)).toBe('restart')
+    expect(nextStartStep(unsaved, undefined, true)).toBe('restart')
+  })
+
+  it('открытый пустой с тем же выбором — открыть; у не сохраняемого память off, и это не повод пересоздавать', () => {
+    const unsaved = start({ resumed: true, messageCount: 0, memoryMode: DialogMemoryMode.Off, saved: false })
+    expect(nextStartStep(unsaved, undefined, false)).toBe('open')
+    const saved = start({ resumed: true, messageCount: 0, memoryMode: DialogMemoryMode.On, saved: true })
+    expect(nextStartStep(saved, DialogMemoryMode.On, true)).toBe('open')
+  })
+
+  it('открытый с репликами — вопрос, и у не сохраняемого тоже', () => {
+    const unsaved = start({ resumed: true, messageCount: 4, memoryMode: DialogMemoryMode.Off, saved: false })
+    expect(nextStartStep(unsaved, undefined, true)).toBe('ask')
+  })
+
+  it('шлюз без saved — как «сохраняется»: с галочкой пересоздаём пустой, без неё открываем', () => {
+    const legacy = start({ resumed: true, messageCount: 0, memoryMode: DialogMemoryMode.On })
+    expect(nextStartStep(legacy, undefined, false)).toBe('restart')
+    expect(nextStartStep(legacy, undefined, true)).toBe('open')
   })
 })

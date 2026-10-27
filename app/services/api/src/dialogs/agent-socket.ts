@@ -23,6 +23,11 @@ export interface AgentSocketHandlers {
   onOpen(): void
   onClose(code: number, reason: string): void
   onError(error: Error): void
+  /**
+   * The agent refused the handshake with an HTTP status (404: it has no such dialog). Without a handler, or for a status the handler
+   * does not take over, it is an `onError` like any failed connection.
+   */
+  onRejected?(status: number): void
 }
 
 function agentWsUrl(baseUrl: string, userId: string, dialogId: string): string {
@@ -68,7 +73,15 @@ export function openAgentSocket(options: AgentSocketOptions, handlers: AgentSock
     'close',
     bindRequestContext((code: number, reason: Buffer) => handlers.onClose(code, reason.toString('utf8'))),
   )
-  socket.on('error', bindRequestContext(handlers.onError))
+  socket.on(
+    'error',
+    bindRequestContext((error: Error) => {
+      // `ws` reports a refused handshake as an error whose message carries the status.
+      const refused = /Unexpected server response: (\d{3})/.exec(error.message)
+      if (refused && handlers.onRejected) return handlers.onRejected(Number(refused[1]))
+      handlers.onError(error)
+    }),
+  )
 
   return {
     send(frame) {

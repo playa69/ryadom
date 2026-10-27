@@ -20,7 +20,11 @@
  */
 export const MEMORY_CONSENT_VERSION = '2026-10-12'
 
-/** Memory for one conversation: `off` is a conversation "without memory", deleted 24 hours after its last message. */
+/**
+ * Memory for one conversation: `off` is a conversation "without memory": no memory block, no notes, no search by it. Otherwise it is an
+ * ordinary conversation (journal, recap, retention). A conversation held unsaved ("Не сохранять этот разговор") is `off` too, and is told
+ * apart by `saved: false`.
+ */
 export enum DialogMemoryMode {
   On = 'on',
   Off = 'off',

@@ -48,6 +48,10 @@ export class CreateDialogShareOperationHandler implements RequestHandler<
       new GetAgentDialogRequest({ userId: operation.userId, dialogId: operation.dialogId }),
     )
     if (!dialog.success) return { success: false, error: CreateDialogShareOperationErrorCode.DIALOG_NOT_FOUND }
+    // A conversation held unsaved lives in the agent's memory only: there is nothing to share, and a link must not keep it open.
+    if (dialog.dialog.saved === false) {
+      return { success: false, error: CreateDialogShareOperationErrorCode.DIALOG_NOT_FOUND }
+    }
     // An empty conversation has nothing to show.
     const last = dialog.dialog.messages.at(-1)
     if (!last) return { success: false, error: CreateDialogShareOperationErrorCode.DIALOG_NOT_FOUND }

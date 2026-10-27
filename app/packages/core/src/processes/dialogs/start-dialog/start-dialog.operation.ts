@@ -14,6 +14,8 @@ export interface StartDialogOperationData {
    * open one keeps the mode it was started with.
    */
   memory?: AgentDialogMemoryMode
+  /** `false`: the person asked not to save this conversation. Only a new dialog takes it, like `memory`. */
+  saved?: boolean
 }
 
 export class StartDialogOperation extends RequestData<StartDialogResult> {
@@ -23,11 +25,13 @@ export class StartDialogOperation extends RequestData<StartDialogResult> {
   public readonly userId: string
   public readonly startNew: boolean
   public readonly memory: AgentDialogMemoryMode | undefined
+  public readonly saved: boolean | undefined
 
   constructor(data: StartDialogOperationData) {
     super()
     this.userId = data.userId
     this.startNew = data.startNew === true
     this.memory = data.memory
+    this.saved = data.saved
   }
 }

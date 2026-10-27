@@ -1,12 +1,22 @@
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
-import { Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
+import { Block, Button, Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+import { trackUnlessUnsaved } from '../../../lib/dialog-analytics'
+import {
+  isUnsaved,
+  rememberUnsaved,
+  UNSAVED_DONE_TEXT,
+  UNSAVED_GONE,
+  UNSAVED_NOTE,
+  UNSAVED_NOTE_TEXT,
+  wasUnsaved,
+} from '@ryadom/client-core/unsaved'
 import { reportMicFailure, reportVoiceProblem } from '../../../lib/analytics'
 import {
   createDialogSocket,
@@ -95,6 +105,7 @@ export default function DialogPage({
   resumed,
   sinceLastDialogHours,
   memoryMode: startedMemoryMode,
+  saved: startedSaved,
   memoryEnabled,
   listen,
 }: {
@@ -106,6 +117,8 @@ export default function DialogPage({
   sinceLastDialogHours?: number | null
   /** `off`: the conversation is held "without memory". Unknown when opened other than from home. */
   memoryMode?: DialogMemoryMode
+  /** `false`: held unsaved ("Не сохранять этот разговор"). Unknown when opened other than from home. */
+  saved?: boolean
   /** Whether the person's memory was on when the conversation started. */
   memoryEnabled?: boolean
   /** Opened by the talk button on home: start listening as soon as the connection is up. */
@@ -114,6 +127,13 @@ export default function DialogPage({
   const { auth } = useAuth()
   const user = auth.user
   const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(startedMemoryMode)
+  /** Held unsaved: from the start, or from the dialog when the screen is opened another way. */
+  const [unsaved, setUnsaved] = useState(() => startedSaved === false || wasUnsaved(dialogId))
+  const unsavedRef = useRef(unsaved)
+  unsavedRef.current = unsaved
+  const trackDialog = trackUnlessUnsaved(() => unsavedRef.current)
+  /** The dialog is gone from the agent (a restart took an unsaved one). */
+  const [gone, setGone] = useState(false)
 
   // Opened other than from home: the dialog itself says whether it is held without memory.
   useEffect(() => {
@@ -121,7 +141,12 @@ export default function DialogPage({
     let cancelled = false
     getDialog(dialogId)
       .then((result) => {
-        if (!cancelled && result.ok) setMemoryMode(result.data.memoryMode)
+        if (cancelled || !result.ok) return
+        setMemoryMode(result.data.memoryMode)
+        if (isUnsaved(result.data)) {
+          rememberUnsaved(dialogId)
+          setUnsaved(true)
+        }
       })
       .catch(() => {})
     return () => {
@@ -252,7 +277,7 @@ export default function DialogPage({
 
   // Once per conversation opened, not per render; `resumed` is what the server said when it started it.
   useEffect(() => {
-    track(AnalyticsEvent.DialogScreenOpened, { resumed: resumed === true })
+    if (!unsavedRef.current) track(AnalyticsEvent.DialogScreenOpened, { resumed: resumed === true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dialogId])
 
@@ -330,7 +355,7 @@ export default function DialogPage({
           phase === 'start' ? startAgentSpeech(messageId) : replyVoice.agentSpeechEnded(messageId),
         onTranscript: (text, final) => {
           // A voice turn the agent heard: only how long it was, in three sizes, never what was said.
-          if (final && text.trim()) {
+          if (final && text.trim() && !unsavedRef.current) {
             track(AnalyticsEvent.DialogMessageSent, { input: 'voice', size: sizeClass(text.length) })
           }
           setHearing(final ? '' : text)
@@ -360,7 +385,10 @@ export default function DialogPage({
           }
           if (code === DialogWsErrorCode.RATE_LIMITED || code === DialogWsErrorCode.MESSAGE_TOO_LONG) {
             f7.toast.create({ text: message, closeTimeout: 2500 }).open()
+            return
           }
+          // The agent has no such dialog: an unsaved one is lost when it restarts. The screen says so instead of retrying.
+          if (code === DialogWsErrorCode.DIALOG_NOT_FOUND) setGone(true)
         },
       },
       // The greeting from the dialog start: the socket may take a moment to open, and the screen
@@ -611,7 +639,7 @@ export default function DialogPage({
   }
 
   async function showText() {
-    track(AnalyticsEvent.DialogVoiceToggled, { enabled: false })
+    trackDialog(AnalyticsEvent.DialogVoiceToggled, { enabled: false })
     hush()
     if (handsFree) await closeMic(null, 'send')
     else await finishUtterance()
@@ -621,7 +649,7 @@ export default function DialogPage({
   }
 
   function showVoice() {
-    track(AnalyticsEvent.DialogVoiceToggled, { enabled: true })
+    trackDialog(AnalyticsEvent.DialogVoiceToggled, { enabled: true })
     setMode('voice')
     // Choosing the voice is asking to speak: no second tap.
     modeRef.current = 'voice'
@@ -635,7 +663,7 @@ export default function DialogPage({
     const text = draft.trim()
     if (!text) return
     // Only how long it is, in three sizes: the message itself never leaves the conversation.
-    track(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(text.length) })
+    trackDialog(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(text.length) })
     socket.current?.sendMessage(text)
     setDraft('')
     setAwaitingReply(true)
@@ -651,7 +679,7 @@ export default function DialogPage({
   }
 
   function openEnd() {
-    track(AnalyticsEvent.DialogEndSheetOpened)
+    trackDialog(AnalyticsEvent.DialogEndSheetOpened)
     hush()
     if (handsFree) void closeMic('manual', 'drop')
     else dropListening()
@@ -668,13 +696,14 @@ export default function DialogPage({
     setEndOpened(false)
     // The journal lives on another tab; on a wide screen its list is visible right away.
     void journal.refresh()
-    const text =
-      (summary?.title ? `Забираешь с собой: ${summary.title}` : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
-      (summary?.recapStatus === 'pending'
-        ? ' Итог разговора появится в журнале через минуту.'
-        : summary?.recapStatus === 'ready'
-          ? ' Итог разговора сохранён в журнале.'
-          : '')
+    const text = unsavedRef.current
+      ? UNSAVED_DONE_TEXT
+      : (summary?.title ? `Забираешь с собой: ${summary.title}` : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
+        (summary?.recapStatus === 'pending'
+          ? ' Итог разговора появится в журнале через минуту.'
+          : summary?.recapStatus === 'ready'
+            ? ' Итог разговора сохранён в журнале.'
+            : '')
     const keepsConversations = user?.email === null || user?.isEmailConfirmed === false
     if (!keepsConversations) {
       f7.dialog.alert(text, 'Спасибо, что поговорил(а)', () => f7router.back())
@@ -744,11 +773,28 @@ export default function DialogPage({
     if (element) element.scrollTop = element.scrollHeight
   }, [subtitle, mode])
 
+  if (gone) {
+    return (
+      <Page name="dialog" className="rd-dialog-page rd-no-tabbar ph-no-capture">
+        <Navbar backLink="Назад" title="Разговор" />
+        <Block className="rd-dialog-gone" data-testid="dialog-gone">
+          <h1 className="rd-sheet-title">{unsaved ? UNSAVED_GONE.title : 'Разговор не найден'}</h1>
+          <p className="rd-muted" data-testid={unsaved ? 'dialog-unsaved-gone' : undefined}>
+            {unsaved ? UNSAVED_GONE.text : 'Возможно, ссылка устарела. Начни новый разговор с главной.'}
+          </p>
+          <Button fill large onClick={() => f7router.back()}>
+            {unsaved ? UNSAVED_GONE.home : 'На главную'}
+          </Button>
+        </Block>
+      </Page>
+    )
+  }
+
   return (
     <Page name="dialog" className="rd-dialog-page rd-no-tabbar ph-no-capture">
       <Navbar backLink="Назад" title="Разговор">
         {/* The link shows the stored messages, and the greeting is not one of them: it needs something said. */}
-        {(saidBefore || messages.some((message) => message.role === 'user')) && <ShareNavButton onClick={() => setShareOpened(true)} />}
+        {!unsaved && (saidBefore || messages.some((message) => message.role === 'user')) && <ShareNavButton onClick={() => setShareOpened(true)} />}
         {/* What Ryadom remembers, one tap from the conversation. Not in a conversation held without memory. */}
         {memoryMode !== DialogMemoryMode.Off && user?.memoryEnabled !== false && (
           <button
@@ -775,7 +821,16 @@ export default function DialogPage({
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
       <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />
 
-      {memoryMode === DialogMemoryMode.Off && (
+      {unsaved && (
+        <div className="rd-incognito-mark" role="note" data-testid="dialog-unsaved">
+          <Icon f7="eye_slash" size={16} />
+          <span>
+            <b>{UNSAVED_NOTE}.</b> {UNSAVED_NOTE_TEXT}
+          </span>
+        </div>
+      )}
+
+      {!unsaved && memoryMode === DialogMemoryMode.Off && (
         <div className="rd-incognito-mark" role="note" data-testid="dialog-incognito">
           <Icon f7="eye_slash" size={16} />
           <span>
@@ -930,10 +985,11 @@ export default function DialogPage({
       <DialogEndSheet
         opened={endOpened}
         dialogId={dialogId}
+        unsaved={unsaved}
         onClose={() => setEndOpened(false)}
         onSubmit={(takeaway, tension, recapSource) => {
           // Neither the takeaway nor the value on the scale is reported, only whether each was given.
-          track(AnalyticsEvent.DialogEndSubmitted, {
+          trackDialog(AnalyticsEvent.DialogEndSubmitted, {
             has_takeaway: takeaway !== null,
             gave_tension: tension !== null,
             skipped: takeaway === null && tension === null,

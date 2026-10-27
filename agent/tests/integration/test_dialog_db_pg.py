@@ -36,7 +36,7 @@ def _write(dialog_id: str, user_id: str, text: str = "привет") -> "object"
 
     return DialogWrite(
         dialog_id=dialog_id,
-        row=(dialog_id, user_id, "2026-10-24T10:00:00+00:00", None, encode_summary({"a": 1}), None, "male", 0, "on", 0),
+        row=(dialog_id, user_id, "2026-10-24T10:00:00+00:00", None, encode_summary({"a": 1}), None, "male", 0, "on", 0, True),
         messages=[("m1", dialog_id, 0, "user", text, "2026-10-24T10:00:01+00:00", 1.5)],
         client_ids=[(dialog_id, "c1", "m1")],
         pref=(user_id, "male"),
@@ -81,7 +81,7 @@ def test_apply_and_load_user_roundtrip(db: PostgresDialogDatabase) -> None:
 def test_apply_upsert_keeps_crisis_seen_and_extracted_at(db: PostgresDialogDatabase) -> None:
     db.apply([_write("d1", "u1")])
     seen = _write("d1", "u1")
-    seen.row = (*seen.row[:9], 1)  # crisis_seen=1
+    seen.row = (*seen.row[:9], 1, True)  # crisis_seen=1
     db.apply([seen])
     db.apply([_write("d1", "u1")])  # повторная запись не должна сбросить crisis_seen
     dialogs, _ = db.load_user("u1")
@@ -188,6 +188,21 @@ def test_soft_deleted_dialogs_are_neither_indexed_nor_expired(db: PostgresDialog
     db.delete_dialog("u1", "d1", forget_derived=False)
     assert db.dialog_for_index("d1") is None and db.indexable_dialog_ids("u1") == []
     assert {row[1] for row in db.expired_dialogs("2027-01-01T00:00:00.000Z")} == {"d2"}
+
+
+def test_an_unsaved_mark_is_stored_without_text_and_is_never_indexed(db: PostgresDialogDatabase) -> None:
+    """«Не сохранять этот разговор» (PROTEUS-246): строка-пометка с `saved = FALSE`, без итога и сообщений; в индекс не идёт, а
+    повторная запись не превращает её в обычный разговор."""
+    from app.services.dialog_db import DialogWrite
+
+    row = ("d1", "u1", "2026-10-24T10:00:00.000Z", "2026-10-24T10:30:00.000Z", None, None, "male", 0, "off", 0, False)
+    db.apply([DialogWrite(dialog_id="d1", row=row)])
+    stored, _ = db.load_user("u1")
+    assert [(d.id, d.saved, d.summary, d.messages, d.memory_mode) for d in stored] == [("d1", False, None, [], "off")]
+    assert db.dialog_for_index("d1") is None and db.indexable_dialog_ids("u1") == []
+    db.apply([DialogWrite(dialog_id="d1", row=(*row[:10], True))])  # saved неизменяем после создания
+    assert db.load_user("u1")[0][0].saved is False
+    assert {r[1] for r in db.expired_dialogs("2027-01-01T00:00:00.000Z")} == {"d1"}  # срок хранения пометку не обходит
 
 
 def test_memory_deletion_marks_of_0_8_8_move_to_the_outbox_once(db: PostgresDialogDatabase) -> None:

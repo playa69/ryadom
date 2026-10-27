@@ -107,6 +107,11 @@ describe('пометка в журнале', () => {
     expect(dialogMemoryMark({ memoryMode: 'on' })).toBeNull()
     expect(dialogMemoryMark({})).toBeNull()
   })
+
+  it('не сохранённый разговор тоже memoryMode: off, но «Без памяти» на нём нет: у него своя пометка', () => {
+    expect(dialogMemoryMark({ memoryMode: 'off', saved: false })).toBeNull()
+    expect(dialogMemoryMark({ memoryMode: 'off', saved: true })?.label).toBe('Без памяти')
+  })
 })
 
 describe('экран «Память»: группы', () => {

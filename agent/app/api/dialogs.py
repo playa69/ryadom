@@ -66,9 +66,12 @@ class StartBody(BaseModel):
     # Конкретный голос Gemini (профиль): действует только вместе с `voice` (его родом).
     voice_name: str | None = Field(default=None, alias="voiceName", max_length=32)
     new: bool = False
-    # `off` — разговор «Без памяти»: без заметок и индекса (срок хранения и пометка в журнале — PROTEUS-246).
+    # `off` — разговор «Без памяти»: без сводки, заметок и индекса; в остальном обычный (журнал, итог, срок хранения).
     # Только для нового диалога: возвращённый открытый остаётся со своей памятью.
     memory: Literal["on", "off"] = "on"
+    # `false` — «Не сохранять этот разговор» (PROTEUS-246): текст живёт только в памяти процесса, после завершения остаётся пометка
+    # без текста. Отдельно от `memory`; только для нового диалога, как и `memory`. Старые клиенты поле не шлют: разговор сохраняется.
+    saved: bool = True
 
 
 @router.post("/dialogs")
@@ -78,14 +81,15 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
         raise validation_error("voiceName: неизвестный голос")
     user = _user(user_id)
     await store.ensure_user(user)
-    dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory, start.voice_name)
+    dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory, start.voice_name, start.saved)
     logger.info(
-        "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s",
+        "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s saved=%s",
         dialog.id,
         resumed,
         start.new,
         dialog.voice,
         dialog.memory_mode,
+        dialog.saved,
     )
     return {
         "dialogId": dialog.id,
@@ -97,6 +101,7 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
         "messageCount": len(dialog.messages),
         "lastActivityAt": dialog.last_activity_at,
         "memoryMode": dialog.memory_mode,
+        "saved": dialog.saved,
         "memoryEnabled": store.memory_enabled(user),
     }
 
@@ -135,7 +140,8 @@ async def end_dialog(user_id: str, dialog_id: str, store: Store, body: EndBody |
     if dialog is None:
         raise dialog_not_found()
     body = body or EndBody()
-    return {"summary": store.end(dialog, body.takeaway, body.tension_after, body.recap_source)}
+    # `saved` рядом со сводкой: шлюз не отправляет аналитику о конце не сохраняемого разговора.
+    return {"summary": store.end(dialog, body.takeaway, body.tension_after, body.recap_source), "saved": dialog.saved}
 
 
 def _recap_unavailable() -> AgentError:
@@ -297,7 +303,8 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
         logger.info("socket opened dialog=%s", dialog.id)
         if dialog.ended_at is not None:
             # Диалог завершён (человек начал новый разговор с другого экрана, а этот был без связи): в него больше ничего не пишем.
-            await websocket.send_text(json.dumps({"v": 1, "type": "ready"}))
+            ready = {"v": 1, "type": "ready", **({} if dialog.saved else {"saved": False})}
+            await websocket.send_text(json.dumps(ready))
             await websocket.send_text(json.dumps({"v": 1, "type": "ended", "summary": dialog.summary}, ensure_ascii=False))
             await websocket.close(code=1000)
             return

@@ -75,6 +75,8 @@ const startBody = z.object({
   startNew: z.boolean().optional(),
   // "Without memory" for a new dialog; a returned open one keeps its own mode.
   memory: z.enum(DialogMemoryMode).optional(),
+  // `false`: "Не сохранять этот разговор", a choice of its own, apart from `memory`. Absent in the builds that came before it.
+  saved: z.boolean().optional(),
 })
 
 const listQuery = z.object({
@@ -107,12 +109,13 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
       if (!(await rateLimiter.hit(`user:dialog-start:${userId}`, RATE_LIMITS.dialogStart.perUser))) {
         return apiError(c, 429, 'Too many dialog starts')
       }
-      const { startNew, memory } = c.req.valid('json')
+      const { startNew, memory, saved } = c.req.valid('json')
       const result = await dialogsProcess.execute(
         new StartDialogOperation({
           userId,
           startNew,
           memory: memory === undefined ? undefined : fromDialogMemoryMode(memory),
+          saved,
         }),
       )
       if (!result.success) {
@@ -135,14 +138,18 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
         messageCount: result.dialog.messageCount,
         lastActivityAt: result.dialog.lastActivityAt,
         memoryMode: toDialogMemoryMode(result.dialog.memoryMode),
+        saved: result.dialog.saved,
         memoryEnabled: result.dialog.memoryEnabled,
       }
-      analytics.capture(userId, AnalyticsEvent.DialogStarted, {
-        ...dialogIdProperty(result.dialog.dialogId),
-        resumed: result.dialog.resumed,
-        hours_since_last:
-          result.dialog.sinceLastDialogHours === null ? null : Math.round(result.dialog.sinceLastDialogHours),
-      })
+      // A conversation held unsaved is not reported anywhere: neither its start nor its end nor its turns.
+      if (result.dialog.saved) {
+        analytics.capture(userId, AnalyticsEvent.DialogStarted, {
+          ...dialogIdProperty(result.dialog.dialogId),
+          resumed: result.dialog.resumed,
+          hours_since_last:
+            result.dialog.sinceLastDialogHours === null ? null : Math.round(result.dialog.sinceLastDialogHours),
+        })
+      }
       return apiOk(c, response)
     },
   )
@@ -212,13 +219,15 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
       }
     }
     const response: EndDialogApiResponse = { summary: toDialogSummary(result.summary) }
-    analytics.capture(authUser(c).userId, AnalyticsEvent.DialogEnded, {
-      ...dialogIdProperty(c.req.param('dialogId')),
-      via: 'rest',
-      ...messageCounts(result.summary),
-      has_takeaway: body.takeaway !== undefined && body.takeaway !== '',
-      ...tensionOutcome(response.summary),
-    })
+    if (result.saved) {
+      analytics.capture(authUser(c).userId, AnalyticsEvent.DialogEnded, {
+        ...dialogIdProperty(c.req.param('dialogId')),
+        via: 'rest',
+        ...messageCounts(result.summary),
+        has_takeaway: body.takeaway !== undefined && body.takeaway !== '',
+        ...tensionOutcome(response.summary),
+      })
+    }
     return apiOk(c, response)
   })
 

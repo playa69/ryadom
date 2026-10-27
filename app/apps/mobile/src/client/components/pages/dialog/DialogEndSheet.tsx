@@ -2,6 +2,7 @@ import { Button, Sheet } from 'framework7-react'
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { RECAP_AUTO_LABEL, RECAP_ERROR_TEXT } from '@ryadom/client-core/recaps'
+import { UNSAVED_END_NOTE } from '@ryadom/client-core/unsaved'
 import { Preloader } from 'framework7-react'
 import { apiErrorText, draftDialogRecap, getDialogSettings, putDialogSettings } from '../../../lib/api'
 
@@ -19,11 +20,14 @@ export default function DialogEndSheet({
   dialogId,
   onClose,
   onSubmit,
+  unsaved = false,
 }: {
   opened: boolean
   dialogId: string
   onClose: () => void
   onSubmit: (takeaway: string | null, tensionAfter: number | null, recapSource: EndRecapSource) => void
+  /** A conversation held unsaved keeps nothing, so nothing is asked: no takeaway, no scale, no recap. */
+  unsaved?: boolean
 }) {
   const [takeaway, setTakeaway] = useState('')
   const [tension, setTension] = useState<number | null>(null)
@@ -34,11 +38,11 @@ export default function DialogEndSheet({
   const [recapError, setRecapError] = useState('')
 
   useEffect(() => {
-    if (!opened) return
+    if (!opened || unsaved) return // nothing to set up for a conversation that keeps no recap
     getDialogSettings()
       .then((settings) => setRecapEnabled(settings.recapEnabled))
       .catch(() => setRecapEnabled(null))
-  }, [opened])
+  }, [opened, unsaved])
 
   async function changeEnabled(next: boolean) {
     setRecapEnabled(next)
@@ -68,6 +72,25 @@ export default function DialogEndSheet({
 
   function submit() {
     onSubmit(takeaway.trim() || null, tension, drafted ? 'draft' : 'manual')
+  }
+
+  if (unsaved) {
+    return (
+      <Sheet opened={opened} onSheetClosed={onClose} swipeToClose closeOnEscape backdrop style={{ height: 'auto' }}>
+        <div className="rd-sheet-body rd-sheet-body--scroll">
+          <h2 className="rd-sheet-title">Завершить разговор?</h2>
+          <p className="rd-muted" data-testid="unsaved-end-note">
+            {UNSAVED_END_NOTE}
+          </p>
+          <Button fill large onClick={() => onSubmit(null, null, 'manual')} data-testid="dialog-end-submit">
+            Завершить
+          </Button>
+          <Button large onClick={onClose}>
+            Продолжить разговор
+          </Button>
+        </div>
+      </Sheet>
+    )
   }
 
   return (

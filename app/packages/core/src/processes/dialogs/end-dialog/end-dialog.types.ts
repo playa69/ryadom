@@ -7,5 +7,5 @@ export enum EndDialogOperationErrorCode {
 }
 
 export type EndDialogResult =
-  | { success: true; summary: DialogSummaryDTO | null }
+  | { success: true; summary: DialogSummaryDTO | null; saved: boolean }
   | { success: false; error: EndDialogOperationErrorCode }

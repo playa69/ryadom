@@ -48,7 +48,7 @@ export interface DialogListItemDTO {
   startedAt: Date
   endedAt: Date | null
   summary: DialogSummaryDTO | null
-  /** `off`: a conversation "without memory", deleted by the agent 24 hours after its last message. */
+  /** `off`: a conversation "without memory" (no memory block, notes or search), otherwise an ordinary one; also `off` when unsaved. */
   memoryMode: AgentDialogMemoryMode
   /** `false`: a conversation the person asked not to keep: the journal shows a mark without text. */
   saved: boolean

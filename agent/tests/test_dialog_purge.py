@@ -38,7 +38,7 @@ def write(dialog_id: str, user_id: str) -> DialogWrite:
     """Диалог с двумя сообщениями, идентификатором клиента, выбором голоса и двумя строками расхода (на сообщение и на диалог)."""
     return DialogWrite(
         dialog_id=dialog_id,
-        row=(dialog_id, user_id, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2, "on", 0),
+        row=(dialog_id, user_id, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2, "on", 0, True),
         messages=[
             ("m1", dialog_id, 0, "user", "реплика", "2026-10-12T10:00:01.000Z", 3.2),
             ("m2", dialog_id, 1, "assistant", "ответ", "2026-10-12T10:00:02.000Z", None),
