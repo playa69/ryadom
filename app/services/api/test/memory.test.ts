@@ -300,7 +300,7 @@ describe('PUT /api/memory/settings', () => {
     expect(calls).toEqual([])
   })
 
-  it('отказы агента — коды контракта: MEMORY_UNAVAILABLE (503 агента), MEMORY_NOT_ALLOWED', async () => {
+  it('отказ агента — код контракта: MEMORY_UNAVAILABLE (503 агента)', async () => {
     const { tokens } = await signedIn()
     const body = { enabled: true, consentAccepted: true, consentVersion: MEMORY_CONSENT_VERSION }
 
@@ -308,12 +308,6 @@ describe('PUT /api/memory/settings', () => {
     refusedWith(
       await call(app, 'PUT', ApiPath.MemorySettings, body, tokens.accessToken),
       UpdateMemorySettingsApiErrorCode.MEMORY_UNAVAILABLE,
-    )
-
-    mockFetch({ [`PUT ${AGENT}/settings`]: () => agentError(403, 'MEMORY_NOT_ALLOWED') })
-    refusedWith(
-      await call(app, 'PUT', ApiPath.MemorySettings, body, tokens.accessToken),
-      UpdateMemorySettingsApiErrorCode.MEMORY_NOT_ALLOWED,
     )
   })
 })

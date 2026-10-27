@@ -33,11 +33,6 @@ describe('настройка PostHog', () => {
     expect(createAnalytics(both, logger).canErase).toBe(true)
   })
 
-  it('события стёртого аккаунта по умолчанию стираются; оставить историю можно только явно', () => {
-    expect(parseEnv({ ...process.env }).POSTHOG_ERASE_EVENTS).toBe(true)
-    expect(parseEnv({ ...process.env, POSTHOG_ERASE_EVENTS: 'false' }).POSTHOG_ERASE_EVENTS).toBe(false)
-  })
-
   it('личный ключ (phx_…) в POSTHOG_KEY не уходит клиентам: аналитика выключается, значение не раскрывается', () => {
     const personalKey = `phx_${'A1b2'.repeat(12)}`
     const env = parseEnv({ ...process.env, POSTHOG_KEY: personalKey })

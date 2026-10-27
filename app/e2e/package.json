@@ -12,7 +12,6 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@ryadom/contracts": "workspace:*",
-    "@ryadom/self-check": "workspace:*",
     "@types/node": "^24.6.0",
     "@types/pngjs": "^6.0.5",
     "pixelmatch": "^7.2.0",

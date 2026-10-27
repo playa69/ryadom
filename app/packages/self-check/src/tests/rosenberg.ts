@@ -30,5 +30,4 @@ export const rosenberg: SelfCheckTest = {
   ],
   source: 'Rosenberg, 1965; русская версия Золотарева, 2020',
   license: 'Общественное достояние (University of Maryland)',
-  status: 'review',
 }

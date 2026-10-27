@@ -6,8 +6,6 @@ export enum UpdateMemorySettingsOperationErrorCode {
   CONSENT_REQUIRED = 'CONSENT_REQUIRED',
   /** Memory is unavailable on the server: it cannot be turned on now. The consent stays on record. */
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
-  /** A closed beta, and this person is not in it. The consent stays on record. */
-  MEMORY_NOT_ALLOWED = 'MEMORY_NOT_ALLOWED',
 }
 
 export type UpdateMemorySettingsResult =

@@ -1,9 +1,6 @@
 /** Тон уровня: цвет сегмента шкалы и точки в списках. */
 export type Tone = 'calm' | 'mild' | 'moderate' | 'high'
 
-/** `ready` — в продакшене; `review` — ждёт ревью; `blocked` — лицензия не подтверждена. */
-export type TestStatus = 'ready' | 'review' | 'blocked'
-
 export type Option = { label: string; value: number }
 
 export type Item = {
@@ -47,9 +44,6 @@ export type SelfCheckTest = {
   highBandFrom?: number
   source: string
   license: string
-  status: TestStatus
-  /** Кто проверил текст и дату ревью; `ready` ставит владелец после ревью. */
-  reviewedBy?: { name: string; date: string }
 }
 
 export type SubscaleScore = { id: string; label: string; score: number }

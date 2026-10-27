@@ -49,5 +49,4 @@ export const miniIpip: SelfCheckTest = {
   bands: [{ from: 0, to: 5, label: 'профиль черт', tone: 'calm', text: 'Черты не хорошие и не плохие: это описание того, как ты обычно ведёшь себя. Сравнивай себя с собой в разное время, а не с другими.' }],
   source: 'Donnellan, Oswald, Baird, Lucas, 2006; пункты IPIP (Goldberg); перевод Рядом',
   license: 'IPIP: свободно для любых целей, в том числе коммерческих',
-  status: 'review',
 }

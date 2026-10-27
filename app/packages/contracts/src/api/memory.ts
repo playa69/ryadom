@@ -217,8 +217,6 @@ export enum UpdateMemorySettingsApiErrorCode {
   CONSENT_REQUIRED = 'CONSENT_REQUIRED',
   /** Memory is unavailable on the server (its storage is not ready); the person cannot turn it on now. */
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
-  /** A closed beta, and this person is not in it. */
-  MEMORY_NOT_ALLOWED = 'MEMORY_NOT_ALLOWED',
 }
 
 // ─── POST /api/memory/facts, PATCH and DELETE /api/memory/facts/:id ──────────

@@ -2,22 +2,21 @@
 
 import { Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { allTests } from '@ryadom/self-check/catalog'
 import { Card } from '@ryadom/ui/components/card'
-import { shownTests } from '@/lib/self-check'
 import { BUTTON } from '../controls'
 import { lengthLine } from './ui'
 import { useSelfCheck } from './useSelfCheck'
 
-/** The segment «Тесты»: every shown test with search over the title, the code and the description. */
+/** The segment «Тесты»: every test of the catalog with search over the title, the code and the description. */
 export default function TestsCatalog() {
   const { start } = useSelfCheck()
   const [query, setQuery] = useState('')
-  const all = useMemo(() => shownTests(), [])
   const found = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return all
-    return all.filter((t) => `${t.title} ${t.code} ${t.subtitle} ${t.preface}`.toLowerCase().includes(q))
-  }, [all, query])
+    if (!q) return allTests
+    return allTests.filter((t) => `${t.title} ${t.code} ${t.subtitle} ${t.preface}`.toLowerCase().includes(q))
+  }, [query])
 
   return (
     <div className="flex flex-col gap-3" data-testid="tests-catalog">

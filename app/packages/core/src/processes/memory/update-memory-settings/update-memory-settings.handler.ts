@@ -125,8 +125,6 @@ export class UpdateMemorySettingsOperationHandler implements RequestHandler<
       switch (updated.error) {
         case UpdateAgentMemorySettingsRequestErrorCode.MEMORY_UNAVAILABLE:
           return { success: false, error: UpdateMemorySettingsOperationErrorCode.MEMORY_UNAVAILABLE }
-        case UpdateAgentMemorySettingsRequestErrorCode.MEMORY_NOT_ALLOWED:
-          return { success: false, error: UpdateMemorySettingsOperationErrorCode.MEMORY_NOT_ALLOWED }
         // The version was checked above: the agent disagreeing with it is a bug, not the person's doing.
         case UpdateAgentMemorySettingsRequestErrorCode.INVALID_REQUEST:
           throw new Error('Agent API did not accept the memory settings')

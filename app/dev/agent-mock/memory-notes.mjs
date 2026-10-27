@@ -252,7 +252,7 @@ function view(memory) {
 }
 
 /**
- * `ctx`: `{ json, noContent, readBody, agentError, allowlist }` of the mock server. Reading, export and deleting
+ * `ctx`: `{ json, noContent, readBody, agentError }` of the mock server. Reading, export and deleting
  * work with the memory off; writing notes needs it on.
  */
 export async function handleMemory(ctx, req, res, url, userId, memory, parts, method) {
@@ -279,9 +279,6 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
     if (body.enabled === true) {
       if (typeof body.consentVersion !== 'string' || !body.consentVersion) {
         return agentError(res, 422, 'AGENT_VALIDATION', 'Для включения нужна версия согласия')
-      }
-      if (ctx.allowlist.length > 0 && !ctx.allowlist.includes(userId)) {
-        return agentError(res, 403, 'MEMORY_NOT_ALLOWED', 'Память пока доступна не всем')
       }
       memory.enabled = true
       memory.consentVersion = body.consentVersion

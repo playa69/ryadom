@@ -507,8 +507,6 @@ export const MEMORY_SETTINGS_ERRORS: Record<UpdateMemorySettingsApiErrorCode, st
   [UpdateMemorySettingsApiErrorCode.USER_NOT_FOUND]: ACCOUNT_GONE,
   [UpdateMemorySettingsApiErrorCode.CONSENT_REQUIRED]: 'Чтобы включить память, нужно твоё согласие',
   [UpdateMemorySettingsApiErrorCode.MEMORY_UNAVAILABLE]: UNAVAILABLE,
-  [UpdateMemorySettingsApiErrorCode.MEMORY_NOT_ALLOWED]:
-    'Память пока открыта не всем. Скоро она появится и у тебя',
 }
 
 /**
@@ -1005,17 +1003,10 @@ export const MEMORY_INVITE = {
   decline: 'Не сейчас',
 } as const
 
-/**
- * The sheet is off until the owner decides about memory by default (task 0.1, `design.md` D9): until then
- * a person turns memory on in "Профиль → Память". Flip to `true` after the decision.
- */
-export const MEMORY_INVITE_ENABLED = false
-
-/** Whether to show the sheet: it is enabled, the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
+/** Whether to show the sheet: the feature works, the person has not accepted any memory consent and has not said "Не сейчас" already. */
 export function shouldInviteToMemory(
   memory: Pick<MemoryApiResponse, 'available' | 'enabled' | 'consentVersion'> | null,
   dismissed: boolean,
-  enabled: boolean = MEMORY_INVITE_ENABLED,
 ): boolean {
-  return enabled && memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
+  return memory !== null && memory.available && !memory.enabled && memory.consentVersion === null && !dismissed
 }

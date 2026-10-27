@@ -15,19 +15,13 @@ export interface AnalyticsAdminOptions {
   projectId: string
   /** A personal API key with the `person:write` scope. */
   personalApiKey: string
-  /**
-   * Also erase the person's events. Off keeps them: the profile and recordings go, the history stays
-   * under the account's id, which is what lets past activity (daily users, retention) still be counted.
-   * Those events are pseudonymous, not anonymous, for as long as something else maps the id to a person.
-   */
-  deleteEvents: boolean
   timeoutMs?: number
   /** For tests. */
   fetch?: typeof fetch
 }
 
 export interface AnalyticsAdmin {
-  /** Queues the person and their recordings (and, if configured, their events) for deletion. True when PostHog accepted it without errors. */
+  /** Queues the person, their recordings and their events for deletion. True when PostHog accepted it without errors. */
   deletePerson(distinctId: string): Promise<boolean>
 }
 
@@ -49,7 +43,7 @@ export function createAnalyticsAdmin(options: AnalyticsAdminOptions): AnalyticsA
           },
           body: JSON.stringify({
             distinct_ids: [distinctId],
-            delete_events: options.deleteEvents,
+            delete_events: true,
             delete_recordings: true,
           }),
           signal: AbortSignal.timeout(timeoutMs),
