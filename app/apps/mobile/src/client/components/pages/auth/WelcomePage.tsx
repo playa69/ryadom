@@ -180,8 +180,8 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
         )}
         {!signedIn && telegram && (
           <p className="rd-fineprint">
-            Аккаунт привязан к твоему Telegram: разговоры не потеряются, и открыть их можно в Telegram на
-            любом устройстве. Почту для входа вне Telegram можно добавить в профиле.
+            Аккаунт привязан к твоему Telegram, и открыть его можно в Telegram на любом устройстве.
+            {DIALOG_KEEP_NOTE} Почту для входа вне Telegram можно добавить в профиле.
           </p>
         )}
       </Block>

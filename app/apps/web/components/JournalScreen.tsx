@@ -202,6 +202,10 @@ export default function JournalScreen() {
               </Button>
             </Alert>
           )}
+          {/* The term of the conversations is said to everyone; a guest on a narrow screen already has it in the note above. */}
+          <p className={cn('px-1 text-xs text-dim', keepsConversations && 'hidden md:block')} data-testid="journal-retention">
+            {DIALOG_KEEP_NOTE}
+          </p>
 
           {error && (
             // The button inside brings its own 44px of height, so the note itself takes little padding.
