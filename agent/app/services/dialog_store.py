@@ -13,6 +13,11 @@
 
 Память агента (app/memory) подключается к хранилищу через `memory` (`MemoryLink`): хранилище сообщает ей о загрузке человека,
 завершении диалога и стирании, а сессии разговора берут у неё сводку (`memory_brief`) без обращений к диску и сети.
+
+Разговор по галочке «Не сохранять этот разговор» (`Dialog.saved = False`, PROTEUS-246) живёт только здесь, в памяти процесса: пока он идёт,
+на диск не уходит ничего (ни реплики, ни расход моделей, ни идентификаторы клиента), в память агента он не сообщается. Когда разговор
+завершён штатно, текст из памяти удаляется, а на диск пишется одна строка-пометка без текста и без итога. Перезапуск пода такой
+разговор теряет, и это задумано.
 """
 
 from __future__ import annotations
@@ -58,6 +63,22 @@ EVICTED_MEMO_LIMIT = 100_000
 GREETING_NEW = "Я рядом. С чего начнём?"
 GREETING_RESUMED = "Продолжим, где остановились."
 GREETINGS = (GREETING_NEW, GREETING_RESUMED)
+
+
+def unsaved_summary(user_messages: int = 0, assistant_messages: int = 0) -> dict[str, Any]:
+    """Сводка завершённого не сохраняемого разговора: только счётчики для кадра `ended`; на диск она не попадает."""
+    return {
+        "title": "Разговор",
+        "themes": [],
+        "tensionBefore": None,
+        "tensionAfter": None,
+        "userMessages": user_messages,
+        "assistantMessages": assistant_messages,
+        "recap": None,
+        "recapStatus": "none",
+        "recapSource": None,
+        "recapAvailable": False,
+    }
 
 
 MemoryMode = Literal["on", "off"]
@@ -110,25 +131,37 @@ class Dialog:
     # Зовёт хранилище, когда диалог завершён снаружи сокета (человек начал новый разговор с другого экрана): сокет сообщает
     # `ended` и закрывается, а не продолжает писать в завершённый диалог. Ставит и снимает сессия; на диск не попадает.
     on_replaced: Callable[[dict[str, Any] | None], None] | None = field(default=None, repr=False, compare=False)
-    # Память в этом разговоре: `off` — «Без памяти» (без сводки и извлечения, текст удаляется через 24 часа). Задаётся при
-    # создании и больше не меняется (MEM-5.3, MEM-9).
+    # Память в этом разговоре: `off` — «Без памяти» (без сводки, заметок и индекса; в остальном разговор обычный: журнал, итог, срок
+    # хранения). Задаётся при создании и больше не меняется (MEM-5.3, MEM-9).
     memory_mode: MemoryMode = "on"
+    # `False` — галочка «Не сохранять этот разговор» (PROTEUS-246): текст живёт только в памяти процесса, после завершения остаётся
+    # пометка без текста. Не зависит от выбора `memory_mode`, но память для такого разговора всегда выключена (`__post_init__`).
+    # Задаётся при создании и больше не меняется.
+    saved: bool = True
     # В разговоре был кризис (кадр safety): автоматическое извлечение из него пропускается (I13). Только растёт.
     crisis_seen: bool = False
     # До какой реплики (её created_at) память уже извлечена. Пишет только воркер памяти, писатель диалогов её не трогает.
     memory_extracted_at: str | None = None
-    # Когда закрылся последний сокет (на диск не попадает): срок удаления разговора «Без памяти» идёт от него.
+    # Когда закрылся последний сокет (на диск не попадает): автозавершение брошенного разговора (`end_stale`) считает срок от него.
     socket_closed_at: str | None = None
     # Расход моделей, ещё не записанный на диск (строки model_usage). Только при подключённой базе; в памяти не хранится дальше записи.
     usage: list[tuple[Any, ...]] = field(default_factory=list, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.saved:
+            # Не сохраняемый разговор не попадает в память (`add-unsaved-dialog`, «Не сохраняемый разговор не попадает в память»):
+            # все охранники памяти смотрят на `memory_mode`, и этот разговор для них такой же, как «Без памяти».
+            self.memory_mode = "off"
 
     def to_item(self) -> dict[str, Any]:
         return {
             "dialogId": self.id,
             "startedAt": self.started_at,
             "endedAt": self.ended_at,
-            "summary": self.summary,
+            # У пометки итога нет: сводка не сохранённого разговора нужна только кадру `ended` и в списки не попадает.
+            "summary": self.summary if self.saved else None,
             "memoryMode": self.memory_mode,
+            "saved": self.saved,
         }
 
     @property
@@ -294,6 +327,7 @@ class DialogStore:
         new: bool = False,
         memory_mode: MemoryMode = "on",
         voice_name: str | None = None,
+        saved: bool = True,
     ) -> tuple[Dialog, bool, int | None]:
         """Начать или возобновить диалог. Возвращает (диалог, resumed, часов с прошлого разговора).
 
@@ -304,11 +338,13 @@ class DialogStore:
         открытый диалог возвращается с `resumed`, ничего не меняется.
         `memory_mode` — память нового разговора (`off` — «Без памяти»). У возвращённого открытого диалога остаётся своя. Пустой
         открытый диалог с другой памятью не переиспользуется, а удаляется: память разговора после создания не меняется.
+        `saved=False` — «Не сохранять этот разговор»: так же, как память, выбирается при создании; память у такого разговора всегда off.
         """
+        memory_mode = memory_mode if saved else "off"
         hours = self._hours_since_last(user_id)  # до завершения открытого: от последней активности человека, в том числе в нём
         existing = self.open_dialog(user_id)
-        if existing is not None and not existing.messages and existing.memory_mode != memory_mode:
-            self._discard_empty(existing)  # в нём ничего не сказано: разговор с нужной памятью начнётся заново
+        if existing is not None and not existing.messages and (existing.memory_mode != memory_mode or existing.saved != saved):
+            self._discard_empty(existing)  # в нём ничего не сказано: разговор с нужной памятью и сохранением начнётся заново
             existing = None
         resumed = existing is not None
         if new and existing is not None:
@@ -320,7 +356,7 @@ class DialogStore:
                 existing = None
             # пустой открытый диалог: нечего ни завершать, ни продолжать, он остаётся и приветствует как новый
         dialog = existing or Dialog(
-            id=str(uuid.uuid4()), user_id=user_id, started_at=self._next_started_at(), memory_mode=memory_mode
+            id=str(uuid.uuid4()), user_id=user_id, started_at=self._next_started_at(), memory_mode=memory_mode, saved=saved
         )
         self._dialogs(user_id)[dialog.id] = dialog
         if voice is not None:
@@ -378,7 +414,7 @@ class DialogStore:
         )
         dialog.messages.append(message)
         self._touch(dialog)
-        if role == "user" and self.memory is not None:
+        if role == "user" and self.memory is not None and dialog.saved:  # не сохраняемый разговор памяти не сообщается
             try:
                 self.memory.user_message(dialog, text)  # фоновый поиск по реплике — к следующему ходу
             except Exception:  # noqa: BLE001 - память не должна мешать разговору (I3)
@@ -404,9 +440,10 @@ class DialogStore:
     def add_usage(self, dialog: Dialog, message_id: str | None, spent: Iterable[Usage]) -> None:
         """Записать расход моделей на сообщение диалога, а если такого сообщения нет (ответ выброшен, озвучена фраза), — на диалог.
 
-        Пишется только на диск (таблица model_usage); без базы общий счёт ведёт Prometheus (app/services/usage.py).
+        Пишется только на диск (таблица model_usage); без базы общий счёт ведёт Prometheus (app/services/usage.py). Не сохраняемый
+        разговор в базу не пишет и расход: в Prometheus остаются только общие счётчики без привязки к человеку.
         """
-        if self._db is None or not self._owns(dialog):
+        if self._db is None or not dialog.saved or not self._owns(dialog):
             return
         target = message_id if self.message(dialog, message_id) is not None else None
         at = now_iso()
@@ -437,6 +474,8 @@ class DialogStore:
         """
         if dialog.summary is not None:
             return dialog.summary
+        if not dialog.saved:
+            return self._end_unsaved(dialog)
         first_user = next((m for m in dialog.messages if m.role == "user"), None)
         title = (takeaway or (first_user.text if first_user else "") or "Разговор")[:80]
         dialog.ended_at = now_iso()
@@ -469,6 +508,20 @@ class DialogStore:
                 memory.dialog_ended(dialog)
             except Exception:  # noqa: BLE001 - память не должна мешать завершению разговора (I3)
                 logger.exception("memory dialog_ended failed dialog=%s", dialog.id)
+        return dialog.summary
+
+    def _end_unsaved(self, dialog: Dialog) -> dict[str, Any]:
+        """Завершить разговор «Не сохранять этот разговор»: итога и заметок нет, текст из памяти процесса удаляется, на диск уходит
+        одна строка-пометка (`_row_of`). Слова «что забираешь с собой» и напряжение после разговора не сохраняются, а название
+        не берётся из реплики человека. Память не получает сообщения о завершении."""
+        dialog.ended_at = now_iso()
+        dialog.summary = unsaved_summary(
+            sum(1 for m in dialog.messages if m.role == "user"), sum(1 for m in dialog.messages if m.role == "assistant")
+        )
+        dialog.messages.clear()
+        dialog.client_ids.clear()
+        dialog.usage.clear()
+        self._touch(dialog)
         return dialog.summary
 
     # ─── итоги разговоров (add-mood-diary, D13) ───────────────────────────────
@@ -557,7 +610,8 @@ class DialogStore:
             self._touch(dialog)
 
     def memory_brief(self, dialog: Dialog, count: bool = True) -> str:
-        """Сводка памяти для разговора: пустая, если память не подключена, разговор «Без памяти» или что-то сломалось (I2, I3)."""
+        """Сводка памяти для разговора: пустая, если память не подключена, разговор «Без памяти» или «Не сохранять этот разговор» (у
+        него память всегда off) или что-то сломалось (I2, I3)."""
         memory = self.memory
         if memory is None or dialog.memory_mode != "on":
             return ""
@@ -603,7 +657,7 @@ class DialogStore:
         self._forget(dialog.user_id, dialog.id)
         if dialog.on_replaced is not None:
             dialog.on_replaced(None)
-        if self._db is not None:
+        if self._db is not None and dialog.saved:  # у не сохраняемого на диске ничего нет
             self._spawn(self._delete_on_disk(dialog.user_id, dialog.id, False))
 
     def _spawn(self, coro: Any) -> None:
@@ -628,7 +682,8 @@ class DialogStore:
         Исключение — диск не ответил; из памяти процесса диалог к этому моменту уже убран.
         """
         memory = self.memory
-        if memory is not None:
+        dialog = self.get(user_id, dialog_id)
+        if memory is not None and (dialog is None or dialog.saved):  # не сохранённого разговора в индексе нет
             try:
                 await memory.dialog_deleting(user_id, dialog_id)  # документ в индексе уходит в очередь, пока известен его id
             except Exception:  # noqa: BLE001 - память не должна мешать удалению разговора
@@ -787,7 +842,7 @@ class DialogStore:
 
     @staticmethod
     def _from_stored(item: StoredDialog) -> Dialog:
-        return Dialog(
+        dialog = Dialog(
             id=item.id,
             user_id=item.user_id,
             started_at=item.started_at,
@@ -801,12 +856,19 @@ class DialogStore:
             reply_index=item.reply_index,
             voice=item.voice if item.voice in ("male", "female") else "male",  # type: ignore[arg-type]
             memory_mode="off" if item.memory_mode == "off" else "on",
+            saved=item.saved,
             crisis_seen=item.crisis_seen,
             memory_extracted_at=item.memory_extracted_at,
         )
+        if not dialog.saved and dialog.summary is None:
+            dialog.summary = unsaved_summary()  # пометка в базе без сводки: повторное завершение не должно её завершать заново
+        return dialog
 
     @staticmethod
     def _row_of(dialog: Dialog) -> tuple[Any, ...]:
+        if not dialog.saved:
+            # Пометка без следа текста: без итога (название берётся из реплики), приветствия, признака кризиса и счёта ответов.
+            return (dialog.id, dialog.user_id, dialog.started_at, dialog.ended_at, None, None, dialog.voice, 0, "off", 0, False)
         return (
             dialog.id,
             dialog.user_id,
@@ -818,6 +880,7 @@ class DialogStore:
             dialog.reply_index,
             dialog.memory_mode,
             int(dialog.crisis_seen),
+            True,
         )
 
     def _snapshot_of(self, dialog: Dialog) -> _Persisted:
@@ -836,14 +899,16 @@ class DialogStore:
         а человека с живым сокетом не выгружают."""
         if self._db is None or not self._owns(dialog):
             return
-        self._dirty[dialog.id] = dialog
         self._last_access[dialog.user_id] = time.monotonic()
+        if not dialog.saved and dialog.ended_at is None:
+            return  # открытый не сохраняемый разговор на диск не идёт; после завершения уйдёт одна пометка
+        self._dirty[dialog.id] = dialog
         self._wake.set()
 
     def socket_opened(self, dialog: Dialog) -> None:
         """У диалога живой сокет: ответы дописываются на месте, поэтому он сохраняется по таймеру, пока сокет жив."""
         dialog.has_live_socket = True
-        if self._db is not None and self._owns(dialog):
+        if self._db is not None and dialog.saved and self._owns(dialog):
             self._watch[dialog.id] = dialog
             self._wake.set()
 
@@ -855,6 +920,8 @@ class DialogStore:
 
     def _collect(self, dialog: Dialog) -> DialogWrite | None:
         """Что в диалоге изменилось с прошлой записи; None, если ничего."""
+        if not dialog.saved and dialog.ended_at is None:
+            return None  # пока не сохраняемый разговор идёт, в базе нет и его строки
         known = self._persisted.get(dialog.id)
         row = self._row_of(dialog)
         messages = [
@@ -995,7 +1062,8 @@ class DialogStore:
         - он не загружен с диска (`ensure_user` его не загружал): загрузка ещё идёт, или его стирают;
         - у его диалога живой сокет: сессия держит объект диалога и меняет его на месте (`socket`);
         - есть незаписанное: диалог ждёт записи, запись идёт или не удалась, его изменили на месте после записи, выбор голоса не
-          записан (`dirty`). Изменённое на месте без очереди ставится в очередь: человек выгрузится на следующем проходе.
+          записан (`dirty`). Изменённое на месте без очереди ставится в очередь: человек выгрузится на следующем проходе;
+        - у него открыт разговор «Не сохранять этот разговор» (`unsaved`): кроме памяти процесса, его нигде нет.
         Неозвученное приветствие (`greeting_pending`) живёт только в памяти и при выгрузке теряется: если сокет откроется позже
         срока, приветствие не прозвучит, клиент прочтёт его сам (как при обрыве озвучки).
 
@@ -1026,7 +1094,7 @@ class DialogStore:
         return evicted
 
     def _keeps(self, user_id: str) -> str | None:
-        """Почему человека сейчас нельзя выгрузить: `socket` или `dirty` (см. `evict_idle`); None — можно."""
+        """Почему человека сейчас нельзя выгрузить: `socket`, `dirty` или `unsaved` (см. `evict_idle`); None — можно."""
         dialogs = list(self._users.get(user_id, {}).values())
         if any(d.has_live_socket or d.on_replaced is not None or d.id in self._watch for d in dialogs):
             return "socket"
@@ -1045,10 +1113,10 @@ class DialogStore:
             dirty = True
         if dirty:
             return "dirty"
-        if any(d.memory_mode == "off" for d in dialogs):
-            # Срок удаления разговора «Без памяти» идёт от `socket_closed_at`, а оно на диск не попадает: пока такой разговор жив
-            # (удаляется через 24 часа), человека держим в памяти, иначе срок потерялся бы вместе с выгрузкой.
-            return "memory_off"
+        if any(not d.saved and d.ended_at is None for d in dialogs):
+            # Открытый не сохраняемый разговор есть только в памяти процесса: выгрузка человека унесла бы его целиком. Дальше его
+            # завершит `end_stale`, после чего на диске будет пометка, и человека можно выгружать.
+            return "unsaved"
         return None
 
     def _unload(self, user_id: str) -> None:

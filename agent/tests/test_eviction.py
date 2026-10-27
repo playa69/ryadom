@@ -768,17 +768,37 @@ async def test_memory_is_told_when_a_person_is_unloaded_and_loaded_again(tmp_pat
     await store.detach()
 
 
-async def test_a_person_with_a_memory_off_dialog_stays_in_memory(tmp_path: Path) -> None:
+async def test_a_person_with_an_open_unsaved_dialog_stays_in_memory(tmp_path: Path) -> None:
+    store, _ = await make_store(tmp_path / "d.sqlite3")
+    user = str(uuid.uuid4())
+    await store.ensure_user(user)
+    earlier, _, _ = store.start(user, "female")
+    store.add_message(earlier, "user", "Обычный разговор")
+    store.end(earlier, None, None)
+    await store.flush()  # выбор голоса записан: «незаписанного» за человеком нет, кроме самого не сохраняемого разговора
+    dialog, _, _ = store.start(user, "female", saved=False)
+    store.add_message(dialog, "user", "Выдуманная реплика")
+    await store.flush()
+    before = sample("agent_dialog_evictions_skipped_total", reason="unsaved")
+    assert store.evict_idle(later()) == 0  # такой разговор есть только в памяти процесса: выгрузка унесла бы его
+    assert sample("agent_dialog_evictions_skipped_total", reason="unsaved") == before + 1
+    assert in_memory(store, user)
+    store.end(dialog, None, None)  # завершён: на диске пометка
+    await store.flush()
+    assert store.evict_idle(later()) == 1
+    await store.detach()
+
+
+async def test_a_person_with_a_memory_off_dialog_is_evicted_like_anyone(tmp_path: Path) -> None:
+    """«Без памяти» только отключает память: разговор записан на диск, срока удаления в памяти у него нет."""
     store, _ = await make_store(tmp_path / "d.sqlite3")
     user = str(uuid.uuid4())
     await store.ensure_user(user)
     dialog, _, _ = store.start(user, "female", memory_mode="off")
     store.add_message(dialog, "user", "Без памяти")
     await store.flush()
-    before = sample("agent_dialog_evictions_skipped_total", reason="memory_off")
-    assert store.evict_idle(later()) == 0  # срок удаления такого разговора живёт только в памяти (socket_closed_at)
-    assert sample("agent_dialog_evictions_skipped_total", reason="memory_off") == before + 1
-    assert in_memory(store, user)
+    assert store.evict_idle(later()) == 1
+    assert not in_memory(store, user)
     await store.detach()
 
 

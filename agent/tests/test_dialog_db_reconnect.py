@@ -25,7 +25,7 @@ def db():
 def _write() -> DialogWrite:
     return DialogWrite(
         dialog_id="rc-1",
-        row=("rc-1", "reconnect-user", "2026-10-24T10:00:00Z", None, None, None, "male", 0, "on", 0),
+        row=("rc-1", "reconnect-user", "2026-10-24T10:00:00Z", None, None, None, "male", 0, "on", 0, True),
         messages=[("m1", "rc-1", 0, "user", "привет", "2026-10-24T10:00:01Z", None)],
     )
 

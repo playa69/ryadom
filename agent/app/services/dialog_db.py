@@ -166,6 +166,9 @@ DDL = (
     "CREATE INDEX IF NOT EXISTS memory_sources_dialog ON memory_sources (dialog_id)",
     "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS memory_notes_cursor TEXT",
     "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS cognee_data_id TEXT",
+    # Строка-пометка разговора «Не сохранять этот разговор» (PROTEUS-246): FALSE — разговор не оставил следа, кроме самой строки без
+    # текста, итога и производного от них. Неизменяема после создания, как и memory_mode.
+    "ALTER TABLE dialogs ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT TRUE",
 )
 
 # Метки `memory_deletions` агента 0.8.8: «забыть всё» и стирание человека ставили метку, а датасет Cognee не удаляли, и память
@@ -203,6 +206,8 @@ class StoredDialog:
     memory_mode: str = "on"
     crisis_seen: bool = False
     memory_extracted_at: str | None = None
+    # False — пометка «Не сохранять этот разговор»: сообщений и итога у неё нет.
+    saved: bool = True
     # (id, role, text, created_at, audio_seconds) по порядку
     messages: list[tuple[str, str, str, str, float | None]] = field(default_factory=list)
     client_ids: dict[str, str] = field(default_factory=dict)
@@ -213,7 +218,7 @@ class DialogWrite:
     """Что записать за один раз по одному диалогу: строка диалога, новые или изменённые сообщения, идентификаторы клиента."""
 
     dialog_id: str
-    # (id, user_id, started_at, ended_at, summary_json, greeting, voice, reply_index, memory_mode, crisis_seen)
+    # (id, user_id, started_at, ended_at, summary_json, greeting, voice, reply_index, memory_mode, crisis_seen, saved)
     row: tuple[Any, ...]
     # (id, dialog_id, position, role, text, created_at, audio_seconds)
     messages: list[tuple[Any, ...]] = field(default_factory=list)
@@ -376,10 +381,11 @@ class DialogDatabase:
                     memory_mode=row[8],
                     crisis_seen=bool(row[9]),
                     memory_extracted_at=row[10],
+                    saved=bool(row[11]),
                 )
                 for row in conn.execute(
                     "SELECT id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, memory_mode, crisis_seen, "
-                    "memory_extracted_at FROM dialogs WHERE user_id = %s AND deleted_at IS NULL ORDER BY started_at, id",
+                    "memory_extracted_at, saved FROM dialogs WHERE user_id = %s AND deleted_at IS NULL ORDER BY started_at, id",
                     (user_id,),
                 )
             }
@@ -435,12 +441,12 @@ class DialogDatabase:
             conn.transaction(),
         ):
             for write in writes:
-                # memory_mode неизменяем после создания, crisis_seen только растёт, memory_extracted_at писатель
+                # memory_mode и saved неизменяемы после создания, crisis_seen только растёт, memory_extracted_at писатель
                 # диалогов не трогает (это отметка бэкенда памяти о забранном диалоге). Мягко стёртый диалог
                 # (deleted_at) запись не воскрешает: отложенная пачка не вернёт стёртого человека.
                 cur.execute(
                     "INSERT INTO dialogs (id, user_id, started_at, ended_at, summary, greeting, voice, reply_index, "
-                    "memory_mode, crisis_seen) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "memory_mode, crisis_seen, saved) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (id) DO UPDATE SET "
                     "ended_at = EXCLUDED.ended_at, summary = EXCLUDED.summary, greeting = EXCLUDED.greeting, "
                     "voice = EXCLUDED.voice, reply_index = EXCLUDED.reply_index, "
@@ -647,11 +653,11 @@ class DialogDatabase:
             conn.execute("UPDATE dialogs SET cognee_data_id = NULL WHERE user_id = %s", (user_id,))
 
     def dialog_for_index(self, dialog_id: str) -> tuple[str, str, str, list[tuple[str, str]]] | None:
-        """Разговор для индексации: (user_id, started_at, memory_mode, [(role, text)]) или None, если его уже нет или он мягко
-        удалён: удалённое в индекс не возвращается."""
+        """Разговор для индексации: (user_id, started_at, memory_mode, [(role, text)]) или None, если его уже нет, он мягко
+        удалён или это пометка «Не сохранять этот разговор»: ни удалённое, ни не сохранённое в индекс не возвращается."""
         with self._lock, self._connection() as conn:
             head = conn.execute(
-                "SELECT user_id, started_at, memory_mode FROM dialogs WHERE id = %s AND deleted_at IS NULL", (dialog_id,)
+                "SELECT user_id, started_at, memory_mode FROM dialogs WHERE id = %s AND deleted_at IS NULL AND saved", (dialog_id,)
             ).fetchone()
             if head is None:
                 return None
@@ -659,10 +665,11 @@ class DialogDatabase:
         return head[0], head[1], head[2], [(r[0], r[1]) for r in rows]
 
     def indexable_dialog_ids(self, user_id: str) -> list[str]:
-        """Завершённые разговоры человека, которые идут в индекс: не «не сохранять», по порядку (для пересборки индекса)."""
+        """Завершённые разговоры человека, которые идут в индекс: без «Без памяти» и без «Не сохранять этого разговора», по порядку
+        (для пересборки индекса)."""
         with self._lock, self._connection() as conn:
             rows = conn.execute(
-                "SELECT id FROM dialogs WHERE user_id = %s AND ended_at IS NOT NULL AND memory_mode = 'on' AND deleted_at IS NULL "
+                "SELECT id FROM dialogs WHERE user_id = %s AND ended_at IS NOT NULL AND memory_mode = 'on' AND saved AND deleted_at IS NULL "
                 "ORDER BY started_at",
                 (user_id,),
             ).fetchall()

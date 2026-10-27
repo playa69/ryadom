@@ -151,9 +151,21 @@ def test_no_recap_for_a_conversation_with_a_crisis(client, user_id):
     assert draft.status_code == 409 and draft.json()["error"]["code"] == "RECAP_NOT_AVAILABLE"
 
 
-def test_no_recap_for_a_conversation_without_memory(client, user_id):
+def test_a_conversation_without_memory_gets_a_recap_like_any_other(client, user_id):
+    """«Без памяти» отключает только память (PROTEUS-246): журнал, итог и срок хранения у такого разговора обычные."""
     dialog_id = talk(client, user_id, memory="off")
-    assert end(client, user_id, dialog_id)["recapStatus"] == "none"
+    summary = end(client, user_id, dialog_id)
+    assert summary["recapAvailable"] is True
+    assert wait_status(client, user_id, dialog_id, "ready")["recap"]
+
+
+def test_no_recap_for_an_unsaved_conversation(client, user_id):
+    response = client.post(url(user_id, "/dialogs"), json={"saved": False, "new": True}, headers=AUTH)
+    dialog_id = response.json()["dialogId"]
+    store = store_of(client)
+    store.add_message(store.get(user_id, dialog_id), "user", LONG)
+    summary = end(client, user_id, dialog_id, takeaway=RECAP)
+    assert summary["recap"] is None and summary["recapStatus"] == "none" and summary["recapAvailable"] is False
 
 
 def test_the_recap_does_not_depend_on_the_memory_switch(client, user_id):

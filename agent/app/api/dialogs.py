@@ -66,9 +66,12 @@ class StartBody(BaseModel):
     # Конкретный голос Gemini (профиль): действует только вместе с `voice` (его родом).
     voice_name: str | None = Field(default=None, alias="voiceName", max_length=32)
     new: bool = False
-    # `off` — разговор «Без памяти»: без заметок и индекса (срок хранения и пометка в журнале — PROTEUS-246).
+    # `off` — разговор «Без памяти»: без сводки, заметок и индекса; в остальном обычный (журнал, итог, срок хранения).
     # Только для нового диалога: возвращённый открытый остаётся со своей памятью.
     memory: Literal["on", "off"] = "on"
+    # `false` — «Не сохранять этот разговор» (PROTEUS-246): текст живёт только в памяти процесса, после завершения остаётся пометка
+    # без текста. Отдельно от `memory`; только для нового диалога, как и `memory`. Старые клиенты поле не шлют: разговор сохраняется.
+    saved: bool = True
 
 
 @router.post("/dialogs")
@@ -78,14 +81,15 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
         raise validation_error("voiceName: неизвестный голос")
     user = _user(user_id)
     await store.ensure_user(user)
-    dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory, start.voice_name)
+    dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory, start.voice_name, start.saved)
     logger.info(
-        "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s",
+        "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s saved=%s",
         dialog.id,
         resumed,
         start.new,
         dialog.voice,
         dialog.memory_mode,
+        dialog.saved,
     )
     return {
         "dialogId": dialog.id,
@@ -97,6 +101,7 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
         "messageCount": len(dialog.messages),
         "lastActivityAt": dialog.last_activity_at,
         "memoryMode": dialog.memory_mode,
+        "saved": dialog.saved,
         "memoryEnabled": store.memory_enabled(user),
     }
 
