@@ -25,7 +25,7 @@ worktree; `STAND_ID=…` в окружении переопределяет) и 
 
 ```bash
 pnpm stand:up [--only api,web,…] [--infra-only] [--e2e]   # поднять стенд (по умолчанию всё; --e2e — стек для e2e)
-pnpm stand:env [--shell|--ps|--json]                       # адреса и переменные стенда (pnpm -s stand:env --shell | eval)
+pnpm stand:env [--shell|--ps|--json]                       # адреса и переменные стенда (pnpm --silent stand:env --shell | eval)
 pnpm stand:down [--release]                                # остановить своё; --release ещё и вернуть слот
 pnpm stand:ls                                              # все стенды машины: слот, что запущено, давно ли виден
 pnpm stand:gc [--dry-run]                                  # убрать слоты исчезнувших или давно простаивающих worktree
