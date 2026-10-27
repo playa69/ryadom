@@ -140,7 +140,8 @@ async def end_dialog(user_id: str, dialog_id: str, store: Store, body: EndBody |
     if dialog is None:
         raise dialog_not_found()
     body = body or EndBody()
-    return {"summary": store.end(dialog, body.takeaway, body.tension_after, body.recap_source)}
+    # `saved` рядом со сводкой: шлюз не отправляет аналитику о конце не сохраняемого разговора.
+    return {"summary": store.end(dialog, body.takeaway, body.tension_after, body.recap_source), "saved": dialog.saved}
 
 
 def _recap_unavailable() -> AgentError:
@@ -302,7 +303,8 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
         logger.info("socket opened dialog=%s", dialog.id)
         if dialog.ended_at is not None:
             # Диалог завершён (человек начал новый разговор с другого экрана, а этот был без связи): в него больше ничего не пишем.
-            await websocket.send_text(json.dumps({"v": 1, "type": "ready"}))
+            ready = {"v": 1, "type": "ready", **({} if dialog.saved else {"saved": False})}
+            await websocket.send_text(json.dumps(ready))
             await websocket.send_text(json.dumps({"v": 1, "type": "ended", "summary": dialog.summary}, ensure_ascii=False))
             await websocket.close(code=1000)
             return

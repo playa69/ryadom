@@ -17,7 +17,7 @@ from starlette.testclient import WebSocketDenialResponse
 
 from app.services.dialog_store import DialogStore
 from app.services.usage import Usage
-from tests.conftest import AUTH, start_dialog, ws_url
+from tests.conftest import AUTH, read_frames, ws_url
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from tests.test_persistence import app_client, say
 
@@ -397,3 +397,19 @@ def test_a_crisis_in_an_unsaved_dialog_is_handled_as_usual_and_not_written(tmp_p
         app.portal.call(store.flush)
         state = DialogDatabase._files[str(path)]
         assert state.messages == {} and state.dialogs[dialog_id][9] == 0  # ни кризисных кусков, ни признака кризиса
+
+
+def test_the_socket_tells_the_gateway_that_the_dialog_is_not_saved(client: TestClient, user_id: str) -> None:
+    unsaved = client.post(url(user_id, "/dialogs"), json={"saved": False, "new": True}, headers=AUTH).json()["dialogId"]
+    with client.websocket_connect(ws_url(user_id, unsaved), headers=AUTH) as ws:
+        frames = read_frames(ws, lambda f: any(k == "json" and b["type"] == "ready" for k, b in f))
+    ready = next(b for k, b in frames if k == "json" and b["type"] == "ready")
+    assert ready["saved"] is False
+    ended = client.post(url(user_id, f"/dialogs/{unsaved}/end"), headers=AUTH).json()
+    assert ended["saved"] is False
+
+    saved = client.post(url(user_id, "/dialogs"), json={"new": True}, headers=AUTH).json()["dialogId"]
+    with client.websocket_connect(ws_url(user_id, saved), headers=AUTH) as ws:
+        frames = read_frames(ws, lambda f: any(k == "json" and b["type"] == "ready" for k, b in f))
+    assert "saved" not in next(b for k, b in frames if k == "json" and b["type"] == "ready")
+    assert client.post(url(user_id, f"/dialogs/{saved}/end"), headers=AUTH).json()["saved"] is True

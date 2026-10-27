@@ -449,8 +449,9 @@ class DialogSession:
 
     async def _serve(self) -> None:
         """Приём кадров клиента до закрытия сокета."""
-        await self._send({"type": "ready"})
         dialog = self._dialog
+        # Шлюз узнаёт из `ready`, что разговор не сохраняется, и не отправляет по нему аналитику (add-unsaved-dialog, D4).
+        await self._send({"type": "ready", **({} if dialog.saved else {"saved": False})})
         dialog.on_replaced = self._replaced
         if dialog.greeting_pending:
             dialog.greeting_pending = False  # один раз на каждый POST …/dialogs, не на каждый сокет
