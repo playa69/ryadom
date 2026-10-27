@@ -1,6 +1,6 @@
 """Типизированная конфигурация сервиса agent из переменных окружения.
 
-Единственное место чтения env в приложении (.agents/skills/env-config-rules):
+Единственное место чтения env в приложении (agent/AGENTS.md, «Конфигурация»):
 доменные Settings с validation_alias, SecretStr для секретов, fail-fast
 валидация, неизменяемый синглтон APP_CONFIG.
 

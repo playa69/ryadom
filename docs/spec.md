@@ -142,7 +142,7 @@
 | `CON-TECH-03` | `tts_start` SHOULD приходить не позже 0,9 с после `assistant_end`; опоздавшая озвучка просто начинается позже, клиент ответ своим голосом не читает (так читал, и получался двойной голос). Своим голосом клиент читает только приветствие | Голос — основной интерфейс |
 | `CON-TECH-04` | По `tts_cancel` озвучка прекращается немедленно; в hands-free агент должен замолчать в пределах 300 мс от начала речи человека | Перебивание голосом |
 | `CON-TECH-05` | Звук: вход PCM16 LE моно 16 кГц, кадры по 100 мс; выход агента PCM16 LE моно 24 кГц, кадры по 200 мс. Формат в кадрах не передаётся. К клиенту шлюз отдаёт озвучку в кодеке, согласованном в `hello` (`opus`/`mulaw`/`pcm16`, [REQ-VOICE-09](#66-голос)); без согласования — PCM16, как раньше | Фиксирован в контракте v1; клиентский контракт расширен только полями |
-| `CON-TECH-06` | Конфигурация агента — только через pydantic-settings (`agent/app/core/config.py`, `validation_alias` на каждое поле, `SecretStr`, fail-fast); хардкод конфигов запрещён | Скилл env-config-rules |
+| `CON-TECH-06` | Конфигурация агента — только через pydantic-settings (`agent/app/core/config.py`, `validation_alias` на каждое поле, `SecretStr`, fail-fast); хардкод конфигов запрещён | `agent/AGENTS.md`, «Конфигурация» |
 | `CON-TECH-07` | Кризисная ветвь MUST быть детерминированной и не зависеть от генеративной модели | Предсказуемость в худший момент |
 | `CON-TECH-08` | Отказ любой внешней модели MUST NOT оставлять человека без ответа и MUST NOT вешать конвейер дольше таймаута | Деградация, а не падение |
 | `CON-TECH-09` | Инфраструктура: только production, кластер Timeweb `twc-sber500` (Москва), образы только из `cr.yandex/crpsqeamqpuvrkm5tpr9` | Текущие ресурсы |
@@ -219,7 +219,7 @@ flowchart LR
 | Фон | Celery/Arq | Нет у агента; у шлюза — ежечасная очистка анонимных аккаунтов | План |
 | Аналитика | AppMetrica + ClickHouse | Продуктовая: PostHog Cloud (EU), события клиентов и сервера идут через собственный прокси `/api/ingest`, без текстов и ПДн ([docs/analytics.md](analytics.md)); технические метрики голоса — Prometheus. AppMetrica и ClickHouse не используются | Реализовано; решение зафиксировано в docs/analytics.md |
 | Трейсинг LLM | Langfuse | Langfuse развёрнут (ns `infra`); агент трассирует ходы диалогов (`app/core/tracing.py`, `LANGFUSE_*`) | Реализовано |
-| Логи | — | Loki + Prometheus + Grafana (ns `monitoring`); агент пишет stdlib `logging` | План: loguru по logging-rules |
+| Логи | — | Loki + Prometheus + Grafana (ns `monitoring`); агент пишет stdlib `logging` | План: loguru |
 | Инфраструктура | Облако РФ, GitLab CI | Timeweb Cloud k8s + Istio Gateway API + cert-manager; Yandex Cloud: S3, DNS, Container Registry | — |
 
 ### 4.3. Развёртывание
@@ -804,10 +804,10 @@ sequenceDiagram
 **`REQ-OBS-02`** — Метрики бизнес-логики. Статус: **план**: длительность этапов конвейера (STT, safety, генерация, TTS до первого звука), доля ходов без ответа модели, срабатывания `safety` по ступеням, диалоги в день, длительность диалогов, обращения к компонентам (для метрики конкурса, `§9`).
 
 **`REQ-OBS-03`** — Сквозная трассировка. Статус: **частично** — шлюз шлёт агенту заголовки (`x-trace-id`, `x-request-time`, `x-client-id`, `x-session-id`, `x-user-id`), агент их не читает.
-Целевое (скилл api-headers-rules): middleware кладёт заголовки в ContextVars, все логи обработки реплики содержат `rqUId`, заголовки пробрасываются во внешние вызовы.
+Целевое: middleware кладёт заголовки в ContextVars, все логи обработки реплики содержат `rqUId`, заголовки пробрасываются во внешние вызовы.
 
 **`REQ-OBS-04`** — Логи. Статус: **частично** (stdlib `logging`, текстовый формат).
-Целевое (скилл logging-rules): loguru + ContextVars + patcher, JSON, три sink'а (`app.log`, `app-metric.log`, `events.log`), маскирование PII; сбор в Loki.
+Целевое: loguru + ContextVars + patcher, JSON, три sink'а (`app.log`, `app-metric.log`, `events.log`), маскирование PII; сбор в Loki.
 
 **`REQ-OBS-05`** — Langfuse. Статус: **план**: трейс на реплику (`dialog_id`, хэш `user_id`), спаны на каждый вызов модели (модель, токены, длительность), только маскированный текст.
 
@@ -865,7 +865,7 @@ sequenceDiagram
 | Qwen TTS | `QWEN_TTS_BASE_URL`, `QWEN_TTS_MODEL`, `QWEN_TTS_VOICE_MALE`, `QWEN_TTS_VOICE_FEMALE`, `QWEN_TTS_TIMEOUT_SECONDS` |
 | espeak-ng | `ESPEAK_BINARY`, `ESPEAK_VOICE_MALE`, `ESPEAK_VOICE_FEMALE`, `ESPEAK_SPEED` |
 
-Новые параметры бизнес-логики (пороги антизависимости, таймаут реплики, модели классификаторов и эмбеддингов, БД, Redis, Langfuse) добавляются доменными классами Settings в `agent/app/core/config.py` по env-config-rules и описываются здесь.
+Новые параметры бизнес-логики (пороги антизависимости, таймаут реплики, модели классификаторов и эмбеддингов, БД, Redis, Langfuse) добавляются доменными классами Settings в `agent/app/core/config.py` по правилам `agent/AGENTS.md` и описываются здесь.
 
 Шлюз, связанное с агентом: `AGENT_API_URL`, `AGENT_API_TOKEN` (в кластере берётся из ключа `AGENT_INTERNAL_TOKEN` Secret `app-secrets`), `AGENT_TIMEOUT_MS`, `DIALOG_IDLE_TIMEOUT_SEC`, `DIALOG_MAX_DURATION_SEC`, `ANONYMOUS_PURGE_DISABLED`. Озвучка к клиенту: `DIALOG_AUDIO_CODECS` (`opus,mulaw,pcm16`; пусто — только PCM16), `DIALOG_OPUS_COMPLEXITY` (0..10, по умолчанию 5), `DIALOG_OPUS_BITRATE` (бит/с, по умолчанию 24000).
 
@@ -903,7 +903,7 @@ sequenceDiagram
 | # | Инкремент | Требования | Зависит от | Критерий приёмки |
 |---|---|---|---|---|
 | 1 | Расширенный словарь кризиса (ступень 1) + 20 эталонных фраз в тестах | `REQ-SAFE-01`, `REQ-SAFE-06` | — | Все эталонные фразы → `safety`; нейтральные фразы из набора не срабатывают |
-| 2 | Логи по logging-rules + middleware заголовков | `REQ-OBS-03`, `REQ-OBS-04` | — | В логах обработки есть `rqUId`; тексты реплик не попадают в логи |
+| 2 | Структурные логи + middleware заголовков | `REQ-OBS-03`, `REQ-OBS-04` | — | В логах обработки есть `rqUId`; тексты реплик не попадают в логи |
 | 3 | Таймаут реплики | `REQ-DLG-09` | — | Зависший мок → `error AGENT_TIMEOUT` за ≤ 60 с |
 | 4 | БД агента: диалоги, сообщения, сводки; миграции; стирание | `REQ-MEM-01`, `REQ-DATA-02` | Решение по БД (Q-03), манифесты | Перезапуск пода не теряет диалоги; после `DELETE` строк пользователя нет |
 | 5 | Несколько реплик и `SIGTERM` | `REQ-OPS-02`, `REQ-OPS-03` | 4 | Два экземпляра на общей БД обслуживают любой диалог; `SIGTERM` посреди ответа → ответ в истории, закрытие `1012` |
