@@ -189,7 +189,7 @@ self_check_results(id uuid pk, user_id fk users on delete cascade, test_id text,
 
 ### Порядок слияния и миграции шлюза
 
-- Порядок слияния оставшихся change'ей: PROTEUS-218 (`add-self-check-tests`) → PROTEUS-243 (`add-notifications`) → PROTEUS-246 (разговор «Без памяти», своя ветка, в интеграционной ветке его нет) → PROTEUS-245 (`add-recap-search`).
+- Порядок слияния оставшихся change'ей: PROTEUS-218 (`add-self-check-tests`) → PROTEUS-243 (`add-notifications`) → PROTEUS-246 («Не сохранять этот разговор», `add-unsaved-dialog`, своя ветка, в интеграционной ветке его нет) → PROTEUS-245 (`add-recap-search`).
 - Миграции шлюза идут в том же порядке: `0010_mood_diary` (183, в коде) → `0011_self_check` (218) → `0012_notifications` (243). 246 и 245 миграций шлюза не добавляют.
 - Номер в имени не важен: Drizzle применяет миграцию, только если её `when` в `meta/_journal.json` позже последней применённой. Поэтому миграцию генерируют `drizzle-kit generate` после ребейза на main, где уже есть предыдущая; если ветка сливается не в свою очередь, она удаляет свою миграцию (SQL, снимок, запись журнала) и генерирует заново.
 - Выкат миграций — в том же порядке.
