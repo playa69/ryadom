@@ -29,6 +29,7 @@ import {
 } from '@ryadom/core/services/job-queue-service'
 import { QUEUE_CATALOG, type QueueDefinition } from '../src/jobs/catalog'
 import { erasePersonJob } from '../src/jobs/erase-person'
+import { watchdogJob } from '../src/jobs/watchdog'
 import type { JobDeps } from '../src/jobs/handlers'
 import { ensureQueues, queueDrift, registerSchedules, type JobHandlers } from '../src/jobs/registry'
 import { startJobs, type Jobs, type JobsConfig } from '../src/lib/jobs'
@@ -207,6 +208,13 @@ describe('реестр и каталог очередей', () => {
       retryBackoff: true,
       heartbeatSeconds: null,
     },
+    'jobs.watchdog': {
+      policy: 'exclusive',
+      expireInSeconds: 120,
+      retryLimit: 0,
+      heartbeatSeconds: null,
+      cron: '*/5 * * * *',
+    },
     'analytics.erase-person': {
       policy: 'short',
       expireInSeconds: 120,
@@ -264,11 +272,13 @@ describe('реестр и каталог очередей', () => {
       JobQueue.DiaryWeeklyPass,
       JobQueue.AnalyticsErasePerson,
       JobQueue.DialogsAfterDelete,
+      JobQueue.JobsWatchdog,
     ])
     const schedules = await jobs.boss.getSchedules()
     expect(schedules.map((schedule) => [schedule.name, schedule.cron]).sort()).toEqual([
       [JobQueue.AccountsPurgeInactiveAnonymous, '15 * * * *'],
       [JobQueue.DiaryWeeklyPass, '* * * * *'],
+      [JobQueue.JobsWatchdog, '*/5 * * * *'],
       [JobQueue.SessionsPurgeExpired, '0 * * * *'],
     ])
   })
@@ -599,6 +609,9 @@ describe('стирание профиля в аналитике через оч�
       )
       const [copy] = await jobs.boss.findJobs<{ userId: string }>(JobQueue.JobsDeadLetter)
       expect(copy?.data).toEqual({ userId: 'user-gone' })
+      // It names where it came from and stays 30 days, as the catalog says (the receiver's retention, not the source's).
+      expect(copy?.sourceName).toBe('analytics.erase-person')
+      expect((copy!.keepUntil.getTime() - Date.now()) / 86_400_000).toBeGreaterThan(29)
       // One line with the id, on the last attempt only: the way to remove the profile by hand.
       const lines = errors.mock.calls.filter(
         ([fields]) => (fields as { userId?: string }).userId === 'user-gone',
@@ -698,15 +711,13 @@ describe('сброс недели после удаления разговора
 
   it('воркер сбрасывает неделю и гасит ссылку, когда у агента разговора нет; недоступный агент — повтор, а не потеря', async () => {
     const { user } = await signUpAndIn(app)
-    await getDb()
-      .insert(diarySummaries)
-      .values({
-        userId: user.id,
-        kind: 'week',
-        periodStart: '2026-10-19',
-        text: 'Итог недели.',
-        status: 'ready',
-      })
+    await getDb().insert(diarySummaries).values({
+      userId: user.id,
+      kind: 'week',
+      periodStart: '2026-10-19',
+      text: 'Итог недели.',
+      status: 'ready',
+    })
     let answers = 0
     mockAgent({
       'GET http://agent.test/v1/users/*/dialogs/*': () => {
@@ -732,15 +743,13 @@ describe('сброс недели после удаления разговора
 
   it('разговор на месте — задача завершается, неделя цела', async () => {
     const { user } = await signUpAndIn(app)
-    await getDb()
-      .insert(diarySummaries)
-      .values({
-        userId: user.id,
-        kind: 'week',
-        periodStart: '2026-10-19',
-        text: 'Итог недели.',
-        status: 'ready',
-      })
+    await getDb().insert(diarySummaries).values({
+      userId: user.id,
+      kind: 'week',
+      periodStart: '2026-10-19',
+      text: 'Итог недели.',
+      status: 'ready',
+    })
     mockAgent({
       'GET http://agent.test/v1/users/*/dialogs/*': () =>
         json({
@@ -761,5 +770,94 @@ describe('сброс недели после удаления разговора
     )
     const [row] = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
     expect(row).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+  })
+})
+
+describe('сторож очередей', () => {
+  // `openspec/changes/add-job-queue`, tasks 3.7 (design D5): the log, not a metric, says that a queue is in trouble.
+  const warnings = () => vi.spyOn(getRootLogger(), 'warn')
+  const lines = (spy: ReturnType<typeof warnings>): Record<string, unknown>[] =>
+    spy.mock.calls.map(([fields, message]) => ({ ...(fields as Record<string, unknown>), message }))
+
+  it('пустые очереди и отложенная задача — тишина', async () => {
+    const warn = warnings()
+    try {
+      const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+      // Not late: it may start only in half an hour.
+      await jobs.boss.send(JobQueue.AnalyticsErasePerson, { userId: 'user-1' }, { startAfter: 1800 })
+
+      await watchdogJob(jobs.boss)({}, {} as never)
+
+      expect(lines(warn)).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('в jobs.dead-letter есть задача — warn с именем очереди и числом, без данных задачи', async () => {
+    const warn = warnings()
+    try {
+      const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+      await jobs.boss.send(JobQueue.JobsDeadLetter, { userId: 'user-secret-id' })
+      await jobs.boss.send(JobQueue.JobsDeadLetter, { userId: 'user-secret-id-2' })
+
+      await watchdogJob(jobs.boss)({}, {} as never)
+
+      expect(lines(warn)).toEqual([
+        expect.objectContaining({ queue: 'jobs.dead-letter', count: 2, message: expect.any(String) }),
+      ])
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('user-secret-id')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('готовая задача ждёт больше десяти минут — warn с очередью, числом готовых и возрастом; моложе десяти минут — тишина', async () => {
+    const warn = warnings()
+    try {
+      const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+      await jobs.boss.send(
+        JobQueue.SessionsPurgeExpired,
+        {},
+        { startAfter: new Date(Date.now() - 11 * 60_000) },
+      )
+      await jobs.boss.send(
+        JobQueue.AccountsPurgeInactiveAnonymous,
+        {},
+        { startAfter: new Date(Date.now() - 5 * 60_000) },
+      )
+
+      await watchdogJob(jobs.boss)({}, {} as never)
+
+      const found = lines(warn)
+      expect(found).toHaveLength(1)
+      expect(found[0]).toMatchObject({ queue: 'sessions.purge-expired', ready: 1 })
+      expect(found[0]!.oldestWaitSeconds).toBeGreaterThanOrEqual(660)
+      expect(found[0]!.oldestWaitSeconds).toBeLessThan(700)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('воркер очереди jobs.watchdog пишет в журнал то, что нашёл: недоставленная задача видна без участия человека', async () => {
+    const warn = warnings()
+    try {
+      const catalog = QUEUE_CATALOG.filter((queue) =>
+        [JobQueue.JobsDeadLetter, JobQueue.JobsWatchdog].includes(queue.name as never),
+      )
+      const jobs = await start({}, { catalog, skipTransport: true })
+      await jobs.boss.send(JobQueue.JobsDeadLetter, { from: 'test' })
+
+      await jobs.boss.send(JobQueue.JobsWatchdog, {})
+
+      await vi.waitFor(
+        () => expect(lines(warn).some((line) => line.queue === 'jobs.dead-letter')).toBe(true),
+        {
+          timeout: 15_000,
+        },
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

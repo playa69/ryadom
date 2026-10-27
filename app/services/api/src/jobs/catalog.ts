@@ -136,4 +136,17 @@ export const QUEUE_CATALOG: readonly QueueDefinition[] = [
       deadLetter: JobQueue.JobsDeadLetter,
     },
   },
+  {
+    name: JobQueue.JobsWatchdog,
+    cron: '*/5 * * * *',
+    options: {
+      policy: 'exclusive',
+      expireInSeconds: 120,
+      retentionSeconds: DAY,
+      deleteAfterSeconds: KEEP_FINISHED,
+      ...NO_RETRY,
+      heartbeatSeconds: null,
+      deadLetter: JobQueue.JobsDeadLetter,
+    },
+  },
 ]

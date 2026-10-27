@@ -105,7 +105,7 @@ export async function startJobs(options: StartJobsOptions): Promise<Jobs> {
 
   let workers: readonly JobQueueName[] = []
   if (workersEnabled) {
-    workers = await registerWorkers(boss, { ...createHandlers(deps), ...testing.handlers }, catalog, {
+    workers = await registerWorkers(boss, { ...createHandlers(deps, boss), ...testing.handlers }, catalog, {
       pollingIntervalSeconds: testing.pollingIntervalSeconds,
     })
     await registerSchedules(boss, catalog)
