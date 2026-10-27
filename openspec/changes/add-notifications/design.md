@@ -163,7 +163,7 @@ notification_deliveries(id bigserial pk, user_id, kind text, local_date date, ch
 
 ### Порядок слияния и миграции шлюза
 
-- **Порядок слияния оставшихся change'ей в `main`:** PROTEUS-218 (`add-self-check-tests`) → PROTEUS-243 (`add-notifications`) → PROTEUS-246 (разговор «Без памяти», своя ветка, в интеграционной ветке его нет) → PROTEUS-245 (`add-recap-search`). Дневник (183) и память (242) уже в коде.
+- **Порядок слияния оставшихся change'ей в `main`:** PROTEUS-218 (`add-self-check-tests`) → PROTEUS-243 (`add-notifications`) → PROTEUS-246 («Не сохранять этот разговор», `add-unsaved-dialog`, своя ветка, в интеграционной ветке его нет) → PROTEUS-245 (`add-recap-search`). Дневник (183) и память (242) уже в коде.
 - **Миграции шлюза идут в том же порядке:** `0010_mood_diary` (183, в коде) → `0011_self_check` (218) → `0012_notifications` (243). 246 и 245 миграций шлюза не добавляют.
 - **Номер в имени не важен.** Drizzle (`drizzle-orm/postgres-js/migrator`) применяет миграцию, только если её `when` в `meta/_journal.json` позже последней применённой. Миграция с более ранним `when` на базе, где уже применена более поздняя, не применится.
 - **Поэтому миграцию генерируют, а не переносят.** `drizzle-kit generate` (скрипт `generate` в `app/packages/db`, `--name notifications`) запускается после ребейза на `main`, где уже есть `0011_self_check`. Если ветка сливается не в свою очередь, она удаляет свою миграцию (SQL, снимок и запись в `meta/_journal.json`) и генерирует её заново поверх `main`, а не переименовывает файл.

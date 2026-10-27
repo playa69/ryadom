@@ -161,7 +161,11 @@ describe('health и политика версий', () => {
   it('минимум JS без пакета или для слишком старого натива ничего не требует', () => {
     const noBundle: ReleasePolicy = { ...POLICY, js: { ...EMPTY_POLICY.js, minVersion: '1.2.0' } }
     expect(
-      resolveAppStatus(noBundle, { platform: AppPlatform.Android, versionCode: 12, jsVersion: '1.0.0' }, null),
+      resolveAppStatus(
+        noBundle,
+        { platform: AppPlatform.Android, versionCode: 12, jsVersion: '1.0.0' },
+        null,
+      ),
     ).toMatchObject({ jsUpdate: UpdateAvailability.NotAvailable, jsBundleUrl: null })
     expect(
       resolveAppStatus(
