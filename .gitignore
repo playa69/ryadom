@@ -227,11 +227,6 @@ k8s/kubeconfig*.yaml
 /registry-pusher-key.json
 /ONBOARDING.md
 
-# backend runtime
-backend/.venv/
-backend/logs/
-backend/.env
-
 # agent runtime
 agent/.venv/
 agent/logs/
