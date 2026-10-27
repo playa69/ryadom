@@ -504,6 +504,44 @@ async def test_a_memory_failure_does_not_stop_the_session() -> None:
     await session._drop_link()
 
 
+async def test_a_new_or_grown_brief_waits_for_the_planned_rotation() -> None:
+    """Сводка догрузилась после открытия, к ней добавилась находка поиска по реплике или её переписало извлечение: сессия не
+    переоткрывается (каждое переоткрытие — пауза в разговоре и потеря звукового контекста), сводку берёт плановая смена."""
+    connector = FakeConnector()
+    memory = Memory()
+    session = with_memory(memory, connector, ("u", FIRST), ("a", "Ответ"))
+    link = await session._ensure_link()
+    assert link is not None and BRIEF not in link.instructions
+    memory.text = BRIEF  # загрузка дошла уже после открытия
+    assert await session._ensure_link() is link
+    session._link_used = True  # на сессии был ход: плановая смена (GEMINI_ROTATE_EVERY)
+    rotated = await session._ensure_link(rotate=True)
+    assert rotated is not None and rotated is not link and BRIEF in rotated.instructions
+    memory.text = BRIEF + "\n\n" + FOUND  # фоновый поиск по реплике что-то нашёл
+    assert await session._ensure_link() is rotated
+    memory.text = "Человека зовут Аня."  # извлечение переписало сводку
+    assert await session._ensure_link() is rotated
+    assert len(connector.links) == 2
+    session._link_used = True
+    latest = await session._ensure_link(rotate=True)
+    assert latest is not None and "Человека зовут Аня." in latest.instructions and FOUND not in latest.instructions
+    await session._drop_link()
+
+
+async def test_a_revoked_brief_reopens_the_session_without_it() -> None:
+    """Человек выключил память, забыл всё или стёр аккаунт посреди разговора: следующий ход уже без сводки (MEM-13.3)."""
+    connector = FakeConnector()
+    memory = Memory(text=BRIEF)
+    session = with_memory(memory, connector)
+    link = await session._ensure_link()
+    assert link is not None and BRIEF in link.instructions
+    memory.text = ""
+    new = await session._ensure_link()
+    assert new is not None and new is not link and link.closed and BRIEF not in new.instructions
+    assert await session._ensure_link() is new  # без сводки дальше не переоткрывается
+    await session._drop_link()
+
+
 # ─── usage ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 USAGE = {"input_text": 300, "input_audio": 1000, "output_audio": 60}

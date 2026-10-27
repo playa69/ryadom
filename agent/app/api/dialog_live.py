@@ -326,8 +326,10 @@ class LiveDialogSession(DialogSession):
         self._speech_turns: dict[str, LiveTurn] = {}
         # Последний ход, отправленный модели целиком (конец реплики или текст): на его ответ пишется пришедший usage.
         self._usage_turn: LiveTurn | None = None
-        # Сводка памяти, с которой открыта текущая сессия: изменилась (человек что-то забыл, выключил память, извлечение
-        # добавило факт) — к следующему ходу сессия открывается заново с новой (MEM-8.4, MEM-13.3).
+        # Сводка памяти, с которой открыта текущая сессия. Новая или дополненная сводка (догрузилась, нашлось по реплике,
+        # извлечение добавило факт) сессию не переоткрывает: каждое переоткрытие — это пауза в разговоре и потеря звукового
+        # контекста, а сводку возьмёт плановая смена сессии. Пропала сводка целиком (человек выключил память, забыл всё,
+        # стёр аккаунт) — к следующему ходу сессия открывается заново без неё (MEM-13.3).
         self._brief_used = ""
         self._memory_load: asyncio.Task[None] | None = None  # загрузка памяти к открытию сессии (`_await_memory`)
         self._socket_at = time.monotonic()  # сессию создают сразу после accept сокета: от этого момента считаем ожидание
@@ -512,8 +514,8 @@ class LiveDialogSession(DialogSession):
                     logger.info("live context refresh deferred: level=%s dialog=%s", budget.level(), self._dialog.id)
                     return link
                 self._refresh = True
-            if self._store.memory_brief(self._dialog, count=False) != self._brief_used:
-                self._refresh = True  # память изменилась: новая сессия с новой сводкой (или без неё)
+            if self._brief_used and not self._store.memory_brief(self._dialog, count=False):
+                self._refresh = True  # сводку отозвали (см. `_brief_used`): следующий ход уже без неё
             alive = link is not None and not link.closed and link.voice == voice
             if alive and self._rotate_pending and not self._refresh and self._may_open():
                 self._refresh = True  # отложенная (или ленивая) смена сессии: теперь можно
