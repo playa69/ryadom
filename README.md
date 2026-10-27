@@ -220,33 +220,32 @@ flowchart LR
     PG[("PostgreSQL 16")]
     RD[("Redis + Sentinel")]
   end
-  PROXY["LLM-прокси<br/>GigaChat · Whisper · Qwen TTS"]
+  GEM["Gemini Live<br/>голос, через релей"]
+  PROXY["LLM-прокси<br/>фоновая модель: итоги, заметки"]
   MOB & WEB -->|HTTPS + WSS| API
   ADM --> API
   API -->|REST + WS, Bearer| AG
   API --> PG
   API -.-> RD
+  AG --> GEM
   AG --> PROXY
 ```
 
-**Как проходит разговор:** клиент → шлюз `app-api` (аккаунты, согласия, лимиты, горячие линии) → агент (распознавание → кризисная проверка → генерация → озвучка по предложениям). Шлюз не хранит и не логирует содержимое сообщений; агент получает только `userId`, без почты и имени.
+**Как проходит разговор:** клиент → шлюз `app-api` (аккаунты, согласия, лимиты, горячие линии) → агент (голос ведёт Gemini Live: расшифровка реплики → кризисная проверка → ответ модели её собственным звуком). Шлюз не хранит и не логирует содержимое сообщений; агент получает только `userId`, без почты и имени.
 
 <details>
 <summary><b>Конвейер одной реплики — как есть</b></summary>
 
 ```mermaid
 flowchart LR
-  IN["Текст или голос"] --> STT["whisper<br/>(голос целиком)"]
-  STT --> SAVE["Сохранить"]
-  IN --> SAVE
-  SAVE --> CR{"Кризис?"}
-  CR -->|да| SF["safety + кризисный ответ"]
-  CR -->|нет| LLM["Чат-модель:<br/>промпт + 12 последних сообщений"]
-  LLM -->|отказ / таймаут| TPL["Шаблонный ответ"]
-  LLM --> OUT["Сохранить → стрим"]
-  TPL --> OUT
-  SF --> OUT
-  OUT --> TTS["Озвучка<br/>по предложениям"]
+  IN["Текст или голос"] --> SAVE["Сохранить"]
+  SAVE --> LIVE["Gemini Live:<br/>реплика + история текстом"]
+  LIVE --> CR{"Кризис?<br/>(по тексту реплики,<br/>до показа ответа)"}
+  CR -->|да| SF["safety + фиксированный<br/>кризисный ответ"]
+  CR -->|нет| ANS["Ответ модели:<br/>текст + её звук"]
+  SF --> TTS["Озвучка фразы<br/>(из памяти фраз)"]
+  ANS --> OUT["Сохранить → стрим"]
+  TTS --> OUT
 ```
 
 </details>
@@ -260,8 +259,9 @@ flowchart LR
 | Замолчать, когда человек перебивает | ≤ 300 мс |
 | Вход / выход | PCM16 моно 16 кГц / 24 кГц |
 | Голосовая реплика | до 300 с |
-| Отказ озвучки или распознавания | разговор продолжается текстом |
-| Отказ чат-модели | человек всё равно получает ответ (шаблон) |
+| Отказ озвучки фиксированной фразы | текст всё равно доходит, человек видит, что голос недоступен |
+| Gemini недоступен (релей, ключ) | `VOICE_UNAVAILABLE`: запасного голосового пути нет |
+| Отказ фоновой модели | разговор идёт как обычно; итоги и заметки откладываются |
 
 </details>
 
@@ -274,7 +274,7 @@ flowchart LR
 | **Клиенты** | TypeScript · Next.js 16 + React 19 + Tailwind 4 + shadcn/ui (веб, лендинг, админка) · Framework7 + Capacitor 8 + Vite (PWA, Android, iOS) |
 | **Шлюз** | Node.js ≥ 24 · Hono · Drizzle ORM · PostgreSQL · Redis |
 | **Агент** | Python 3.12 · FastAPI · httpx · pydantic-settings · prometheus-client · uv |
-| **Модели** | `gigachat3.5-432b-a28b` (ответы) · `whisper-large-v3` (распознавание) · Qwen TTS / SaluteSpeech (озвучка) — через OpenAI-совместимый прокси |
+| **Модели** | Gemini Live `gemini-3.8-live` (голос, речь в речь; через релей) · фоновая модель `gigachat3.5-432b-a28b` через OpenAI-совместимый прокси (итоги разговоров и недели, заметки памяти) · Cognee (память) |
 | **Голос на клиенте** | Собственный детектор реплики (VAD) и плеер в `client-core` |
 | **Монорепо** | pnpm workspaces · Turborepo · Playwright (e2e) |
 | **Инфраструктура** | Timeweb Cloud Kubernetes (Москва) · Istio Gateway API · cert-manager · CloudNativePG · Yandex Cloud (S3, DNS, Container Registry) |
@@ -347,15 +347,21 @@ pnpm stand:ls                                   # стенды всей маши
 
 ### Агент
 
-Без ключей моделей — шаблонные ответы и локальная озвучка espeak-ng:
+Для разработки приложения настоящий агент не нужен: `pnpm dev:agent-mock` (см. выше) повторяет его контракт без моделей.
+
+Настоящему агенту нужен ключ Gemini: без `GEMINI_API_KEY` сервис не стартует. Из России Google напрямую недоступен, поэтому
+задают адрес релея (`GEMINI_BASE_URL`) и его токен (`GEMINI_RELAY_TOKEN`, см. [agent/relay/README.md](agent/relay/README.md)).
+Итоги разговоров, итоги недели и заметки памяти делает фоновая модель прокси (`LLM_BASE_URL`, `AGENT_API_TOKEN`); без неё агент
+разговаривает, а итоги и заметки не появляются.
 
 ```bash
 cd agent
 uv sync
-AGENT_INTERNAL_TOKEN=<токен> TTS_MODE=espeak LLM_MODE=template uv run uvicorn app.main:app --port 8001
+cp .env.example .env     # заполнить AGENT_INTERNAL_TOKEN и GEMINI_API_KEY (и релей, если нужен)
+uv run uvicorn app.main:app --port 8001
 ```
 
-С настоящими моделями нужны `LLM_MODE=proxy`, `LLM_BASE_URL` и `AGENT_API_TOKEN`. Все настройки — в [agent/.env.example](agent/.env.example) и [agent/README.md](agent/README.md).
+Все настройки — в [agent/.env.example](agent/.env.example) и [agent/README.md](agent/README.md).
 
 ### Проверки
 
@@ -384,7 +390,7 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 
 - Вход без регистрации и по почте, согласия 18+
 - Голосовой и текстовый разговор, режим hands-free, перебивание голосом
-- Ответы чат-модели с запасным шаблоном при отказе
+- Ответы модели голосом (речь в речь, Gemini Live) и текстом
 - Мужской и женский голос агента
 - Кризисная ветвь и лист горячих линий (в т.ч. офлайн)
 - Журнал разговоров

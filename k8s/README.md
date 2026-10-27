@@ -29,7 +29,7 @@ k8s/
 │   ├── 03-network-policy-ryadom-db.yaml
 │   ├── 04-network-policy-kube-apiserver.yaml  ← egress на 192.168.0.4:6443 (урок post-DNAT)
 │   ├── 07-network-policy-prod-apps.yaml  ← ingress от gateway на :3000–3003 (сервисы app/)
-│   └── 08-network-policy-agent-service.yaml  ← prod → agent:8001, агент → прокси Qwen TTS :4000
+│   └── 08-network-policy-agent-service.yaml  ← prod → agent:8001, агент и cognee → прокси программы :4000 (фоновая модель, LLM Cognee)
 ├── istio/
 │   ├── values-istiod.yaml          ← helm values control plane
 │   ├── values-ingressgateway.yaml  ← helm values gateway (DaemonSet + hostPort)
@@ -624,7 +624,9 @@ generic ... --from-env-file=...` (именно `create`, а не `apply`, что
 ### Агент и реплики
 
 - **Agent** (`AGENT_API_URL` — `http://agent.agent.svc.cluster.local:8001`) выкачен в ns `agent`;
-  манифесты и порядок выката — `k8s/agent/README.md`.
+  манифесты и порядок выката — `k8s/agent/README.md`. Голос ведёт Gemini Live через релей: Secret
+  `agent-gemini` (`GEMINI_API_KEY`, `GEMINI_BASE_URL`, `GEMINI_RELAY_TOKEN`) обязателен, без него агент не
+  запустится; прокси на `:4000` нужен только фоновой модели (итоги, заметки).
 - 1 реплика на сервис: ресурсов в кластере впритык (см. «Доступные ресурсы»).
 
 ### DNS и почта: что сделать руками (Yandex Cloud, консоль)

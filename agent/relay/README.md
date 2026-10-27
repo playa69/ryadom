@@ -1,7 +1,8 @@
 # Релей к Gemini API (Hetzner + Caddy)
 
-Ранбук маленького сервера, через который агент ходит в Gemini Live. Нужен только при `VOICE_PIPELINE=gemini_live`
-(см. [agent/README.md](../README.md), «Режим gemini_live»). В каскадном режиме (`cascade`, по умолчанию) релей не используется.
+Ранбук маленького сервера, через который агент ходит в Gemini Live (см. [agent/README.md](../README.md), «Режим gemini_live»).
+Gemini Live — единственный голосовой путь агента, запасного нет: пока Google недоступен напрямую из страны, где работает агент,
+без релея голоса нет.
 
 Шаблон cloud-init, по которому сервер настраивается сам: [cloud-init.yaml](cloud-init.yaml). Его не правим руками на сервере:
 меняем шаблон и пересоздаём сервер.
@@ -40,7 +41,7 @@ TLS заканчивается на релее, а к Google Caddy открыв�
 **голос пользователей** (PCM 16 кГц), расшифровки реплик, ответы модели и **ключ Gemini**. Следствия:
 
 1. Доступ к серверу равен доступу к этим данным. SSH только по ключу, один администратор, на сервер ничего лишнего не ставить.
-2. `GEMINI_API_KEY` для этого режима заводить отдельным ключом, чтобы его можно было отозвать, не задев ничего другого
+2. `GEMINI_API_KEY` для агента заводить отдельным ключом, чтобы его можно было отозвать, не задев ничего другого
    (при сворачивании релея и при подозрении на утечку ключ отзывается, см. последний раздел).
 3. Голос и тексты уходят за пределы РФ дважды: на Hetzner (Финляндия или Германия) и в Google. Для персональных данных
    это нужно подтвердить, как и для прокси в agent/README.md («Модели»).
@@ -86,7 +87,7 @@ ssh-keygen -t ed25519 -f "$work\relay_ed25519" -C gemini-relay
 $bytes = New-Object byte[] 24
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $token = -join ($bytes | ForEach-Object { $_.ToString('x2') })
-[IO.File]::WriteAllText("$work\gemini.env", "GEMINI_RELAY_TOKEN=$token`n")   # для Secret'а кластера, ниже допишем GEMINI_API_KEY
+[IO.File]::WriteAllText("$work\gemini.env", "GEMINI_RELAY_TOKEN=$token`n")   # для Secret'а кластера, ниже допишем GEMINI_API_KEY и GEMINI_BASE_URL
 
 # 3. Подставить токен в шаблон: UTF-8 без BOM и переводы строк LF (cloud-init не принимает BOM и CRLF)
 $src = (Resolve-Path agent\relay\cloud-init.yaml).Path
@@ -170,21 +171,19 @@ chmod 0700 /usr/local/bin/gemini-relay-setup.sh      # в скрипте леж�
 
 | Переменная | Значение | Где |
 |---|---|---|
-| `VOICE_PIPELINE` | `gemini_live` | ConfigMap |
-| `GEMINI_BASE_URL` | `https://<хост>`, без слэша на конце и без пути | ConfigMap |
-| `GEMINI_RELAY_TOKEN` | токен релея | Secret |
-| `GEMINI_API_KEY` | ключ Gemini API | Secret |
+| `GEMINI_BASE_URL` | `https://<хост>`, без слэша на конце и без пути | Secret `agent-gemini` |
+| `GEMINI_RELAY_TOKEN` | токен релея | Secret `agent-gemini` |
+| `GEMINI_API_KEY` | ключ Gemini API | Secret `agent-gemini` |
 
-Остальные настройки `GEMINI_*` необязательны: таблица с умолчаниями в agent/README.md, «Режим gemini_live».
+Все три обязательны: без `GEMINI_API_KEY` агент не стартует, а в k8s без любого из трёх под не запускается. Остальные настройки
+`GEMINI_*` необязательны: таблица с умолчаниями в agent/README.md, «Режим gemini_live».
 
-**Локально** (`agent/.env`, в git не попадает): те же четыре переменные, значения из `gemini.env` и ключ Gemini.
+**Локально** (`agent/.env`, в git не попадает, образец — `agent/.env.example`): те же три переменные, значения из `gemini.env` и ключ Gemini.
 
 **В k8s** (ns `agent`, нужен админский kubeconfig, как в [k8s/agent/README.md](../../k8s/agent/README.md)):
 
-1. ConfigMap `agent-config`: добавить в `data` файла `k8s/agent/00-config.yaml` строки `VOICE_PIPELINE: "gemini_live"` и
-   `GEMINI_BASE_URL: "https://<хост>"`, затем `kubectl apply -f k8s/agent/00-config.yaml`.
-2. Secret `agent-gemini` (отдельный, существующий `agent-secrets` не трогаем). Допиши в `gemini.env` строку
-   `GEMINI_API_KEY=<ключ>` (значения у администратора) и создай Secret, значения не печатая:
+1. Secret `agent-gemini` (отдельный, существующий `agent-secrets` не трогаем). Допиши в `gemini.env` строки
+   `GEMINI_API_KEY=<ключ>` и `GEMINI_BASE_URL=https://<хост>` (значения у администратора) и создай Secret, значения не печатая:
 
    ```bash
    kubectl -n agent create secret generic agent-gemini --from-env-file="$HOME/gemini-relay-local/gemini.env"
@@ -193,23 +192,12 @@ chmod 0700 /usr/local/bin/gemini-relay-setup.sh      # в скрипте леж�
    Не выводи Secret (`get -o yaml` и т. п.). Чтобы заменить значения у существующего:
    `kubectl -n agent create secret generic agent-gemini --from-env-file=... --dry-run=client -o yaml | kubectl apply -f -`
    (в консоль идёт только «configured»).
-3. Deployment читает секреты поимённо, поэтому в `env` контейнера `agent` в `k8s/agent/02-deployment.yaml` нужны две записи
-   (`optional: true`, чтобы каскадный режим жил и без них):
-
-   ```yaml
-   - name: GEMINI_API_KEY
-     valueFrom:
-       secretKeyRef: {name: agent-gemini, key: GEMINI_API_KEY, optional: true}
-   - name: GEMINI_RELAY_TOKEN
-     valueFrom:
-       secretKeyRef: {name: agent-gemini, key: GEMINI_RELAY_TOKEN, optional: true}
-   ```
-
-   Применить: `kubectl apply -f k8s/agent/02-deployment.yaml`.
-4. Перезапуск, чтобы агент прочитал ConfigMap: `kubectl -n agent rollout restart deploy/agent`, затем
+2. Deployment (`k8s/agent/02-deployment.yaml`) читает все три ключа поимённо и без `optional`, правок в манифесте не нужно. Если под
+   ждал Secret (`CreateContainerConfigError`), он запустится после создания Secret'а.
+3. Перезапуск, чтобы агент прочитал новые значения: `kubectl -n agent rollout restart deploy/agent`, затем
    `kubectl -n agent rollout status deploy/agent --timeout=180s`. Реплика одна и `Recreate`: диалоги в памяти пропадут, агент
    недоступен около минуты.
-5. Сеть: исходящий `:443` в любой адрес агенту уже разрешён (`k8s/namespaces/manifests/05-network-policy-agent.yaml`), отдельное
+4. Сеть: исходящий `:443` в любой адрес агенту уже разрешён (`k8s/namespaces/manifests/05-network-policy-agent.yaml`), отдельное
    правило для релея не нужно. Если политику когда-нибудь сузят до списка адресов, добавить IP релея на `:443`.
 
 ## Проверка
@@ -248,19 +236,21 @@ kubectl -n agent exec deploy/agent -- python -c "import urllib.request as u; pri
 ```bash
 kubectl -n agent port-forward svc/agent 18001:8001 &
 curl -s http://127.0.0.1:18001/health/ready
-# {"status":"ok","pipeline":"gemini-live:<модель>","tts":"gemini-live:<модель>","llm":"none","stt":"none"}
+# {"status":"ok","pipeline":"gemini-live:<модель>","tts":"gemini-live:<модель>","llm":"proxy:…","dialogs":"postgres","memory":"on"}
 ```
 
-`"pipeline": "cascade"` значит, что режим не включён (ConfigMap не применён или агент не перезапущен). `/health/ready` Gemini не
-опрашивает: он показывает только выбранный режим, живость связи проверяется следующим пунктом.
+`pipeline` должен содержать `gemini-live`; `llm` — фоновая модель итогов и заметок (`none`, если ключа прокси нет: на голос это не влияет).
+`/health/ready` Gemini не опрашивает: он показывает только имя соединителя, живость связи проверяется следующим пунктом.
+Если агент вообще не стартует, смотри `kubectl -n agent logs deploy/agent`: без `GEMINI_API_KEY` сервис завершается сразу.
 
 **4. Live целиком:**
 
 ```bash
-# Старт и прогрев: приветствия и кризисный ответ обоими голосами озвучиваются через Gemini Live (12 коротких сессий)
+# Старт и прогрев: фиксированные фразы (приветствия, кризисный ответ, просьба повторить) обоими голосами озвучиваются
+# через Gemini Live короткими сессиями, не больше трёх одновременно (около 16 фраз для каждого голоса)
 kubectl -n agent logs deploy/agent | grep -E "agent started|прогрев|gemini live"
-# agent started: pipeline=gemini-live:<модель> ...
-# прогрев озвучки закончен: озвучено 12, не удалось 0     <- не 0 неудач: смотри строки «прогрев озвучки не удался»
+# agent started: voice=gemini-live:<модель> tts=gemini-live:<модель> ...
+# прогрев озвучки закончен: озвучено N, не удалось 0     <- не 0 неудач: смотри строки «прогрев озвучки не удался»
 ```
 
 Ручная проба с тем же клиентом и теми же настройками, что у агента (шлёт фразу текстом и считает байты звука в ответе).
@@ -363,7 +353,7 @@ hcloud server poweron gemini-relay
 
 1. Новый сервер по cloud-init сам настроит Caddy под новый хост. Если IP сменился у того же сервера, на сервере:
    `/usr/local/bin/gemini-relay-setup.sh && systemctl restart caddy` (Caddyfile пересоздаётся по текущему IP), и `cat /root/relay-host.txt`.
-2. Впиши новый хост в «Текущее состояние» и в `GEMINI_BASE_URL` (ConfigMap `agent-config`), примени и перезапусти агента.
+2. Впиши новый хост в «Текущее состояние» и в `GEMINI_BASE_URL` (Secret `agent-gemini`, способ замены значений: «Подключение агента», шаг 1), перезапусти агента.
 3. Старый хост в Secret'ах не хранится, токен менять не обязательно.
 
 **Лимит Let's Encrypt.** Не больше 5 сертификатов на один и тот же набор имён в неделю и 5 неудачных проверок в час. Перезапуски
@@ -375,9 +365,12 @@ Caddy и перезагрузки сервера сертификат не пе�
 с A-записью на IP релея; тогда замени имя хоста в Caddyfile вручную (скрипт `gemini-relay-setup.sh` больше не запускать) и
 `GEMINI_BASE_URL`.
 
-**Если релей недоступен.** Агент сообщает `VOICE_UNAVAILABLE` и отвечает шаблоном, автоматического перехода на каскад нет.
-Порядок: проверка 1 и 2 из раздела «Проверка» → `hcloud server list` или консоль (сервер запущен?) → `systemctl status caddy`
-и `journalctl -u caddy` на сервере. Если быстро не чинится, временно верни каскад (шаг 1 раздела «Как свернуть инфраструктуру»).
+**Если релей недоступен.** Голос не работает вовсе: запасного пути у агента нет. Он сообщает человеку `error VOICE_UNAVAILABLE`
+(«Голосовая модель недоступна»), а в журнале пишет `gemini live not available`. Приложение при этом живо, диалоги и память целы.
+Порядок: проверка 1 и 2 из раздела «Проверка» → `hcloud server list` или консоль (сервер запущен?) → `systemctl status caddy` и
+`journalctl -u caddy` на сервере → ключ Gemini (третий запрос проверки 1) и `GEMINI_BASE_URL` в Secret'е `agent-gemini` (хост должен
+совпадать с `cat /root/relay-host.txt`; после смены IP он другой). Если сервер потерян, быстрее всего создать новый по cloud-init (раздел
+«Создание»), вписать новый хост в `GEMINI_BASE_URL` и перезапустить агента; пока релея нет, голоса нет.
 
 ## Безопасность
 
@@ -429,7 +422,7 @@ base64 (+33%), поэтому на секунду речи человека пр
 далеко за остальными пределами. Мониторить: исходящий трафик с начала месяца против 20 ТБ (Hetzner шлёт уведомления на 75% и 100%),
 CPU и steal, число ESTAB на :443 (`ss -Htn state established '( sport = :443 )'`), `nf_conntrack_count`, срок сертификата,
 `/_relay_health` из кластера. Caddy из пакета Ubuntu (2.6.2): перезагрузка конфига или обновление пакета рвут идущие
-WebSocket; агент переоткроет сессию (по handle, а при `GEMINI_TEXT_CONTEXT` по текстовой истории), но реплика в этот момент прервётся.
+WebSocket; агент переоткроет сессию по текстовой истории, но реплика в этот момент прервётся.
 
 **Лимиты Gemini Live API.** Лимиты и квоты принадлежат проекту Google, а не ключу; затраты всех ключей проекта суммируются.
 Официальных чисел по одновременным сессиям и TPM для Live на Tier 2 в документации нет (смотреть в AI Studio, лимиты не
@@ -444,8 +437,9 @@ Tier 2: потолок 2000 $/мес на billing-аккаунт и 50 $ за с
 `GEMINI_COMPRESSION_TRIGGER_TOKENS`/`GEMINI_COMPRESSION_TARGET_TOKENS` явно (например 25000/8000), помня о цене: чем меньше окно,
 тем короче «память» модели о начале долгого разговора (полный текст диалога при этом остаётся в агенте).
 
-**Оптимизация контекста (`GEMINI_TEXT_CONTEXT`, по умолчанию включена).** После каждого ответа агент меняет сессию на свежую, куда
-прошлые реплики загружены текстом, и аудио в контексте не копится (схема и замеры: `agent/README.md`, «Контекст сессии и стоимость»).
+**Оптимизация контекста (всегда включена).** Агент меняет сессию на свежую, куда прошлые реплики загружены текстом (раз в
+`GEMINI_ROTATE_EVERY` ходов), и аудио в контексте не копится (схема и замеры: `agent/README.md`, «Контекст сессии и стоимость»).
+Замеры ниже сняты со сменой после каждого ответа.
 Замер 2026-10-12, диалог из 12 голосовых реплик на живом `gemini-3.8-live`: входные токены хода без оптимизации растут с 1,3 тыс. до
 5,2-5,9 тыс. (из них аудио 3,6 тыс.), с оптимизацией до 1,9 тыс.; сумма за 12 ходов 38,8-43,0 тыс. против 19,1 тыс. (около -53%),
 аудио во входе -86%. Рост за ход около +380 токенов против +50, поэтому выигрыш растёт с длиной диалога (оценка по экстраполяции,
@@ -467,19 +461,21 @@ Spend cap enforcement для сервиса `generativelanguage.googleapis.com` 
 
 ## Как свернуть инфраструктуру, если релей больше не нужен
 
-1. **Верни агента на каскад и убедись в этом.** В `k8s/agent/00-config.yaml` поставь `VOICE_PIPELINE: "cascade"` (или убери
-   `VOICE_PIPELINE` и `GEMINI_BASE_URL`), в `k8s/agent/02-deployment.yaml` убери записи `GEMINI_API_KEY` и `GEMINI_RELAY_TOKEN`, затем:
+1. **Переведи агента на прямой доступ к Google и убедись, что голос работает.** Это возможно только там, где Google доступен напрямую
+   (из России нет: тогда без релея голоса не будет, и сворачивать его можно, только когда голос больше не нужен). У агента нет запасного
+   пути, поэтому проверка обязательна. В Secret `agent-gemini` оставь ключи, но задай пустые `GEMINI_BASE_URL` и `GEMINI_RELAY_TOKEN`
+   (пусто = напрямую в Google; сами ключи из Secret'а убирать нельзя: Deployment читает их без `optional`):
 
    ```bash
-   kubectl apply -f k8s/agent/00-config.yaml -f k8s/agent/02-deployment.yaml
-   kubectl -n agent delete secret agent-gemini
+   # файл: GEMINI_API_KEY=<ключ>, затем строки GEMINI_BASE_URL= и GEMINI_RELAY_TOKEN= без значений
+   kubectl -n agent create secret generic agent-gemini --from-env-file=<файл> --dry-run=client -o yaml | kubectl apply -f -
    kubectl -n agent rollout restart deploy/agent && kubectl -n agent rollout status deploy/agent --timeout=180s
    kubectl -n agent port-forward svc/agent 18001:8001 &
-   curl -s http://127.0.0.1:18001/health/ready          # "pipeline":"cascade", "llm" и "stt" не "none"
+   curl -s http://127.0.0.1:18001/health/ready          # "pipeline" содержит gemini-live
    ```
 
-   Локально: убери `GEMINI_BASE_URL`, `GEMINI_RELAY_TOKEN`, `GEMINI_API_KEY` из `agent/.env`, `VOICE_PIPELINE=cascade`.
-   Пока в `/health/ready` не `cascade`, сервер не удаляй.
+   Затем голосовой диалог на сайте (проверка 4 раздела «Проверка»). Локально: убери `GEMINI_BASE_URL` и `GEMINI_RELAY_TOKEN` из `agent/.env`.
+   Пока диалог не заработал без релея, сервер не удаляй.
 2. **Удали сервер.** Консоль: проект `ryadom-gemini-relay` → Servers → `gemini-relay` → **Delete**. Или:
    `hcloud server delete gemini-relay`.
 3. **Проверь, что не осталось платных остатков** (в том же проекте): Primary IP, тома, снимки, бэкапы, плавающие IP, прочее.

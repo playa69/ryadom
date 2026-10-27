@@ -81,7 +81,7 @@ kubectl -n agent logs deploy/agent -c agent --since=20m | grep -cE 'socket opene
 | готовность | `kube_pod_status_ready{namespace=~"prod\|agent",condition="true"}` |
 | память и CPU | `container_memory_working_set_bytes{namespace="agent",container="agent"}`, `rate(container_cpu_usage_seconds_total{namespace="agent",container="agent"}[5m])` |
 | WebSocket-апгрейды к api | `sum(rate(istio_requests_total{reporter="destination",destination_service_name="app-api",response_code="101"}[5m]))` |
-| бюджет Gemini | `agent_gemini_tpm_window_tokens`, `agent_gemini_tpm_limit_tokens`, `agent_gemini_budget_level`, `increase(agent_gemini_quota_errors_total[1h])` |
+| учёт токенов Gemini | `agent_gemini_tpm_window_tokens`, `agent_gemini_tpm_limit_tokens`, `increase(agent_gemini_quota_errors_total[1h])` |
 | расход моделей | `agent_model_usage_total` (метки `model`, `task`, `direction`, `modality`, `unit`), `agent_component_calls_total` |
 | база и память агента | `agent_dialog_db_errors_total`, `agent_memory_*`, `process_resident_memory_bytes` |
 
@@ -97,13 +97,14 @@ curl -s localhost:18001/metrics | grep '^agent_'
 kill $pf
 ```
 
-`/health/ready` показывает конвейер (`pipeline`), озвучку (`tts`), хранилище диалогов (`dialogs`: `postgres` — норма,
-`memory` — база не открылась) и режим памяти (`memory`).
+`/health/ready` показывает имя соединителя Gemini (`pipeline`, например `gemini-live:gemini-3.8-live`), озвучку фиксированных
+фраз (`tts`), фоновую модель итогов и заметок (`llm`: имя или `none`, если ключа прокси нет), хранилище диалогов (`dialogs`:
+`postgres` — норма, `memory` — база не открылась) и состояние памяти (`memory`: `on` или `unavailable`).
 
 ## Langfuse
 
 `kubectl -n infra port-forward svc/langfuse-web 3000:3000` (developer) → `http://localhost:3000`, вход у администратора.
-Тексты реплик в трассы не пишутся (`LANGFUSE_TRACE_TEXT=false`), по токенам Langfuse — источник правды; стоимость там 0,
+Тексты реплик в трассы не пишутся никогда, по токенам Langfuse — источник правды; стоимость там 0,
 цены моделей не заданы. Ключи проекта Langfuse есть только в окружении пода агента: из пода их не выноси, read-only
 скрипт к его API запускай в самом поде (`kubectl exec -i -n agent deploy/agent -c agent -- python - < script.py`, admin).
 
@@ -116,7 +117,7 @@ kill $pf
 ## После выката
 
 1. `kubectl -n <ns> rollout status deploy/<имя> --timeout=300s`; под Ready, рестартов 0.
-2. Агент: в журнале старта `dialog db opened`, `agent started: pipeline=… memory=…`,
+2. Агент: в журнале старта `dialog db opened`, `agent started: voice=… tts=… memory=…`,
    `прогрев озвучки закончен: озвучено N, не удалось 0`; затем `grep -E ' (WARNING|ERROR|CRITICAL) |Traceback'`.
 3. api: `--since=10m` без `"level":"error"`, есть «Redis подключён».
 4. `/health/ready` и `/version` агента; снаружи `curl -sI https://xn----htbtgjker8b3a2c.xn--p1ai/api/health`, `/app`, `/pwa/`.
