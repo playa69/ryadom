@@ -307,15 +307,6 @@ describe('включение и выключение памяти', () => {
     expect((await consentRows(user.id)).filter((row) => row.kind === 'memory')).toHaveLength(1)
   })
 
-  it('MEMORY_NOT_ALLOWED (403) — отказ', async () => {
-    mockFetch({ [`PUT ${AGENT}/settings`]: () => agentError(403, 'MEMORY_NOT_ALLOWED') })
-    const user = await registerConfirmedUser()
-    expect(await settings(user.id)).toEqual({
-      success: false,
-      error: UpdateMemorySettingsOperationErrorCode.MEMORY_NOT_ALLOWED,
-    })
-  })
-
   it('503 с другим кодом (AGENT_INTERNAL), 500 и сеть — AgentUnavailableError', async () => {
     const user = await registerConfirmedUser()
     for (const answer of [

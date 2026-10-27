@@ -1,7 +1,6 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { track } from '@ryadom/analytics/browser'
 import { Suspense, useEffect } from 'react'
@@ -15,24 +14,15 @@ import TestsCatalog from '../self-check/TestsCatalog'
 import { SelfCheckProvider } from '../self-check/useSelfCheck'
 
 /**
- * The «Дневник» section: the segments «Дневник · Журнал» under the header and the content
+ * The «Дневник» section: the segments «Дневник · Журнал · Тесты» under the header and the content
  * of the open one. The last open segment is remembered on the device.
  */
 export default function DiaryScreen({ segment }: { segment: DiarySegment }) {
-  const router = useRouter()
-  // The address of a segment that has nothing to show (no test is ready) leads back to the diary, as if it did not exist.
-  const missing = !DIARY_SEGMENTS.some((s) => s.key === segment)
   useEffect(() => {
-    if (missing) {
-      router.replace('/diary')
-      return
-    }
     writeLastSegment(segment)
     // Which segment was opened, once per opening: never what is on it.
     track(AnalyticsEvent.DiaryOpened, { tab: segment })
-  }, [segment, missing, router])
-
-  if (missing) return null
+  }, [segment])
 
   return (
     <SelfCheckProvider>

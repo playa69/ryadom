@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { shownTests } from './self-check'
 import { WEB_DIARY_SEGMENT_KEY } from './storage-keys'
 
 export type DiarySegment = 'diary' | 'journal' | 'tests'
 
-/** «Тесты» is the third segment, and only once a test is ready to show: an empty catalog is not worth a tab. */
-export const diarySegments = (withTests: boolean): { key: DiarySegment; label: string; href: string }[] => [
+export const DIARY_SEGMENTS: { key: DiarySegment; label: string; href: string }[] = [
   { key: 'diary', label: 'Дневник', href: '/diary' },
   { key: 'journal', label: 'Журнал', href: '/diary/journal' },
-  ...(withTests ? [{ key: 'tests' as const, label: 'Тесты', href: '/diary/tests' }] : []),
+  { key: 'tests', label: 'Тесты', href: '/diary/tests' },
 ]
-
-export const DIARY_SEGMENTS = diarySegments(shownTests().length > 0)
 
 /** The segment the person left the diary in; the sidebar link and a bare `/diary` return to it. */
 export function readLastSegment(): DiarySegment {

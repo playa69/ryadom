@@ -29,5 +29,4 @@ export const gad7: SelfCheckTest = {
   highBandFrom: 15,
   source: 'Spitzer, Kroenke, Williams, Löwe; перевод Pfizer «Russian for Russia»',
   license: 'Воспроизведение и перевод разрешены правообладателем; формулировки не менять',
-  status: 'review',
 }

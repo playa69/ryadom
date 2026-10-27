@@ -49,17 +49,9 @@ function effectiveTts() {
 /** `POST /dev/digests {"fail": true}` makes `/digests` answer 502, as an agent whose model is down. */
 let digestsFail = false
 
-/**
- * Memory, the agent's long-term notes about the person: the person can turn it on, and "запомни, что ..."
- * said in a conversation becomes a note shortly after (`MOCK_NOTE_DELAY_MS`, see `memory-notes.mjs`).
- * `MOCK_MEMORY_ALLOWLIST` (user ids, comma-separated) plays a closed beta: anyone else gets
- * MEMORY_NOT_ALLOWED when turning it on.
- * Texts of facts and messages never reach the log here either: ids and counts only.
- */
-const MEMORY_ALLOWLIST = (process.env.MOCK_MEMORY_ALLOWLIST ?? '')
-  .split(',')
-  .map((id) => id.trim())
-  .filter(Boolean)
+// Memory, the agent's long-term notes about the person: the person can turn it on, and "запомни, что ..."
+// said in a conversation becomes a note shortly after (`MOCK_NOTE_DELAY_MS`, see `memory-notes.mjs`).
+// Texts of facts and messages never reach the log here either: ids and counts only.
 /** A conversation "without memory" is deleted this long after its last message. */
 const INCOGNITO_TTL_MS = 24 * 60 * 60 * 1000
 
@@ -264,7 +256,7 @@ function noContent(res) {
 /** /v1/users/{userId}/memory...: the notes model lives in `memory-notes.mjs`. */
 function handleMemoryRoute(req, res, url, userId, parts, method) {
   return handleNotesMemory(
-    { json, noContent, readBody, agentError, allowlist: MEMORY_ALLOWLIST },
+    { json, noContent, readBody, agentError },
     req,
     res,
     url,

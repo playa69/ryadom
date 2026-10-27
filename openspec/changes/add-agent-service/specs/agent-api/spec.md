@@ -289,7 +289,7 @@
 
 ### Requirement: Формат ошибок
 
-Ошибки REST SHALL возвращаться в формате `{"error":{"code","message","details"}}`. Коды: `AGENT_VALIDATION` (400; 422 для правил памяти), `AGENT_UNAUTHORIZED` (401), `AGENT_DIALOG_NOT_FOUND` (404), `AGENT_LLM_UNAVAILABLE` (503), `AGENT_TIMEOUT` (504), `AGENT_INTERNAL` (500); память: `MEMORY_UNAVAILABLE` (503), `MEMORY_NOT_ALLOWED` (403), `MEMORY_DISABLED` (409), `MEMORY_FULL` (409), `FACT_REJECTED` (422, `details.reason` — код правила, без текста факта), `FACT_NOT_FOUND` (404). Ошибка в сокете MUST передаваться кадром `error` с тем же кодом; единственное исключение — `VOICE_UNAVAILABLE` (отказ голоса, разговор продолжается текстом). Вызывающая сторона считает агента недоступным при сетевой ошибке, таймауте 10 секунд, ответе `5xx` и не-JSON там, где ждали JSON, и показывает человеку экран с линиями помощи.
+Ошибки REST SHALL возвращаться в формате `{"error":{"code","message","details"}}`. Коды: `AGENT_VALIDATION` (400; 422 для правил памяти), `AGENT_UNAUTHORIZED` (401), `AGENT_DIALOG_NOT_FOUND` (404), `AGENT_LLM_UNAVAILABLE` (503), `AGENT_TIMEOUT` (504), `AGENT_INTERNAL` (500); память: `MEMORY_UNAVAILABLE` (503), `MEMORY_DISABLED` (409), `MEMORY_FULL` (409), `FACT_REJECTED` (422, `details.reason` — код правила, без текста факта), `FACT_NOT_FOUND` (404). Ошибка в сокете MUST передаваться кадром `error` с тем же кодом; единственное исключение — `VOICE_UNAVAILABLE` (отказ голоса, разговор продолжается текстом). Вызывающая сторона считает агента недоступным при сетевой ошибке, таймауте 10 секунд, ответе `5xx` и не-JSON там, где ждали JSON, и показывает человеку экран с линиями помощи.
 
 #### Scenario: Ошибка валидации
 

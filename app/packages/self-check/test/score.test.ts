@@ -5,7 +5,7 @@ import type { SelfCheckTest } from '../src/types'
 const opts = (n: number) => Array.from({ length: n }, (_, v) => ({ label: String(v), value: v }))
 const items = (n: number, reverse: number[] = [], crisis: number[] = []) =>
   Array.from({ length: n }, (_, i) => ({ text: `q${i + 1}`, reverse: reverse.includes(i), crisis: crisis.includes(i) ? { from: 1 } : undefined }))
-const base = { version: 1, code: 'T', title: 'T', subtitle: '', icon: 'x', preface: '', source: '', license: '', status: 'review' as const }
+const base = { version: 1, code: 'T', title: 'T', subtitle: '', icon: 'x', preface: '', source: '', license: '' }
 
 const who5: SelfCheckTest = {
   ...base, id: 'who5', options: opts(6), items: items(5),

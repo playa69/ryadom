@@ -243,16 +243,6 @@ const appShape = {
     z.string().regex(/^\d+$/, 'must be the numeric id of the PostHog project').optional(),
   ),
   /**
-   * Whether erasing a deleted account's person in PostHog also erases that person's events. On by
-   * default: «erase everything». Off keeps the events (the profile and recordings still go), so past
-   * activity can still be counted; the events are then pseudonymous (an account id, no text, no email)
-   * and not anonymous while the deletion archive in the database still maps that id to a person.
-   *
-   * RISK of off: personal data kept longer than the purpose (art. 5 part 7) and, after withdrawal of consent
-   * or achievement of the purpose, due for destruction within 30 days (art. 21 parts 4-5).
-   */
-  POSTHOG_ERASE_EVENTS: booleanFlag.transform((value) => value ?? true),
-  /**
    * The build that runs (the image tag), sent with every analytics event as `app_version` so a figure can be
    * split by release. Set at image build time (`--build-arg RELEASE=<tag>`); empty means the events carry none.
    */
