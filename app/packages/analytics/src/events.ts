@@ -88,6 +88,12 @@ export enum AnalyticsEvent {
   BreathingStarted = 'breathing_started',
   /** Something about voice did not work: it tells the product where speech breaks for people. */
   VoiceProblem = 'voice_problem',
+  /** The menu "Микрофон и звук" of the voice screen was opened: how many devices people have to choose from. */
+  AudioDeviceMenuOpened = 'audio_device_menu_opened',
+  /** A microphone or speaker was chosen in it. Device names are never sent: they often carry the owner's name. */
+  AudioDeviceChosen = 'audio_device_chosen',
+  /** The microphone or speaker in use went away mid-conversation, and whether another took over. */
+  AudioDeviceLost = 'audio_device_lost',
 
   // ── Client: other screens ───────────────────────────────────────────────────────────────────
   JournalEntryOpened = 'journal_entry_opened',
@@ -302,6 +308,10 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.HotlineCalled]: { hotline: string }
   [AnalyticsEvent.BreathingStarted]: { source: 'home' | 'dialog' | 'sos' }
   [AnalyticsEvent.VoiceProblem]: { reason: VoiceProblemReason }
+  [AnalyticsEvent.AudioDeviceMenuOpened]: { inputs: number; outputs: number }
+  /** `system`: "as in the system" rather than a particular device. */
+  [AnalyticsEvent.AudioDeviceChosen]: { kind: 'input' | 'output'; system: boolean }
+  [AnalyticsEvent.AudioDeviceLost]: { kind: 'input' | 'output'; recovered: boolean }
 
   [AnalyticsEvent.JournalEntryOpened]: NoProperties
   [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }

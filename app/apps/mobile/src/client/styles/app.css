@@ -1248,6 +1248,91 @@ input:-webkit-autofill:focus {
   cursor: pointer;
 }
 
+/* With the device chip under the buttons, the chip takes the bottom inset instead. */
+.rd-voice-controls--above-device {
+  padding-bottom: 12px;
+}
+
+/* Which microphone listens: quiet, under the buttons, there only when there is a choice. */
+.rd-voice-device {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+  max-width: 100%;
+  min-height: 36px;
+  margin-bottom: calc(12px + var(--f7-safe-area-bottom, 0px));
+  padding: 0 14px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: 999px;
+  background: var(--ryadom-surface-2);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rd-voice-device-name {
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The person seems not to be heard: the hint above points here. */
+.rd-voice-device--attention {
+  border-color: var(--ryadom-brand-400);
+  box-shadow: 0 0 0 2px var(--ryadom-brand-400);
+  color: var(--ryadom-text);
+}
+
+.rd-devices-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: var(--ryadom-s-2) 0 calc(-1 * var(--ryadom-s-2));
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-devices .rd-devices-list {
+  margin: 0;
+}
+
+/* The sheet's lists are inset already by the sheet's own padding. */
+.rd-devices .rd-devices-list .list-inset,
+.rd-devices .rd-devices-list.inset {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* A device's whole name matters more than one tidy line: "Headset (JBL…" leaves two headsets alike. */
+.rd-devices .item-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.rd-devices-level {
+  position: relative;
+  overflow: hidden;
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ryadom-line-strong);
+}
+
+.rd-devices-level > span {
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background: var(--ryadom-brand-400);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
 .rd-voice-mic--on {
   background: var(--ryadom-sos);
   box-shadow: 0 10px 30px -8px rgba(255, 106, 111, 0.65);

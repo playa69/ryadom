@@ -1,5 +1,12 @@
+import { canChooseOutput } from './devices'
 import { levelOf } from './level'
 import type { PcmChunk } from './tts-decoder'
+
+/** Output selection on the context (Chromium); the DOM types do not have it yet. */
+type RoutableContext = AudioContext & {
+  readonly sinkId: string | object
+  setSinkId(sinkId: string): Promise<void>
+}
 
 /**
  * Playback of the agent's voice: float samples, already decoded from whatever codec the connection
@@ -9,6 +16,9 @@ import type { PcmChunk } from './tts-decoder'
  *
  * The `AudioContext` is unlocked by the person's first tap (an iOS requirement), so `unlock()` is
  * called from a tap handler rather than on page load.
+ *
+ * Where the browser allows it (`canChooseOutput`), the voice goes to the speaker the person chose
+ * (`setOutput`); otherwise, and until they choose, to the system's.
  */
 export class VoicePlayer {
   private context: AudioContext | null = null
@@ -24,17 +34,55 @@ export class VoicePlayer {
    * message id, so everything is dropped until the next `begin`.
    */
   private muted = false
+  /** The speaker the person chose, null for the system's. Kept for a context that does not exist yet. */
+  private sinkId: string | null = null
 
   /** Call from a tap handler, otherwise iOS refuses to play audio. */
   async unlock(): Promise<void> {
+    let created = false
     if (!this.context) {
       this.context = new AudioContext()
       this.meter = this.context.createAnalyser()
       this.meter.fftSize = 512
       this.meter.connect(this.context.destination)
       this.bins = new Uint8Array(this.meter.fftSize)
+      created = true
     }
+    // First, while the tap still counts as the person's gesture.
     if (this.context.state === 'suspended') await this.context.resume()
+    // Not through the constructor: there a device that is gone fails silently, and nothing is heard.
+    if (created && this.sinkId && canChooseOutput()) await this.route(this.context, this.sinkId)
+  }
+
+  /**
+   * Sends the voice to a speaker (an id from `listAudioDevices`), or to the system's with null. False
+   * where the browser cannot choose, or when that speaker is gone: then the system's plays it.
+   */
+  async setOutput(deviceId: string | null): Promise<boolean> {
+    this.sinkId = deviceId
+    if (!canChooseOutput()) return deviceId === null
+    if (!this.context) return true
+    return this.route(this.context, deviceId)
+  }
+
+  /** The speaker in use (before the first tap, the one it will be): an id, or '' for the system's. */
+  output(): string {
+    if (!canChooseOutput()) return ''
+    if (!this.context) return this.sinkId ?? ''
+    const sink = (this.context as RoutableContext).sinkId
+    return typeof sink === 'string' ? sink : ''
+  }
+
+  private async route(context: AudioContext, deviceId: string | null): Promise<boolean> {
+    const routable = context as RoutableContext
+    try {
+      await routable.setSinkId(deviceId ?? '')
+      return true
+    } catch {
+      // Unplugged since it was chosen: the system's speaker is better than silence.
+      await routable.setSinkId('').catch(() => undefined)
+      return false
+    }
   }
 
   /** Whether the agent's voice is audible or still queued. */
