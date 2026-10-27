@@ -141,10 +141,15 @@ runSync('node', compose('up', '-d', '--wait', '--build'), { env: composeEnv })
 log('применяю миграции')
 runSync('pnpm', ['--filter', '@ryadom/db', 'migrate'], { env: { ...process.env, DATABASE_URL: DB_URL } })
 
-/** The build-time switches of the web app's tests: both on by default, both off with `E2E_SELF_CHECK=0`. */
+/** The build-time switches of the tests in the web app and the PWA: both on by default, both off with `E2E_SELF_CHECK=0`. */
 function selfCheckBuildEnv() {
   const on = process.env.E2E_SELF_CHECK === '0' ? '0' : '1'
-  return { NEXT_PUBLIC_SELF_CHECK_ENABLED: on, NEXT_PUBLIC_SELF_CHECK_PREVIEW: on }
+  return {
+    NEXT_PUBLIC_SELF_CHECK_ENABLED: on,
+    NEXT_PUBLIC_SELF_CHECK_PREVIEW: on,
+    VITE_SELF_CHECK_ENABLED: on,
+    VITE_SELF_CHECK_PREVIEW: on,
+  }
 }
 
 log('собираю клиент, api, сайт и веб-приложение')

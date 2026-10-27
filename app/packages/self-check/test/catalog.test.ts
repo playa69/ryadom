@@ -13,9 +13,11 @@ describe('волна 1', () => {
   it('максимум и минимум совпадают с описанием', () => {
     for (const t of wave1) {
       const hi = Math.max(...t.options.map((o) => o.value))
-      const best = t.items.map((i) => (i.reverse ? 0 : hi))
+      const lo = Math.min(...t.options.map((o) => o.value))
+      const best = t.items.map((i) => (i.reverse ? lo : hi))
       expect(score(t, best).score, t.id).toBe(t.scoring.max)
-      expect(score(t, t.items.map((i) => (i.reverse ? hi : 0))).score, t.id).toBe(0)
+      // The lowest answers give 0 only for scales that start at 0; those that start at 1 give 5 × 1 and so on.
+      if (lo === 0) expect(score(t, t.items.map((i) => (i.reverse ? hi : 0))).score, t.id).toBe(0)
     }
   })
   it('PHQ-9: кризисный только пункт 9; в проде только ready', () => {
@@ -57,7 +59,7 @@ import { visible } from '../src/catalog'
 describe('видимость', () => {
   it('без preview в проде пусто, с preview видны тесты на ревью', () => {
     expect(visible(false)).toEqual([])
-    expect(visible(true).length).toBe(7)
+    expect(visible(true).length).toBe(11)
   })
 })
 
@@ -69,5 +71,21 @@ describe('PHQ-9 по спеке', () => {
     expect(isHigh(phq, 21)).toBe(true)
     expect(isHigh(phq, 19)).toBe(false)
     expect(phq.items[8]?.crisis).toEqual({ from: 1 })
+  })
+})
+
+describe('волна 2 без коммерческой лицензии', () => {
+  it('SWLS: 7×5=35 «очень высокая», все единицы — 5; K6: 13 и выше — высокий; PHQ-2/GAD-2 — первые два вопроса', () => {
+    const swls = byId('swls')!
+    expect(score(swls, [7, 7, 7, 7, 7]).score).toBe(35)
+    expect(band(swls, 35)?.label).toContain('очень высокая')
+    expect(score(swls, [1, 1, 1, 1, 1]).score).toBe(5)
+    const k6 = byId('k6')!
+    expect(isHigh(k6, 13)).toBe(true)
+    expect(isHigh(k6, 12)).toBe(false)
+    expect(byId('phq2')!.items).toEqual(byId('phq9')!.items.slice(0, 2))
+    expect(byId('gad2')!.items).toEqual(byId('gad7')!.items.slice(0, 2))
+    expect(score(byId('phq2')!, [1, 2]).score).toBe(3)
+    expect(band(byId('phq2')!, 3)?.label).toBe('от порога')
   })
 })

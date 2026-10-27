@@ -4,6 +4,7 @@ import { APP_URL } from '../playwright.config'
 import { button, openApp, openTab, startAnonymously } from '../support/app'
 import { expect, test } from '../support/fixtures'
 import { trackSession } from '../support/session'
+import { SELF_CHECK_ON } from '../support/flags'
 // Written by the server side of the change (a direct write to the table: the API takes only today and yesterday).
 import { ageWeekSummary, seedMarks } from '../support/diary'
 
@@ -33,10 +34,18 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-today-title')).toHaveText('Как ты сегодня?')
   await expect(diary.getByTestId('diary-chart-empty')).toContainText('здесь появится график')
   await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 0 из 3)')
-  // Neither the self-check (PROTEUS-218) nor the events of the week live on this page, and memory is not mentioned.
-  await expect(diary.getByTestId('diary-selfcheck')).toHaveCount(0)
+  // The events of the week do not live on this page, and memory is not mentioned. The block «Самопроверка» and the
+  // segment «Тесты» exist only with the tests switched on (add-self-check-tests, D9).
   await expect(diary.getByTestId('diary-events-card')).toHaveCount(0)
-  await expect(diary).not.toContainText(/Самопроверка|События|памят/i)
+  await expect(diary).not.toContainText(/События|памят/i)
+  if (SELF_CHECK_ON) {
+    await expect(diary.getByTestId('self-check-block')).toBeVisible()
+    await expect(diary.getByTestId('diary-segment-tests')).toBeVisible()
+  } else {
+    await expect(diary).not.toContainText('Самопроверка')
+    await expect(diary.getByTestId('self-check-block')).toHaveCount(0)
+    await expect(diary.getByTestId('diary-segment-tests')).toHaveCount(0)
+  }
   await expect(diary.getByTestId('diary-streak')).toHaveCount(0)
   await shot(page, 'diary-empty')
 

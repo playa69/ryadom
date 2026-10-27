@@ -36,6 +36,7 @@
     "@ryadom/client-core": "workspace:*",
     "@ryadom/contracts": "workspace:*",
     "@ryadom/design": "workspace:*",
+    "@ryadom/self-check": "workspace:*",
     "@twa-dev/sdk": "8.0.2",
     "assert-never": "^1.4.0",
     "framework7": "^9.1.3",

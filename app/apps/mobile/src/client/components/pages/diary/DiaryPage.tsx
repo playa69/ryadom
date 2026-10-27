@@ -6,6 +6,7 @@ import { deviceDate } from '../../../lib/diary-queue'
 import DiaryShell, { segmentChosen } from './DiaryShell'
 import MoodCard from './MoodCard'
 import MoodChart from './MoodChart'
+import SelfCheckBlock from './SelfCheckBlock'
 import PreviousWeekCard from './PreviousWeekCard'
 import WeekCard from './WeekCard'
 
@@ -47,6 +48,7 @@ export default function DiaryPage({ f7router }: { f7router: Router.Router }) {
           <MoodChart data={data} today={deviceDate()} />
           <WeekCard data={data} />
           {data.previousWeek && <PreviousWeekCard summary={data.previousWeek} />}
+          <SelfCheckBlock />
         </>
       )}
     </DiaryShell>

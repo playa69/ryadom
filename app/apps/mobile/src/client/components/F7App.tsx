@@ -18,6 +18,7 @@ import InstallBanner from './InstallBanner'
 import OfflineBar from './OfflineBar'
 import { routes } from './routes'
 import SosSheet, { openSos } from './SosSheet'
+import TestSheet from './self-check/TestSheet'
 
 /**
  * The app root: Framework7 (the md theme gives one layout on every platform, and the dark palette
@@ -266,6 +267,8 @@ export default function F7App() {
         <Shell />
         <AppUpdateGate />
         <OfflineBar />
+        {/* The test sheet first: the help sheet opened from its crisis screen must be above it (later in the DOM). */}
+        <TestSheet />
         <SosSheet />
         {/* Inside Telegram the app is already where the person keeps it: nothing to install. */}
         {isWebBuild() && !isTelegramMiniApp() && <InstallBanner />}
