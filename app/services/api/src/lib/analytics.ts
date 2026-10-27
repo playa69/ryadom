@@ -56,7 +56,6 @@ export function createAnalytics(
           apiHost: env.POSTHOG_UI_HOST,
           projectId: env.POSTHOG_PROJECT_ID,
           personalApiKey: env.POSTHOG_PERSONAL_API_KEY,
-          deleteEvents: env.POSTHOG_ERASE_EVENTS,
         })
       : undefined
   return createServerAnalytics({
