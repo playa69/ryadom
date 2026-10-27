@@ -54,6 +54,13 @@ const DENIED_KEYS = new Set([
   'cookie',
   'query',
   'search',
+  // Tests (REQ-WELL-06): a score, a level or an answer of a questionnaire is a fact about health.
+  'score',
+  'scores',
+  'subscores',
+  'band',
+  'answers',
+  'answer',
 ])
 
 const DENIED_FRAGMENTS = ['password', 'token', 'secret', 'email', 'phone', 'authorization']
