@@ -143,9 +143,10 @@ test('итог разговора: три способа, разговоры б�
   await openWebApp(page, '/diary')
   await expect
     .poll(async () => (await readDiary()).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .toContain(MANUAL_RECAP)
+    .toContain('работа и дела')
   await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-week-text')).toContainText(EDITED_RECAP)
+  await expect(page.getByTestId('diary-week-text')).toContainText('работа и дела')
+  await expect(page.getByTestId('diary-week-text')).not.toContainText('руководителем') // no quotes of a recap
   // На странице дневника нет ни «Памяти», ни событий недели.
   await expect(page.getByRole('main')).not.toContainText(/памят/i)
   await page.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
@@ -159,9 +160,9 @@ test('итог разговора: три способа, разговоры б�
   await ageWeekSummary(session.userId())
   await expect
     .poll(async () => (await readDiary()).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .not.toContain(MANUAL_RECAP) // the mock weaves the newest three recaps: the new one pushes the first out
+    .toContain('работа и дела')
   await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-week-text')).not.toContainText(MANUAL_RECAP)
+  await expect(page.getByTestId('diary-week-text')).not.toContainText('руководителем')
   await page.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
   await shot(page, 'web-recap-week-4')
 
@@ -183,9 +184,10 @@ test('итог разговора: три способа, разговоры б�
   // Текст недели пропал сразу и пишется заново уже без удалённого разговора.
   await expect
     .poll(async () => (await readDiary()).week.summary?.text ?? '', { timeout: 240_000, intervals: [3_000] })
-    .toContain(MANUAL_RECAP)
+    .toContain('работа и дела')
   await openWebApp(page, '/diary')
-  await expect(page.getByTestId('diary-week-text')).toContainText(EDITED_RECAP)
+  await expect(page.getByTestId('diary-week-text')).toContainText('работа и дела')
+  await expect(page.getByTestId('diary-week-text')).not.toContainText('руководителем') // no quotes of a recap
   await page.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
   await shot(page, 'web-recap-week-after-delete')
 })

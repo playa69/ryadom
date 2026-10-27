@@ -112,7 +112,7 @@ def test_prompt_forbids_quoting():
 
     system = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[0]["content"]
     task = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[1]["content"]
-    assert "Не цитируй" in system
+    assert "Никаких цитат" in system and "не привязывай" in system
     assert "без цитат" in task.lower()
 
 
@@ -171,3 +171,15 @@ def test_week_recaps_reach_the_model_but_are_not_quoted_back(user_id):
     assert "Итоги разговоров недели" in chat.seen[0][1]["content"] and "начальника" in chat.seen[0][1]["content"]
     assert "Чаще всего было нормально" not in text  # ответ модели с дословной цитатой отбракован, подставлен шаблон из содержания итогов
     assert text.startswith("На этой неделе")
+    assert "работа и дела" in text  # общая тема, без слов самого итога
+    assert "начальника" not in text
+
+
+def test_week_text_is_a_general_overview_without_quotes_or_ties_to_a_dialog():
+    from app.services import digests
+
+    recaps = [{"date": "2026-10-20", "text": "Тяжёлая неделя на работе, поговорю с руководителем до пятницы."}]
+    text = digests.template_digest("week", marks(3, 3, 4), recaps)
+    assert "работа и дела" in text
+    assert "руководител" not in text and "пятниц" not in text
+    assert digests.clean_digest("week", "Неделя шла непросто. В понедельник ты много думал о работе. Рядом бывают люди.", marks(3, 3, 4)) is None

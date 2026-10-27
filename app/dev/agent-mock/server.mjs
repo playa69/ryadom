@@ -766,14 +766,23 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { text, stats: { markedDays: marks.length } })
     }
     const recaps = Array.isArray(body.recaps) ? body.recaps : []
-    // Free-form characterization woven from the recap texts of the week (the second input); no counts, no statistics.
+    // A general overview, no quotes and no tie to a dialog: only the names of the themes the recaps touch (as in agent/app/services/digests.py).
     const texts = recaps.map((r) => (typeof r?.text === 'string' ? r.text.trim() : '')).filter(Boolean)
-    const sentence = (t) => (/[.!?…]$/.test(t) ? t : `${t}.`)
+    const joined = texts.join(' ').toLowerCase()
+    const THEMES = [
+      ['работа и дела', /работ|руковод|начальн|коллег|офис|проект|дедлайн|карьер|увольн/],
+      ['близкие и отношения', /мам[аыуе]|пап|семь|друг|подруг|отношени|партн[её]р|муж|жена|девушк|парень|дет[иейям]/],
+      ['здоровье и сон', /здоровь|сон\b|сна\b|бессонн|усталост|болезн|врач|тревог|паник/],
+      ['деньги', /деньг|долг|зарплат|кредит|финанс/],
+    ]
+    const themes = THEMES.filter(([, re]) => re.test(joined)).map(([name]) => name).slice(0, 2)
     const text =
-      (texts.length
-        ? `На этой неделе в разговорах ты возвращался к важному для себя. ${texts.slice(0, 3).map(sentence).join(' ')} `
-        : // Without recaps the mock states the counts, so that the e2e specs can tell a rewritten text from the old one.
-          `Тяжёлых дней было ${hard}, лёгких — ${marks.filter((m) => m.mood >= 3).length}. `) +
+      (themes.length
+        ? `На этой неделе в твоих мыслях заметное место занимало: ${themes.join(' и ')}. `
+        : texts.length
+          ? 'На этой неделе ты не раз возвращался к тому, что у тебя на душе. '
+          : // Without recaps the mock states the counts, so that the e2e specs can tell a rewritten text from the old one.
+            `Тяжёлых дней было ${hard}, лёгких — ${marks.filter((m) => m.mood >= 3).length}. `) +
       (hard >= 3
         ? 'Неделя выдалась непростой. Рядом могут быть люди, с которыми можно поговорить, и я тоже здесь.'
         : 'Спасибо, что делишься со мной тем, как ты.')

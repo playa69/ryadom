@@ -124,11 +124,12 @@ test('итог разговора в приложении: три способа
   const diary = page.locator('.page-current[data-name="diary"]')
   await expect
     .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .toContain(MANUAL_RECAP)
+    .toContain('работа и дела')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await page.locator('.page-current').getByTestId('diary-segment-diary').click()
-  await expect(diary.getByTestId('diary-week-text')).toContainText(EDITED_RECAP)
+  await expect(diary.getByTestId('diary-week-text')).toContainText('работа и дела')
+  await expect(diary.getByTestId('diary-week-text')).not.toContainText('руководителем') // no quotes of a recap
   await expect(diary).not.toContainText(/памят/i)
   await diary.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
   await shot(page, 'recap-week-3')
@@ -141,12 +142,12 @@ test('итог разговора в приложении: три способа
   await ageWeekSummary(session.userId())
   await expect
     .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .not.toContain(MANUAL_RECAP) // the mock weaves the newest three recaps: the new one pushes the first out
+    .toContain('работа и дела')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await page.locator('.page-current').getByTestId('diary-segment-diary').click()
   await diary.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
-  await expect(diary.getByTestId('diary-week-text')).not.toContainText(MANUAL_RECAP)
+  await expect(diary.getByTestId('diary-week-text')).not.toContainText('руководителем')
   await shot(page, 'recap-week-4')
 
   // ── «Удалить разговор» ───────────────────────────────────────────────────
@@ -164,7 +165,7 @@ test('итог разговора в приложении: три способа
   await expect.poll(() => recapCount(request, token())).toBe(3)
   await expect
     .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [3_000] })
-    .toContain(MANUAL_RECAP)
+    .toContain('работа и дела')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await page.locator('.page-current').getByTestId('diary-segment-diary').click()

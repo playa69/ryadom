@@ -369,7 +369,8 @@ def test_the_week_digest_reads_the_recaps(client, user_id):
     marks = [{"date": f"2026-10-{19 + i:02d}", "mood": 3, "factor": None} for i in range(3)]
     body = {"kind": "week", "periodStart": "2026-10-19", "marks": marks, "recaps": [{"date": "2026-10-20", "text": RECAP}]}
     text = client.post(url(user_id, "/digests"), json=body, headers=AUTH).json()["text"]
-    assert "руководителем до пятницы" in text  # содержание итога попадает в текст недели
+    assert "работа и дела" in text  # тема итога попадает в текст недели общим названием
+    assert "руководителем" not in text and "пятницы" not in text  # без слов итога
     assert "договорённостей" not in text and "разговоров с итогом" not in text  # без счётчиков
     plain = client.post(url(user_id, "/digests"), json={**body, "recaps": []}, headers=AUTH).json()["text"]
-    assert "руководителем" not in plain
+    assert "работа и дела" not in plain
