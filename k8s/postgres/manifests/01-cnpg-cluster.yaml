@@ -11,9 +11,31 @@
 # по нодам (встроенный механизм CNPG по kubernetes.io/hostname — как в
 # референсе UnionApp/k8s/langfuse/manifests/02-cnpg-cluster.yaml).
 #
-# Ресурсы PG осознанно скромные (requests 256Mi/100m, shared_buffers 128MB):
-# узкое место маленького кластера — не PG. Поднять до референсных значений
-# (512Mi/150m, shared_buffers 256MB) — при росте объёма данных/нагрузки.
+# Ресурсы (PROTEUS-254): requests 250m / 768Mi, limits 1 vCPU / 1Gi (были 100m / 256Mi и
+# 500m / 512Mi) — запас под рост нагрузки: в базе живут app, agent, cognee и langfuse.
+# shared_buffers 256MB — четверть лимита памяти, остальное — backend'ы (до 100 соединений)
+# и page cache. Нода 2 vCPU / 4 ГБ несёт ещё Redis, istio-сайдкары и мониторинг: CNPG
+# получает долю, не ноду целиком. Дальше поднимать вместе с лимитом памяти (shared_buffers
+# держать около четверти) и после замера: kubectl -n ryadom-db top pod.
+#
+# Том: одна PVC на инстанс держит и данные, и WAL (walStorage не вынесен: перенос WAL
+# на отдельный том требует пересоздания кластера). Поэтому полный том = остановка записи, а сбой
+# архивации WAL в S3 копит журнал прямо на нём: на то и алерты RyadomPostgresDisk*
+# (monitoring/manifests/03-prometheus-rules.yaml).
+#
+# РАСШИРЕНИЕ ТОМА (размер только растёт, уменьшить нельзя):
+#   1. StorageClass nvme.network-drives.csi.timeweb.cloud — allowVolumeExpansion: true
+#      (k8s/README.md, «Хранилище»); проверка:
+#        kubectl get sc nvme.network-drives.csi.timeweb.cloud -o jsonpath='{.allowVolumeExpansion}'
+#   2. Поменять spec.storage.size ниже и применить манифест:
+#        kubectl apply -f k8s/postgres/manifests/01-cnpg-cluster.yaml
+#      Оператор сам увеличит PVC всех инстансов (storage.resizeInUseVolumes: true по умолчанию),
+#      пересоздавать поды не нужно.
+#   3. Следить: kubectl -n ryadom-db get pvc -w — ёмкость растёт до нового размера. Если PVC
+#      застрял в FileSystemResizePending, файловая система дорастёт после перезапуска пода:
+#      сначала реплики (kubectl -n ryadom-db delete pod ryadom-db-<N> у не-primary), затем
+#      switchover и тот же шаг для бывшего primary.
+#   4. Проверка: kubectl -n ryadom-db exec ryadom-db-1 -c postgres -- df -h /var/lib/postgresql/data
 # =============================================================================
 
 apiVersion: postgresql.cnpg.io/v1
@@ -31,7 +53,8 @@ spec:
     - name: registry-pull
 
   storage:
-    size: 10Gi
+    # 30Gi (было 10Gi): на одном томе общая база app, agent, cognee (векторы) и langfuse, там же WAL.
+    size: 30Gi
     # Сетевой диск Timeweb через CSI. Кластер в регионе Москва — HDD там
     # недоступен (проверено: CreateVolume "disk preset not found"),
     # поэтому NVMe. В СПб можно hdd.network-drives.csi.timeweb.cloud.
@@ -65,11 +88,11 @@ spec:
 
   resources:
     requests:
-      memory: "256Mi"
-      cpu: "100m"
+      memory: "768Mi"
+      cpu: "250m"
     limits:
-      memory: "512Mi"
-      cpu: "500m"
+      memory: "1Gi"
+      cpu: "1000m"
 
   bootstrap:
     initdb:
@@ -110,14 +133,14 @@ spec:
   postgresql:
     parameters:
       max_connections: "100"
-      shared_buffers: "128MB"
-      effective_cache_size: "384MB"
-      maintenance_work_mem: "32MB"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+      maintenance_work_mem: "64MB"
       checkpoint_completion_target: "0.9"
       wal_buffers: "4096kB"
       default_statistics_target: "100"
       random_page_cost: "1.1"
       effective_io_concurrency: "200"
-      work_mem: "512kB"
+      work_mem: "1MB"
       min_wal_size: "512MB"
       max_wal_size: "1GB"
