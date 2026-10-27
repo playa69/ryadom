@@ -1,6 +1,7 @@
 import type { ServerAnalytics } from '@ryadom/analytics/server'
 import { JobQueue } from '@ryadom/core/services/job-queue-service'
 import type { Sessions } from '../lib/sessions'
+import { afterDeleteJob } from './after-delete'
 import { diaryPassJob } from './diary-pass'
 import { erasePersonJob } from './erase-person'
 import { purgeAnonymousJob } from './purge-anonymous'
@@ -20,5 +21,6 @@ export function createHandlers(deps: JobDeps): JobHandlers {
     [JobQueue.AccountsPurgeInactiveAnonymous]: purgeAnonymousJob(),
     [JobQueue.DiaryWeeklyPass]: diaryPassJob(deps.analytics),
     [JobQueue.AnalyticsErasePerson]: erasePersonJob(deps.analytics),
+    [JobQueue.DialogsAfterDelete]: afterDeleteJob(),
   }
 }

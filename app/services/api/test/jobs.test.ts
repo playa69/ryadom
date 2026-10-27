@@ -7,7 +7,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
+import { diarySummaries } from '@ryadom/db/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { testDatabase } from '@ryadom/db/test-db'
 import { getDb, getRootLogger, inTransaction } from '@ryadom/core/shared'
@@ -31,7 +32,7 @@ import { erasePersonJob } from '../src/jobs/erase-person'
 import type { JobDeps } from '../src/jobs/handlers'
 import { ensureQueues, queueDrift, registerSchedules, type JobHandlers } from '../src/jobs/registry'
 import { startJobs, type Jobs, type JobsConfig } from '../src/lib/jobs'
-import { call, makeApp, mockAgent, ok, PASSWORD, signUpAndIn } from './helpers'
+import { call, json, makeApp, mockAgent, ok, PASSWORD, signUpAndIn } from './helpers'
 
 const DATABASE_URL = process.env.DATABASE_URL!
 
@@ -197,6 +198,15 @@ describe('реестр и каталог очередей', () => {
       heartbeatSeconds: 30,
       cron: '* * * * *',
     },
+    'dialogs.after-delete': {
+      policy: 'short',
+      expireInSeconds: 300,
+      retentionSeconds: 14 * 86_400,
+      retryLimit: 6,
+      retryDelay: 60,
+      retryBackoff: true,
+      heartbeatSeconds: null,
+    },
     'analytics.erase-person': {
       policy: 'short',
       expireInSeconds: 120,
@@ -253,6 +263,7 @@ describe('реестр и каталог очередей', () => {
       JobQueue.AccountsPurgeInactiveAnonymous,
       JobQueue.DiaryWeeklyPass,
       JobQueue.AnalyticsErasePerson,
+      JobQueue.DialogsAfterDelete,
     ])
     const schedules = await jobs.boss.getSchedules()
     expect(schedules.map((schedule) => [schedule.name, schedule.cron]).sort()).toEqual([
@@ -669,5 +680,86 @@ describe('удаление аккаунта и настоящая очередь
     // The repeated request queues nothing more.
     expect(ok(await call(app, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
     expect(await jobs.boss.findJobs(JobQueue.AnalyticsErasePerson)).toHaveLength(1)
+  })
+})
+
+describe('сброс недели после удаления разговора через настоящую очередь', () => {
+  // `openspec/changes/add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался».
+  const { app } = makeApp()
+  const after = QUEUE_CATALOG.filter((queue) => queue.name === JobQueue.DialogsAfterDelete)
+  const fast: QueueDefinition[] = [
+    ...QUEUE_CATALOG.filter((queue) => queue.name === JobQueue.JobsDeadLetter),
+    ...after.map((queue) => ({
+      ...queue,
+      options: { ...queue.options, retryDelay: 1, retryBackoff: false },
+    })),
+  ]
+  const data = (userId: string) => ({ userId, dialogId: 'd-1', dialogAt: '2026-10-20T10:00:00.000Z' })
+
+  it('воркер сбрасывает неделю и гасит ссылку, когда у агента разговора нет; недоступный агент — повтор, а не потеря', async () => {
+    const { user } = await signUpAndIn(app)
+    await getDb()
+      .insert(diarySummaries)
+      .values({
+        userId: user.id,
+        kind: 'week',
+        periodStart: '2026-10-19',
+        text: 'Итог недели.',
+        status: 'ready',
+      })
+    let answers = 0
+    mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => {
+        answers += 1
+        return answers === 1
+          ? json({ error: 'the agent is down' }, 503)
+          : json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404)
+      },
+    })
+    const jobs = await start({}, { catalog: fast, skipTransport: true })
+
+    await jobs.boss.send(JobQueue.DialogsAfterDelete, data(user.id), { singletonKey: `${user.id}:d-1` })
+
+    await vi.waitFor(
+      async () => expect((await jobs.boss.findJobs(JobQueue.DialogsAfterDelete))[0]?.state).toBe('completed'),
+      { timeout: 20_000 },
+    )
+    const [job] = await jobs.boss.findJobs(JobQueue.DialogsAfterDelete)
+    expect(job?.retryCount).toBe(1)
+    const [row] = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    expect(row).toMatchObject({ status: 'pending', text: '' })
+  })
+
+  it('разговор на месте — задача завершается, неделя цела', async () => {
+    const { user } = await signUpAndIn(app)
+    await getDb()
+      .insert(diarySummaries)
+      .values({
+        userId: user.id,
+        kind: 'week',
+        periodStart: '2026-10-19',
+        text: 'Итог недели.',
+        status: 'ready',
+      })
+    mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () =>
+        json({
+          dialogId: 'd-1',
+          startedAt: '2026-10-20T10:00:00.000Z',
+          endedAt: null,
+          summary: null,
+          messages: [],
+        }),
+    })
+    const jobs = await start({}, { catalog: fast, skipTransport: true })
+
+    await jobs.boss.send(JobQueue.DialogsAfterDelete, data(user.id), { singletonKey: `${user.id}:d-1` })
+
+    await vi.waitFor(
+      async () => expect((await jobs.boss.findJobs(JobQueue.DialogsAfterDelete))[0]?.state).toBe('completed'),
+      { timeout: 20_000 },
+    )
+    const [row] = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    expect(row).toMatchObject({ status: 'ready', text: 'Итог недели.' })
   })
 })

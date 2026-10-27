@@ -121,4 +121,19 @@ export const QUEUE_CATALOG: readonly QueueDefinition[] = [
       deadLetter: JobQueue.JobsDeadLetter,
     },
   },
+  {
+    name: JobQueue.DialogsAfterDelete,
+    options: {
+      policy: 'short',
+      expireInSeconds: 300,
+      retentionSeconds: 14 * DAY,
+      deleteAfterSeconds: KEEP_FINISHED,
+      retryLimit: 6,
+      retryDelay: 60,
+      retryBackoff: true,
+      retryDelayMax: null,
+      heartbeatSeconds: null,
+      deadLetter: JobQueue.JobsDeadLetter,
+    },
+  },
 ]
