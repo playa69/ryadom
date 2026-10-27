@@ -192,7 +192,7 @@ GEMINI_OPENS_TOTAL = Counter(
     ["purpose", "result"],
 )
 
-# Цвет шарика (GEMINI_MOOD_CLASSIFIER): сколько раз определён тон и через сколько после конца реплики.
+# Цвет шарика (app/clients/mood_classifier.py): сколько раз определён тон и через сколько после конца реплики.
 GEMINI_MOOD_TOTAL = Counter("agent_gemini_mood_total", "Определения тона реплики классификатором.", ["tone"])
 GEMINI_MOOD_DELAY_SECONDS = Histogram(
     "agent_gemini_mood_delay_seconds",

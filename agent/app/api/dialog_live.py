@@ -112,6 +112,8 @@ MEMORY_WAIT_SECONDS = 1.5
 # Сколько ходу, которому нужна новая сессия, можно ждать конца паузы после 1011 (от конца реплики или набранного сообщения):
 # дольше человек ждать не будет, а пауза обычно короче (5 с и растёт, но открытие в паузе всё равно получило бы тот же отказ).
 COOLDOWN_WAIT_SECONDS = 1.5
+# Пауза без новых слов расшифровки, после которой реплика уходит на классификатор тона (цвет шарика).
+MOOD_DEBOUNCE_SECONDS = 0.3
 
 LIVE_ADDENDUM = (
     "\n- Ты говоришь вслух живым голосом, как в разговоре: сказанное человеком не пересказывай."
@@ -836,7 +838,7 @@ class DialogSession:
             asyncio.create_task(self._send_loop()),
             asyncio.create_task(self._pump()),
         ]
-        if self._cfg.mood_classifier and self._cfg.api_key is not None:
+        if self._cfg.api_key is not None:
             self._tasks.append(asyncio.create_task(self._warm_mood_classifier()))  # первый запрос иначе ждёт TLS и релей
         self._tasks.append(asyncio.create_task(self._ensure_link()))  # соединение готово к первой реплике
         try:
@@ -1569,7 +1571,7 @@ class DialogSession:
 
     def _classify_mood_soon(self, turn: LiveTurn) -> None:
         """Прототип PROTEUS-168: когда слова расшифровки перестали приходить, реплика уходит на классификатор тона."""
-        if not self._cfg.mood_classifier or self._cfg.api_key is None:
+        if self._cfg.api_key is None:
             return
         previous = self._mood_task
         if previous is not None:
@@ -1587,7 +1589,7 @@ class DialogSession:
         await self._mood_classifier.classify("привет")
 
     async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
-        await asyncio.sleep(self._cfg.mood_debounce_ms / 1000)
+        await asyncio.sleep(MOOD_DEBOUNCE_SECONDS)
         if self._mood_classifier is None:
             self._mood_classifier = MoodClassifier(self._cfg)
         mood = await self._mood_classifier.classify(heard)
