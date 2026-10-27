@@ -1,6 +1,6 @@
 # Подзадачи: уведомления (add-notifications)
 
-Ничего из change'а в коде нет, поэтому описаны все задачи; ссылки на прежние `notifications-design.md`, `spec-notifications.md`, `spec-mood-reminders.md` заменены на `design.md` и дельты `specs/`. Номера совпадают с `tasks.md`.
+Ничего из change'а в коде нет, поэтому описаны все задачи. Номера совпадают с `tasks.md`.
 
 ## Этап 1. Решения, тексты, макеты
 
