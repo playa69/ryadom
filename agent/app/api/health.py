@@ -29,7 +29,7 @@ async def ready(request: Request) -> dict[str, str]:
         "stt": recognizer.name if recognizer else "none",
         # postgres: диалоги в PostgreSQL и переживают перезапуск; memory: только в памяти (не задано или не открылось)
         "dialogs": request.app.state.store.persistence,
-        # Память агента: off | shadow | on | unavailable (режим задан, но диск или модель извлечения не готовы)
+        # Память агента: on | unavailable (Cognee не настроен); off — пока память не создана (приложение не запущено)
         "memory": memory.status() if memory is not None else "off",
     }
 
