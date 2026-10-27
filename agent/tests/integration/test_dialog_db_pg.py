@@ -81,7 +81,7 @@ def test_apply_and_load_user_roundtrip(db: PostgresDialogDatabase) -> None:
 def test_apply_upsert_keeps_crisis_seen_and_extracted_at(db: PostgresDialogDatabase) -> None:
     db.apply([_write("d1", "u1")])
     seen = _write("d1", "u1")
-    seen.row = (*seen.row[:9], 1)  # crisis_seen=1
+    seen.row = (*seen.row[:9], 1, True)  # crisis_seen=1
     db.apply([seen])
     db.apply([_write("d1", "u1")])  # повторная запись не должна сбросить crisis_seen
     dialogs, _ = db.load_user("u1")
