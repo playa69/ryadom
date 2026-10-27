@@ -162,10 +162,7 @@ log('собираю клиент, api, сайт и веб-приложение')
 runSync('pnpm', [
   'exec', 'turbo', 'run', 'build', '--concurrency=2', '--output-logs=new-only',
   '--filter=@ryadom/mobile', '--filter=@ryadom/api', '--filter=@ryadom/landing', '--filter=@ryadom/web',
-], {
-  // The e2e stack also shows the tests whose texts still wait for sign-off (status `review`).
-  env: { ...process.env, NEXT_PUBLIC_SELF_CHECK_PREVIEW: '1' },
-})
+])
 
 const apiEnv = {
   ...process.env,

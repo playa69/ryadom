@@ -53,11 +53,14 @@ describe('повтор теста', () => {
 })
 
 import { visible } from '../src/catalog'
+import { gad7 } from '../src/tests/gad7'
+import { stress } from '../src/tests/stress'
 
 describe('видимость', () => {
-  it('без preview в проде пусто, с preview видны тесты на ревью', () => {
-    expect(visible(false)).toEqual([])
-    expect(visible(true).length).toBe(7)
+  it('видны только тесты со статусом ready, на ревью и заблокированные — нет', () => {
+    const ready = { ...gad7, status: 'ready' as const }
+    expect(visible([ready, byId('phq9')!, { ...stress, status: 'blocked' as const }])).toEqual([ready])
+    expect(visible().every((t) => t.status === 'ready')).toBe(true)
   })
 })
 

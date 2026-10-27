@@ -3,6 +3,7 @@ import { clearMailbox } from '../support/mail'
 import { seedMarks } from '../support/diary'
 import { trackSession } from '../support/session'
 import { expect, test } from '../support/fixtures'
+import { HAS_SHOWN_TESTS } from '../support/self-check'
 import {
   closeSidebar,
   nav,
@@ -40,8 +41,15 @@ test('дневник: отметка в два касания, график, м�
   // The events of the week do not live on this page, and memory is not mentioned.
   await expect(page.getByTestId('diary-events-card')).toHaveCount(0)
   await expect(page.getByRole('main')).not.toContainText(/События|памят/i)
-  await expect(page.getByTestId('self-check-block')).toBeVisible()
-  await expect(page.getByTestId('diary-segment-tests')).toBeVisible()
+  // The block «Самопроверка» and the segment «Тесты» are there once some test is ready (add-self-check-tests, D9).
+  if (HAS_SHOWN_TESTS) {
+    await expect(page.getByTestId('self-check-block')).toBeVisible()
+    await expect(page.getByTestId('diary-segment-tests')).toBeVisible()
+  } else {
+    await expect(page.getByRole('main')).not.toContainText('Самопроверка')
+    await expect(page.getByTestId('self-check-block')).toHaveCount(0)
+    await expect(page.getByTestId('diary-segment-tests')).toHaveCount(0)
+  }
   await shot(page, 'web-diary-empty')
 
   // ── два касания: «Нормально», затем «Работа» ──────────────────────────────
