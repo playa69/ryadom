@@ -237,7 +237,7 @@ kubectl -n agent create secret generic agent-db \
 - Файл небольшой (сообщения весят сотни байт). Посмотреть содержимое: только `kubectl exec` под admin-kubeconfig
   (`sqlite3` в образе нет: `python -c "import sqlite3; …"`); тексты разговоров людей без причины не читать.
 - Стирание человека (`DELETE /v1/users/{userId}`) удаляло и строки на диске (`secure_delete`) и усекало журнал WAL. В PostgreSQL
-  то же обещание выполняет `erase_user` в `app/services/dialog_db.py` (каскадные DELETE в одной транзакции). Если хранилище задано,
+  то же обещание выполняет `erase_user` в `app/services/dialog_db.py` (пометка `deleted_at` в одной транзакции, физически строки убирает очистка раз в 10 минут). Если хранилище задано,
   но не подключилось (`"dialogs": "memory"`), стирание отвечает `503`, а не `204`: приложение повторит его, когда БД вернётся.
 
 ## Память агента: Cognee (Deployment `cognee`)
