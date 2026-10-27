@@ -238,34 +238,24 @@ class MemoryReclaimSettings(BaseAppSettings):
 
 
 class LangfuseSettings(BaseAppSettings):
-    """Langfuse (self-hosted, ns `infra`, тот же RU-кластер, что и БД диалогов): трейсинг LLM-ходов и приёмник расхода моделей.
+    """Langfuse (self-hosted, ns `infra`, тот же RU-кластер, что и БД диалогов): трейсинг LLM-ходов.
 
-    По умолчанию всё выключено: агент работает как раньше (NullTracer, приёмника нет). При `LANGFUSE_ENABLED=true`
-    оба ключа обязательны — без них сервис не стартует (fail-fast). Ключи проекта (pk-lf/sk-lf) лежат в Secret
-    `agent-secrets`, в ConfigMap их быть не должно.
+    Трейсинг включается, когда заданы оба ключа проекта (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`: pk-lf/sk-lf, лежат в Secret
+    `agent-secrets`, в ConfigMap их быть не должно); без ключей трассы не пишутся. Задан только один ключ — сервис не стартует
+    (fail-fast).
 
-    Трейсинг (`app/core/tracing.py`): трасса на каждый ход. `LANGFUSE_TRACE_TEXT=false` (по умолчанию) — уходят число символов
-    и слов, длительность речи, токены и задержки, сами тексты маскируются; `true` — тексты реплик людей и агента уходят в
-    Langfuse, только для локальной отладки (в проде нельзя).
-
-    Приёмник расхода (`app/services/langfuse_usage.py`, README «Расход моделей»): только числа, без текстов, отдельная трасса
-    `model-usage`. Расход ходов уже есть в трассах трейсинга, поэтому приёмник включается отдельно (`LANGFUSE_USAGE_SINK=true`):
-    при включённых обоих расход в Langfuse задвоится.
+    Трасса на каждый ход (`app/core/tracing.py`): число символов и слов, длительность речи, токены и задержки этапов. Тексты
+    реплик людей и агента в Langfuse не уходят: они маскируются всегда.
     """
 
-    enabled: bool = Field(validation_alias="LANGFUSE_ENABLED", default=False)
     host: str = Field(validation_alias="LANGFUSE_HOST", default="http://langfuse-web.infra.svc.cluster.local:3000")
     public_key: SecretStr | None = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default=None)
     secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
-    trace_text: bool = Field(validation_alias="LANGFUSE_TRACE_TEXT", default=False)
-    usage_sink: bool = Field(validation_alias="LANGFUSE_USAGE_SINK", default=False)
-    flush_seconds: float = Field(validation_alias="LANGFUSE_FLUSH_SECONDS", default=5, ge=0.2, le=60)
-    timeout_seconds: int = Field(validation_alias="LANGFUSE_TIMEOUT_SECONDS", default=5, ge=1, le=30)
 
     @model_validator(mode="after")
-    def _keys_required_when_enabled(self) -> "LangfuseSettings":
-        if self.enabled and not (self._key(self.public_key) and self._key(self.secret_key)):
-            raise ValueError("LANGFUSE_ENABLED=true, но не заданы LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY")
+    def _both_keys_or_none(self) -> "LangfuseSettings":
+        if bool(self._key(self.public_key)) != bool(self._key(self.secret_key)):
+            raise ValueError("нужны оба ключа Langfuse: LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY (или ни одного)")
         host = self.host.strip()
         if host and not host.startswith(("http://", "https://")):
             raise ValueError("LANGFUSE_HOST должен начинаться с http:// или https://")
@@ -276,9 +266,9 @@ class LangfuseSettings(BaseAppSettings):
         return value.get_secret_value().strip() if value is not None else ""
 
     @property
-    def usage_sink_active(self) -> bool:
-        """Приёмник расхода работает, только если включён Langfuse и отдельно приёмник."""
-        return bool(self.enabled and self.usage_sink and self.host.strip())
+    def tracing_active(self) -> bool:
+        """Трейсинг работает, когда заданы ключи проекта."""
+        return bool(self._key(self.public_key) and self._key(self.secret_key))
 
 
 class Config:

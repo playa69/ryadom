@@ -29,7 +29,6 @@ from app.memory.extractor import NotesExtractor
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.gemini_budget import TokenBudget
-from app.services.langfuse_usage import start_langfuse_sink
 from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, split_sentences
 
 if TYPE_CHECKING:
@@ -214,7 +213,6 @@ def create_app(
         if isinstance(app.state.tts, CachedTts):
             sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
             warm_up = asyncio.create_task(app.state.tts.warm_up(sentences, parallel=warm_up_parallel))
-        langfuse = start_langfuse_sink(APP_CONFIG.langfuse)
         # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
         evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
         # После прогрева стартовые объекты замораживаются для сборщика мусора, дальше память раз в MEMORY_RECLAIM_SECONDS
@@ -227,8 +225,6 @@ def create_app(
             evictor.cancel()
             await asyncio.gather(evictor, return_exceptions=True)
             await reclaimer.stop()
-            if langfuse is not None:
-                langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
             if isinstance(memory_service, CogneeMemoryBackend):

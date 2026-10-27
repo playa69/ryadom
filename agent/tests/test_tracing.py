@@ -1,8 +1,8 @@
 """Трейсинг LLM-ходов в Langfuse (app/core/tracing.py).
 
-По умолчанию трейсинг выключен (NullTracer), и приложение ведёт себя как раньше. Здесь проверяются:
-маскирование текстов при LANGFUSE_TRACE_TEXT=false, маппинг полей на SDK, устойчивость к сбоям SDK
-и fail-fast валидация настроек (enabled без ключей — сервис не стартует).
+Без ключей Langfuse трейсинг выключен (NullTracer), и приложение ведёт себя как без него. Здесь проверяются:
+маскирование текстов (тексты в Langfuse не уходят никогда), маппинг полей на SDK, устойчивость к сбоям SDK
+и настройки (ключи включают трейсинг, один ключ без второго — сервис не стартует).
 """
 
 import os
@@ -27,39 +27,30 @@ MESSAGES = [{"role": "user", "content": "мне тяжело"}, {"role": "assist
 # ─── маскирование и расход ────────────────────────────────────────────────────
 
 
-def test_mask_keeps_text_when_trace_text_on() -> None:
-    assert _mask("привет", True) == "привет"
-    assert _mask(MESSAGES, True) == MESSAGES
-
-
-def test_mask_replaces_text_with_length_and_words_when_off() -> None:
-    assert _mask("привет", False) == "[скрыто: 6 симв., 1 сл.]"
-    masked = _mask(MESSAGES, False)
+def test_mask_replaces_text_with_length_and_words() -> None:
+    assert _mask("привет") == "[скрыто: 6 симв., 1 сл.]"
+    assert _mask(None) is None
+    masked = _mask(MESSAGES)
     assert masked[0]["role"] == "user"
     assert masked[0]["content"] == "[скрыто: 10 симв., 2 сл.]"
     assert "тяжело" not in str(masked)
 
 
 def test_mask_hides_values_of_unexpected_types() -> None:
-    assert _mask({"text": "мне плохо"}, False) == "[скрыто]"
-    assert "плохо" not in str(_mask([{"role": "user", "content": "мне плохо"}, "мне плохо"], False))
+    assert _mask({"text": "мне плохо"}) == "[скрыто]"
+    assert "плохо" not in str(_mask([{"role": "user", "content": "мне плохо"}, "мне плохо"]))
 
 
-def test_status_loses_the_provider_body_when_off() -> None:
-    assert _mask_status("Чат-модель ответила 500: {мне плохо, я не знаю что делать}", False) == "Чат-модель ответила 500"
-    assert _mask_status("Чат-модель ответила 500: тело", True) == "Чат-модель ответила 500: тело"
-    assert _mask_status(None, False) is None
+def test_status_loses_the_provider_body() -> None:
+    assert _mask_status("Фоновая модель ответила 500: {мне плохо, я не знаю что делать}") == "Фоновая модель ответила 500"
+    assert _mask_status(None) is None
 
 
 def test_metadata_keeps_numbers_and_short_names_but_not_long_strings() -> None:
     metadata = {"model": "gemini-3.8-live", "chars": 12, "audio_seconds": 1.5, "flag": True, "note": "мне плохо", "long": "а" * 80}
-    masked = _mask_metadata(metadata, False)
+    masked = _mask_metadata(metadata)
     assert masked == {**metadata, "note": "[скрыто]", "long": "[скрыто]"}
-    assert _mask_metadata(metadata, True) == metadata
-
-
-def test_text_is_not_traced_by_default() -> None:
-    assert LangfuseSettings().trace_text is False
+    assert _mask_metadata(None) is None
 
 
 def test_usage_details_keeps_only_ints() -> None:
@@ -131,11 +122,10 @@ class FakeLangfuseClient:
         self.flushed = True
 
 
-def make_tracer(trace_text: bool = True) -> tuple[LangfuseTracer, FakeLangfuseClient]:
+def make_tracer() -> tuple[LangfuseTracer, FakeLangfuseClient]:
     client = FakeLangfuseClient()
     tracer = LangfuseTracer.__new__(LangfuseTracer)
     tracer._client = client
-    tracer._trace_text = trace_text
     tracer.name = "langfuse:fake"
     return tracer, client
 
@@ -157,15 +147,15 @@ async def test_turn_trace_maps_fields_to_sdk() -> None:
     root = client.traces[0]
     assert root.kind == "generation"
     assert root.kwargs["model"] == "gemini-3.8-live"
-    assert root.kwargs["input"] == "как дела?"
+    assert root.kwargs["input"] == "[скрыто: 9 симв., 2 сл.]"  # текст реплики в Langfuse не уходит
     assert root.trace == {"session_id": "dialog-1", "user_id": "user-1", "tags": ["gemini_live"]}
-    assert root.updates[0]["output"] == "хорошо"
+    assert root.updates[0]["output"] == "[скрыто: 6 симв., 1 сл.]"
     assert root.updates[0]["usage_details"] == {"prompt_audio": 100}  # не-числа отброшены
     assert root.ended
 
 
-async def test_trace_text_off_masks_input_and_output() -> None:
-    tracer, client = make_tracer(trace_text=False)
+async def test_input_and_output_are_masked() -> None:
+    tracer, client = make_tracer()
     turn = tracer.start_turn(name="t", session_id="d", user_id="u", input="мне плохо")
     turn.update(output="я рядом")
     turn.end()
@@ -175,9 +165,9 @@ async def test_trace_text_off_masks_input_and_output() -> None:
     assert "плохо" not in str(root.kwargs) and "рядом" not in str(root.updates)
 
 
-async def test_trace_text_off_keeps_sizes_and_no_text_anywhere() -> None:
+async def test_traces_keep_sizes_and_no_text_anywhere() -> None:
     """Ни в одном поле трассы (вход, выход, метаданные, статус, вложенные наблюдения) нет текста реплики."""
-    tracer, client = make_tracer(trace_text=False)
+    tracer, client = make_tracer()
     secret = "мне очень тяжело сегодня"
     turn = tracer.start_turn(name="t", session_id="d", user_id="u", input=secret, metadata={"user_chars": len(secret)})
     first = tracer.start_span(turn, name="tts", input=secret, metadata={"text": secret})
@@ -262,26 +252,53 @@ async def test_aclose_flushes() -> None:
 # ─── настройки: fail-fast ─────────────────────────────────────────────────────
 
 
-def test_enabled_without_keys_fails_fast() -> None:
+def keys(**env: str) -> LangfuseSettings:
+    """Настройки Langfuse из заданного окружения: ключи из .env разработчика и контейнера в тест не попадают."""
+    saved = {name: os.environ.pop(name, None) for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")}
+    os.environ.update(env)
+    try:
+        return LangfuseSettings()
+    finally:
+        for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+            os.environ.pop(name, None)
+            if saved[name] is not None:
+                os.environ[name] = saved[name]  # type: ignore[assignment]
+
+
+def test_one_key_without_the_other_fails_fast() -> None:
     from pydantic import ValidationError
 
-    from app.core.config import LangfuseSettings
-
-    os.environ["LANGFUSE_ENABLED"] = "true"
-    os.environ.pop("LANGFUSE_PUBLIC_KEY", None)
-    os.environ.pop("LANGFUSE_SECRET_KEY", None)
-    try:
-        with pytest.raises(ValidationError, match="LANGFUSE_PUBLIC_KEY"):
-            LangfuseSettings()
-    finally:
-        os.environ.pop("LANGFUSE_ENABLED", None)
+    with pytest.raises(ValidationError, match="LANGFUSE_SECRET_KEY"):
+        keys(LANGFUSE_PUBLIC_KEY="pk-lf-test")
+    with pytest.raises(ValidationError, match="LANGFUSE_PUBLIC_KEY"):
+        keys(LANGFUSE_SECRET_KEY="sk-lf-test")
 
 
-def test_disabled_by_default() -> None:
-    from app.core.config import LangfuseSettings
+def test_without_keys_there_is_no_tracing() -> None:
     from app.core.tracing import build_tracer
 
-    assert build_tracer(LangfuseSettings()).name == "null"
+    settings = keys()
+    assert settings.tracing_active is False
+    assert build_tracer(settings).name == "null"
+
+
+def test_keys_switch_the_tracing_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Флага включения нет: оба ключа проекта заданы — трейсинг работает."""
+    import langfuse
+
+    from app.core.tracing import build_tracer
+
+    started: dict[str, object] = {}
+
+    class StubLangfuse:
+        def __init__(self, **kwargs: object) -> None:
+            started.update(kwargs)
+
+    monkeypatch.setattr(langfuse, "Langfuse", StubLangfuse)
+    settings = keys(LANGFUSE_PUBLIC_KEY="pk-lf-test", LANGFUSE_SECRET_KEY="sk-lf-test")
+    assert settings.tracing_active is True
+    tracer = build_tracer(settings)
+    assert isinstance(tracer, LangfuseTracer) and started["public_key"] == "pk-lf-test" and started["secret_key"] == "sk-lf-test"
 
 
 def test_native_fastapi_telemetry_is_off() -> None:
