@@ -121,7 +121,7 @@ export function isOurs(entry) {
 // pnpm and npm are .cmd shims on Windows, which only a shell starts. Everything else is started as it is, so that an
 // argument with spaces stays one argument; the shim line is quoted by hand for the same reason.
 const SHIM = /^(pnpm|npm|npx|yarn|corepack)$/i
-const quoteArg = (arg) => (/^[w@%+=:,./\-]+$/.test(arg) ? arg : `"${arg.replaceAll('"', '\\"')}"`)
+const quoteArg = (arg) => (/^[\w@%+=:,./\\-]+$/.test(arg) ? arg : `"${arg.replaceAll('"', '\\"')}"`)
 const shimLine = (command, args) => [command, ...args.map(quoteArg)].join(' ')
 const viaShell = (command) => isWindows && SHIM.test(command)
 
@@ -872,6 +872,15 @@ function cmdGc(flags) {
       if (id !== 'manual' && !known.has(id))
         act(`containers of "${id}" belong to no slot, removing them`, () => removeByLabel(id))
     }
+  }
+  // Mock images of other versions that no container uses (docker refuses to remove one that is in use).
+  const current = hashDirectory(join(APP_ROOT, 'dev', 'agent-mock'))
+  const images = docker(['images', 'ryadom-agent-mock', '--format', '{{.Tag}}'], { capture: true })
+  for (const tag of images.stdout.split(/\s+/).filter(Boolean)) {
+    if (tag === current || tag === 'local') continue
+    act(`removing the unused agent mock image ryadom-agent-mock:${tag}`, () => {
+      docker(['image', 'rm', `ryadom-agent-mock:${tag}`], { capture: true })
+    })
   }
   for (const name of existsSyncDir(join(registryDir(), 'slots'))) {
     if (
