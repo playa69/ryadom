@@ -372,6 +372,11 @@ class DialogSession:
         # контекста, а сводку возьмёт плановая смена сессии. Пропала сводка целиком (человек выключил память, забыл всё,
         # стёр аккаунт) — к следующему ходу сессия открывается заново без неё (MEM-13.3).
         self._brief_used = ""
+        # Сколько раз человек убирал что-то из сводки к открытию текущей сессии (`DialogStore.memory_removals`). Выросло — человек
+        # удалил или поправил заметку, удалил память, выключил память или переключатель, удалил разговор: убранное ещё лежит в
+        # контексте сессии, и к следующему ходу она открывается заново (`_note_memory_removal`).
+        self._removals_seen = 0
+        self._privacy_reopen = False  # следующее открытие — по этой причине (purpose=privacy в журнале и метрике)
         self._memory_load: asyncio.Task[None] | None = None  # загрузка памяти к открытию сессии (`_await_memory`)
         self._socket_at = time.monotonic()  # сессию создают сразу после accept сокета: от этого момента считаем ожидание
         self._open_logged = False  # строка о задержке первой сессии уже в журнале
@@ -895,7 +900,9 @@ class DialogSession:
     def _instructions(self) -> str:
         """Промпт агента, правила памяти и сводка. Прошлые реплики в промпт не входят: они загружаются в сессию настоящими
         репликами при открытии (`_history`)."""
-        # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока.
+        # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока. Число удалений читается раньше
+        # сводки: убранное между этими двумя чтениями увидит следующий ход.
+        self._removals_seen = self._store.memory_removals(self._dialog.user_id)
         self._brief_used = self._store.memory_brief(self._dialog)
         return system_prompt(self._dialog.voice) + LIVE_ADDENDUM + memory_block(self._brief_used)
 
@@ -928,6 +935,7 @@ class DialogSession:
                 self._refresh = True
             if self._brief_used and not self._store.memory_brief(self._dialog, count=False):
                 self._refresh = True  # сводку отозвали (см. `_brief_used`): следующий ход уже без неё
+            self._note_memory_removal()
             alive = link is not None and not link.closed and link.voice == voice
             if alive and self._rotate_pending and not self._refresh and self._may_open():
                 self._refresh = True  # отложенная смена сессии: теперь можно
@@ -938,6 +946,8 @@ class DialogSession:
             purpose = (
                 "voice"
                 if voice_changed
+                else "privacy"
+                if self._privacy_reopen
                 else "recover"
                 if self._recovering
                 else "rotate"
@@ -947,6 +957,7 @@ class DialogSession:
                 else "start"
             )
             self._recovering = False
+            self._privacy_reopen = False
             keep = budget.enabled and alive  # с бюджетом прежнюю сессию закрываем, только когда откроется новая
             if not keep:
                 await self._drop_link()
@@ -967,6 +978,16 @@ class DialogSession:
             self._session_audio = 0
             self._reader = asyncio.create_task(self._read(new))
             return new
+
+    def _note_memory_removal(self) -> None:
+        """Правило приватности: человек убрал что-то из памяти, пока шёл разговор. Сессия Gemini держит сводку в контексте и сама её
+        не забудет, поэтому к следующему ходу она открывается заново (с актуальной сводкой и историей текстом). Добавления в
+        сводку этого не вызывают: их берёт плановая смена сессии (`GEMINI_ROTATE_EVERY`)."""
+        if self._store.memory_removals(self._dialog.user_id) != self._removals_seen:
+            if not self._privacy_reopen:
+                logger.info("memory removal: the session is reopened for the next turn dialog=%s", self._dialog.id)
+            self._refresh = True
+            self._privacy_reopen = True
 
     async def _await_memory(self) -> float:
         """Загрузить сводку памяти к открытию сессии, но ждать её не дольше MEMORY_WAIT_SECONDS. Загрузка не отменяется:
@@ -1338,6 +1359,7 @@ class DialogSession:
         self._sent_bytes = 0
         self._voice_turn = None
         # Человек заговорил: отложенную смену сессии или нужное переоткрытие делаем сейчас, за его речью.
+        self._note_memory_removal()
         if (self._rotate_pending or self._refresh) and self._may_open():
             self._prepare_link()
 

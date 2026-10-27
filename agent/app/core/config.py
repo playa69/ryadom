@@ -24,7 +24,6 @@ class BaseAppSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_ignore_empty=True, enable_decoding=False)
 
-    local: bool = Field(validation_alias="LOCAL", default=False)
     debug: bool = Field(validation_alias="DEBUG", default=False)
 
     @property

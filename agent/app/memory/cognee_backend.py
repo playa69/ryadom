@@ -86,7 +86,9 @@ class CogneeMemoryBackend:
         # База диалогов (PostgreSQL), если подключена: в ней живут настройки памяти («включена или пауза», согласие).
         # Без неё (разработка) настройки хранятся только в памяти процесса.
         self._database = database or (lambda: None)
-        self.notes = NotesService(self._database, config.notes_max, self._notes_changed, self._sources_suppressed)
+        self.notes = NotesService(
+            self._database, config.notes_max, self._notes_changed, self._sources_suppressed, self._removed_by_person
+        )
         self.outbox = CogneeOutbox(self._database, lambda: self._client)  # индекс разговоров в Cognee: очередь с повторами
         self._outbox_task: asyncio.Task[None] | None = None
         self._notes_cache: dict[str, list[dict[str, Any]]] = {}  # user_id → заметки для блока памяти (без обращений к базе на ходу)
@@ -97,6 +99,9 @@ class CogneeMemoryBackend:
         self._extracting: set[str] = set()
         self._datasets: dict[str, bool] = {}  # user_id → память включена (датасет существует)
         self._turn_recalls: dict[str, str] = {}  # user_id → находка recall по последней реплике человека
+        # user_id → сколько раз человек убрал что-то из своей сводки с момента загрузки (счётчик только растёт). Открытая сессия
+        # модели держит сводку в контексте и по смене счётчика переоткрывается к следующему ходу (`removals`).
+        self._removals: dict[str, int] = {}
         self._consents: dict[str, tuple[str | None, str | None]] = {}  # user_id → (версия согласия, когда)
         self._loading: set[str] = set()
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -140,6 +145,16 @@ class CogneeMemoryBackend:
         self._datasets.pop(user_id, None)
         self._consents.pop(user_id, None)
         self._turn_recalls.pop(user_id, None)
+        self._removals.pop(user_id, None)
+
+    def removals(self, user_id: str) -> int:
+        """Сколько раз человек убрал что-то из своей сводки: удалил или поправил заметку, удалил всю память, выключил память,
+        «Запоминать чувствительное» или «Опираться на прошлые разговоры», удалил разговор. Добавления (новая заметка, находка
+        поиска, догрузка сводки) не считаются: их берёт плановая смена сессии."""
+        return self._removals.get(user_id, 0)
+
+    def _removed_by_person(self, user_id: str) -> None:
+        self._removals[user_id] = self._removals.get(user_id, 0) + 1
 
     async def _read_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
         """Сохранённые настройки памяти человека; None — база не подключена, не ответила или строки нет."""
@@ -486,6 +501,7 @@ class CogneeMemoryBackend:
                 await self.outbox.drop(user_id, ("index_dialog", "reindex_dialog", "rebuild", "delete_document"))
                 await self.outbox.add(user_id, "delete_dataset")
                 self._turn_recalls.pop(user_id, None)
+                self._removed_by_person(user_id)
                 self._spawn(self.outbox.tick())
             elif after and not before:
                 await self.outbox.add(user_id, "rebuild")  # включили: индекс пересобирается в фоне из журнала
@@ -520,6 +536,7 @@ class CogneeMemoryBackend:
         version, at = await self._consent_of(user_id)  # пауза не отзывает согласие: оно остаётся в строке настроек
         await self._write_settings(user_id, False, version, at)
         self._datasets[user_id] = False
+        self._removed_by_person(user_id)
         logger.info("cognee memory disabled (данные сохранены) user=%s", user_id)
         return {"enabled": False, "consentVersion": None, "consentAt": None}
 
@@ -581,6 +598,8 @@ class CogneeMemoryBackend:
         """Разговор удаляется (вручную или по сроку): его документ в Cognee удаляется жёстко через очередь. Вызывается до удаления
         строки из базы, пока известен `cognee_data_id`. Заметки из разговора остаются."""
         self._pending.pop(dialog_id, None)  # неразобранные реплики удаляемого разговора в заметки уже не идут
+        self._turn_recalls.pop(user_id, None)  # находка по прошлым разговорам могла цитировать этот: пересоберётся по реплике
+        self._removed_by_person(user_id)
         if self._client is None:
             return
         db = self._database()

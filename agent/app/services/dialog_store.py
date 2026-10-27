@@ -154,6 +154,11 @@ class MemoryLink(Protocol):
         """Загрузить состояние памяти и блок памяти перед открытием модельной сессии."""
         ...
 
+    def removals(self, user_id: str) -> int:
+        """Сколько раз человек убрал что-то из своей сводки (заметка, вся память, переключатели, разговор). Сессия модели держит
+        сводку в контексте: когда число выросло, к следующему ходу она открывается заново без убранного."""
+        ...
+
     def enabled(self, user_id: str) -> bool:
         """Включена ли память у человека (по кэшу; человек уже загружен `user_loaded`)."""
         ...
@@ -561,6 +566,17 @@ class DialogStore:
         except Exception:  # noqa: BLE001 - любая ошибка памяти даёт разговор без сводки, а не ошибку разговора
             logger.exception("memory brief failed dialog=%s", dialog.id)
             return ""
+
+    def memory_removals(self, user_id: str) -> int:
+        """Сколько раз человек убрал что-то из сводки памяти; 0, если памяти нет или она сбоит (I3)."""
+        memory = self.memory
+        if memory is None:
+            return 0
+        try:
+            return memory.removals(user_id)
+        except Exception:  # noqa: BLE001 - любая ошибка памяти не должна мешать разговору
+            logger.exception("memory removals failed")
+            return 0
 
     async def memory_prepare(self, dialog: Dialog) -> None:
         """Подготовить память до ответа; сбой не роняет разговор."""

@@ -185,10 +185,10 @@ GEMINI_TPM_LIMIT_TOKENS = Gauge(
     "Лимит входных токенов в минуту, с которым сравнивают окно (GEMINI_TPM_LIMIT).",
 )
 
-# purpose: start | rotate | reconnect | voice | tts; result: ok | failed | quota
+# purpose: start | rotate | reconnect | voice | recover | privacy | tts; result: ok | failed | quota
 GEMINI_OPENS_TOTAL = Counter(
     "agent_gemini_opens_total",
-    "Открытия сессий Gemini Live: первая в разговоре, смена после ответа, переоткрытие, смена голоса, озвучка фразы.",
+    "Открытия сессий Gemini Live: первая в разговоре, смена после ответа, переоткрытие, смена голоса, повторная просьба, убранное из памяти, озвучка фразы.",
     ["purpose", "result"],
 )
 

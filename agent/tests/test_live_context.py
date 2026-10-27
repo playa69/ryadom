@@ -412,9 +412,33 @@ class Memory:
         self.fail = fail
         self.ready = False
         self.calls = 0
+        self.removed = 0  # сколько раз человек убрал что-то из сводки (`removals`)
 
     def brief(self, dialog: Any, count: bool = True) -> str:
         return self.text
+
+    def removals(self, user_id: str) -> int:
+        return self.removed
+
+    def enabled(self, user_id: str) -> bool:
+        return True
+
+    def user_message(self, dialog: Any, text: str) -> None:
+        return None
+
+    def dialog_ended(self, dialog: Any) -> None:
+        return None
+
+    async def user_loaded(self, user_id: str) -> None:
+        return None
+
+    def user_unloaded(self, user_id: str) -> None:
+        return None
+
+    def remove(self, text: str) -> None:
+        """Человек убрал заметку: в сводке её нет, счётчик убранного вырос."""
+        self.text = text
+        self.removed += 1
 
     async def prepare(self, dialog: Any) -> None:
         self.calls += 1
@@ -505,6 +529,88 @@ async def test_a_revoked_brief_reopens_the_session_without_it() -> None:
     assert new is not None and new is not link and link.closed and BRIEF not in new.instructions
     assert await session._ensure_link() is new  # без сводки дальше не переоткрывается
     await session._drop_link()
+
+
+NOTE_A, NOTE_B = "Работает учительницей.", "Есть сестра Маша."
+TWO_NOTES = f"- {NOTE_A}\n- {NOTE_B}"
+
+
+async def test_something_removed_by_the_person_reopens_the_session_without_it() -> None:
+    """Правило приватности: человек удалил (или поправил) заметку, выключил чувствительное, стёр память или разговор — убранное
+    лежит в контексте сессии, и к следующему ходу она открывается заново с сводкой без него. Остальная сводка остаётся."""
+    connector = FakeConnector()
+    memory = Memory(text=TWO_NOTES)
+    session = with_memory(memory, connector, ("u", FIRST), ("a", "Ответ"))
+    link = await session._ensure_link()
+    assert link is not None and NOTE_B in link.instructions
+    before = sample("agent_gemini_opens_total", purpose="privacy", result="ok")
+
+    memory.remove(f"- {NOTE_A}")  # человек удалил заметку про сестру
+    new = await session._ensure_link()
+    assert new is not None and new is not link and link.closed
+    assert NOTE_B not in new.instructions and NOTE_A in new.instructions
+    assert sample("agent_gemini_opens_total", purpose="privacy", result="ok") == before + 1
+    assert await session._ensure_link() is new  # дальше не переоткрывается, пока снова ничего не убрали
+
+    memory.text += f"\n- {NOTE_B}"  # добавление ждёт плановой смены сессии
+    assert await session._ensure_link() is new
+    memory.remove("")  # «Удалить всю память»
+    last = await session._ensure_link()
+    assert last is not None and last is not new and NOTE_A not in last.instructions
+    await session._drop_link()
+
+
+async def test_a_removal_before_the_open_is_not_counted_again() -> None:
+    """Убранное до открытия сессии в ней уже не лежит: счётчик запоминается при открытии, второго открытия нет."""
+    connector = FakeConnector()
+    memory = Memory(text=NOTE_A)
+    memory.removed = 3  # человек убирал и раньше, до разговора
+    session = with_memory(memory, connector)
+    link = await session._ensure_link()
+    assert link is not None and await session._ensure_link() is link
+    assert len(connector.links) == 1
+    await session._drop_link()
+
+
+def test_the_next_turn_after_a_removal_goes_to_a_new_session(user_id: str) -> None:
+    connector = FakeConnector()
+    memory = Memory(text=TWO_NOTES)
+    privacy = sample("agent_gemini_opens_total", purpose="privacy", result="ok")
+    with make_live_client(connector, FakeTts()) as client:
+        client.app.state.store.memory = memory
+        dialog_id = start_dialog(client, user_id)["dialogId"]
+        with client.websocket_connect(ws_url(user_id, dialog_id), headers=AUTH) as ws:
+            say(ws, "c-1", FIRST)
+            assert len(connector.links) == 1 and NOTE_B in connector.links[0].instructions
+            memory.remove(f"- {NOTE_A}")  # человек удалил заметку в разделе «Память» посреди разговора
+            time.sleep(0.2)
+            assert len(connector.links) == 1  # пока он молчит, ничего не открывается
+            say(ws, "c-2", SECOND)
+    assert len(connector.links) == 2 and connector.links[0].closed
+    second = connector.links[1]
+    assert NOTE_B not in second.instructions and ("text", SECOND) in second.commands
+    assert second.history == [("user", FIRST), ("model", connector.reply)]  # разговор продолжается: история текстом
+    assert sample("agent_gemini_opens_total", purpose="privacy", result="ok") == privacy + 1
+
+
+def test_a_removal_is_picked_up_when_the_person_starts_speaking(user_id: str) -> None:
+    """Голос: новая сессия открывается за речью, как только человек заговорил, а не после её конца."""
+    connector = FakeConnector()
+    memory = Memory(text=TWO_NOTES)
+    with make_live_client(connector, FakeTts()) as client:
+        client.app.state.store.memory = memory
+        dialog_id = start_dialog(client, user_id)["dialogId"]
+        with client.websocket_connect(ws_url(user_id, dialog_id), headers=AUTH) as ws:
+            say(ws, "c-1", FIRST)
+            memory.remove(f"- {NOTE_A}")
+            ws.send_text(json.dumps({"type": "audio_start"}))
+            wait_until(lambda: len(connector.links) == 2, "сессия без убранного открыта сразу, за речью")
+            for i in range(4):
+                ws.send_bytes(audio_in_frame(i, loud=True))
+            ws.send_text(json.dumps({"type": "audio_end"}))
+            read_frames(ws, reply_done)
+    assert NOTE_B not in connector.links[1].instructions and ("end",) in connector.links[1].commands
+    assert len(connector.links) == 2
 
 
 # ─── usage ────────────────────────────────────────────────────────────────────────────────────────────────────────
