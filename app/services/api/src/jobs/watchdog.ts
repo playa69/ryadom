@@ -14,8 +14,8 @@ const LOOK_AT = 1000
 /**
  * Every five minutes, one run for all replicas. Reports to the log, as a `warn` with the name of the queue and numbers,
  * a queue in trouble:
- *  - `jobs.dead-letter` holds jobs: the retries of some job ran out, and a person has to look (the line of that job
- *    carries what to look for);
+ *  - `jobs.dead-letter` holds jobs: the retries of an event's job (an erasure, the reset after a deleted dialog) ran
+ *    out, and a person has to look (the line of that job carries what to look for);
  *  - the oldest job that is ready to run in any other queue has waited more than ten minutes: no replica works it.
  *
  * There are no Prometheus metrics in the API, so the log is where this goes (Loki reads it). The data of a job is never

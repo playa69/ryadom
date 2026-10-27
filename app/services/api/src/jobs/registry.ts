@@ -53,7 +53,8 @@ export interface WorkerSettings {
 
 /**
  * One worker per queue that has a handler, one job at a time. A failure is logged and thrown back to pg-boss, which
- * retries by the queue's options or, when they ran out, copies the job to `jobs.dead-letter`.
+ * retries by the queue's options or, when they ran out, copies the job to `jobs.dead-letter` (a queue of an event
+ * names it; a schedule does not, its next firing does the work again).
  */
 export async function registerWorkers(
   boss: PgBoss,

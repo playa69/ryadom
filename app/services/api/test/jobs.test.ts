@@ -243,7 +243,10 @@ describe('реестр и каталог очередей', () => {
         ...options,
         deleteAfterSeconds: name === 'jobs.dead-letter' ? 30 * 86_400 : 86_400,
       })
-      if (name !== 'jobs.dead-letter') expect(queue?.deadLetter, name).toBe('jobs.dead-letter')
+      // Only the queues of events send their dead jobs to jobs.dead-letter: a lost schedule run is made up by the next
+      // run, a lost erasure is not.
+      const events = ['analytics.erase-person', 'dialogs.after-delete']
+      expect(queue?.deadLetter ?? null, name).toBe(events.includes(name) ? 'jobs.dead-letter' : null)
       expect(QUEUE_CATALOG.find((item) => item.name === name)?.cron, name).toBe(cron)
     }
     // Nothing in the catalog is missing from this table.
@@ -624,6 +627,20 @@ describe('стирание профиля в аналитике через оч�
       )
       expect(lines).toHaveLength(1)
       expect(lines[0]?.[1]).toContain('убрать вручную')
+
+      // And the watchdog says that the receiver holds a job, with the queue and the count, never with its data.
+      const warn = vi.spyOn(getRootLogger(), 'warn')
+      try {
+        await watchdogJob(jobs.boss)({}, {} as never)
+        const dead = warn.mock.calls.filter(
+          ([fields]) => (fields as { queue?: string }).queue === 'jobs.dead-letter',
+        )
+        expect(dead).toHaveLength(1)
+        expect(dead[0]?.[0]).toMatchObject({ queue: 'jobs.dead-letter', count: 1 })
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('user-gone')
+      } finally {
+        warn.mockRestore()
+      }
     } finally {
       errors.mockRestore()
     }
@@ -835,6 +852,52 @@ describe('сброс недели после удаления разговора
     )
     const [row] = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
     expect(row).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+  })
+})
+
+describe('расписание, которое не выполнилось, не попадает в очередь недоставленных', () => {
+  // The next firing does the same work from the state, so a failed run needs neither a retry nor a copy: a pod that was
+  // killed in the middle of a pass must not make the watchdog warn for 30 days. The queues of events keep theirs
+  // (test «Сбой стирания» above).
+  it('ошибка прохода — задача failed, jobs.dead-letter пуст, сторож молчит', async () => {
+    const warn = vi.spyOn(getRootLogger(), 'warn')
+    try {
+      const failing: JobHandlers = {
+        [JobQueue.DiaryWeeklyPass]: async () => {
+          throw new Error('the pass failed')
+        },
+      }
+      const jobs = await start({}, { handlers: failing, skipTransport: true })
+
+      await jobs.boss.send(JobQueue.DiaryWeeklyPass, {})
+
+      await vi.waitFor(
+        async () => expect((await jobs.boss.findJobs(JobQueue.DiaryWeeklyPass))[0]?.state).toBe('failed'),
+        { timeout: 15_000 },
+      )
+      expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toEqual([])
+      warn.mockClear()
+      await watchdogJob(jobs.boss)({}, {} as never)
+      expect(
+        warn.mock.calls.filter(([fields]) => (fields as { queue?: string }).queue === 'jobs.dead-letter'),
+      ).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('убитый под: задача, снятая с исполнителя методом fail (так её провалит надзор по heartbeat), тоже остаётся без копии', async () => {
+    const jobs = await start({ JOBS_WORKERS_ENABLED: false })
+    const id = await jobs.boss.send(JobQueue.AccountsPurgeInactiveAnonymous, {})
+    const [taken] = await jobs.boss.fetch(JobQueue.AccountsPurgeInactiveAnonymous)
+    expect(taken?.id).toBe(id)
+
+    // What the supervision does to a job whose heartbeat stopped: it fails, and with no retries it stays failed.
+    await jobs.boss.fail(JobQueue.AccountsPurgeInactiveAnonymous, id!)
+
+    const [job] = await jobs.boss.findJobs(JobQueue.AccountsPurgeInactiveAnonymous)
+    expect(job?.state).toBe('failed')
+    expect(await jobs.boss.findJobs(JobQueue.JobsDeadLetter)).toEqual([])
   })
 })
 

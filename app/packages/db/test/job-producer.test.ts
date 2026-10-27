@@ -200,6 +200,42 @@ describe('каталог очередей', () => {
     expect(QUEUE_CATALOG.map((queue) => queue.name).sort()).toEqual(Object.values(JobQueue).sort())
   })
 
+  it('очередь расписания, созданная раньше с очередью недоставленных, теряет её: каталог не даёт расписаниям копий', async () => {
+    const boss = new PgBoss({
+      connectionString: database.url,
+      migrate: false,
+      supervise: false,
+      schedule: false,
+      registerInstance: false,
+      max: 1,
+    })
+    boss.on('error', () => {})
+    await boss.start()
+    try {
+      await boss.createQueue(JobQueue.JobsDeadLetter, { policy: 'standard' })
+      // An earlier version of the catalog named the receiver for every queue.
+      await boss.createQueue(JobQueue.DiaryWeeklyPass, {
+        policy: 'exclusive',
+        expireInSeconds: 600,
+        retryLimit: 0,
+        heartbeatSeconds: 30,
+        retentionSeconds: 86_400,
+        deleteAfterSeconds: 86_400,
+        deadLetter: JobQueue.JobsDeadLetter,
+      })
+      expect((await boss.getQueue(JobQueue.DiaryWeeklyPass))?.deadLetter).toBe(JobQueue.JobsDeadLetter)
+
+      await ensureQueues(boss, QUEUE_CATALOG)
+
+      expect((await boss.getQueue(JobQueue.DiaryWeeklyPass))?.deadLetter ?? null).toBeNull()
+      // The queues of events keep it.
+      expect((await boss.getQueue(JobQueue.AnalyticsErasePerson))?.deadLetter).toBe(JobQueue.JobsDeadLetter)
+      expect((await boss.getQueue(JobQueue.DialogsAfterDelete))?.deadLetter).toBe(JobQueue.JobsDeadLetter)
+    } finally {
+      await boss.stop({ graceful: false, timeout: 1_000 })
+    }
+  })
+
   it('ensureQueues без update не меняет параметры, с update — приводит к каталогу', async () => {
     const boss = new PgBoss({
       connectionString: database.url,
