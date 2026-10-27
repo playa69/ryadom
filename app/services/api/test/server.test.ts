@@ -3,7 +3,8 @@
  */
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { SignJWT, decodeJwt } from 'jose'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { healthService } from '@ryadom/core/services/health-service'
 import { MeApiErrorCode } from '@ryadom/contracts/api/auth/me'
 import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
 import { ACCESS_TTL_SECONDS, REFRESH_TTL_SECONDS, createJwt } from '../src/lib/jwt'
@@ -54,6 +55,27 @@ describe('health и политика версий', () => {
       expect(await response.json()).toMatchObject({ status: 'draining' })
     } finally {
       resetDraining()
+    }
+  })
+
+  it('GET /api/health/live — без БД и без гейта версий, и во время остановки отвечает 200', async () => {
+    const headers = { [AppHeader.Platform]: AppPlatform.Android, [AppHeader.AppVersion]: '1' }
+    const database = vi.spyOn(healthService, 'execute')
+    try {
+      const response = await app.request('/api/health/live', { headers })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ status: 'ok' })
+
+      // Остановка: readiness снимает под с трафика, а liveness молчит, чтобы kubelet не убил его раньше срока.
+      startDraining()
+      try {
+        expect((await app.request('/api/health/live')).status).toBe(200)
+      } finally {
+        resetDraining()
+      }
+      expect(database).not.toHaveBeenCalled()
+    } finally {
+      database.mockRestore()
     }
   })
 

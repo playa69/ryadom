@@ -68,7 +68,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       jsVersion: c.req.header(AppHeader.JsVersion),
     }
     // Probes and the analytics firehose (a request every few seconds per open tab) stay out of the info log.
-    if (c.req.path === ApiPath.Health || c.req.path.startsWith(`${ApiPath.Ingest}/`)) logger.debug(entry, 'request')
+    const probe = c.req.path === ApiPath.Health || c.req.path === ApiPath.HealthLive
+    if (probe || c.req.path.startsWith(`${ApiPath.Ingest}/`)) logger.debug(entry, 'request')
     else logger.info(entry, 'request')
   })
 

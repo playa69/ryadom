@@ -4,6 +4,8 @@
  */
 export enum ApiPath {
   Health = '/api/health',
+  /** Liveness without the database: a restart does not fix a database that is down. */
+  HealthLive = '/api/health/live',
   AppStatus = '/api/app-status',
   /** Prefix only: the file name carries the version (`ryadom-<flavor>-<version>.zip`). */
   OtaBundle = '/api/ota',

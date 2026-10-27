@@ -6,15 +6,29 @@
 # сервис app-pwa. Перед первым rollout должен завершиться Job миграций
 # (db/02-job-migrate.yaml).
 #
-# 1 реплика: ресурсов в кластере впритык. Лимиты запросов считаются в Redis
-# (REDIS_ENABLED=true, общие для реплик), поэтому replicas можно поднимать
-# без размножения лимитов, когда хватит ресурсов.
+# 2 реплики (PROTEUS-254): рестарт или потеря ноды не обрывает все разговоры сразу, а выкат
+# идёт по одному поду (maxUnavailable 0). Реплики разнесены по нодам мягкой anti-affinity
+# (если нода одна, обе встанут на неё), PodDisruptionBudget 04-poddisruptionbudget.yaml не даёт
+# drain убрать оба пода. Что делает две реплики безопасными:
+#   - лимиты запросов считаются в Redis (REDIS_ENABLED=true в app-config), общие для реплик;
+#   - у WebSocket-шлюза нет sticky sessions: клиент после обрыва попадает на любую реплику, а
+#     «одно соединение на человека» держится через Redis (канал оповещения реплик), агент
+#     к тому же пускает на диалог только одно живое соединение;
+#   - часовые задачи (очистка refresh-токенов, удаление неактивных анонимных аккаунтов)
+#     идемпотентны: параллельный проход второй реплики находит удалённое удалённым.
+# Недоступный Redis не валит ничего: лимиты считаются в памяти пода, а оповещение между
+# репликами пропадает (второе соединение человека на другой реплике сменит первое не сразу,
+# а когда то оборвётся по heartbeat).
 #
 # Пробы — только httpGet: NetworkPolicy пускает kubelet лишь на :15020
 # (istio переписывает httpGet-пробы на pilot-agent), tcpSocket на :3002 был бы
 # заблокирован. readiness по /api/health: 503, пока БД недоступна и пока под
 # останавливается (draining) — балансировщик снимает его с трафика.
-# liveness тоже /api/health, но терпимая (6×20с = 2 мин сбоя БД до рестарта).
+# liveness и startup — /api/health/live: ответ процесса без БД. Рестарт не лечит упавшую базу,
+# а сбрасывает все разговоры пода; при недоступной базе поды лишь уходят из ротации.
+# ВАЖНО: /api/health/live есть только в образах api, собранных после PROTEUS-254. Поправить тег
+# образа ниже на такой образ ДО применения манифеста: на старом образе (0.9.2) это 404, и
+# startupProbe не даст новым подам стать Ready (выкат встанет, старые поды продолжат работать).
 #
 # readOnlyRootFilesystem + emptyDir /tmp. Если под упадёт с EROFS — это
 # приложение пишет в файловую систему: найти путь в логах и добавить emptyDir.
@@ -39,7 +53,7 @@ metadata:
     app: app-api
     app.kubernetes.io/part-of: ryadom
 spec:
-  replicas: 1
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -54,6 +68,16 @@ spec:
         app: app-api
     spec:
       terminationGracePeriodSeconds: 60
+      # Мягко: по одной реплике на ноду, но не в ущерб планированию на маленьком кластере.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: app-api
       imagePullSecrets:
         - name: registry-pull
       securityContext:
@@ -161,7 +185,7 @@ spec:
                   optional: true
           startupProbe:
             httpGet:
-              path: /api/health
+              path: /api/health/live
               port: 3002
             periodSeconds: 3
             failureThreshold: 20
@@ -175,11 +199,11 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /api/health/live
               port: 3002
             periodSeconds: 20
             timeoutSeconds: 3
-            failureThreshold: 6
+            failureThreshold: 3
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -189,7 +213,7 @@ spec:
               memory: 192Mi
             limits:
               cpu: 1000m
-              memory: 384Mi
+              memory: 512Mi
       volumes:
         - name: tmp
           emptyDir: {}
