@@ -1,12 +1,24 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { createAnalytics, hasInvalidProjectToken, projectToken, toAnalyticsConfig } from '../src/lib/analytics'
+import {
+  createAnalytics,
+  hasInvalidProjectToken,
+  projectToken,
+  toAnalyticsConfig,
+} from '../src/lib/analytics'
 import { parseEnv } from '../src/lib/env'
 import { createLogger } from '../src/lib/logger'
 
 describe('настройка PUBLIC_APP_URL', () => {
   it('PUBLIC_APP_URL — только origin: путь в нём удвоился бы в адресах OTA-бандлов', () => {
-    expect(parseEnv({ ...process.env, PUBLIC_APP_URL: 'https://example.com/' }).PUBLIC_APP_URL).toBe('https://example.com')
-    expect(() => parseEnv({ ...process.env, PUBLIC_APP_URL: 'https://example.com/app' })).toThrow(/PUBLIC_APP_URL/)
+    expect(parseEnv({ ...process.env, PUBLIC_APP_URL: 'https://example.com/' }).PUBLIC_APP_URL).toBe(
+      'https://example.com',
+    )
+    expect(() => parseEnv({ ...process.env, PUBLIC_APP_URL: 'https://example.com/app' })).toThrow(
+      /PUBLIC_APP_URL/,
+    )
   })
 })
 
@@ -52,5 +64,50 @@ describe('настройка PostHog', () => {
 
   it('id проекта — число', () => {
     expect(() => parseEnv({ ...process.env, POSTHOG_PROJECT_ID: 'ryadom' })).toThrow(/POSTHOG_PROJECT_ID/)
+  })
+})
+
+describe('настройка очереди задач', () => {
+  // `openspec/changes/add-job-queue`, design D9.
+  it('без значений: воркеры включены, пул 4 соединения, остановка ждёт 10 секунд', () => {
+    const env = parseEnv({
+      ...process.env,
+      JOBS_WORKERS_ENABLED: '',
+      JOBS_POOL_MAX: '',
+      JOBS_STOP_TIMEOUT_MS: '',
+    })
+    expect(env.JOBS_WORKERS_ENABLED).toBe(true)
+    expect(env.JOBS_POOL_MAX).toBe(4)
+    expect(env.JOBS_STOP_TIMEOUT_MS).toBe(10_000)
+  })
+
+  it('значения из окружения принимаются, воркеры выключаются словом false', () => {
+    const env = parseEnv({
+      ...process.env,
+      JOBS_WORKERS_ENABLED: 'false',
+      JOBS_POOL_MAX: '6',
+      JOBS_STOP_TIMEOUT_MS: '20000',
+    })
+    expect(env.JOBS_WORKERS_ENABLED).toBe(false)
+    expect(env.JOBS_POOL_MAX).toBe(6)
+    expect(env.JOBS_STOP_TIMEOUT_MS).toBe(20_000)
+  })
+
+  it('нечисловой пул и срок — ошибка запуска со списком всех проблем', () => {
+    expect(() => parseEnv({ ...process.env, JOBS_POOL_MAX: 'many', JOBS_STOP_TIMEOUT_MS: 'soon' })).toThrow(
+      /JOBS_POOL_MAX[\s\S]*JOBS_STOP_TIMEOUT_MS/,
+    )
+    expect(() => parseEnv({ ...process.env, JOBS_POOL_MAX: '0' })).toThrow(/JOBS_POOL_MAX/)
+    expect(() => parseEnv({ ...process.env, JOBS_WORKERS_ENABLED: 'maybe' })).toThrow(/JOBS_WORKERS_ENABLED/)
+  })
+
+  it('ключи очереди есть в ConfigMap и в .env.example', () => {
+    const root = fileURLToPath(new URL('../../../../', import.meta.url))
+    const manifest = readFileSync(join(root, 'k8s/app/00-app-config.yaml'), 'utf8')
+    const example = readFileSync(fileURLToPath(new URL('../.env.example', import.meta.url)), 'utf8')
+    for (const key of ['JOBS_WORKERS_ENABLED', 'JOBS_POOL_MAX', 'JOBS_STOP_TIMEOUT_MS']) {
+      expect(manifest, key).toMatch(new RegExp(`^\\s+${key}: "`, 'm'))
+      expect(example, key).toMatch(new RegExp(`^${key}=`, 'm'))
+    }
   })
 })

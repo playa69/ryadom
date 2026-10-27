@@ -579,7 +579,7 @@ importers:
         version: 1.4.0
       drizzle-orm:
         specifier: ^0.45.3
-        version: 0.45.3(@opentelemetry/api@1.9.1)(postgres@3.4.9)
+        version: 0.45.3(@opentelemetry/api@1.9.1)(pg@8.23.1)(postgres@3.4.9)
       mediatr-ts:
         specifier: ^2.2.0
         version: 2.2.0
@@ -611,6 +611,9 @@ importers:
       '@types/react-dom':
         specifier: ^19
         version: 19.3.0(@types/react@19.3.0)
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
       typescript:
         specifier: ~6.0.3
         version: 6.0.3
@@ -9634,11 +9637,6 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
       pg: 8.23.1
-      postgres: 3.4.9
-
-  drizzle-orm@0.45.3(@opentelemetry/api@1.9.1)(postgres@3.4.9):
-    optionalDependencies:
-      '@opentelemetry/api': 1.9.1
       postgres: 3.4.9
 
   dunder-proto@1.0.1:
