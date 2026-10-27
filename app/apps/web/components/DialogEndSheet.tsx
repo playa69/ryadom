@@ -1,34 +1,23 @@
 'use client'
 
+import { Loader2, Sparkles } from 'lucide-react'
 import { useId, useState } from 'react'
-import type { DialogRecapApi } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
-import {
-  EMPTY_RECAP_FIELDS,
-  RECAP_AUTO_LABEL,
-  RECAP_CHECK_TEXT,
-  fieldsFromRecap,
-  recapFieldsTouched,
-  recapFromFields,
-} from '@ryadom/client-core/recaps'
+import { RECAP_AUTO_LABEL } from '@ryadom/client-core/recaps'
 import { NativeCheckbox } from '@ryadom/ui/components/native-checkbox'
 import { Button } from '@ryadom/ui/components/button'
 import { FieldError } from '@ryadom/ui/components/field'
 import { Textarea } from '@ryadom/ui/components/textarea'
 import { cn } from '@ryadom/ui/lib/utils'
 import Modal from './Modal'
-import RecapEditor from './RecapEditor'
 import { BUSY } from './busy'
 import { BUTTON } from './controls'
 
-/** The recap the person wrote or pre-filled in the sheet; null leaves it to the agent (it writes one in the background). */
-export interface EndRecap {
-  recap: DialogRecapApi
-  source: 'manual' | 'draft'
-}
+/** Where the recap came from: written by the person, or pre-filled with «Предзаполнить» (and maybe edited). */
+export type EndRecapSource = 'manual' | 'draft'
 
 /**
- * Closing a conversation: the takeaway, the tension afterwards and the recap (add-mood-diary, D13).
+ * Closing a conversation: the takeaway, which is also the recap of the conversation (add-mood-diary, D13), and the tension afterwards.
  *
  * Tension is not a survey for the sake of statistics: the product's headline metric is the
  * difference between before and after. So the scale is there, but it can be skipped.
@@ -36,12 +25,12 @@ export interface EndRecap {
 export interface DialogEndSheetProps {
   open: boolean
   onClose(): void
-  onSubmit(takeaway: string | null, tensionAfter: number | null, recap: EndRecap | null): void
+  onSubmit(takeaway: string | null, tensionAfter: number | null, recapSource: EndRecapSource): void
   /** «Подводить итог автоматически»: null until the setting is read; absent hides the row (an agent without recaps). */
   recapEnabled?: boolean | null
   onRecapEnabledChange?(next: boolean): void
   /** «Предзаполнить»: the draft, or the reason it could not be written. */
-  onDraft?(): Promise<{ recap: DialogRecapApi } | { error: string }>
+  onDraft?(): Promise<{ recap: string } | { error: string }>
   /** The end request is in flight: one press is enough, and the sheet must not vanish under it. */
   busy: boolean
   error: string
@@ -69,8 +58,6 @@ export default function DialogEndSheet({
   const [takeaway, setTakeaway] = useState('')
   const [tension, setTension] = useState<number | null>(null)
   const scaleLabelId = useId()
-  const [writing, setWriting] = useState(false)
-  const [fields, setFields] = useState(EMPTY_RECAP_FIELDS)
   const [drafted, setDrafted] = useState(false)
   const [drafting, setDrafting] = useState(false)
   const [recapError, setRecapError] = useState('')
@@ -82,18 +69,13 @@ export default function DialogEndSheet({
     const result = await onDraft()
     setDrafting(false)
     if ('error' in result) return setRecapError(result.error)
-    setFields(fieldsFromRecap(result.recap))
+    setTakeaway(result.recap.slice(0, InputLimit.TakeawayMax))
     setDrafted(true)
   }
 
   function submit() {
     if (busy) return
-    // An untouched form leaves the recap to the agent; a touched one must be complete.
-    if (!writing || !recapFieldsTouched(fields)) return onSubmit(takeaway.trim() || null, tension, null)
-    const checked = recapFromFields(fields)
-    if (!checked.ok) return setRecapError(RECAP_CHECK_TEXT[checked.reason])
-    setRecapError('')
-    onSubmit(takeaway.trim() || null, tension, { recap: checked.recap, source: drafted ? 'draft' : 'manual' })
+    onSubmit(takeaway.trim() || null, tension, drafted ? 'draft' : 'manual')
   }
 
   return (
@@ -105,7 +87,7 @@ export default function DialogEndSheet({
       className="tab:w-[min(92vw,600px)]"
     >
       <div className="flex flex-col gap-3 [@media(max-height:520px)]:gap-2">
-        <p className="text-base leading-[1.55] text-dim">Одна фраза, если захочется. Её увидишь только ты.</p>
+        <p className="text-base leading-[1.55] text-dim">Это и есть итог разговора, его увидишь только ты. Оставь пустым: подведу итог сам.</p>
         <Textarea
           // A box of its own height, as before: it stays resizable and does not grow with the text.
           className="field-sizing-fixed resize-y [@media(max-height:520px)]:min-h-14"
@@ -116,6 +98,26 @@ export default function DialogEndSheet({
           value={takeaway}
           onChange={(event) => setTakeaway(event.target.value)}
         />
+        {onDraft && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(BUTTON, 'h-auto min-h-11 self-start px-4')}
+            aria-busy={drafting}
+            disabled={drafting || busy}
+            onClick={() => void draft()}
+            data-testid="recap-draft"
+          >
+            {drafting ? <Loader2 aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Sparkles aria-hidden="true" />}
+            Предзаполнить
+          </Button>
+        )}
+        {recapError && (
+          <FieldError className="leading-[1.4]" data-testid="recap-error">
+            {recapError}
+          </FieldError>
+        )}
 
         <p id={scaleLabelId} className="text-sm leading-snug text-faint">
           Насколько тяжело сейчас? 1 — легко, 10 — очень тяжело.
@@ -161,23 +163,6 @@ export default function DialogEndSheet({
             <span className="text-base leading-snug text-foreground">{RECAP_AUTO_LABEL}</span>
           </label>
         )}
-        {onDraft && (
-          <div className="flex flex-col gap-3">
-            <button
-              type="button"
-              className="min-h-11 self-start rounded-md px-1 text-[0.9375rem] text-dim underline underline-offset-4 hover:text-foreground focus-visible:text-foreground"
-              aria-expanded={writing}
-              onClick={() => setWriting((value) => !value)}
-              data-testid="recap-toggle"
-            >
-              {writing ? 'Не писать итог самому' : 'Написать итог самому'}
-            </button>
-            {writing && (
-              <RecapEditor fields={fields} onChange={setFields} onDraft={() => void draft()} drafting={drafting} error={recapError} compact />
-            )}
-          </div>
-        )}
-
         {error && (
           <FieldError className="text-center leading-[1.4]" data-testid="form-error">
             {error}

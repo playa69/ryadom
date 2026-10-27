@@ -1,79 +1,31 @@
-import {
-  DialogRecapApiErrorCode,
-  RECAP_ABOUT_MAX,
-  RECAP_AGREEMENT_MAX,
-  RECAP_AGREEMENTS_MAX,
-  RECAP_MAIN_MAX,
-  type DialogRecapApi,
-} from '@ryadom/contracts/api/dialogs'
+import { DialogRecapApiErrorCode, RECAP_MAX } from '@ryadom/contracts/api/dialogs'
 
 /**
- * The recap of a conversation as the screens edit it (add-mood-diary, D13): three texts, the last one typed
- * one item per line. The same on the web and in the app, so the checks and the wording live here once.
+ * The recap of a conversation as the screens edit it (add-mood-diary, D13): one free-form text. At the end of a
+ * conversation it is the «Что забираешь с собой» field itself. The same on the web and in the app, so the checks and the
+ * wording live here once.
  */
 
-export const RECAP_LABELS = {
-  about: 'О чём говорили',
-  main: 'Главное',
-  agreements: 'Договорились',
-} as const
-
+export const RECAP_TITLE = 'Итог разговора'
 export const RECAP_AUTO_LABEL = 'Подводить итог автоматически'
 export const RECAP_PENDING_TEXT = 'Итог появится через минуту'
-export const RECAP_AGREEMENTS_HINT = `По одному пункту в строке, не больше ${RECAP_AGREEMENTS_MAX}`
-export const RECAP_FIELD_LIMITS = {
-  about: RECAP_ABOUT_MAX,
-  main: RECAP_MAIN_MAX,
-  agreement: RECAP_AGREEMENT_MAX,
-  agreements: RECAP_AGREEMENTS_MAX,
-} as const
+export { RECAP_MAX }
 
-export interface RecapFields {
-  about: string
-  main: string
-  /** One agreement per line. */
-  agreements: string
+export type RecapTextCheck =
+  | { ok: true; recap: string }
+  /** `empty`: nothing typed; `too-long`: over `RECAP_MAX`. */
+  | { ok: false; reason: 'empty' | 'too-long' }
+
+export function checkRecapText(text: string): RecapTextCheck {
+  const recap = text.trim()
+  if (recap === '') return { ok: false, reason: 'empty' }
+  if (recap.length > RECAP_MAX) return { ok: false, reason: 'too-long' }
+  return { ok: true, recap }
 }
 
-export const EMPTY_RECAP_FIELDS: RecapFields = { about: '', main: '', agreements: '' }
-
-export function fieldsFromRecap(recap: DialogRecapApi): RecapFields {
-  return { about: recap.about, main: recap.main, agreements: recap.agreements.join('\n') }
-}
-
-/** Whether the person typed anything at all: an untouched form means "write it for me". */
-export function recapFieldsTouched(fields: RecapFields): boolean {
-  return fields.about.trim() !== '' || fields.main.trim() !== '' || fields.agreements.trim() !== ''
-}
-
-export type RecapFieldsCheck =
-  | { ok: true; recap: DialogRecapApi }
-  /** `incomplete`: "what we talked about" or "the main thing" is empty; `too-many`/`too-long`: over the limits. */
-  | { ok: false; reason: 'incomplete' | 'too-many' | 'too-long' }
-
-export function recapFromFields(fields: RecapFields): RecapFieldsCheck {
-  const about = fields.about.trim()
-  const main = fields.main.trim()
-  const agreements = fields.agreements
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '')
-  if (about === '' || main === '') return { ok: false, reason: 'incomplete' }
-  if (agreements.length > RECAP_AGREEMENTS_MAX) return { ok: false, reason: 'too-many' }
-  if (
-    about.length > RECAP_ABOUT_MAX ||
-    main.length > RECAP_MAIN_MAX ||
-    agreements.some((item) => item.length > RECAP_AGREEMENT_MAX)
-  ) {
-    return { ok: false, reason: 'too-long' }
-  }
-  return { ok: true, recap: { about, main, agreements } }
-}
-
-export const RECAP_CHECK_TEXT: Record<'incomplete' | 'too-many' | 'too-long', string> = {
-  incomplete: 'Заполни «О чём говорили» и «Главное» или оставь итог пустым: тогда я подведу его сам',
-  'too-many': `Договорённостей может быть не больше ${RECAP_AGREEMENTS_MAX}`,
-  'too-long': 'Один из пунктов слишком длинный: сократи его',
+export const RECAP_CHECK_TEXT: Record<'empty' | 'too-long', string> = {
+  empty: 'Напиши итог',
+  'too-long': `Итог слишком длинный: не больше ${RECAP_MAX} знаков`,
 }
 
 /** What the person is told when "Pre-fill" or "Save" is refused. */

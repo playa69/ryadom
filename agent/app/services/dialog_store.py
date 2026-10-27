@@ -390,12 +390,12 @@ class DialogStore:
         dialog: Dialog,
         takeaway: str | None,
         tension_after: int | None,
-        recap: dict[str, Any] | None = None,
         recap_source: Literal["manual", "draft"] = "manual",
     ) -> dict[str, Any]:
         """Завершить диалог. Повторный вызов отдаёт ту же сводку (с актуальным итогом).
 
-        `recap` — итог, написанный человеком (в листе завершения): сохраняется сразу и автоматическим не заменяется.
+        Поле «Что забираешь с собой» (`takeaway`) и есть итог: если человек его заполнил, оно сохраняется сразу как итог
+        и автоматическим не заменяется (`recap_source` — `draft`, если поле предзаполнил черновик).
         Без него и при включённой настройке итог подводится в фоне (`recapStatus: pending`), если разговор для этого годится.
         """
         if dialog.summary is not None:
@@ -419,7 +419,7 @@ class DialogStore:
             # Можно ли у этого разговора завести итог (мало сказано, кризис, «Без памяти» — нельзя): журнал предлагает «Написать итог» только если можно.
             "recapAvailable": recaps.eligible(dialog),
         }
-        given = recaps.clean_recap(recap) if recap is not None else None
+        given = recaps.clean_recap(takeaway)
         if given is not None and recaps.eligible(dialog):
             self._store_recap(dialog, given, recap_source)
         elif recaps.eligible(dialog) and self.recap_enabled(dialog.user_id):
@@ -436,7 +436,7 @@ class DialogStore:
 
     # ─── итоги разговоров (add-mood-diary, D13) ───────────────────────────────
 
-    def _store_recap(self, dialog: Dialog, recap: dict[str, Any], source: str) -> None:
+    def _store_recap(self, dialog: Dialog, recap: str, source: str) -> None:
         summary = dialog.summary
         if summary is None:
             return
@@ -464,7 +464,7 @@ class DialogStore:
             return
         self._store_recap(dialog, recap, "auto")
 
-    def set_recap(self, dialog: Dialog, recap: dict[str, Any], source: Literal["manual", "draft"]) -> dict[str, Any] | None:
+    def set_recap(self, dialog: Dialog, recap: str, source: Literal["manual", "draft"]) -> dict[str, Any] | None:
         """Сохранить итог завершённого разговора, написанный человеком (журнал: «Написать итог»). None — итога у разговора быть не может."""
         if dialog.summary is None or not recaps.eligible(dialog):
             return None
@@ -474,7 +474,7 @@ class DialogStore:
         self._store_recap(dialog, cleaned, source)
         return dialog.summary
 
-    async def draft_recap(self, dialog: Dialog) -> dict[str, Any] | None:
+    async def draft_recap(self, dialog: Dialog) -> str | None:
         """Черновик итога для «Предзаполнить»: ничего не сохраняется. None — модель не ответила."""
         return await recaps.make_recap(self.recap_chat, dialog, self.recap_timeout_seconds, self.recap_template)
 

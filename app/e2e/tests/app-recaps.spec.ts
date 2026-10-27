@@ -10,6 +10,8 @@ import { trackSession } from '../support/session'
  * Итог разговора и итоги недели в приложении (PWA, `add-mood-diary`, D13): три способа завести итог в листе завершения,
  * разговор без итога, итог в записи журнала, итоги недели читают итоги и пересобираются, «Удалить разговор».
  */
+const MANUAL_RECAP = 'Тяжёлая неделя на работе, поговорю с руководителем до пятницы.'
+const EDITED_RECAP = 'Ты решил не откладывать разговор с руководителем.'
 const SAID = 'Мне сегодня очень тяжело из-за работы. Давай так: поговорю с руководителем до пятницы'
 
 async function readDiary(request: APIRequestContext, token: string) {
@@ -68,22 +70,17 @@ test('итог разговора в приложении: три способа
   await talk(page, SAID)
   await openEnd(page)
   await expect(sheet(page).getByTestId('recap-auto').locator('input')).toBeChecked()
-  await expect(sheet(page).getByTestId('recap-editor')).toHaveCount(0)
-  await sheet(page).getByTestId('recap-toggle').click()
-  await sheet(page).getByTestId('recap-about').fill('Ты рассказал про тяжёлую неделю на работе.')
-  await sheet(page).getByTestId('recap-main').fill('Тебе важно поговорить с руководителем.')
-  await sheet(page).getByTestId('recap-agreements').fill('Поговорить с руководителем до пятницы')
+  await sheet(page).getByTestId('takeaway-input').fill(MANUAL_RECAP)
   await shot(page, 'recap-sheet-manual')
   expect(await submitAndLeave(page)).toContain('Итог разговора сохранён в журнале')
 
   // ── «Предзаполнить» ──────────────────────────────────────────────────────
   await talk(page, SAID)
   await openEnd(page)
-  await sheet(page).getByTestId('recap-toggle').click()
   await sheet(page).getByTestId('recap-draft').click()
-  await expect(sheet(page).getByTestId('recap-about')).not.toHaveValue('', { timeout: 20_000 })
+  await expect(sheet(page).getByTestId('takeaway-input')).not.toHaveValue('', { timeout: 20_000 })
   expect(await recapCount(request, token())).toBe(1) // the draft saved nothing
-  await sheet(page).getByTestId('recap-main').fill('Ты решил не откладывать разговор.')
+  await sheet(page).getByTestId('takeaway-input').fill(EDITED_RECAP)
   await shot(page, 'recap-sheet-draft')
   expect(await submitAndLeave(page)).toContain('Итог разговора сохранён в журнале')
 
@@ -106,8 +103,7 @@ test('итог разговора в приложении: три способа
   await shot(page, 'recap-journal')
   await rows.nth(3).click()
   const entry = page.locator('.page-current')
-  await expect(entry.getByTestId('journal-recap-about')).toHaveText('Ты рассказал про тяжёлую неделю на работе.', { timeout: 20_000 })
-  await expect(entry.getByTestId('journal-recap-agreements')).toContainText('Поговорить с руководителем до пятницы')
+  await expect(entry.getByTestId('journal-recap-text')).toHaveText(MANUAL_RECAP, { timeout: 20_000 })
   await shot(page, 'recap-entry-manual')
   // Back from the entry to the list (on a wide screen the entry is a pane beside it and there is no way back to press).
   const back = page.locator('.page-current .navbar a.back')
@@ -128,11 +124,11 @@ test('итог разговора в приложении: три способа
   const diary = page.locator('.page-current[data-name="diary"]')
   await expect
     .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .toContain('Разговоров с итогом на неделе: 3, договорённостей в них: 3')
+    .toContain(MANUAL_RECAP)
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await page.locator('.page-current').getByTestId('diary-segment-diary').click()
-  await expect(diary.getByTestId('diary-week-text')).toContainText('Разговоров с итогом на неделе: 3')
+  await expect(diary.getByTestId('diary-week-text')).toContainText(EDITED_RECAP)
   await expect(diary).not.toContainText(/памят/i)
   await diary.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
   await shot(page, 'recap-week-3')
@@ -145,12 +141,12 @@ test('итог разговора в приложении: три способа
   await ageWeekSummary(session.userId())
   await expect
     .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
-    .toContain('Разговоров с итогом на неделе: 4, договорённостей в них: 4')
+    .not.toContain(MANUAL_RECAP) // the mock weaves the newest three recaps: the new one pushes the first out
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await page.locator('.page-current').getByTestId('diary-segment-diary').click()
   await diary.getByTestId('diary-week-card').scrollIntoViewIfNeeded()
-  await expect(diary.getByTestId('diary-week-text')).toContainText('Разговоров с итогом на неделе: 4')
+  await expect(diary.getByTestId('diary-week-text')).not.toContainText(MANUAL_RECAP)
   await shot(page, 'recap-week-4')
 
   // ── «Удалить разговор» ───────────────────────────────────────────────────
@@ -168,7 +164,7 @@ test('итог разговора в приложении: три способа
   await expect.poll(() => recapCount(request, token())).toBe(3)
   await expect
     .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [3_000] })
-    .toContain('Разговоров с итогом на неделе: 3')
+    .toContain(MANUAL_RECAP)
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await page.locator('.page-current').getByTestId('diary-segment-diary').click()
@@ -191,7 +187,7 @@ test('журнал в приложении: пометка о не сохран�
         themes: ['выговориться'],
         tensionBefore: null,
         tensionAfter: 4,
-        recap: { about: 'Ты говорил о работе.', main: 'Стало легче.', agreements: ['Отдохнуть вечером'] },
+        recap: 'Ты говорил о работе, и после этого стало легче.',
         recapStatus: 'ready',
         recapSource: 'auto',
         recapAvailable: true,

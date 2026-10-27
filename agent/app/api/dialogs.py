@@ -23,27 +23,19 @@ def _user(user_id: str) -> str:
     return canonical
 
 
-class RecapBody(BaseModel):
-    """Итог разговора: «о чём говорили», «главное», «договорились» (0–3 пункта), от второго лица."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    about: str = Field(max_length=recaps.FIELD_MAX)
-    main: str = Field(max_length=recaps.FIELD_MAX)
-    agreements: list[str] = Field(default_factory=list, max_length=recaps.MAX_AGREEMENTS)
-
-
 class EndBody(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     takeaway: str | None = Field(default=None, max_length=1000)
     tension_after: int | None = Field(default=None, ge=1, le=10, alias="tensionAfter")
-    # Итог, написанный человеком (вручную или из черновика «Предзаполнить»): сохраняется сразу и не заменяется автоматическим.
-    recap: RecapBody | None = None
+    # `takeaway` и есть итог; `draft` — поле предзаполнил черновик «Предзаполнить» (и, возможно, поправил человек).
     recap_source: Literal["manual", "draft"] = Field(default="manual", alias="recapSource")
 
 
-class RecapPutBody(RecapBody):
+class RecapPutBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    recap: str = Field(max_length=recaps.RECAP_MAX)
     source: Literal["manual", "draft"] = "manual"
 
 
@@ -131,8 +123,7 @@ async def end_dialog(user_id: str, dialog_id: str, store: Store, body: EndBody |
     if dialog is None:
         raise dialog_not_found()
     body = body or EndBody()
-    given = body.recap.model_dump() if body.recap is not None else None
-    return {"summary": store.end(dialog, body.takeaway, body.tension_after, given, body.recap_source)}
+    return {"summary": store.end(dialog, body.takeaway, body.tension_after, body.recap_source)}
 
 
 def _recap_unavailable() -> AgentError:
@@ -168,7 +159,7 @@ async def put_recap(user_id: str, dialog_id: str, body: RecapPutBody, store: Sto
     dialog = _ended_dialog(store, user, dialog_id)
     if dialog.summary is None:
         raise AgentError(409, "DIALOG_NOT_ENDED", "Разговор ещё не завершён")
-    summary = store.set_recap(dialog, body.model_dump(include={"about", "main", "agreements"}), body.source)
+    summary = store.set_recap(dialog, body.recap, body.source)
     if summary is None:
         raise _recap_unavailable()
     return {"summary": summary}

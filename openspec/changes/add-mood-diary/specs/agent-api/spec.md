@@ -4,11 +4,11 @@
 
 ### Requirement: Завершение диалога
 
-Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/end` с телом `{ "takeaway"?: string, "tensionAfter"?: 1..10, "recap"?: { "about": string, "main": string, "agreements": string[] } }` и ответом `200 { "summary" }` либо `404`. Поле `recap` — итог, написанный человеком (способы «вручную» и «предзаполнить»).
+Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/end` с телом `{ "takeaway"?: string, "tensionAfter"?: 1..10, "recapSource"?: "manual" | "draft" }` и ответом `200 { "summary" }` либо `404`. `takeaway` — поле «Что забираешь с собой?» и одновременно итог, написанный человеком (способы «вручную» и «предзаполнить»); `recapSource: draft` говорит, что поле было предзаполнено черновиком.
 
-Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": { "about": string, "main": string, "agreements": string[] } | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null, "recapAvailable": boolean, "recapAt"?: string }`. `recapAvailable` равен `false`, когда итог для разговора невозможен (мало сказано, кризис, «Без памяти»); `recapAt` — когда итог сохранён.
+Сводка: `{ "title": string, "themes": string[], "tensionBefore"?: number | null, "tensionAfter"?: number | null, "recap": string | null, "recapStatus": "pending" | "ready" | "none", "recapSource": "manual" | "draft" | "auto" | null, "recapAvailable": boolean, "recapAt"?: string }`. `recapAvailable` равен `false`, когда итог для разговора невозможен (мало сказано, кризис, «Без памяти»); `recapAt` — когда итог сохранён.
 
-Автоматический итог (`recapSource: auto`) считается в фоне после завершения любым путём и готов не позже чем через 60 секунд, если включена настройка `recapEnabled` («Подводить итог автоматически») или у человека её нет в базе (по умолчанию включена). До этого `recapStatus` равен `pending`, а `recap` — `null`. Итог, пришедший в `recap` тела запроса, сохраняется сразу (`ready`) и не заменяется автоматическим. Для не сохраняемого разговора, разговора с кризисом и разговора, где человек сказал меньше 40 знаков, `recapStatus` равен `none`.
+Автоматический итог (`recapSource: auto`) считается в фоне после завершения любым путём и готов не позже чем через 60 секунд, если включена настройка `recapEnabled` («Подводить итог автоматически») или у человека её нет в базе (по умолчанию включена). До этого `recapStatus` равен `pending`, а `recap` — `null`. Непустой `takeaway` годного для итога разговора сохраняется как итог сразу (`ready`) и сразу (`ready`) и не заменяется автоматическим. Для не сохраняемого разговора, разговора с кризисом и разговора, где человек сказал меньше 40 знаков, `recapStatus` равен `none`.
 
 Эндпоинт — запасной путь на случай, когда сокет уже закрыт. Повторный вызов для завершённого диалога SHOULD возвращать ту же сводку с актуальным итогом.
 
@@ -28,7 +28,7 @@
 
 ### Requirement: Черновик итога
 
-Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/recap/draft` с ответом `200 { "recap": { "about", "main", "agreements" } }`. Черновик MUST NOT сохраняться. Для чужого или несуществующего диалога — `404`, для не сохраняемого, кризисного и слишком короткого — `409 RECAP_NOT_AVAILABLE`.
+Агент SHALL предоставлять `POST /v1/users/{userId}/dialogs/{dialogId}/recap/draft` с ответом `200 { "recap": string }`. Черновик MUST NOT сохраняться. Для чужого или несуществующего диалога — `404`, для не сохраняемого, кризисного и слишком короткого — `409 RECAP_NOT_AVAILABLE`.
 
 #### Scenario: Черновик не сохраняется
 
@@ -37,7 +37,7 @@
 
 ### Requirement: Итог завершённого разговора из журнала
 
-Агент SHALL предоставлять `PUT /v1/users/{userId}/dialogs/{dialogId}/recap` с телом `{ "about", "main", "agreements", "source"?: "manual" | "draft" }` и ответом `200 { "summary" }`: итог завершённого разговора, написанный человеком в журнале (способы «вручную» и «предзаполнить» позже). Для чужого и несуществующего разговора — `404`, для незавершённого, не сохраняемого, кризисного и слишком короткого — `409 RECAP_NOT_AVAILABLE`. Ручной итог заменяет автоматический.
+Агент SHALL предоставлять `PUT /v1/users/{userId}/dialogs/{dialogId}/recap` с телом `{ "recap": string, "source"?: "manual" | "draft" }` и ответом `200 { "summary" }`: итог завершённого разговора, написанный человеком в журнале (способы «вручную» и «предзаполнить» позже). Для чужого и несуществующего разговора — `404`, для незавершённого, не сохраняемого, кризисного и слишком короткого — `409 RECAP_NOT_AVAILABLE`. Ручной итог заменяет автоматический.
 
 #### Scenario: Написать итог позже
 

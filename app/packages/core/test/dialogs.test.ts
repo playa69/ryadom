@@ -416,7 +416,7 @@ describe('завершение разговора', () => {
   })
 })
 
-const RECAP = { about: 'Ты рассказал про работу.', main: 'Тебе важно, чтобы тебя услышали.', agreements: ['Поговорить с руководителем'] }
+const RECAP = 'Ты рассказал про работу и решил поговорить с руководителем до пятницы.'
 
 describe('итог разговора', () => {
   it('написанный человеком итог уходит агенту вместе с завершением и приходит в сводке', async () => {
@@ -435,13 +435,13 @@ describe('итог разговора', () => {
         }),
     })
     const result = await dialogsProcess.execute(
-      new EndDialogOperation({ userId: user.id, dialogId: 'd-1', takeaway: null, tensionAfter: 4, recap: RECAP, recapSource: 'draft' }),
+      new EndDialogOperation({ userId: user.id, dialogId: 'd-1', takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' }),
     )
     expect(result).toMatchObject({
       success: true,
       summary: { recap: RECAP, recapStatus: 'ready', recapSource: 'draft', recapAt: new Date('2026-10-24T09:00:00.000Z') },
     })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ tensionAfter: 4, recap: RECAP, recapSource: 'draft' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' })
   })
 
   it('агент без итогов (прежний) не говорит ни pending, ни ready: статус none', async () => {
@@ -501,7 +501,7 @@ describe('итог разговора', () => {
     expect(
       await dialogsProcess.execute(new PutRecapOperation({ userId: user.id, dialogId: 'd-1', recap: RECAP, source: 'manual' })),
     ).toMatchObject({ success: true, summary: { recap: RECAP, recapSource: 'manual' } })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ ...RECAP, source: 'manual' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ recap: RECAP, source: 'manual' })
     mockAgent({ 'PUT http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
     expect(
       await dialogsProcess.execute(new PutRecapOperation({ userId: user.id, dialogId: 'd-1', recap: RECAP, source: 'manual' })),

@@ -566,12 +566,12 @@ describe('итоги недели читают итоги разговоров (
   const hours = (n: number) => minutes(n * 60)
   const weekRows = (userId: string) => getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, userId))
   /** What the agent lists for a conversation that began at `startedAt` and got its recap at `recapAt`. */
-  const recapItem = (dialogId: string, startedAt: string, recapAt: string, agreements: string[] = []) => ({
+  const recapItem = (dialogId: string, startedAt: string, recapAt: string, recap = 'Ты говорил о работе, и к концу стало легче.') => ({
     dialogId,
     startedAt,
     endedAt: startedAt,
     title: 'Разговор',
-    recap: { about: 'Ты говорил о работе.', main: 'Стало легче.', agreements },
+    recap,
     recapSource: 'auto',
     recapAt,
   })
@@ -583,7 +583,7 @@ describe('итоги недели читают итоги разговоров (
     const user = await registerConfirmedUser()
     await threeMarks(user.id)
     agentRecaps = [
-      recapItem('d-week', '2026-10-20T10:00:00Z', '2026-10-20T10:05:00Z', ['Отдохнуть вечером']),
+      recapItem('d-week', '2026-10-20T10:00:00Z', '2026-10-20T10:05:00Z', 'Ты решил отдохнуть вечером.'),
       // 18 Oct 22:30 UTC is Monday 19 Oct 01:30 in Moscow: this conversation belongs to the week of the 19th.
       recapItem('d-late-sunday', '2026-10-18T22:30:00Z', '2026-10-18T22:40:00Z'),
       recapItem('d-before', '2026-10-18T10:00:00Z', '2026-10-18T10:05:00Z'),
@@ -592,8 +592,8 @@ describe('итоги недели читают итоги разговоров (
     expect(await tick(NOW)).toMatchObject({ weekly: 1 })
     const sent = JSON.parse(calls[0]!.body as string)
     expect(sent.recaps).toEqual([
-      { date: '2026-10-20', about: 'Ты говорил о работе.', main: 'Стало легче.', agreements: ['Отдохнуть вечером'] },
-      { date: '2026-10-19', about: 'Ты говорил о работе.', main: 'Стало легче.', agreements: [] },
+      { date: '2026-10-20', text: 'Ты решил отдохнуть вечером.' },
+      { date: '2026-10-19', text: 'Ты говорил о работе, и к концу стало легче.' },
     ])
     expect((await weekRows(user.id))[0]?.stats).toMatchObject({ recapsCount: 2 })
   })

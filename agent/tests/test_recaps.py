@@ -16,7 +16,7 @@ from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 LONG = "Мне сегодня очень тревожно из-за работы, и я не знаю, как поговорить с руководителем."
 SHORT = "Привет"
-RECAP = {"about": "Ты рассказал про работу.", "main": "Тебе важно, чтобы тебя услышали.", "agreements": ["Поговорить с руководителем до пятницы"]}
+RECAP = "Ты рассказал про работу и решил поговорить с руководителем до пятницы."
 
 
 def url(user: str, tail: str = "") -> str:
@@ -80,14 +80,14 @@ class SlowChat:
 
 def test_manual_recap_is_saved_at_once_and_marked_manual(client, user_id):
     dialog_id = talk(client, user_id)
-    summary = end(client, user_id, dialog_id, recap=RECAP)
+    summary = end(client, user_id, dialog_id, takeaway=RECAP)
     assert summary["recapStatus"] == "ready" and summary["recapSource"] == "manual"
     assert summary["recap"] == RECAP
 
 
 def test_a_pre_filled_recap_is_marked_draft(client, user_id):
     dialog_id = talk(client, user_id)
-    summary = end(client, user_id, dialog_id, recap=RECAP, recapSource="draft")
+    summary = end(client, user_id, dialog_id, takeaway=RECAP, recapSource="draft")
     assert summary["recapSource"] == "draft"
 
 
@@ -96,15 +96,15 @@ def test_automatic_recap_is_pending_then_ready(client, user_id):
     summary = end(client, user_id, dialog_id, tensionAfter=4)
     assert summary["recapStatus"] in ("pending", "ready")
     ready = wait_status(client, user_id, dialog_id, "ready")
-    assert ready["recapSource"] == "auto" and ready["recap"]["about"]
+    assert ready["recapSource"] == "auto" and ready["recap"]
 
 
 def test_a_manual_recap_is_not_replaced_by_the_automatic_one(user_id):
-    with make_client(chat=SlowChat('{"about": "Авто.", "main": "Авто.", "agreements": []}', delay=0.4)) as client:
+    with make_client(chat=SlowChat("Авто итог.", delay=0.4)) as client:
         dialog_id = talk(client, user_id)
         assert end(client, user_id, dialog_id)["recapStatus"] == "pending"
         # пока модель думает, человек пишет итог сам в журнале
-        put = client.put(url(user_id, f"/dialogs/{dialog_id}/recap"), json={**RECAP, "source": "manual"}, headers=AUTH)
+        put = client.put(url(user_id, f"/dialogs/{dialog_id}/recap"), json={"recap": RECAP, "source": "manual"}, headers=AUTH)
         assert put.status_code == 200 and put.json()["summary"]["recapSource"] == "manual"
         time.sleep(0.8)
         final = summary_of(client, user_id, dialog_id)
@@ -112,20 +112,19 @@ def test_a_manual_recap_is_not_replaced_by_the_automatic_one(user_id):
 
 
 def test_the_model_recap_is_validated_and_a_failed_one_leaves_none(user_id):
-    bad = '{"about": "Тебе надо поговорить.", "main": "Главное.", "agreements": []}'
+    bad = "Тебе надо поговорить."
     with make_client(chat=SlowChat(bad)) as client:
         dialog_id = talk(client, user_id)
         end(client, user_id, dialog_id)
         assert wait_status(client, user_id, dialog_id, "none")["recap"] is None
 
 
-def test_the_model_recap_is_taken_from_the_json(user_id):
-    good = 'Вот итог: {"about": "Ты говорил о работе.", "main": "Стало легче.", "agreements": ["Отдохнуть вечером"]}'
-    with make_client(chat=SlowChat(good)) as client:
+def test_the_model_recap_is_the_free_text(user_id):
+    with make_client(chat=SlowChat("Ты говорил о работе, и стало легче.")) as client:
         dialog_id = talk(client, user_id)
         end(client, user_id, dialog_id)
         ready = wait_status(client, user_id, dialog_id, "ready")
-        assert ready["recap"]["agreements"] == ["Отдохнуть вечером"] and ready["recapSource"] == "auto"
+        assert ready["recap"] == "Ты говорил о работе, и стало легче." and ready["recapSource"] == "auto"
 
 
 # ─── когда итога нет ──────────────────────────────────────────────────────────
@@ -133,7 +132,7 @@ def test_the_model_recap_is_taken_from_the_json(user_id):
 
 def test_no_recap_for_a_short_conversation(client, user_id):
     dialog_id = talk(client, user_id, SHORT)
-    summary = end(client, user_id, dialog_id, recap=RECAP)
+    summary = end(client, user_id, dialog_id, takeaway=RECAP)
     assert summary["recap"] is None and summary["recapStatus"] == "none" and summary["recapSource"] is None
 
 
@@ -172,7 +171,7 @@ def test_with_the_setting_off_there_is_no_automatic_recap_but_a_manual_one_can_b
     client.put(url(user_id, "/dialog-settings"), json={"recapEnabled": False}, headers=AUTH)
     dialog_id = talk(client, user_id)
     assert end(client, user_id, dialog_id)["recapStatus"] == "none"
-    put = client.put(url(user_id, f"/dialogs/{dialog_id}/recap"), json=RECAP, headers=AUTH)
+    put = client.put(url(user_id, f"/dialogs/{dialog_id}/recap"), json={"recap": RECAP}, headers=AUTH)
     assert put.status_code == 200 and put.json()["summary"]["recapStatus"] == "ready"
 
 
@@ -199,7 +198,7 @@ def test_the_draft_is_not_saved(client, user_id):
     end(client, user_id, dialog_id)
     before = summary_of(client, user_id, dialog_id)
     draft = client.post(url(user_id, f"/dialogs/{dialog_id}/recap/draft"), headers=AUTH)
-    assert draft.status_code == 200 and {"about", "main", "agreements"} <= set(draft.json()["recap"])
+    assert draft.status_code == 200 and isinstance(draft.json()["recap"], str) and draft.json()["recap"]
     assert summary_of(client, user_id, dialog_id) == before and before["recapStatus"] == "none"
 
 
@@ -207,20 +206,20 @@ def test_a_stranger_or_missing_dialog_is_not_found(client, user_id):
     other = str(uuid.uuid4())
     dialog_id = talk(client, other)
     for method, tail in (("post", "/recap/draft"), ("put", "/recap"), ("delete", "")):
-        response = getattr(client, method)(url(user_id, f"/dialogs/{dialog_id}{tail}"), headers=AUTH, **({"json": RECAP} if method == "put" else {}))
+        response = getattr(client, method)(url(user_id, f"/dialogs/{dialog_id}{tail}"), headers=AUTH, **({"json": {"recap": RECAP}} if method == "put" else {}))
         assert response.status_code == 404
 
 
 def test_a_recap_can_not_be_written_for_an_open_dialog(client, user_id):
     dialog_id = talk(client, user_id)
-    assert client.put(url(user_id, f"/dialogs/{dialog_id}/recap"), json=RECAP, headers=AUTH).status_code == 409
+    assert client.put(url(user_id, f"/dialogs/{dialog_id}/recap"), json={"recap": RECAP}, headers=AUTH).status_code == 409
 
 
 def test_the_list_holds_only_conversations_with_a_recap_newest_first_in_pages(client, user_id):
     ids = []
     for _ in range(3):
         dialog_id = talk(client, user_id)
-        end(client, user_id, dialog_id, recap=RECAP)
+        end(client, user_id, dialog_id, takeaway=RECAP)
         ids.append(dialog_id)
     short = talk(client, user_id, SHORT)
     end(client, user_id, short)
@@ -233,7 +232,7 @@ def test_the_list_holds_only_conversations_with_a_recap_newest_first_in_pages(cl
 
 def test_the_next_dialog_does_not_carry_the_recap(client, user_id):
     dialog_id = talk(client, user_id)
-    end(client, user_id, dialog_id, recap=RECAP)
+    end(client, user_id, dialog_id, takeaway=RECAP)
     started = client.post(url(user_id, "/dialogs"), json={"new": True}, headers=AUTH).json()
     assert "previousRecap" not in started
     assert "recap" not in started
@@ -244,7 +243,7 @@ def test_the_next_dialog_does_not_carry_the_recap(client, user_id):
 
 def test_delete_removes_the_conversation_with_its_recap(client, user_id):
     dialog_id = talk(client, user_id)
-    end(client, user_id, dialog_id, recap=RECAP)
+    end(client, user_id, dialog_id, takeaway=RECAP)
     assert client.delete(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 204
     assert client.get(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH).status_code == 404
     assert client.get(url(user_id, "/recaps"), headers=AUTH).json()["items"] == []
@@ -254,7 +253,7 @@ def test_delete_removes_the_conversation_with_its_recap(client, user_id):
 def test_delete_leaves_the_notes_of_memory(client, user_id):
     client.put(url(user_id, "/memory/settings"), json={"enabled": True}, headers=AUTH)
     dialog_id = talk(client, user_id)
-    end(client, user_id, dialog_id, recap=RECAP)
+    end(client, user_id, dialog_id, takeaway=RECAP)
     facts_before = client.get(url(user_id, "/memory"), headers=AUTH).json()
     client.delete(url(user_id, f"/dialogs/{dialog_id}"), headers=AUTH)
     assert client.get(url(user_id, "/memory"), headers=AUTH).json() == facts_before
@@ -269,7 +268,7 @@ def test_the_recap_is_stored_with_the_dialog_on_disk(tmp_path: Path):
 
     with app() as first:
         dialog_id = talk(first, user)
-        end(first, user, dialog_id, recap=RECAP)
+        end(first, user, dialog_id, takeaway=RECAP)
         time.sleep(0.2)
     with app() as second:
         assert summary_of(second, user, dialog_id)["recap"] == RECAP
@@ -304,8 +303,8 @@ def test_retention_deletes_a_dialog_older_than_the_term_with_its_recap(client, u
     store = store_of(client)
     store.retention_days, store.retention_dry_run = 21, False
     old, fresh = talk(client, user_id), talk(client, user_id)
-    end(client, user_id, old, recap=RECAP)
-    end(client, user_id, fresh, recap=RECAP)
+    end(client, user_id, old, takeaway=RECAP)
+    end(client, user_id, fresh, takeaway=RECAP)
     age(client, user_id, old, 22)
     assert retention(client) == (1, 1)
     assert client.get(url(user_id, f"/dialogs/{old}"), headers=AUTH).status_code == 404
@@ -342,7 +341,7 @@ def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
 
     with app() as first:
         dialog_id = talk(first, user)
-        end(first, user, dialog_id, recap=RECAP)
+        end(first, user, dialog_id, takeaway=RECAP)
         age(first, user, dialog_id, 30)
         store_of(first)._touch(store_of(first).get(user, dialog_id))
         time.sleep(0.3)
@@ -356,29 +355,21 @@ def test_retention_reaches_dialogs_of_people_not_in_memory(tmp_path: Path):
 # ─── валидация итога ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        {"about": "", "main": "x", "agreements": []},
-        {"about": "x", "main": "y", "agreements": ["1", "2", "3", "4"]},
-        {"about": "x" * 601, "main": "y", "agreements": []},
-        {"about": 1, "main": "y"},
-    ],
-)
+@pytest.mark.parametrize("value", [None, "", "   ", "x" * 501, 1, {"about": "x"}])
 def test_clean_recap_rejects_what_does_not_fit(value):
     assert recaps.clean_recap(value) is None
 
 
-def test_clean_recap_normalises_spaces_and_drops_empty_items():
-    assert recaps.clean_recap({"about": " a  b ", "main": "c", "agreements": [" ", "d  e"]}) == {"about": "a b", "main": "c", "agreements": ["d e"]}
+def test_clean_recap_normalises_spaces():
+    assert recaps.clean_recap(" a  b ") == "a b"
+
 
 
 def test_the_week_digest_reads_the_recaps(client, user_id):
     marks = [{"date": f"2026-10-{19 + i:02d}", "mood": 3, "factor": None} for i in range(3)]
-    body = {"kind": "week", "periodStart": "2026-10-19", "marks": marks, "recaps": [{"date": "2026-10-20", **RECAP}]}
+    body = {"kind": "week", "periodStart": "2026-10-19", "marks": marks, "recaps": [{"date": "2026-10-20", "text": RECAP}]}
     text = client.post(url(user_id, "/digests"), json=body, headers=AUTH).json()["text"]
-    assert "итоги" in text and "договорённостей в них: 1" in text
-    # без итогов разговоров текст прежний
+    assert "руководителем до пятницы" in text  # содержание итога попадает в текст недели
+    assert "договорённостей" not in text and "разговоров с итогом" not in text  # без счётчиков
     plain = client.post(url(user_id, "/digests"), json={**body, "recaps": []}, headers=AUTH).json()["text"]
-    assert "договорённостей" not in plain
+    assert "руководителем" not in plain

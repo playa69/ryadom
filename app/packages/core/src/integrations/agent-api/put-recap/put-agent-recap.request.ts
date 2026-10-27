@@ -5,9 +5,7 @@ import type { PutAgentRecapResult } from './put-agent-recap.types'
 export interface PutAgentRecapRequestData {
   userId: string
   dialogId: string
-  about: string
-  main: string
-  agreements: string[]
+  recap: string
   source: 'manual' | 'draft'
 }
 
@@ -19,20 +17,14 @@ export class PutAgentRecapRequest extends RequestData<PutAgentRecapResult> {
   public readonly userId: string
   public readonly dialogId: string
   @hasPII(true)
-  public readonly about: string
-  @hasPII(true)
-  public readonly main: string
-  @hasPII(true)
-  public readonly agreements: string[]
+  public readonly recap: string
   public readonly source: 'manual' | 'draft'
 
   constructor(data: PutAgentRecapRequestData) {
     super()
     this.userId = data.userId
     this.dialogId = data.dialogId
-    this.about = data.about
-    this.main = data.main
-    this.agreements = data.agreements
+    this.recap = data.recap
     this.source = data.source
   }
 }

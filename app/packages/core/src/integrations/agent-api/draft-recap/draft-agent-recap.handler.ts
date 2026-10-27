@@ -1,5 +1,4 @@
 import { requestHandler, type RequestHandler } from 'mediatr-ts'
-import type { AgentRecapResponse } from '../shared/agent-api.types'
 import { callAgent, userDialogsPath } from '../shared/request'
 import { DraftAgentRecapRequest } from './draft-agent-recap.request'
 import { DraftAgentRecapRequestErrorCode, type DraftAgentRecapResult } from './draft-agent-recap.types'
@@ -7,7 +6,7 @@ import { DraftAgentRecapRequestErrorCode, type DraftAgentRecapResult } from './d
 @requestHandler(DraftAgentRecapRequest)
 export class DraftAgentRecapRequestHandler implements RequestHandler<DraftAgentRecapRequest, DraftAgentRecapResult> {
   async handle(request: DraftAgentRecapRequest): Promise<DraftAgentRecapResult> {
-    const { status, body, errorCode } = await callAgent<{ recap?: AgentRecapResponse }>(
+    const { status, body, errorCode } = await callAgent<{ recap?: string }>(
       `${userDialogsPath(request.userId)}/${encodeURIComponent(request.dialogId)}/recap/draft`,
       { method: 'POST', body: {}, handledErrorCodes: ['RECAP_UNAVAILABLE'] },
     )

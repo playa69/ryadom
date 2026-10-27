@@ -9,7 +9,6 @@ import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import {
   DialogApiErrorCode,
   DialogWsErrorCode,
-  type DialogRecapApi,
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText } from '@ryadom/client-core/errors'
@@ -55,7 +54,7 @@ import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import DialogAlert from './DialogAlert'
-import DialogEndSheet, { type EndRecap } from './DialogEndSheet'
+import DialogEndSheet, { type EndRecapSource } from './DialogEndSheet'
 import ShareDialogModal from './ShareDialogModal'
 import DialogFeed from './DialogFeed'
 import DialogVoice from './DialogVoice'
@@ -682,7 +681,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   }
 
   /** «Предзаполнить»: a draft from the model; the person edits it and saves. */
-  async function draftRecap(): Promise<{ recap: DialogRecapApi } | { error: string }> {
+  async function draftRecap(): Promise<{ recap: string } | { error: string }> {
     try {
       const result = await client.draftDialogRecap(dialogId)
       return result.ok ? { recap: result.data.recap } : { error: RECAP_ERROR_TEXT[result.code] ?? RECAP_ERROR_TEXT.RECAP_UNAVAILABLE }
@@ -691,7 +690,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     }
   }
 
-  async function submitEnd(takeaway: string | null, tensionAfter: number | null, recap: EndRecap | null) {
+  async function submitEnd(takeaway: string | null, tensionAfter: number | null, recapSource: EndRecapSource) {
     // Whether there is a takeaway and whether the scale was answered, never what either says;
     // "skipped" is the sheet closed with nothing filled in.
     track(AnalyticsEvent.DialogEndSubmitted, {
@@ -704,7 +703,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     const live = socket.current
     const liveState = live?.getState()
     if (live && (liveState === 'ready' || liveState === 'streaming')) {
-      live.end(takeaway, tensionAfter, recap)
+      live.end(takeaway, tensionAfter, recapSource)
       // The summary arrives as an `ended` frame; if the agent stays silent, end on our side.
       endTimer.current = setTimeout(() => finish(null), END_FALLBACK_MS)
       return
@@ -714,7 +713,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       const result = await client.endDialog(dialogId, {
         ...(takeaway ? { takeaway } : {}),
         ...(tensionAfter !== null ? { tensionAfter } : {}),
-        ...(recap ? { recap: recap.recap, recapSource: recap.source } : {}),
+        ...(takeaway && recapSource === 'draft' ? { recapSource } : {}),
       })
       if (result.ok) {
         finish(result.data.summary)
@@ -938,7 +937,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       <DialogEndSheet
         open={endOpen}
         onClose={() => setEndOpen(false)}
-        onSubmit={(takeaway, tension, recap) => void submitEnd(takeaway, tension, recap)}
+        onSubmit={(takeaway, tension, source) => void submitEnd(takeaway, tension, source)}
         busy={ending}
         error={endError}
         recapEnabled={recapEnabled}

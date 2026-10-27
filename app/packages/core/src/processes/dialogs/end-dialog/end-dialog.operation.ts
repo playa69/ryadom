@@ -1,6 +1,5 @@
 import { RequestData } from 'mediatr-ts'
 import { hasPII } from '../../../shared'
-import type { DialogRecapDTO } from '../shared/dialog.dto'
 import type { EndDialogResult } from './end-dialog.types'
 
 export interface EndDialogOperationData {
@@ -9,8 +8,7 @@ export interface EndDialogOperationData {
   /** "What are you taking with you". */
   takeaway: string | null
   tensionAfter: number | null
-  /** The recap the person wrote or pre-filled; null: the agent writes one in the background. */
-  recap?: DialogRecapDTO | null
+  /** `draft`: the takeaway, which is the recap, was pre-filled by the model. */
   recapSource?: 'manual' | 'draft'
 }
 
@@ -26,9 +24,6 @@ export class EndDialogOperation extends RequestData<EndDialogResult> {
 
   public readonly tensionAfter: number | null
 
-  @hasPII(true)
-  public readonly recap: DialogRecapDTO | null
-
   public readonly recapSource: 'manual' | 'draft'
 
   constructor(data: EndDialogOperationData) {
@@ -37,7 +32,6 @@ export class EndDialogOperation extends RequestData<EndDialogResult> {
     this.dialogId = data.dialogId
     this.takeaway = data.takeaway
     this.tensionAfter = data.tensionAfter
-    this.recap = data.recap ?? null
     this.recapSource = data.recapSource ?? 'manual'
   }
 }

@@ -41,8 +41,8 @@ def test_week_template_text_is_deterministic_and_clean(client, user_id):
     first = post(client, user_id, body).json()
     assert post(client, user_id, body).json() == first
     assert first["stats"] == {"markedDays": 4, "hardDays": 0, "mostFrequent": 4}
-    assert 4 <= len(re.findall(r"[.!?]", first["text"])) <= 6
-    assert "хорошо" in first["text"] and "работа" in first["text"]
+    assert 2 <= len(re.findall(r"[.!?]", first["text"])) <= 6
+    assert "работа" in first["text"] and "чаще всего" not in first["text"].lower()
     assert not FORBIDDEN.search(first["text"])
     assert "людей" not in first["text"] and "люди" not in first["text"]
 
@@ -90,7 +90,7 @@ def test_model_text_with_forbidden_words_falls_back_to_the_template(user_id):
         with make_client(None, chat=ScriptedChat(bad)) as client:
             reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
         assert not FORBIDDEN.search(reply["text"]), bad
-        assert reply["text"].startswith("Эта неделя прошла рядом с тобой")
+        assert reply["text"].startswith("На этой неделе")
 
 
 def test_model_failure_is_a_502_without_the_body(user_id):
@@ -113,7 +113,7 @@ def test_prompt_forbids_quoting():
     system = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[0]["content"]
     task = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[1]["content"]
     assert "Не цитируй" in system
-    assert "Без цитат" in task
+    assert "без цитат" in task.lower()
 
 
 def test_quotation_marks_with_more_than_two_words_are_a_quotation():
@@ -145,7 +145,7 @@ def test_model_text_with_a_quotation_falls_back_to_the_template(user_id):
     with make_client(None, chat=ScriptedChat(bad)) as client:
         reply = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)}).json()
     assert "не могу" not in reply["text"]
-    assert reply["text"].startswith("Эта неделя прошла рядом с тобой")
+    assert reply["text"].startswith("На этой неделе")
 
 
 def test_clean_digest_rejects_a_verbatim_piece_of_the_source():
@@ -158,7 +158,7 @@ def test_clean_digest_rejects_a_verbatim_piece_of_the_source():
 
 
 def test_week_recaps_reach_the_model_but_are_not_quoted_back(user_id):
-    recap = {"date": "2026-10-20", "about": "Ты не можешь больше терпеть начальника каждый день", "main": "Тебе важно, чтобы тебя услышали", "agreements": []}
+    recap = {"date": "2026-10-20", "text": "Ты не можешь больше терпеть начальника каждый день. Тебе важно, чтобы тебя услышали"}
     quoted = (
         "Эта неделя была непростой, и ты не можешь больше терпеть начальника каждый день. "
         "Ты отмечал настроение и находил время для себя. Чаще всего было нормально. "
@@ -169,5 +169,5 @@ def test_week_recaps_reach_the_model_but_are_not_quoted_back(user_id):
         body = {**WEEK, "marks": marks(3, 3, 4), "recaps": [recap]}
         text = post(client, user_id, body).json()["text"]
     assert "Итоги разговоров недели" in chat.seen[0][1]["content"] and "начальника" in chat.seen[0][1]["content"]
-    assert "терпеть начальника каждый день" not in text  # дословные шесть слов из итога отбракованы, подставлен шаблон
-    assert "договорённостей в них: 0" in text
+    assert "Чаще всего было нормально" not in text  # ответ модели с дословной цитатой отбракован, подставлен шаблон из содержания итогов
+    assert text.startswith("На этой неделе")

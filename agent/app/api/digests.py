@@ -41,14 +41,12 @@ class Mark(BaseModel):
 
 
 class WeekRecap(BaseModel):
-    """Итог разговора недели (add-mood-diary, D13): второй вход текста недели. Не хранится и в журнал не пишется."""
+    """Итог разговора недели (add-mood-diary, D13): свободный текст, второй вход текста недели. Не хранится и в журнал не пишется."""
 
     model_config = ConfigDict(extra="ignore")
 
     date: str
-    about: str = Field(max_length=600)
-    main: str = Field(max_length=600)
-    agreements: list[str] = Field(default_factory=list, max_length=3)
+    text: str = Field(min_length=1, max_length=500)
 
     _date = field_validator("date")(_date)
 
@@ -82,7 +80,7 @@ async def create_digest(user_id: str, body: DigestBody, request: Request) -> dic
             logger.warning("digest model failed kind=%s", body.kind, exc_info=False)
             raise AgentError(502, "DIGEST_UNAVAILABLE", "Модель не написала итоги") from error
         # Тексты, написанные человеком или о нём (итоги разговоров), дословно в итог не берём.
-        sources = [" ".join([r["about"], r["main"], *r["agreements"]]) for r in recaps]
+        sources = [r["text"] for r in recaps]
         text = digests.clean_digest(body.kind, reply, marks, source_texts=sources)
         if text is None:
             logger.info("digest rejected by the validator kind=%s", body.kind)

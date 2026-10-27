@@ -29,10 +29,7 @@ import {
   DialogApiErrorCode,
   DialogMode,
   DialogRecapApiErrorCode,
-  RECAP_ABOUT_MAX,
-  RECAP_AGREEMENT_MAX,
-  RECAP_AGREEMENTS_MAX,
-  RECAP_MAIN_MAX,
+  RECAP_MAX,
   StartDialogApiErrorCode,
   type DeleteDialogApiResponse,
   type DialogSettingsApiResponse,
@@ -84,20 +81,16 @@ const listQuery = z.object({
   before: z.string().min(1).max(200).optional(),
 })
 
-const recapBody = z.object({
-  about: z.string().trim().min(1).max(RECAP_ABOUT_MAX),
-  main: z.string().trim().min(1).max(RECAP_MAIN_MAX),
-  agreements: z.array(z.string().trim().min(1).max(RECAP_AGREEMENT_MAX)).max(RECAP_AGREEMENTS_MAX).default([]),
-})
-
 const endBody = z.object({
   takeaway: z.string().max(InputLimit.TakeawayMax).optional(),
   tensionAfter: z.coerce.number().int().min(1).max(10).optional(),
-  recap: recapBody.optional(),
   recapSource: z.enum(['manual', 'draft']).optional(),
 })
 
-const putRecapBody = recapBody.extend({ source: z.enum(['manual', 'draft']).optional() })
+const putRecapBody = z.object({
+  recap: z.string().trim().min(1).max(RECAP_MAX),
+  source: z.enum(['manual', 'draft']).optional(),
+})
 const settingsBody = z.object({ recapEnabled: z.boolean() })
 
 export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, analytics }: RouteDeps): void {
@@ -202,7 +195,6 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
         dialogId: c.req.param('dialogId'),
         takeaway: body.takeaway ?? null,
         tensionAfter: body.tensionAfter ?? null,
-        recap: body.recap ?? null,
         recapSource: body.recapSource ?? 'manual',
       }),
     )
@@ -314,7 +306,7 @@ export function dialogsRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions, a
     jsonBody(putRecapBody),
     async (c) => {
       const { userId } = authUser(c)
-      const { source, ...recap } = c.req.valid('json')
+      const { source, recap } = c.req.valid('json')
       const result = await dialogsProcess.execute(
         new PutRecapOperation({ userId, dialogId: c.req.param('dialogId'), recap, source: source ?? 'manual' }),
       )

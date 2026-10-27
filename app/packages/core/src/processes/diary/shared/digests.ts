@@ -99,9 +99,7 @@ export async function weekRecaps(userId: string, start: string): Promise<WeekRec
     const at = item.recapAt ? new Date(item.recapAt) : startedAt
     result.push({
       date,
-      about: item.recap.about,
-      main: item.recap.main,
-      agreements: item.recap.agreements,
+      text: item.recap,
       at: Number.isNaN(at.getTime()) ? startedAt : at,
     })
   }
@@ -144,7 +142,7 @@ export async function makeWeekSummary(
     userId,
     start,
     toMarks(days),
-    recaps.map(({ date, about, main, agreements }) => ({ date, about, main, agreements })),
+    recaps.map(({ date, text }) => ({ date, text })),
   )
   if (!digest) return { success: false, error: DigestFailureCode.SUMMARY_UNAVAILABLE }
   const hardDays = days.filter((d) => d.mood === 1).length
