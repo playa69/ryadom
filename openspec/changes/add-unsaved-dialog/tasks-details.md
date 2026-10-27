@@ -56,7 +56,7 @@
 ### 5.1 Спеки
 
 #### Что сделать
-Применить дельты к `openspec/specs/dialog`, `dialog-history`, `memory-notes` вручную (ADDED — новые требования, MODIFIED — целиком по тексту базы), перенести change в `openspec/changes/archive/2026-10-27-add-unsaved-dialog/`, поправить `REQ-MEM-05` в `docs/spec.md`.
+Применить дельты к `openspec/specs/dialog`, `dialog-history`, `dialog-recaps`, `memory-notes` вручную (ADDED — новые требования, MODIFIED — целиком по тексту базы), перенести change в `openspec/changes/archive/2026-10-27-add-unsaved-dialog/`, поправить `REQ-MEM-05` в `docs/spec.md`.
 
 #### Приёмка
 - Линтер формата спек — «ошибок: 0».
