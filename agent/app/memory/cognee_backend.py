@@ -266,6 +266,8 @@ class CogneeMemoryBackend:
         self._extractor = extractor
 
     def _notes_active(self, dialog: Dialog) -> bool:
+        """Заметки из разговора извлекаются только при `memory_mode == "on"`: для «Не сохранять этот разговор» он всегда `off`
+        (`Dialog.__post_init__`), так что ни по ходу, ни после завершения заметок из него нет (`add-unsaved-dialog`, задача 1.2)."""
         return self._extractor is not None and dialog.memory_mode == "on" and self._effective_enabled(dialog.user_id)
 
     def _sources_suppressed(self, user_id: str, dialog_ids: list[str]) -> None:
@@ -344,6 +346,11 @@ class CogneeMemoryBackend:
 
     def user_message(self, dialog: Dialog, text: str) -> None:
         """Реплика человека: фоновый recall по её тексту — к следующему ходу сводка уже с находкой по теме."""
+        if dialog.memory_mode != "on":
+            # «Без памяти» и «Не сохранять этот разговор»: реплика не идёт ни в заметки, ни в поиск. Находка по ней осела бы в сводке
+            # человека (`_turn_recalls`) и всплыла в следующем разговоре, то есть разговор оставил бы след в памяти (`add-unsaved-dialog`,
+            # «Не сохраняемый разговор не попадает в память»).
+            return
         if self._notes_active(dialog) and text.strip():
             self._queue_for_notes(dialog, text)
         if (
@@ -379,7 +386,8 @@ class CogneeMemoryBackend:
         self._drop(user_id)  # при загрузке (`user_loaded`) состояние и сводка соберутся заново
 
     def dialog_ended(self, dialog: Dialog) -> None:
-        """Диалог завершён: финальный проход извлечения и транскрипт в датасет человека (в фоне)."""
+        """Диалог завершён: финальный проход извлечения и транскрипт в датасет человека (в фоне). Разговор «Без памяти» и «Не сохранять
+        этот разговор» (`memory_mode == "off"`) не даёт ни заметок, ни записи в очередь `memory_outbox`, ни документа в Cognee."""
         if self._notes_active(dialog):
             pending = self._pending.setdefault(dialog.id, _Pending(dialog.user_id))  # после перезапуска состояния нет: добор из диалога
             if dialog.id in self._extracting:

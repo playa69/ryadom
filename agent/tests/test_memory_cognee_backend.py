@@ -289,11 +289,13 @@ async def test_update_settings_off_keeps_dataset() -> None:
     assert service.enabled(user) is False
 
 
-def stored_dialog(db: FakeDialogDatabase, user: str, lines: list[tuple[str, str]], mode: str = "on", ended: bool = True) -> str:
+def stored_dialog(
+    db: FakeDialogDatabase, user: str, lines: list[tuple[str, str]], mode: str = "on", ended: bool = True, saved: bool = True
+) -> str:
     """Разговор в двойнике базы: (id, user, started, ended, ..., memory_mode), сообщения по порядку."""
     dialog_id = str(uuid.uuid4())
     state = db._state()
-    state.dialogs[dialog_id] = (dialog_id, user, "2026-10-20T10:00:00Z", "2026-10-20T10:05:00Z" if ended else None, None, None, "male", 0, mode, 0)
+    state.dialogs[dialog_id] = (dialog_id, user, "2026-10-20T10:00:00Z", "2026-10-20T10:05:00Z" if ended else None, None, None, "male", 0, mode, 0, saved)
     for position, (role, text) in enumerate(lines):
         state.messages[(dialog_id, str(position))] = (str(position), dialog_id, position, role, text, "2026-10-20T10:00:00Z", None)
     return dialog_id
