@@ -39,5 +39,5 @@
 
 ## 7. Архив
 
-- [ ] 7.1 Статусы `REQ-WELL-01`…`REQ-WELL-05` и `REQ-WELL-10` в `docs/spec.md` по коду; трассировка (§14). Приёмка: `docs/spec.md` соответствует коду
+- [ ] 7.1 Статусы `REQ-WELL-01`…`REQ-WELL-05` и `REQ-WELL-10` в `docs/spec.md` по коду; индекс требований (§5). Приёмка: `docs/spec.md` соответствует коду
 - [ ] 7.2 `openspec archive add-mood-diary` после выката: MODIFIED вливает «Токен виджета в API» и «Срок хранения разговоров» в базу целиком. Приёмка: `openspec validate --specs --strict` зелёный, `git diff openspec/specs` ничего нужного не теряет
