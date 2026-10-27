@@ -3,7 +3,7 @@ name = "ryadom-agent"
 version = "0.1.0"
 description = "Агент «Слышу Рядом»: контракт agent-api, голос — Gemini Live (речь в речь), текстовая модель прокси для итогов и заметок, память"
 requires-python = ">=3.12"
-# Намеренно минимум. LangGraph и классификаторы из openspec/changes/add-agent-service не подключены;
+# Намеренно минимум. LangGraph и классификаторы не подключены;
 # вызовы прокси, Cognee и Langfuse usage — обычный httpx, без SDK.
 dependencies = [
     "fastapi>=0.115",

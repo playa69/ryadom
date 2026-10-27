@@ -104,7 +104,7 @@ export interface DialogListItemApiResponse {
   /** `off`: an unsaved conversation ("Не сохранять этот разговор"): the journal keeps a mark without text. */
   memoryMode: DialogMemoryMode
   /**
-   * `false`: a conversation the person asked not to keep (`add-unsaved-dialog`): the journal shows a mark without text,
+   * `false`: a conversation the person asked not to keep (PROTEUS-246): the journal shows a mark without text,
    * with the date, the time and how long it lasted. Absent or `true`: an ordinary conversation.
    */
   saved?: boolean

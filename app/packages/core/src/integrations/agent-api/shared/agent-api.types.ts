@@ -40,7 +40,7 @@ export interface AgentDialogListItemResponse {
   summary: AgentDialogSummaryResponse | null
   /** `off`: a conversation "without memory". Absent from an agent without memory, which means `on`. */
   memoryMode?: string
-  /** `false`: a conversation kept only as a mark (`add-unsaved-dialog`); absent from an agent that has none. */
+  /** `false`: a conversation kept only as a mark (PROTEUS-246); absent from an agent that has none. */
   saved?: boolean
 }
 
