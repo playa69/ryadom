@@ -24,11 +24,7 @@ from app.core.config import MemorySettings
 
 def memory_settings(**values: object) -> MemorySettings:
     """Настройки памяти для теста (без чтения окружения), без чтения окружения."""
-    defaults: dict[str, object] = {
-        "MEMORY_ALLOWLIST": "",
-    }
-    defaults.update(values)
-    return MemorySettings(**defaults)  # type: ignore[arg-type]
+    return MemorySettings(**values)  # type: ignore[arg-type]
 
 CONSENT = "2026-10-21"
 

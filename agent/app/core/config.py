@@ -223,12 +223,6 @@ class MemorySettings(BaseAppSettings):
     brief_max_tokens: int = Field(validation_alias="MEMORY_BRIEF_MAX_TOKENS", default=1200, ge=100)
     # Модель извлечения заметок по ходу разговора (по умолчанию LLM_CHAT_MODEL).
     notes_model: str | None = Field(validation_alias="MEMORY_NOTES_MODEL", default=None)
-    # UUID через запятую: если задан, включить память могут только эти люди (закрытая бета).
-    allowlist: str = Field(validation_alias="MEMORY_ALLOWLIST", default="")
-
-    @property
-    def allowed_users(self) -> frozenset[str]:
-        return frozenset(item.strip().lower() for item in self.allowlist.split(",") if item.strip())
 
 
 class MemoryReclaimSettings(BaseAppSettings):

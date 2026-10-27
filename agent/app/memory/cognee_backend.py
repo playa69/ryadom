@@ -29,7 +29,6 @@ from app.memory.errors import (
     MemoryDisabled,
     FactNotFound,
     FactRejected,
-    MemoryNotAllowed,
     MemoryUnavailable,
     MemoryValidation,
 )
@@ -512,9 +511,6 @@ class CogneeMemoryBackend:
                 raise MemoryUnavailable()  # настройки и заметки хранятся в базе агента: без неё включать нечего
             if not consent_version:
                 raise MemoryValidation("consentVersion обязателен при включении")
-            allowed = self._cfg.allowed_users
-            if allowed and user_id.lower() not in allowed:
-                raise MemoryNotAllowed()
             at = iso(datetime.now(UTC))
             await self._write_settings(user_id, True, consent_version, at)
             self._datasets[user_id] = True
