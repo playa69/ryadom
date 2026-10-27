@@ -6,7 +6,6 @@ import './end-dialog/end-agent-dialog.handler'
 import './erase-user/erase-agent-user.handler'
 import './get-memory/get-agent-memory.handler'
 import './update-memory-settings/update-agent-memory-settings.handler'
-import './create-memory-fact/create-agent-memory-fact.handler'
 import './update-memory-fact/update-agent-memory-fact.handler'
 import './delete-memory-fact/delete-agent-memory-fact.handler'
 import './forget-memory/forget-agent-memory.handler'
@@ -39,8 +38,6 @@ export { GetAgentMemoryRequest } from './get-memory/get-agent-memory.request'
 export type { GetAgentMemoryRequestData } from './get-memory/get-agent-memory.request'
 export { UpdateAgentMemorySettingsRequest } from './update-memory-settings/update-agent-memory-settings.request'
 export type { UpdateAgentMemorySettingsRequestData } from './update-memory-settings/update-agent-memory-settings.request'
-export { CreateAgentMemoryFactRequest } from './create-memory-fact/create-agent-memory-fact.request'
-export type { CreateAgentMemoryFactRequestData } from './create-memory-fact/create-agent-memory-fact.request'
 export { UpdateAgentMemoryFactRequest } from './update-memory-fact/update-agent-memory-fact.request'
 export type { UpdateAgentMemoryFactRequestData } from './update-memory-fact/update-agent-memory-fact.request'
 export { DeleteAgentMemoryFactRequest } from './delete-memory-fact/delete-agent-memory-fact.request'
@@ -91,8 +88,6 @@ export type { EraseAgentUserResponse } from './erase-user/erase-agent-user.types
 export type { GetAgentMemoryResponse } from './get-memory/get-agent-memory.types'
 export type { UpdateAgentMemorySettingsResult } from './update-memory-settings/update-agent-memory-settings.types'
 export { UpdateAgentMemorySettingsRequestErrorCode } from './update-memory-settings/update-agent-memory-settings.types'
-export type { CreateAgentMemoryFactResult } from './create-memory-fact/create-agent-memory-fact.types'
-export { CreateAgentMemoryFactRequestErrorCode } from './create-memory-fact/create-agent-memory-fact.types'
 export type { UpdateAgentMemoryFactResult } from './update-memory-fact/update-agent-memory-fact.types'
 export { UpdateAgentMemoryFactRequestErrorCode } from './update-memory-fact/update-agent-memory-fact.types'
 export type { DeleteAgentMemoryFactResult } from './delete-memory-fact/delete-agent-memory-fact.types'
@@ -141,7 +136,6 @@ import type { EndAgentDialogRequest } from './end-dialog/end-agent-dialog.reques
 import type { EraseAgentUserRequest } from './erase-user/erase-agent-user.request'
 import type { GetAgentMemoryRequest } from './get-memory/get-agent-memory.request'
 import type { UpdateAgentMemorySettingsRequest } from './update-memory-settings/update-agent-memory-settings.request'
-import type { CreateAgentMemoryFactRequest } from './create-memory-fact/create-agent-memory-fact.request'
 import type { UpdateAgentMemoryFactRequest } from './update-memory-fact/update-agent-memory-fact.request'
 import type { DeleteAgentMemoryFactRequest } from './delete-memory-fact/delete-agent-memory-fact.request'
 import type { ForgetAgentMemoryRequest } from './forget-memory/forget-agent-memory.request'
@@ -164,7 +158,6 @@ export type AgentApiIntegrationRequests =
   | EraseAgentUserRequest
   | GetAgentMemoryRequest
   | UpdateAgentMemorySettingsRequest
-  | CreateAgentMemoryFactRequest
   | UpdateAgentMemoryFactRequest
   | DeleteAgentMemoryFactRequest
   | ForgetAgentMemoryRequest

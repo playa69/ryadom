@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DialogMode } from '@ryadom/contracts/api/dialogs'
-import { DialogMemoryMode, MEMORY_CONSENT_VERSION, MemoryFactStatus } from '@ryadom/contracts/api/memory'
+import { DialogMemoryMode, MEMORY_CONSENT_VERSION } from '@ryadom/contracts/api/memory'
 import { createClient, type ClientConfig } from '../src/client'
 import { ApiError } from '../src/errors'
 import { envelope, makeToken, memoryStorage, userOf, type MemoryStorage } from './helpers'
@@ -346,13 +346,13 @@ describe('память', () => {
     expect(await client.setMemoryEnabled(true)).toEqual({ ok: false, code: 'MEMORY_UNAVAILABLE' })
   })
 
-  it('пути и методы: факт, забыть, забыть всё, изменения разговора, экспорт', async () => {
+  it('пути и методы: правка заметки, забыть, забыть всё, изменения разговора, экспорт', async () => {
     stubFetch()
     const { client } = setup()
     await client.startSession(userOf('a'), tokens(makeToken('a')))
     fetchMock.mockImplementation(async () => envelope(null))
 
-    await client.updateMemoryFact('f/1', { status: MemoryFactStatus.Pinned })
+    await client.updateMemoryFact('f/1', { text: 'Работает в продажах' })
     await client.forgetMemoryFact('f/1')
     await client.forgetAllMemory()
     await client.getMemoryChanges('d 1')
@@ -361,7 +361,7 @@ describe('память', () => {
     expect(call(0)).toMatchObject({
       url: 'http://api.test/api/memory/facts/f%2F1',
       method: 'PATCH',
-      body: { status: 'pinned' },
+      body: { text: 'Работает в продажах' },
     })
     expect(call(1)).toMatchObject({ url: 'http://api.test/api/memory/facts/f%2F1', method: 'DELETE' })
     expect(call(2)).toMatchObject({ url: 'http://api.test/api/memory', method: 'DELETE' })

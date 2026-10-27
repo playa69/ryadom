@@ -18,8 +18,7 @@ const SENSITIVE_KINDS = new Set(['wellbeing', 'beliefs'])
 const NOTES_MAX = 200
 const NOTE_DELAY_MS = Number(process.env.MOCK_NOTE_DELAY_MS ?? 1500)
 
-/** Old category of a fact → kind of a note (for the legacy `POST /facts`) and back (for the legacy `facts` in `GET /memory`). */
-const KIND_OF_CATEGORY = { style: 'style', boundary: 'boundary', person: 'person', situation: 'situation', goal: 'agreement', works: 'interest', interest: 'interest' }
+/** Kind of a note → category of the old fact (for the legacy `facts` in `GET /memory`, which the cached apps read). */
 const CATEGORY_OF_KIND = {
   name: 'style', style: 'style', person: 'person', situation: 'situation', event: 'situation', agreement: 'goal',
   interest: 'interest', boundary: 'boundary', wellbeing: 'situation', beliefs: 'situation',
@@ -100,9 +99,7 @@ function asFact(note) {
     sources: note.dialogId ? [{ dialogId: note.dialogId, date: note.createdAt.slice(0, 10) }] : [],
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
-    lastConfirmedAt: null,
     expiresAt: null,
-    confirmCount: 0,
     seenByUser: true,
   }
 }
@@ -330,35 +327,6 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
 
   if (resource === 'notes' && id && method === 'DELETE') {
     if (!memory.notes.delete(id)) return agentError(res, 404, 'NOTE_NOT_FOUND', 'Заметка не найдена')
-    return noContent(res)
-  }
-
-  // The legacy routes of facts, on the notes (the cached PWA).
-  if (resource === 'facts' && !id && method === 'POST') {
-    const body = await readBody(req)
-    const kind = KIND_OF_CATEGORY[body.category] ?? 'situation'
-    const text = typeof body.text === 'string' ? body.text : Object.values(body.slots ?? {}).join(', ')
-    const reason = verdict(text, kind, memory)
-    if (reason) return agentError(res, 422, 'FACT_REJECTED', 'Это нельзя запомнить', { reason })
-    if (!memory.enabled) return agentError(res, 409, 'MEMORY_DISABLED', 'Память выключена')
-    if (memory.notes.size >= NOTES_MAX) return agentError(res, 409, 'MEMORY_FULL', 'Память заполнена')
-    return json(res, 201, asFact(addNote(memory, { kind, text })))
-  }
-  if (resource === 'facts' && id && method === 'PATCH') {
-    const body = await readBody(req)
-    const note = memory.notes.get(id)
-    if (!note) return agentError(res, 404, 'FACT_NOT_FOUND', 'Факт не найден')
-    if (body.status === 'pinned' || body.confirm || typeof body.text !== 'string') {
-      return agentError(res, 422, 'MEMORY_ACTION_UNSUPPORTED', 'Это действие с памятью больше не поддерживается')
-    }
-    const reason = verdict(body.text, note.kind, memory)
-    if (reason) return agentError(res, 422, 'FACT_REJECTED', 'Это нельзя запомнить', { reason })
-    note.text = body.text.trim()
-    note.updatedAt = now()
-    return json(res, 200, asFact(note))
-  }
-  if (resource === 'facts' && id && method === 'DELETE') {
-    if (!memory.notes.delete(id)) return agentError(res, 404, 'FACT_NOT_FOUND', 'Факт не найден')
     return noContent(res)
   }
 

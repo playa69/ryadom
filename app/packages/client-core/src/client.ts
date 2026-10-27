@@ -75,8 +75,6 @@ import { AppHeader } from '@ryadom/contracts/api/headers'
 import {
   DialogMemoryMode,
   MEMORY_CONSENT_VERSION,
-  type CreateMemoryFactApiErrorCode,
-  type CreateMemoryFactApiRequest,
   type ForgetMemoryApiErrorCode,
   type MemoryInstructionApiErrorCode,
   type MemoryInstructionApiResponse,
@@ -880,16 +878,7 @@ export function createClient(config: ClientConfig) {
         body: change,
       }),
 
-    /** A fact the person writes themselves: it is theirs and pinned. */
-    createMemoryFact: (
-      fact: CreateMemoryFactApiRequest,
-    ): Promise<ApiOutcome<MemoryFactApiResponse, CreateMemoryFactApiErrorCode>> =>
-      apiOutcome<MemoryFactApiResponse, CreateMemoryFactApiErrorCode>(ApiPath.MemoryFacts, {
-        method: 'POST',
-        body: fact,
-      }),
-
-    /** One change at a time: a correction, "Запомнить", pin or unpin, or "Верно". */
+    /** The person corrects the text of a note; the answer is that note in the shape of a fact (`text`, `updatedAt`). */
     updateMemoryFact: (
       factId: string,
       change: UpdateMemoryFactApiRequest,
@@ -899,13 +888,13 @@ export function createClient(config: ClientConfig) {
         body: change,
       }),
 
-    /** "Забыть" and "Не запоминать". A fact that is gone already counts as forgotten. */
+    /** "Забыть". A note that is gone already counts as forgotten. */
     forgetMemoryFact: async (factId: string): Promise<ApiOutcome<void, ForgetMemoryApiErrorCode>> =>
       voidOutcome(
         await apiOutcome<null, ForgetMemoryApiErrorCode>(memoryFactPath(factId), { method: 'DELETE' }),
       ),
 
-    /** "Забыть всё": the facts go, the conversations and the switch stay. */
+    /** "Забыть всё": the notes go, the conversations and the switch stay. */
     forgetAllMemory: async (): Promise<ApiOutcome<void, ForgetMemoryApiErrorCode>> =>
       voidOutcome(await apiOutcome<null, ForgetMemoryApiErrorCode>(ApiPath.Memory, { method: 'DELETE' })),
 
@@ -926,7 +915,7 @@ export function createClient(config: ClientConfig) {
         body: { text },
       }),
 
-    /** "Скачать мою память": everything, guesses and proposed facts included. */
+    /** "Скачать мою память": everything the agent keeps about the person. */
     exportMemory: (): Promise<MemoryExportApiResponse> =>
       apiFetch<MemoryExportApiResponse>(ApiPath.MemoryExport),
   }

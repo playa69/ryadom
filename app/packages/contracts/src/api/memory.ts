@@ -4,7 +4,7 @@
  * them and what not to bring up).
  *
  * Memory is opt-in: it stays off until the person turns it on after a separate consent sheet
- * (`PUT /api/memory/settings`). Everything remembered is visible here and can be corrected, pinned,
+ * (`PUT /api/memory/settings`). Everything remembered is visible here and can be corrected,
  * forgotten one by one or all at once, and downloaded. A single conversation can be held "without
  * memory" (`memory: 'off'` in `POST /api/dialogs`). Reading, exporting and forgetting work even
  * while memory is off or unavailable.
@@ -51,8 +51,6 @@ export enum MemoryFactStatus {
   /** Waits for the person's "Remember" (sensitive, or it contradicts their own edit). */
   Proposed = 'proposed',
   Active = 'active',
-  /** Pinned or written by the person: the agent never overwrites it. */
-  Pinned = 'pinned',
   /** Outlived its term or was replaced; hidden from the person and erased after 30 days. */
   Expired = 'expired',
 }
@@ -115,10 +113,8 @@ export interface MemoryFactApiResponse {
   /** ISO 8601. */
   createdAt: string
   updatedAt: string
-  lastConfirmedAt: string | null
   /** ISO 8601; null means no term. */
   expiresAt: string | null
-  confirmCount: number
   seenByUser: boolean
 }
 
@@ -219,55 +215,30 @@ export enum UpdateMemorySettingsApiErrorCode {
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
 }
 
-// ─── POST /api/memory/facts, PATCH and DELETE /api/memory/facts/:id ──────────
+// ─── PATCH and DELETE /api/memory/facts/:id ───────────────────────────────────
 
 /**
- * The person writes a fact themselves. `style` and `person` take only `slots` (the server builds their text: "Сестра Аня:
- * поддерживает"); the other categories take only `text`.
+ * The person corrects the text of one note. The path keeps the name "facts" for the clients that predate notes; the id is a
+ * note's, and the answer is that note in the shape of a fact (the old clients read it). There is no route to write a note by
+ * hand: the agent writes them, and the person asks it ("Скажи, что поправить или убрать").
  */
-export interface CreateMemoryFactApiRequest {
-  category: MemoryFactCategory
-  text?: string
-  slots?: MemoryFactSlots
+export interface UpdateMemoryFactApiRequest {
+  text: string
 }
 
-export enum CreateMemoryFactApiErrorCode {
+export enum UpdateMemoryFactApiErrorCode {
   USER_NOT_FOUND = 'USER_NOT_FOUND',
-  /** The person's memory is off: turn it on first. */
-  MEMORY_DISABLED = 'MEMORY_DISABLED',
-  /** 60 facts already, and none can make room. */
-  MEMORY_FULL = 'MEMORY_FULL',
+  /** No such note of this person (or it was forgotten already). */
+  FACT_NOT_FOUND = 'FACT_NOT_FOUND',
   /** The server's rules do not allow remembering this (a diagnosis, a phone number, an instruction to the agent…). */
   FACT_REJECTED = 'FACT_REJECTED',
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
 }
 
-/**
- * One change at a time: `text`/`slots` correct the fact (it becomes the person's and pinned), `status`
- * accepts a proposed one ("Remember", `active`) or pins and unpins, `confirm` says "Right".
- */
-export interface UpdateMemoryFactApiRequest {
-  text?: string
-  slots?: MemoryFactSlots
-  status?: MemoryFactStatus.Active | MemoryFactStatus.Pinned
-  confirm?: true
-}
-
-export enum UpdateMemoryFactApiErrorCode {
-  USER_NOT_FOUND = 'USER_NOT_FOUND',
-  MEMORY_DISABLED = 'MEMORY_DISABLED',
-  /** No such fact of this person (or it was forgotten already). */
-  FACT_NOT_FOUND = 'FACT_NOT_FOUND',
-  FACT_REJECTED = 'FACT_REJECTED',
-  MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
-}
-
-/** `DELETE /api/memory/facts/:id` ("Forget", or "Don't remember" on a proposed one) and `DELETE /api/memory` ("Forget everything"): `result: null`, repeats succeed. */
+/** `DELETE /api/memory/facts/:id` ("Forget" a note) and `DELETE /api/memory` ("Forget everything"): `result: null`, repeats succeed. */
 export enum ForgetMemoryApiErrorCode {
   USER_NOT_FOUND = 'USER_NOT_FOUND',
   MEMORY_UNAVAILABLE = 'MEMORY_UNAVAILABLE',
-  /** `DELETE /api/memory/facts/:id` only: the agent cannot forget a single fact; "Forget everything" works. */
-  FACT_UNSUPPORTED = 'FACT_UNSUPPORTED',
 }
 
 // ─── GET /api/memory/changes?dialogId= ────────────────────────────────────────

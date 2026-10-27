@@ -352,8 +352,8 @@ const server = createServer(async (req, res) => {
   // POST /v1/users/{userId}/seed - dev only, not part of the agent contract: replaces the user's
   // dialogs with ready-made ones (past dates, real-looking text), so screenshots and demos show a
   // lived-in journal instead of a day of test chatter. Body: { dialogs: [{ startedAt, endedAt,
-  // summary, memoryMode?, messages: [{ role, text }] }], memory?: { enabled, consentVersion?, facts:
-  // [{ category, text, slots?, status?, origin? }] } }, messages get their times spread from startedAt.
+  // summary, memoryMode?, messages: [{ role, text }] }], memory?: { enabled, consentVersion?, sensitiveEnabled?,
+  // notes: [{ kind, text, eventDate? }] } }, messages get their times spread from startedAt.
   if (parts.length === 4 && parts[3] === 'seed' && method === 'POST') {
     const body = await readBody(req)
     const state = userState(userId)

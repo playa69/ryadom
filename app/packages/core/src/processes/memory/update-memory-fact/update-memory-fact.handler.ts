@@ -13,8 +13,8 @@ import { UpdateMemoryFactOperationErrorCode, type UpdateMemoryFactResult } from 
 import { updateMemoryFactSchema } from './update-memory-fact.validator'
 
 /**
- * One change to one fact: "Correct" (it becomes the person's and pinned), "Remember" a proposed one,
- * "Pin"/"Unpin", "Right". The agent checks that the fact is this person's: the path carries them.
+ * The person corrects the text of one note. The agent checks that the note is this person's: the
+ * path carries them.
  */
 @requestHandler(UpdateMemoryFactOperation)
 export class UpdateMemoryFactOperationHandler implements RequestHandler<
@@ -22,13 +22,7 @@ export class UpdateMemoryFactOperationHandler implements RequestHandler<
   UpdateMemoryFactResult
 > {
   async handle(operation: UpdateMemoryFactOperation): Promise<UpdateMemoryFactResult> {
-    const input = validateInput(updateMemoryFactSchema, {
-      factId: operation.factId,
-      text: operation.text,
-      hasSlots: operation.slots !== undefined,
-      status: operation.status,
-      confirm: operation.confirm,
-    })
+    const input = validateInput(updateMemoryFactSchema, { factId: operation.factId, text: operation.text })
     if (!(await isLiveUser(operation.userId))) {
       return { success: false, error: UpdateMemoryFactOperationErrorCode.USER_NOT_FOUND }
     }
@@ -37,19 +31,14 @@ export class UpdateMemoryFactOperationHandler implements RequestHandler<
         userId: operation.userId,
         factId: operation.factId,
         text: input.text,
-        slots: operation.slots,
-        status: input.status,
-        confirm: input.confirm,
       }),
     )
     if (!updated.success) {
       switch (updated.error) {
         case UpdateAgentMemoryFactRequestErrorCode.FACT_NOT_FOUND:
           return { success: false, error: UpdateMemoryFactOperationErrorCode.FACT_NOT_FOUND }
-        case UpdateAgentMemoryFactRequestErrorCode.MEMORY_DISABLED:
-          return { success: false, error: UpdateMemoryFactOperationErrorCode.MEMORY_DISABLED }
         case UpdateAgentMemoryFactRequestErrorCode.FACT_REJECTED:
-          createLogger('memory').info('Memory fact correction refused by the rules', {
+          createLogger('memory').info('Memory note correction refused by the rules', {
             userId: operation.userId,
             factId: operation.factId,
             reason: updated.reason,

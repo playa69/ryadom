@@ -8,7 +8,6 @@ import { getDb } from '@ryadom/core/shared'
 import { memoryConsentEvents, userConsents } from '@ryadom/db/schema'
 import type { ListDialogsApiResponse } from '@ryadom/contracts/api/dialogs'
 import {
-  CreateMemoryFactApiErrorCode,
   DialogMemoryMode,
   ForgetMemoryApiErrorCode,
   MEMORY_CONSENT_VERSION,
@@ -48,10 +47,22 @@ function agentFact(overrides: Record<string, unknown> = {}) {
     sources: [{ dialogId: 'd-1', date: '2026-10-12' }],
     createdAt: '2026-10-12T10:00:00.000Z',
     updatedAt: '2026-10-12T10:05:00.000Z',
-    lastConfirmedAt: null,
     expiresAt: null,
-    confirmCount: 1,
     seenByUser: true,
+    ...overrides,
+  }
+}
+
+function agentNote(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'n-1',
+    kind: 'interest',
+    text: 'Рисую акварелью',
+    sensitive: false,
+    eventDate: null,
+    createdAt: '2026-10-12T10:00:00.000Z',
+    updatedAt: '2026-10-12T10:05:00.000Z',
+    dialogId: 'd-1',
     ...overrides,
   }
 }
@@ -73,8 +84,7 @@ describe('доступ к памяти', () => {
       ['GET', ApiPath.Memory],
       ['DELETE', ApiPath.Memory],
       ['PUT', ApiPath.MemorySettings, { enabled: false }],
-      ['POST', ApiPath.MemoryFacts, { category: MemoryFactCategory.Goal, text: 'Выспаться' }],
-      ['PATCH', memoryFactPath('f-1'), { confirm: true }],
+      ['PATCH', memoryFactPath('f-1'), { text: 'Выспаться' }],
       ['DELETE', memoryFactPath('f-1')],
       ['GET', `${ApiPath.MemoryChanges}?dialogId=d-1`],
       ['GET', ApiPath.MemoryExport],
@@ -104,17 +114,16 @@ describe('доступ к памяти', () => {
   it('человек берётся только из токена: чужой id в теле и в запросе ни на что не влияет', async () => {
     const { user, tokens } = await signedIn()
     const { calls } = mockFetch({
-      [`POST ${AGENT}/facts`]: () =>
-        json(agentFact({ category: 'goal', text: 'Выспаться', slots: null }), 201),
+      [`PATCH ${AGENT}/notes/*`]: () => json(agentNote({ text: 'Выспаться' })),
       [`GET ${AGENT}/changes`]: () => json({ status: 'pending', reason: null, items: [] }),
     })
 
     ok(
       await call(
         app,
-        'POST',
-        ApiPath.MemoryFacts,
-        { category: MemoryFactCategory.Goal, text: 'Выспаться', userId: 'someone-else' },
+        'PATCH',
+        memoryFactPath('n-1'),
+        { text: 'Выспаться', userId: 'someone-else' },
         tokens.accessToken,
       ),
     )
@@ -129,10 +138,10 @@ describe('доступ к памяти', () => {
     )
 
     expect(calls.map((entry) => entry.url.pathname)).toEqual([
-      `/v1/users/${user.id}/memory/facts`,
+      `/v1/users/${user.id}/memory/notes/n-1`,
       `/v1/users/${user.id}/memory/changes`,
     ])
-    expect(JSON.parse(calls[0]!.body)).toEqual({ category: 'goal', text: 'Выспаться' })
+    expect(JSON.parse(calls[0]!.body)).toEqual({ text: 'Выспаться' })
   })
 })
 
@@ -183,9 +192,7 @@ describe('GET /api/memory', () => {
       sources: [{ dialogId: 'd-1', date: '2026-10-12' }],
       createdAt: '2026-10-12T10:00:00.000Z',
       updatedAt: '2026-10-12T10:05:00.000Z',
-      lastConfirmedAt: null,
       expiresAt: null,
-      confirmCount: 1,
       seenByUser: true,
     })
     expect(memory.facts[1]!.slots).toBeNull()
@@ -312,175 +319,99 @@ describe('PUT /api/memory/settings', () => {
   })
 })
 
-describe('факты', () => {
-  it('POST: факт человека возвращается; слишком длинный текст — 422; лишний слот — 400', async () => {
-    const { tokens } = await signedIn()
-    const { calls } = mockFetch({
-      [`POST ${AGENT}/facts`]: () =>
-        json(
-          agentFact({
-            id: 'f-9',
-            category: 'interest',
-            text: 'Рисую',
-            slots: null,
-            status: 'pinned',
-            origin: 'user_edit',
-          }),
-          201,
-        ),
-    })
+describe('заметки', () => {
+  it('PATCH: текст уходит агенту, в ответе заметка в форме факта; слишком длинный — 422; тело не про текст — 400 без вызова агента', async () => {
+    const { user, tokens } = await signedIn()
+    const { calls } = mockFetch({ [`PATCH ${AGENT}/notes/*`]: () => json(agentNote({ text: 'Рисую акварелью' })) })
 
     const fact = ok<MemoryFactApiResponse>(
-      await call(
-        app,
-        'POST',
-        ApiPath.MemoryFacts,
-        { category: MemoryFactCategory.Interest, text: 'Рисую' },
-        tokens.accessToken,
-      ),
+      await call(app, 'PATCH', memoryFactPath('n-1'), { text: '  Рисую акварелью  ' }, tokens.accessToken),
     )
-    expect(fact).toMatchObject({
-      id: 'f-9',
-      status: MemoryFactStatus.Pinned,
+    // The correction comes back as the note in the shape of a fact: the clients that predate notes read that.
+    expect(fact).toEqual({
+      id: 'n-1',
+      category: MemoryFactCategory.Interest,
+      text: 'Рисую акварелью',
+      slots: null,
+      importance: 5,
+      confidence: 1,
+      status: MemoryFactStatus.Active,
       origin: MemoryFactOrigin.UserEdit,
+      sensitivity: 'normal',
+      sources: [{ dialogId: 'd-1', date: '2026-10-12' }],
+      createdAt: '2026-10-12T10:00:00.000Z',
+      updatedAt: '2026-10-12T10:05:00.000Z',
+      expiresAt: null,
+      seenByUser: true,
     })
+    expect(calls.at(-1)!.url.pathname).toBe(`/v1/users/${user.id}/memory/notes/n-1`)
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ text: 'Рисую акварелью' })
 
-    const tooLong = await call(
-      app,
-      'POST',
-      ApiPath.MemoryFacts,
-      { category: MemoryFactCategory.Interest, text: 'а'.repeat(201) },
-      tokens.accessToken,
-    )
-    expect(tooLong.status).toBe(422)
-    const unknownSlot = await call(
-      app,
-      'POST',
-      ApiPath.MemoryFacts,
-      { category: MemoryFactCategory.Person, slots: { role: 'сестра', age: '30' } },
-      tokens.accessToken,
-    )
-    expect(unknownSlot.status).toBe(400)
+    expect((await call(app, 'PATCH', memoryFactPath('n-1'), { text: 'а'.repeat(201) }, tokens.accessToken)).status).toBe(422)
+    // Only the text of a note is corrected: a body with a status, a confirmation or slots (the clients of the old facts) is not.
+    for (const body of [{}, { status: 'active' }, { confirm: true }, { slots: { form: 'ty' } }]) {
+      expect((await call(app, 'PATCH', memoryFactPath('n-1'), body, tokens.accessToken)).status).toBe(400)
+    }
     expect(calls).toHaveLength(1)
   })
 
-  it('POST: style и person уходят слотами без текста', async () => {
+  it('PATCH: отказ правил — FACT_REJECTED, в errorMessage код правила и ни слова из текста', async () => {
     const { tokens } = await signedIn()
-    const { calls } = mockFetch({
-      [`POST ${AGENT}/facts`]: () =>
-        json(agentFact({ category: 'style', text: 'На «ты»', slots: { form: 'ty' } }), 201),
-    })
-
-    const fact = ok<MemoryFactApiResponse>(
-      await call(
-        app,
-        'POST',
-        ApiPath.MemoryFacts,
-        { category: MemoryFactCategory.Style, slots: { form: 'ty', tone: 'soft' } },
-        tokens.accessToken,
-      ),
-    )
-
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ category: 'style', slots: { form: 'ty', tone: 'soft' } })
-    expect(fact.slots).toEqual({ form: 'ty' })
-  })
-
-  it('POST: форма по категории — 400 без вызова агента: style и person только слотами, остальные только текстом', async () => {
-    const { tokens } = await signedIn()
-    const { calls } = mockFetch({})
-    for (const body of [
-      { category: MemoryFactCategory.Person, text: 'Сестра Оля', slots: { role: 'сестра' } },
-      { category: MemoryFactCategory.Person, text: 'Сестра Оля' },
-      { category: MemoryFactCategory.Style },
-      { category: MemoryFactCategory.Goal },
-      { category: MemoryFactCategory.Goal, slots: { role: 'сестра' } },
-    ]) {
-      expect((await call(app, 'POST', ApiPath.MemoryFacts, body, tokens.accessToken)).status).toBe(400)
-    }
-    expect(calls).toEqual([])
-  })
-
-  it('POST: отказ правил — FACT_REJECTED, в errorMessage код правила и ни слова из факта', async () => {
-    const { tokens } = await signedIn()
-    mockFetch({ [`POST ${AGENT}/facts`]: () => agentError(422, 'FACT_REJECTED', { reason: 'contact_pii' }) })
+    mockFetch({ [`PATCH ${AGENT}/notes/*`]: () => agentError(422, 'NOTE_REJECTED', { reason: 'contact_pii' }) })
 
     const result = await call(
       app,
-      'POST',
-      ApiPath.MemoryFacts,
-      { category: MemoryFactCategory.Situation, text: 'Мой номер 8 900 000 00 00' },
+      'PATCH',
+      memoryFactPath('n-1'),
+      { text: 'Мой номер 8 900 000 00 00' },
       tokens.accessToken,
     )
 
-    refusedWith(result, CreateMemoryFactApiErrorCode.FACT_REJECTED)
+    refusedWith(result, UpdateMemoryFactApiErrorCode.FACT_REJECTED)
     const message = result.envelope.status ? '' : result.envelope.errorMessage
     expect(message).toContain('contact_pii')
     expect(message).not.toContain('900')
   })
 
-  it('POST: MEMORY_DISABLED, MEMORY_FULL, MEMORY_UNAVAILABLE — отказы; AGENT_VALIDATION — 422', async () => {
+  it('PATCH: чужая заметка — FACT_NOT_FOUND, MEMORY_UNAVAILABLE — отказ, AGENT_VALIDATION — 422', async () => {
     const { tokens } = await signedIn()
-    const body = { category: MemoryFactCategory.Goal, text: 'Выспаться' }
+    const body = { text: 'Выспаться' }
     for (const [answer, code] of [
-      [() => agentError(409, 'MEMORY_DISABLED'), CreateMemoryFactApiErrorCode.MEMORY_DISABLED],
-      [() => agentError(409, 'MEMORY_FULL'), CreateMemoryFactApiErrorCode.MEMORY_FULL],
-      [() => agentError(503, 'MEMORY_UNAVAILABLE'), CreateMemoryFactApiErrorCode.MEMORY_UNAVAILABLE],
+      [() => agentError(404, 'NOTE_NOT_FOUND'), UpdateMemoryFactApiErrorCode.FACT_NOT_FOUND],
+      [() => agentError(503, 'MEMORY_UNAVAILABLE'), UpdateMemoryFactApiErrorCode.MEMORY_UNAVAILABLE],
     ] as const) {
-      mockFetch({ [`POST ${AGENT}/facts`]: answer })
-      refusedWith(await call(app, 'POST', ApiPath.MemoryFacts, body, tokens.accessToken), code)
+      mockFetch({ [`PATCH ${AGENT}/notes/*`]: answer })
+      refusedWith(await call(app, 'PATCH', memoryFactPath('n-x'), body, tokens.accessToken), code)
     }
-    mockFetch({ [`POST ${AGENT}/facts`]: () => agentError(422, 'AGENT_VALIDATION') })
-    expect((await call(app, 'POST', ApiPath.MemoryFacts, body, tokens.accessToken)).status).toBe(422)
+    mockFetch({ [`PATCH ${AGENT}/notes/*`]: () => agentError(422, 'AGENT_VALIDATION') })
+    expect((await call(app, 'PATCH', memoryFactPath('n-x'), body, tokens.accessToken)).status).toBe(422)
   })
 
-  it('PATCH: «закрепить» уходит агенту как status: pinned; чужой факт — FACT_NOT_FOUND; пустое тело — 400', async () => {
-    const { user, tokens } = await signedIn()
-    const { calls } = mockFetch({ [`PATCH ${AGENT}/facts/*`]: () => json(agentFact({ status: 'pinned' })) })
-
-    const fact = ok<MemoryFactApiResponse>(
-      await call(
-        app,
-        'PATCH',
-        memoryFactPath('f-1'),
-        { status: MemoryFactStatus.Pinned },
-        tokens.accessToken,
-      ),
+  it('POST /api/memory/facts больше нет: заметку пишет агент, а не человек', async () => {
+    const { tokens } = await signedIn()
+    const { calls } = mockFetch({})
+    const response = await call(
+      app,
+      'POST',
+      ApiPath.MemoryFacts,
+      { category: MemoryFactCategory.Goal, text: 'Выспаться' },
+      tokens.accessToken,
     )
-    expect(fact.status).toBe(MemoryFactStatus.Pinned)
-    expect(calls.at(-1)!.url.pathname).toBe(`/v1/users/${user.id}/memory/facts/f-1`)
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ status: 'pinned' })
-
-    expect((await call(app, 'PATCH', memoryFactPath('f-1'), {}, tokens.accessToken)).status).toBe(400)
-    expect(
-      (
-        await call(
-          app,
-          'PATCH',
-          memoryFactPath('f-1'),
-          { status: MemoryFactStatus.Expired },
-          tokens.accessToken,
-        )
-      ).status,
-    ).toBe(400)
-
-    mockFetch({ [`PATCH ${AGENT}/facts/*`]: () => agentError(404, 'FACT_NOT_FOUND') })
-    refusedWith(
-      await call(app, 'PATCH', memoryFactPath('f-x'), { confirm: true }, tokens.accessToken),
-      UpdateMemoryFactApiErrorCode.FACT_NOT_FOUND,
-    )
+    expect(response.status).toBe(404)
+    expect(calls).toEqual([])
   })
 
-  it('DELETE факта и DELETE всей памяти: result null; MEMORY_UNAVAILABLE — отказ', async () => {
+  it('DELETE заметки и DELETE всей памяти: result null; MEMORY_UNAVAILABLE — отказ', async () => {
     const { user, tokens } = await signedIn()
     const { calls } = mockFetch({
-      [`DELETE ${AGENT}/facts/*`]: () => new Response(null, { status: 204 }),
+      [`DELETE ${AGENT}/notes/*`]: () => new Response(null, { status: 204 }),
       [`DELETE ${AGENT}`]: () => new Response(null, { status: 204 }),
     })
 
     expect(ok(await call(app, 'DELETE', memoryFactPath('f-1'), undefined, tokens.accessToken))).toBeNull()
     expect(ok(await call(app, 'DELETE', ApiPath.Memory, undefined, tokens.accessToken))).toBeNull()
     expect(calls.map((entry) => `${entry.method} ${entry.url.pathname}`)).toEqual([
-      `DELETE /v1/users/${user.id}/memory/facts/f-1`,
+      `DELETE /v1/users/${user.id}/memory/notes/f-1`,
       `DELETE /v1/users/${user.id}/memory`,
     ])
 
