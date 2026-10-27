@@ -201,7 +201,7 @@
 ### 7.1 Архив
 
 #### Что сделать
-`openspec archive add-memory-notes` после выката. Места, затронутые `cleanup/242-memory-fixes` (`design.md`, вопрос 9), перевести в MODIFIED на обновлённую базу.
+`openspec archive add-memory-notes` после выката. Места, затронутые `cleanup/242-memory-fixes`, уже переведены в MODIFIED (`design.md`, вопрос 9).
 
 #### Приёмка
 - `validate --strict` зелёный; `git diff openspec/specs` без потерь.

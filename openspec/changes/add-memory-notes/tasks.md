@@ -58,4 +58,4 @@
 
 ## 7. Архив
 
-- [ ] 7.1 `openspec archive add-memory-notes` после выката; вместе с ним переводятся в MODIFIED места, затронутые `cleanup/242-memory-fixes` (`design.md`, вопрос 9). Приёмка: `validate --strict` зелёный, `git diff openspec/specs` без потерь
+- [ ] 7.1 `openspec archive add-memory-notes` после выката; дельты уже написаны как MODIFIED на базу после `cleanup/242-memory-fixes`. Приёмка: `validate --strict` зелёный, `git diff openspec/specs` без потерь
