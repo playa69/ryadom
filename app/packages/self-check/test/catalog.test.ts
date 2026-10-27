@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { byId, catalog, wave1 } from '../src/catalog'
+import { allTests, byId, wave1 } from '../src/catalog'
 import { score } from '../src/score'
 
 describe('волна 1', () => {
@@ -18,9 +18,8 @@ describe('волна 1', () => {
       expect(score(t, t.items.map((i) => (i.reverse ? hi : 0))).score, t.id).toBe(0)
     }
   })
-  it('PHQ-9: кризисный только пункт 9; в проде только ready', () => {
+  it('PHQ-9: кризисный только пункт 9', () => {
     expect(byId('phq9')!.items.map((i) => !!i.crisis)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 1].map(Boolean))
-    expect(catalog()).toEqual([])
   })
   it('в подписях нет диагнозов', () => {
     for (const t of wave1) for (const b of t.bands) expect(b.label + b.text).not.toMatch(/депресси|расстройств|диагноз:/i)
@@ -52,15 +51,13 @@ describe('повтор теста', () => {
   })
 })
 
-import { visible } from '../src/catalog'
-import { gad7 } from '../src/tests/gad7'
-import { stress } from '../src/tests/stress'
-
-describe('видимость', () => {
-  it('видны только тесты со статусом ready, на ревью и заблокированные — нет', () => {
-    const ready = { ...gad7, status: 'ready' as const }
-    expect(visible([ready, byId('phq9')!, { ...stress, status: 'blocked' as const }])).toEqual([ready])
-    expect(visible().every((t) => t.status === 'ready')).toBe(true)
+describe('каталог', () => {
+  it('в каталоге все семь тестов, у каждого свой id', () => {
+    expect(allTests.map((t) => t.id)).toEqual(['gad7', 'phq9', 'rosenberg', 'wellbeing', 'stress', 'burnout', 'mini-ipip'])
+    expect(new Set(allTests.map((t) => t.id)).size).toBe(allTests.length)
+  })
+  it('byId находит тест любой волны', () => {
+    expect(byId('mini-ipip')?.code).toBe('Mini-IPIP')
   })
 })
 

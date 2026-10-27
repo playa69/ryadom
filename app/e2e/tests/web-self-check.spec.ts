@@ -1,6 +1,5 @@
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
-import { WAVE1_SHOWN } from '../support/self-check'
 import { openWebApp, registerAndConfirm, uniqueEmail } from '../support/web'
 
 /**
@@ -10,8 +9,6 @@ import { openWebApp, registerAndConfirm, uniqueEmail } from '../support/web'
  * проходится без сети. Сохранение и история появятся с серверной частью (миграция 0010), здесь их нет.
  * Один сценарий на одну регистрацию, как в остальных web-спеках.
  */
-test.skip(!WAVE1_SHOWN, 'сценарий идёт по шести шкалам волны 1: пока не все со статусом ready (PROTEUS-218), в дневнике их нет')
-
 test('тесты: самопроверка, каталог, прохождение, результат, кризисный пункт, без сети', async ({ page, shot }) => {
   test.setTimeout(180_000)
   await clearMailbox()

@@ -32,5 +32,4 @@ export const phq9: SelfCheckTest = {
   highBandFrom: 20,
   source: 'Spitzer, Kroenke, Williams; перевод Pfizer «Russian for Russia»',
   license: 'Воспроизведение и перевод разрешены правообладателем; формулировки не менять (изменённый текст теряет валидность)',
-  status: 'review',
 }
