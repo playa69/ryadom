@@ -53,7 +53,7 @@ data:
   # Память агента — Cognee (app/memory/cognee_backend.py, PR #53): согласие и данные человека — его датасет в Cognee
   # (svc cognee, тот же ns agent; деплой — 12-cognee-deployment.yaml). Сервисный пользователь — Secret
   # cognee-service-account (ключи COGNEE_SERVICE_EMAIL/COGNEE_SERVICE_PASSWORD, подключены в 02-deployment.yaml).
-  # Память = два слоя (openspec/changes/add-memory-notes): заметки о человеке в PostgreSQL агента (`memory_notes`) и поиск по
+  # Память = два слоя (openspec/specs/memory-notes): заметки о человеке в PostgreSQL агента (`memory_notes`) и поиск по
   # прошлым разговорам в Cognee. Включена ли память у человека и согласие хранятся в базе агента (`memory_settings`), а не
   # здесь: пауза переживает перезапуск. Согласия и факты SQLite-памяти (образы < 0.8.0) не мигрировали (решение владельца).
   # Заметки извлекаются по ходу разговора всегда (при включённой памяти у человека и заданном ключе прокси); лимит живых заметок

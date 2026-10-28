@@ -114,8 +114,13 @@ export enum AnalyticsEvent {
   MemorySheetOpened = 'memory_sheet_opened',
   /** A note was corrected by hand and saved. */
   MemoryNoteEdited = 'memory_note_edited',
-  /** A note was deleted with "×"; `undone` when "Вернуть" took it back within its seconds. */
+  /**
+   * A note was deleted with "×" of the sheet (no `source`), or with "Убрать" of the block "Я запомнил" (`source: 'recap'`, never
+   * `undone`: there is no "Вернуть" there); `undone` when "Вернуть" took it back within its seconds.
+   */
   MemoryNoteDeleted = 'memory_note_deleted',
+  /** The block "Я запомнил" came up in the closing window of a conversation. Neither a text, a kind nor a count. */
+  MemoryRecapShown = 'memory_recap_shown',
   /** "Скажи, что поправить или убрать" was used. */
   MemoryInstructionUsed = 'memory_instruction_used',
   /** "Удалить всю память" was confirmed and done. */
@@ -268,6 +273,9 @@ export type ProfileField = 'name' | 'voice'
 /** Which switch of the memory section: "Память", "Запоминать чувствительное", "Опираться на прошлые разговоры". */
 export type MemorySettingName = 'memory' | 'sensitive' | 'chat_search'
 
+/** Where a note was deleted: the sheet "Что помнит Рядом" (the default, no `source`) or the block "Я запомнил" of the closing window. */
+export type MemoryNoteSource = 'sheet' | 'recap'
+
 /** Where the list of tests was opened from. */
 export type SelfCheckFrom = 'diary' | 'tests' | 'history'
 /** A test id from the catalog (`phq9`, `gad7`…): a fixed short set, never typed by a person. */
@@ -371,7 +379,8 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
   [AnalyticsEvent.MemorySheetOpened]: { source: 'profile' }
   [AnalyticsEvent.MemoryNoteEdited]: NoProperties
-  [AnalyticsEvent.MemoryNoteDeleted]: { undone: boolean }
+  [AnalyticsEvent.MemoryNoteDeleted]: { undone: boolean; source?: MemoryNoteSource }
+  [AnalyticsEvent.MemoryRecapShown]: NoProperties
   [AnalyticsEvent.MemoryInstructionUsed]: NoProperties
   [AnalyticsEvent.MemoryReset]: NoProperties
   [AnalyticsEvent.MemorySettingChanged]: { setting: MemorySettingName; enabled: boolean }

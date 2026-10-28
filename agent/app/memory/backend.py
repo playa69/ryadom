@@ -45,8 +45,8 @@ class MemoryBackend(MemoryLink, Protocol):
         """«Забыть всё»."""
         ...
 
-    async def changes(self, user_id: str, dialog_id: str) -> dict[str, Any]:
-        """Что разговор добавил в память: карточка «Я запомнил»."""
+    async def changes(self, dialog: Dialog) -> dict[str, Any]:
+        """Заметки разговора для блока «Я запомнил»: `pending`, пока финальный проход извлечения не закончен, потом `ready`."""
         ...
 
     async def export(self, user_id: str) -> dict[str, Any]:

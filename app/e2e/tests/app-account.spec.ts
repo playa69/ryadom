@@ -12,6 +12,7 @@ import {
 } from '../support/app'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 
 /**
  * The whole account path: sign-up, the code from the email, SOS, password change, deletion.
@@ -46,14 +47,19 @@ test('путь аккаунта: регистрация, вход, смена п
   await expect(page.getByTestId('voice-name')).toContainText('Дмитрий')
   await page.getByTestId('voice-name').click()
   // The voice page opens on the tab of the current gender; a tap on a voice's ▶ plays it and does not choose it.
+  await expect(page.locator('.segmented')).toBeVisible()
+  await step(page, 'voice-male-tab', 'Страница «Голос агента»: открыта на мужских голосах')
   await page.locator('.segmented .button', { hasText: 'Женские' }).click()
+  await step(page, 'voice-female-tab', 'Вкладка женских голосов: у каждого можно прослушать пример')
   await page.getByLabel('Прослушать: Алиса').click()
   await expect(page.locator('input[name=voice]:checked')).toHaveCount(0) // the chosen one is on the other tab
   await page.locator('.item-title', { hasText: 'Алиса' }).click()
   await expect(page.getByText('Голос сохранён')).toBeVisible()
   await expect(page.locator('input[name=voice]:checked')).toHaveValue('Zephyr')
+  await step(page, 'voice-saved', 'Выбрана Алиса: «Голос сохранён»')
   await page.locator('.navbar a.back').click()
   await expect(page.getByTestId('voice-name')).toContainText('Алиса')
+  await step(page, 'voice-profile', 'В профиле теперь голос Алиса')
 
   await page.getByText('Изменить пароль', { exact: true }).click()
 

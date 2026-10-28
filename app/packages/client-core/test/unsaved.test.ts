@@ -1,5 +1,5 @@
 /**
- * "Не сохранять этот разговор" on the client (`openspec/changes/add-unsaved-dialog`): only an answer that says `saved: false` counts,
+ * "Не сохранять этот разговор" on the client (`add-unsaved-dialog`): only an answer that says `saved: false` counts,
  * and the id of such a dialog is remembered for the tab, so a reload can still say "Разговор не сохранён".
  */
 import { describe, expect, it } from 'vitest'

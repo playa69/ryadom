@@ -5,7 +5,7 @@ import { QUEUE_CATALOG, type QueueDefinition } from '@ryadom/db/jobs'
 
 /**
  * Hangs the schedules of the catalog on their queues and registers the workers
- * (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4). The catalog and the creation of the queues are shared with
+ * (`add-job-queue`, design D4). The catalog and the creation of the queues are shared with
  * the admin app and live in `@ryadom/db/jobs`; everything that works a queue off is here and in `lib/jobs.ts`: the core
  * sees only the port of `job-queue-service`.
  */

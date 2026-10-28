@@ -2988,6 +2988,87 @@ p.rd-recap-text {
   display: block;
 }
 
+/* The block "Я запомнил" in the window after a conversation (a Framework7 dialog): the notes it left, each with "Убрать". */
+.rd-remembered {
+  margin: var(--ryadom-s-3) 0 0;
+  padding: var(--ryadom-s-2) var(--ryadom-s-3);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  text-align: left;
+}
+
+.rd-remembered-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-remembered-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rd-remembered-note + .rd-remembered-note {
+  border-top: 1px solid var(--ryadom-line);
+}
+
+.rd-remembered-row {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rd-remembered-text {
+  flex: 1;
+  min-width: 0;
+  padding: var(--ryadom-s-2) 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--ryadom-text);
+  overflow-wrap: anywhere;
+}
+
+.rd-remembered-remove {
+  flex: none;
+  min-height: 44px;
+  padding: 0 var(--ryadom-s-2);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
+.rd-remembered-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rd-remembered .rd-form-error {
+  display: block;
+  padding-bottom: var(--ryadom-s-2);
+  text-align: left;
+}
+
+.rd-remembered-more {
+  margin: var(--ryadom-s-1) 0 var(--ryadom-s-1);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ryadom-text-faint);
+}
+
+/* The offer to link an address, under the block, in its own paragraph of the dialog. */
+.dialog .rd-dialog-offer {
+  margin-top: var(--ryadom-s-3);
+}
+
 /* ─── Тесты внутри приложения (add-self-check-tests) ───────────────────────── */
 
 .rd-test-list {

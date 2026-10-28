@@ -13,6 +13,7 @@ import {
   startAnonymously,
   talkButton,
 } from '../support/web'
+import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 
 /**
@@ -21,7 +22,8 @@ import { expect, test } from '../support/fixtures'
  * the notes in groups (correct, "×" with "Вернуть", "Скажи, что поправить или убрать"), the three
  * switches (the sensitive one decides whether "плохо сплю" becomes a note), the pause, the download and
  * "Удалить всю память". The agent is the mock (`dev/agent-mock/memory-notes.mjs`): its "extraction" turns
- * the person's phrases into notes a moment (1.5 s) after they are said.
+ * the person's phrases into notes a moment (1.5 s) after they are said, and answers `GET /memory/changes` like the real agent: `pending`
+ * until the final pass after the end is done, then the notes of that conversation (the block "Я запомнил" of the closing window).
  */
 
 const INTRO = 'Меня зовут Алекс, я работаю в продажах'
@@ -127,8 +129,6 @@ test('память в вебе: согласие → разговор → лис
   await goTo(page, 'Новый разговор')
   await expect(page.getByTestId('incognito-toggle')).toHaveAttribute('aria-pressed', 'false')
   await talkAndEnd(page, INTRO)
-  // No card "Я запомнил" any more: the notes are seen on the sheet only.
-  await expect(page.getByTestId('memory-card')).toHaveCount(0)
 
   await openMemory(page)
   await openSheet(page)
@@ -307,7 +307,6 @@ test('память в вебе: разговор «Без памяти» нич�
   await expect(page).toHaveURL(/\/home$/)
   // The mock is done in about a second and a half; well past it, still nothing.
   await page.waitForTimeout(4_000)
-  await expect(page.getByTestId('memory-card')).toHaveCount(0)
   await openMemory(page)
   await openSheet(page)
   await expect(sheet(page).getByTestId('memory-sheet-empty')).toBeVisible()
@@ -405,4 +404,185 @@ test('«Запомнил: … · Убрать» в разговоре: нова�
   await openMemory(page)
   await openSheet(page)
   await expect(sheet(page)).not.toContainText(SLEEP_NOTE)
+})
+
+// ── the block "Я запомнил" in the window after a conversation (PROTEUS-242, D16) ─────────────────
+
+const RECAP_ONE = 'Люблю море'
+const RECAP_ONE_NOTE = 'Любит море'
+// One message, six notes: the mock takes every phrase pattern in a line.
+const RECAP_MANY =
+  'Меня зовут Борис, я работаю в школе, у меня есть сестра Маша, люблю горы, не хочу говорить про отца, запомни, что у меня кот Барсик'
+
+const recap = (page: Page) => modal(page).getByTestId('memory-recap')
+const recapNote = (page: Page, text: string) =>
+  recap(page).getByTestId('memory-recap-note').filter({ hasText: text })
+
+async function turnMemoryOn(page: Page): Promise<void> {
+  await openMemory(page)
+  await memorySwitch(page).click()
+  await modalButton(page, 'Включить память').click()
+  await expect(memorySwitch(page)).toBeChecked()
+}
+
+/** A conversation from home: the words typed, the reply waited for; the conversation stays open. */
+async function talk(page: Page, words: string): Promise<void> {
+  await homeInput(page).fill(words)
+  await homeInput(page).press('Enter')
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
+  await expect(messages(page, 'assistant').last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
+  await expect(dialogInput(page)).toBeVisible()
+}
+
+/** Ends the open conversation and waits for the window "Спасибо, что поговорил(а)"; the window stays open. */
+async function endAndWait(page: Page): Promise<void> {
+  await page.getByTestId('dialog-end').click()
+  await modalButton(page, 'Завершить').click()
+  await expect(modal(page).getByRole('heading', { name: 'Спасибо, что поговорил(а)' })).toBeVisible({
+    timeout: 30_000,
+  })
+}
+
+async function closeWindow(page: Page): Promise<void> {
+  await page.getByTestId('alert-ok').click()
+  await expect(page).toHaveURL(/\/home$/)
+}
+
+test('блок «Я запомнил» в окне завершения: заметки этого разговора, «Убрать», сбой «Убрать», больше четырёх', async ({
+  page,
+}) => {
+  test.setTimeout(360_000)
+  await openWebApp(page)
+  await startAnonymously(page)
+  await turnMemoryOn(page)
+
+  // An earlier conversation leaves a note of its own: it must not show up in the block of the next one.
+  await goTo(page, 'Новый разговор')
+  await talkAndEnd(page, RECAP_ONE)
+
+  await goTo(page, 'Новый разговор')
+  await talk(page, INTRO)
+  await expect(messages(page, 'user').first()).toContainText('Алекс')
+  await step(page, 'recap-said', 'Человек рассказал о себе в разговоре: имя и работа')
+
+  // The window opens at once, with no block: the final pass is still going.
+  await endAndWait(page)
+  await expect(recap(page)).toHaveCount(0)
+  await expect(page.getByTestId('alert-ok')).toBeEnabled()
+  await step(page, 'recap-window-pending', 'Разговор завершён: окно открыто, блока «Я запомнил» ещё нет')
+
+  // Then the notes of this conversation, each with «Убрать»; the earlier one is not among them.
+  await expect(recap(page)).toBeVisible({ timeout: 30_000 })
+  await expect(recap(page).getByRole('heading', { name: 'Я запомнил' })).toBeVisible()
+  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(2)
+  await expect(recapNote(page, NAME)).toBeVisible()
+  await expect(recapNote(page, WORK)).toBeVisible()
+  await expect(recap(page)).not.toContainText(RECAP_ONE_NOTE)
+  await expect(recap(page).getByTestId('memory-recap-remove')).toHaveCount(2)
+  await expect(recap(page).getByTestId('memory-recap-more')).toHaveCount(0)
+  await expectNoHorizontalOverflow(page)
+  await step(page, 'recap-block', 'Блок «Я запомнил»: две заметки из этого разговора, у каждой «Убрать»')
+
+  // «Убрать» that does not go through: the note stays and the error is beside it.
+  await page.route('**/api/memory/facts/*', (route) =>
+    route.request().method() === 'DELETE'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+      : route.fallback(),
+  )
+  await recapNote(page, NAME).getByTestId('memory-recap-remove').click()
+  await expect(recapNote(page, NAME).getByTestId('memory-recap-error')).toBeVisible()
+  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(2)
+  await step(page, 'recap-remove-failed', 'Удаление не прошло: заметка осталась в блоке, рядом ошибка')
+  await page.unroute('**/api/memory/facts/*')
+
+  // «Убрать» that does: gone from the block at once, without «Вернуть».
+  await recapNote(page, NAME).getByTestId('memory-recap-remove').click()
+  await expect(recapNote(page, NAME)).toHaveCount(0)
+  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(1)
+  await expect(recapNote(page, WORK)).toBeVisible()
+  await expect(page.getByTestId('memory-undo')).toHaveCount(0)
+  await step(page, 'recap-note-removed', 'После «Убрать» заметка пропала из блока, другая на месте')
+
+  // …and from the sheet "Что помнит Рядом", the earlier note and the other one are still there.
+  await closeWindow(page)
+  await openMemory(page)
+  await openSheet(page)
+  await reveal(page)
+  await expect(notes(page)).toHaveCount(2)
+  await expect(sheet(page)).toContainText(RECAP_ONE_NOTE)
+  await expect(sheet(page)).toContainText(WORK)
+  await expect(sheet(page)).not.toContainText(NAME)
+  await step(page, 'recap-sheet-after-remove', 'В листе «Что помнит Рядом» убранной заметки нет, остальные на месте')
+  await closeSheet(page)
+
+  // More than four notes: four in the block and a line about the rest; «Убрать» brings the next one up.
+  await goTo(page, 'Новый разговор')
+  await talk(page, RECAP_MANY)
+  await endAndWait(page)
+  await expect(recap(page)).toBeVisible({ timeout: 30_000 })
+  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(4)
+  await expect(recap(page).getByTestId('memory-recap-more')).toContainText('в «Что помнит Рядом»')
+  await expectNoHorizontalOverflow(page)
+  await step(page, 'recap-more-than-four', 'Из разговора вышло шесть заметок: в блоке четыре и подпись про остальные')
+  await recap(page).getByTestId('memory-recap-remove').first().click()
+  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(4)
+  await expect(recap(page).getByTestId('memory-recap-more')).toBeVisible()
+  await recap(page).getByTestId('memory-recap-remove').first().click()
+  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(4)
+  await expect(recap(page).getByTestId('memory-recap-more')).toHaveCount(0)
+  await closeWindow(page)
+})
+
+test('блока «Я запомнил» нет: «Без памяти», «Не сохранять», пауза, разговор без заметок', async ({ page }) => {
+  test.setTimeout(360_000)
+  await openWebApp(page)
+  await startAnonymously(page)
+  await turnMemoryOn(page)
+
+  // The block would come within a poll or two (3 s apart) and the mock is done in 1.5 s: a wait past both.
+  const noBlock = async () => {
+    await page.waitForTimeout(5_000)
+    await expect(recap(page)).toHaveCount(0)
+    await expect(page.getByTestId('alert-ok')).toBeVisible()
+  }
+
+  // A conversation «Без памяти» says nothing to remember, however much the person told.
+  await goTo(page, 'Новый разговор')
+  await page.getByTestId('incognito-toggle').click()
+  await expect(page.getByTestId('incognito-toggle')).toHaveAttribute('aria-pressed', 'true')
+  await talk(page, INTRO)
+  await endAndWait(page)
+  await noBlock()
+  await step(page, 'recap-none-incognito', 'Разговор «Без памяти»: окно завершения как прежде, блока нет')
+  await closeWindow(page)
+
+  // A conversation held unsaved: the same.
+  await goTo(page, 'Новый разговор')
+  await page.getByTestId('unsaved-toggle').check()
+  await talk(page, INTRO)
+  await endAndWait(page)
+  await noBlock()
+  await closeWindow(page)
+
+  // Nothing to remember in what was said: the block does not come up empty.
+  await goTo(page, 'Новый разговор')
+  await talk(page, 'Привет, как дела')
+  await endAndWait(page)
+  await noBlock()
+  await closeWindow(page)
+
+  // Memory on pause: the person told about themselves, and nothing is kept, so nothing is listed.
+  await openMemory(page)
+  await memorySwitch(page).click()
+  await expect(memorySwitch(page)).not.toBeChecked()
+  await goTo(page, 'Новый разговор')
+  await talk(page, INTRO)
+  await endAndWait(page)
+  await noBlock()
+  await closeWindow(page)
+  await openMemory(page)
+  await openSheet(page)
+  await expect(sheet(page).getByTestId('memory-sheet-empty')).toBeVisible()
 })
