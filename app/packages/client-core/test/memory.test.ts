@@ -1,9 +1,11 @@
 /**
- * Memory on the client: the groups of the screen, the labels of a fact, its actions, the card "Я
- * запомнил" (whether to show it and the polling behind it) and "Забыть" with time to take it back.
+ * Memory on the client: the groups of the screen, the labels of a fact, its actions, the block "Я
+ * запомнил" in the closing window (whether to look for it, the polling behind it and its "Убрать")
+ * and "Забыть" with time to take it back.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ForgetMemoryApiErrorCode,
   MEMORY_CONSENT_VERSION,
   MemoryChangeOp,
   MemoryChangesStatus,
@@ -14,24 +16,25 @@ import {
   type MemoryChangesApiResponse,
   type MemoryFactApiResponse,
 } from '@ryadom/contracts/api/memory'
-import type { ApiOutcome } from '../src/errors'
+import { ApiError, NETWORK_ERROR_STATUS, NETWORK_ERROR_TEXT, type ApiOutcome } from '../src/errors'
 import {
   FORGET_UNDO_MS,
-  MEMORY_CARD_MAX_ITEMS,
-  createMemoryCard,
+  MEMORY_FORGET_ERRORS,
+  MEMORY_RECAP_MAX_ITEMS,
+  createMemoryRecap,
   createPendingForgets,
   dialogMemoryMark,
   groupMemory,
-  memoryCardContent,
   memoryExportFileName,
   memoryFactActions,
   memoryFactSource,
   memoryInUse,
+  memoryRecapNotes,
   memorySectionStatus,
   needsMemoryConsent,
   pollMemoryChanges,
-  shouldShowMemoryCard,
   shouldWatchMemoryChanges,
+  type ForgetNote,
 } from '../src/memory'
 
 let nextId = 1
@@ -200,7 +203,7 @@ describe('действия с фактом', () => {
   })
 })
 
-describe('карточка «Я запомнил»: что показывать', () => {
+describe('блок «Я запомнил»: что показывать', () => {
   it('только ready и только новое: подтверждение уже известного — не новость', () => {
     const added = fact()
     const confirmed = fact()
@@ -208,44 +211,35 @@ describe('карточка «Я запомнил»: что показывать'
       { op: MemoryChangeOp.Add, fact: added },
       { op: MemoryChangeOp.Confirm, fact: confirmed },
     ])
-    expect(memoryCardContent(ready).items.map((item) => item.fact)).toEqual([added])
-    expect(shouldShowMemoryCard(ready)).toBe(true)
+    expect(memoryRecapNotes(ready)).toEqual([{ id: added.id, text: added.text }])
   })
 
-  it('pending, skipped, пусто и null — карточки нет', () => {
+  it('pending, skipped, пусто и null — заметок нет', () => {
     const one = [{ op: MemoryChangeOp.Add, fact: fact() }]
-    expect(shouldShowMemoryCard(changes(MemoryChangesStatus.Pending, one))).toBe(false)
-    expect(shouldShowMemoryCard(changes(MemoryChangesStatus.Skipped, one))).toBe(false)
-    expect(shouldShowMemoryCard(changes(MemoryChangesStatus.Ready))).toBe(false)
-    expect(shouldShowMemoryCard(null)).toBe(false)
+    expect(memoryRecapNotes(changes(MemoryChangesStatus.Pending, one))).toEqual([])
+    expect(memoryRecapNotes(changes(MemoryChangesStatus.Skipped, one))).toEqual([])
+    expect(memoryRecapNotes(changes(MemoryChangesStatus.Ready))).toEqual([])
+    expect(memoryRecapNotes(null)).toEqual([])
   })
 
-  it('предположения и истёкшие в карточку не идут, один факт — один пункт', () => {
-    const active = fact()
+  it('предположения и истёкшие в блок не идут, одна заметка — один пункт, порядок сервера сохраняется', () => {
+    const first = fact()
+    const second = fact()
     const ready = changes(MemoryChangesStatus.Ready, [
-      { op: MemoryChangeOp.Add, fact: active },
-      { op: MemoryChangeOp.Update, fact: active },
+      { op: MemoryChangeOp.Add, fact: first },
       { op: MemoryChangeOp.Add, fact: fact({ status: MemoryFactStatus.Candidate }) },
+      { op: MemoryChangeOp.Update, fact: first },
+      { op: MemoryChangeOp.Add, fact: second },
       { op: MemoryChangeOp.Supersede, fact: fact({ status: MemoryFactStatus.Expired }) },
     ])
-    expect(memoryCardContent(ready).items.map((item) => item.fact.id)).toEqual([active.id])
+    expect(memoryRecapNotes(ready).map((note) => note.id)).toEqual([first.id, second.id])
   })
 
-  it('ждущие «Запомнить» — первыми; не больше четырёх, остальное считается', () => {
-    const plain = Array.from({ length: 4 }, () => ({ op: MemoryChangeOp.Add, fact: fact() }))
-    const proposed = fact({ status: MemoryFactStatus.Proposed })
-    const content = memoryCardContent(
-      changes(MemoryChangesStatus.Ready, [...plain, { op: MemoryChangeOp.Add, fact: proposed }]),
-    )
-    expect(content.items).toHaveLength(MEMORY_CARD_MAX_ITEMS)
-    expect(content.items[0]).toEqual({ fact: proposed, proposed: true })
-    expect(content.more).toBe(1)
-  })
-
-  it('ждать ли карточку: не после разговора «Без памяти» и не при выключенной памяти', () => {
+  it('ждать ли блок: не после «Без памяти», «Не сохранять» и не при выключенной памяти', () => {
     expect(shouldWatchMemoryChanges({ memoryMode: 'on', memoryEnabled: true })).toBe(true)
     expect(shouldWatchMemoryChanges({ memoryMode: 'off', memoryEnabled: true })).toBe(false)
     expect(shouldWatchMemoryChanges({ memoryMode: 'on', memoryEnabled: false })).toBe(false)
+    expect(shouldWatchMemoryChanges({ memoryMode: 'on', memoryEnabled: true, unsaved: true })).toBe(false)
     // An older gateway says nothing: one request finds out.
     expect(shouldWatchMemoryChanges({})).toBe(true)
   })
@@ -325,66 +319,160 @@ describe('опрос изменений после разговора', () => {
   })
 })
 
-describe('карточка как состояние модуля', () => {
+describe('блок «Я запомнил» как состояние окна завершения', () => {
   const instant = { wait: async () => {} }
   type Load = (dialogId: string) => Promise<ApiOutcome<MemoryChangesApiResponse, string>>
 
-  it('готовые изменения — карточка с владельцем; убрать последний пункт — карточки нет', async () => {
-    const item = fact()
-    const card = createMemoryCard(instant)
+  function readyWith(facts: MemoryFactApiResponse[]): Load {
+    return async () => ok(changes(MemoryChangesStatus.Ready, facts.map((item) => ({ op: MemoryChangeOp.Add, fact: item }))))
+  }
+  const forgot = (): ForgetNote => async () => ({ ok: true, data: undefined })
+
+  it('готовые заметки — блок; сообщает подписчикам', async () => {
+    const [first, second] = [fact({ text: 'Зовут Алекс' }), fact({ text: 'Работает в продажах' })]
+    const recap = createMemoryRecap(instant)
     const listener = vi.fn()
-    card.subscribe(listener)
-    await card.watch('d-1', 'user-a', async () =>
-      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: item }])),
-    )
-    expect(card.getSnapshot()).toMatchObject({ dialogId: 'd-1', owner: 'user-a', items: [{ fact: item }] })
+    recap.subscribe(listener)
+    await recap.watch('d-1', readyWith([first!, second!]))
+    expect(recap.getSnapshot()).toEqual({
+      dialogId: 'd-1',
+      items: [
+        { id: first!.id, text: 'Зовут Алекс' },
+        { id: second!.id, text: 'Работает в продажах' },
+      ],
+      more: 0,
+      busyId: null,
+      errors: {},
+    })
     expect(listener).toHaveBeenCalled()
-
-    card.remove(item.id)
-    expect(card.getSnapshot()).toBeNull()
   })
 
-  it('skipped — карточки нет и ничего не сообщается', async () => {
-    const card = createMemoryCard(instant)
-    await card.watch('d-1', 'user-a', async () => ok(changes(MemoryChangesStatus.Skipped)))
-    expect(card.getSnapshot()).toBeNull()
+  it('проход ещё идёт — блока нет, он появляется, когда заметки готовы', async () => {
+    const item = fact()
+    const answers = [
+      ok(changes(MemoryChangesStatus.Pending)),
+      ok(changes(MemoryChangesStatus.Pending)),
+      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: item }])),
+    ]
+    const recap = createMemoryRecap(instant)
+    const seen: Array<string | undefined> = []
+    recap.subscribe(() => seen.push(recap.getSnapshot()?.items[0]?.id))
+    await recap.watch('d-1', async () => answers.shift()!)
+    expect(seen).toEqual([item.id])
+    expect(recap.getSnapshot()?.items).toHaveLength(1)
   })
 
-  it('«Запомнить» на карточке: пункт остаётся, но больше не ждёт', async () => {
-    const proposed = fact({ status: MemoryFactStatus.Proposed })
-    const card = createMemoryCard(instant)
-    await card.watch('d-1', 'user-a', async () =>
-      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: proposed }])),
-    )
-    card.update({ ...proposed, status: MemoryFactStatus.Active })
-    expect(card.getSnapshot()?.items).toEqual([
-      { fact: { ...proposed, status: MemoryFactStatus.Active }, proposed: false },
-    ])
+  it('pending до конца, skipped, пустой ready, отказ — блока нет', async () => {
+    for (const load of [
+      async () => ok(changes(MemoryChangesStatus.Pending)),
+      async () => ok(changes(MemoryChangesStatus.Skipped)),
+      async () => ok(changes(MemoryChangesStatus.Ready)),
+      async (): Promise<ApiOutcome<MemoryChangesApiResponse, string>> => ({ ok: false, code: 'DIALOG_NOT_FOUND' }),
+    ] as Load[]) {
+      const recap = createMemoryRecap({ ...fakeClock() })
+      await recap.watch('d-1', load)
+      expect(recap.getSnapshot()).toBeNull()
+    }
   })
 
-  it('выход из аккаунта во время опроса — ответ, пришедший позже, не показывается', async () => {
+  it('больше четырёх — четыре и счёт остальных; «Убрать» подтягивает следующую, пока заметки есть', async () => {
+    const all = Array.from({ length: 6 }, (_, index) => fact({ text: `заметка ${index + 1}` }))
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith(all))
+    expect(recap.getSnapshot()).toMatchObject({ items: all.slice(0, 4).map((item) => ({ id: item.id })), more: 2 })
+    expect(MEMORY_RECAP_MAX_ITEMS).toBe(4)
+
+    expect(await recap.remove(all[0]!.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()!.items.map((item) => item.text)).toEqual(['заметка 2', 'заметка 3', 'заметка 4', 'заметка 5'])
+    expect(recap.getSnapshot()!.more).toBe(1)
+
+    for (const item of all.slice(1)) expect(await recap.remove(item.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()).toBeNull() // убрали всё — блока нет
+  })
+
+  it('«Убрать» зовёт удаление заметки и убирает её из блока, остальные на месте', async () => {
+    const [a, b] = [fact(), fact()]
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a, b]))
+    const forget = vi.fn<ForgetNote>(async () => ({ ok: true, data: undefined }))
+    expect(await recap.remove(a.id, forget)).toBe(true)
+    expect(forget).toHaveBeenCalledExactlyOnceWith(a.id)
+    expect(recap.getSnapshot()?.items.map((item) => item.id)).toEqual([b.id])
+    expect(recap.getSnapshot()?.busyId).toBeNull()
+  })
+
+  it('отказ сервера: заметка остаётся, рядом ошибка; повтор получается и ошибку снимает', async () => {
+    const [a, b] = [fact(), fact()]
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a, b]))
+    const refused: ForgetNote = async () => ({ ok: false, code: ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE })
+    expect(await recap.remove(a.id, refused)).toBe(false)
+    expect(recap.getSnapshot()).toMatchObject({
+      items: [{ id: a.id }, { id: b.id }],
+      busyId: null,
+      errors: { [a.id]: MEMORY_FORGET_ERRORS[ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE] },
+    })
+    expect(await recap.remove(a.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()).toMatchObject({ items: [{ id: b.id }], errors: {} })
+  })
+
+  it('сбой самого запроса: заметка остаётся, ошибка по статусу, а не текст исключения', async () => {
+    const a = fact()
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a]))
+    expect(await recap.remove(a.id, async () => Promise.reject(new ApiError(NETWORK_ERROR_STATUS)))).toBe(false)
+    expect(recap.getSnapshot()?.errors[a.id]).toBe(NETWORK_ERROR_TEXT)
+    expect(await recap.remove(a.id, async () => Promise.reject(new Error('boom')))).toBe(false)
+    expect(recap.getSnapshot()?.errors[a.id]).toBe('Не получилось убрать')
+  })
+
+  it('второе «Убрать» при идущем первом ничего не делает; незнакомая заметка — тоже', async () => {
+    const [a, b] = [fact(), fact()]
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a, b]))
+    let finish!: () => void
+    const slow: ForgetNote = () => new Promise((resolve) => (finish = () => resolve({ ok: true, data: undefined })))
+    const first = recap.remove(a.id, slow)
+    expect(recap.getSnapshot()?.busyId).toBe(a.id)
+    const other = vi.fn(forgot())
+    expect(await recap.remove(b.id, other)).toBe(false)
+    expect(other).not.toHaveBeenCalled()
+    finish()
+    expect(await first).toBe(true)
+    expect(await recap.remove('unknown', other)).toBe(false)
+    expect(other).not.toHaveBeenCalled()
+  })
+
+  it('выход с экрана во время опроса — ответ, пришедший позже, не показывается', async () => {
     let answer!: (value: ApiOutcome<MemoryChangesApiResponse, string>) => void
-    const card = createMemoryCard(instant)
-    const watching = card.watch('d-1', 'user-a', () => new Promise((resolve) => (answer = resolve)))
-    card.reset()
+    const recap = createMemoryRecap(instant)
+    const watching = recap.watch('d-1', () => new Promise((resolve) => (answer = resolve)))
+    recap.reset()
     answer(ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: fact() }])))
     await watching
-    expect(card.getSnapshot()).toBeNull()
+    expect(recap.getSnapshot()).toBeNull()
   })
 
-  it('новый разговор заменяет карточку прежнего', async () => {
-    const first = fact()
-    const second = fact()
+  it('выход с экрана во время «Убрать» — запоздалый ответ блок не перерисовывает', async () => {
+    const a = fact()
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a]))
+    let finish!: () => void
+    const removing = recap.remove(a.id, () => new Promise((resolve) => (finish = () => resolve({ ok: true, data: undefined }))))
+    recap.reset()
+    finish()
+    expect(await removing).toBe(true) // заметка удалена, но блока уже нет
+    expect(recap.getSnapshot()).toBeNull()
+  })
+
+  it('новый разговор заменяет заметки прежнего', async () => {
+    const [first, second] = [fact(), fact()]
     const load: Load = async (dialogId) =>
-      ok(
-        changes(MemoryChangesStatus.Ready, [
-          { op: MemoryChangeOp.Add, fact: dialogId === 'd-1' ? first : second },
-        ]),
-      )
-    const card = createMemoryCard(instant)
-    await card.watch('d-1', 'user-a', load)
-    await card.watch('d-2', 'user-a', load)
-    expect(card.getSnapshot()).toMatchObject({ dialogId: 'd-2', items: [{ fact: second }] })
+      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: dialogId === 'd-1' ? first : second }]))
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', load)
+    await recap.watch('d-2', load)
+    expect(recap.getSnapshot()).toMatchObject({ dialogId: 'd-2', items: [{ id: second.id }] })
   })
 })
 

@@ -1,5 +1,5 @@
 /**
- * The job queue of the API against a real PostgreSQL and real pg-boss: `openspec/changes/archive/2026-10-27-add-job-queue`.
+ * The job queue of the API against a real PostgreSQL and real pg-boss: `add-job-queue`.
  *
  * The schema `pgboss` comes with the template of the test database (the migrator installs it, design D2). The tests
  * stop every instance they start and clear the jobs and schedules afterwards, so one test leaves nothing to the next.
@@ -112,7 +112,7 @@ function gate() {
 }
 
 describe('каркас очереди задач', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, tasks 3.1.
+  // `add-job-queue`, tasks 3.1.
   it('задача, поставленная внутри inTransaction, видна после коммита и отсутствует после отката', async () => {
     const jobs = await start({ JOBS_WORKERS_ENABLED: false })
     const request = (key: string) =>
@@ -175,7 +175,7 @@ describe('каркас очереди задач', () => {
 })
 
 describe('реестр и каталог очередей', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, tasks 3.2.
+  // `add-job-queue`, tasks 3.2.
   const EXPECTED = {
     'jobs.dead-letter': {
       policy: 'standard',
@@ -325,7 +325,7 @@ describe('реестр и каталог очередей', () => {
 })
 
 describe('остановка с настоящей очередью', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Стирание при удалении аккаунта» (product-analytics): сценарий «Остановка пода»
+  // `add-job-queue`, «Стирание при удалении аккаунта» (product-analytics): сценарий «Остановка пода»
   // (задача переживает остановку); порядок шагов остановки — test/shutdown.test.ts.
   const catalog: QueueDefinition[] = [{ name: SLOW, options: DEFINITION }]
 
@@ -394,7 +394,7 @@ describe('остановка с настоящей очередью', () => {
 })
 
 describe('расписания на нескольких экземплярах', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Чистка неактивных гостевых аккаунтов»: сценарий «Несколько реплик и частые
+  // `add-job-queue`, «Чистка неактивных гостевых аккаунтов»: сценарий «Несколько реплик и частые
   // перезапуски»; «Когда пересчитываются итоги недели»: сценарий «Две реплики».
   it(
     'Несколько реплик и частые перезапуски, Две реплики: каждое расписание срабатывает один раз на оба экземпляра, и под, жившего секунды, это не сдвигает',
@@ -489,7 +489,7 @@ describe('расписания на нескольких экземплярах'
 })
 
 describe('агент: повторные удаления (заглушка app/dev/agent-mock)', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, tasks 2.1: the agent is not changed, a repeated deletion must be a success.
+  // `add-job-queue`, tasks 2.1: the agent is not changed, a repeated deletion must be a success.
   let mock: ChildProcess | undefined
   let baseUrl = ''
 
@@ -542,7 +542,7 @@ describe('агент: повторные удаления (заглушка app/
 })
 
 describe('стирание профиля в аналитике через очередь', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Стирание при удалении аккаунта» (product-analytics): «Сбой стирания», «Несколько реплик».
+  // `add-job-queue`, «Стирание при удалении аккаунта» (product-analytics): «Сбой стирания», «Несколько реплик».
   const erasure = QUEUE_CATALOG.filter((queue) => queue.name === JobQueue.AnalyticsErasePerson)
   /** The erasure of the catalog with the waits cut to a second, so the retries fit in a test. */
   const fastErasure: QueueDefinition[] = erasure.map((queue) => ({
@@ -683,7 +683,7 @@ describe('стирание профиля в аналитике через оч�
 })
 
 describe('удаление аккаунта и настоящая очередь', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Профиль и события в аналитике»: сценарии «(API) Удаление человеком» и «(API) Удаление не состоялось»
+  // `add-job-queue`, «Профиль и события в аналитике»: сценарии «(API) Удаление человеком» и «(API) Удаление не состоялось»
   // (откат уносит и аккаунт, и задачу); product-analytics «Остановка пода» — задача лежит в базе, а не в памяти пода.
   const { app } = makeApp()
 
@@ -779,7 +779,7 @@ describe('стирание администратором и чисткой го
 })
 
 describe('сброс недели после удаления разговора через настоящую очередь', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался».
+  // `add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался».
   const { app } = makeApp()
   const after = QUEUE_CATALOG.filter((queue) => queue.name === JobQueue.DialogsAfterDelete)
   const fast: QueueDefinition[] = [
@@ -902,7 +902,7 @@ describe('расписание, которое не выполнилось, не
 })
 
 describe('сторож очередей', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, tasks 3.7 (design D5): the log, not a metric, says that a queue is in trouble.
+  // `add-job-queue`, tasks 3.7 (design D5): the log, not a metric, says that a queue is in trouble.
   const warnings = () => vi.spyOn(getRootLogger(), 'warn')
   const lines = (spy: ReturnType<typeof warnings>): Record<string, unknown>[] =>
     spy.mock.calls.map(([fields, message]) => ({ ...(fields as Record<string, unknown>), message }))

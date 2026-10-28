@@ -85,7 +85,7 @@ export const RATE_LIMITS = {
   /** Starting a dialog: protection against an accidental loop in the client. */
   dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
   /**
-   * The agent's memory. Reading covers the screen and the "I remembered" card, which asks every three
+   * The agent's memory. Reading covers the screen and the "I remembered" block, which asks every three
    * seconds for half a minute after a conversation; changes are taps on cards. Both are far above what
    * a person does and stop a client stuck in a loop from hammering the agent.
    */

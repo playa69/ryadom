@@ -47,7 +47,7 @@ import { inputOrNull } from '../../lib/rules'
 
 /**
  * The agent's memory of the person (`/api/memory...`): what it remembers, the switch "Remember" with
- * its consent, the person's own corrections, "forget" one note or everything, the "I remembered" card
+ * its consent, the person's own corrections, "forget" one note or everything, the "I remembered" block
  * after a conversation and the download. Memory lives at the agent; these routes only let the person
  * reach their own: the user always comes from the token, never from the body or the path.
  *
@@ -243,7 +243,7 @@ export function memoryRoutes(app: Hono<AppEnv>, { jwt, rateLimiter, sessions }: 
     return apiOk(c, null)
   })
 
-  // GET /api/memory/changes?dialogId=: the "I remembered" card after a conversation.
+  // GET /api/memory/changes?dialogId=: the notes of one conversation, for the block "I remembered" in its closing window.
   app.get(ApiPath.MemoryChanges, ...signedIn, read, queryParams(changesQuery), async (c) => {
     const { dialogId } = c.req.valid('query')
     const result = await memoryProcess.execute(

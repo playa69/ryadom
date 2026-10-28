@@ -188,11 +188,93 @@ def test_export_has_notes_and_settings(client: TestClient) -> None:
     assert exported["settings"]["enabled"] is True
 
 
+def new_dialog(client: TestClient, user: str, **body: Any) -> str:
+    response = client.post(f"/v1/users/{user}/dialogs", json=body, headers=AUTH)
+    assert response.status_code in (200, 201), response.text
+    return str(response.json()["dialogId"])
+
+
+def changes_of(client: TestClient, user: str, dialog_id: str) -> Any:
+    return client.get(f"{base(user)}/changes", params={"dialogId": dialog_id}, headers=AUTH)
+
+
+def test_changes_of_a_missing_or_foreign_dialog_are_refused(client: TestClient) -> None:
+    """Блок «Я запомнил»: чужой и несуществующий разговор неразличимы, оба — `404 AGENT_DIALOG_NOT_FOUND`."""
+    user, stranger = uid(), uid()
+    enable(client, user)
+    mine = new_dialog(client, user)
+    for dialog_id in (str(uuid.uuid4()), "d-1"):
+        refused = changes_of(client, user, dialog_id)
+        assert refused.status_code == 404 and refused.json()["error"]["code"] == "AGENT_DIALOG_NOT_FOUND"
+    assert changes_of(client, stranger, mine).status_code == 404  # разговор есть, но не этого человека
+    assert changes_of(client, user, mine).status_code == 200
+
+
+def test_changes_are_pending_during_the_final_pass_and_then_list_the_notes_of_this_dialog(client: TestClient) -> None:
+    import threading
+    import time
+
+    from app.memory.extractor import NotesExtractor
+    from tests.test_memory_extractor import FakeModel
+
+    gate = threading.Event()
+
+    class GateModel(FakeModel):
+        async def complete(self, messages: list[dict[str, str]]) -> str:
+            while not gate.is_set():
+                await asyncio.sleep(0.01)
+            return await super().complete(messages)
+
+    user = uid()
+    enable(client, user)
+    memory = client.app.state.memory
+    memory.set_extractor(
+        NotesExtractor(
+            GateModel({"ops": [{"op": "add", "kind": "situation", "text": "Работает в продажах", "quote": "работаю в продажах"}]}),
+            memory.notes,
+        )
+    )
+    add(client, user, "Любит море")  # заметка без этого разговора в блок не попадает
+    dialog_id = new_dialog(client, user)
+    store = client.app.state.store
+    store.add_message(store.get(user, dialog_id), "user", "Я работаю в продажах")
+
+    assert changes_of(client, user, dialog_id).json()["status"] == "pending"  # разговор ещё идёт
+    assert client.post(f"/v1/users/{user}/dialogs/{dialog_id}/end", json={}, headers=AUTH).status_code == 200
+    assert changes_of(client, user, dialog_id).json() == {"status": "pending", "reason": None, "items": []}  # проход ждёт модель
+
+    gate.set()
+    deadline = time.monotonic() + 5
+    answer = changes_of(client, user, dialog_id).json()
+    while answer["status"] == "pending" and time.monotonic() < deadline:
+        time.sleep(0.02)
+        answer = changes_of(client, user, dialog_id).json()
+    assert answer["status"] == "ready" and answer["reason"] is None
+    assert [(item["op"], item["fact"]["text"]) for item in answer["items"]] == [("add", "Работает в продажах")]
+    # «Убрать» зовёт тот же маршрут удаления заметки, что и «×»: идентификатор из блока — идентификатор заметки.
+    assert client.delete(f"{base(user)}/notes/{answer['items'][0]['fact']['id']}", headers=AUTH).status_code == 204
+    assert changes_of(client, user, dialog_id).json() == {"status": "ready", "reason": None, "items": []}
+
+
+def test_changes_are_empty_without_memory_for_the_conversation_unsaved_and_with_memory_off(client: TestClient) -> None:
+    user = uid()
+    # память человека выключена: ответ `ready` и пусто
+    plain = new_dialog(client, user)
+    assert changes_of(client, user, plain).json() == {"status": "ready", "reason": None, "items": []}
+
+    enable(client, user)
+    store = client.app.state.store
+    for body in ({"memory": "off", "new": True}, {"saved": False, "new": True}):
+        dialog_id = new_dialog(client, user, **body)
+        store.add_message(store.get(user, dialog_id), "user", "Я работаю в продажах")  # стартовый пустой разговор подменяется следующим
+        assert client.post(f"/v1/users/{user}/dialogs/{dialog_id}/end", json={}, headers=AUTH).status_code == 200
+        assert changes_of(client, user, dialog_id).json() == {"status": "ready", "reason": None, "items": []}
+
+
 def test_changes_stay_and_the_old_fact_routes_are_gone(client: TestClient) -> None:
     user = uid()
     enable(client, user)
     note = add(client, user, "Работает в продажах")
-    assert client.get(f"{base(user)}/changes", params={"dialogId": "d-1"}, headers=AUTH).json()["status"] == "ready"
     # Правят и удаляют заметку только по `/notes/{id}`; маршрутов факта (создать, править, забыть) у агента больше нет.
     assert client.post(f"{base(user)}/facts", json={"category": "situation", "text": "Новая"}, headers=AUTH).status_code == 404
     assert client.patch(f"{base(user)}/facts/{note['id']}", json={"text": "Другое"}, headers=AUTH).status_code == 404
