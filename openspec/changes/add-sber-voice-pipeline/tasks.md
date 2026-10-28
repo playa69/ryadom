@@ -23,19 +23,19 @@
 
 ## 2. Агент
 
-- [ ] 2.1 Путь Сбера `agent/app/clients/sber_voice.py`: потоковый GigaASR с пересчётом 16 → 24 кГц, GigaChat потоком с нарезкой
+- [x] 2.1 Путь Сбера `agent/app/clients/sber_voice.py`: потоковый GigaASR с пересчётом 16 → 24 кГц, GigaChat потоком с нарезкой
   на предложения (длинное первое — по запятой), SaluteSpeech на открытой сессии с отменой ответа, напоминание о голосовом формате,
   удаление маркеров списков, женский род агента, учёт расхода. Приёмка: `agent/tests/test_sber_voice.py`.
-- [ ] 2.2 Запасной путь: `FallbackConnector` (Сбер не открылся → Gemini Live) и `FallbackTts` (SaluteSpeech без звука → Gemini) в
+- [x] 2.2 Запасной путь: `FallbackConnector` (Сбер не открылся → Gemini Live) и `FallbackTts` (SaluteSpeech без звука → Gemini) в
   `agent/app/clients/sber_voice.py`. Приёмка: `agent/tests/test_sber_voice.py`.
-- [ ] 2.3 Путь по старту разговора: `StartBody.pipeline` (`sber` | `gemini`, иное — 400) в `agent/app/api/dialogs.py`, поле
+- [x] 2.3 Путь по старту разговора: `StartBody.pipeline` (`sber` | `gemini`, иное — 400) в `agent/app/api/dialogs.py`, поле
   разговора в `agent/app/services/dialog_store.py`, сборка путей, путь по умолчанию и прогрев фраз обоих путей в
   `agent/app/main.py`, `voicePipeline` в `agent/app/api/health.py`. Приёмка: `agent/tests/test_voice_pipeline.py` — старт
   запоминает путь и меняет его при возобновлении, путь вне списка — 400; готовность содержит `voicePipeline`.
-- [ ] 2.4 Окно токенов Gemini только для пути Gemini Live: сессия разговора пути Сбера получает выключенный учёт
+- [x] 2.4 Окно токенов Gemini только для пути Gemini Live: сессия разговора пути Сбера получает выключенный учёт
   (`agent/app/api/dialogs.py`). Приёмка: `agent/tests/test_voice_pipeline.py` — ход пути Сбера не
   попадает в окно токенов, ход Gemini Live попадает.
-- [ ] 2.5 Кадры по 40 мс: запас перед речью и длительность реплики считаются в байтах, а не в кадрах
+- [x] 2.5 Кадры по 40 мс: запас перед речью и длительность реплики считаются в байтах, а не в кадрах
   (`agent/app/api/dialog_session.py`), смоук-скрипты шлют по 40 мс и умеют `--pipeline` (`agent/scripts/live_smoke.py`,
   `agent/scripts/feedback_check.py`). Приёмка: `agent/tests/test_live_scenarios.py`.
 - [ ] 2.6 Документация: `agent/README.md` (два пути, переменные, замеры пути Сбера), `docs/spec.md` (интерфейс, глоссарий,
@@ -75,7 +75,7 @@
 - [x] 5.5 `admin-console`, «Выбор голосового пути», «Журнал действий», «Каркас админки»: `app/packages/core/test/voice-settings.test.ts`
   (смена с записью, тот же путь без записи, запись без аккаунта не попадает в журнал одного аккаунта); скриншоты 1280 (админка под
   телефон не адаптирована): первое открытие, выбор «Gemini Live», после сохранения, запись в журнале.
-- [ ] 5.6 `agent-api`, «Служебные эндпоинты»: `agent/tests/test_voice_pipeline.py` — `voicePipeline` в `GET /health/ready`.
+- [x] 5.6 `agent-api`, «Служебные эндпоинты»: `agent/tests/test_voice_pipeline.py` — `voicePipeline` в `GET /health/ready`.
 - [ ] 5.7 Перед сдачей: typecheck и тесты затронутых пакетов app, pytest агента, ruff, `pnpm e2e` (desktop и mobile),
   `node .agents/skills/release-check/scripts/release-check.mjs`.
 

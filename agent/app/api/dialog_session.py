@@ -1090,7 +1090,7 @@ class DialogSession:
             purpose,
             voice,
             getattr(link, "voice_name", ""),
-            self._cfg.live_model,
+            getattr(link, "model", None) or self._cfg.live_model,  # у пути Сбера своя модель (GigaChat), у Gemini — из настроек
             len(history),
             (time.monotonic() - began) * 1000,
         )
