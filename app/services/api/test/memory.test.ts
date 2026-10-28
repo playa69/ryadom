@@ -473,10 +473,11 @@ describe('блок «Я запомнил», выгрузка и журнал', (
         origin: 'user_edit',
         sensitivity: sensitive ? 'sensitive' : 'normal',
       })
-    const asked = () => call(app, 'GET', `${ApiPath.MemoryChanges}?dialogId=d-1`, undefined, tokens.accessToken)
+    const asked = () =>
+      call<MemoryChangesApiResponse>(app, 'GET', `${ApiPath.MemoryChanges}?dialogId=d-1`, undefined, tokens.accessToken)
 
     mockFetch({ [`GET ${AGENT}/changes`]: () => json({ status: 'pending', reason: null, items: [] }) })
-    expect(ok<MemoryChangesApiResponse>(await asked())).toEqual({
+    expect(ok(await asked())).toEqual({
       status: MemoryChangesStatus.Pending,
       reason: null,
       items: [],
@@ -493,7 +494,7 @@ describe('блок «Я запомнил», выгрузка и журнал', (
           ],
         }),
     })
-    const ready = ok<MemoryChangesApiResponse>(await asked())
+    const ready = ok(await asked())
     expect(ready.status).toBe(MemoryChangesStatus.Ready)
     expect(ready.items.map((item) => [item.op, item.fact.id, item.fact.text, item.fact.sensitivity])).toEqual([
       [MemoryChangeOp.Add, 'n-1', 'Зовут Алекс', MemoryFactSensitivity.Normal],
@@ -503,7 +504,7 @@ describe('блок «Я запомнил», выгрузка и журнал', (
 
     // A conversation held "without memory" (or unsaved, or with memory off): the agent says ready and nothing, the gateway passes it on.
     mockFetch({ [`GET ${AGENT}/changes`]: () => json({ status: 'ready', reason: null, items: [] }) })
-    expect(ok<MemoryChangesApiResponse>(await asked())).toEqual({
+    expect(ok(await asked())).toEqual({
       status: MemoryChangesStatus.Ready,
       reason: null,
       items: [],
