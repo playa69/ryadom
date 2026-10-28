@@ -475,9 +475,26 @@ class CogneeMemoryBackend:
             "events": [],
         }
 
-    async def changes(self, user_id: str, dialog_id: str) -> dict[str, Any]:
-        """Карточка «Я запомнил»: Cognee не различает факты по диалогам — всегда пустая, но готовая."""
-        return {"status": "ready", "reason": None, "items": []}
+    async def changes(self, dialog: Dialog) -> dict[str, Any]:
+        """Блок «Я запомнил» в итоге разговора (`design.md` D16): заметки этого разговора, то есть с его `dialog_id`.
+
+        `pending`, пока разговор не завершён или финальный проход извлечения не закончен; потом `ready`. Для «Без памяти»,
+        «Не сохранять», выключенной памяти и паузы список пуст, а не `skipped`: блок такого разговора просто не показывается.
+        Заметки идут в порядке, как их сказали, и в форме прежнего факта (закэшированная PWA читает `fact`).
+        """
+        user_id = dialog.user_id
+        if dialog.memory_mode != "on" or not dialog.saved:
+            return {"status": "ready", "reason": None, "items": []}
+        if user_id not in self._datasets and self._client is not None:
+            await self._load_state(user_id)
+        if not self._effective_enabled(user_id):
+            return {"status": "ready", "reason": None, "items": []}
+        # `_pending` держит запись разговора, пока не закончился финальный проход (`_final_extract` убирает её последней).
+        if dialog.ended_at is None or dialog.id in self._extracting or dialog.id in self._pending:
+            return {"status": "pending", "reason": None, "items": []}
+        notes = [note for note in await self.notes.list(user_id) if note["dialogId"] == dialog.id]
+        notes.reverse()  # список идёт от новых к старым, а блок читается как рассказ
+        return {"status": "ready", "reason": None, "items": [{"op": "add", "fact": note_as_fact(note)} for note in notes]}
 
     # ─── изменения по просьбе человека ────────────────────────────────────────
 

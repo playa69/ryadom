@@ -9,7 +9,7 @@ export interface SelfCheckSubscale {
 }
 
 /**
- * One saved result of a test inside the app (`REQ-WELL-06`…`08`, `openspec/changes/add-self-check-tests`, D5).
+ * One saved result of a test inside the app (`REQ-WELL-06`…`08`, `openspec/specs/self-check`, D5).
  * Only the score, the scores of the subscales, the level and the time: the answers are never stored. A result is
  * a fact about health: it is shown to the person alone and the agent does not read it.
  */

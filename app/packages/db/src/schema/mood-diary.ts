@@ -25,7 +25,7 @@ export type DiarySummaryStatus = 'pending' | 'ready'
 const bytea = customType<{ data: Buffer }>({ dataType: () => 'bytea' })
 
 /**
- * One mood note per person per local day (`openspec/changes/add-mood-diary`, D11). `local_date` is the
+ * One mood note per person per local day (`openspec/specs/mood-diary`, D11). `local_date` is the
  * day in the person's time zone, not UTC. A mood with the account id may count as health data: the
  * values never go to product analytics.
  */

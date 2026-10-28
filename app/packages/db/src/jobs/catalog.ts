@@ -2,7 +2,7 @@ import type { Queue } from 'pg-boss'
 import { JobQueue, type JobQueueName } from './queues'
 
 /**
- * The catalog of the queues (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4): how each is created in the database,
+ * The catalog of the queues (`add-job-queue`, design D4): how each is created in the database,
  * and which of them fires on a schedule. Every option is stated, none is left to the library's default, so that
  * `ensureQueues` can compare what the database holds with what the code wants and bring the two together.
  *

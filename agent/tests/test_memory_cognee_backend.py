@@ -446,7 +446,7 @@ async def test_changes_and_export_shapes() -> None:
     user = uid()
     await service.update_settings(user, True, CONSENT)
     await service.drain()
-    assert await service.changes(user, "dialog-1") == {"status": "ready", "reason": None, "items": []}
+    assert await service.changes(dialog(user, 0)) == {"status": "ready", "reason": None, "items": []}  # заметок из разговора нет
     exported = await service.export(user)
     assert exported["settings"]["enabled"] is True
     assert exported["settings"]["consentVersion"] == CONSENT

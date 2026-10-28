@@ -56,7 +56,7 @@ import { buildDeletionArchive } from './deletion-archive'
  * (marks, week texts, widget tokens), the saved results of the self-check tests and the codes of the address are erased;
  * the row is anonymized; the consents in force are marked as withdrawn in their journals; the sessions end; and the
  * erasure of the person in product analytics is queued as the last step, so that the deletion and the job stand or
- * fall together (`openspec/changes/archive/2026-10-27-add-job-queue`, D3).
+ * fall together (`add-job-queue`, D3).
  *
  * What stays: the archive (`users.properties.deletion`), the accepted consents (`user_consents`) and the journals of
  * what the person did with them (`memory_consent_events`, `self_check_consent_events`) as the evidence of consent, the

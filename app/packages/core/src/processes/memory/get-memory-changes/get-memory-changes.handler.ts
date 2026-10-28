@@ -11,7 +11,7 @@ import { GetMemoryChangesOperation } from './get-memory-changes.operation'
 import { GetMemoryChangesOperationErrorCode, type GetMemoryChangesResult } from './get-memory-changes.types'
 
 /**
- * What one conversation added to memory, for the "I remembered" card after it. The app asks every
+ * The notes one conversation left, for the block "I remembered" in the closing window. The app asks every
  * few seconds while it is `pending`; the agent checks that the dialog is this person's.
  */
 @requestHandler(GetMemoryChangesOperation)

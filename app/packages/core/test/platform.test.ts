@@ -82,7 +82,7 @@ describe('config', () => {
     expect(env.MOBILE_JS_MIN_VERSION).toBeUndefined()
   })
 
-  // `openspec/changes/add-required-js-update`, «Откуда берётся политика релизов».
+  // `add-required-js-update`, «Откуда берётся политика релизов».
   it('минимум JS: версия принимается, пусто — не задано, не версия — ошибка запуска', () => {
     const appEnv = { ...baseEnv, MOBILE_JWT_SECRET: 'y'.repeat(32) }
     expect(
