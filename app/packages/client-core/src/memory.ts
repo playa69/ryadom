@@ -272,15 +272,12 @@ export const MEMORY_FORGET_ERRORS: Record<ForgetMemoryApiErrorCode, string> = {
 
 // ─── the block "Я запомнил" in the closing window ─────────────────────────────
 
-/** The block lists this many notes at most; the rest are in the sheet "Что помнит Рядом". */
-export const MEMORY_RECAP_MAX_ITEMS = 4
-
 /** The words of the block. */
 export const MEMORY_RECAP = {
   title: 'Я запомнил',
   remove: 'Убрать',
-  /** Under the four notes when there are more of them. */
-  more: 'Остальные заметки — в «Что помнит Рядом»',
+  /** Under the text of the window when the final pass is still going after the 30 seconds the client waits: no buttons. */
+  late: 'Ещё записываю, что запомнить. Загляни в «Что помнит Рядом» чуть позже.',
   removeError: 'Не получилось убрать',
 } as const
 
@@ -346,9 +343,11 @@ function waitFor(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Asks what a finished conversation left in memory, every 3 seconds for up to 30, until the answer is `ready`. Resolves with that
- * answer, or null when there is nothing to show: `skipped`, still `pending` at the end, a refusal (an unknown dialog), or `signal`
- * aborted. A failed request is asked again: the block is a courtesy, and its absence is never reported to the person as an error.
+ * Asks what a finished conversation left in memory, every 3 seconds for up to 30, for as long as the answer is `pending`. Resolves with
+ * the first answer that is not `pending` (`ready`; a status this client does not know is such an answer too: there is nothing to wait
+ * for), or with the last `pending` one when the 30 seconds run out (the final pass is still going), or with null when there is
+ * nothing to say: a refusal (an unknown dialog), a last request that failed, or `signal` aborted. A failed request is asked again: the
+ * block is a courtesy, and its absence is never reported to the person as an error.
  */
 export async function pollMemoryChanges(
   load: () => Promise<ApiOutcome<MemoryChangesApiResponse, string>>,
@@ -365,11 +364,10 @@ export async function pollMemoryChanges(
     const result = await load().catch(() => null)
     if (signal?.aborted) return null
     if (result && !result.ok) return null
-    if (result?.ok) {
-      if (result.data.status === MemoryChangesStatus.Ready) return result.data
-      if (result.data.status === MemoryChangesStatus.Skipped) return null
-    }
-    if (now() + interval > deadline) return null
+    // A failed request is no answer: only a `pending` one that is the last word means "still writing".
+    const answer = result?.ok ? result.data : null
+    if (answer && answer.status !== MemoryChangesStatus.Pending) return answer
+    if (now() + interval > deadline) return answer
     await wait(interval, signal)
   }
 }
@@ -377,10 +375,13 @@ export async function pollMemoryChanges(
 /** What the block shows. */
 export interface MemoryRecapState {
   dialogId: string
-  /** The notes on show: the first four of what is left. */
+  /**
+   * `notes`: the block with the notes of the conversation, all of them, in the order they were said. `late`: the final pass was
+   * still going after the 30 seconds, so there is only a line under the text of the window, with no notes and nothing to press.
+   */
+  kind: 'notes' | 'late'
+  /** The notes on show (none when `late`): the ones of the conversation that are left. */
   items: MemoryRecapNote[]
-  /** How many more there are beyond the four (they are in the sheet). */
-  more: number
   /** The note whose "Убрать" is on its way. */
   busyId: string | null
   /** id → what the person reads when "Убрать" did not go through; the note stays in the block. */
@@ -397,7 +398,7 @@ export type ForgetNote = (id: string) => Promise<ApiOutcome<unknown, ForgetMemor
  */
 export function createMemoryRecap(poll: Omit<MemoryPollOptions, 'signal'> = {}) {
   let state: MemoryRecapState | null = null
-  /** Every note the conversation left, the ones beyond the first four included: removing one brings the next up. */
+  /** Every note the conversation left that has not been removed. */
   let notes: MemoryRecapNote[] = []
   let watching: AbortController | null = null
   let generation = 0
@@ -410,12 +411,7 @@ export function createMemoryRecap(poll: Omit<MemoryPollOptions, 'signal'> = {}) 
 
   function show(dialogId: string, rest: Pick<MemoryRecapState, 'busyId' | 'errors'>): void {
     if (notes.length === 0) return set(null)
-    set({
-      dialogId,
-      items: notes.slice(0, MEMORY_RECAP_MAX_ITEMS),
-      more: Math.max(0, notes.length - MEMORY_RECAP_MAX_ITEMS),
-      ...rest,
-    })
+    set({ dialogId, kind: 'notes', items: notes, ...rest })
   }
 
   function stop(): void {
@@ -451,6 +447,10 @@ export function createMemoryRecap(poll: Omit<MemoryPollOptions, 'signal'> = {}) 
         if (controller.signal.aborted) return
         watching = null
         notes = memoryRecapNotes(changes)
+        // Still `pending` when the 30 seconds ran out: say so, once; a refusal or a failed request says nothing.
+        if (changes?.status === MemoryChangesStatus.Pending) {
+          return set({ dialogId, kind: 'late', items: [], busyId: null, errors: {} })
+        }
         show(dialogId, { busyId: null, errors: {} })
       })
     },

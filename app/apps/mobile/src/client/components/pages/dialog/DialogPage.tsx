@@ -226,17 +226,19 @@ export default function DialogPage({
 
   /**
    * The block "Я запомнил" of the closing window: it waits for the notes of this conversation after it ends and is drawn into the
-   * window when they are there. A Framework7 dialog lives outside React's tree, so the block goes into its slot through a portal.
-   * The texts are the person's words: state only, never reported.
+   * window when they are there (or, after half a minute without them, a line that they are still being written). A Framework7
+   * dialog lives outside React's tree, so the block goes into its slot through a portal. The texts are the person's words: state
+   * only, never reported.
    */
   const recap = useMemo(() => createMemoryRecap(), [])
   const recapState = useSyncExternalStore(recap.subscribe, recap.getSnapshot, () => null)
   const [recapHost, setRecapHost] = useState<HTMLElement | null>(null)
   useEffect(() => () => recap.reset(), [recap])
   useEffect(() => {
-    if (recapState) track(AnalyticsEvent.MemoryRecapShown)
+    // Only the block counts as shown; the line "Ещё записываю" (`late`) is not the block, and nothing about it is reported.
+    if (recapState?.kind === 'notes') track(AnalyticsEvent.MemoryRecapShown)
     // Once per conversation: removing a note redraws the block, which is not a new showing.
-  }, [recapState?.dialogId])
+  }, [recapState?.kind === 'notes' ? recapState.dialogId : null])
 
   async function removeRecapNote(id: string) {
     if (await recap.remove(id, forgetMemoryFact)) {

@@ -252,8 +252,6 @@ export enum MemoryChangesStatus {
   Pending = 'pending',
   /** The notes of the conversation, possibly none. A conversation "without memory", an unsaved one, memory off or paused: `ready` and no items. */
   Ready = 'ready',
-  /** Kept for older gateways and agents; the agent no longer answers it. */
-  Skipped = 'skipped',
 }
 
 export enum MemoryChangeOp {
@@ -275,7 +273,7 @@ export interface MemoryChangeApiResponse {
  */
 export interface MemoryChangesApiResponse {
   status: MemoryChangesStatus
-  /** Why it was skipped; for the logs, the person is shown nothing. */
+  /** Why there are no notes (a code, for the logs); the person is shown nothing. */
   reason: string | null
   items: MemoryChangeApiResponse[]
 }

@@ -14,6 +14,7 @@ import {
   talkButton,
 } from '../support/web'
 import { step } from '../support/evidence'
+import { expectInsideViewport } from '../support/layout'
 import { expect, test } from '../support/fixtures'
 
 /**
@@ -415,8 +416,22 @@ const RECAP_MANY =
   'Меня зовут Борис, я работаю в школе, у меня есть сестра Маша, люблю горы, не хочу говорить про отца, запомни, что у меня кот Барсик'
 
 const recap = (page: Page) => modal(page).getByTestId('memory-recap')
-const recapNote = (page: Page, text: string) =>
-  recap(page).getByTestId('memory-recap-note').filter({ hasText: text })
+const recapList = (page: Page) => recap(page).getByTestId('memory-recap-list')
+const recapNotes = (page: Page) => recap(page).getByTestId('memory-recap-note')
+const recapNote = (page: Page, text: string) => recapNotes(page).filter({ hasText: text })
+const recapLate = (page: Page) => modal(page).getByTestId('memory-recap-late')
+// The words under the text of the window when the final pass is still going after the 30 seconds the app waits.
+const STILL_WRITING = 'Ещё записываю, что запомнить. Загляни в «Что помнит Рядом» чуть позже.'
+
+/** The notes of the six-note conversation, in the order they were said (the mock's wording). */
+const MANY_NOTES = [
+  'Зовут Борис',
+  'Работает в школе',
+  'Есть сестра Маша',
+  'Любит горы',
+  'Не хочет обсуждать отца',
+  'У меня кот Барсик',
+]
 
 async function turnMemoryOn(page: Page): Promise<void> {
   await openMemory(page)
@@ -450,7 +465,7 @@ async function closeWindow(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/home$/)
 }
 
-test('блок «Я запомнил» в окне завершения: заметки этого разговора, «Убрать», сбой «Убрать», больше четырёх', async ({
+test('блок «Я запомнил» в окне завершения: заметки этого разговора, «Убрать», сбой «Убрать», все заметки с прокруткой в блоке', async ({
   page,
 }) => {
   test.setTimeout(360_000)
@@ -481,7 +496,9 @@ test('блок «Я запомнил» в окне завершения: зам�
   await expect(recapNote(page, WORK)).toBeVisible()
   await expect(recap(page)).not.toContainText(RECAP_ONE_NOTE)
   await expect(recap(page).getByTestId('memory-recap-remove')).toHaveCount(2)
-  await expect(recap(page).getByTestId('memory-recap-more')).toHaveCount(0)
+  await expect(recapLate(page)).toHaveCount(0)
+  // Two notes are fewer than three: nothing to scroll and no empty room under them.
+  expect(await recapList(page).evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1)
   await expectNoHorizontalOverflow(page)
   await step(page, 'recap-block', 'Блок «Я запомнил»: две заметки из этого разговора, у каждой «Убрать»')
 
@@ -517,21 +534,122 @@ test('блок «Я запомнил» в окне завершения: зам�
   await step(page, 'recap-sheet-after-remove', 'В листе «Что помнит Рядом» убранной заметки нет, остальные на месте')
   await closeSheet(page)
 
-  // More than four notes: four in the block and a line about the rest; «Убрать» brings the next one up.
+  // Many notes: all of them are in the block, about three in view, the rest by scrolling the list itself.
   await goTo(page, 'Новый разговор')
   await talk(page, RECAP_MANY)
   await endAndWait(page)
   await expect(recap(page)).toBeVisible({ timeout: 30_000 })
-  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(4)
-  await expect(recap(page).getByTestId('memory-recap-more')).toContainText('в «Что помнит Рядом»')
-  await expectNoHorizontalOverflow(page)
-  await step(page, 'recap-more-than-four', 'Из разговора вышло шесть заметок: в блоке четыре и подпись про остальные')
-  await recap(page).getByTestId('memory-recap-remove').first().click()
-  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(4)
-  await expect(recap(page).getByTestId('memory-recap-more')).toBeVisible()
-  await recap(page).getByTestId('memory-recap-remove').first().click()
-  await expect(recap(page).getByTestId('memory-recap-note')).toHaveCount(4)
+  await expect(recapNotes(page)).toHaveCount(MANY_NOTES.length)
+  await expect(recapNotes(page).locator('[data-testid="memory-recap-text"]')).toHaveText(MANY_NOTES)
   await expect(recap(page).getByTestId('memory-recap-more')).toHaveCount(0)
+  await expect(recapList(page)).toHaveAttribute('role', 'list')
+  await expect(recapList(page)).toHaveAttribute('aria-label', 'Заметки этого разговора')
+  await expect(recapList(page)).toHaveAttribute('tabindex', '0')
+  // About three rows: the first three whole, the last ones cut off by the list's own edge, which is why the list scrolls.
+  for (const text of MANY_NOTES.slice(0, 3)) await expect(recapNote(page, text)).toBeInViewport({ ratio: 0.9 })
+  for (const text of MANY_NOTES.slice(4)) await expect(recapNote(page, text)).not.toBeInViewport()
+  const before = await recapList(page).evaluate((el) => ({ room: el.scrollHeight - el.clientHeight, top: el.scrollTop, height: el.clientHeight }))
+  expect(before.room).toBeGreaterThan(40)
+  expect(before.top).toBe(0)
+  const rowHeight = (await recapNotes(page).first().boundingBox())!.height
+  expect(before.height).toBeLessThan(rowHeight * 5)
+  // The window as a whole stays on the screen.
+  await expectInsideViewport(page, modal(page))
+  await expectNoHorizontalOverflow(page)
+  await step(page, 'recap-many-notes', 'Из разговора вышло шесть заметок: в блоке видны три, дальше список прокручивается внутри блока')
+
+  // The wheel over the list scrolls the list, and not the page under the window.
+  const pageTop = await page.evaluate(() => window.scrollY)
+  await recapList(page).hover()
+  await page.mouse.wheel(0, 600)
+  await expect.poll(() => recapList(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(1)
+  await expect(recapNote(page, MANY_NOTES.at(-1)!)).toBeInViewport({ ratio: 0.9 })
+  await expect(recapNote(page, MANY_NOTES[0]!)).not.toBeInViewport()
+  expect(await page.evaluate(() => window.scrollY)).toBe(pageTop)
+  await expectInsideViewport(page, modal(page))
+  await step(page, 'recap-many-scrolled', 'Список прокручен до конца: видна последняя заметка, окно и страница под ним на месте')
+
+  // The list takes the keyboard: the arrow keys scroll it back up.
+  await recapList(page).focus()
+  await page.keyboard.press('Home')
+  await expect.poll(() => recapList(page).evaluate((el) => el.scrollTop)).toBe(0)
+  await expect(recapNote(page, MANY_NOTES[0]!)).toBeInViewport({ ratio: 0.9 })
+
+  // «Убрать» in the middle of the list: that note goes, the others stay in their order, the block shrinks.
+  const heightWith6 = (await recapList(page).boundingBox())!.height
+  await recapNote(page, MANY_NOTES[1]!).getByTestId('memory-recap-remove').click()
+  await expect(recapNotes(page)).toHaveCount(MANY_NOTES.length - 1)
+  await expect(recapNote(page, MANY_NOTES[1]!)).toHaveCount(0)
+  await expect(recapNotes(page).locator('[data-testid="memory-recap-text"]')).toHaveText(
+    MANY_NOTES.filter((_, index) => index !== 1),
+  )
+  await expect(recap(page).getByTestId('memory-recap-more')).toHaveCount(0)
+  expect((await recapList(page).boundingBox())!.height).toBeLessThanOrEqual(heightWith6)
+  // Down to three: the list no longer scrolls and has no empty room.
+  for (const text of [MANY_NOTES[3]!, MANY_NOTES[4]!]) {
+    await recapNote(page, text).getByTestId('memory-recap-remove').click()
+    await expect(recapNote(page, text)).toHaveCount(0)
+  }
+  await expect(recapNotes(page)).toHaveCount(3)
+  expect(await recapList(page).evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1)
+  // Nothing left: the block goes, and the window is as it was.
+  for (const text of [MANY_NOTES[0]!, MANY_NOTES[2]!, MANY_NOTES[5]!]) {
+    await recapNote(page, text).getByTestId('memory-recap-remove').click()
+    await expect(recapNote(page, text)).toHaveCount(0)
+  }
+  await expect(recap(page)).toHaveCount(0)
+  await expect(page.getByTestId('alert-ok')).toBeVisible()
+  await closeWindow(page)
+})
+
+test('«Ещё записываю»: заметки не готовы за 30 секунд — под текстом окна спокойная строка, до этого ничего', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await openWebApp(page)
+  await startAnonymously(page)
+  await turnMemoryOn(page)
+
+  // The final pass never finishes: the agent keeps saying `pending`.
+  let asked = 0
+  await page.route('**/api/memory/changes*', (route) => {
+    asked += 1
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ status: true, result: { status: 'pending', reason: null, items: [] } }),
+    })
+  })
+
+  await goTo(page, 'Новый разговор')
+  await talk(page, INTRO)
+  await endAndWait(page)
+  const opened = Date.now()
+  await expect.poll(() => asked).toBeGreaterThan(0)
+
+  // Within the half minute the window is as it was: no block, no line, nothing that flickers.
+  await page.waitForTimeout(20_000)
+  await expect(recap(page)).toHaveCount(0)
+  await expect(recapLate(page)).toHaveCount(0)
+  await expect(page.getByTestId('alert-ok')).toBeEnabled()
+
+  // Then one calm line under the text, with nothing to press.
+  await expect(recapLate(page)).toBeVisible({ timeout: 20_000 })
+  expect(Date.now() - opened).toBeGreaterThan(24_000)
+  await expect(recapLate(page)).toHaveText(STILL_WRITING)
+  await expect(recapLate(page)).toHaveAttribute('aria-live', 'polite')
+  await expect(recapLate(page).getByRole('button')).toHaveCount(0)
+  await expect(recap(page)).toHaveCount(0)
+  await expect(page.getByTestId('alert-ok')).toBeEnabled()
+  await expectInsideViewport(page, modal(page))
+  await expectNoHorizontalOverflow(page)
+  await step(page, 'recap-still-writing', 'Заметки не успели записаться за 30 секунд: под текстом окна строка «Ещё записываю…», кнопок нет')
+
+  // The poll has stopped, and the line stays.
+  const stopped = asked
+  expect(stopped).toBeLessThanOrEqual(11)
+  await page.waitForTimeout(7_000)
+  expect(asked).toBe(stopped)
+  await expect(recapLate(page)).toBeVisible()
   await closeWindow(page)
 })
 
@@ -545,6 +663,7 @@ test('блока «Я запомнил» нет: «Без памяти», «Не
   const noBlock = async () => {
     await page.waitForTimeout(5_000)
     await expect(recap(page)).toHaveCount(0)
+    await expect(recapLate(page)).toHaveCount(0)
     await expect(page.getByTestId('alert-ok')).toBeVisible()
   }
 

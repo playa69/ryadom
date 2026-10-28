@@ -60,3 +60,11 @@ test('несуществующая страница отвечает 404, а н�
   expect(response?.status()).toBe(404)
   await expect(page.getByRole('heading', { name: 'Такой страницы нет' })).toBeVisible()
 })
+
+test('robots.txt закрывает страницы ссылок на разговоры и оставляет остальной сайт открытым', async ({ page }) => {
+  const response = await page.request.get('/robots.txt')
+  expect(response.ok()).toBe(true)
+  const body = await response.text()
+  expect(body).toMatch(/^Disallow: \/app\/s\/$/m)
+  expect(body).toMatch(/^Allow: \/$/m)
+})
