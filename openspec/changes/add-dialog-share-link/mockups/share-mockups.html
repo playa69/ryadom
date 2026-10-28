@@ -1,0 +1,77 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><title>Поделиться разговором — макеты</title>
+<style>
+:root{--paper:#00051a;--s:#0e1631;--s2:#151f40;--s3:#1d2854;--line:rgba(255,255,255,.1);--ls:rgba(255,255,255,.36);--t:#f1f4ff;--d:#b0b9d8;--f:#93a0c8;--b:#007aff;--b4:#4da3ff;--cta:linear-gradient(180deg,#0070f0,#005fdd);--sage:#79d2c2;--danger:#ff7a7a}
+*{box-sizing:border-box}body{margin:0;background:#050a22;color:var(--t);font:14px/1.45 Inter,system-ui,sans-serif;padding:24px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:13px;color:var(--f);font-weight:500;margin:28px 0 10px;text-transform:uppercase;letter-spacing:.06em}
+.row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.web{width:760px;height:480px;border-radius:14px;border:1px solid var(--line);background:var(--paper) radial-gradient(70% 50% at 50% -10%,rgba(34,150,168,.3),transparent 70%),radial-gradient(60% 50% at 100% 50%,rgba(73,61,209,.3),transparent 70%);position:relative;overflow:hidden}
+.phone{width:300px;height:580px;border-radius:30px;border:1px solid var(--ls);background:var(--paper) radial-gradient(80% 40% at 50% -5%,rgba(34,150,168,.3),transparent 70%);position:relative;overflow:hidden}
+.cap{color:var(--f);font-size:12px;margin-top:6px;width:inherit}
+.bar{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line);background:rgba(10,16,40,.78)}
+.logo{font-weight:600}.sp{flex:1}
+.btn{border:1px solid var(--ls);background:transparent;color:var(--t);border-radius:999px;padding:7px 14px;font:inherit;display:inline-flex;gap:6px;align-items:center}
+.btn.p{background:var(--cta);border-color:transparent;box-shadow:0 10px 30px -8px rgba(0,122,255,.65);color:#fff;font-weight:500}
+.btn.d{color:var(--danger);border-color:rgba(255,122,122,.5)}
+.btn.w{width:100%;justify-content:center;padding:11px}
+.body{padding:16px 22px}.sub{color:var(--f);font-size:12px}
+.card{background:rgba(18,27,62,.58);border:1px solid var(--line);border-radius:20px;padding:14px 16px;margin-bottom:10px}
+.msg{max-width:78%;padding:9px 13px;border-radius:18px;margin:6px 0;background:var(--s3)}.msg.me{margin-left:auto;background:#0b3b80}
+.dim{opacity:.35;filter:blur(1px);pointer-events:none}
+.modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:430px;background:var(--s2);border:1px solid var(--line);border-radius:28px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--s2);border-radius:28px 28px 0 0;padding:18px 18px 22px;border-top:1px solid var(--line)}
+.seg{display:flex;background:var(--s);border:1px solid var(--line);border-radius:999px;padding:3px;margin:10px 0}
+.seg span{flex:1;text-align:center;padding:7px;border-radius:999px;color:var(--d)}.seg .on{background:var(--cta);color:#fff;font-weight:500}
+.warn{background:rgba(232,169,114,.12);border:1px solid rgba(232,169,114,.4);border-radius:14px;padding:10px 12px;color:#f3d3b3;font-size:13px;margin:10px 0}
+.link{display:flex;gap:8px;align-items:center;background:var(--s);border:1px solid var(--ls);border-radius:14px;padding:10px 12px;font-family:ui-monospace,monospace;font-size:12px;color:var(--b4);overflow:hidden;white-space:nowrap}
+.ok{color:var(--sage)}h3{margin:0 0 6px;font-size:18px}
+.li{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.banner{background:rgba(121,210,194,.12);border:1px solid rgba(121,210,194,.28);border-radius:14px;padding:9px 12px;color:var(--sage);font-size:13px;margin-bottom:10px}
+.center{text-align:center;padding-top:110px}.ic{font-size:38px}
+</style>
+<h1>Поделиться разговором по ссылке — макеты</h1><div class="sub">PROTEUS-172 · палитра packages/design/tokens.css · веб и PWA</div>
+
+<h2>1. Веб — экран записи, окно «Поделиться»</h2>
+<div class="row"><div><div class="web" id="w1">
+ <div class="bar"><span class="logo">Рядом</span><span class="sp"></span><span class="sub">Журнал</span></div>
+ <div class="body dim"><div class="sub">← Все разговоры</div><h3>Тяжёлый день на работе</h3><div class="card">1 октября, 14:30 · Работа, усталость · 7 → 4</div><div class="msg">Привет, мне сегодня очень тяжело…</div><div class="msg me">Я рядом. Расскажи, что случилось?</div></div>
+ <div class="modal"><h3>Поделиться разговором</h3><div class="sub">Получатель увидит этот разговор по ссылке, без входа в приложение.</div>
+  <div class="sub" style="margin-top:12px">Ссылка действует</div><div class="seg"><span class="on">24 часа</span><span>3 дня</span><span>7 дней</span></div>
+  <div class="warn">Получатель увидит <b>весь текст</b> разговора как есть — вместе с тем, что вы могли назвать по имени. Сводка, оценки напряжения и голосовые записи не передаются. Отозвать ссылку можно в любой момент.</div>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><span class="btn">Отмена</span><span class="btn p">Создать ссылку</span></div></div>
+</div><div class="cap">Кнопка «Поделиться» стоит в заголовке записи рядом с названием; срок по умолчанию — 24 часа.</div></div>
+
+<div><div class="web">
+ <div class="bar"><span class="logo">Рядом</span></div><div class="body dim"><h3>Тяжёлый день на работе</h3></div>
+ <div class="modal"><h3 class="ok">✓ Ссылка активна</h3>
+  <div class="link">https://app.ryadom.ru/s/Qm9r…x7Lw</div>
+  <div class="sub" style="margin:8px 0">Действует до 2 октября, 14:30 · 3 просмотра · последний 18:02</div>
+  <div style="display:flex;gap:8px"><span class="btn p">Скопировать</span><span class="btn">Отправить…</span></div>
+  <div class="li" style="margin-top:16px"><span class="sub">Ссылку можно открыть здесь снова в любой момент. Чтобы сменить срок — отзовите и создайте новую.</span></div>
+  <div style="display:flex;gap:8px;justify-content:space-between;margin-top:6px"><span class="btn d">Отозвать ссылку</span><span class="btn">Закрыть</span></div></div>
+</div></div><div class="cap">Повторное нажатие «Поделиться» открывает это же окно: у разговора одна активная ссылка, её видно и можно скопировать снова.</div></div></div>
+
+<h2>2. PWA / мобильный — лист снизу</h2>
+<div class="row">
+<div><div class="phone"><div class="bar"><span>‹ Журнал</span><span class="sp"></span><span class="b4" style="color:var(--b4)">Поделиться</span></div>
+ <div class="body dim"><h3>Тяжёлый день</h3><div class="msg">Привет, мне сегодня очень тяжело…</div></div>
+ <div class="sheet"><h3>Поделиться разговором</h3><div class="seg"><span class="on">24 ч</span><span>3 дня</span><span>7 дней</span></div>
+  <div class="warn">Получатель увидит весь текст разговора. Сводка и голос не передаются.</div>
+  <span class="btn p w">Создать ссылку</span></div></div><div class="cap" style="width:300px">Выбор срока и предупреждение.</div></div>
+<div><div class="phone"><div class="bar"><span>‹ Журнал</span></div><div class="body dim"><h3>Тяжёлый день</h3></div>
+ <div class="sheet"><h3 class="ok">✓ Ссылка активна</h3><div class="link">…/s/Qm9r…x7Lw</div><div class="sub" style="margin:8px 0 12px">До 2 окт, 14:30 · 3 просмотра</div>
+  <span class="btn p w" style="margin-bottom:8px">Отправить…</span><span class="btn w" style="margin-bottom:8px">Скопировать ссылку</span><span class="btn w d">Отозвать ссылку</span></div></div><div class="cap" style="width:300px">Ссылка видна при каждом открытии; «Отправить…» вызывает системный лист.</div></div>
+<div><div class="phone"><div class="bar"><span>‹ Журнал</span></div><div class="body dim"><h3>Тяжёлый день</h3></div>
+ <div class="sheet"><h3>Разговор в кризисе</h3><div class="warn">Если вам плохо прямо сейчас — <u>линии помощи «Люди рядом»</u>. Поделиться разговором можно и позже.</div>
+  <span class="btn p w" style="margin-bottom:8px">Всё равно поделиться</span><span class="btn w">Отмена</span></div></div><div class="cap" style="width:300px">Для разговоров с уровнем crisis в листе добавляется мягкая подсказка.</div></div>
+</div>
+
+<h2>3. Получатель — страница /s/&lt;token&gt; (без входа, только чтение)</h2>
+<div class="row">
+<div><div class="web" style="height:430px"><div class="bar"><span class="logo">Рядом</span><span class="sp"></span><span class="sub">Только чтение</span></div>
+ <div class="body" style="max-width:520px;margin:0 auto"><div class="banner">С вами поделились разговором от 1 октября. Доступен до 2 октября, 14:30.</div>
+  <div class="msg">Привет, мне сегодня очень тяжело…</div><div class="msg me" style="background:var(--s3);margin-left:0">Я рядом. Расскажи, что случилось?</div><div class="msg">Начальник накричал при всех.</div>
+  <div class="sub" style="margin-top:14px;text-align:center">Вы видите только этот разговор · <span style="color:var(--b4)">Что такое Рядом</span></div></div></div><div class="cap">Десктоп. Реплики агента слева, автора справа/слева с подписью; поля ввода нет.</div></div>
+<div><div class="phone"><div class="bar"><span class="logo">Рядом</span></div><div class="body"><div class="banner">Разговор ещё идёт — показан на 1 окт, 14:52. Доступен до 2 окт.</div><div class="msg">Привет, мне сегодня очень тяжело…</div><div class="msg me">Я рядом. Расскажи, что случилось?</div></div></div><div class="cap" style="width:300px">Телефон / PWA, открытый разговор.</div></div>
+<div><div class="phone"><div class="bar"><span class="logo">Рядом</span></div><div class="center"><div class="ic">🔒</div><h3>Ссылка больше не действует</h3><div class="sub" style="padding:0 30px">Срок истёк, ссылку отозвали или разговор удалён. Попросите отправителя создать новую.</div></div></div><div class="cap" style="width:300px">Одинаковый экран для всех причин отказа.</div></div>
+</div>
+</html>
