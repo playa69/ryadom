@@ -20,7 +20,7 @@ import { ApiError, NETWORK_ERROR_STATUS, NETWORK_ERROR_TEXT, type ApiOutcome } f
 import {
   FORGET_UNDO_MS,
   MEMORY_FORGET_ERRORS,
-  MEMORY_RECAP_MAX_ITEMS,
+  MEMORY_RECAP,
   createMemoryRecap,
   createPendingForgets,
   dialogMemoryMark,
@@ -68,6 +68,9 @@ function changes(
 }
 
 const ok = <T>(data: T): ApiOutcome<T, string> => ({ ok: true, data })
+
+/** A status the contract does not have (a newer or an older server): the client must not wait for it. */
+const UNKNOWN_STATUS = 'archived' as MemoryChangesStatus
 
 afterEach(() => {
   vi.useRealTimers()
@@ -214,10 +217,10 @@ describe('блок «Я запомнил»: что показывать', () => 
     expect(memoryRecapNotes(ready)).toEqual([{ id: added.id, text: added.text }])
   })
 
-  it('pending, skipped, пусто и null — заметок нет', () => {
+  it('pending, незнакомый статус, пусто и null — заметок нет', () => {
     const one = [{ op: MemoryChangeOp.Add, fact: fact() }]
     expect(memoryRecapNotes(changes(MemoryChangesStatus.Pending, one))).toEqual([])
-    expect(memoryRecapNotes(changes(MemoryChangesStatus.Skipped, one))).toEqual([])
+    expect(memoryRecapNotes(changes(UNKNOWN_STATUS, one))).toEqual([])
     expect(memoryRecapNotes(changes(MemoryChangesStatus.Ready))).toEqual([])
     expect(memoryRecapNotes(null)).toEqual([])
   })
@@ -273,19 +276,40 @@ describe('опрос изменений после разговора', () => {
     expect(clock.waits).toEqual([3000, 3000])
   })
 
-  it('pending до конца — null через 30 с, 11 запросов', async () => {
+  it('pending до конца — последний pending-ответ через 30 с, 11 запросов', async () => {
     const clock = fakeClock()
     const load = vi.fn(async () => ok(changes(MemoryChangesStatus.Pending)))
-    expect(await pollMemoryChanges(load, clock)).toBeNull()
+    expect(await pollMemoryChanges(load, clock)).toEqual(changes(MemoryChangesStatus.Pending))
     expect(load).toHaveBeenCalledTimes(11)
     expect(clock.now()).toBe(30_000)
   })
 
-  it('skipped — сразу null, без повторов', async () => {
+  it('ready на последнем запросе, ровно на 30-й секунде, ещё считается', async () => {
     const clock = fakeClock()
-    const load = vi.fn(async () => ok(changes(MemoryChangesStatus.Skipped)))
-    expect(await pollMemoryChanges(load, clock)).toBeNull()
+    const ready = changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: fact() }])
+    let calls = 0
+    const load = vi.fn(async () => ok(++calls === 11 ? ready : changes(MemoryChangesStatus.Pending)))
+    expect(await pollMemoryChanges(load, clock)).toEqual(ready)
+    expect(clock.now()).toBe(30_000)
+  })
+
+  it('статус, которого клиент не знает, — конец ожидания без повторов', async () => {
+    const clock = fakeClock()
+    const unknown = changes(UNKNOWN_STATUS)
+    const load = vi.fn(async () => ok(unknown))
+    expect(await pollMemoryChanges(load, clock)).toEqual(unknown)
     expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('последний запрос не удался — ответа нет (null), хотя раньше было pending', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const load = vi.fn(async (): Promise<ApiOutcome<MemoryChangesApiResponse, string>> => {
+      if (++calls === 11) throw new Error('HTTP 503')
+      return ok(changes(MemoryChangesStatus.Pending))
+    })
+    expect(await pollMemoryChanges(load, clock)).toBeNull()
+    expect(load).toHaveBeenCalledTimes(11)
   })
 
   it('отказ с кодом (чужой или неизвестный диалог) — null без повторов', async () => {
@@ -336,11 +360,11 @@ describe('блок «Я запомнил» как состояние окна з
     await recap.watch('d-1', readyWith([first!, second!]))
     expect(recap.getSnapshot()).toEqual({
       dialogId: 'd-1',
+      kind: 'notes',
       items: [
         { id: first!.id, text: 'Зовут Алекс' },
         { id: second!.id, text: 'Работает в продажах' },
       ],
-      more: 0,
       busyId: null,
       errors: {},
     })
@@ -362,12 +386,12 @@ describe('блок «Я запомнил» как состояние окна з
     expect(recap.getSnapshot()?.items).toHaveLength(1)
   })
 
-  it('pending до конца, skipped, пустой ready, отказ — блока нет', async () => {
+  it('пустой ready, незнакомый статус, отказ, сбой запросов до конца — ни блока, ни строки «Ещё записываю»', async () => {
     for (const load of [
-      async () => ok(changes(MemoryChangesStatus.Pending)),
-      async () => ok(changes(MemoryChangesStatus.Skipped)),
       async () => ok(changes(MemoryChangesStatus.Ready)),
+      async () => ok(changes(UNKNOWN_STATUS)),
       async (): Promise<ApiOutcome<MemoryChangesApiResponse, string>> => ({ ok: false, code: 'DIALOG_NOT_FOUND' }),
+      async (): Promise<ApiOutcome<MemoryChangesApiResponse, string>> => Promise.reject(new Error('HTTP 503')),
     ] as Load[]) {
       const recap = createMemoryRecap({ ...fakeClock() })
       await recap.watch('d-1', load)
@@ -375,18 +399,75 @@ describe('блок «Я запомнил» как состояние окна з
     }
   })
 
-  it('больше четырёх — четыре и счёт остальных; «Убрать» подтягивает следующую, пока заметки есть', async () => {
+  it('pending все 30 секунд — состояние late без заметок, один раз и только в конце', async () => {
+    const recap = createMemoryRecap({ ...fakeClock() })
+    const seen: Array<string | undefined> = []
+    recap.subscribe(() => seen.push(recap.getSnapshot()?.kind))
+    const load = vi.fn(async () => ok(changes(MemoryChangesStatus.Pending)))
+    await recap.watch('d-1', load)
+    expect(load).toHaveBeenCalledTimes(11)
+    expect(seen).toEqual(['late'])
+    expect(recap.getSnapshot()).toEqual({ dialogId: 'd-1', kind: 'late', items: [], busyId: null, errors: {} })
+    expect(MEMORY_RECAP.late).toContain('Ещё записываю')
+  })
+
+  it('late: убирать нечего; выход с экрана и новый разговор строку снимают', async () => {
+    const recap = createMemoryRecap({ ...fakeClock() })
+    await recap.watch('d-1', async () => ok(changes(MemoryChangesStatus.Pending)))
+    const forget = vi.fn(forgot())
+    expect(await recap.remove('f-1', forget)).toBe(false)
+    expect(forget).not.toHaveBeenCalled()
+
+    recap.reset()
+    expect(recap.getSnapshot()).toBeNull()
+
+    await recap.watch('d-1', async () => ok(changes(MemoryChangesStatus.Pending)))
+    expect(recap.getSnapshot()?.kind).toBe('late')
+    const next = recap.watch('d-2', readyWith([fact()]))
+    expect(recap.getSnapshot()).toBeNull() // the old line goes at once, the new answer is awaited
+    await next
+    expect(recap.getSnapshot()).toMatchObject({ dialogId: 'd-2', kind: 'notes' })
+  })
+
+  it('pending, а потом ready до конца срока — блок, а не late', async () => {
+    const recap = createMemoryRecap(fakeClock())
+    let calls = 0
+    const item = fact()
+    await recap.watch('d-1', async () =>
+      ok(
+        calls++ < 10
+          ? changes(MemoryChangesStatus.Pending)
+          : changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: item }]),
+      ),
+    )
+    expect(recap.getSnapshot()).toMatchObject({ kind: 'notes', items: [{ id: item.id }] })
+  })
+
+  it('все заметки разговора в том порядке, как их сказали, сколько бы их ни было', async () => {
+    const all = Array.from({ length: 12 }, (_, index) => fact({ text: `заметка ${index + 1}` }))
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith(all))
+    expect(recap.getSnapshot()!.items.map((item) => item.id)).toEqual(all.map((item) => item.id))
+    expect(recap.getSnapshot()).not.toHaveProperty('more')
+  })
+
+  it('«Убрать» из середины списка: остальные на месте и в том же порядке; убрали всё — блока нет', async () => {
     const all = Array.from({ length: 6 }, (_, index) => fact({ text: `заметка ${index + 1}` }))
     const recap = createMemoryRecap(instant)
     await recap.watch('d-1', readyWith(all))
-    expect(recap.getSnapshot()).toMatchObject({ items: all.slice(0, 4).map((item) => ({ id: item.id })), more: 2 })
-    expect(MEMORY_RECAP_MAX_ITEMS).toBe(4)
 
-    expect(await recap.remove(all[0]!.id, forgot())).toBe(true)
-    expect(recap.getSnapshot()!.items.map((item) => item.text)).toEqual(['заметка 2', 'заметка 3', 'заметка 4', 'заметка 5'])
-    expect(recap.getSnapshot()!.more).toBe(1)
+    expect(await recap.remove(all[2]!.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()!.items.map((item) => item.text)).toEqual([
+      'заметка 1',
+      'заметка 2',
+      'заметка 4',
+      'заметка 5',
+      'заметка 6',
+    ])
+    expect(await recap.remove(all[5]!.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()!.items.map((item) => item.text)).toEqual(['заметка 1', 'заметка 2', 'заметка 4', 'заметка 5'])
 
-    for (const item of all.slice(1)) expect(await recap.remove(item.id, forgot())).toBe(true)
+    for (const item of [all[0]!, all[1]!, all[3]!, all[4]!]) expect(await recap.remove(item.id, forgot())).toBe(true)
     expect(recap.getSnapshot()).toBeNull() // убрали всё — блока нет
   })
 

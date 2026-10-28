@@ -187,12 +187,14 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [noticeBusy, setNoticeBusy] = useState<string | null>(null)
   /**
    * The block "Я запомнил" of the closing window: it waits for the notes of this conversation after it ends and comes up in the
-   * window when they are there. The texts are the person's words: state only, never reported.
+   * window when they are there (or, after half a minute without them, a line that they are still being written). The texts are
+   * the person's words: state only, never reported.
    */
   const recap = useMemo(() => createMemoryRecap(), [])
   const recapState = useSyncExternalStore(recap.subscribe, recap.getSnapshot, () => null)
   useEffect(() => () => recap.reset(), [recap])
-  useOnceFor(recapState ? recapState.dialogId : null, () => track(AnalyticsEvent.MemoryRecapShown))
+  // Only the block counts as shown; the line "Ещё записываю" (`late`) is not the block, and nothing about it is reported.
+  useOnceFor(recapState?.kind === 'notes' ? recapState.dialogId : null, () => track(AnalyticsEvent.MemoryRecapShown))
   /** What `finish` needs to know about memory: it is memoized, and these change while the conversation goes on. */
   const memoryNow = useRef({ mode: memoryMode, enabled: user?.memoryEnabled })
   memoryNow.current = { mode: memoryMode, enabled: user?.memoryEnabled }
