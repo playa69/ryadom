@@ -6,7 +6,7 @@ import { expect, test } from '../support/fixtures'
 import { trackSession } from '../support/session'
 
 /**
- * «Не сохранять этот разговор» в приложении (PWA и Mini App, `openspec/changes/archive/2026-10-27-add-unsaved-dialog`, PROTEUS-246): галочка на главной,
+ * «Не сохранять этот разговор» в приложении (PWA и Mini App, `add-unsaved-dialog`, PROTEUS-246): галочка на главной,
  * разговор без следа, пометка в журнале, потеря разговора при перезапуске агента. Агент — мок (`dev/agent-mock/server.mjs`).
  */
 const SAID = 'Мне сегодня очень тяжело из-за работы. Давай так: поговорю с руководителем до пятницы'

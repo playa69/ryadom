@@ -2,7 +2,7 @@
  * The client side of the version policy: what a native build does with each answer of /api/app-status.
  * The plugin, the platform and the network are replaced; every `load()` is a fresh launch of the app
  * (the module state is gone, the storage stays).
- * `openspec/specs/app-updates` and `openspec/changes/archive/2026-10-28-add-required-js-update`.
+ * `openspec/specs/app-updates` and `add-required-js-update`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { UpdateAvailability, type AppStatusApiResponse } from '@ryadom/contracts/api/app-status'

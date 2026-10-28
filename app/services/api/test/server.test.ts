@@ -138,7 +138,7 @@ describe('health и политика версий', () => {
     })
   })
 
-  // `openspec/changes/archive/2026-10-28-add-required-js-update`, «Решение сервера по версии JS».
+  // `add-required-js-update`, «Решение сервера по версии JS».
   it('минимум JS: ниже него пакет применяется сразу, выше — тихо', () => {
     const withMin = (minVersion: string) => ({ ...POLICY, js: { ...POLICY.js, minVersion } })
     const status = (policy: ReleasePolicy, jsVersion: string) =>
