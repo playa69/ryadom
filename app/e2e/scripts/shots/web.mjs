@@ -91,9 +91,10 @@ export function webSpec(args, repoRoot) {
     journal: { open: go('/journal') },
     'journal-entry': {
       open: async (page) => {
-        await go('/journal')(page)
+        await go('/diary/journal')(page)
         // A finished conversation: an open one resumes in the dialog screen instead of opening here.
-        await page.locator('[data-testid="journal-item"][href^="/journal/"]').first().click()
+        await page.locator('[data-testid="journal-item"][href^="/diary/journal/"]').first().click()
+        await page.getByTestId('journal-messages').waitFor({ timeout: 30_000 })
         await page.waitForLoadState('networkidle')
       },
     },

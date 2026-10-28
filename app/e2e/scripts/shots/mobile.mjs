@@ -31,10 +31,29 @@ export function mobileSpec(args, repoRoot) {
     await page.waitForSelector('.page-current [data-testid="have-account"]', { timeout: 30_000 })
     await dismissBanner(page)
   }
+  // The first screen starts a conversation without registration; the form of an account is two taps away:
+  // «У меня уже есть аккаунт», then «Создать аккаунт» on the sign-in screen.
+  const registerForm = async (page, email) => {
+    await welcome(page)
+    await page.locator('.page-current [data-testid="have-account"]').click()
+    await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
+    await page.locator('.page-current').getByText('Создать аккаунт', { exact: true }).click()
+    await page.waitForSelector('.page-current input[name="name"]', { timeout: 30_000 })
+    await page.locator('.page-current input[name="name"]').fill('Женя')
+    await page.locator('.page-current input[name="email"]').fill(email)
+    await page.locator('.page-current input[name="password"]').fill('Password-123')
+  }
   const home = async (page) => {
     await page.goto(`${base}/`)
     await page.waitForSelector('#rd-tabbar', { state: 'visible', timeout: 30_000 })
     await dismissBanner(page)
+  }
+  // The journal is a segment of the «Дневник» tab (segments: Дневник, Журнал, Тесты).
+  const journalList = async (page) => {
+    await home(page)
+    await tab(page, 'Дневник')
+    await page.locator('.page-current').getByTestId('diary-segment-journal').click()
+    await page.locator('.page-current').getByTestId('journal-item').first().waitFor({ timeout: 30_000 })
   }
   const tab = async (page, label) => {
     await page.locator('#rd-tabbar').getByText(label, { exact: true }).click()
@@ -115,24 +134,17 @@ export function mobileSpec(args, repoRoot) {
     welcome: { anon: true, open: welcome },
     register: {
       anon: true,
-      open: async (page) => {
-        await welcome(page)
-        await page.locator('.page-current').getByText('Создать аккаунт').click()
-        await page.locator('.page-current input[name="name"]').fill('Женя')
-        await page.locator('.page-current input[name="email"]').fill('zhenya@example.com')
-        await page.locator('.page-current input[name="password"]').fill('Password-123')
-      },
+      open: (page) => registerForm(page, 'zhenya@example.com'),
     },
     'confirm-email': {
       anon: true,
       open: async (page) => {
-        await welcome(page)
-        await page.locator('.page-current').getByText('Создать аккаунт').click()
-        await page.locator('.page-current input[name="name"]').fill('Женя')
-        await page.locator('.page-current input[name="email"]').fill(`shot-${Date.now()}-${randomBytes(2).toString('hex')}@example.com`)
-        await page.locator('.page-current input[name="password"]').fill('Password-123')
-        await page.locator('.page-current .rd-consents .icon-checkbox').click()
-        await page.locator('.page-current').getByText('Создать аккаунт').click()
+        await registerForm(page, `shot-${Date.now()}-${randomBytes(2).toString('hex')}@example.com`)
+        // Three separate agreements (18+, not therapy, terms and personal data): all of them are needed.
+        const boxes = page.locator('.page-current .rd-consents .icon-checkbox')
+        const count = await boxes.count()
+        for (let i = 0; i < count; i++) await boxes.nth(i).click()
+        await page.locator('.page-current').getByText('Создать аккаунт', { exact: true }).click()
         await page.waitForSelector('text=Подтверди почту', { timeout: 30_000 })
       },
     },
@@ -150,12 +162,13 @@ export function mobileSpec(args, repoRoot) {
         await page.locator('.page-current').getByText('Посмотреть').first().click()
       },
     },
-    journal: { open: async (page) => { await home(page); await tab(page, 'Журнал') } },
+    journal: { open: journalList },
     'journal-entry': {
       open: async (page) => {
-        await home(page)
-        await tab(page, 'Журнал')
-        await page.locator('.page-current').getByText('Поговорю с мамой после работы').first().click()
+        await journalList(page)
+        // A finished conversation of the demo journal. On a wide screen the entry opens in the pane beside the list.
+        await page.locator('.page-current').getByTestId('journal-item').filter({ hasText: 'Поговорю с мамой после работы' }).first().click()
+        await page.locator('.page-current .rd-entry .message').first().waitFor({ timeout: 30_000 })
       },
     },
     profile: { open: async (page) => { await home(page); await tab(page, 'Профиль') } },
