@@ -1082,7 +1082,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         offer={
           alert?.leaves && (user?.email === null || user?.isEmailConfirmed === false)
             ? {
-                text: `${DIALOG_KEEP_NOTE} Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
+                // A conversation held unsaved has no term to speak of: only the account's.
+                text: `${unsaved ? '' : `${DIALOG_KEEP_NOTE} `}Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
                 action: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
                 onAction: () => {
                   setAlert(null)

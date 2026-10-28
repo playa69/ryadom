@@ -712,7 +712,8 @@ export default function DialogPage({
       f7.dialog
         .create({
           title: 'Спасибо, что поговорил(а)',
-          text: `${text}<br><br>${DIALOG_KEEP_NOTE} Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
+          // A conversation held unsaved has no term to speak of: only the account's.
+          text: `${text}<br><br>${unsavedRef.current ? '' : `${DIALOG_KEEP_NOTE} `}Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
           buttons: [
             {
               text: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
