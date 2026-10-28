@@ -1,4 +1,4 @@
-"""Новые возможности выката 0.6.0 в бою: память агента от согласия до стирания.
+"""Новые возможности выката 0.6.0 в бою: память агента от согласия до стирания; позже к ним добавлены выбор голоса и тесты внутри приложения.
 
 Запускается отдельно и только по просьбе (`POSTDEPLOY_FEATURES=1`): ходит в модель извлечения и в Gemini, оставляет в проде тестовые данные.
 
@@ -193,3 +193,92 @@ def test_voice_choice_is_saved_on_the_account(api: Api, token: str) -> None:
     # Только род сбрасывает конкретный голос на голос рода (мужской — Charon).
     back = api.result("PATCH", "/api/auth/me", token=token, body={"voice": "male"})
     assert (back["voice"], back["voiceName"]) == ("male", "Charon")
+
+
+# GAD-7: 1+2+1+1+1+1+1 = 8 из 21, «лёгкая выраженность» (app/packages/self-check/src/tests/gad7.ts).
+SELF_CHECK_CONSENT_VERSION = "2026-10-27"  # app/packages/contracts/src/api/self-check.ts
+GAD7_ANSWERS = [1, 2, 1, 1, 1, 1, 1]
+SELF_CHECK_RESULT_KEYS = {"id", "testId", "testVersion", "score", "subscores", "band", "takenAt"}
+
+
+def save_gad7(api: Api, token: str) -> dict:
+    return api.result(
+        "POST",
+        "/api/self-check/results",
+        token=token,
+        body={"testId": "gad7", "testVersion": 1, "answers": GAD7_ANSWERS},
+    )
+
+
+def test_self_check_save_history_delete(api: Api, token: str) -> None:
+    """Тесты внутри приложения (PROTEUS-218, REQ-WELL-06…08, миграция 0011): согласие, сохранение, последний результат, история, удаление, отзыв.
+
+    Баллы в тексте проверки не печатаются как данные человека: аккаунт тестовый, результат вымышленный; ответы сервер не хранит и не возвращает.
+    """
+    # 0. Чистое начало (тест повторяем): отзыв согласия стирает всё сохранённое и сам по себе повторим.
+    api.result("DELETE", "/api/self-check/consent", token=token)
+    assert api.result("GET", "/api/self-check/consent", token=token) == {"given": False, "version": None}
+    assert api.result("GET", "/api/self-check/latest", token=token)["items"] == []
+
+    # 1. Без согласия сохранение отказано по правилу, а не ошибкой: клиент покажет лист согласия.
+    code, refusal = api.call(
+        "POST",
+        "/api/self-check/results",
+        token=token,
+        body={"testId": "gad7", "testVersion": 1, "answers": GAD7_ANSWERS},
+    )
+    assert code == 200 and refusal["status"] is False and refusal["errorCode"] == "CONSENT_REQUIRED"
+
+    # 2. Согласие записано с версией текста.
+    given = api.result("POST", "/api/self-check/consent", token=token, body={"version": SELF_CHECK_CONSENT_VERSION})
+    assert given == {"given": True, "version": SELF_CHECK_CONSENT_VERSION}
+    assert api.result("GET", "/api/self-check/consent", token=token)["given"] is True
+
+    # 3. Сохранение: балл и уровень считает сервер по ответам; ответов в ответе нет.
+    saved = save_gad7(api, token)
+    assert set(saved) == SELF_CHECK_RESULT_KEYS
+    assert (saved["testId"], saved["testVersion"], saved["score"]) == ("gad7", 1, 8)
+    assert saved["band"] == "лёгкая выраженность" and saved["subscores"] is None
+
+    # Чужая версия теста и неподходящие ответы отвергаются, ничего не сохраняется.
+    for bad in ({"testVersion": 99}, {"answers": [1, 2]}, {"testId": "no-such-test"}):
+        code, _ = api.call(
+            "POST",
+            "/api/self-check/results",
+            token=token,
+            body={"testId": "gad7", "testVersion": 1, "answers": GAD7_ANSWERS, **bad},
+        )
+        assert code == 422, f"{bad}: ждали 422, пришло {code}"
+
+    # 4. Последний результат теста и история (новые сверху).
+    second = save_gad7(api, token)
+    latest = api.result("GET", "/api/self-check/latest", token=token)["items"]
+    assert [item["testId"] for item in latest] == ["gad7"] and latest[0]["id"] == second["id"]
+    history = api.result("GET", "/api/self-check/results", token=token, params={"testId": "gad7"})
+    assert [item["id"] for item in history["items"]] == [second["id"], saved["id"]] and history["nextBefore"] is None
+    assert all(set(item) == SELF_CHECK_RESULT_KEYS for item in history["items"])
+
+    # 5. Удаление одного результата (повтор — «не найдено», чужой id так же не выдаёт, чей он).
+    assert api.result("DELETE", f"/api/self-check/results/{second['id']}", token=token) == {"deleted": 1}
+    code, _ = api.call("DELETE", f"/api/self-check/results/{second['id']}", token=token)
+    assert code == 404
+    history = api.result("GET", "/api/self-check/results", token=token, params={"testId": "gad7"})
+    assert [item["id"] for item in history["items"]] == [saved["id"]]
+
+    # 6. Все результаты теста; затем снова сохранить и отозвать согласие: оно уносит результаты с собой.
+    assert api.result("DELETE", "/api/self-check/results", token=token, params={"testId": "gad7"}) == {"deleted": 1}
+    assert api.result("GET", "/api/self-check/latest", token=token)["items"] == []
+    save_gad7(api, token)
+    revoked = api.result("DELETE", "/api/self-check/consent", token=token)
+    assert revoked == {"deleted": 1}
+    assert api.result("GET", "/api/self-check/consent", token=token) == {"given": False, "version": None}
+    assert api.result("GET", "/api/self-check/latest", token=token)["items"] == []
+
+    # 7. После отзыва следующее сохранение снова просит согласие.
+    code, refusal = api.call(
+        "POST",
+        "/api/self-check/results",
+        token=token,
+        body={"testId": "gad7", "testVersion": 1, "answers": GAD7_ANSWERS},
+    )
+    assert code == 200 and refusal["errorCode"] == "CONSENT_REQUIRED"
