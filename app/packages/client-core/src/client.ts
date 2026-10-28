@@ -968,7 +968,7 @@ export function createClient(config: ClientConfig) {
     forgetAllMemory: async (): Promise<ApiOutcome<void, ForgetMemoryApiErrorCode>> =>
       voidOutcome(await apiOutcome<null, ForgetMemoryApiErrorCode>(ApiPath.Memory, { method: 'DELETE' })),
 
-    /** What one conversation added to memory, for the card "Я запомнил" (see `pollMemoryChanges`). */
+    /** The notes one conversation left, for the block "Я запомнил" in its closing window (see `pollMemoryChanges`). */
     getMemoryChanges: (
       dialogId: string,
     ): Promise<ApiOutcome<MemoryChangesApiResponse, MemoryChangesApiErrorCode>> =>
