@@ -3,13 +3,14 @@
  *
  * It runs on the audio thread, so it ships as a standalone file in public/ instead of going
  * through the bundle: bundler modules do not reach that thread. Its only job is to turn float32
- * into PCM16 at the target rate and emit 100 ms frames.
+ * into PCM16 at the target rate and emit 40 ms frames: speech reaches streaming recognition while
+ * it is still being said, instead of waiting for a whole 100 ms to fill.
  *
  * Resampling is linear: good enough for speech and the recognition that follows, whereas a heavy
  * filter on the audio thread would cost dropouts.
  */
 const TARGET_SAMPLE_RATE = 16000
-const FRAME_MS = 100
+const FRAME_MS = 40
 
 class CaptureProcessor extends AudioWorkletProcessor {
   constructor() {
