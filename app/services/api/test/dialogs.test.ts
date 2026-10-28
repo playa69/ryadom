@@ -1388,6 +1388,24 @@ describe('WebSocket-шлюз', () => {
     client.close()
   })
 
+  it('кадры по 40 мс: запас перед речью и несколько секунд речи разом не рвут соединение', async () => {
+    // `openspec/changes/add-sber-voice-pipeline`, «Коды закрытия, ошибки и лимиты соединения»
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-40ms' }))
+    const agentSide = await agent.waitFor('d-40ms')
+
+    client.send(JSON.stringify({ type: DialogClientFrame.AudioStart, sampleRate: 16000 }))
+    // 600 ms of pre-roll plus five seconds of 40 ms frames after a stall: 140 frames, more than the old burst of 60.
+    for (let sequence = 0; sequence < 140; sequence++) client.send(micFrame(sequence))
+
+    await vi.waitFor(() => expect(agentSide.binaryFrames).toHaveLength(140))
+    expect(client.readyState).toBe(WebSocket.OPEN)
+
+    client.close()
+  })
+
   it('поток кадров быстрее, чем говорит человек, — RATE_LIMITED', async () => {
     const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
