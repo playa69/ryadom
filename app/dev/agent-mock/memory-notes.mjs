@@ -226,7 +226,8 @@ function changesOf(memory, dialog) {
   if (!dialog.endedAt || (dialog.pendingPasses ?? 0) > 0 || Date.now() < (dialog.finalPassUntil ?? 0)) {
     return { status: 'pending', reason: null, items: [] }
   }
-  const mine = liveNotes(memory).filter((note) => note.dialogId === dialog.dialogId).reverse()
+  // The order they were extracted in (the map keeps it): notes made in one millisecond share a time, so `createdAt` cannot order them.
+  const mine = [...memory.notes.values()].filter((note) => note.dialogId === dialog.dialogId)
   return ready(mine.map((note) => ({ op: 'add', fact: asFact(note) })))
 }
 
