@@ -28,7 +28,7 @@ export function mobileSpec(args, repoRoot) {
   }
   const welcome = async (page) => {
     await page.goto(`${base}/`)
-    await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
+    await page.waitForSelector('.page-current [data-testid="have-account"]', { timeout: 30_000 })
     await dismissBanner(page)
   }
   const home = async (page) => {
@@ -221,6 +221,9 @@ export function mobileSpec(args, repoRoot) {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ru-RU' })
       const page = await context.newPage()
       await page.goto(`${base}/`)
+      // The first screen offers a conversation without registration; the sign-in form is one tap away.
+      await page.waitForSelector('.page-current [data-testid="have-account"]', { timeout: 30_000 })
+      await page.locator('.page-current [data-testid="have-account"]').click()
       await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
       await page.locator('.page-current input[name="email"]').fill(ACCOUNT.email)
       await page.locator('.page-current input[name="password"]').fill(ACCOUNT.password)
