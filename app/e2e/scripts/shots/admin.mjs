@@ -37,6 +37,22 @@ export function adminSpec(args, repoRoot) {
       },
     },
     audit: { open: go('/audit') },
+    voice: { open: go('/voice') },
+    // The pipeline not in force is picked: «Сохранить» turns active.
+    'voice-picked': {
+      open: async (page) => {
+        await go('/voice')(page)
+        await page.locator('input[name="pipeline"]:not(:checked)').first().check()
+      },
+    },
+    // Saving it changes the stand: the notice shows, «Сейчас» and the line about who changed it move.
+    'voice-saved': {
+      open: async (page) => {
+        await screens['voice-picked'].open(page)
+        await page.getByRole('button', { name: 'Сохранить' }).click()
+        await page.getByText('Голосовой путь сохранён').waitFor({ timeout: 15_000 })
+      },
+    },
   }
 
   return {

@@ -52,7 +52,7 @@
 - [ ] 4.1 (web, pwa, android, ios, tg) Звук реплики кадрами по 40 мс: `app/packages/client-core/src/voice/capture.ts`,
   `app/apps/web/public/voice-worklet.js`, `app/apps/mobile/public/voice-worklet.js`. Приёмка: `pnpm --filter @ryadom/client-core
   test` (`test/capture.test.ts`: запас перед речью — 15 кадров по 40 мс); e2e из раздела 5.
-- [ ] 4.2 (admin) Раздел «Голос»: `app/apps/admin/app/(dashboard)/voice/page.tsx`, `voice/actions.ts`,
+- [x] 4.2 (admin) Раздел «Голос»: `app/apps/admin/app/(dashboard)/voice/page.tsx`, `voice/actions.ts`,
   `voice/_components/voice-pipeline-form.tsx`, пункт меню в `app/apps/admin/app/(dashboard)/_components/admin-sidebar.tsx`,
   подпись и подробности записи журнала в `app/apps/admin/app/(dashboard)/_lib/labels.ts`. Макет —
   `mockups/admin-voice.html`. Приёмка: `pnpm --filter @ryadom/admin typecheck`; скриншоты из раздела 5.
@@ -72,7 +72,7 @@
   и запасная озвучка); голос и род — живой прогон из 5.1 (0 мужских форм о себе).
 - [ ] 5.4 `dialog`, «Коды закрытия, ошибки и лимиты соединения»: `app/services/api/test/dialogs.test.ts` — кадры по 40 мс с
   запасом перед речью проходят, поток быстрее 50 в секунду сверх запаса — `RATE_LIMITED` и 4008.
-- [ ] 5.5 `admin-console`, «Выбор голосового пути», «Журнал действий», «Каркас админки»: `app/packages/core/test/voice-settings.test.ts`
+- [x] 5.5 `admin-console`, «Выбор голосового пути», «Журнал действий», «Каркас админки»: `app/packages/core/test/voice-settings.test.ts`
   (смена с записью, тот же путь без записи, запись без аккаунта не попадает в журнал одного аккаунта); скриншоты 1280 (админка под
   телефон не адаптирована): первое открытие, выбор «Gemini Live», после сохранения, запись в журнале.
 - [ ] 5.6 `agent-api`, «Служебные эндпоинты»: `agent/tests/test_voice_pipeline.py` — `voicePipeline` в `GET /health/ready`.
