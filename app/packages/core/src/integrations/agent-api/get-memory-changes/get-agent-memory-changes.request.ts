@@ -6,7 +6,7 @@ export interface GetAgentMemoryChangesRequestData {
   dialogId: string
 }
 
-/** What one conversation added to memory: the "I remembered" card after it. */
+/** The notes one conversation left, for the block "I remembered" in the closing window. */
 export class GetAgentMemoryChangesRequest extends RequestData<GetAgentMemoryChangesResult> {
   /** Survives build minification: GetAgentMemoryChangesRequest.name is not kept in production. Used by LoggingBehavior. */
   static readonly requestName = 'GetAgentMemoryChangesRequest'

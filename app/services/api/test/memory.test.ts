@@ -16,6 +16,7 @@ import {
   MemoryChangesStatus,
   MemoryFactCategory,
   MemoryFactOrigin,
+  MemoryFactSensitivity,
   MemoryFactStatus,
   MemoryInstructionApiErrorCode,
   UpdateMemoryFactApiErrorCode,
@@ -423,7 +424,7 @@ describe('заметки', () => {
   })
 })
 
-describe('карточка, выгрузка и журнал', () => {
+describe('блок «Я запомнил», выгрузка и журнал', () => {
   it('changes: без dialogId — 400; чужой диалог — DIALOG_NOT_FOUND; готовые изменения — в форме контракта', async () => {
     const { tokens } = await signedIn()
 
@@ -455,6 +456,57 @@ describe('карточка, выгрузка и журнал', () => {
       status: MemoryChangesStatus.Ready,
       reason: null,
       items: [{ op: MemoryChangeOp.Add, fact: { id: 'f-1', category: MemoryFactCategory.Person } }],
+    })
+  })
+
+  it('changes: блок «Я запомнил» — pending, затем заметки разговора по порядку в форме прежнего факта, пустой ready для разговора без памяти', async () => {
+    const { tokens } = await signedIn()
+    // What the agent answers for a note of the conversation (`note_as_fact`): the id is the note's, so the same id is deleted.
+    const noteFact = (id: string, text: string, sensitive = false) =>
+      agentFact({
+        id,
+        category: 'situation',
+        text,
+        slots: null,
+        importance: 5,
+        confidence: 1,
+        origin: 'user_edit',
+        sensitivity: sensitive ? 'sensitive' : 'normal',
+      })
+    const asked = () => call(app, 'GET', `${ApiPath.MemoryChanges}?dialogId=d-1`, undefined, tokens.accessToken)
+
+    mockFetch({ [`GET ${AGENT}/changes`]: () => json({ status: 'pending', reason: null, items: [] }) })
+    expect(ok<MemoryChangesApiResponse>(await asked())).toEqual({
+      status: MemoryChangesStatus.Pending,
+      reason: null,
+      items: [],
+    })
+
+    const { calls } = mockFetch({
+      [`GET ${AGENT}/changes`]: () =>
+        json({
+          status: 'ready',
+          reason: null,
+          items: [
+            { op: 'add', fact: noteFact('n-1', 'Зовут Алекс') },
+            { op: 'add', fact: noteFact('n-2', 'Последние недели плохо спит', true) },
+          ],
+        }),
+    })
+    const ready = ok<MemoryChangesApiResponse>(await asked())
+    expect(ready.status).toBe(MemoryChangesStatus.Ready)
+    expect(ready.items.map((item) => [item.op, item.fact.id, item.fact.text, item.fact.sensitivity])).toEqual([
+      [MemoryChangeOp.Add, 'n-1', 'Зовут Алекс', MemoryFactSensitivity.Normal],
+      [MemoryChangeOp.Add, 'n-2', 'Последние недели плохо спит', MemoryFactSensitivity.Sensitive],
+    ])
+    expect(calls.map((entry) => entry.url.search)).toEqual(['?dialogId=d-1'])
+
+    // A conversation held "without memory" (or unsaved, or with memory off): the agent says ready and nothing, the gateway passes it on.
+    mockFetch({ [`GET ${AGENT}/changes`]: () => json({ status: 'ready', reason: null, items: [] }) })
+    expect(ok<MemoryChangesApiResponse>(await asked())).toEqual({
+      status: MemoryChangesStatus.Ready,
+      reason: null,
+      items: [],
     })
   })
 
