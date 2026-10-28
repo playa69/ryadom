@@ -7,6 +7,7 @@ import {
   MEMORY_FORGET_ERRORS,
   MEMORY_INSTRUCTION_ERRORS,
   MEMORY_SHEET,
+  MEMORY_SHEET_REFRESH_MS,
   groupNotes,
   instructionResultText,
   noteDateLabel,
@@ -79,6 +80,15 @@ export default function MemoryNotesSheet({
     setInstruction('')
     void load()
   }, [opened, load])
+
+  // Opened in a conversation, the list gets a new note without closing the sheet: it is read again every MEMORY_SHEET_REFRESH_MS.
+  // Not while a note is being edited or a request is on its way, so the refresh does not overwrite what the person is doing.
+  const busy = editing !== null || saving || sending
+  useEffect(() => {
+    if (!opened || busy) return
+    const timer = setInterval(() => void load(), MEMORY_SHEET_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [opened, busy, load])
 
   function startEditing(note: MemoryNoteApiResponse) {
     setEditing(note)

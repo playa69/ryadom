@@ -21,6 +21,8 @@ const NOTE_KINDS = ['name', 'style', 'person', 'situation', 'event', 'agreement'
 const SENSITIVE_KINDS = new Set(['wellbeing', 'beliefs'])
 const NOTES_MAX = 200
 const NOTE_DELAY_MS = Number(process.env.MOCK_NOTE_DELAY_MS ?? 1500)
+// How long the index of past conversations is "being rebuilt" after "Опираться на прошлые разговоры" is turned on (0: never).
+const REINDEX_MS = Number(process.env.MOCK_REINDEX_MS ?? 0)
 
 /** Kind of a note → category of the old fact (for the legacy `facts` in `GET /memory`, which the cached apps read). */
 const CATEGORY_OF_KIND = {
@@ -266,6 +268,7 @@ function view(memory) {
     paused: !memory.enabled,
     sensitiveEnabled: memory.sensitiveEnabled,
     chatSearchEnabled: memory.chatSearchEnabled,
+    reindexing: memory.enabled && memory.chatSearchEnabled && Date.now() < (memory.reindexUntil ?? 0),
     consentVersion: memory.consentVersion,
     consentAt: memory.consentAt,
     rulesVersion: 'notes-1',
@@ -311,7 +314,11 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
     } else if (body.enabled === false) {
       memory.enabled = false // a pause: the notes stay, the consent stays
     }
-    if (typeof body.chatSearchEnabled === 'boolean') memory.chatSearchEnabled = body.chatSearchEnabled
+    if (typeof body.chatSearchEnabled === 'boolean') {
+      // Turned on again: the index is rebuilt in the background for a while.
+      if (body.chatSearchEnabled && !memory.chatSearchEnabled && REINDEX_MS > 0) memory.reindexUntil = Date.now() + REINDEX_MS
+      memory.chatSearchEnabled = body.chatSearchEnabled
+    }
     if (typeof body.sensitiveEnabled === 'boolean') {
       if (memory.sensitiveEnabled && !body.sensitiveEnabled) {
         for (const note of liveNotes(memory)) if (note.sensitive) memory.notes.delete(note.id)
@@ -367,6 +374,8 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
       rulesVersion: 'notes-1',
       settings: {
         enabled: memory.enabled,
+        sensitiveEnabled: memory.sensitiveEnabled,
+        chatSearchEnabled: memory.chatSearchEnabled,
         consentVersion: memory.consentVersion,
         consentAt: memory.consentAt,
         epochAt: null,

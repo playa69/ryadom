@@ -234,6 +234,10 @@ test('память в вебе: согласие → разговор → лис
   await expect(memorySwitch(page)).toBeChecked()
   await searchSwitch(page).click()
   await expect(searchSwitch(page)).toBeChecked()
+  // Turned on again, the index is rebuilt: the section says so, reads again by itself and the label goes away.
+  await expect(page.getByTestId('memory-reindexing')).toHaveText('Готовлю память о прошлых разговорах…')
+  await shot(page, 'web-memory-reindexing')
+  await expect(page.getByTestId('memory-reindexing')).toHaveCount(0, { timeout: 30_000 })
 
   // ── sensitive off: the sensitive notes are deleted ──────────────────────────────────────────
   await sensitiveSwitch(page).click()
@@ -298,6 +302,8 @@ test('память в вебе: разговор «Без памяти» нич�
   await homeInput(page).press('Enter')
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
   await expect(page.getByTestId('dialog-incognito')).toContainText('Без памяти')
+  // The button with the notes is not in a conversation held without memory.
+  await expect(page.getByTestId('memory-nav')).toHaveCount(0)
   await expect(messages(page, 'assistant').last()).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
   await shot(page, 'web-memory-incognito-dialog')
@@ -311,6 +317,43 @@ test('память в вебе: разговор «Без памяти» нич�
   await openSheet(page)
   await expect(sheet(page).getByTestId('memory-sheet-empty')).toBeVisible()
   await shot(page, 'web-memory-incognito-sheet')
+})
+
+test('лист «Что помнит Рядом» из разговора: кнопка в шапке, тексты скрыты, новая заметка появляется без перезапуска листа', async ({
+  page,
+  shot,
+}) => {
+  test.setTimeout(180_000)
+  await openWebApp(page)
+  await startAnonymously(page)
+  await openMemory(page)
+  await memorySwitch(page).click()
+  await modalButton(page, 'Включить память').click()
+  await expect(memorySwitch(page)).toBeChecked()
+
+  await goTo(page, 'Новый разговор')
+  await expect(page.getByTestId('memory-nav')).toHaveCount(0) // home is not a conversation
+  await homeInput(page).fill(INTRO)
+  await homeInput(page).press('Enter')
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(messages(page, 'assistant').last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.getByTestId('memory-nav')).toBeVisible()
+  await shot(page, 'web-memory-dialog-button')
+
+  // The sheet opens over the conversation; the texts are behind "Показать" as in the profile. The note the mock makes
+  // 1.5 s after the words appears on the open sheet by itself, within the refresh period of 10 s.
+  await page.getByTestId('memory-nav').click()
+  await expect(sheet(page)).toBeVisible()
+  await expect(notes(page)).toHaveCount(2, { timeout: 15_000 })
+  await expect(noteTexts(page).first()).toHaveText('Текст скрыт')
+  await shot(page, 'web-memory-dialog-sheet-hidden')
+  await reveal(page)
+  await expect(noteTexts(page).filter({ hasText: NAME })).toHaveCount(1)
+  await expect(noteTexts(page).filter({ hasText: WORK })).toHaveCount(1)
+  await shot(page, 'web-memory-dialog-sheet')
+  await closeSheet(page)
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/)
 })
 
 const invite = (page: Page) => page.getByTestId('memory-invite')

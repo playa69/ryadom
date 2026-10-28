@@ -837,7 +837,10 @@ export default function DialogPage({
             className="rd-navbar-icon ph-no-capture"
             aria-label={MEMORY_SHEET.title}
             data-testid="memory-nav"
-            onClick={() => setNotesOpened(true)}
+            onClick={() => {
+              track(AnalyticsEvent.MemorySheetOpened, { source: 'dialog' })
+              setNotesOpened(true)
+            }}
           >
             <Icon f7="sparkles" size={22} />
           </button>

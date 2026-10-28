@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowDown, CircleCheck, EyeOff, Share2 } from 'lucide-react'
+import { ArrowDown, CircleCheck, EyeOff, Share2, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -18,6 +18,7 @@ import {
   MEMORY_FORGET_ERRORS,
   MEMORY_NOTICE,
   MEMORY_NOTICE_POLL_MS,
+  MEMORY_SHEET,
   memoryInUse,
   newSensitiveNotes,
   noteIds,
@@ -73,6 +74,7 @@ import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import DialogAlert from './DialogAlert'
 import DialogEndSheet, { type EndRecapSource } from './DialogEndSheet'
+import DialogMemory from './DialogMemory'
 import ShareDialogModal from './ShareDialogModal'
 import DialogFeed from './DialogFeed'
 import MemoryRecap from './MemoryRecap'
@@ -150,6 +152,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [view, setView] = useState<DialogView>(() => initialDialogView(dialogId))
   const [sharing, setSharing] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const [recording, setRecording] = useState(false)
   // PROTEUS-168: the tone the agent reports for the person's last turn; fades back after a while.
   const [mood, setMood] = useState<OrbMood | null>(null)
@@ -944,6 +947,23 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
                 <span className="sr-only tab:not-sr-only">Поделиться</span>
               </Button>
             )}
+            {/* What Ryadom remembers, one tap from the conversation. Not in a conversation held without memory or while memory is off. */}
+            {!incognito && user?.memoryEnabled !== false && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={cn(BUTTON, 'w-11 shrink-0 border-input! px-0 outline-none tab:w-auto tab:px-4')}
+                onClick={() => {
+                  track(AnalyticsEvent.MemorySheetOpened, { source: 'dialog' })
+                  setMemoryOpen(true)
+                }}
+                data-testid="memory-nav"
+              >
+                <Sparkles aria-hidden="true" className="size-5 tab:size-4" />
+                <span className="sr-only tab:not-sr-only">{MEMORY_SHEET.title}</span>
+              </Button>
+            )}
             {view === 'text' ? (
               <Button
                 type="button"
@@ -964,6 +984,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         }
       />
       <ShareDialogModal dialogId={dialogId} open={sharing} onClose={() => setSharing(false)} />
+      <DialogMemory open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       {unsaved && (
         <div className={cn(COLUMN, 'pt-3')}>

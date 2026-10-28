@@ -633,6 +633,15 @@ class DialogDatabase:
             row = conn.execute("SELECT count(*) FROM memory_outbox").fetchone()
         return int(row[0]) if row else 0
 
+    def outbox_rebuilding(self, user_id: str) -> bool:
+        """Идёт ли пересборка индекса человека: ждёт `rebuild` или документ, поставленный им (`payload.rebuild`)."""
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM memory_outbox WHERE user_id = %s AND (op = 'rebuild' OR (op = 'index_dialog' AND payload ->> 'rebuild' = 'true')) LIMIT 1",
+                (user_id,),
+            ).fetchone()
+        return row is not None
+
     def outbox_drop_user(self, user_id: str, ops: tuple[str, ...]) -> None:
         """Убрать из очереди операции человека (например, индексацию, когда индекс уже решили удалить целиком)."""
         with self._lock, self._connection() as conn, conn.transaction():

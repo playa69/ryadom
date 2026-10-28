@@ -15,34 +15,34 @@
 
 ## 1. Данные и контракты
 
-- [ ] 1.1 Контракты (`app/packages/contracts/src/api/memory.ts`, только добавление): признак пересборки индекса (`reindexing`) в `GET /api/memory`, переключатели в настройках `GET /api/memory/export`; заодно поправить устаревшие комментарии («opt-in», «60 facts», «Recap»). Приёмка: `pnpm --filter @ryadom/contracts typecheck`; прежний клиент без новых полей читает ответы
+- [x] 1.1 Контракты (`app/packages/contracts/src/api/memory.ts`, только добавление): признак пересборки индекса (`reindexing`) в `GET /api/memory`, переключатели в настройках `GET /api/memory/export`; заодно поправить устаревшие комментарии («opt-in», «60 facts», «Recap»). Приёмка: `pnpm --filter @ryadom/contracts typecheck`; прежний клиент без новых полей читает ответы
 
 ## 2. Агент
 
 - [ ] 2.1 Проход извлечения по таймеру: одиночная реплика не ждёт следующей (`agent/app/memory/cognee_backend.py`, `_queue_for_notes`, `EXTRACT_EVERY_SECONDS`). Приёмка: сценарии «Одна реплика» и «Просьба «забудь»»; тест `agent/tests/test_memory_flow.py` на подставных часах, без лишних проходов и без висящего таймера после завершения разговора
 - [ ] 2.2 «Интимное» — чувствительное: `agent/app/memory/guard.py` (`SENSITIVE_KINDS`) и `agent/app/memory/prompts/extract.md`. Приёмка: сценарии «Интимное без согласия» и «Интимное с согласием»; тесты `agent/tests/test_memory_masking_guard.py`, `test_memory_extractor.py` на синтетических фразах
 - [ ] 2.3 Находки из прошлых разговоров: 600 знаков вместе с датой (`TURN_RECALL_MAX_CHARS` в `agent/app/memory/cognee_backend.py`). Приёмка: сценарий «Длинная находка»; тест `agent/tests/test_memory_cognee_backend.py`
-- [ ] 2.4 Признак пересборки индекса в `GET …/memory`: установлен, пока идёт пересборка после включения поиска (`agent/app/memory/cognee_backend.py`, `indexer.py`). Приёмка: сценарий «Идёт пересборка»; тест `agent/tests/test_memory_index.py`
-- [ ] 2.5 Выгрузка: `sensitiveEnabled` и `chatSearchEnabled` в настройках файла (`export` в `agent/app/memory/cognee_backend.py`). Приёмка: сценарий «Настройки в файле»; тест `agent/tests/test_memory_api.py`
+- [x] 2.4 Признак пересборки индекса в `GET …/memory`: установлен, пока идёт пересборка после включения поиска (`agent/app/memory/cognee_backend.py`, `indexer.py`). Приёмка: сценарий «Идёт пересборка»; тест `agent/tests/test_memory_index.py`
+- [x] 2.5 Выгрузка: `sensitiveEnabled` и `chatSearchEnabled` в настройках файла (`export` в `agent/app/memory/cognee_backend.py`). Приёмка: сценарий «Настройки в файле»; тест `agent/tests/test_memory_api.py`
 
 ## 3. Шлюз API
 
-- [ ] 3.1 Передать признак пересборки и переключатели выгрузки: разбор ответов агента (`app/packages/core/src/integrations/agent-api/shared/agent-memory.parse.ts`, `agent-memory.types.ts`) и маршруты (`app/services/api/src/routes/memory/index.ts`). Приёмка: тесты `app/services/api/test/memory.test.ts`
+- [x] 3.1 Передать признак пересборки и переключатели выгрузки: разбор ответов агента (`app/packages/core/src/integrations/agent-api/shared/agent-memory.parse.ts`, `agent-memory.types.ts`) и маршруты (`app/services/api/src/routes/memory/index.ts`). Приёмка: тесты `app/services/api/test/memory.test.ts`
 
 ## 4. Клиенты по поверхностям
 
-- [ ] 4.1 client-core (`app/packages/client-core/src/memory.ts`): обновление листа раз в 10 секунд, подпись «Готовлю память о прошлых разговорах…», тексты пункта онбординга. Приёмка: юнит-тесты `app/packages/client-core/test/memory.test.ts`
-- [ ] 4.2 Веб: кнопка памяти в шапке экрана разговора и обновление листа раз в 10 секунд (`app/apps/web/components/DialogScreen.tsx`, `MemoryNotesSheet.tsx`); в «Без памяти» и при выключенной памяти кнопки нет. Приёмка: сценарии «(Web) Лист из разговора», «Список обновляется во время разговора»
-- [ ] 4.3 Мобильный клиент: обновление листа раз в 10 секунд (`app/apps/mobile/src/client/components/pages/profile/MemoryNotesSheet.tsx`; кнопка в шапке `DialogPage.tsx` уже есть). Приёмка: сценарий «Список обновляется во время разговора» на PWA
-- [ ] 4.6 Подпись «Готовлю память о прошлых разговорах…» в разделе «Память»: веб `app/apps/web/components/ProfileMemory.tsx`, мобильный `app/apps/mobile/src/client/components/pages/profile/MemoryPage.tsx`. Приёмка: сценарий «Идёт пересборка»
+- [ ] 4.1 client-core (`app/packages/client-core/src/memory.ts`): обновление листа раз в 10 секунд, подпись «Готовлю память о прошлых разговорах…», тексты пункта онбординга. Приёмка: юнит-тесты `app/packages/client-core/test/memory.test.ts` (сделано: обновление раз в 10 с и подпись «Готовлю память…» — `MEMORY_SHEET_REFRESH_MS`, `MEMORY_REINDEXING_LABEL`; тексты пункта онбординга остаются, см. 4.7)
+- [x] 4.2 Веб: кнопка памяти в шапке экрана разговора и обновление листа раз в 10 секунд (`app/apps/web/components/DialogScreen.tsx`, `MemoryNotesSheet.tsx`); в «Без памяти» и при выключенной памяти кнопки нет. Приёмка: сценарии «(Web) Лист из разговора», «Список обновляется во время разговора»
+- [x] 4.3 Мобильный клиент: обновление листа раз в 10 секунд (`app/apps/mobile/src/client/components/pages/profile/MemoryNotesSheet.tsx`; кнопка в шапке `DialogPage.tsx` уже есть). Приёмка: сценарий «Список обновляется во время разговора» на PWA
+- [x] 4.6 Подпись «Готовлю память о прошлых разговорах…» в разделе «Память»: веб `app/apps/web/components/ProfileMemory.tsx`, мобильный `app/apps/mobile/src/client/components/pages/profile/MemoryPage.tsx`. Приёмка: сценарий «Идёт пересборка»
 - [ ] 4.7 Пункт о памяти на первом экране: веб `app/apps/web/app/(auth)/welcome/welcome-screen.tsx`, `_components/consent-group.tsx`; мобильный и Mini App `app/apps/mobile/src/client/components/pages/auth/WelcomePage.tsx`. Принятие после записи согласий вызывает `PUT /api/memory/settings` с согласием. Приёмка: сценарии «Память по умолчанию у новых аккаунтов»; условия листа-приглашения не менять (ветка `cleanup/242-memory-fixes`)
-- [ ] 4.8 Аналитика без текстов (`app/packages/analytics/src/events.ts`): `memory_sheet_opened` с источником `dialog`. Приёмка: компиляция проверяет свойства; тест `sanitize`; ни одно событие не несёт текста
+- [x] 4.8 Аналитика без текстов (`app/packages/analytics/src/events.ts`): `memory_sheet_opened` с источником `dialog`. Приёмка: компиляция проверяет свойства; тест `sanitize`; ни одно событие не несёт текста
 
 ## 5. Проверка
 
 Скриншоты — `pnpm evidence PROTEUS-242 web-memory app-memory web-anonymous app-anonymous` (скилл `screenshots`): 390 (проект `mobile`) и 1280 (`desktop`), по снимку на каждый `THEN`, без видео, данные синтетические. Тест называет change и требование: `openspec/changes/add-memory-notes`, «<требование>».
 
-- [ ] 5.1 Мок агента (`app/dev/agent-mock/memory-notes.mjs`): проход по таймеру, признак пересборки, переключатели в выгрузке. Приёмка: e2e ниже зелёные на desktop и mobile
+- [ ] 5.1 Мок агента (`app/dev/agent-mock/memory-notes.mjs`): проход по таймеру, признак пересборки, переключатели в выгрузке. Приёмка: e2e ниже зелёные на desktop и mobile (сделано: признак пересборки `MOCK_REINDEX_MS` и переключатели в выгрузке; проход по таймеру остаётся, см. 2.1)
 - [ ] 5.3 «Память по умолчанию у новых аккаунтов»: юнит client-core; e2e `web-anonymous.spec.ts` (desktop), `app-anonymous.spec.ts` (mobile), `web-memory.spec.ts`. Снимки шагов: первый экран с пунктом о памяти; принят — память включена, приглашения нет; не принят — лист «Рядом теперь запоминает важное»; прежний аккаунт видит приглашение
 - [ ] 5.4 «Лист «Что помнит Рядом»»: e2e `web-memory.spec.ts` (кнопка в шапке разговора, скрытие текстов, обновление за 10 секунд) и `app-memory.spec.ts`. Снимки шагов: разговор с кнопкой; лист со скрытыми текстами; новая заметка появилась без перезапуска листа; «Без памяти» без кнопки
 - [ ] 5.5 Агент: сценарии «Одна реплика», «Просьба «забудь»», «Интимное…» (тесты задач 2.1–2.2), «Длинная находка», «Идёт пересборка», «Настройки в файле»; золотой набор `agent/scripts/memory_golden.py` дополнен интимными фразами (синтетика). Приёмка: точность ≥0,9, полнота ≥0,75, утечек 0, p95 появления заметки ≤60 с

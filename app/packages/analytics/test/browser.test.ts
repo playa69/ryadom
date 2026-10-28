@@ -193,6 +193,15 @@ describe('отправка', () => {
     expect(posthog.capture).toHaveBeenCalledWith('memory_note_deleted', { undone: false, source: 'recap' })
   })
 
+  it('лист «Что помнит Рядом»: источник profile или dialog доходит, текст заметок — нет', async () => {
+    const { posthog, started } = start(CONFIG)
+    await started
+    track(AnalyticsEvent.MemorySheetOpened, { source: 'dialog', text: 'Сестра Аня' } as never)
+    track(AnalyticsEvent.MemorySheetOpened, { source: 'profile' })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_sheet_opened', { source: 'dialog' })
+    expect(posthog.capture).toHaveBeenCalledWith('memory_sheet_opened', { source: 'profile' })
+  })
+
   it('события тестов несут test_id, а баллы, уровни и ответы отбрасываются', async () => {
     const { posthog, started } = start(CONFIG)
     await started

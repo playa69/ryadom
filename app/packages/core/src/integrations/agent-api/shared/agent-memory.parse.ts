@@ -134,6 +134,8 @@ const memorySchema = z.object({
   paused: z.boolean().optional(),
   sensitiveEnabled: z.boolean().catch(false),
   chatSearchEnabled: z.boolean().catch(true),
+  // An older agent has no index rebuild to report.
+  reindexing: z.boolean().catch(false),
   notes: z.array(z.unknown()).catch([]),
   facts: z.array(z.unknown()),
 })
@@ -215,6 +217,8 @@ const exportSchema = z.object({
   rulesVersion: z.string().catch(''),
   settings: z.object({
     enabled: z.boolean(),
+    sensitiveEnabled: z.boolean().catch(false),
+    chatSearchEnabled: z.boolean().catch(true),
     consentVersion: nullableString,
     consentAt: nullableString,
     epochAt: nullableString,

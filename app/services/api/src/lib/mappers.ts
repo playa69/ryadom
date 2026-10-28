@@ -285,6 +285,7 @@ export function toMemory(memory: MemoryDTO): MemoryApiResponse {
     paused: memory.paused,
     sensitiveEnabled: memory.sensitiveEnabled,
     chatSearchEnabled: memory.chatSearchEnabled,
+    reindexing: memory.reindexing,
     notes: memory.notes.map(toMemoryNote),
     facts: memory.facts.map(toMemoryFact),
   }
@@ -336,6 +337,8 @@ export function toMemoryExport(exported: MemoryExportDTO): MemoryExportApiRespon
     rulesVersion: exported.rulesVersion,
     settings: {
       enabled: exported.settings.enabled,
+      sensitiveEnabled: exported.settings.sensitiveEnabled,
+      chatSearchEnabled: exported.settings.chatSearchEnabled,
       consentVersion: exported.settings.consentVersion,
       consentAt: exported.settings.consentAt?.toISOString() ?? null,
       epochAt: exported.settings.epochAt?.toISOString() ?? null,

@@ -95,6 +95,8 @@ export interface AgentMemoryResponse {
   paused: boolean
   sensitiveEnabled: boolean
   chatSearchEnabled: boolean
+  /** The index of past conversations is being rebuilt. */
+  reindexing: boolean
   notes: AgentMemoryNoteResponse[]
   facts: AgentMemoryFactResponse[]
 }
@@ -131,6 +133,8 @@ export interface AgentMemoryExportResponse {
   rulesVersion: string
   settings: {
     enabled: boolean
+    sensitiveEnabled: boolean
+    chatSearchEnabled: boolean
     consentVersion: string | null
     consentAt: string | null
     epochAt: string | null

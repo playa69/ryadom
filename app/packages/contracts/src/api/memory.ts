@@ -3,8 +3,8 @@
  * not start from zero every time (who matters to them, what is going on, what helps, how to talk to
  * them and what not to bring up).
  *
- * Memory is opt-in: it stays off until the person turns it on after a separate consent sheet
- * (`PUT /api/memory/settings`). Everything remembered is visible here and can be corrected,
+ * Memory is on for a person who accepted the memory point of the first screen or the consent sheet
+ * (`PUT /api/memory/settings`); until then it is off. Everything remembered is visible here and can be corrected,
  * forgotten one by one or all at once, and downloaded. A single conversation can be held "without
  * memory" (`memory: 'off'` in `POST /api/dialogs`). Reading, exporting and forgetting work even
  * while memory is off or unavailable.
@@ -45,7 +45,7 @@ export enum MemoryFactCategory {
   Works = 'works',
   /** Interests and pleasant things. */
   Interest = 'interest',
-  /** A retelling of the latest conversation; there is one at a time. */
+  /** Old retelling of a conversation; recaps are conversation recaps now and are not facts. */
   Recap = 'recap',
 }
 
@@ -179,6 +179,8 @@ export interface MemoryApiResponse {
   sensitiveEnabled: boolean
   /** The switch "Rely on past conversations" (search in Cognee), on by default. */
   chatSearchEnabled: boolean
+  /** The index of past conversations is being rebuilt after the switch was turned on: show "Готовлю память о прошлых разговорах…". Absent from an older agent. */
+  reindexing?: boolean
   /** The notes, newest first. */
   notes: MemoryNoteApiResponse[]
   /** The same notes in the old form of a fact, for cached apps. */
@@ -293,6 +295,9 @@ export interface MemoryExportApiResponse {
   rulesVersion: string
   settings: {
     enabled: boolean
+    /** The two other switches; an older agent does not send them. */
+    sensitiveEnabled?: boolean
+    chatSearchEnabled?: boolean
     consentVersion: string | null
     consentAt: string | null
     epochAt: string | null

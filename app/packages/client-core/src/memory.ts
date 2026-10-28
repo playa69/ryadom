@@ -682,6 +682,18 @@ export const MEMORY_SHEET = {
   deleteHint: 'Если хочешь, чтобы Рядом совсем забыл, удали и разговор в журнале',
 } as const
 
+/** While the index of past conversations is being rebuilt (`reindexing`), the section "Память" says so. */
+export const MEMORY_REINDEXING_LABEL = 'Готовлю память о прошлых разговорах…'
+/** How often the section is read again while the label is shown. */
+export const MEMORY_REINDEXING_POLL_MS = 5_000
+/** How often the sheet "Что помнит Рядом" reads the list again while it is open during a conversation. */
+export const MEMORY_SHEET_REFRESH_MS = 10_000
+
+/** Whether to keep reading the section: the label is shown only while search and memory are on and the agent reports a rebuild. */
+export function isReindexing(memory: Pick<MemoryApiResponse, 'enabled' | 'chatSearchEnabled' | 'reindexing'> | null): boolean {
+  return memory !== null && memory.enabled && memory.chatSearchEnabled && memory.reindexing === true
+}
+
 /** How the answer to "Скажи, что поправить" reads on the sheet. */
 export function instructionResultText(changes: MemoryInstructionApiResponse): string {
   const parts: string[] = []

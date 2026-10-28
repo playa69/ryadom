@@ -377,7 +377,7 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.MemoryForgetAll]: NoProperties
   [AnalyticsEvent.MemoryExport]: NoProperties
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
-  [AnalyticsEvent.MemorySheetOpened]: { source: 'profile' }
+  [AnalyticsEvent.MemorySheetOpened]: { source: 'profile' | 'dialog' }
   [AnalyticsEvent.MemoryNoteEdited]: NoProperties
   [AnalyticsEvent.MemoryNoteDeleted]: { undone: boolean; source?: MemoryNoteSource }
   [AnalyticsEvent.MemoryRecapShown]: NoProperties

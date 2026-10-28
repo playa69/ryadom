@@ -650,4 +650,16 @@ describe('«Запомнил: … · Убрать» и лист «Рядом т�
     expect(shouldInviteToMemory(person(true, MEMORY_CONSENT_VERSION), false)).toBe(false) // включена
     expect(shouldInviteToMemory(person(false, '2020-01-01'), false)).toBe(false) // новый текст — лист согласия, не приглашение
   })
+
+  it('«Готовлю память…»: только при включённых памяти и поиске и пока агент отдаёт reindexing', async () => {
+    const { isReindexing, MEMORY_REINDEXING_LABEL } = await import('../src/memory')
+    const on = { enabled: true, chatSearchEnabled: true, reindexing: true }
+    expect(MEMORY_REINDEXING_LABEL).toBe('Готовлю память о прошлых разговорах…')
+    expect(isReindexing(on)).toBe(true)
+    expect(isReindexing({ ...on, reindexing: false })).toBe(false) // пересборка закончилась
+    expect(isReindexing({ ...on, reindexing: undefined })).toBe(false) // прежний агент
+    expect(isReindexing({ ...on, enabled: false })).toBe(false) // пауза
+    expect(isReindexing({ ...on, chatSearchEnabled: false })).toBe(false) // поиск выключен
+    expect(isReindexing(null)).toBe(false)
+  })
 })

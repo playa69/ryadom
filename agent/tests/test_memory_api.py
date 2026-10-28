@@ -280,3 +280,13 @@ def test_changes_stay_and_the_old_fact_routes_are_gone(client: TestClient) -> No
     assert client.patch(f"{base(user)}/facts/{note['id']}", json={"text": "Другое"}, headers=AUTH).status_code == 404
     assert client.delete(f"{base(user)}/facts/{note['id']}", headers=AUTH).status_code == 404
     assert [n["text"] for n in client.get(f"{base(user)}/notes", headers=AUTH).json()["notes"]] == ["Работает в продажах"]
+
+
+def test_export_carries_all_three_switches(client: TestClient) -> None:
+    """«Настройки в файле» (задача 2.5): в выгрузке значения всех трёх переключателей, как в профиле."""
+    user = uid()
+    enable(client, user)
+    client.put(f"{base(user)}/settings", json={"sensitiveEnabled": True, "chatSearchEnabled": False}, headers=AUTH)
+    settings = client.get(f"{base(user)}/export", headers=AUTH).json()["settings"]
+    assert settings["enabled"] is True and settings["sensitiveEnabled"] is True and settings["chatSearchEnabled"] is False
+    assert client.get(base(user), headers=AUTH).json()["reindexing"] is False

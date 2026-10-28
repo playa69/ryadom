@@ -446,6 +446,7 @@ class CogneeMemoryBackend:
             "paused": not enabled,
             "sensitiveEnabled": sensitive,
             "chatSearchEnabled": chat_search,
+            "reindexing": chat_search and enabled and await self.outbox.rebuilding(user_id),  # «Готовлю память о прошлых разговорах…»
             "consentVersion": version,
             "consentAt": at,
             "rulesVersion": "notes-1",
@@ -460,11 +461,14 @@ class CogneeMemoryBackend:
             await self._load_state(user_id)
         enabled = self._effective_enabled(user_id)
         version, at = await self._consent_of(user_id)
+        sensitive, chat_search = await self.notes.flags(user_id)
         return {
             "exportedAt": iso(datetime.now(UTC)),
             "rulesVersion": "cognee",
             "settings": {
                 "enabled": enabled,
+                "sensitiveEnabled": sensitive,
+                "chatSearchEnabled": chat_search,
                 "consentVersion": version,
                 "consentAt": at,
                 "epochAt": None,

@@ -83,6 +83,11 @@ class CogneeOutbox:
         if db is not None:
             await asyncio.to_thread(db.outbox_drop_user, user_id, ops)
 
+    async def rebuilding(self, user_id: str) -> bool:
+        """Идёт ли пересборка индекса человека после включения «Опираться на прошлые разговоры»."""
+        db = self._database()
+        return False if db is None else await asyncio.to_thread(db.outbox_rebuilding, user_id)
+
     async def pending(self) -> int:
         db = self._database()
         return 0 if db is None else await asyncio.to_thread(db.outbox_pending)
@@ -135,7 +140,7 @@ class CogneeOutbox:
             await asyncio.to_thread(db.clear_cognee_data_ids, user_id)
         elif op == "rebuild":
             for dialog_id in await asyncio.to_thread(db.indexable_dialog_ids, user_id):
-                await asyncio.to_thread(db.outbox_add, user_id, "index_dialog", {"dialog_id": dialog_id}, _iso(datetime.now(UTC)), _iso(datetime.now(UTC)))
+                await asyncio.to_thread(db.outbox_add, user_id, "index_dialog", {"dialog_id": dialog_id, "rebuild": True}, _iso(datetime.now(UTC)), _iso(datetime.now(UTC)))
         else:
             logger.warning("cognee outbox: unknown op=%s", op)
 

@@ -5,8 +5,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   MEMORY_FORGET_ERRORS,
   MEMORY_SETTINGS_ERRORS,
+  MEMORY_REINDEXING_LABEL,
+  MEMORY_REINDEXING_POLL_MS,
   MEMORY_SHEET,
   MEMORY_SWITCHES,
+  isReindexing,
   memoryExportFileName,
   memoryExportText,
   memoryInUse,
@@ -77,6 +80,14 @@ export default function MemoryPage() {
     void load()
   }, [load])
 
+  // While the agent rebuilds the index of past conversations the label is shown; the section is read again until it is gone.
+  const reindexing = isReindexing(memory)
+  useEffect(() => {
+    if (!reindexing) return
+    const timer = setInterval(() => void load(), MEMORY_REINDEXING_POLL_MS)
+    return () => clearInterval(timer)
+  }, [reindexing, load])
+
   const toast = (text: string) => f7.toast.create({ text, closeTimeout: 2500 }).open()
 
   async function enable() {
@@ -145,6 +156,8 @@ export default function MemoryPage() {
         toast(codeText(MEMORY_SETTINGS_ERRORS, result.code, 'Не получилось изменить'))
       } else {
         setMemory((current) => (current ? { ...current, ...result.data } : current))
+        // Search turned on: the agent starts rebuilding the index; the section reads it again to show "Готовлю память…".
+        if ('chatSearchEnabled' in change && change.chatSearchEnabled) void load()
         return
       }
     } catch (error) {
@@ -282,6 +295,12 @@ export default function MemoryPage() {
             </ListItem>
           </List>
 
+          {reindexing && (
+            <p className="rd-caption rd-muted" role="status" data-testid="memory-reindexing">
+              {MEMORY_REINDEXING_LABEL}
+            </p>
+          )}
+
           {!memory.available && (
             <div className="rd-note rd-note--danger" data-testid="memory-unavailable">
               <Icon f7="exclamationmark_circle" size={22} className="rd-note-icon" />
@@ -298,7 +317,10 @@ export default function MemoryPage() {
             <ListItem
               link
               title={`${MEMORY_SHEET.open} →`}
-              onClick={() => setNotesOpened(true)}
+              onClick={() => {
+                track(AnalyticsEvent.MemorySheetOpened, { source: 'profile' })
+                setNotesOpened(true)
+              }}
               data-testid="memory-open-notes"
             >
               <Icon slot="media" f7="list_bullet" />

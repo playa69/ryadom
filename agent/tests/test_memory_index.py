@@ -267,3 +267,26 @@ def test_document_leaves_out_requests_to_forget_or_correct() -> None:
     document = build_document("2026-10-20T10:00:00Z", messages) or ""
     assert "отпуск" in document and "гулять" in document
     assert "отца" not in document and "Поправь" not in document
+
+
+async def test_reindexing_flag_is_set_while_the_index_is_rebuilt_and_dropped_after() -> None:
+    """«Идёт пересборка» (задача 2.4): признак в `get_memory` на время пересборки после включения поиска."""
+    fake = FakeCognee()
+    service = backend(fake)
+    db = service._database()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    await indexed(service, db, user)
+    assert (await service.get_memory(user))["reindexing"] is False  # обычная индексация после разговора пересборкой не считается
+
+    await service.update_settings(user, None, None, chat_search_enabled=False)
+    await service.drain()
+    await service.outbox.tick()
+    assert (await service.get_memory(user))["reindexing"] is False  # поиск выключен: готовить нечего
+
+    await service.update_settings(user, None, None, chat_search_enabled=True)
+    await service.drain()  # первый проход очереди: rebuild раскладывается на документы разговоров
+    assert (await service.get_memory(user))["reindexing"] is True  # документы ждут индексации
+    while await service.outbox.tick():
+        pass
+    assert (await service.get_memory(user))["reindexing"] is False

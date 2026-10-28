@@ -8,6 +8,8 @@ import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import {
   MEMORY_FORGET_ERRORS,
   MEMORY_SETTINGS_ERRORS,
+  MEMORY_REINDEXING_LABEL,
+  MEMORY_REINDEXING_POLL_MS,
   MEMORY_SHEET,
   MEMORY_SWITCHES,
   memoryExportFileName,
@@ -15,6 +17,7 @@ import {
   memoryInUse,
   memorySwitches,
   needsMemoryConsent,
+  isReindexing,
   readHideMemoryTexts,
   writeHideMemoryTexts,
 } from '@ryadom/client-core/memory'
@@ -136,6 +139,14 @@ export default function ProfileMemory() {
     void load()
   }, [load])
 
+  // While the agent rebuilds the index of past conversations the label is shown; the section is read again until it is gone.
+  const reindexing = isReindexing(memory)
+  useEffect(() => {
+    if (!reindexing) return
+    const timer = setInterval(() => void load(), MEMORY_REINDEXING_POLL_MS)
+    return () => clearInterval(timer)
+  }, [reindexing, load])
+
   async function retry() {
     setRetrying(true)
     await load()
@@ -200,7 +211,8 @@ export default function ProfileMemory() {
           : current,
       )
       // Turning "чувствительное" off deletes the sensitive notes: the list is read again.
-      if (setting === 'sensitive' && !on) await load()
+      // Turning the search on starts the rebuild of the index: the section reads again to show "Готовлю память…".
+      if ((setting === 'sensitive' && !on) || (setting === 'chat_search' && on)) await load()
     } catch (err) {
       notify(apiErrorText(err, {}, fallback), 'error')
     } finally {
@@ -306,6 +318,11 @@ export default function ProfileMemory() {
               testId="memory-switch-chat-search"
               onChange={(on) => void setOption('chat_search', on)}
             />
+            {reindexing && (
+              <li className="px-4 pb-3 text-sm text-dim" role="status" data-testid="memory-reindexing">
+                {MEMORY_REINDEXING_LABEL}
+              </li>
+            )}
           </SettingsSection>
 
           {!memory.available && (

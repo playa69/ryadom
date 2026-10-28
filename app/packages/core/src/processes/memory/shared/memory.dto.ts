@@ -79,6 +79,7 @@ export interface MemoryDTO {
   paused: boolean
   sensitiveEnabled: boolean
   chatSearchEnabled: boolean
+  reindexing: boolean
   notes: MemoryNoteDTO[]
   facts: MemoryFactDTO[]
 }
@@ -115,6 +116,8 @@ export interface MemoryExportDTO {
   rulesVersion: string
   settings: {
     enabled: boolean
+    sensitiveEnabled: boolean
+    chatSearchEnabled: boolean
     consentVersion: string | null
     consentAt: Date | null
     epochAt: Date | null
@@ -183,6 +186,7 @@ export function toMemoryDTO(memory: AgentMemoryResponse): MemoryDTO {
     paused: memory.paused,
     sensitiveEnabled: memory.sensitiveEnabled,
     chatSearchEnabled: memory.chatSearchEnabled,
+    reindexing: memory.reindexing,
     notes: memory.notes.map(toMemoryNoteDTO),
     facts: memory.facts.map(toMemoryFactDTO),
   }
@@ -225,6 +229,8 @@ export function toMemoryExportDTO(exported: AgentMemoryExportResponse): MemoryEx
     rulesVersion: exported.rulesVersion,
     settings: {
       enabled: exported.settings.enabled,
+      sensitiveEnabled: exported.settings.sensitiveEnabled,
+      chatSearchEnabled: exported.settings.chatSearchEnabled,
       consentVersion: exported.settings.consentVersion,
       consentAt: toDate(exported.settings.consentAt),
       epochAt: toDate(exported.settings.epochAt),

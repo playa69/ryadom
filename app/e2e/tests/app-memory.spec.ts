@@ -71,8 +71,8 @@ test('память в приложении: согласие → разгово�
   await expect(page.locator('.message-received')).toHaveCount(3, { timeout: 30_000 })
 
   // ── the sheet from the conversation's bar: the notes in groups, with dates ────────────────
-  // The mock extracts the notes ~1.5 s after the line; the sheet reads them when it opens.
-  await page.waitForTimeout(3000)
+  // The mock extracts the notes ~1.5 s after the line. The sheet is opened at once: a note that is not there yet appears on the
+  // open sheet by itself, within the refresh period of 10 s (no closing and reopening).
   await page.locator('.page-current').getByTestId('memory-nav').click()
   await expect(sheet.getByTestId('memory-notes')).toBeVisible()
   await expect(sheet.getByTestId('memory-note').filter({ hasText: NAME_NOTE })).toBeVisible({ timeout: 20_000 })
@@ -138,6 +138,15 @@ test('память в приложении: согласие → разгово�
   await expect(sensitiveSwitch.locator('input[type="checkbox"]')).toBeChecked()
   await expect(searchSwitch.locator('input[type="checkbox"]')).toBeChecked()
   await shot(page, 'memory-sensitive-on')
+
+  // ── "Опираться на прошлые разговоры": turned off and on again, the index is rebuilt and the section says so ──
+  await searchSwitch.locator('.toggle').click()
+  await expect(searchSwitch.locator('input[type="checkbox"]')).not.toBeChecked()
+  await searchSwitch.locator('.toggle').click()
+  await expect(searchSwitch.locator('input[type="checkbox"]')).toBeChecked()
+  await expect(memory.getByTestId('memory-reindexing')).toHaveText('Готовлю память о прошлых разговорах…')
+  await shot(page, 'memory-reindexing')
+  await expect(memory.getByTestId('memory-reindexing')).toHaveCount(0, { timeout: 30_000 })
 
   // ── pause: the notes stay, the two lower switches wait ───────────────────────────────────────
   await memorySwitch.locator('.toggle').click()

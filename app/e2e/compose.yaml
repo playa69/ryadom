@@ -50,6 +50,8 @@ services:
     labels: *stand-labels
     environment:
       PORT: '8080'
+      # How long "Готовлю память о прошлых разговорах…" shows after "Опираться на прошлые разговоры" is turned on again.
+      MOCK_REINDEX_MS: '6000'
     ports:
       - '${E2E_AGENT_MOCK_PORT:-8081}:8080'
     healthcheck:

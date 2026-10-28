@@ -314,6 +314,13 @@ class FakeDialogDatabase:
         with self._lock:
             return len(self._state().outbox)
 
+    def outbox_rebuilding(self, user_id: str) -> bool:
+        with self._lock:
+            return any(
+                o["user_id"] == user_id and (o["op"] == "rebuild" or (o["op"] == "index_dialog" and o["payload"].get("rebuild")))
+                for o in self._state().outbox
+            )
+
     def outbox_drop_user(self, user_id: str, ops: tuple[str, ...]) -> None:
         with self._lock:
             state = self._state()

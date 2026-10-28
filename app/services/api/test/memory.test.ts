@@ -520,6 +520,8 @@ describe('блок «Я запомнил», выгрузка и журнал', (
           rulesVersion: 'rules-1',
           settings: {
             enabled: true,
+            sensitiveEnabled: true,
+            chatSearchEnabled: false,
             consentVersion: MEMORY_CONSENT_VERSION,
             consentAt: null,
             epochAt: null,
@@ -537,7 +539,13 @@ describe('блок «Я запомнил», выгрузка и журнал', (
     )
     expect(exported).toMatchObject({
       exportedAt: '2026-10-12T12:00:00.000Z',
-      settings: { enabled: true, consentVersion: MEMORY_CONSENT_VERSION, consentAt: null },
+      settings: {
+        enabled: true,
+        sensitiveEnabled: true,
+        chatSearchEnabled: false,
+        consentVersion: MEMORY_CONSENT_VERSION,
+        consentAt: null,
+      },
       facts: [{ id: 'f-1', status: MemoryFactStatus.Proposed }],
       events: [
         { factId: 'f-1', op: 'add', actor: 'extractor', dialogId: 'd-1', at: '2026-10-12T10:00:00.000Z' },
@@ -602,6 +610,16 @@ describe('заметки, переключатели и «Скажи, что п�
     ...overrides,
   })
 
+  it('GET от прежнего агента без признака пересборки: reindexing=false', async () => {
+    const { tokens } = await signedIn()
+    mockFetch({
+      [`GET ${AGENT}`]: () =>
+        json({ available: true, enabled: true, consentVersion: null, consentAt: null, rulesVersion: 'x', limits: { maxFacts: 60 }, facts: [] }),
+    })
+    const memory = ok<MemoryApiResponse>(await call(app, 'GET', ApiPath.Memory, undefined, tokens.accessToken))
+    expect(memory.reindexing).toBe(false)
+  })
+
   it('GET отдаёт заметки, паузу, переключатели и лимит заметок; прежние facts на месте', async () => {
     const { tokens } = await signedIn()
     mockFetch({
@@ -613,6 +631,7 @@ describe('заметки, переключатели и «Скажи, что п�
           paused: true,
           sensitiveEnabled: true,
           chatSearchEnabled: false,
+          reindexing: true,
           consentVersion: MEMORY_CONSENT_VERSION,
           consentAt: '2026-10-12T09:00:00Z',
           rulesVersion: 'notes-1',
@@ -624,7 +643,7 @@ describe('заметки, переключатели и «Скажи, что п�
 
     const memory = ok<MemoryApiResponse>(await call(app, 'GET', ApiPath.Memory, undefined, tokens.accessToken))
 
-    expect(memory).toMatchObject({ paused: true, sensitiveEnabled: true, chatSearchEnabled: false })
+    expect(memory).toMatchObject({ paused: true, sensitiveEnabled: true, chatSearchEnabled: false, reindexing: true })
     expect(memory.limits).toEqual({ maxFacts: 200, maxNotes: 200 })
     expect(memory.notes.map((n) => [n.id, n.kind, n.sensitive, n.eventDate])).toEqual([
       ['n-1', 'situation', false, null],
