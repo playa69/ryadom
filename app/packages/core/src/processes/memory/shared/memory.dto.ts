@@ -97,7 +97,8 @@ export interface MemoryChangeDTO {
 }
 
 export interface MemoryChangesDTO {
-  status: AgentMemoryChangesStatus
+  /** What the app is told: `skipped` of an older agent is already an empty `ready` here. */
+  status: Exclude<AgentMemoryChangesStatus, 'skipped'>
   reason: string | null
   items: MemoryChangeDTO[]
 }
@@ -212,6 +213,8 @@ export function toMemorySettingsDTO(settings: AgentMemorySettingsResponse): Memo
 }
 
 export function toMemoryChangesDTO(changes: AgentMemoryChangesResponse): MemoryChangesDTO {
+  // Tolerance for an agent older than this gateway: its `skipped` means there is nothing to list, which is an empty `ready`.
+  if (changes.status === 'skipped') return { status: 'ready', reason: changes.reason, items: [] }
   return {
     status: changes.status,
     reason: changes.reason,

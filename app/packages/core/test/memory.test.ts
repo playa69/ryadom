@@ -597,14 +597,28 @@ describe('карточка «Я запомнил» и выгрузка', () => {
     })
   })
 
-  it('pending и skipped приходят как есть', async () => {
+  it('pending приходит как есть', async () => {
     const user = await registerConfirmedUser()
-    mockFetch({ [`GET ${AGENT}/changes`]: () => json({ status: 'skipped', reason: 'too_short', items: [] }) })
+    mockFetch({ [`GET ${AGENT}/changes`]: () => json({ status: 'pending', reason: null, items: [] }) })
     expect(
       await memoryProcess.execute(new GetMemoryChangesOperation({ userId: user.id, dialogId: 'd-1' })),
     ).toEqual({
       success: true,
-      changes: { status: 'skipped', reason: 'too_short', items: [] },
+      changes: { status: 'pending', reason: null, items: [] },
+    })
+  })
+
+  it('skipped прежнего агента — пустой ready, даже если он прислал заметки', async () => {
+    const user = await registerConfirmedUser()
+    mockFetch({
+      [`GET ${AGENT}/changes`]: () =>
+        json({ status: 'skipped', reason: 'too_short', items: [{ op: 'add', fact: agentFact({ id: 'f-1' }) }] }),
+    })
+    expect(
+      await memoryProcess.execute(new GetMemoryChangesOperation({ userId: user.id, dialogId: 'd-1' })),
+    ).toEqual({
+      success: true,
+      changes: { status: 'ready', reason: 'too_short', items: [] },
     })
   })
 
