@@ -29,6 +29,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import live_smoke  # noqa: E402
 from live_smoke import Conn, cyrillic_share, first, open_dialog, open_socket, send_voice  # noqa: E402
 
 from app.services.replies import REPEAT_REQUEST, is_language_lecture  # noqa: E402
@@ -345,11 +346,11 @@ async def scenarios(args: argparse.Namespace) -> Report:
                 conn = await new_session(http, auth, ws_base)
                 try:
                     since = conn.mark()
-                    first_end = await send_voice(conn, pcm("unfinished_part1_cut"), 0.1)
+                    first_end = await send_voice(conn, pcm("unfinished_part1_cut"), 0.04)  # реальное время
                     await asyncio.sleep(2.5)
                     between = [e for e in conn.evs[since:] if e.type == "assistant_end"]
                     since2 = conn.mark()
-                    started = await send_voice(conn, pcm("unfinished_part2"), 0.1)
+                    started = await send_voice(conn, pcm("unfinished_part2"), 0.04)
                     result = await collect(conn, since2, started)
                     if result["answer"]:  # озвучка могла начаться ещё до продолжения: ищем tts_start с начала сценария
                         mid = next(e.d.get("messageId") for e in conn.evs[since2:] if e.type == "assistant_end" and e.d.get("messageId") != "greeting")
@@ -424,13 +425,15 @@ if __name__ == "__main__":
     parser.add_argument("--token", required=True)
     parser.add_argument("--pcm-dir", required=True)
     parser.add_argument("--runs", type=int, default=3)
-    parser.add_argument("--pace", type=float, default=0.03, help="пауза между кадрами голоса, с (0,1 — реальное время)")
+    parser.add_argument("--pace", type=float, default=0.03, help="пауза между кадрами голоса, с (0,04 — реальное время)")
+    parser.add_argument("--pipeline", choices=("sber", "gemini"), help="голосовой путь диалогов (PROTEUS-258); без него — путь агента по умолчанию")
     parser.add_argument("--only", help="сценарии через запятую: ustala_quiet, hobby, ne_znayu, podskazhi, switch_lang, pause, voiceless; по запросу: long_text, hobbies, en_real, en_real_short, pause_cut, gender_male, gender_female")
     parser.add_argument("--long-dialogs", type=int, default=3, help="long_text: сколько диалогов")
     parser.add_argument("--long-turns", type=int, default=30, help="long_text: сколько реплик в диалоге")
     parser.add_argument("--json", help="куда записать сырые результаты")
     parser.add_argument("--strict", action="store_true", help="просьбы повторить и ответы без звука тоже считать провалом")
     args = parser.parse_args()
+    live_smoke.PIPELINE = args.pipeline
     report = asyncio.run(scenarios(args))
     failed = summary(report)
     if args.json:

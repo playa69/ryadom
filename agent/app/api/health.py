@@ -23,6 +23,8 @@ async def ready(request: Request) -> dict[str, str]:
     return {
         "status": "ok",
         "pipeline": live.name if live else "none",  # голос: Gemini Live (имя соединителя с моделью)
+        # Голосовой путь новых разговоров по умолчанию: sber (GigaASR → GigaChat → SaluteSpeech) или gemini.
+        "voicePipeline": getattr(request.app.state, "default_pipeline", "gemini"),
         "tts": tts.name if tts else "none",  # озвучка фраз
         "llm": background.name if background else "none",  # фоновая модель итогов и заметок
         # postgres: диалоги в PostgreSQL и переживают перезапуск; memory: только в памяти (не задано или не открылось)

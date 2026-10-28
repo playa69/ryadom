@@ -33,7 +33,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from starlette.testclient import WebSocketDenialResponse
 
-from app.api.dialog_session import MAX_AUDIO_BYTES, PRE_ROLL_FRAMES
+from app.api.dialog_session import MAX_AUDIO_BYTES, PRE_ROLL_BYTES
 from app.clients.gemini_live import VERBATIM_INSTRUCTIONS, LiveError, LiveEvent, LiveHistory
 from app.core.config import APP_CONFIG
 from app.services.dialog_store import GREETING_NEW, GREETING_RESUMED
@@ -1474,7 +1474,7 @@ def test_silence_before_speech_does_not_change_what_the_person_sees() -> None:
     assert run.bodies("transcript")[0]["text"] == "мне сегодня тяжело"
     frame = 3200
     # тишину перед речью Gemini не получает, кроме запаса в 500 мс; хвост после речи уходит как есть
-    assert run.extra["audio"] == (PRE_ROLL_FRAMES + 4 + 3) * frame
+    assert run.extra["audio"] == PRE_ROLL_BYTES + (4 + 3) * frame
 
 
 def sc_second_socket(r: Rig) -> Run:

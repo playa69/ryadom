@@ -72,6 +72,9 @@ class StartBody(BaseModel):
     # `false` — «Не сохранять этот разговор» (PROTEUS-246): текст живёт только в памяти процесса, после завершения остаётся пометка
     # без текста. Отдельно от `memory`; только для нового диалога, как и `memory`. Старые клиенты поле не шлют: разговор сохраняется.
     saved: bool = True
+    # Голосовой путь разговора (PROTEUS-258): `sber` — GigaASR → GigaChat → SaluteSpeech с запасным Gemini Live, `gemini` — Gemini
+    # Live. Без поля — путь агента по умолчанию (Сбер, если у агента есть ключ прокси).
+    pipeline: Literal["sber", "gemini"] | None = None
 
 
 @router.post("/dialogs")
@@ -82,14 +85,17 @@ async def start_dialog(user_id: str, store: Store, body: StartBody | None = None
     user = _user(user_id)
     await store.ensure_user(user)
     dialog, resumed, hours = store.start(user, start.voice, start.new, start.memory, start.voice_name, start.saved)
+    if start.pipeline is not None:
+        dialog.pipeline = start.pipeline
     logger.info(
-        "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s saved=%s",
+        "dialog started dialog=%s resumed=%s new=%s voice=%s memory=%s saved=%s pipeline=%s",
         dialog.id,
         resumed,
         start.new,
         dialog.voice,
         dialog.memory_mode,
         dialog.saved,
+        dialog.pipeline or "default",
     )
     return {
         "dialogId": dialog.id,
@@ -308,9 +314,10 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             await websocket.send_text(json.dumps({"v": 1, "type": "ended", "summary": dialog.summary}, ensure_ascii=False))
             await websocket.close(code=1000)
             return
-        session = DialogSession(
-            websocket, store, dialog, lambda: app.state.tts, app.state.live, budget=app.state.budget, tracer=app.state.tracer
-        )
+        pipeline = dialog.pipeline if dialog.pipeline in app.state.pipelines else app.state.default_pipeline
+        connector, tts_source = app.state.pipelines.get(pipeline, (app.state.live, lambda: app.state.tts))
+        logger.info("socket pipeline dialog=%s pipeline=%s voice=%s", dialog.id, pipeline, connector.name)
+        session = DialogSession(websocket, store, dialog, tts_source, connector, budget=app.state.budget, tracer=app.state.tracer)
         session.bind_component_calls()
         await session.run()
     finally:

@@ -93,17 +93,19 @@ FRAME_KIND_AUDIO_IN = 0x01
 # Набранный текст шлюз приложения ограничивает 4000 символов сам; запас здесь — для голоса:
 # пять минут речи (VOICE_TURN_MAX_SECONDS) — это 4-5 тысяч символов расшифровки.
 MAX_USER_TEXT = 8000
-# Один кадр голоса человека — 100 мс (specs/agent-api «Голос — формат и ввод»); вход — PCM16 моно, 16 кГц.
-AUDIO_FRAME_SECONDS = 0.1
+# Голос человека — PCM16 моно, 16 кГц, кадрами по 40 мс (specs/agent-api «Голос — формат и ввод»; старые клиенты шлют по 100 мс).
+# Длительность и запас перед речью считаются по байтам, поэтому длина кадра агенту не важна.
 AUDIO_IN_RATE = 16_000
+AUDIO_IN_BYTES_PER_SECOND = AUDIO_IN_RATE * 2
 # Одна голосовая реплика — не длиннее VOICE_TURN_MAX_SECONDS: остальное отбрасывается, память не растёт без предела.
 MAX_AUDIO_BYTES = AUDIO_IN_RATE * 2 * APP_CONFIG.dialog.voice_turn_max_seconds
 # Тише этого (среднеквадратичное по PCM16, около -50 дБ) — тишина: в модель она не идёт.
 SILENCE_RMS = 100
 # Сколько предложений фиксированной фразы синтезируется одновременно: звучащее и следующее. Больше не надо.
 SPEECH_PREFETCH = 2
-# Сколько мс тишины перед началом речи уходит модели вместе с ней (кадры по 100 мс): начало слова не обрезается.
-PRE_ROLL_FRAMES = 5
+# Сколько тишины перед началом речи уходит модели вместе с ней: начало слова не обрезается.
+PRE_ROLL_SECONDS = 0.5
+PRE_ROLL_BYTES = int(AUDIO_IN_BYTES_PER_SECOND * PRE_ROLL_SECONDS)
 # Хвост ответа прерванной модели, которая ещё может прислать события, считается чужим столько секунд.
 STALE_SECONDS = 1.0
 # Сколько открытие сессии ждёт сводку памяти. Поиск в Cognee бывает дольше минуты, и человек всё это время говорил бы
@@ -330,7 +332,7 @@ class DialogSession:
         self._cancelled: set[str] = set()
         self._voice_error_sent = False
         self._audio_open = False
-        self._audio_frames = 0
+        self._audio_bytes = 0
         # Когда пришёл последний кадр с речью (monotonic): по нему видно, сколько тишины ждал детектор конца реплики.
         self._last_voiced: float | None = None
         # Озвучку перебили, и следующая голосовая реплика — ответ на это перебивание.
@@ -502,7 +504,7 @@ class DialogSession:
                 await self._on_user_message(frame)
             case "audio_start":
                 self._audio_open = True
-                self._audio_frames = 0
+                self._audio_bytes = 0
                 self._last_voiced = None
                 # tts_cancel прямо перед audio_start — перебивание голосом: реплику начинаем с чистого листа.
                 self._turn_interrupts, self._interrupted = self._interrupted, False
@@ -1137,7 +1139,8 @@ class DialogSession:
         if link is None or link is self._link:
             self._session_audio = usage.get("input_audio", 0)  # звук контекста растёт с каждым ходом: порог смены сессии
         with model_usage.collect() as spent:
-            record_usage(self._connector.model, "live", usage)
+            # Модель соединения: у пути Сбера с запасным Gemini Live соединение бывает любого из двух.
+            record_usage(getattr(link, "model", None) or self._connector.model, "live", usage)
         if turn is not None and turn.generating:
             turn.usage.extend(spent)
         else:
@@ -1368,13 +1371,15 @@ class DialogSession:
         if not (self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN):
             return
         pcm = data[5:]
-        self._audio_frames += 1
+        self._audio_bytes += len(pcm)
         voiced = not is_silence(pcm)
         if voiced:
             self._last_voiced = time.monotonic()
         if not self._act_started:
             if not voiced:
-                self._pre = (self._pre + [pcm])[-PRE_ROLL_FRAMES:]  # тишину до речи модель не получает, кроме запаса
+                self._pre.append(pcm)  # тишину до речи модель не получает, кроме запаса
+                while sum(map(len, self._pre)) > PRE_ROLL_BYTES:
+                    self._pre.pop(0)
                 return
             self._act_started = True
             turn = LiveTurn(kind="voice", interrupts=self._turn_interrupts)
@@ -1406,8 +1411,8 @@ class DialogSession:
             VOICE_TURN_END_DELAY_SECONDS.observe(time.monotonic() - self._last_voiced)
         turn = self._voice_turn
         if turn is not None:
-            turn.audio_seconds = round(self._audio_frames * AUDIO_FRAME_SECONDS, 3)
-        self._audio_open, self._audio_frames = False, 0
+            turn.audio_seconds = round(self._audio_bytes / AUDIO_IN_BYTES_PER_SECOND, 3)
+        self._audio_open, self._audio_bytes = False, 0
         self._last_voiced, self._turn_interrupts = None, False
         self._voice_turn, self._pre, self._act_started = None, [], False
         if turn is None:  # речи в записи не было
