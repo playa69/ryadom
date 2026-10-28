@@ -25,7 +25,7 @@ export default function DialogAlert({
   open: boolean
   title: string
   text: string
-  /** Something under the text that may come up after the window opened (the block "Я запомнил"): the window never waits for it. */
+  /** Something under the text that may come up after the window opened (the block "Я запомнил", or the line that it is still being written): the window never waits for it. */
   extra?: ReactNode
   offer?: DialogAlertOffer
   onClose(): void

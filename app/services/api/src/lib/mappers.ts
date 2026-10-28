@@ -199,7 +199,6 @@ const MEMORY_FACT_SENSITIVITIES: Record<MemoryFactDTO['sensitivity'], MemoryFact
 const MEMORY_CHANGES_STATUSES: Record<MemoryChangesDTO['status'], MemoryChangesStatus> = {
   pending: MemoryChangesStatus.Pending,
   ready: MemoryChangesStatus.Ready,
-  skipped: MemoryChangesStatus.Skipped,
 }
 
 const MEMORY_CHANGE_OPS: Record<MemoryChangesDTO['items'][number]['op'], MemoryChangeOp> = {

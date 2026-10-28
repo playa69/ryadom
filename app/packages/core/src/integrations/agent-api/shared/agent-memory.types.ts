@@ -30,6 +30,11 @@ export type AgentMemoryFactOrigin = (typeof AGENT_MEMORY_FACT_ORIGINS)[number]
 export const AGENT_MEMORY_FACT_SENSITIVITIES = ['normal', 'sensitive'] as const
 export type AgentMemoryFactSensitivity = (typeof AGENT_MEMORY_FACT_SENSITIVITIES)[number]
 
+/**
+ * `skipped` is what an agent older than this gateway answers for a conversation that has nothing to list ("without memory",
+ * memory off, too short). The agent now answers an empty `ready`; the gateway still accepts the old word until every agent is
+ * the new one, and `toMemoryChangesDTO` turns it into that `ready`.
+ */
 export const AGENT_MEMORY_CHANGES_STATUSES = ['pending', 'ready', 'skipped'] as const
 export type AgentMemoryChangesStatus = (typeof AGENT_MEMORY_CHANGES_STATUSES)[number]
 

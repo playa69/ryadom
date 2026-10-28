@@ -2991,7 +2991,8 @@ p.rd-recap-text {
 /* The block "Я запомнил" in the window after a conversation (a Framework7 dialog): the notes it left, each with "Убрать". */
 .rd-remembered {
   margin: var(--ryadom-s-3) 0 0;
-  padding: var(--ryadom-s-2) var(--ryadom-s-3);
+  /* The list carries the padding above and under the notes: its fades need room there, or the first and the last note would stay faded. */
+  padding: var(--ryadom-s-2) var(--ryadom-s-3) 0;
   border: 1px solid var(--ryadom-line);
   border-radius: var(--ryadom-r-m);
   background: var(--ryadom-surface-glass);
@@ -3006,10 +3007,29 @@ p.rd-recap-text {
   color: var(--ryadom-text-dim);
 }
 
+/*
+ * About three notes are in view (a row is 44px); the rest are reached by scrolling the list, with the finger and not the page
+ * behind the window. The edges fade where there is more to scroll to; the padding above and under the notes is as tall as the
+ * fades, so with nothing to scroll to the notes stay clear of them.
+ */
 .rd-remembered-list {
+  box-sizing: border-box;
+  max-height: min(168px, 35dvh);
   margin: 0;
-  padding: 0;
+  padding: 6px 0 var(--ryadom-s-3);
   list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 6px, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 6px, #000 calc(100% - 12px), transparent);
+}
+
+/* The ring is drawn inside the box: the fade clips whatever lies outside it. */
+.rd-remembered-list:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ryadom-brand-400);
+  border-radius: 8px;
 }
 
 .rd-remembered-note + .rd-remembered-note {
@@ -3057,11 +3077,12 @@ p.rd-recap-text {
   text-align: left;
 }
 
-.rd-remembered-more {
-  margin: var(--ryadom-s-1) 0 var(--ryadom-s-1);
-  font-size: 13px;
+/* "Ещё записываю…": a calm line under the text of the window, in the same voice as the text, with nothing to press. */
+.rd-remembered-late {
+  margin: var(--ryadom-s-3) 0 0;
+  font-size: 14px;
   line-height: 1.4;
-  color: var(--ryadom-text-faint);
+  color: var(--ryadom-text-dim);
 }
 
 /* The offer to link an address, under the block, in its own paragraph of the dialog. */

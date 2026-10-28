@@ -511,6 +511,20 @@ describe('блок «Я запомнил», выгрузка и журнал', (
     })
   })
 
+  it('changes: skipped прежнего агента наружу не уходит — клиент получает пустой ready', async () => {
+    const { tokens } = await signedIn()
+    mockFetch({ [`GET ${AGENT}/changes`]: () => json({ status: 'skipped', reason: 'too_short', items: [] }) })
+    const response = await call<MemoryChangesApiResponse>(
+      app,
+      'GET',
+      `${ApiPath.MemoryChanges}?dialogId=d-1`,
+      undefined,
+      tokens.accessToken,
+    )
+    expect(ok(response)).toEqual({ status: MemoryChangesStatus.Ready, reason: 'too_short', items: [] })
+    expect(JSON.stringify(response.envelope)).not.toContain('skipped')
+  })
+
   it('export: всё, включая историю без текстов, датами ISO', async () => {
     const { tokens } = await signedIn()
     mockFetch({
