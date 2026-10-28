@@ -38,7 +38,7 @@
 - [x] 2.5 Кадры по 40 мс: запас перед речью и длительность реплики считаются в байтах, а не в кадрах
   (`agent/app/api/dialog_session.py`), смоук-скрипты шлют по 40 мс и умеют `--pipeline` (`agent/scripts/live_smoke.py`,
   `agent/scripts/feedback_check.py`). Приёмка: `agent/tests/test_live_scenarios.py`.
-- [ ] 2.6 Документация: `agent/README.md` (два пути, переменные, замеры пути Сбера), `docs/spec.md` (интерфейс, глоссарий,
+- [x] 2.6 Документация: `agent/README.md` (два пути, переменные, замеры пути Сбера), `docs/spec.md` (интерфейс, глоссарий,
   `REQ-GEN-02`), строка про единственный голосовой путь в `.agents/skills/openspec/SKILL.md` (+ `node scripts/sync-agent-skills.mjs`).
   Приёмка: `node scripts/sync-agent-skills.mjs --check`.
 
