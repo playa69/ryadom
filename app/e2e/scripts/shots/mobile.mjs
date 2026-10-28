@@ -59,7 +59,8 @@ export function mobileSpec(args, repoRoot) {
     await home(page)
     await page.locator('.page-current').getByText('Поговорить').first().click()
     await page.locator('.page-current .rd-voice').waitFor({ timeout: 30_000 })
-    await page.getByRole('button', { name: 'Остановить запись' }).waitFor({ timeout: 30_000 })
+    // The conversation starts hands-free: it is listening as soon as the voice screen is up.
+    await page.locator('.page-current [data-testid="voice-caption"]').waitFor({ timeout: 30_000 })
   }
   // The text feed: a voice turn would put the mock's "[голосовая реплика]" into every picture, so these
   // screens come in without a microphone and the voice screen falls back to the text by itself.
@@ -78,18 +79,15 @@ export function mobileSpec(args, repoRoot) {
     await page.waitForTimeout(800)
     const caption = page.locator('.page-current [data-testid="voice-caption"]')
     const greeting = (await caption.textContent()) ?? ''
-    await page.getByRole('button', { name: 'Остановить запись' }).click()
-    // The mock answers a voice turn after a pause in the frames; the greeting is replaced by the reply,
-    // which then streams in word by word.
-    await page.waitForFunction(
-      (before) => {
-        const text = document.querySelector('.page-current [data-testid="voice-caption"]')?.textContent ?? ''
-        const hint = document.querySelector('.page-current .rd-voice-hint')?.textContent ?? ''
-        return text !== '' && text !== before && hint.startsWith('Нажми на шар')
-      },
-      greeting,
-      { timeout: 30_000 },
-    )
+    // Hands-free: the fake microphone speaks, the turn ends by itself and the reply replaces the greeting; if it
+    // does not come in time, the picture shows the voice screen as it is.
+    await page
+      .waitForFunction(
+        (before) => (document.querySelector('.page-current [data-testid="voice-caption"]')?.textContent ?? '') !== before,
+        greeting,
+        { timeout: 20_000 },
+      )
+      .catch(() => {})
   }
   const chat = async (page) => {
     await startChat(page)
@@ -216,6 +214,17 @@ export function mobileSpec(args, repoRoot) {
     async prepareContext(context) {
       const ip = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`
       await context.route((url) => url.pathname.startsWith('/api/'), (route) => route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': ip } }))
+    },
+    // Every signed-in shot signs in on its own: the refresh token rotates, so one saved session cannot serve many contexts.
+    async signIn(page) {
+      await page.goto(`${base}/`)
+      await page.waitForSelector('.page-current [data-testid="have-account"]', { timeout: 30_000 })
+      await page.locator('.page-current [data-testid="have-account"]').click()
+      await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
+      await page.locator('.page-current input[name="email"]').fill(ACCOUNT.email)
+      await page.locator('.page-current input[name="password"]').fill(ACCOUNT.password)
+      await page.locator('.page-current a.button-fill').first().click()
+      await page.waitForSelector('#rd-tabbar', { timeout: 30_000 })
     },
     async login(browser) {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ru-RU' })
