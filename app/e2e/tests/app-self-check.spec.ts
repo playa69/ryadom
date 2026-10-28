@@ -2,7 +2,7 @@ import { openApp, openTab, startAnonymously } from '../support/app'
 import { expect, test } from '../support/fixtures'
 
 /**
- * Тесты внутри приложения, PWA (`REQ-WELL-06`…`REQ-WELL-08`, `openspec/changes/add-self-check-tests`): блок «Самопроверка»
+ * Тесты внутри приложения, PWA (`REQ-WELL-06`…`REQ-WELL-08`, `openspec/specs/self-check`): блок «Самопроверка»
  * в «Дневнике», сегмент «Тесты» с поиском, прохождение в листе («Назад», «Прервать тест?»), результат без диагноза,
  * кризисный пункт PHQ-9 открывает экран помощи и лист SOS, тест проходится без сети. Сохранение и история появятся
  * с серверной частью (миграция 0010). Зеркало `web-self-check.spec.ts`.

@@ -1,6 +1,7 @@
 import { openWebApp, registerAndConfirm, talkButton, uniqueEmail } from '../support/web'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 
 test.use({
   permissions: ['microphone'],
@@ -26,6 +27,7 @@ test('шарик в вебе окрашивается по настроению:
   const orb = page.locator('[data-slot="voice-orb"]')
   await expect(orb).toBeVisible({ timeout: 30_000 })
   await expect(orb).not.toHaveAttribute('data-mood', /.+/)
+  await step(page, 'orb-calm', 'Шарик в спокойном состоянии: без цвета настроения')
 
   const say = async (text: string) => {
     await page.getByRole('button', { name: 'Писать текстом' }).click()
@@ -41,11 +43,14 @@ test('шарик в вебе окрашивается по настроению:
   await say('Меня всё бесит, достало это всё')
   await expect(orb).toHaveAttribute('data-mood', 'angry')
   await shot(page, 'web-orb-mood-angry')
+  await step(page, 'orb-angry', 'Злая реплика: шарик окрасился красным')
 
   await say('Мне очень страшно, я боюсь')
   await expect(orb).toHaveAttribute('data-mood', 'afraid')
   await shot(page, 'web-orb-mood-afraid')
+  await step(page, 'orb-afraid', 'Испуганная реплика: шарик позеленел')
 
   await say('Сегодня обычный день')
   await expect(orb).not.toHaveAttribute('data-mood', /.+/)
+  await step(page, 'orb-plain', 'Обычная реплика: цвет настроения ушёл')
 })

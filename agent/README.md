@@ -849,7 +849,7 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 
 ## Память
 
-Память в два слоя, как у Claude (`openspec/changes/add-memory-notes`, `docs/spec.md` REQ-MEM-*):
+Память в два слоя, как у Claude (`openspec/specs/memory-notes`, `docs/spec.md` REQ-MEM-*):
 
 1. **Заметки о человеке** (`app/memory/notes.py`, таблица `memory_notes` в PostgreSQL агента). Короткие записи по категориям
    (`name`, `style`, `person`, `situation`, `event`, `agreement`, `interest`, `boundary`; чувствительные `wellbeing`,
@@ -869,6 +869,12 @@ uv run python scripts/smoke.py --url http://127.0.0.1:8001 --token <токен> 
 (`masking.py`) стоит до модели. Не работает без включённой у человека памяти, без фоновой модели, в разговоре «Без памяти» и в разговоре «Не сохранять этот разговор»; отдельного
 выключателя нет. Нужны `LLM_BASE_URL` и `AGENT_API_TOKEN` (см. «Модели»).
 Качество — `scripts/memory_golden.py` (67 выдуманных случаев на модели прода: точность ≥0,9, полнота ≥0,75, утечек 0).
+
+**Заметки разговора для блока «Я запомнил».** `GET /v1/users/{userId}/memory/changes?dialogId=` (`app/api/memory.py`, `CogneeMemoryBackend.changes`)
+отдаёт заметки с `dialog_id` этого разговора (в порядке, как их сказали, в форме прежнего факта: `fact.id` — идентификатор заметки). `pending` —
+пока разговор не завершён или финальный проход извлечения не закончен; потом `ready`. Для разговора «Без памяти» и «Не сохранять этот разговор»,
+при выключенной памяти и на паузе список пуст (`ready`, не `skipped`). Чужой и несуществующий разговор — `404 AGENT_DIALOG_NOT_FOUND`. Блок в окне
+завершения показывают веб и мобильный клиент (спека `memory-notes`, «Блок «Я запомнил» в итоге разговора»).
 
 **Как память попадает в разговор.** Блок памяти (`app/memory/notes.py`, `build_notes_block`) собирается из кэша заметок без сети:
 `name`, `style`, `boundary` всегда, остальные свежие в пределах `MEMORY_BRIEF_MAX_TOKENS` (1200). Пересказ графа Cognee в

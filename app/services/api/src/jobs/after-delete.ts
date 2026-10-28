@@ -17,7 +17,7 @@ const logger = createLogger('jobs')
  * there is nothing to do. An agent that does not answer makes the job throw, and the queue retries it.
  *
  * The job is queued before the agent is asked to delete, so it covers a pod that died between the agent's answer and
- * the reset (`openspec/changes/archive/2026-10-27-add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался»).
+ * the reset (`add-job-queue`, «Когда пересчитываются итоги недели»: «Сброс после удаления не удался»).
  */
 export function afterDeleteJob(): JobHandler<typeof JobQueue.DialogsAfterDelete> {
   return async ({ userId, dialogId, dialogAt }) => {

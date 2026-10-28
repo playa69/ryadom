@@ -44,7 +44,9 @@ export async function runShots(spec, args, repoRoot) {
         deviceScaleFactor: scale,
         reducedMotion: 'reduce',
         permissions: ['microphone'],
-        ...(screen.anon || !spec.state ? {} : { storageState: spec.state }),
+        // A client that signs in per shot (`spec.signIn`) does not share a saved session: the refresh token rotates on use,
+        // so a second context with the same stored session is signed out.
+        ...(screen.anon || !spec.state || spec.signIn ? {} : { storageState: spec.state }),
       })
       // A headless browser has no voice, and a real engine would make the pace of every shot depend on the machine.
       await context.addInitScript(() => {
@@ -54,9 +56,15 @@ export async function runShots(spec, args, repoRoot) {
         const synthesis = { speak: (u) => setTimeout(() => u.onend?.(), 20), cancel() {}, getVoices: () => [] }
         Object.defineProperty(window, 'speechSynthesis', { value: synthesis, configurable: true })
         window.SpeechSynthesisUtterance = Utterance
+        // The demo account never gave the memory consent, so the invitation sheet would sit on top of every screen.
+        try {
+          localStorage.setItem('ryadom.web.memory-invite-dismissed', '1')
+          localStorage.setItem('ryadom.memory-invite-dismissed', '1')
+        } catch {}
       })
       if (spec.prepareContext) await spec.prepareContext(context)
       const page = await context.newPage()
+      if (spec.signIn && !screen.anon) await spec.signIn(page)
       const errors = []
       page.on('console', (message) => {
         const text = message.text()

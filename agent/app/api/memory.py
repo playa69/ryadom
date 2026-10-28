@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import Store, canonical_user_id, require_token
-from app.core.errors import AgentError, validation_error
+from app.core.errors import AgentError, dialog_not_found, validation_error
 from app.memory.backend import MemoryBackend
 from app.memory.errors import MemoryServiceError
 
@@ -158,10 +158,15 @@ async def list_notes(user_id: str, store: Store, memory: Memory) -> dict[str, An
 async def changes(
     user_id: str, store: Store, memory: Memory, dialog_id: Annotated[str, Query(alias="dialogId", max_length=64)]
 ) -> dict[str, Any]:
+    """Заметки одного разговора для блока «Я запомнил»: `pending` — финальный проход идёт, `ready` — список (может быть пуст).
+    Чужой и несуществующий разговор — `404 AGENT_DIALOG_NOT_FOUND`, как у остальных маршрутов диалога."""
     user = _user(user_id)
     await store.ensure_user(user)
+    dialog = store.get(user, dialog_id)
+    if dialog is None:
+        raise dialog_not_found()
     try:
-        return await memory.changes(user, dialog_id)
+        return await memory.changes(dialog)
     except MemoryServiceError as error:
         raise _error(error) from error
 

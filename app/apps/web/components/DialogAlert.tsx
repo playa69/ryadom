@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
 import Modal from './Modal'
@@ -17,12 +18,15 @@ export default function DialogAlert({
   open,
   title,
   text,
+  extra,
   offer,
   onClose,
 }: {
   open: boolean
   title: string
   text: string
+  /** Something under the text that may come up after the window opened (the block "Я запомнил"): the window never waits for it. */
+  extra?: ReactNode
   offer?: DialogAlertOffer
   onClose(): void
 }) {
@@ -31,6 +35,7 @@ export default function DialogAlert({
       <p className="text-base leading-[1.55] text-dim" data-testid="alert-text">
         {text}
       </p>
+      {extra}
       {offer && (
         <p className="text-base leading-[1.55] text-dim" data-testid="alert-offer">
           {offer.text}

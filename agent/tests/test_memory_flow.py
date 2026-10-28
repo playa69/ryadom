@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.extractor import NotesExtractor
+from app.services.dialog_store import now_iso
 from tests.conftest import AUTH, make_app
 from tests.fake_db import FakeDialogDatabase
 from tests.test_memory_cognee_backend import CONSENT, FakeCognee, dialog, memory_settings, uid
@@ -187,6 +188,90 @@ async def test_end_during_a_running_pass_does_not_extract_the_same_replies_twice
     await service.drain()
     assert len(model.seen) == 1  # те же реплики модели второй раз не отдавались
     assert [row[2] for row in db.list_notes(user)] == ["Работает в продажах"]
+
+
+class _GateModel(FakeModel):
+    """Модель, которая отвечает, только когда тест откроет затвор: так виден «финальный проход ещё идёт»."""
+
+    def __init__(self, answer: Any, gate: asyncio.Event) -> None:
+        super().__init__(answer)
+        self._gate = gate
+
+    async def complete(self, messages: list[dict[str, str]]) -> str:
+        await self._gate.wait()
+        return await super().complete(messages)
+
+
+READY_EMPTY = {"status": "ready", "reason": None, "items": []}
+
+
+async def test_changes_wait_for_the_final_pass_and_then_list_this_dialogs_notes() -> None:
+    """Блок «Я запомнил» (PROTEUS-242, D16): `pending`, пока финальный проход идёт, потом `ready` с заметками этого разговора."""
+    gate = asyncio.Event()
+    service, _, db = build()
+    service.set_extractor(NotesExtractor(_GateModel(ADD_WORK, gate), service.notes))
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    await service.notes.add(user, "interest", "Любит море", "earlier-dialog")  # заметка из прежнего разговора в блок не идёт
+    current = dialog(user, 0)
+    service.user_message(current, "Я работаю в продажах")
+    service.dialog_ended(current)
+    await asyncio.sleep(0)
+
+    assert (await service.changes(current))["status"] == "pending"  # проход ждёт модель
+    gate.set()
+    await service.drain()
+    answer = await service.changes(current)
+    assert answer["status"] == "ready" and answer["reason"] is None
+    assert [(item["op"], item["fact"]["text"]) for item in answer["items"]] == [("add", "Работает в продажах")]
+    saved_id = next(row[0] for row in db.list_notes(user) if row[2] == "Работает в продажах")
+    assert answer["items"][0]["fact"]["id"] == saved_id  # «Убрать» удаляет заметку по этому идентификатору
+    assert answer["items"][0]["fact"]["sources"][0]["dialogId"] == current.id
+
+
+async def test_changes_of_a_dialog_that_is_not_ended_are_pending() -> None:
+    service, _, _ = build(ADD_WORK)
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    open_dialog = dialog(user, 0)
+    open_dialog.ended_at = None  # финального прохода ещё не было: список заметок не окончательный
+    assert (await service.changes(open_dialog))["status"] == "pending"
+
+
+async def test_changes_are_empty_for_a_conversation_without_memory_unsaved_pause_and_off() -> None:
+    """Блока нет там, где памяти нет: ответ — пустой `ready`, а не `skipped` и не отказ (спека «Я запомнил» без памяти)."""
+    service, _, db = build(ADD_WORK)
+    user = uid()
+    current = dialog(user, 0)
+    db.add_note(("n-1", user, "situation", "Работает в продажах", False, None, current.id, now_iso(), now_iso()))
+    assert await service.changes(current) == READY_EMPTY  # память человека не включена
+
+    await service.update_settings(user, True, CONSENT)
+    assert [item["fact"]["id"] for item in (await service.changes(current))["items"]] == ["n-1"]  # включена: заметка видна
+
+    silent = dialog(user, 0)
+    silent.memory_mode = "off"  # «Без памяти»
+    db.add_note(("n-2", user, "situation", "Любит чай", False, None, silent.id, now_iso(), now_iso()))
+    assert await service.changes(silent) == READY_EMPTY
+
+    unsaved = dialog(user, 0)
+    unsaved.saved = False  # «Не сохранять этот разговор» (`__post_init__` в рабочем коде выставляет memory_mode = off)
+    assert await service.changes(unsaved) == READY_EMPTY
+
+    await service.update_settings(user, False, None)  # пауза: заметки хранятся, но блока нет
+    assert await service.changes(current) == READY_EMPTY
+
+
+async def test_changes_list_the_notes_in_the_order_they_were_said() -> None:
+    service, _, db = build()
+    user = uid()
+    await service.update_settings(user, True, CONSENT)
+    current = dialog(user, 0)
+    for index, (note_id, text) in enumerate([("n-a", "Любит чай"), ("n-b", "Есть сестра Маша"), ("n-c", "Работает в продажах")]):
+        stamp = f"2026-10-12T10:00:0{index}.000Z"
+        db.add_note((note_id, user, "situation", text, False, None, current.id, stamp, stamp))
+    answer = await service.changes(current)
+    assert [item["fact"]["text"] for item in answer["items"]] == ["Любит чай", "Есть сестра Маша", "Работает в продажах"]
 
 
 async def test_a_note_differing_only_in_punctuation_and_yo_is_the_same_note() -> None:

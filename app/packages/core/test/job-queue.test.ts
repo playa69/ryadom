@@ -12,7 +12,7 @@ import {
 } from '../src/services/job-queue-service'
 
 /**
- * `openspec/changes/archive/2026-10-27-add-job-queue`, design D3: the core knows only the port. The jobs of the tests go to the memory
+ * `add-job-queue`, design D3: the core knows only the port. The jobs of the tests go to the memory
  * transport (registered by test/setup.ts); the real queue is tested in services/api/test/jobs.test.ts.
  */
 

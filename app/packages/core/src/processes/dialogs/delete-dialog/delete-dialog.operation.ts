@@ -9,7 +9,7 @@ export interface DeleteDialogOperationData {
 
 /**
  * «Delete the conversation» in the journal: the agent deletes it with its recap, the share link goes out; the notes of memory stay.
- * A job that resets the week text is queued before the agent is asked (`openspec/changes/archive/2026-10-27-add-job-queue`).
+ * A job that resets the week text is queued before the agent is asked (`add-job-queue`).
  */
 export class DeleteDialogOperation extends RequestData<DeleteDialogResult> {
   /** Survives minification: DeleteDialogOperation.name is not preserved in production. Used by LoggingBehavior. */
