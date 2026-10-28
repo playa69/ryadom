@@ -3,6 +3,7 @@
 import { Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
+import { reportSelfCheckOpened } from '@ryadom/analytics/self-check'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { SelfCheckResultApi } from '@ryadom/contracts/api/self-check'
 import {
@@ -46,6 +47,7 @@ export default function HistorySheet({ test, onClose }: { test: SelfCheckTest; o
   }, [client, notify, test.id])
 
   useEffect(() => {
+    reportSelfCheckOpened('history')
     track(AnalyticsEvent.SelfCheckHistoryOpened, { test_id: test.id })
     load()
   }, [load, test.id])

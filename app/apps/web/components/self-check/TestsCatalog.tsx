@@ -2,6 +2,7 @@
 
 import { Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useSelfCheckOpened, useSelfCheckSearchReport } from '@ryadom/analytics/react'
 import { allTests } from '@ryadom/self-check/catalog'
 import { Card } from '@ryadom/ui/components/card'
 import { BUTTON } from '../controls'
@@ -17,6 +18,8 @@ export default function TestsCatalog() {
     if (!q) return allTests
     return allTests.filter((t) => `${t.title} ${t.code} ${t.subtitle} ${t.preface}`.toLowerCase().includes(q))
   }, [query])
+  useSelfCheckOpened('tests')
+  useSelfCheckSearchReport(query, found.length > 0)
 
   return (
     <div className="flex flex-col gap-3" data-testid="tests-catalog">

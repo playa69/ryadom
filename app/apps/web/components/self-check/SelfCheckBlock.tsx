@@ -1,5 +1,6 @@
 'use client'
 
+import { useSelfCheckOpened } from '@ryadom/analytics/react'
 import { Card } from '@ryadom/ui/components/card'
 import { Button } from '@ryadom/ui/components/button'
 import { wave1 } from '@ryadom/self-check/catalog'
@@ -11,6 +12,7 @@ import { useSelfCheck } from './useSelfCheck'
 export default function SelfCheckBlock() {
   const { start, openHistory, latest } = useSelfCheck()
   const tests = wave1
+  useSelfCheckOpened('diary')
   return (
     <Card className="gap-1 rounded-lg px-5 py-5 shadow-none" data-testid="self-check-block">
       <h2 className="text-lg font-semibold text-foreground">Самопроверка</h2>
