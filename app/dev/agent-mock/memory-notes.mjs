@@ -9,6 +9,10 @@ import { randomUUID } from 'node:crypto'
  * - "extraction" runs after `MOCK_NOTE_DELAY_MS` (1500) once the person says something in a conversation, with the memory on and the
  *   conversation not marked "without memory": a few phrase patterns ("меня зовут…", "работаю в…", "у меня есть сестра…", "люблю…",
  *   "не хочу говорить про…", "запомни…") become notes; "забудь про…" deletes the notes that mention it. The real agent asks a model.
+ * - the final pass of the real agent (at the end of a conversation) is modelled as one more `MOCK_NOTE_DELAY_MS` after the end:
+ *   `GET /memory/changes?dialogId=` answers `pending` until it and every pass still waiting are done, then `ready` with the notes whose
+ *   source is that conversation, in the order they were said. A conversation "without memory", an unsaved one, memory off or paused:
+ *   `ready` and nothing. A missing conversation: `404 AGENT_DIALOG_NOT_FOUND`.
  * - the checks of "never" (diagnoses, medicines, contacts, instructions to the agent) are a short list of the real one.
  * - nothing the person said ever reaches the log here: ids and counts only.
  */
@@ -200,11 +204,30 @@ function apply(memory, sentence, dialogId = null, explicit = true) {
 /** A person's line in a conversation: after a pause the "extraction" turns it into notes. */
 export function onUserMessage(memory, dialog, text) {
   if (!memory.enabled || dialog.memoryMode === 'off') return
+  dialog.pendingPasses = (dialog.pendingPasses ?? 0) + 1
   setTimeout(() => {
+    dialog.pendingPasses -= 1
     if (!memory.enabled) return
     const out = apply(memory, text, dialog.dialogId, /(?:забудь|убери|удали|не запоминай|не [\p{L}-]+,?\s+а)/iu.test(text))
     console.log(`[agent-mock] заметки: +${out.added.length} ~${out.updated.length} -${out.deleted.length}`)
   }, NOTE_DELAY_MS)
+}
+
+/** The conversation has ended: the final pass runs for one more delay (a "without memory" or unsaved one has none, `ready` at once). */
+export function onDialogEnded(memory, dialog) {
+  if (!memory.enabled || dialog.memoryMode === 'off' || dialog.saved === false) return
+  dialog.finalPassUntil = Date.now() + NOTE_DELAY_MS
+}
+
+/** The block "Я запомнил" of one conversation, as `GET /memory/changes` answers it. */
+function changesOf(memory, dialog) {
+  const ready = (items) => ({ status: 'ready', reason: null, items })
+  if (dialog.memoryMode === 'off' || dialog.saved === false || !memory.enabled) return ready([])
+  if (!dialog.endedAt || (dialog.pendingPasses ?? 0) > 0 || Date.now() < (dialog.finalPassUntil ?? 0)) {
+    return { status: 'pending', reason: null, items: [] }
+  }
+  const mine = liveNotes(memory).filter((note) => note.dialogId === dialog.dialogId).reverse()
+  return ready(mine.map((note) => ({ op: 'add', fact: asFact(note) })))
 }
 
 /**
@@ -252,11 +275,11 @@ function view(memory) {
 }
 
 /**
- * `ctx`: `{ json, noContent, readBody, agentError }` of the mock server. Reading, export and deleting
- * work with the memory off; writing notes needs it on.
+ * `ctx`: `{ json, noContent, readBody, agentError, dialogOf }` of the mock server (`dialogOf(dialogId)` finds a dialog of this person).
+ * Reading, export and deleting work with the memory off; writing notes needs it on.
  */
 export async function handleMemory(ctx, req, res, url, userId, memory, parts, method) {
-  const { json, noContent, readBody, agentError } = ctx
+  const { json, noContent, readBody, agentError, dialogOf } = ctx
   const resource = parts[4] ?? null
   const id = parts[5] ?? null
 
@@ -330,8 +353,12 @@ export async function handleMemory(ctx, req, res, url, userId, memory, parts, me
     return noContent(res)
   }
 
-  // GET /memory/changes: the card "Я запомнил" is gone; the answer stays for the cached apps
-  if (resource === 'changes' && method === 'GET') return json(res, 200, { status: 'ready', reason: null, items: [] })
+  // GET /memory/changes?dialogId=: the notes of one conversation, for the block "Я запомнил" in its closing window
+  if (resource === 'changes' && method === 'GET') {
+    const dialog = dialogOf(url.searchParams.get('dialogId') ?? '')
+    if (!dialog) return agentError(res, 404, 'AGENT_DIALOG_NOT_FOUND', 'Диалог не найден')
+    return json(res, 200, changesOf(memory, dialog))
+  }
 
   if (resource === 'export' && method === 'GET') {
     return json(res, 200, {
