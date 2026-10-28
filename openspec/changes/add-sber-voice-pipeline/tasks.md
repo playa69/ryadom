@@ -49,7 +49,7 @@
 
 ## 4. Клиенты
 
-- [ ] 4.1 (web, pwa, android, ios, tg) Звук реплики кадрами по 40 мс: `app/packages/client-core/src/voice/capture.ts`,
+- [x] 4.1 (web, pwa, android, ios, tg) Звук реплики кадрами по 40 мс: `app/packages/client-core/src/voice/capture.ts`,
   `app/apps/web/public/voice-worklet.js`, `app/apps/mobile/public/voice-worklet.js`. Приёмка: `pnpm --filter @ryadom/client-core
   test` (`test/capture.test.ts`: запас перед речью — 15 кадров по 40 мс); e2e из раздела 5.
 - [x] 4.2 (admin) Раздел «Голос»: `app/apps/admin/app/(dashboard)/voice/page.tsx`, `voice/actions.ts`,
@@ -64,7 +64,7 @@
   `agent/tests/test_voice_pipeline.py` (путь разговора); «API без поля пути» — `agent/tests/test_voice_pipeline.py`; «Ответ голосом и текстом», «Ответ на набранное сообщение» в пути Сбера — живой прогон
   `agent/scripts/live_smoke.py --pipeline sber` и `agent/scripts/feedback_check.py --pipeline sber --pace 0.04` (результат — в
   PROTEUS-258).
-- [ ] 5.2 `dialog-voice`, «Голосовая реплика и расшифровка», «Постоянное слушание»: кадры по 40 мс — e2e
+- [x] 5.2 `dialog-voice`, «Голосовая реплика и расшифровка», «Постоянное слушание»: кадры по 40 мс — e2e
   `app/e2e/tests/web-hands-free.spec.ts` (desktop) и `app/e2e/tests/app-dialog.spec.ts` (mobile); «(Сбер) Распознавание идёт по
   ходу речи» — `agent/tests/test_sber_voice.py` (пересчёт по кадрам) и живой прогон из 5.1.
 - [ ] 5.3 `dialog-voice`, «Озвучка ответов и фиксированных фраз», «Сбои голосовой модели», «Манера и границы ответов агента»,

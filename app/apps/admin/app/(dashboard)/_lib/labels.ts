@@ -62,7 +62,7 @@ const PAYLOAD_ORDER = Object.keys(PAYLOAD_KEYS)
 /** A voice pipeline (`from`/`to` of a pipeline change) reads by its name, everything else as it is. */
 function describeValue(value: unknown): string {
   if (typeof value !== 'string') return JSON.stringify(value)
-  return value in PIPELINE_LABELS ? PIPELINE_LABELS[value as keyof typeof PIPELINE_LABELS] : value
+  return Object.hasOwn(PIPELINE_LABELS, value) ? PIPELINE_LABELS[value as keyof typeof PIPELINE_LABELS] : value
 }
 
 /** Audit details as a short phrase; an empty payload is a dash, not `{}`. */
