@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Макет: админка, раздел «Голос»</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: #111827; background: #f9fafb; }
+  .shell { display: flex; min-height: 100vh; }
+  aside { width: 256px; background: #fff; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; }
+  .brand { padding: 16px; border-bottom: 1px solid #e5e7eb; font-weight: 700; }
+  .brand small { display: block; font-weight: 400; color: #6b7280; font-size: 12px; }
+  nav { padding: 12px; flex: 1; }
+  nav a { display: block; padding: 8px 12px; border-radius: 6px; color: #4b5563; text-decoration: none; margin-bottom: 4px; }
+  nav a.active { background: #f3f4f6; color: #111827; font-weight: 500; }
+  .main { flex: 1; display: flex; flex-direction: column; }
+  header { height: 56px; background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 24px; color: #4b5563; }
+  main { padding: 24px; max-width: 880px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .lead { color: #4b5563; margin: 0 0 20px; }
+  .notice { border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; }
+  .options { display: grid; gap: 12px; }
+  label.card { display: flex; gap: 12px; align-items: flex-start; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; cursor: pointer; }
+  label.card.selected { border-color: #111827; box-shadow: 0 0 0 1px #111827; }
+  label.card input { margin-top: 3px; }
+  .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
+  .badge { font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; background: #dcfce7; color: #166534; }
+  .desc { color: #4b5563; margin-top: 4px; }
+  .meta { color: #6b7280; margin: 16px 0; }
+  button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 0; background: #111827; color: #fff; }
+  button:disabled { background: #d1d5db; color: #6b7280; }
+  .state { margin: 40px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #9ca3af; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside>
+    <div class="brand">Рядом<small>Админ-панель</small></div>
+    <nav aria-label="Разделы">
+      <a href="#">Пользователи</a>
+      <a href="#" class="active" aria-current="page">Голос</a>
+      <a href="#">Журнал действий</a>
+    </nav>
+    <nav><a href="#">Перейти на сайт</a></nav>
+  </aside>
+  <div class="main">
+    <header><span>admin@example.com · Администратор</span><span>Выйти</span></header>
+    <main>
+      <h1>Голос</h1>
+      <p class="lead">Каким путём агент слушает и отвечает голосом. Действует для всех со следующего старта разговора, в том числе возобновлённого; открытые разговоры идут прежним путём.</p>
+
+      <p class="state">Состояние: выбор не меняли, администратор отметил «Gemini Live»</p>
+      <form>
+        <div class="options" role="radiogroup" aria-label="Голосовой путь">
+          <label class="card">
+            <input type="radio" name="pipeline" value="sber" checked>
+            <div>
+              <div class="title">Сбер <span class="badge">Сейчас</span></div>
+              <div class="desc">GigaASR → GigaChat → SaluteSpeech. Голос человека не уходит в Google. Звучит один женский голос, выбор голоса в профиле не действует. Если путь недоступен — запасной Gemini Live.</div>
+            </div>
+          </label>
+          <label class="card selected">
+            <input type="radio" name="pipeline" value="gemini">
+            <div>
+              <div class="title">Gemini Live</div>
+              <div class="desc">Речь в речь в одной модели. Звучит голос, выбранный человеком в профиле. Запасного пути нет.</div>
+            </div>
+          </label>
+        </div>
+        <p class="meta">Не меняли: действует путь по умолчанию — Сбер.</p>
+        <button type="submit">Сохранить</button>
+      </form>
+
+      <p class="state">Состояние: после сохранения</p>
+      <div class="notice">Голосовой путь сохранён: «Gemini Live». Действует со следующего старта разговора.</div>
+      <div class="options">
+        <label class="card"><input type="radio" name="p2" value="sber"><div><div class="title">Сбер</div><div class="desc">GigaASR → GigaChat → SaluteSpeech. …</div></div></label>
+        <label class="card selected"><input type="radio" name="p2" value="gemini" checked><div><div class="title">Gemini Live <span class="badge">Сейчас</span></div><div class="desc">Речь в речь в одной модели. …</div></div></label>
+      </div>
+      <p class="meta">Изменён 29.10.2026, 14:05 · admin@example.com</p>
+      <button type="submit" disabled>Сохранить</button>
+    </main>
+  </div>
+</div>
+</body>
+</html>
