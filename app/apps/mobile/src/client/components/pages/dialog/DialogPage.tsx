@@ -2,7 +2,8 @@ import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { Block, Button, Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
@@ -24,7 +25,7 @@ import {
   type DialogMessageView,
   type DialogSocketState,
 } from '../../../lib/dialog-socket'
-import { apiErrorText, codeText, forgetMemoryFact, getDialog, getMemory } from '../../../lib/api'
+import { apiErrorText, codeText, forgetMemoryFact, getDialog, getMemory, getMemoryChanges } from '../../../lib/api'
 import { journal } from '../../../lib/journal'
 import { openRoute } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
@@ -54,16 +55,19 @@ import { openSos } from '../../SosSheet'
 import Breathing from '../../Breathing'
 import VoiceOrb, { type OrbState } from '../../VoiceOrb'
 import DialogEndSheet from './DialogEndSheet'
+import MemoryRecap from './MemoryRecap'
 import ShareSheet, { ShareNavButton } from '../journal/ShareSheet'
 import MemoryNotesSheet from '../profile/MemoryNotesSheet'
 import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 import {
+  createMemoryRecap,
   MEMORY_FORGET_ERRORS,
   MEMORY_NOTICE,
   MEMORY_NOTICE_POLL_MS,
   MEMORY_SHEET,
   newSensitiveNotes,
   noteIds,
+  shouldWatchMemoryChanges,
 } from '@ryadom/client-core/memory'
 
 /**
@@ -217,6 +221,26 @@ export default function DialogPage({
     } catch (err) {
       const error = apiErrorText(err, {}, 'Не получилось удалить')
       setNotices((current) => current.map((notice) => (notice.id === id ? { ...notice, error } : notice)))
+    }
+  }
+
+  /**
+   * The block "Я запомнил" of the closing window: it waits for the notes of this conversation after it ends and is drawn into the
+   * window when they are there. A Framework7 dialog lives outside React's tree, so the block goes into its slot through a portal.
+   * The texts are the person's words: state only, never reported.
+   */
+  const recap = useMemo(() => createMemoryRecap(), [])
+  const recapState = useSyncExternalStore(recap.subscribe, recap.getSnapshot, () => null)
+  const [recapHost, setRecapHost] = useState<HTMLElement | null>(null)
+  useEffect(() => () => recap.reset(), [recap])
+  useEffect(() => {
+    if (recapState) track(AnalyticsEvent.MemoryRecapShown)
+    // Once per conversation: removing a note redraws the block, which is not a new showing.
+  }, [recapState?.dialogId])
+
+  async function removeRecapNote(id: string) {
+    if (await recap.remove(id, forgetMemoryFact)) {
+      track(AnalyticsEvent.MemoryNoteDeleted, { undone: false, source: 'recap' })
     }
   }
 
@@ -705,15 +729,19 @@ export default function DialogPage({
             ? ' Итог разговора сохранён в журнале.'
             : '')
     const keepsConversations = user?.email === null || user?.isEmailConfirmed === false
-    if (!keepsConversations) {
-      f7.dialog.alert(text, 'Спасибо, что поговорил(а)', () => f7router.back())
-    } else {
-      // A finished conversation is the moment an address has something to give: this one is kept.
-      f7.dialog
-        .create({
-          title: 'Спасибо, что поговорил(а)',
-          text: `${text}<br><br>${DIALOG_KEEP_NOTE} Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
-          buttons: [
+    // The slot of the block "Я запомнил": empty until its notes are there, and the window never waits for them.
+    const slot = '<div class="rd-remembered-slot"></div>'
+    // A finished conversation is the moment an address has something to give: this one is kept.
+    // A conversation held unsaved has no term to speak of: only the account's.
+    const offer = `${unsavedRef.current ? '' : `${DIALOG_KEEP_NOTE} `}Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`
+    // Enter is left out of the keys that close it: on "Убрать" it would close the window as well as remove the note.
+    const closeKeys = [27]
+    const closing = f7.dialog.create({
+      title: 'Спасибо, что поговорил(а)',
+      text,
+      content: keepsConversations ? `${slot}<div class="dialog-text rd-dialog-offer">${offer}</div>` : slot,
+      buttons: keepsConversations
+        ? [
             {
               text: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
               onClick: () => {
@@ -721,10 +749,16 @@ export default function DialogPage({
                 openRoute('/profile/link-email/')
               },
             },
-            { text: 'ОК', onClick: () => f7router.back() },
-          ],
-        })
-        .open()
+            { text: 'ОК', onClick: () => f7router.back(), keyCodes: closeKeys },
+          ]
+        : [{ text: 'ОК', onClick: () => f7router.back(), keyCodes: closeKeys }],
+      destroyOnClose: true,
+    })
+    closing.open()
+    setRecapHost(closing.el.querySelector<HTMLElement>('.rd-remembered-slot'))
+    closing.on('closed', () => setRecapHost(null))
+    if (shouldWatchMemoryChanges({ memoryMode, memoryEnabled: user?.memoryEnabled, unsaved: unsavedRef.current })) {
+      void recap.watch(dialogId, (id) => getMemoryChanges(id))
     }
     // summary is the only dependency: this must fire exactly on the transition out of undefined.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -981,6 +1015,10 @@ export default function DialogPage({
           </div>
         </>
       )}
+
+      {recapHost &&
+        recapState &&
+        createPortal(<MemoryRecap state={recapState} onRemove={(id) => void removeRecapNote(id)} />, recapHost)}
 
       <DialogEndSheet
         opened={endOpened}

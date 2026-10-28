@@ -40,7 +40,7 @@ import { clientIp, RATE_LIMITS, type RateLimiter, type RateLimitRule } from '../
 import { jsonBody, queryParams } from '../../lib/request'
 
 /**
- * The mood diary (`REQ-WELL-01`, `openspec/changes/add-mood-diary`). On for everyone: there is no switch.
+ * The mood diary (`REQ-WELL-01`, `openspec/specs/mood-diary`). On for everyone: there is no switch.
  *
  * Moods, factors and summary texts are the person's own: they reach their screens and, as codes, the
  * agent's summary route. They are not written to a log and not to product analytics, only the fact of

@@ -3,7 +3,7 @@
 import { ArrowDown, CircleCheck, EyeOff, Share2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import {
@@ -14,12 +14,14 @@ import {
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { RECAP_ERROR_TEXT } from '@ryadom/client-core/recaps'
 import {
+  createMemoryRecap,
   MEMORY_FORGET_ERRORS,
   MEMORY_NOTICE,
   MEMORY_NOTICE_POLL_MS,
   memoryInUse,
   newSensitiveNotes,
   noteIds,
+  shouldWatchMemoryChanges,
 } from '@ryadom/client-core/memory'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import {
@@ -73,6 +75,7 @@ import DialogAlert from './DialogAlert'
 import DialogEndSheet, { type EndRecapSource } from './DialogEndSheet'
 import ShareDialogModal from './ShareDialogModal'
 import DialogFeed from './DialogFeed'
+import MemoryRecap from './MemoryRecap'
 import DialogVoice from './DialogVoice'
 import { BUTTON, COLUMN } from './controls'
 import { useNotice, useNoticePlacement } from './Notice'
@@ -182,6 +185,17 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   /** Sensitive notes made during this conversation, told as "Запомнил: … · Убрать". The texts are the person's words: state only. */
   const [notices, setNotices] = useState<Array<{ id: string; text: string }>>([])
   const [noticeBusy, setNoticeBusy] = useState<string | null>(null)
+  /**
+   * The block "Я запомнил" of the closing window: it waits for the notes of this conversation after it ends and comes up in the
+   * window when they are there. The texts are the person's words: state only, never reported.
+   */
+  const recap = useMemo(() => createMemoryRecap(), [])
+  const recapState = useSyncExternalStore(recap.subscribe, recap.getSnapshot, () => null)
+  useEffect(() => () => recap.reset(), [recap])
+  useOnceFor(recapState ? recapState.dialogId : null, () => track(AnalyticsEvent.MemoryRecapShown))
+  /** What `finish` needs to know about memory: it is memoized, and these change while the conversation goes on. */
+  const memoryNow = useRef({ mode: memoryMode, enabled: user?.memoryEnabled })
+  memoryNow.current = { mode: memoryMode, enabled: user?.memoryEnabled }
   const socket = useRef<DialogSocket | null>(null)
   const capture = useRef<VoiceCapture | null>(null)
   const player = useRef<VoicePlayer | null>(null)
@@ -270,6 +284,12 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     }
   }
 
+  async function removeRecapNote(id: string) {
+    if (await recap.remove(id, (noteId) => client.forgetMemoryFact(noteId))) {
+      track(AnalyticsEvent.MemoryNoteDeleted, { undone: false, source: 'recap' })
+    }
+  }
+
   const noticeLines = notices.length > 0 && (
     <ul className="flex flex-col gap-2" data-testid="memory-notices">
       {notices.map((notice) => (
@@ -350,6 +370,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setEnding(false)
       void stopRecording()
       voice.current?.cancel()
+      // The window does not wait for the notes: the block comes up in it, if there are any, within half a minute.
+      if (shouldWatchMemoryChanges({ memoryMode: memoryNow.current.mode, memoryEnabled: memoryNow.current.enabled, unsaved: unsavedRef.current })) {
+        void recap.watch(dialogId, (id) => client.getMemoryChanges(id))
+      }
       setAlert({
         title: 'Спасибо, что поговорил(а)',
         text: unsavedRef.current
@@ -365,7 +389,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         leaves: true,
       })
     },
-    [client, dialogId, stopRecording],
+    [client, dialogId, recap, stopRecording],
   )
 
   // The socket handlers outlive renders; they read the latest helpers through here.
@@ -1078,11 +1102,17 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         open={alert !== null}
         title={alert?.title ?? ''}
         text={alert?.text ?? ''}
+        extra={
+          alert?.leaves && recapState ? (
+            <MemoryRecap state={recapState} onRemove={(id) => void removeRecapNote(id)} />
+          ) : undefined
+        }
         // A finished conversation is the moment an address has something to give: this one is kept.
         offer={
           alert?.leaves && (user?.email === null || user?.isEmailConfirmed === false)
             ? {
-                text: `${DIALOG_KEEP_NOTE} Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
+                // A conversation held unsaved has no term to speak of: only the account's.
+                text: `${unsaved ? '' : `${DIALOG_KEEP_NOTE} `}Без почты аккаунт ${GUEST_LIFE_CLAUSE}, и войти с другого телефона нельзя. Привяжи почту, чтобы сохранить аккаунт.`,
                 action: user?.email === null ? 'Привязать почту' : 'Подтвердить почту',
                 onAction: () => {
                   setAlert(null)

@@ -1,7 +1,7 @@
 import { JobQueue } from '@ryadom/db/job-queues'
 
 /**
- * The queues of the background work and what a job in each carries (`openspec/changes/archive/2026-10-27-add-job-queue`,
+ * The queues of the background work and what a job in each carries (`add-job-queue`,
  * design D4). The names live in `@ryadom/db/job-queues` (names only, no pg-boss), where the catalog of the API and the
  * admin app takes them from too, so a typo in a name fails the compilation in the core that enqueues and in every
  * process that works the queue or posts to it.

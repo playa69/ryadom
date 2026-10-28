@@ -49,7 +49,8 @@ export function webSpec(args, repoRoot) {
     await go('/home')(page)
     await page.getByTestId('home-talk').click()
     await page.waitForURL('**/dialog/**', { timeout: 20_000 })
-    await page.getByRole('button', { name: 'Остановить запись' }).waitFor({ timeout: 30_000 })
+    // The conversation starts hands-free: it is listening as soon as the voice screen is up.
+    await page.getByTestId('voice-caption').waitFor({ timeout: 30_000 })
   }
   // After one voice turn: the sphere is calm again and the reply is under it.
   const voiceReply = async (page) => {
@@ -57,16 +58,15 @@ export function webSpec(args, repoRoot) {
     await page.waitForTimeout(800)
     const caption = page.getByTestId('voice-caption')
     const greeting = (await caption.textContent()) ?? ''
-    await page.getByRole('button', { name: 'Остановить запись' }).click()
-    await page.waitForFunction(
-      (before) => {
-        const text = document.querySelector('[data-testid="voice-caption"]')?.textContent ?? ''
-        const hint = document.querySelector('[data-testid="voice-hint"]')?.textContent ?? ''
-        return text !== '' && text !== before && hint.startsWith('Нажми на шар')
-      },
-      greeting,
-      { timeout: 30_000 },
-    )
+    // Hands-free: the fake microphone speaks, the turn ends by itself and the reply replaces the greeting; if it
+    // does not come in time, the picture shows the voice screen as it is.
+    await page
+      .waitForFunction(
+        (before) => (document.querySelector('[data-testid="voice-caption"]')?.textContent ?? '') !== before,
+        greeting,
+        { timeout: 20_000 },
+      )
+      .catch(() => {})
   }
   const openMenu = async (page) => {
     await page.getByRole('button', { name: 'Меню' }).first().click()
@@ -91,9 +91,10 @@ export function webSpec(args, repoRoot) {
     journal: { open: go('/journal') },
     'journal-entry': {
       open: async (page) => {
-        await go('/journal')(page)
+        await go('/diary/journal')(page)
         // A finished conversation: an open one resumes in the dialog screen instead of opening here.
-        await page.locator('[data-testid="journal-item"][href^="/journal/"]').first().click()
+        await page.locator('[data-testid="journal-item"][href^="/diary/journal/"]').first().click()
+        await page.getByTestId('journal-messages').waitFor({ timeout: 30_000 })
         await page.waitForLoadState('networkidle')
       },
     },
@@ -143,6 +144,19 @@ export function webSpec(args, repoRoot) {
     state,
     screens,
     ctx: {},
+    // Sign-in is limited per address: every context gets an address of its own.
+    async prepareContext(context) {
+      const ip = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`
+      await context.route((url) => url.pathname.startsWith('/api/'), (route) => route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': ip } }))
+    },
+    // Every signed-in shot signs in on its own: the refresh token rotates, so one saved session cannot serve many contexts.
+    async signIn(page) {
+      await page.goto(`${base}/login`, { waitUntil: 'networkidle' })
+      await page.locator('input[name="email"]').fill(ACCOUNT.email)
+      await page.locator('input[name="password"]').fill(ACCOUNT.password)
+      await page.locator('form button[type="submit"]').first().click()
+      await page.waitForURL('**/home', { timeout: 30_000 })
+    },
     // The signed-in desktop window is 900px tall at 1280; everything else follows the usual sizes.
     heights: (width, screen) => (width === 1280 ? (screen.anon ? 800 : 900) : { 390: 844, 820: 1180, 1920: 1080 }[width] ?? 900),
     reset,

@@ -23,6 +23,7 @@ import {
 } from '../support/web'
 import { clearMailbox, waitForCode } from '../support/mail'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 
 /**
  * The whole account path in the web app, the counterpart of app-account.spec.ts: sign-up with the
@@ -92,13 +93,19 @@ test('путь аккаунта в вебе: регистрация, профи�
   await expect(page.getByTestId('voice-apply')).toBeDisabled()
   // The modal opens on the tab of the current gender; another tab lists the other gender.
   await expect(page.getByRole('tab', { name: 'Мужские' })).toHaveAttribute('aria-selected', 'true')
+  await step(page, 'voice-male-tab', 'Лист «Голос агента»: открыт на мужских голосах, «Применить» неактивна')
   await page.getByRole('tab', { name: 'Женские' }).click()
+  await expect(page.getByRole('tab', { name: 'Женские' })).toHaveAttribute('aria-selected', 'true')
+  await step(page, 'voice-female-tab', 'Вкладка женских голосов: у каждого можно прослушать пример')
   // Playing a sample does not choose it.
   await page.getByLabel('Прослушать: Алиса').click()
   await expect(page.getByTestId('voice-apply')).toBeDisabled()
   await page.getByRole('radio', { name: 'Алиса' }).click()
+  await expect(page.getByTestId('voice-apply')).toBeEnabled()
+  await step(page, 'voice-picked', 'Выбрана Алиса: «Применить» стала активной')
   await page.getByTestId('voice-apply').click()
   await expect(page.getByTestId('voice-name')).toContainText('Алиса')
+  await step(page, 'voice-applied', 'Голос сохранён: в профиле теперь Алиса')
 
   // The help lines are also a page of their own: one column at every width, nothing sideways.
   await page.getByTestId('row-people').click()

@@ -65,14 +65,18 @@ if (!signedIn) {
   await page.locator('input[name="name"]').fill(ACCOUNT.name)
   await page.locator('input[name="email"]').fill(ACCOUNT.email)
   await page.locator('input[name="password"]').fill(ACCOUNT.password)
-  await page.getByTestId('consents').getByRole('checkbox').check()
+  // The three required consents (18+, not therapy, terms); the optional memory item is left alone.
+  for (const box of await page.getByTestId('consents').getByRole('checkbox').all()) await box.check()
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click()
   await page.getByRole('heading', { name: 'Подтверди почту' }).waitFor({ timeout: 20_000 })
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(await newestCode(ACCOUNT.email, before))
   await page.waitForURL('**/home', { timeout: 30_000 })
 }
 
-const userId = await page.evaluate(() => JSON.parse(localStorage.getItem('ryadom.user') ?? 'null')?.id ?? null)
+// The web client keeps its cached user under its own prefix (`ryadom.web.`); the PWA and the store builds under `ryadom.user`.
+const userId = await page.evaluate(
+  () => JSON.parse(localStorage.getItem('ryadom.web.user') ?? localStorage.getItem('ryadom.user') ?? 'null')?.id ?? null,
+)
 if (!userId) throw new Error('signed in, but no user id in storage')
 
 const count = await seedJournal(AGENT, userId)

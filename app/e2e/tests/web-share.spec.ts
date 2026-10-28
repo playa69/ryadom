@@ -11,7 +11,7 @@ import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 
 /**
- * A link to one conversation (`REQ-DATA-05`, `openspec/changes/add-dialog-share-link`): made from the
+ * A link to one conversation (`REQ-DATA-05`, `openspec/specs/dialog-share`): made from the
  * journal entry, opened by someone who is not signed in, shown again, revoked. One scenario for the
  * same reason as the other web specs (one sign-up).
  */

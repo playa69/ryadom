@@ -184,6 +184,15 @@ describe('отправка', () => {
     expect(posthog.capture).toHaveBeenCalledWith('memory_setting_changed', { setting: 'sensitive', enabled: true })
   })
 
+  it('блок «Я запомнил»: показ без свойств, «Убрать» — с источником recap, тексты и число заметок не уходят', async () => {
+    const { posthog, started } = start(CONFIG)
+    await started
+    track(AnalyticsEvent.MemoryRecapShown, { text: 'Сестра Аня', notes: 3 } as never)
+    track(AnalyticsEvent.MemoryNoteDeleted, { undone: false, source: 'recap', text: 'Сестра Аня' } as never)
+    expect(posthog.capture).toHaveBeenCalledWith('memory_recap_shown', {})
+    expect(posthog.capture).toHaveBeenCalledWith('memory_note_deleted', { undone: false, source: 'recap' })
+  })
+
   it('события тестов несут test_id, а баллы, уровни и ответы отбрасываются', async () => {
     const { posthog, started } = start(CONFIG)
     await started

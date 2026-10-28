@@ -68,7 +68,7 @@ describe('настройка PostHog', () => {
 })
 
 describe('настройка очереди задач', () => {
-  // `openspec/changes/archive/2026-10-27-add-job-queue`, design D9.
+  // `add-job-queue`, design D9.
   it('без значений: воркеры включены, пул 4 соединения, остановка ждёт 10 секунд', () => {
     const env = parseEnv({
       ...process.env,

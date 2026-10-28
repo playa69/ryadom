@@ -1,5 +1,5 @@
 /**
- * The names of the queues of the background work (`openspec/changes/archive/2026-10-27-add-job-queue`, design D4).
+ * The names of the queues of the background work (`add-job-queue`, design D4).
  * Names only, no pg-boss: the core re-exports them as `JobQueue` for the code that queues a job, and the API and the
  * admin app take the same names to their catalog, so a typo in a name fails the compilation everywhere.
  */

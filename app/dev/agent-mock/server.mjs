@@ -15,7 +15,7 @@
  */
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { handleMemory as handleNotesMemory, newMemory, onUserMessage, seedMemory } from './memory-notes.mjs'
+import { handleMemory as handleNotesMemory, newMemory, onDialogEnded, onUserMessage, seedMemory } from './memory-notes.mjs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { WebSocketServer } from 'ws'
@@ -159,6 +159,7 @@ function endDialog(dialog, takeaway, tensionAfter, recapSource = 'manual') {
     recapSource: null,
     recapAvailable: recapEligible(dialog),
   }
+  onDialogEnded(userState(dialog.userId).memory, dialog)
   const written = cleanRecap(takeaway)
   if (recapEligible(dialog)) {
     if (written) storeRecap(dialog, written, recapSource === 'draft' ? 'draft' : 'manual')
@@ -259,7 +260,7 @@ function noContent(res) {
 /** /v1/users/{userId}/memory...: the notes model lives in `memory-notes.mjs`. */
 function handleMemoryRoute(req, res, url, userId, parts, method) {
   return handleNotesMemory(
-    { json, noContent, readBody, agentError },
+    { json, noContent, readBody, agentError, dialogOf: (dialogId) => userState(userId).dialogs.get(dialogId) },
     req,
     res,
     url,

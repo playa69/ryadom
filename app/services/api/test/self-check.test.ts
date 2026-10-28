@@ -1,5 +1,5 @@
 /**
- * Tests inside the app over HTTP (`REQ-WELL-06`…`08`, `openspec/changes/add-self-check-tests`): the switch, the
+ * Tests inside the app over HTTP (`REQ-WELL-06`…`08`, `openspec/specs/self-check`): the switch, the
  * consent, saving with a recount on the server, history, deletion, the withdrawal of the consent and the account's
  * deletion. The core and the database are real.
  */

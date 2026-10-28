@@ -17,13 +17,13 @@ import {
   type MemoryInstructionApiResponse,
   type MemoryNoteApiResponse,
 } from '@ryadom/contracts/api/memory'
-import type { ApiOutcome } from './errors'
+import { apiErrorText, codeText, type ApiOutcome } from './errors'
 
 /**
  * Memory on the client, shared by the phone and the browser: the consent sheet, how the screen
- * "Память" groups and labels what is remembered, which actions a fact has, the card "Я запомнил"
- * after a conversation (whether to show it, and the polling behind it), and the delayed "forget"
- * with its five seconds to take it back.
+ * "Память" groups and labels what is remembered, which actions a fact has, the block "Я запомнил"
+ * in the window after a conversation (whether to look for it, the polling behind it and its "Убрать"),
+ * and the delayed "forget" with its five seconds to take it back.
  *
  * The texts of the facts are the person's own words. Nothing here logs them, stores them or passes
  * them anywhere but back to the screen; the apps must do the same (no analytics, no storage).
@@ -270,61 +270,54 @@ export const MEMORY_FORGET_ERRORS: Record<ForgetMemoryApiErrorCode, string> = {
   [ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE]: 'Сейчас не получается забыть. Попробуй чуть позже',
 }
 
-// ─── the card "Я запомнил" ────────────────────────────────────────────────────
+// ─── the block "Я запомнил" in the closing window ─────────────────────────────
 
-/** The card shows this many points at most; the rest are on the screen "Память". */
-export const MEMORY_CARD_MAX_ITEMS = 4
+/** The block lists this many notes at most; the rest are in the sheet "Что помнит Рядом". */
+export const MEMORY_RECAP_MAX_ITEMS = 4
 
-export interface MemoryCardItem {
-  fact: MemoryFactApiResponse
-  /** Waits for "Запомнить": until then it is not used. */
-  proposed: boolean
+/** The words of the block. */
+export const MEMORY_RECAP = {
+  title: 'Я запомнил',
+  remove: 'Убрать',
+  /** Under the four notes when there are more of them. */
+  more: 'Остальные заметки — в «Что помнит Рядом»',
+  removeError: 'Не получилось убрать',
+} as const
+
+export interface MemoryRecapNote {
+  /** The note's id: the one `DELETE /api/memory/facts/:id` takes. */
+  id: string
+  text: string
 }
 
-export interface MemoryCardContent {
-  items: MemoryCardItem[]
-  /** How many more there are beyond the card. */
-  more: number
-}
-
-const CARD_OPS = new Set<string>([MemoryChangeOp.Add, MemoryChangeOp.Update, MemoryChangeOp.Supersede])
-const CARD_STATUSES = new Set<string>([MemoryFactStatus.Active, MemoryFactStatus.Proposed])
+const RECAP_OPS = new Set<string>([MemoryChangeOp.Add, MemoryChangeOp.Update, MemoryChangeOp.Supersede])
 
 /**
- * What the card lists after a conversation: what is new or changed (a fact merely confirmed again is
- * not news), each fact once, the ones waiting for an answer first. Guesses stay off the card: they are
- * not used yet, and the screen "Память" shows them apart. Anything but `ready` lists nothing.
+ * The notes the closing window lists: what is new or changed (a note merely confirmed again is not news), each once, in the
+ * order the server gave them. Anything but `ready` lists nothing.
  */
-export function memoryCardContent(changes: MemoryChangesApiResponse | null): MemoryCardContent {
-  if (!changes || changes.status !== MemoryChangesStatus.Ready) return { items: [], more: 0 }
+export function memoryRecapNotes(changes: MemoryChangesApiResponse | null): MemoryRecapNote[] {
+  if (!changes || changes.status !== MemoryChangesStatus.Ready) return []
   const seen = new Set<string>()
-  const items: MemoryCardItem[] = []
+  const notes: MemoryRecapNote[] = []
   for (const { op, fact } of changes.items) {
-    if (!CARD_OPS.has(op) || !CARD_STATUSES.has(fact.status) || seen.has(fact.id)) continue
+    if (!RECAP_OPS.has(op) || fact.status !== MemoryFactStatus.Active || seen.has(fact.id)) continue
     seen.add(fact.id)
-    items.push({ fact, proposed: fact.status === MemoryFactStatus.Proposed })
+    notes.push({ id: fact.id, text: fact.text })
   }
-  items.sort((a, b) => Number(b.proposed) - Number(a.proposed))
-  return {
-    items: items.slice(0, MEMORY_CARD_MAX_ITEMS),
-    more: Math.max(0, items.length - MEMORY_CARD_MAX_ITEMS),
-  }
-}
-
-/** The card appears only when there is something to list: `skipped`, `pending` and empty show nothing. */
-export function shouldShowMemoryCard(changes: MemoryChangesApiResponse | null): boolean {
-  return memoryCardContent(changes).items.length > 0
+  return notes
 }
 
 /**
- * Whether to look for the card at all once a conversation ends: not after one "without memory", and
- * not for a person whose memory is known to be off. Unknown (an older gateway) costs one request.
+ * Whether to look for the block at all once a conversation ends: not after one "without memory" or one held unsaved, and not for
+ * a person whose memory is known to be off. Unknown (an older gateway) costs one request.
  */
 export function shouldWatchMemoryChanges(dialog: {
   memoryMode?: string | null
   memoryEnabled?: boolean
+  unsaved?: boolean
 }): boolean {
-  return dialog.memoryMode !== 'off' && dialog.memoryEnabled !== false
+  return dialog.memoryMode !== 'off' && dialog.memoryEnabled !== false && dialog.unsaved !== true
 }
 
 export const MEMORY_POLL_INTERVAL_MS = 3_000
@@ -353,10 +346,9 @@ function waitFor(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Asks what a finished conversation added to memory, every 3 seconds for up to 30, until the answer is
- * `ready`. Resolves with that answer, or null when there is nothing to show: `skipped`, still `pending`
- * at the end, a refusal (an unknown dialog), or `signal` aborted. A failed request is asked again: the
- * card is a courtesy, and its absence is never reported to the person as an error.
+ * Asks what a finished conversation left in memory, every 3 seconds for up to 30, until the answer is `ready`. Resolves with that
+ * answer, or null when there is nothing to show: `skipped`, still `pending` at the end, a refusal (an unknown dialog), or `signal`
+ * aborted. A failed request is asked again: the block is a courtesy, and its absence is never reported to the person as an error.
  */
 export async function pollMemoryChanges(
   load: () => Promise<ApiOutcome<MemoryChangesApiResponse, string>>,
@@ -382,28 +374,52 @@ export async function pollMemoryChanges(
   }
 }
 
-/** What the card shows, and whose it is: a different signed-in account never sees it. */
-export interface MemoryCardState extends MemoryCardContent {
+/** What the block shows. */
+export interface MemoryRecapState {
   dialogId: string
-  owner: string
+  /** The notes on show: the first four of what is left. */
+  items: MemoryRecapNote[]
+  /** How many more there are beyond the four (they are in the sheet). */
+  more: number
+  /** The note whose "Убрать" is on its way. */
+  busyId: string | null
+  /** id → what the person reads when "Убрать" did not go through; the note stays in the block. */
+  errors: Readonly<Record<string, string>>
 }
 
+/** The call that deletes a note: the same as the "×" of the sheet (`client.forgetMemoryFact`). */
+export type ForgetNote = (id: string) => Promise<ApiOutcome<unknown, ForgetMemoryApiErrorCode>>
+
 /**
- * The card "Я запомнил" as module state: the conversation ends on its own screen, and the card shows
- * up on home a few seconds later, whatever screen is mounted in between. Framework-free; each app
- * wraps it in `useSyncExternalStore`.
+ * The block "Я запомнил" of one closing window as state: it waits for the notes of the conversation that has just ended
+ * (`pollMemoryChanges`) without holding anything up, and "Убрать" deletes a note at once, without the five seconds for "Вернуть". A
+ * failed deletion leaves the note where it is, with the error beside it. Framework-free; each app wraps it in `useSyncExternalStore`.
  */
-export function createMemoryCard(poll: Omit<MemoryPollOptions, 'signal'> = {}) {
-  let state: MemoryCardState | null = null
+export function createMemoryRecap(poll: Omit<MemoryPollOptions, 'signal'> = {}) {
+  let state: MemoryRecapState | null = null
+  /** Every note the conversation left, the ones beyond the first four included: removing one brings the next up. */
+  let notes: MemoryRecapNote[] = []
   let watching: AbortController | null = null
+  let generation = 0
   const listeners = new Set<() => void>()
 
-  function set(next: MemoryCardState | null): void {
+  function set(next: MemoryRecapState | null): void {
     state = next
     for (const listener of listeners) listener()
   }
 
+  function show(dialogId: string, rest: Pick<MemoryRecapState, 'busyId' | 'errors'>): void {
+    if (notes.length === 0) return set(null)
+    set({
+      dialogId,
+      items: notes.slice(0, MEMORY_RECAP_MAX_ITEMS),
+      more: Math.max(0, notes.length - MEMORY_RECAP_MAX_ITEMS),
+      ...rest,
+    })
+  }
+
   function stop(): void {
+    generation += 1
     watching?.abort()
     watching = null
   }
@@ -414,65 +430,68 @@ export function createMemoryCard(poll: Omit<MemoryPollOptions, 'signal'> = {}) {
       return () => listeners.delete(listener)
     },
 
-    getSnapshot(): MemoryCardState | null {
+    getSnapshot(): MemoryRecapState | null {
       return state
     },
 
     /**
-     * Starts looking for the card of a conversation that has just ended; `load` asks the server once
-     * (`client.getMemoryChanges`). A newer conversation replaces the older one's card, shown or still awaited.
+     * Starts looking for the notes of a conversation that has just ended; `load` asks the server once
+     * (`client.getMemoryChanges`). A newer conversation replaces what the older one had, shown or still awaited.
      */
     watch(
       dialogId: string,
-      owner: string,
       load: (dialogId: string) => Promise<ApiOutcome<MemoryChangesApiResponse, string>>,
     ): Promise<void> {
       stop()
+      notes = []
       if (state) set(null)
       const controller = new AbortController()
       watching = controller
-      return pollMemoryChanges(() => load(dialogId), { ...poll, signal: controller.signal }).then(
-        (changes) => {
-          if (controller.signal.aborted) return
-          watching = null
-          const content = memoryCardContent(changes)
-          if (content.items.length > 0) set({ ...content, dialogId, owner })
-        },
-      )
-    },
-
-    /** A point taken off the card ("убрать", or forgotten elsewhere); the card goes when it is empty. */
-    remove(factId: string): void {
-      if (!state) return
-      const items = state.items.filter((item) => item.fact.id !== factId)
-      set(items.length === 0 && state.more === 0 ? null : { ...state, items })
-    },
-
-    /** A point the server answered for: it stays, no longer waiting. */
-    update(fact: MemoryFactApiResponse): void {
-      if (!state) return
-      set({
-        ...state,
-        items: state.items.map((item) =>
-          item.fact.id === fact.id ? { fact, proposed: fact.status === MemoryFactStatus.Proposed } : item,
-        ),
+      return pollMemoryChanges(() => load(dialogId), { ...poll, signal: controller.signal }).then((changes) => {
+        if (controller.signal.aborted) return
+        watching = null
+        notes = memoryRecapNotes(changes)
+        show(dialogId, { busyId: null, errors: {} })
       })
     },
 
-    /** The person closed the card. */
-    close(): void {
-      if (state) set(null)
+    /**
+     * "Убрать": deletes the note, and it goes from the block. Resolves true when it did. A refusal or a failed request leaves it
+     * with the error beside it; a second tap while one is on its way does nothing.
+     */
+    async remove(id: string, forget: ForgetNote): Promise<boolean> {
+      const current = state
+      if (!current || current.busyId !== null || !notes.some((note) => note.id === id)) return false
+      const turn = generation
+      const { [id]: _cleared, ...errors } = current.errors
+      set({ ...current, busyId: id, errors })
+      let failure = ''
+      try {
+        const outcome = await forget(id)
+        if (outcome.ok) {
+          if (turn !== generation) return true // the block was reset meanwhile: the note is gone all the same, nothing to redraw
+          notes = notes.filter((note) => note.id !== id)
+          show(current.dialogId, { busyId: null, errors })
+          return true
+        }
+        failure = codeText(MEMORY_FORGET_ERRORS, outcome.code, MEMORY_RECAP.removeError)
+      } catch (error) {
+        failure = apiErrorText(error, {}, MEMORY_RECAP.removeError)
+      }
+      if (turn === generation) set({ ...current, busyId: null, errors: { ...errors, [id]: failure } })
+      return false
     },
 
-    /** Sign-out, sign-in and "Забыть всё": nothing awaited or shown survives it. */
+    /** Leaving the screen, sign-out, a new conversation: nothing awaited or shown survives it. */
     reset(): void {
       stop()
+      notes = []
       if (state) set(null)
     },
   }
 }
 
-export type MemoryCardStore = ReturnType<typeof createMemoryCard>
+export type MemoryRecapStore = ReturnType<typeof createMemoryRecap>
 
 // ─── "Забыть" with five seconds to take it back ──────────────────────────────
 
