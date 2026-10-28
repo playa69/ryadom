@@ -28,7 +28,7 @@ k8s/
 │   ├── 02-network-policy-infra.yaml   ← + egress в ryadom-db:5432/6379/26379, ingress :3000/9091 от monitoring
 │   ├── 03-network-policy-ryadom-db.yaml
 │   ├── 04-network-policy-kube-apiserver.yaml  ← egress на 192.168.0.4:6443 (урок post-DNAT)
-│   ├── 07-network-policy-prod-apps.yaml  ← ingress от gateway на :3000–3003 (сервисы app/)
+│   ├── 07-network-policy-prod-apps.yaml  ← ingress от gateway на :3000–3004 (сервисы app/), :3002 от monitoring (/metrics api), egress SMTP
 │   └── 08-network-policy-agent-service.yaml  ← prod → agent:8001, агент и cognee → прокси программы :4000 (фоновая модель, LLM Cognee)
 ├── istio/
 │   ├── values-istiod.yaml          ← helm values control plane
@@ -460,7 +460,14 @@ port-forward, наружу НЕ публикуется.
 ingressgateway), `cnpg` (инстансы ryadom-db :9187). Grafana datasource Loki
 добавлен через values (`grafana.additionalDataSources`). Метрики приложений —
 через ServiceMonitor: `agent` (:8001,
-`agent/04-servicemonitor.yaml`: расход моделей, задержки голоса, база диалогов).
+`agent/04-servicemonitor.yaml`: расход моделей, задержки голоса, база диалогов) и
+`app-api` (:3002, `app/api/04-servicemonitor.yaml`: счётчик `self_check_crisis_total{test}`, сколько раз после кризисного
+пункта теста показан экран помощи; без id и без связи с человеком). `/metrics` api лежит вне `/api` и наружу через
+HTTPRoute не публикуется. Применяет администратор, в таком порядке: сеть (`kubectl apply -f
+k8s/namespaces/manifests/07-network-policy-prod-apps.yaml -f k8s/monitoring/manifests/01-network-policy.yaml`, правила
+`prod-allow-ingress-monitoring-scrape-api` и :3002 в `prometheus-allow-egress-scrape`), затем `kubectl apply -f
+k8s/app/api/04-servicemonitor.yaml`. Проверка: в Prometheus цель `app-api` в состоянии `up`; после кризисного пункта
+теста на тестовом аккаунте `self_check_crisis_total{test="phq9"}` растёт.
 
 Доступ к Grafana: `kubectl port-forward -n monitoring svc/prometheus-grafana
 3000:80` → http://localhost:3000, логин `admin`, пароль — в секрете

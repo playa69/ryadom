@@ -10,6 +10,9 @@
 # 3002 (api), 3003 (web), 3004 (pwa). Политика применяется к порту ПОДА (после DNAT
 # сервиса), поэтому нужны именно эти порты, а не 80 у Service.
 #
+# Scrape /metrics api от Prometheus (ns monitoring) на :3002 — отдельная политика ниже, только для app-api
+# (в 01 для monitoring разрешён лишь :15090 сайдкаров).
+#
 # Что здесь НЕ открыто (и работает уже сейчас, см. 01-network-policy-prod.yaml):
 #   - egress к PG/Redis в ryadom-db (5432/6379/26379), DNS, HTTPS наружу, istiod;
 #   - kubelet-пробы на :15020 (все пробы приложений — httpGet через istio).
@@ -50,6 +53,30 @@ spec:
           port: 3003
         - protocol: TCP
           port: 3004
+
+---
+# Scrape /metrics api (self_check_crisis_total) от Prometheus. Только поды app-api и только их порт: остальным
+# сервисам prod это правило ничего не открывает. Обратная сторона — egress в prometheus-allow-egress-scrape
+# (monitoring/manifests/01-network-policy.yaml), сам сбор — k8s/app/api/04-servicemonitor.yaml. Применять до него.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prod-allow-ingress-monitoring-scrape-api
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: app-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3002
 
 ---
 # Исходящая почта по SMTPS (порт 465, TLS с первого байта — без STARTTLS-даунгрейда).
