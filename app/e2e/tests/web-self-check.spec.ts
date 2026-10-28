@@ -3,7 +3,7 @@ import { expect, test } from '../support/fixtures'
 import { openWebApp, registerAndConfirm, uniqueEmail } from '../support/web'
 
 /**
- * Тесты внутри приложения, веб (`REQ-WELL-06`…`REQ-WELL-08`, `openspec/changes/add-self-check-tests`):
+ * Тесты внутри приложения, веб (`REQ-WELL-06`…`REQ-WELL-08`, `openspec/specs/self-check`):
  * блок «Самопроверка» в «Дневнике», сегмент «Тесты» с поиском, прохождение в листе («Назад», «Прервать
  * тест?»), результат без диагноза, кризисный пункт PHQ-9 открывает экран помощи и лист SOS, тест
  * проходится без сети. Сохранение и история появятся с серверной частью (миграция 0010), здесь их нет.

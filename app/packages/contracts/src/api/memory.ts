@@ -248,10 +248,11 @@ export enum ForgetMemoryApiErrorCode {
 // ─── GET /api/memory/changes?dialogId= ────────────────────────────────────────
 
 export enum MemoryChangesStatus {
-  /** Extraction has not finished yet: ask again in a few seconds. */
+  /** The conversation is not over or its final extraction pass is still running: ask again in a few seconds. */
   Pending = 'pending',
+  /** The notes of the conversation, possibly none. A conversation "without memory", an unsaved one, memory off or paused: `ready` and no items. */
   Ready = 'ready',
-  /** Nothing was extracted from this conversation (too short, memory off…): show nothing. */
+  /** Kept for older gateways and agents; the agent no longer answers it. */
   Skipped = 'skipped',
 }
 
@@ -264,11 +265,14 @@ export enum MemoryChangeOp {
 
 export interface MemoryChangeApiResponse {
   op: MemoryChangeOp
-  /** The fact as it is now. */
+  /** One note of the conversation in the shape of a fact (`id` is the note's: `DELETE /api/memory/facts/:id` removes it). */
   fact: MemoryFactApiResponse
 }
 
-/** What the conversation added to memory: the "I remembered" card after it. */
+/**
+ * The notes that came out of one conversation, for the block "Я запомнил" in the closing window: the notes whose source is that
+ * conversation, in the order they were said, each with `op: 'add'`. Notes of earlier conversations are not listed.
+ */
 export interface MemoryChangesApiResponse {
   status: MemoryChangesStatus
   /** Why it was skipped; for the logs, the person is shown nothing. */

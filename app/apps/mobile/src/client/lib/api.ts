@@ -42,6 +42,7 @@ export const {
   getDialogSettings,
   putDialogSettings,
   getMemory,
+  getMemoryChanges,
   setMemoryEnabled,
   updateMemorySettings,
   memoryInstruction,

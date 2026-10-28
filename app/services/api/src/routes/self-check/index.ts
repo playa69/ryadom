@@ -31,7 +31,7 @@ import { clientIp, RATE_LIMITS, type RateLimiter, type RateLimitRule } from '../
 import { jsonBody, queryParams } from '../../lib/request'
 
 /**
- * Tests inside the app (`REQ-WELL-06`…`08`, `openspec/changes/add-self-check-tests`).
+ * Tests inside the app (`REQ-WELL-06`…`08`, `openspec/specs/self-check`).
  *
  * What a person answers is the most private thing the app holds: the answers reach this process only to be
  * counted again and are not stored, not logged and not sent to analytics. Scores and levels are stored for the

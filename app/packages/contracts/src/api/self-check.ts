@@ -1,5 +1,5 @@
 /**
- * Tests inside the app (`REQ-WELL-06`…`08`, `openspec/changes/add-self-check-tests`). A result is saved only after the
+ * Tests inside the app (`REQ-WELL-06`…`08`, `openspec/specs/self-check`). A result is saved only after the
  * person agreed (`SelfCheckApiErrorCode.CONSENT_REQUIRED`); the server recomputes the score from the answers with the
  * same package as the clients and keeps the score, the subscores, the level and the time, never the answers.
  * A result is a fact about health: it goes to the person's own screens only, never to the agent and never to analytics.

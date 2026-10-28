@@ -1,5 +1,5 @@
 /**
- * The mood diary (`REQ-WELL-01`, `openspec/changes/add-mood-diary`). One mood note per person per
+ * The mood diary (`REQ-WELL-01`, `openspec/specs/mood-diary`). One mood note per person per
  * local day; the day is the one in the person's time zone (`MeApiResponse.timezone`). The values are
  * health-adjacent: they go to the person's own screens and, as codes, to the agent for the summary,
  * never to product analytics.

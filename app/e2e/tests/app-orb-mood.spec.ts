@@ -1,6 +1,7 @@
 import { button, openApp, registerAndConfirm, uniqueEmail } from '../support/app'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 
 /**
  * REQ-VOICE-10 in the mobile client: the sphere takes the colour of the person's mood. The agent mock reports a
@@ -19,6 +20,7 @@ test('шарик в приложении окрашивается по наст�
   const orb = page.locator('.rd-orb')
   await expect(orb).toBeVisible({ timeout: 30_000 })
   await expect(orb).not.toHaveAttribute('data-mood', /.+/)
+  await step(page, 'orb-calm', 'Шарик в спокойном состоянии: без цвета настроения')
 
   const say = async (text: string) => {
     await page.getByRole('button', { name: 'Писать текстом' }).click()
@@ -33,10 +35,13 @@ test('шарик в приложении окрашивается по наст�
 
   await say('Меня всё бесит, достало это всё')
   await expect(orb).toHaveAttribute('data-mood', 'angry')
+  await step(page, 'orb-angry', 'Злая реплика: шарик окрасился красным')
 
   await say('Мне очень страшно, я боюсь')
   await expect(orb).toHaveAttribute('data-mood', 'afraid')
+  await step(page, 'orb-afraid', 'Испуганная реплика: шарик позеленел')
 
   await say('Сегодня обычный день')
   await expect(orb).not.toHaveAttribute('data-mood', /.+/)
+  await step(page, 'orb-plain', 'Обычная реплика: цвет настроения ушёл')
 })
