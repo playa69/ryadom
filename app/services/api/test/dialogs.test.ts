@@ -57,7 +57,7 @@ const dialogEvents = (analytics: ReturnType<typeof recordingAnalytics>, userId: 
   analytics.events.filter((entry) => entry.userId === userId && entry.event.startsWith('dialog_')).map((entry) => entry.event)
 
 describe('REST диалогов', () => {
-  it('старт передаёт агенту только голос человека (по умолчанию мужской), режим и клиента нет, отвечает диалогом с числом сообщений и временем последней активности', async () => {
+  it('старт передаёт агенту только голос человека (по умолчанию мужской) и голосовой путь из админки (по умолчанию Сбер), режим и клиента нет, отвечает диалогом с числом сообщений и временем последней активности', async () => {
     resetLimits()
     const { user, tokens } = await signUpAndIn(app)
     const { calls } = mockAgent({
@@ -92,7 +92,7 @@ describe('REST диалогов', () => {
 
     const agentCall = calls.at(-1)!
     expect(agentCall.url.pathname).toBe(`/v1/users/${user.id}/dialogs`)
-    expect(JSON.parse(agentCall.body)).toEqual({ voice: 'male' })
+    expect(JSON.parse(agentCall.body)).toEqual({ voice: 'male', pipeline: 'sber' })
   })
 
   it('агент не прислал messageCount и lastActivityAt — в ответе 0 и null, клиент ничего не спрашивает', async () => {
@@ -136,7 +136,7 @@ describe('REST диалогов', () => {
     )
 
     expect(started).toMatchObject({ dialogId: 'd-6', memoryMode: DialogMemoryMode.Off, memoryEnabled: true })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off', pipeline: 'sber' })
   })
 
   it('«не сохранять»: saved: false уходит агенту отдельно от memory, ответ несёт то, что подтвердил агент, аналитика молчит', async () => {
@@ -155,7 +155,7 @@ describe('REST диалогов', () => {
     )
 
     expect(started).toMatchObject({ dialogId: 'd-u1', saved: false, memoryMode: DialogMemoryMode.Off })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, saved: false })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, saved: false, pipeline: 'sber' })
     expect(dialogEvents(analytics, user.id)).toEqual([]) // ни dialog_started, ничего другого
   })
 
@@ -174,7 +174,7 @@ describe('REST диалогов', () => {
     )
 
     expect(started).toMatchObject({ memoryMode: DialogMemoryMode.Off, saved: true })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', memory: 'off' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', memory: 'off', pipeline: 'sber' })
     expect(dialogEvents(analytics, user.id)).toEqual(['dialog_started'])
   })
 
@@ -230,14 +230,14 @@ describe('REST диалогов', () => {
     expect(again).toMatchObject({ dialogId: 'd-1', resumed: true, messageCount: 3 })
     expect(typeof again.lastActivityAt).toBe('string')
     expect(dialogs.ended).toEqual([])
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', pipeline: 'sber' })
 
     // The person answered "end it and begin a new one".
     const fresh = ok<StartDialogApiResponse>(
       await call(app, 'POST', '/api/dialogs', { startNew: true }, tokens.accessToken),
     )
     expect(fresh).toMatchObject({ dialogId: 'd-2', resumed: false, messageCount: 0, lastActivityAt: null })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, pipeline: 'sber' })
     expect(dialogs.ended).toEqual(['d-1'])
     expect(dialogs.openOf(user.id)).toBe('d-2')
   })
@@ -265,7 +265,7 @@ describe('REST диалогов', () => {
     const started = ok<StartDialogApiResponse>(
       await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken),
     )
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female', pipeline: 'sber' })
     // The voice is the profile's business: the dialog answer keeps its shape.
     expect(started).toEqual({
       dialogId: 'd-9',
@@ -281,7 +281,7 @@ describe('REST диалогов', () => {
 
     ok(await call(app, 'PATCH', '/api/auth/me', { voice: 'male' }, tokens.accessToken))
     ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', pipeline: 'sber' })
   })
 
   it('старый клиент шлёт режим, новый нет — оба получают диалог', async () => {

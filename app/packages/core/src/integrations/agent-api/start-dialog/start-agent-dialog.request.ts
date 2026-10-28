@@ -1,5 +1,5 @@
 import { RequestData } from 'mediatr-ts'
-import type { AgentVoice } from '@ryadom/db/schema'
+import type { AgentVoice, VoicePipeline } from '@ryadom/db/schema'
 import type { AgentDialogMemoryMode } from '../shared/agent-memory.types'
 import type { StartAgentDialogResponse } from './start-agent-dialog.types'
 
@@ -25,6 +25,11 @@ export interface StartAgentDialogRequestData {
    * without text when it ends. Independent of `memory`. Without it the agent's default (`true`) applies.
    */
   saved?: boolean
+  /**
+   * The voice pipeline an admin picked (`sber` or `gemini`). The agent applies it on every start, a resumed dialog
+   * included; without it the agent takes its own default.
+   */
+  pipeline?: VoicePipeline
 }
 
 export class StartAgentDialogRequest extends RequestData<StartAgentDialogResponse> {
@@ -37,6 +42,7 @@ export class StartAgentDialogRequest extends RequestData<StartAgentDialogRespons
   public readonly startNew: boolean
   public readonly memory: AgentDialogMemoryMode | undefined
   public readonly saved: boolean | undefined
+  public readonly pipeline: VoicePipeline | undefined
 
   constructor(data: StartAgentDialogRequestData) {
     super()
@@ -46,5 +52,6 @@ export class StartAgentDialogRequest extends RequestData<StartAgentDialogRespons
     this.startNew = data.startNew === true
     this.memory = data.memory
     this.saved = data.saved
+    this.pipeline = data.pipeline
   }
 }
