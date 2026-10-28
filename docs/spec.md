@@ -19,7 +19,7 @@
 
 | Тема | Где |
 |---|---|
-| Архитектура, компоненты, развёртывание | `README.md`, `agent/README.md`, `k8s/README.md`, `AGENTS.md` |
+| Архитектура, компоненты, облака, внешние сервисы | [`docs/architecture.md`](architecture.md) (полная карта), `README.md`, `agent/README.md`, `k8s/README.md`, `AGENTS.md` |
 | Бизнес-логика агента, голос, кризис, память | `openspec/specs/` (`dialog`, `dialog-voice`, `crisis-safety`, `memory-notes`, `memory-search`, `orb-mood`) |
 | Контракты `agent-api` и публичный API | `openspec/specs/agent-api`, `app/packages/contracts` |
 | Лимиты, сроки, производительность | capability-владельцы: `dialog`, `dialog-voice`, `data-retention` |
