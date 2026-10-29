@@ -32,7 +32,9 @@ export class ChangeVoicePipelineOperationHandler implements RequestHandler<
         switch (set.error) {
           // Another admin saved the same pipeline between our read and write: theirs is the audited change.
           case SetVoicePipelineCommandErrorCode.ALREADY_SET:
-            createLogger('voice-settings').info('Voice pipeline already set', { pipeline: operation.pipeline })
+            createLogger('voice-settings').info('Voice pipeline already set', {
+              pipeline: operation.pipeline,
+            })
             return false
           default:
             assertNever(set.error)
@@ -51,7 +53,8 @@ export class ChangeVoicePipelineOperationHandler implements RequestHandler<
       return true
     })
     const { settings } = await voiceSettingsManager.execute(new GetVoicePipelineQuery())
-    if (changed) createLogger('voice-settings').info('Voice pipeline changed', { pipeline: settings.pipeline })
+    if (changed)
+      createLogger('voice-settings').info('Voice pipeline changed', { pipeline: settings.pipeline })
     return { success: true, changed, settings }
   }
 }

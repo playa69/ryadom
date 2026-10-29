@@ -5,7 +5,11 @@
 import { describe, expect, it } from 'vitest'
 import { auditLogManager, GetAuditLogQuery } from '../src/managers/audit-log-manager'
 import { GetVoicePipelineQuery, voiceSettingsManager } from '../src/managers/voice-settings-manager'
-import { ChangeVoicePipelineOperation, type VoicePipeline, voiceSettingsProcess } from '../src/processes/voice-settings'
+import {
+  ChangeVoicePipelineOperation,
+  type VoicePipeline,
+  voiceSettingsProcess,
+} from '../src/processes/voice-settings'
 import { ValidationError } from '../src/shared'
 import { registerConfirmedUser } from './helpers'
 
@@ -23,7 +27,11 @@ describe('голосовой путь', () => {
   it('смена пути записывает его, автора и запись журнала без аккаунта с подробностями «было — стало»', async () => {
     const result = await change('gemini')
 
-    expect(result).toMatchObject({ success: true, changed: true, settings: { pipeline: 'gemini', updatedBy: 'admin@example.com' } })
+    expect(result).toMatchObject({
+      success: true,
+      changed: true,
+      settings: { pipeline: 'gemini', updatedBy: 'admin@example.com' },
+    })
     expect((await current()).updatedAt).toBeInstanceOf(Date)
     const [entry] = await audit()
     expect(entry).toMatchObject({
@@ -42,7 +50,11 @@ describe('голосовой путь', () => {
   })
 
   it('тот же путь ничего не меняет и в журнал не пишется, в том числе путь по умолчанию', async () => {
-    expect(await change('sber')).toMatchObject({ success: true, changed: false, settings: { pipeline: 'sber', updatedBy: null } })
+    expect(await change('sber')).toMatchObject({
+      success: true,
+      changed: false,
+      settings: { pipeline: 'sber', updatedBy: null },
+    })
     await change('gemini')
     expect(await change('gemini')).toMatchObject({ changed: false, settings: { pipeline: 'gemini' } })
     expect(await audit()).toHaveLength(1)

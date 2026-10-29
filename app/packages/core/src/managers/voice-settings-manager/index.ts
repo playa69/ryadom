@@ -37,7 +37,9 @@ export class VoiceSettingsManager implements IVoiceSettingsManager {
 }
 
 export interface IVoiceSettingsManager {
-  execute<T extends VoiceSettingsManagerRequests>(request: T): Promise<T extends RequestData<infer R> ? R : never>
+  execute<T extends VoiceSettingsManagerRequests>(
+    request: T,
+  ): Promise<T extends RequestData<infer R> ? R : never>
 }
 
 export const voiceSettingsManager: IVoiceSettingsManager = new VoiceSettingsManager()

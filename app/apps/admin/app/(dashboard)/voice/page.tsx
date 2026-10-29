@@ -24,8 +24,8 @@ export default async function VoicePage() {
   return (
     <div className="max-w-3xl space-y-6">
       <PageHeader title="Голос">
-        Каким путём агент слушает и отвечает голосом. Действует для всех со следующего старта разговора, в том числе
-        возобновлённого; открытые разговоры идут прежним путём.
+        Каким путём агент слушает и отвечает голосом. Действует для всех со следующего старта разговора, в том
+        числе возобновлённого; открытые разговоры идут прежним путём.
       </PageHeader>
       <VoicePipelineForm current={settings.pipeline} changedLine={changedLine} />
     </div>

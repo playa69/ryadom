@@ -9,7 +9,15 @@ import {
   registerJobQueueTransport,
 } from '../src/services/job-queue-service'
 
-const TABLES = ['audit_log', 'email_codes', 'refresh_tokens', 'user_credentials', 'user_devices', 'users', 'voice_settings']
+const TABLES = [
+  'audit_log',
+  'email_codes',
+  'refresh_tokens',
+  'user_credentials',
+  'user_devices',
+  'users',
+  'voice_settings',
+]
 
 beforeEach(async () => {
   vi.useRealTimers()

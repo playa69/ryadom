@@ -86,7 +86,7 @@
 
 ## 5. Проверка
 
-- [ ] 5.1 `dialog-voice`, «Голосовой путь разговора»: «Путь из админки», «Выбора ещё не было», «Смена пути при открытом
+- [x] 5.1 `dialog-voice`, «Голосовой путь разговора»: «Путь из админки», «Выбора ещё не было», «Смена пути при открытом
   разговоре» — `app/packages/core/test/dialogs.test.ts` и `app/services/api/test/dialogs.test.ts` (тело старта) и
   `agent/tests/test_voice_pipeline.py` (путь разговора); «API без поля пути» — `agent/tests/test_voice_pipeline.py`; «Ответ голосом и текстом», «Ответ на набранное сообщение» в пути Сбера — живой прогон
   `agent/scripts/live_smoke.py --pipeline sber` и `agent/scripts/feedback_check.py --pipeline sber --pace 0.04` (результат — в
@@ -94,7 +94,7 @@
 - [x] 5.2 `dialog-voice`, «Голосовая реплика и расшифровка», «Постоянное слушание»: кадры по 40 мс — e2e
   `app/e2e/tests/web-hands-free.spec.ts` (desktop) и `app/e2e/tests/app-dialog.spec.ts` (mobile); «(Сбер) Распознавание идёт по
   ходу речи» — `agent/tests/test_sber_voice.py` (пересчёт по кадрам) и живой прогон из 5.1.
-- [ ] 5.3 `dialog-voice`, «Озвучка ответов и фиксированных фраз», «Сбои голосовой модели», «Манера и границы ответов агента»,
+- [x] 5.3 `dialog-voice`, «Озвучка ответов и фиксированных фраз», «Сбои голосовой модели», «Манера и границы ответов агента»,
   «Выбор голоса агента» — сценарии «(Сбер)» и «(Gemini Live)»: `agent/tests/test_sber_voice.py` (по предложениям, без списков, род,
   запасные пути и запасная озвучка); `agent/tests/test_voice_pipeline.py` (запасной Сбер у Gemini Live, пауза после квоты); голос
   и род — живой прогон из 5.1 (0 мужских форм о себе).
@@ -104,7 +104,7 @@
   (смена с записью, тот же путь без записи, запись без аккаунта не попадает в журнал одного аккаунта); скриншоты 1280 (админка под
   телефон не адаптирована): первое открытие, выбор «Gemini Live», после сохранения, запись в журнале.
 - [x] 5.6 `agent-api`, «Служебные эндпоинты»: `agent/tests/test_voice_pipeline.py` — `voicePipeline` в `GET /health/ready`.
-- [ ] 5.7 Перед сдачей: typecheck и тесты затронутых пакетов app, pytest агента, ruff, `pnpm e2e` (desktop и mobile),
+- [x] 5.7 Перед сдачей: typecheck и тесты затронутых пакетов app, pytest агента, ruff, `pnpm e2e` (desktop и mobile),
   `node .agents/skills/release-check/scripts/release-check.mjs`.
 
 - [x] 5.8 `dialog-voice`, «Выбор голоса агента», сценарии «(Сбер)»: «Голос в пути Сбера» и «Выбор возвращается с путём Gemini

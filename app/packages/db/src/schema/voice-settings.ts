@@ -18,7 +18,10 @@ export const voiceSettings = pgTable(
   },
   (t) => [
     check('voice_settings_single_row', sql`${t.id} = 1`),
-    check('voice_settings_pipeline_check', sql.raw(`pipeline in (${VOICE_PIPELINES.map((p) => `'${p}'`).join(', ')})`)),
+    check(
+      'voice_settings_pipeline_check',
+      sql.raw(`pipeline in (${VOICE_PIPELINES.map((p) => `'${p}'`).join(', ')})`),
+    ),
   ],
 )
 
