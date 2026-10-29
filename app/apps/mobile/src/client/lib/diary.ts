@@ -1,3 +1,4 @@
+import { SELF_CHECK_ENABLED } from './self-check'
 import { Preferences } from '@capacitor/preferences'
 import { useSyncExternalStore } from 'react'
 import type {
@@ -25,16 +26,18 @@ import {
 const QUEUE_KEY = 'ryadom.diary.queue'
 const SEGMENT_KEY = 'ryadom.diary.segment'
 
-/** «Тесты» (PROTEUS-218) will be the third one. */
-export type DiarySegment = 'diary' | 'journal'
+/** «Тесты» (PROTEUS-218) is the third one, and only with the tests switched on. */
+export type DiarySegment = 'diary' | 'journal' | 'tests'
 export const SEGMENT_URLS: Record<DiarySegment, string> = {
   diary: '/diary/',
   journal: '/diary/journal/',
+  tests: '/diary/tests/',
 }
 
 export async function rememberedSegment(): Promise<DiarySegment> {
   try {
     const { value } = await Preferences.get({ key: SEGMENT_KEY })
+    if (value === 'tests' && !SELF_CHECK_ENABLED) return 'diary'
     return value && value in SEGMENT_URLS ? (value as DiarySegment) : 'diary'
   } catch {
     return 'diary'

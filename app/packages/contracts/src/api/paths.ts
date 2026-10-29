@@ -50,6 +50,11 @@ export enum ApiPath {
   /** "Download my memory". */
   MemoryExport = '/api/memory/export',
 
+  /** Results of the tests inside the app (`add-self-check-tests`). */
+  SelfCheckResults = '/api/self-check/results',
+  SelfCheckLatest = '/api/self-check/latest',
+  SelfCheckConsent = '/api/self-check/consent',
+
   /** The mood diary (`REQ-WELL-01`): the rest are under it. */
   Diary = '/api/diary',
   DiaryCheckinToday = '/api/diary/checkins/today',
@@ -71,6 +76,11 @@ export enum ApiPath {
 }
 
 /** `/api/dialogs/:id` and `/api/dialogs/:id/end` are built from the dialog id. */
+/** One saved result of a test: `DELETE`. */
+export function selfCheckResultPath(resultId: string): string {
+  return `${ApiPath.SelfCheckResults}/${encodeURIComponent(resultId)}`
+}
+
 export function dialogPath(dialogId: string): string {
   return `${ApiPath.Dialogs}/${encodeURIComponent(dialogId)}`
 }

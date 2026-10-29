@@ -116,6 +116,9 @@ data:
   # Сложность кодера 0..10 и битрейт, бит/с (по замерам: 5 и 24000 — PESQ 4,16 при 7 мс CPU на 1 с речи)
   DIALOG_OPUS_COMPLEXITY: "5"
   DIALOG_OPUS_BITRATE: "24000"
+  # Тесты внутри приложения (openspec/changes/add-self-check-tests): выключены, пока владелец не одобрил выкат.
+  # Выкл. = маршруты /api/self-check/* отвечают 404. SELF_CHECK_PREVIEW на проде не включать.
+  SELF_CHECK_ENABLED: "false"
   # --- Redis Sentinel (см. шапку): лимиты запросов общие для реплик ---
   REDIS_ENABLED: "true"
   REDIS_SENTINEL_HOST: "redis.ryadom-db.svc.cluster.local"

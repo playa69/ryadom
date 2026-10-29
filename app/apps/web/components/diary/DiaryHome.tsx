@@ -8,6 +8,7 @@ import { Skeleton } from '@ryadom/ui/components/skeleton'
 import { useClient } from '@/lib/auth'
 import { deviceToday, useLoaded } from '@/lib/diary'
 import { RetryButton, StatePanel } from '../JournalParts'
+import SelfCheckBlock from '../self-check/SelfCheckBlock'
 import MoodCard from './MoodCard'
 import RollingChart from './RollingChart'
 import WeekCard from './WeekCard'
@@ -60,6 +61,7 @@ export default function DiaryHome() {
           <p className="text-[0.9375rem] leading-[1.55] whitespace-pre-line text-foreground">{data.previousWeek.text}</p>
         </Card>
       )}
+      <SelfCheckBlock />
     </>
   )
 }

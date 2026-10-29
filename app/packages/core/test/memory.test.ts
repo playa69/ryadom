@@ -132,7 +132,7 @@ const DELETED_OR_MISSING = '00000000-0000-4000-8000-000000000000'
 describe('согласие на память не обязательное (ловушка MEM-11.3)', () => {
   it('memory нет среди обязательных согласий первого экрана, наборы не пересекаются', () => {
     expect(USER_CONSENT_KINDS).not.toContain('memory')
-    expect(OPTIONAL_CONSENT_KINDS).toEqual(['memory'])
+    expect(OPTIONAL_CONSENT_KINDS).toEqual(['memory', 'self_check'])
     for (const kind of OPTIONAL_CONSENT_KINDS) expect(USER_CONSENT_KINDS).not.toContain(kind)
     expect(MEMORY_CONSENT_ACTIONS).toEqual(['granted', 'revoked'])
   })
@@ -355,6 +355,17 @@ describe('включение и выключение памяти', () => {
 })
 
 describe('что помнит агент', () => {
+  it('агент на Cognee без лимита фактов (maxFacts: null) — экран получает число, а не 500', async () => {
+    const user = await registerConfirmedUser()
+    mockFetch({ [`GET ${AGENT}`]: () => json(agentMemory({ limits: { maxFacts: null }, facts: [] })) })
+
+    const result = await memoryProcess.execute(new GetMemoryOperation({ userId: user.id }))
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.memory.maxFacts).toBe(200)
+  })
+
   it('факты приходят с датами, разобранными из строк; путь к агенту — по пользователю', async () => {
     const user = await registerConfirmedUser()
     const { calls } = mockFetch({ [`GET ${AGENT}`]: () => json(agentMemory()) })
@@ -643,6 +654,21 @@ describe('«Забыть» и «Забыть всё»', () => {
 
     mockFetch({ [`DELETE ${AGENT}/facts/*`]: () => agentError(503, 'AGENT_INTERNAL') })
     await expect(forget()).rejects.toBeInstanceOf(AgentUnavailableError)
+  })
+
+  it('факт при агенте на Cognee (422 unsupported_in_cognee) — отказ с кодом, а не ошибка сервера', async () => {
+    const user = await registerConfirmedUser()
+    const forget = () =>
+      memoryProcess.execute(new ForgetMemoryFactOperation({ userId: user.id, factId: 'f-1' }))
+
+    mockFetch({
+      [`DELETE ${AGENT}/facts/*`]: () => agentError(422, 'AGENT_VALIDATION', { reason: 'unsupported_in_cognee' }),
+    })
+    expect(await forget()).toEqual({ success: false, error: ForgetMemoryFactOperationErrorCode.UNSUPPORTED })
+
+    // Another 422 is still our failure: only the known reason is a refusal.
+    mockFetch({ [`DELETE ${AGENT}/facts/*`]: () => agentError(422, 'AGENT_VALIDATION', { reason: 'other' }) })
+    await expect(forget()).rejects.toThrow()
   })
 
   it('всё: 204 — успех, MEMORY_UNAVAILABLE — отказ, согласие и журнал не трогаются', async () => {

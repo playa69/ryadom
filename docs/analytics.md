@@ -137,13 +137,35 @@
 | `memory_incognito_toggled` | переключатель «Без памяти» на главной перед разговором | `on` |
 | `memory_card_action` | пункт карточки «Я запомнил» убран или принят | `action`: `dismiss_item` / `accept_item` |
 
+### Тесты (REQ-WELL-06…08)
+
+В событиях нет баллов, уровней, ответов и признака кризисного ответа. Экран помощи при кризисе событий не создаёт: считается только счётчик Prometheus `self_check_crisis_total{test}`. Карточку «Поговорить со специалистом» не считаем: нажатие выдало бы высокий уровень.
+
+| Событие | Когда | Свойства |
+|---|---|---|
+| `self_check_opened` | открыт список тестов | `from`: `diary` / `tests` / `history` |
+| `self_check_searched` | поиск в каталоге | `found` (слова запроса не отправляются) |
+| `self_check_started` | показан первый вопрос | `test_id`, `from` |
+| `self_check_step_back` | «← Назад» | `test_id` |
+| `self_check_interrupt_choice` | ответ на «Прервать тест?» | `test_id`, `action`: `continue` / `abort`, `progress`: треть пути |
+| `self_check_completed` | отвечено на последний вопрос | `test_id` |
+| `self_check_result_action` | кнопка листа результата | `test_id`, `action`: `close` / `save` / `copy_summary` / `retake` |
+| `self_check_consent_shown` | лист согласия на хранение | — |
+| `self_check_consent_choice` | ответ на согласие | `action`: `accepted` / `declined` |
+| `self_check_save_failed` | «Не получилось сохранить» | `test_id` |
+| `self_check_history_opened` | экран теста с историей | `test_id` |
+| `self_check_warning_choice` | предупреждение перед клиническим скринингом | `test_id`, `action`: `start` / `later` |
+| `self_check_saved` | сервер сохранил результат | `test_id` |
+| `self_check_result_deleted` | сервер удалил результаты | `scope`: `one` / `test` / `all` |
+| `self_check_consent_revoked` | согласие отозвано | — |
+
 **Дневник настроения** (`REQ-WELL-01`, `openspec/changes/add-mood-diary`, D12): только что действие было, а не настроение, фактор, дата, число отмеченных дней, серия или текст итога. Экран дневника, журнал внутри него и итоги закрыты от автосбора так же, как «Память».
 
 | Событие | Где | Когда | Свойства |
 |---|---|---|---|
 | `mood_checked_in` | сервер | отметка дня сохранена или заменена | `source`: `app`/`widget`/`reminder`/`telegram`; `with_factor`; `changed` |
 | `week_summary_generated` | сервер | итоги недели собраны | `trigger`: `auto` (фоновый проход планировщика: первый текст, перезапись после смены отметки не чаще раза в 6 часов, итог понедельника) / `button` («Обновить итоги») |
-| `diary_opened` | клиенты | открыт сегмент дневника | `tab`: `diary`/`journal` |
+| `diary_opened` | клиенты | открыт сегмент дневника | `tab`: `diary`/`journal`/`tests` |
 | `mood_bridge_clicked` | клиенты | нажата кнопка моста после тяжёлого дня | `target`: `dialog`/`people` |
 
 ## Как добавить событие

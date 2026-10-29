@@ -1,3 +1,4 @@
+import ProfileSelfCheck from './ProfileSelfCheck'
 import { setAnalyticsOptOut, track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { useAnalyticsOptOut } from '@ryadom/analytics/react'
@@ -384,6 +385,8 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
         </ListItem>
       </List>
       </section>
+
+      <ProfileSelfCheck />
 
       <div className="rd-profile-actions">
         {!anonymous && (

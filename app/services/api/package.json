@@ -19,6 +19,7 @@
     "@ryadom/contracts": "workspace:*",
     "@ryadom/core": "workspace:*",
     "@ryadom/db": "workspace:*",
+    "@ryadom/self-check": "workspace:*",
     "assert-never": "^1.4.0",
     "hono": "^4.13.8",
     "ioredis": "^5.11.1",

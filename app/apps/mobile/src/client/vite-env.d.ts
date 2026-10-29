@@ -11,6 +11,9 @@ interface ImportMetaEnv {
   readonly VITE_PROD_WEB_URL?: string
   readonly VITE_STAGING_API_URL?: string
   readonly VITE_STAGING_WEB_URL?: string
+  /** `1` turns the tests inside the app on (add-self-check-tests, D9); `VITE_SELF_CHECK_PREVIEW=1` also shows the ones in review. */
+  readonly VITE_SELF_CHECK_ENABLED?: string
+  readonly VITE_SELF_CHECK_PREVIEW?: string
 }
 
 interface ImportMeta {

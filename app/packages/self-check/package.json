@@ -1,0 +1,19 @@
+{
+  "name": "@ryadom/self-check",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Тесты внутри приложения «Рядом»: формат описания опросника как данных и подсчёт без побочных эффектов. Общий для services/api и всех клиентов.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.1"
+  }
+}

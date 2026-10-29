@@ -47,6 +47,7 @@ const nextConfig: NextConfig = {
     '@ryadom/client-core',
     '@ryadom/contracts',
     '@ryadom/design',
+    '@ryadom/self-check',
     '@ryadom/ui',
   ],
   poweredByHeader: false,

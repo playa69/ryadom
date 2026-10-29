@@ -26,6 +26,7 @@ class _File:
         self.client_ids: dict[tuple[str, str], str] = {}  # (dialog_id, client_id) -> message_id
         self.prefs: dict[str, str] = {}  # user_id -> voice
         self.settings: dict[str, bool] = {}  # user_id -> recap_enabled
+        self.memory_settings: dict[str, tuple[bool, str | None, str | None]] = {}  # user_id -> (enabled, version, at)
         self.usage: list[tuple] = []
 
 
@@ -169,6 +170,17 @@ class FakeDialogDatabase:
             state.usage = [row for row in state.usage if row[0] not in gone]
             state.prefs.pop(user_id, None)
             state.settings.pop(user_id, None)
+            state.memory_settings.pop(user_id, None)
+
+    def get_memory_settings(self, user_id: str) -> tuple[bool, str | None, str | None] | None:
+        with self._lock:
+            return self._state().memory_settings.get(user_id)
+
+    def put_memory_settings(
+        self, user_id: str, enabled: bool, consent_version: str | None, consent_at: str | None, updated_at: str
+    ) -> None:
+        with self._lock:
+            self._state().memory_settings[user_id] = (enabled, consent_version, consent_at)
 
     def delete_dialog(self, user_id: str, dialog_id: str, forget_derived: bool) -> None:
         with self._lock:

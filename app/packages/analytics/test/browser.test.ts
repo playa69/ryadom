@@ -189,6 +189,17 @@ describe('отправка', () => {
     expect(posthog.capture).toHaveBeenCalledWith('memory_card_action', { action: 'dismiss_item' })
   })
 
+  it('события тестов несут test_id, а баллы, уровни и ответы отбрасываются', async () => {
+    const { posthog, started } = start(CONFIG)
+    await started
+    track(AnalyticsEvent.SelfCheckCompleted, { test_id: 'phq9', score: 20, band: 'high', answers: [3, 3] } as never)
+    track(AnalyticsEvent.SelfCheckStarted, { test_id: 'gad7', from: 'diary' })
+    track(AnalyticsEvent.SelfCheckResultDeleted, { scope: 'all' })
+    expect(posthog.capture).toHaveBeenCalledWith('self_check_completed', { test_id: 'phq9' })
+    expect(posthog.capture).toHaveBeenCalledWith('self_check_started', { test_id: 'gad7', from: 'diary' })
+    expect(posthog.capture).toHaveBeenCalledWith('self_check_result_deleted', { scope: 'all' })
+  })
+
   it('просмотр экрана отправляется по маршруту, без идентификаторов и запроса', async () => {
     const { posthog, started } = start(CONFIG)
     await started

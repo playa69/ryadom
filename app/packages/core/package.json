@@ -26,6 +26,7 @@
     "@react-email/render": "^2.1.0",
     "@ryadom/db": "workspace:*",
     "@ryadom/design": "workspace:*",
+    "@ryadom/self-check": "workspace:*",
     "assert-never": "^1.4.0",
     "drizzle-orm": "^0.45.3",
     "jose": "^6.2.12",
