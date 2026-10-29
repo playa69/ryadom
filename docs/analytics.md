@@ -152,12 +152,12 @@
 
 ### Тесты (REQ-WELL-06…08)
 
-В событиях нет баллов, уровней, ответов и признака кризисного ответа. Экран помощи при кризисе событий не создаёт: считается только счётчик Prometheus `self_check_crisis_total{test}`. Карточку «Поговорить со специалистом» не считаем: нажатие выдало бы высокий уровень.
+В событиях нет баллов, уровней, ответов и признака кризисного ответа. Экран помощи при кризисе событий не создаёт: считается только счётчик Prometheus `self_check_crisis_total{test}`. Карточку «Поговорить со специалистом» не считаем: нажатие выдало бы высокий уровень. Ни одно событие не несёт слов поискового запроса (`query` и `search` вырезает `sanitizeProperties`, тест `packages/analytics/test/self-check.test.ts` проверяет это для каждого события тестов). Клиент шлёт одиннадцать событий (от `self_check_opened` до `self_check_history_opened`), сервер три (`self_check_saved`, `self_check_result_deleted`, `self_check_consent_revoked`), `self_check_warning_choice` не отправляется: клинические скрининги, к которым оно относится, отложены. «Удалить все результаты тестов» в профиле события клиента не шлёт: удаление считает сервер (`self_check_result_deleted`, `scope: all`).
 
 | Событие | Когда | Свойства |
 |---|---|---|
-| `self_check_opened` | открыт список тестов | `from`: `diary` / `tests` / `history` |
-| `self_check_searched` | поиск в каталоге | `found` (слова запроса не отправляются) |
+| `self_check_opened` | показан список тестов или экран теста: блок «Самопроверка» в «Дневнике» (`diary`), сегмент «Тесты» (`tests`), экран теста с историей (`history`, вместе с `self_check_history_opened`) | `from`: `diary` / `tests` / `history` |
+| `self_check_searched` | поиск в каталоге: через 1,5 с после последней буквы, один раз на оставленный запрос; пустое поле поиском не считается | `found`: нашёлся ли хоть один тест (слова запроса не отправляются) |
 | `self_check_started` | показан первый вопрос | `test_id`, `from` |
 | `self_check_step_back` | «← Назад» | `test_id` |
 | `self_check_interrupt_choice` | ответ на «Прервать тест?» | `test_id`, `action`: `continue` / `abort`, `progress`: треть пути |
@@ -167,7 +167,7 @@
 | `self_check_consent_choice` | ответ на согласие | `action`: `accepted` / `declined` |
 | `self_check_save_failed` | «Не получилось сохранить» | `test_id` |
 | `self_check_history_opened` | экран теста с историей | `test_id` |
-| `self_check_warning_choice` | предупреждение перед клиническим скринингом | `test_id`, `action`: `start` / `later` |
+| `self_check_warning_choice` | предупреждение перед клиническим скринингом (не отправляется: клинические скрининги отложены) | `test_id`, `action`: `start` / `later` |
 | `self_check_saved` | сервер сохранил результат | `test_id` |
 | `self_check_result_deleted` | сервер удалил результаты | `scope`: `one` / `test` / `all` |
 | `self_check_consent_revoked` | согласие отозвано | — |

@@ -1,13 +1,19 @@
 # =============================================================================
 # ServiceMonitor app-api — scrape /metrics API Prometheus'ом (ns prod)
 # =============================================================================
-# /metrics отдаёт только счётчики без id и текстов: сейчас self_check_crisis_total{test}
-# (ветка pending/add-self-check-tests, D4). Наружу не публикуется: HTTPRoute app-api пропускает только
-# PathPrefix /api (02-httproute.yaml), а /metrics лежит вне /api.
+# /metrics отдаёт только счётчики без id и текстов: сейчас self_check_crisis_total{test}, сколько раз
+# человеку показали экран помощи после кризисного пункта теста (openspec/specs/self-check, «Счёт кризисных
+# ответов без человека»). Наружу не публикуется: HTTPRoute app-api пропускает только PathPrefix /api
+# (02-httproute.yaml), а /metrics лежит вне /api.
 #
-# Применяет admin. Перед этим нужно правило сети: ingress monitoring → app-api:3002 в
-# namespaces/manifests/01-network-policy-prod.yaml (сейчас там разрешён только :15090) и egress prometheus →
-# prod:3002 в monitoring/manifests/01-network-policy.yaml (по образцу agent/04-servicemonitor.yaml).
+# Применяет admin, и сначала сеть, потом ServiceMonitor (иначе цель будет down: Prometheus не дойдёт до :3002):
+#   1. ingress monitoring → app-api:3002 — prod-allow-ingress-monitoring-scrape-api в
+#      namespaces/manifests/07-network-policy-prod-apps.yaml (в 01 разрешён только :15090);
+#   2. egress prometheus → app-api:3002 — prometheus-allow-egress-scrape в monitoring/manifests/01-network-policy.yaml
+#      (по образцу agent/04-servicemonitor.yaml);
+#   3. этот файл.
+# Проверка: в Prometheus цель app-api (Status → Targets) в состоянии up, а после кризисного пункта теста на
+# тестовом аккаунте self_check_crisis_total{test="phq9"} вырос.
 # =============================================================================
 
 ---

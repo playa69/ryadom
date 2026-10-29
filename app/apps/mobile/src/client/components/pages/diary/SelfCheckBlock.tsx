@@ -1,3 +1,4 @@
+import { useSelfCheckOpened } from '@ryadom/analytics/react'
 import { Button } from 'framework7-react'
 import { openTest, shownWave1 } from '../../../lib/self-check'
 import { refreshLatestResults, openHistory, useLatestResults } from '../../../lib/self-check-store'
@@ -9,6 +10,7 @@ export default function SelfCheckBlock() {
   const tests = shownWave1()
   const latest = useLatestResults()
   useEffect(() => refreshLatestResults(), [])
+  useSelfCheckOpened('diary')
   if (tests.length === 0) return null
   return (
     <section className="rd-card rd-self-check" data-testid="self-check-block" aria-labelledby="self-check-title">

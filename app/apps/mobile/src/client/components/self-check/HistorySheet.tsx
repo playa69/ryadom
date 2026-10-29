@@ -1,4 +1,5 @@
 import { track } from '@ryadom/analytics/browser'
+import { reportSelfCheckOpened } from '@ryadom/analytics/self-check'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { SelfCheckResultApi } from '@ryadom/contracts/api/self-check'
 import { byId } from '@ryadom/self-check/catalog'
@@ -42,6 +43,7 @@ export default function HistorySheet() {
       setTest(next)
       setItems(null)
       setOpened(true)
+      reportSelfCheckOpened('history')
       track(AnalyticsEvent.SelfCheckHistoryOpened, { test_id: next.id })
       load(next)
     }

@@ -7,6 +7,7 @@
 #
 # Обратная сторона scrape-правил (ingress от monitoring на scrape-порты):
 #   prod      :15090  — namespaces/manifests/01-network-policy-prod.yaml
+#   prod      :3002   — namespaces/manifests/07-network-policy-prod-apps.yaml (app-api, /metrics)
 #   agent     :8001   — namespaces/manifests/05-network-policy-agent.yaml
 #   infra     :3000/9091 — namespaces/manifests/02-network-policy-infra.yaml
 #   ryadom-db :9187   — postgres/manifests/03-network-policy.yaml
@@ -185,6 +186,17 @@ spec:
       ports:
         - protocol: TCP
           port: 15090
+    # Метрики api (:3002, ServiceMonitor k8s/app/api/04-servicemonitor.yaml): только поды app-api в prod
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prod
+          podSelector:
+            matchLabels:
+              app: app-api
+      ports:
+        - protocol: TCP
+          port: 3002
     # Метрики агента (:8001, ServiceMonitor k8s/agent/04-servicemonitor.yaml)
     - to:
         - namespaceSelector:

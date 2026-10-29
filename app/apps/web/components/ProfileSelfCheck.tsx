@@ -1,8 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { track } from '@ryadom/analytics/browser'
-import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { useClient } from '@/lib/auth'
 import Modal from './Modal'
 import { useNotice } from './Notice'
@@ -36,7 +34,6 @@ export default function ProfileSelfCheck() {
     try {
       if (ask === 'results') {
         await client.deleteSelfCheckResults()
-        track(AnalyticsEvent.SelfCheckResultAction, { test_id: 'all', action: 'close' })
         notify('Все результаты тестов удалены.', 'success')
       } else {
         await client.revokeSelfCheckConsent()

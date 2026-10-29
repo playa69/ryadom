@@ -1,3 +1,4 @@
+import { useSelfCheckOpened, useSelfCheckSearchReport } from '@ryadom/analytics/react'
 import type { Router } from 'framework7/types'
 import { useEffect, useMemo, useState } from 'react'
 import { openTest, shownTests } from '../../../lib/self-check'
@@ -15,10 +16,8 @@ export default function TestsPage({ f7router }: { f7router: Router.Router }) {
     const q = query.trim().toLowerCase()
     return q ? all.filter((t) => `${t.title} ${t.code} ${t.subtitle} ${t.preface}`.toLowerCase().includes(q)) : all
   }, [all, query])
-  const [searched, setSearched] = useState(false)
-  useEffect(() => {
-    if (query.trim() && !searched) setSearched(true)
-  }, [query, searched])
+  useSelfCheckOpened('tests')
+  useSelfCheckSearchReport(query, found.length > 0)
 
   return (
     <DiaryShell segment="tests" f7router={f7router}>

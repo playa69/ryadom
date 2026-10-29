@@ -1,3 +1,5 @@
+import { captureAnalytics, leaksOfTests } from '../support/analytics'
+import { step } from '../support/evidence'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { openWebApp, registerAndConfirm, uniqueEmail } from '../support/web'
@@ -6,12 +8,13 @@ import { openWebApp, registerAndConfirm, uniqueEmail } from '../support/web'
  * Тесты внутри приложения, веб (`REQ-WELL-06`…`REQ-WELL-08`, `openspec/specs/self-check`):
  * блок «Самопроверка» в «Дневнике», сегмент «Тесты» с поиском, прохождение в листе («Назад», «Прервать
  * тест?»), результат без диагноза, кризисный пункт PHQ-9 открывает экран помощи и лист SOS, тест
- * проходится без сети. Сохранение и история появятся с серверной частью (миграция 0010), здесь их нет.
- * Один сценарий на одну регистрацию, как в остальных web-спеках.
+ * проходится без сети; отчёты аналитики «список открыт» и «поиск» уходят без баллов и слов запроса. Сохранение, история
+ * и профиль — во втором сценарии. Один сценарий на одну регистрацию, как в остальных web-спеках.
  */
 test('тесты: самопроверка, каталог, прохождение, результат, кризисный пункт, без сети', async ({ page, shot }) => {
   test.setTimeout(180_000)
   await clearMailbox()
+  const analytics = await captureAnalytics(page)
   await openWebApp(page)
   await registerAndConfirm(page, uniqueEmail('web-self-check'))
   await openWebApp(page, '/diary')
@@ -19,6 +22,7 @@ test('тесты: самопроверка, каталог, прохождени
   // ── блок «Самопроверка» в «Дневнике»: шесть шкал волны 1 ────────────────
   const block = page.getByTestId('self-check-block')
   await expect(block).toBeVisible()
+  await expect.poll(() => analytics.named('self_check_opened').map((p) => p.from)).toContain('diary')
   await expect(block).toContainText('Научные скрининговые опросники. Это не диагноз — только ориентир.')
   for (const id of ['gad7', 'phq9', 'rosenberg', 'wellbeing', 'stress', 'burnout']) {
     await expect(page.getByTestId(`self-check-row-${id}`)).toBeVisible()
@@ -95,14 +99,21 @@ test('тесты: самопроверка, каталог, прохождени
   await page.getByTestId('diary-segment-tests').click()
   await expect(page).toHaveURL(/\/diary\/tests$/)
   await expect(page.getByTestId('tests-catalog')).toContainText('Это скрининг, а не диагноз')
+  await expect.poll(() => analytics.named('self_check_opened').map((p) => p.from)).toContain('tests')
+  await step(page, 'tests-opened', 'Сегмент «Тесты» открыт: все тесты списком; в аналитику ушло только «список открыт» с источником «Тесты»')
   await expect(page.getByTestId('tests-card-gad7')).toBeVisible()
   await shot(page, 'web-self-check-catalog')
   await page.getByTestId('tests-search').fill('трев')
   await expect(page.getByTestId('tests-card-gad7')).toBeVisible()
   await expect(page.getByTestId('tests-card-phq9')).toHaveCount(0)
   await shot(page, 'web-self-check-search')
+  // Поиск считается, когда человек перестал печатать: одно событие на оставленный запрос, только «нашлось ли».
+  await expect.poll(() => analytics.named('self_check_searched').map((p) => p.found)).toEqual([true])
+  await step(page, 'search-found', 'Поиск «трев»: остались тесты про тревогу; в аналитику ушло только «нашлось», без слова')
   await page.getByTestId('tests-search').fill('яхта')
   await expect(page.getByTestId('tests-empty')).toBeVisible()
+  await expect.poll(() => analytics.named('self_check_searched').map((p) => p.found)).toEqual([true, false])
+  await step(page, 'search-empty', 'Поиск «яхта»: «Ничего не нашлось»; в аналитику ушло только «не нашлось», без слова')
   await page.getByTestId('tests-search').fill('')
 
   // ── без сети: тест проходится и показывает результат ───────────────────
@@ -113,6 +124,11 @@ test('тесты: самопроверка, каталог, прохождени
   await shot(page, 'web-self-check-offline-result')
   await page.getByTestId('result-close').click()
   await page.context().setOffline(false)
+
+  // ── аналитика: ни балла, ни уровня, ни ответа, ни слов поиска ───────────
+  await expect.poll(() => analytics.named('self_check_completed').length).toBeGreaterThanOrEqual(3)
+  expect(leaksOfTests(analytics.all(), ['трев', 'яхта'])).toEqual([])
+  expect(analytics.named('self_check_searched')).toHaveLength(2)
 })
 
 /** One pass of a test: a tap per question. */
@@ -123,6 +139,7 @@ async function answerAll(page: import('@playwright/test').Page, values: number[]
 test('тесты: согласие, сохранение, история с графиком, удаление, ошибка красным тостом, профиль', async ({ page, shot }) => {
   test.setTimeout(240_000)
   await clearMailbox()
+  const analytics = await captureAnalytics(page)
   await openWebApp(page)
   await registerAndConfirm(page, uniqueEmail('web-self-check-save'))
   await openWebApp(page, '/diary')
@@ -159,6 +176,7 @@ test('тесты: согласие, сохранение, история с гр
   await page.getByTestId('self-check-history-gad7').click()
   await expect(page.getByTestId('history-row')).toHaveCount(2)
   await expect(page.getByTestId('history-chart-point')).toHaveCount(2)
+  await expect.poll(() => analytics.named('self_check_opened').map((p) => p.from)).toContain('history')
   await shot(page, 'web-self-check-history')
   await page.getByTestId('history-delete').first().click()
   await expect(page.getByTestId('history-confirm')).toContainText('исчезнет с сервера')
@@ -193,6 +211,7 @@ test('тесты: согласие, сохранение, история с гр
   await expect(page.getByTestId('self-check-confirm-text')).toContainText('Исчезнут результаты всех тестов')
   await page.getByTestId('self-check-confirm-yes').click()
   await expect(notice.filter({ hasText: 'Все результаты тестов удалены' })).toBeVisible()
+  await step(page, 'profile-delete-all', 'Профиль → «Данные»: все результаты тестов удалены; клиент об этом не отчитывается, удаление считает сервер')
   await page.getByTestId('row-revoke-self-check').click()
   await expect(page.getByTestId('self-check-confirm-text')).toContainText('больше не будем их хранить')
   await shot(page, 'web-self-check-revoke')
@@ -204,4 +223,9 @@ test('тесты: согласие, сохранение, история с гр
   await answerAll(page, [1, 1, 1, 1, 1, 1, 1])
   await page.getByTestId('result-save').click()
   await expect(page.getByTestId('test-consent')).toBeVisible()
+
+  // ── аналитика: «Удалить все результаты тестов» в профиле клиент не отчитывает, удаление считает сервер ──
+  await expect.poll(() => analytics.named('self_check_consent_shown').length).toBe(3)
+  expect(analytics.named('self_check_result_action').filter((p) => p.test_id === 'all')).toEqual([])
+  expect(leaksOfTests(analytics.all(), [])).toEqual([])
 })

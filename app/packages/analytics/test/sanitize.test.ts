@@ -90,6 +90,23 @@ describe('sanitizeProperties', () => {
     expect(isDeniedKey('device-key')).toBe(true)
     expect(isDeniedKey('policy_version')).toBe(false)
   })
+
+  it('тесты: балл, подшкалы, уровень, ответы и слова поиска не проходят под любым написанием ключа', () => {
+    const clean = sanitizeProperties({
+      test_id: 'phq9',
+      found: false,
+      from: 'tests',
+      score: 20,
+      Scores: [1, 2],
+      subScores: 3,
+      band: 'high',
+      answers: [3, 3, 3],
+      Answer: 2,
+      query: 'тревога',
+      search: 'тревога',
+    })
+    expect(clean).toEqual({ test_id: 'phq9', found: false, from: 'tests' })
+  })
 })
 
 describe('normalizePath', () => {

@@ -1,14 +1,19 @@
+import { allTests } from '@ryadom/self-check/catalog'
 import { openApp, openTab, startAnonymously } from '../support/app'
+import { captureAnalytics, leaksOfTests } from '../support/analytics'
+import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 
 /**
  * Тесты внутри приложения, PWA (`REQ-WELL-06`…`REQ-WELL-08`, `openspec/specs/self-check`): блок «Самопроверка»
  * в «Дневнике», сегмент «Тесты» с поиском, прохождение в листе («Назад», «Прервать тест?»), результат без диагноза,
- * кризисный пункт PHQ-9 открывает экран помощи и лист SOS, тест проходится без сети. Сохранение и история появятся
- * с серверной частью (миграция 0010). Зеркало `web-self-check.spec.ts`.
+ * кризисный пункт PHQ-9 открывает экран помощи и лист SOS, тест проходится без сети; отчёты аналитики «список открыт»
+ * и «поиск» уходят без баллов и слов запроса. Сохранение, история и профиль — во втором сценарии, предкэш service
+ * worker — в третьем. Зеркало `web-self-check.spec.ts`.
  */
 test('тесты в PWA: самопроверка, каталог, прохождение, результат, кризисный пункт, без сети', async ({ page, shot }) => {
   test.setTimeout(180_000)
+  const analytics = await captureAnalytics(page)
   await openApp(page)
   await startAnonymously(page)
   await openTab(page, 'Дневник')
@@ -17,6 +22,7 @@ test('тесты в PWA: самопроверка, каталог, прохож�
   const diary = page.locator('.page-current[data-name="diary"]')
   const block = diary.getByTestId('self-check-block')
   await expect(block).toBeVisible()
+  await expect.poll(() => analytics.named('self_check_opened').map((p) => p.from)).toContain('diary')
   await expect(block).toContainText('Научные скрининговые опросники. Это не диагноз — только ориентир.')
   for (const id of ['gad7', 'phq9', 'rosenberg', 'wellbeing', 'stress', 'burnout']) {
     await expect(diary.getByTestId(`self-check-row-${id}`)).toBeAttached()
@@ -103,13 +109,20 @@ test('тесты в PWA: самопроверка, каталог, прохож�
   const tests = page.locator('.page-current[data-name="diary"]')
   await expect(tests.getByTestId('tests-catalog')).toContainText('Это скрининг, а не диагноз')
   await expect(tests.getByTestId('tests-card-gad7')).toBeVisible()
+  await expect.poll(() => analytics.named('self_check_opened').map((p) => p.from)).toContain('tests')
+  await step(page, 'tests-opened', 'Сегмент «Тесты» открыт: все тесты списком; в аналитику ушло только «список открыт» с источником «Тесты»')
   await shot(page, 'app-self-check-catalog')
   await tests.getByTestId('tests-search').fill('трев')
   await expect(tests.getByTestId('tests-card-gad7')).toBeVisible()
   await expect(tests.getByTestId('tests-card-phq9')).toHaveCount(0)
   await shot(page, 'app-self-check-search')
+  // Поиск считается, когда человек перестал печатать: одно событие на оставленный запрос, только «нашлось ли».
+  await expect.poll(() => analytics.named('self_check_searched').map((p) => p.found)).toEqual([true])
+  await step(page, 'search-found', 'Поиск «трев»: остались тесты про тревогу; в аналитику ушло только «нашлось», без слова')
   await tests.getByTestId('tests-search').fill('яхта')
   await expect(tests.getByTestId('tests-empty')).toBeVisible()
+  await expect.poll(() => analytics.named('self_check_searched').map((p) => p.found)).toEqual([true, false])
+  await step(page, 'search-empty', 'Поиск «яхта»: «Ничего не нашлось»; в аналитику ушло только «не нашлось», без слова')
   await tests.getByTestId('tests-search').fill('')
 
   // ── без сети: тест проходится, результат виден ─────────────────────────
@@ -120,6 +133,11 @@ test('тесты в PWA: самопроверка, каталог, прохож�
   await shot(page, 'app-self-check-offline-result')
   await page.getByTestId('result-close').click()
   await page.context().setOffline(false)
+
+  // ── аналитика: ни балла, ни уровня, ни ответа, ни слов поиска ───────────
+  await expect.poll(() => analytics.named('self_check_completed').length).toBeGreaterThanOrEqual(3)
+  expect(leaksOfTests(analytics.all(), ['трев', 'яхта'])).toEqual([])
+  expect(analytics.named('self_check_searched')).toHaveLength(2)
 })
 
 /** One pass of a test: a tap per question. */
@@ -132,6 +150,7 @@ const confirmOk = (page: import('@playwright/test').Page) => page.locator('.dial
 
 test('тесты в PWA: согласие, сохранение, история с графиком, удаление, ошибка красным тостом, профиль', async ({ page, shot }) => {
   test.setTimeout(240_000)
+  const analytics = await captureAnalytics(page)
   await openApp(page)
   await startAnonymously(page)
   await openTab(page, 'Дневник')
@@ -166,6 +185,7 @@ test('тесты в PWA: согласие, сохранение, история 
   await diary.getByTestId('self-check-history-gad7').click()
   await expect(page.getByTestId('history-row')).toHaveCount(2)
   await expect(page.getByTestId('history-chart-point')).toHaveCount(2)
+  await expect.poll(() => analytics.named('self_check_opened').map((p) => p.from)).toContain('history')
   await shot(page, 'app-self-check-history')
   await page.getByTestId('history-delete').first().click()
   await expect(page.locator('.dialog.modal-in')).toContainText('исчезнет с сервера')
@@ -201,9 +221,79 @@ test('тесты в PWA: согласие, сохранение, история 
   await expect(page.locator('.dialog.modal-in')).toContainText('Исчезнут результаты всех тестов')
   await confirmOk(page)
   await expect(toast.filter({ hasText: 'Все результаты тестов удалены' })).toBeVisible()
+  await step(page, 'profile-delete-all', 'Профиль → «Данные»: все результаты тестов удалены; клиент об этом не отчитывается, удаление считает сервер')
   await profile.getByTestId('row-revoke-self-check').click()
   await expect(page.locator('.dialog.modal-in')).toContainText('больше не будем их хранить')
   await shot(page, 'app-self-check-revoke')
   await confirmOk(page)
   await expect(profile.getByTestId('row-revoke-self-check')).toHaveCount(0)
+
+  // ── аналитика: «Удалить все результаты тестов» клиент не отчитывает, удаление считает сервер ──
+  // The next report after the deletion is the mark that everything before it has been sent.
+  const startedBefore = analytics.named('self_check_started').length
+  await openTab(page, 'Дневник')
+  await diary.getByTestId('self-check-start-gad7').click()
+  await expect.poll(() => analytics.named('self_check_started').length).toBe(startedBefore + 1)
+  expect(analytics.named('self_check_result_action').filter((p) => p.test_id === 'all')).toEqual([])
+  expect(leaksOfTests(analytics.all(), [])).toEqual([])
 })
+
+/**
+ * Предкэш PWA: описания тестов вшиты в бандл, а бандл целиком лежит в предкэше service worker (`sw.ts`,
+ * `__WB_MANIFEST`; исключены только posthog и декодер Opus). После первой загрузки воркер держит страницу, и после
+ * перезагрузки без сети приложение поднимается из предкэша, а тест проходится до результата.
+ */
+test('тесты в PWA: описания в предкэше service worker, после перезагрузки без сети тест проходится', async ({ page }) => {
+  test.setTimeout(180_000)
+  await openApp(page)
+  await startAnonymously(page)
+
+  // ── воркер установлен, предкэш заполнен; каждое описание теста лежит в закэшированном файле ──
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined))
+  const described = allTests.flatMap((t) => [t.title, t.preface, ...t.items.map((i) => i.text)])
+  const inPrecache = await page.evaluate(async (wanted) => {
+    const scripts: string[] = []
+    for (const name of (await caches.keys()).filter((n) => n.includes('precache'))) {
+      const cache = await caches.open(name)
+      for (const request of await cache.keys()) {
+        if (!new URL(request.url).pathname.endsWith('.js')) continue
+        const response = await cache.match(request)
+        if (response) scripts.push(await response.text())
+      }
+    }
+    return wanted.map((variants) => scripts.some((script) => variants.some((v) => script.includes(v))))
+  }, described.map(variantsOf))
+  expect(
+    described.filter((_, i) => !inPrecache[i]),
+    'тексты тестов, которых нет в предкэше',
+  ).toEqual([])
+
+  // ── первая перезагрузка с сетью: теперь страницей управляет воркер ──────
+  await page.reload()
+  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true)
+
+  // ── без сети: страница и бандл берутся из предкэша, тест проходится до результата ──
+  await page.context().setOffline(true)
+  await page.reload()
+  await openTab(page, 'Дневник')
+  // Without the network the diary itself does not load, and the block «Самопроверка» comes with it; the catalog
+  // needs no server and is what the segment «Тесты» shows.
+  const diary = page.locator('.page-current[data-name="diary"]')
+  await diary.getByTestId('diary-segment-tests').click()
+  const tests = page.locator('.page-current[data-name="diary"]')
+  await expect(tests.getByTestId('tests-card-k6')).toBeVisible()
+  await step(page, 'precache-catalog', 'Страница перезагружена без сети, каталог тестов открыт из предкэша')
+  await tests.getByTestId('tests-start-rosenberg').click()
+  await expect(page.getByTestId('test-progress-label')).toHaveText('Вопрос 1 из 10')
+  for (let i = 0; i < 10; i++) await page.getByTestId('test-option-2').click()
+  await expect(page.getByTestId('result-score')).toBeVisible()
+  await step(page, 'precache-result', 'Без сети тест пройден до результата, описание взято из предкэша')
+  await page.getByTestId('result-close').click()
+  await page.context().setOffline(false)
+})
+
+/** The text as the bundle may hold it: as it is, and with every non-ASCII letter written as a `\uXXXX` escape. */
+function variantsOf(text: string): string[] {
+  const escaped = text.replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  return escaped === text ? [text] : [text, escaped]
+}
