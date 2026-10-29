@@ -12,10 +12,6 @@ class MemoryUnavailable(MemoryServiceError):
     status, code, message = 503, "MEMORY_UNAVAILABLE", "Память сейчас недоступна"
 
 
-class MemoryNotAllowed(MemoryServiceError):
-    status, code, message = 403, "MEMORY_NOT_ALLOWED", "Память пока доступна не всем"
-
-
 class MemoryDisabled(MemoryServiceError):
     status, code, message = 409, "MEMORY_DISABLED", "Память выключена"
 
@@ -24,12 +20,12 @@ class MemoryFull(MemoryServiceError):
     status, code, message = 409, "MEMORY_FULL", "Память заполнена"
 
 
-class FactNotFound(MemoryServiceError):
-    status, code, message = 404, "FACT_NOT_FOUND", "Факт не найден"
+class NoteNotFound(MemoryServiceError):
+    status, code, message = 404, "NOTE_NOT_FOUND", "Заметка не найдена"
 
 
-class FactRejected(MemoryServiceError):
-    status, code, message = 422, "FACT_REJECTED", "Это нельзя запомнить"
+class NoteRejected(MemoryServiceError):
+    status, code, message = 422, "NOTE_REJECTED", "Это нельзя запомнить"
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -42,7 +38,3 @@ class MemoryValidation(MemoryServiceError):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
-
-
-class DialogMissing(MemoryServiceError):
-    status, code, message = 404, "AGENT_DIALOG_NOT_FOUND", "Диалог не найден"

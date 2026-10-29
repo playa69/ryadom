@@ -27,12 +27,12 @@ export async function resolveSentinels(
 const ERROR_LOG_INTERVAL_MS = 30_000
 
 /**
- * The Redis client, or null when `REDIS_ENABLED` is off. It is built to fail fast: with no offline
+ * The Redis client, or null when no address is configured (`REDIS_URL` or `REDIS_SENTINEL_HOST`). It is built to fail fast: with no offline
  * queue a command sent while the connection is down is refused at once, so the rate limiter can
  * count in memory instead of making requests wait for a server that is not there.
  */
 export async function createRedisClient(env: AppServerEnv, logger: Logger): Promise<Redis | null> {
-  if (!env.REDIS_ENABLED) return null
+  if (!env.REDIS_URL && !env.REDIS_SENTINEL_HOST) return null
 
   const options = {
     enableOfflineQueue: false,

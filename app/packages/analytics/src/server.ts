@@ -39,7 +39,6 @@ export interface ServerAnalyticsClient {
     timestamp?: Date
   }): void
   identify(message: { distinctId: string; properties?: Record<string, unknown>; disableGeoip?: boolean }): void
-  isFeatureEnabled(key: string, distinctId: string): Promise<boolean | undefined>
   captureException(error: unknown, distinctId?: string, additionalProperties?: Record<string | number, unknown>): void
   shutdown(timeoutMs?: number): Promise<void>
   /** Sends what is queued without stopping. */
@@ -52,7 +51,7 @@ export interface ServerAnalyticsOptions {
   key?: string | undefined
   /** The ingestion host, e.g. `https://eu.i.posthog.com`. */
   host: string
-  /** `local`, `staging` or `prod`: lets one PostHog project hold more than one environment. */
+  /** `local` or `prod`: keeps local runs apart from prod in the one PostHog project. */
   appEnv: string
   /** Which service reports, e.g. `api`. */
   service: string
@@ -71,12 +70,6 @@ export interface ServerAnalyticsOptions {
   optOutTtlMs?: number
   /** The build that reports (the image tag), sent as `app_version` so a figure can be split by release. */
   release?: string | undefined
-  /**
-   * How long `erasePerson` waits before asking PostHog to erase. The clients batch their events and
-   * send them a few seconds later; erasing at once would let a batch that was queued before the
-   * deletion arrive after it and create the person again. Pending erasures run at once on `shutdown`.
-   */
-  erasureDelayMs?: number
   /** For tests. */
   client?: ServerAnalyticsClient
 }
@@ -102,19 +95,18 @@ export interface ServerAnalytics {
   captureAnonymous<E extends AnalyticsEvent>(event: E, ...args: AnalyticsEventArgs<E>): void
   /** Sets what is known about a person. */
   identify(userId: string, traits: AnalyticsTraits): void
-  /** A feature flag for a person; false when analytics are off or PostHog does not answer. */
-  isFeatureEnabled(flag: string, userId: string): Promise<boolean>
   /** An error that was handled but is worth a look. */
   captureException(error: unknown, userId?: string, context?: object): void
   /**
-   * Erases a person from PostHog, for an account that was just deleted. It waits `erasureDelayMs`
-   * first (see the option) and sends what is queued for the person, so a late event cannot bring the
-   * profile back; the promise settles when the erasure has been requested.
+   * Erases a person from PostHog, for an account that was deleted. It sends what is queued for the person first, so a
+   * late event of this pod cannot bring the profile back, and settles when the erasure has been requested. It does
+   * not wait and does not retry: the job `analytics.erase-person` (services/api/src/jobs/erase-person.ts) is queued
+   * with the delay that lets the clients' own batches land, and retries a `failed` outcome.
    */
   erasePerson(userId: string): Promise<ErasureResult>
   /** Records a person's choice at once, so the next report already honours it (the answer is otherwise cached). */
   setOptOut(userId: string, optOut: boolean): void
-  /** Sends what is queued and runs pending erasures. Called once on shutdown. */
+  /** Sends what is queued. Called once on shutdown. */
   shutdown(): Promise<void>
 }
 
@@ -126,7 +118,6 @@ const DISABLED: ServerAnalytics = {
   capture() {},
   captureAnonymous() {},
   identify() {},
-  isFeatureEnabled: async () => false,
   captureException() {},
   shutdown: async () => {},
 }
@@ -134,7 +125,6 @@ const DISABLED: ServerAnalytics = {
 /** Waiting for the queue on shutdown must fit in the pod's grace period (see lib/shutdown.ts). */
 const SHUTDOWN_TIMEOUT_MS = 3_000
 const DEFAULT_OPT_OUT_TTL_MS = 60_000
-const DEFAULT_ERASURE_DELAY_MS = 30_000
 /** The remembered answers are bounded: the oldest is dropped past this many people. */
 const MAX_REMEMBERED_PEOPLE = 10_000
 
@@ -214,9 +204,6 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
   }
 
   // ── Erasing people ─────────────────────────────────────────────────────────────────────────
-  const erasureDelay = options.erasureDelayMs ?? DEFAULT_ERASURE_DELAY_MS
-  const pendingErasures = new Set<() => Promise<void>>()
-
   const eraseNow = async (userId: string): Promise<ErasureResult> => {
     if (!options.admin) return 'not_configured'
     try {
@@ -231,24 +218,7 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
   return {
     enabled: true,
     canErase: options.admin !== undefined,
-    erasePerson(userId) {
-      if (!options.admin) return Promise.resolve('not_configured')
-      if (erasureDelay <= 0) return eraseNow(userId)
-      return new Promise<ErasureResult>((resolve) => {
-        let started = false
-        const run = async (): Promise<void> => {
-          if (started) return
-          started = true
-          clearTimeout(timer)
-          pendingErasures.delete(run)
-          resolve(await eraseNow(userId))
-        }
-        const timer = setTimeout(() => void run(), erasureDelay)
-        // The timer alone must not keep the process alive; `shutdown` runs what is still waiting.
-        timer.unref?.()
-        pendingErasures.add(run)
-      })
-    },
+    erasePerson: eraseNow,
     setOptOut(userId, optOut) {
       const known = remembered.get(userId)
       if (optOut) remember(userId, { optOut: true, trafficType: known?.state.trafficType ?? 'real' })
@@ -289,24 +259,13 @@ export function createServerAnalytics(options: ServerAnalyticsOptions): ServerAn
         }),
       )
     },
-    async isFeatureEnabled(flag, userId) {
-      try {
-        // A person who said no is not asked about for flags either: that request names them to PostHog.
-        if ((await stateOf(userId)).optOut) return false
-        return (await client.isFeatureEnabled(flag, userId)) === true
-      } catch (error) {
-        onError?.(error)
-        return false
-      }
-    },
     captureException(error, userId, context) {
       const send = () => client.captureException(impersonalError(error), userId, { ...sanitizeProperties(context), ...common })
       if (userId === undefined) safely(send)
       else forPerson(userId, send)
     },
     async shutdown() {
-      // Erasures that were waiting for the clients' queues run now: the process will not be here later.
-      await Promise.allSettled([...pendingErasures].map((run) => run()))
+      // An erasure waits in the job queue, not here: it runs after the next start if this pod stops first.
       try {
         await client.shutdown(SHUTDOWN_TIMEOUT_MS)
       } catch (error) {

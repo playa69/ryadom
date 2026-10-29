@@ -80,6 +80,12 @@
   --ryadom-indigo-rgb: 73, 61, 209;
   --ryadom-violet-rgb: 150, 100, 235;
 
+  /* Mood levels of the diary, from "hard" to "great": hue and lightness both move, so the five stay apart for colour-blind eyes. */
+  --ryadom-mood-1: #e5645f;
+  --ryadom-mood-2: #ee9a55;
+  --ryadom-mood-3: #e9d36b;
+  --ryadom-mood-4: #86cf86;
+  --ryadom-mood-5: #4ec5d9;
   --ryadom-danger: #ff7a7a;
   /* White at 14px/500 on this fill was 4.27:1, below the 4.5:1 body-text minimum the md button
      label actually needs (14px/500 does not qualify as WCAG "large text"). Darkened so the one

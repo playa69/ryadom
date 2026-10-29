@@ -18,14 +18,18 @@ import { resetPasswordRoutes } from './auth/reset-password'
 import { sessionsRoutes } from './auth/sessions'
 import { telegramRoutes } from './auth/telegram'
 import { dialogSharesRoutes } from './dialog-shares'
+import { diaryRoutes } from './diary'
 import { dialogsRoutes } from './dialogs'
 import { healthRoutes } from './health'
 import { memoryRoutes } from './memory'
+import { metricsRoutes } from './metrics'
 import { otaBundleRoutes } from './ota-bundle'
+import { selfCheckRoutes } from './self-check'
 
 /** Every route of the application. The contracts live in src/shared/api. */
 export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   healthRoutes(app, deps)
+  metricsRoutes(app, deps)
   appStatusRoutes(app, deps)
   analyticsRoutes(app, deps)
   otaBundleRoutes(app, deps)
@@ -49,4 +53,6 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   dialogsRoutes(app, deps)
   dialogSharesRoutes(app, deps)
   memoryRoutes(app, deps)
+  diaryRoutes(app, deps)
+  selfCheckRoutes(app, deps)
 }

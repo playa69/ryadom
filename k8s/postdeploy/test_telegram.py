@@ -1,4 +1,4 @@
-"""Telegram Mini App после выката api 0.7.0 и pwa 0.6.0 (k8s/app/RUNBOOK-telegram-miniapp.md).
+"""Telegram Mini App после выката api 0.7.0 и pwa 0.6.0.
 
 Без аккаунтов: данные запуска подписывает только Telegram ключом бота, поэтому проверяется то, что видно снаружи —
 PWA разрешает встраивание Telegram Web и никому больше, а вход через Telegram включён (токен бота задан) и

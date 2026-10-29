@@ -1,17 +1,18 @@
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Navbar, Page, Preloader } from 'framework7-react'
+import { Block, BlockTitle, Button, f7, Icon, List, ListItem, Preloader } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useEffect, useRef } from 'react'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { dialogMemoryMark } from '@ryadom/client-core/memory'
 import { journal, useJournal } from '../../../lib/journal'
 import { TAB_IDS } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
 import { useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
-import { SosButton } from '../../SosSheet'
+import DiaryShell from '../diary/DiaryShell'
 import { formatJournalDate, nbspDash, tensionLabel } from './format'
 import { JournalEntryBody } from './JournalEntryPage'
+import RecapAutoSetting from './RecapAutoSetting'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
 /**
  * Journal: a feed of past conversations with their summaries. The agent stores the
@@ -19,7 +20,7 @@ import { JournalEntryBody } from './JournalEntryPage'
  *
  * On a wide screen (WIDE, lib/viewport.ts) it is master-detail: the list stays on the left and an
  * entry opens on the right without leaving the screen. Narrower — as on a phone, the entry is its
- * own screen /journal/:id/. Which entry is open lives in lib/journal.ts, so resizing the window
+ * own screen /diary/journal/:id/. Which entry is open lives in lib/journal.ts, so resizing the window
  * keeps the same one open: here when it narrows, in JournalEntryPage when it widens.
  */
 export default function JournalPage({ f7router }: { f7router: Router.Router }) {
@@ -39,25 +40,19 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
   useEffect(() => {
     const narrowed = wasWide.current && !isWide
     wasWide.current = isWide
-    if (!narrowed || !openId || f7router.currentRoute.url !== '/journal/') return
-    f7router.navigate(`/journal/${openId}/`, { animate: false })
+    if (!narrowed || !openId || f7router.currentRoute.url !== '/diary/journal/') return
+    f7router.navigate(`/diary/journal/${openId}/`, { animate: false })
   }, [isWide, openId, f7router])
 
   function openEntry(dialogId: string) {
     track(AnalyticsEvent.JournalEntryOpened)
     journal.open(dialogId)
-    if (!isWide) f7router.navigate(`/journal/${dialogId}/`)
+    if (!isWide) f7router.navigate(`/diary/journal/${dialogId}/`)
   }
 
   return (
     // A conversation may have ended on another tab since the list was loaded.
-    <Page name="journal" className="rd-journal-page ph-no-capture" onPageTabShow={() => void journal.refresh()}>
-      <Navbar title="Журнал" />
-      {/* slot="fixed": this page has a Navbar, and framework7 only lifts known slot names out of
-          .page-content. Left at the default slot, the button was trapped inside .page-content's
-          own stacking context and rendered invisible under the navbar (design review). */}
-      <SosButton slot="fixed" source="header" />
-
+    <DiaryShell segment="journal" f7router={f7router} onTabShow={() => void journal.refresh()}>
       <div className="rd-split">
         <div className="rd-split-side">
           {items === null && (
@@ -87,18 +82,25 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
 
           {items !== null && items.length > 0 && (
             <>
-              {keepsConversations && (
-                // The history is what a person has to lose, so this is where the address is offered.
+              {keepsConversations ? (
+                // The address is offered where the history is: it saves the account, not the conversations.
                 <Block data-testid="journal-link-email">
                   <p className="rd-caption">
-                    Разговоры хранятся только на этом устройстве, {ANONYMOUS_RETENTION_DAYS} дней после
-                    последнего визита. Привяжи почту, чтобы не потерять их.
+                    {DIALOG_KEEP_NOTE} Без почты аккаунт открывается только на этом устройстве и {GUEST_LIFE_CLAUSE}.
+                    Привяжи почту, чтобы сохранить аккаунт.
                   </p>
                   <Button small round outline onClick={() => f7router.navigate('/profile/link-email/')}>
                     {user?.email === null ? 'Привязать почту' : 'Подтвердить почту'}
                   </Button>
                 </Block>
+              ) : (
+                <Block>
+                  <p className="rd-caption" data-testid="journal-retention">
+                    {DIALOG_KEEP_NOTE}
+                  </p>
+                </Block>
               )}
+              <RecapAutoSetting />
               <BlockTitle>Разговоры</BlockTitle>
               <List inset strong dividers mediaList className="rd-menu">
                 {items.map((item) => {
@@ -111,18 +113,18 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
                         isWide && openId === item.dialogId ? 'rd-journal-item rd-journal-item--open' : 'rd-journal-item'
                       }
                       data-testid="journal-item"
-                      title={nbspDash(item.summary?.title ?? 'Разговор')}
+                      title={nbspDash(item.saved === false ? 'Разговор не сохранён' : (item.summary?.title ?? 'Разговор'))}
                       subtitle={mark ? undefined : formatJournalDate(item.startedAt)}
                       text={item.summary?.themes.join(', ')}
                       after={tensionLabel(item) ?? undefined}
                       onClick={() => openEntry(item.dialogId)}
                     >
-                      {/* A conversation "without memory" says so beside its date: it is deleted a day after it went quiet. */}
+                      {/* A conversation "without memory" says so beside its date. */}
                       {mark && (
                         <span slot="subtitle">
                           {formatJournalDate(item.startedAt)}
                           <span className="rd-journal-mark" data-testid="journal-incognito">
-                            {mark.label} · удалится через сутки
+                            {mark.label}
                           </span>
                         </span>
                       )}
@@ -143,7 +145,7 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
         {isWide && (
           <div className="rd-split-main" data-testid="journal-pane">
             {openId ? (
-              <JournalEntryBody key={openId} dialogId={openId} heading />
+              <JournalEntryBody key={openId} dialogId={openId} heading onDeleted={() => journal.open(null)} />
             ) : (
               // With nothing in the list there is nothing to choose: the list's own message says it all.
               items !== null &&
@@ -159,6 +161,6 @@ export default function JournalPage({ f7router }: { f7router: Router.Router }) {
           </div>
         )}
       </div>
-    </Page>
+    </DiaryShell>
   )
 }

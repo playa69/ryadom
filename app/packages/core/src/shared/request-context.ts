@@ -1,9 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 /**
- * Tracing context of the current request: the five tracing headers every service of the repository
- * takes and passes on (`.agents/skills/api-headers-rules`), under the names they have in log
- * records. It is read once at the entry (the HTTP middleware, the WebSocket upgrade) and kept in
+ * Tracing context of the current request: the five tracing headers (`app/AGENTS.md`), under the
+ * names they have in log records. It is read once at the entry (the HTTP middleware, the WebSocket upgrade) and kept in
  * AsyncLocalStorage, so log records and outgoing calls pick it up without it travelling through
  * function arguments.
  */

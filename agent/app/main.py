@@ -1,36 +1,35 @@
 """Точка входа сервиса agent «Слышу Рядом».
 
-Упрощённый агент: контракт agent-api целиком (REST + WebSocket, текст и голос), ответы чат-модели
-и распознавание речи через прокси программы, озвучка Qwen TTS / SaluteSpeech / espeak-ng, диалоги в памяти с копией
-в PostgreSQL (DIALOG_DATABASE_URL): они переживают перезапуск и выкат пода.
-Нужен, чтобы проверить API, голос и интеграцию с приложением до появления настоящей логики
-(openspec/changes/add-agent-service).
+Контракт agent-api целиком (REST + WebSocket, текст и голос). Голос — Gemini Live (речь в речь, app/api/dialog_session.py);
+текстовая модель прокси программы пишет только фоновые тексты (итоги разговоров и недели, заметки памяти). Диалоги живут в памяти
+с копией в PostgreSQL (DIALOG_DATABASE_URL): они переживают перезапуск и выкат пода. Память агента — заметки в PostgreSQL и поиск
+по прошлым разговорам в Cognee.
 """
 
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
-from app.api import dev, dialog_ws, dialogs, health, memory
-from app.clients.cognee import CogneeClient, build_cognee_client
-from app.clients.llm import ChatModel, Recognizer, build_models
-from app.clients.speech import CachedTts, TextToSpeech, build_tts
+from app.api import dialogs, digests, health, memory
+from app.clients.cognee import build_cognee_client
+from app.clients.background_model import BackgroundModel, ProxyBackgroundModel, build_background_model
+from app.clients.speech import CachedTts, TextToSpeech
 from app.core.config import APP_CONFIG, MemorySettings
 from app.core.errors import install_error_handlers
-from app.core.reclaim import MemoryReclaimer
 from app.core.metrics import DIALOG_DB_ERRORS_TOTAL
+from app.core.reclaim import MemoryReclaimer
+from app.core.tracing import build_tracer
 from app.memory.backend import MemoryBackend
 from app.memory.cognee_backend import CogneeMemoryBackend
-from app.core.tracing import build_tracer
+from app.memory.extractor import NotesExtractor
 from app.services.dialog_db import DialogDatabase
+from app.services.dialog_purge import purge_loop
 from app.services.dialog_store import GREETINGS, DialogStore
-from app.services.langfuse_usage import start_langfuse_sink
-from app.services.gemini_budget import CascadeFallback, TokenBudget
+from app.services.gemini_budget import TokenBudget
 from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, split_sentences
 
 if TYPE_CHECKING:
@@ -38,28 +37,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent")
 
-# Готовые фразы агента: приветствия, кризисный ответ (он важнее) и просьба повторить. Заглушки режима без моделей не
-# прогреваются: в бою они не звучат, а прогрев в gemini_live тратит квоту Gemini на старте.
+# Готовые фразы агента: приветствия, кризисный ответ (он важнее) и просьба повторить. Их озвучивает голос Gemini и запоминает
+# память фраз: клиент ждёт приветствие не дольше 0,9 с, а новая сессия Gemini открывается около секунды.
 SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, REPEAT_REQUEST)
-
-FallbackParts = tuple[ChatModel | None, Recognizer | None, TextToSpeech | None]
-
-
-def _build_fallback() -> FallbackParts:
-    """Каскад как запасной путь режима gemini_live: чат, распознавание и озвучка из `LLM_MODE`, `LLM_BASE_URL`, `TTS_MODE`,
-    `QWEN_TTS_*`, `AGENT_API_TOKEN`. Не настроено что-то — без этой части (а не отказ старта: режиму Gemini они не нужны)."""
-    chat: ChatModel | None = None
-    recognizer: Recognizer | None = None
-    tts: TextToSpeech | None = None
-    try:
-        chat, recognizer = build_models(APP_CONFIG.llm)
-    except RuntimeError as error:
-        logger.warning("cascade fallback without chat and stt: %s", error)
-    try:
-        tts = build_tts(APP_CONFIG.speech)
-    except RuntimeError as error:
-        logger.warning("cascade fallback without tts: %s", error)
-    return chat, recognizer, tts
+# Сколько сессий Gemini прогрев держит открытыми одновременно (фраза — сессия): 16 открытий разом на старте Google встречал
+# отказами, и после них половина фраз оставалась не прогретой.
+WARM_UP_GEMINI_SESSIONS = 3
 
 
 class SkipServiceEndpoints(logging.Filter):
@@ -89,41 +72,79 @@ NATIVE_TELEMETRY_OFF: Any = {
 }
 
 
+def _build_live() -> "LiveConnector":
+    from app.clients.gemini_live import build_live
+
+    return build_live(APP_CONFIG.gemini)
+
+
+def _build_sber() -> "LiveConnector | None":
+    """Голосовой путь Сбера (GigaASR → GigaChat → SaluteSpeech, app/clients/sber_voice.py) на прокси фоновой модели: тот же адрес
+    и ключ. Нет ключа или адреса — пути нет, разговоры идут на Gemini Live."""
+    cfg = APP_CONFIG.background_model
+    if cfg.api_key is None or not cfg.base_url:
+        return None
+    from app.clients.sber_voice import SberVoiceConnector
+
+    return SberVoiceConnector(cfg.base_url, cfg.api_key.get_secret_value())
+
+
+async def _together(*jobs: Any) -> None:
+    await asyncio.gather(*jobs)
+
+
+def _build_notes_model(memory_cfg: MemorySettings) -> ProxyBackgroundModel | None:
+    """Модель извлечения заметок: свой экземпляр фоновой модели (`MEMORY_NOTES_MODEL`, по умолчанию `LLM_CHAT_MODEL`).
+    Нет ключа прокси — извлечения нет, разговор идёт как раньше."""
+    cfg = APP_CONFIG.background_model
+    if cfg.api_key is None or not cfg.base_url:
+        return None
+    return ProxyBackgroundModel(
+        cfg.base_url,
+        cfg.api_key.get_secret_value(),
+        memory_cfg.notes_model or cfg.chat_model,
+        max_tokens=600,
+        temperature=0.0,
+        timeout_seconds=max(cfg.timeout_seconds, 30),
+    )
+
+
 def create_app(
+    live_factory: Callable[[], "LiveConnector"] | None = None,
     tts_factory: Callable[[], TextToSpeech | None] | None = None,
-    models_factory: Callable[[], tuple[ChatModel | None, Recognizer | None]] | None = None,
-    live_factory: Callable[[], "LiveConnector | None"] | None = None,
+    background_factory: Callable[[], BackgroundModel | None] | None = None,
     database_factory: Callable[[], DialogDatabase | None] | None = None,
     memory_settings: MemorySettings | None = None,
-    fallback_factory: Callable[[], FallbackParts] | None = None,
+    sber_factory: Callable[[], "LiveConnector | None"] | None = None,
 ) -> FastAPI:
-    """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию озвучка и модели берутся из конфига.
+    """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию всё берётся из конфига.
+
+    Голос — Gemini Live (`live_factory`; по умолчанию `build_live(GEMINI_*)`, без `GEMINI_API_KEY` сервис не стартует). Фиксированные
+    фразы (приветствие, кризисный ответ, просьба повторить) озвучивает тот же голос Gemini (`GeminiLiveTts`) с памятью фраз
+    (`tts_factory` в тестах подменяет озвучку).
+
+    Фоновая модель (`background_factory`; по умолчанию `LLM_*`, прокси программы) пишет фоновые тексты: итоги разговоров и недели.
+    Нет ключа прокси — модели нет, итоги не подводятся, а разговор идёт как обычно.
 
     Хранилище диалогов (`DIALOG_DATABASE_URL` → PostgreSQL; в тестах — `database_factory`): не открылось —
     диалоги остаются в памяти, агент не падает, но пишет об этом в журнал (ошибка) и показывает `dialogs: memory`
     в `/health/ready`.
 
-    `VOICE_PIPELINE=gemini_live` (или `live_factory` в тестах) включает речь в речь через Gemini Live: чат и
-    распознавание не создаются, фиксированные фразы озвучивает тот же голос Gemini.
-
     Память агента (`MEMORY_*`, или `memory_settings` в тестах) — датасеты Cognee (`app/memory/cognee_backend.py`):
     транскрипт после разговора, сводка в разговор, согласие человека. Хранилище диалогов память не определяет.
 
-    Бюджет токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся в режиме gemini_live всегда (при лимите
-    0 он выключен). При `GEMINI_TPM_ENFORCE` собирается и каскад как запасной путь (`fallback_factory` в тестах): на него
-    уходят новые разговоры, когда бюджет исчерпан, а его распознавание и озвучка разбирают ход, отданный шаблону.
+    Учёт токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся всегда (при лимите 0 он выключен): окно
+    только измеряется, а после отказа Google по квоте включается пауза.
+
+    Голосовых путей два (`app.state.pipelines`): `sber` — GigaASR → GigaChat → SaluteSpeech с запасным Gemini Live (`sber_factory`;
+    по умолчанию собирается, если задан ключ прокси, а в тестах с `live_factory` — нет) и `gemini` — Gemini Live. Путь выбирает
+    старт диалога (`pipeline`), без него — Сбер, если он есть.
     """
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
-    if live_factory is None and APP_CONFIG.voice.pipeline == "gemini_live":
-
-        def live_factory() -> "LiveConnector":
-            from app.clients.gemini_live import build_live
-
-            return build_live(APP_CONFIG.gemini)
-
-    factory = tts_factory or (lambda: build_tts(APP_CONFIG.speech))
-    models = models_factory or (lambda: build_models(APP_CONFIG.llm))
+    make_live = live_factory or _build_live
+    make_sber = sber_factory or (_build_sber if live_factory is None else (lambda: None))
+    make_background = background_factory or (lambda: build_background_model(APP_CONFIG.background_model))
 
     def make_configured_database() -> DialogDatabase | None:
         # DIALOG_DATABASE_URL задан — диалоги в PostgreSQL; пусто — только в памяти процесса (разработка).
@@ -165,65 +186,92 @@ def create_app(
         memory_service: MemoryBackend = CogneeMemoryBackend(cognee_client, memory_cfg, lambda: store.database)
         store.memory = memory_service
         app.state.memory = memory_service
+        if isinstance(memory_service, CogneeMemoryBackend):
+            memory_service.start_outbox()  # очередь индекса прошлых разговоров в Cognee
+        notes_model = _build_notes_model(memory_cfg)
+        if notes_model is not None and isinstance(memory_service, CogneeMemoryBackend):
+            memory_service.set_extractor(NotesExtractor(notes_model, memory_service.notes))
         if memory_service.status() == "unavailable":
             logger.error("memory is NOT available: no COGNEE_BASE_URL/COGNEE_SERVICE_EMAIL/COGNEE_SERVICE_PASSWORD")
-        live = live_factory() if live_factory is not None else None
+        live = make_live()
         app.state.live = live
-        budget = TokenBudget(APP_CONFIG.gemini) if live is not None else None
+        budget = TokenBudget(APP_CONFIG.gemini)
         app.state.budget = budget
         tracer = build_tracer(APP_CONFIG.langfuse)
         app.state.tracer = tracer
-        if tts_factory is not None or live is None:
-            app.state.tts = factory()
+        if tts_factory is not None:
+            app.state.tts = tts_factory()
+            warm_up_parallel = 1  # по одной фразе за раз
         else:
             from app.clients.gemini_live import GeminiLiveTts
 
             voice_tts = GeminiLiveTts(live, budget=budget)
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
-        fallback = None
-        if budget is not None and budget.enforcing:
-            parts = (fallback_factory or _build_fallback)()
-            fallback = CascadeFallback(*parts) if any(part is not None for part in parts) else None
-        app.state.fallback = fallback
-        if budget is not None and budget.enabled:
-            logger.info(
-                "gemini budget: limit=%d enforce=%s fallback: llm=%s stt=%s tts=%s",
-                APP_CONFIG.gemini.tpm_limit,
-                budget.enforcing,
-                fallback.chat.name if fallback and fallback.chat else "none",
-                fallback.recognizer.name if fallback and fallback.recognizer else "none",
-                fallback.tts.name if fallback and fallback.tts else "none",
+            warm_up_parallel = WARM_UP_GEMINI_SESSIONS
+        # Голосовые пути: Gemini Live и, если есть ключ прокси, Сбер. Запасные — друг для друга: путь Сбера при отказе уходит на
+        # Gemini Live (фразы — SaluteSpeech, запасная озвучка — Gemini), путь Gemini Live — на Сбер (фразы — Gemini, запасная
+        # озвучка — SaluteSpeech). Пока идёт пауза после отказа Google по квоте, путь Gemini Live не пробуется.
+        app.state.pipelines = {"gemini": (live, lambda: app.state.tts)}
+        app.state.moods = {}
+        sber = make_sber()
+        salute: CachedTts | None = None
+        if sber is not None:
+            from app.clients.gemini_live import is_quota_error
+            from app.clients.sber_voice import FallbackConnector, FallbackTts, SaluteTts
+
+            salute = CachedTts(SaluteTts(sber), APP_CONFIG.speech.tts_cache_items or 1)
+            sber_tts = FallbackTts(salute, app.state.tts) if app.state.tts is not None else salute
+            app.state.pipelines["sber"] = (FallbackConnector(sber, live), lambda: sber_tts)
+
+            def gemini_open_failed(error: Exception) -> None:
+                if is_quota_error(str(error)):
+                    budget.on_quota_error("open")  # отказ по квоте при открытии начинает паузу, как и в разговоре без запасного пути
+
+            gemini_tts = FallbackTts(app.state.tts, salute) if app.state.tts is not None else salute
+            app.state.pipelines["gemini"] = (
+                FallbackConnector(
+                    live, sber, model=live.model, skip_primary=budget.cooling, on_primary_error=gemini_open_failed
+                ),
+                lambda: gemini_tts,
             )
-        if live is not None and models_factory is None:
-            app.state.chat, app.state.recognizer = None, None  # речь в речь: чат и распознавание не нужны
-        else:
-            app.state.chat, app.state.recognizer = models()
+            # Тон реплики в пути Сбера — его же моделью; без своего классификатора шарик не красится, но и в Gemini слова не уходят.
+            mood_classifier = getattr(sber, "mood_classifier", None)
+            app.state.moods["sber"] = mood_classifier() if mood_classifier is not None else None
+        app.state.default_pipeline = "sber" if sber is not None else "gemini"
+        # Фоновая модель: итоги разговоров и недели (заметки памяти берут свой экземпляр, `_build_notes_model`).
+        background = make_background()
+        if background is None:
+            logger.warning("background model is not configured (AGENT_API_TOKEN, LLM_BASE_URL): recaps and weekly digests are off")
+        app.state.background = background
+        store.recap_model = background
+        store.recap_timeout_seconds = APP_CONFIG.dialog.recap_timeout_seconds
+        store.retention_days = APP_CONFIG.dialog.retention_days
         logger.info(
-            "agent started: pipeline=%s tts=%s llm=%s stt=%s dialogs=%s memory=%s tracing=%s",
-            live.name if live else "cascade",
+            "agent started: voice=%s default=%s tts=%s background=%s dialogs=%s memory=%s tracing=%s gemini budget limit=%d (measure only)",
+            " ".join(f"{name}={connector.name}" for name, (connector, _) in app.state.pipelines.items()),
+            app.state.default_pipeline,
             app.state.tts.name if app.state.tts else "none",
-            app.state.chat.name if app.state.chat else "none",
-            app.state.recognizer.name if app.state.recognizer else "none",
+            background.name if background else "none",
             store.persistence,
             memory_service.status(),
             tracer.name,
+            APP_CONFIG.gemini.tpm_limit if budget.enabled else 0,
         )
-        # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а облачный синтез медленнее.
-        # Фиксированные фразы (приветствия, шаблоны, кризисный ответ) готовим заранее; ответы модели так не подготовить.
-        # В режиме gemini_live прогреваются и шаблонные ответы: ими отвечает ход, отданный шаблону (бюджет Gemini исчерпан,
-        # Gemini промолчал или отказал), и звучать они должны из памяти тем же голосом, без новой сессии Gemini на фразу.
-        warm_up = None
+        # Приветствие должно зазвучать за 0,9 с, иначе клиент прочтёт его сам, а открытие сессии Gemini занимает около секунды.
+        # Фиксированные фразы (приветствия, кризисный ответ, просьба повторить) готовим заранее и держим в памяти фраз: каждая
+        # звучит оттуда тем же голосом, без новой сессии Gemini на показ. Ответы модели так не подготовить: их звук приходит
+        # от самой модели.
+        sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
+        warm_ups = []
         if isinstance(app.state.tts, CachedTts):
-            sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
-            warm_up = asyncio.create_task(app.state.tts.warm_up(sentences))
-        langfuse = start_langfuse_sink(APP_CONFIG.langfuse)
-        fallback_warm_up = None
-        if fallback is not None and isinstance(fallback.tts, CachedTts):
-            sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
-            fallback_warm_up = asyncio.create_task(fallback.tts.warm_up(sentences))
+            warm_ups.append(app.state.tts.warm_up(sentences, parallel=warm_up_parallel))
+        if salute is not None:
+            warm_ups.append(salute.warm_up(sentences, parallel=WARM_UP_GEMINI_SESSIONS))
+        warm_up = asyncio.create_task(_together(*warm_ups)) if warm_ups else None
         # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
         evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
+        purger = asyncio.create_task(purge_loop(lambda: store.database), name="dialog-purger")  # физически убирает мягко стёртое
         # После прогрева стартовые объекты замораживаются для сборщика мусора, дальше память раз в MEMORY_RECLAIM_SECONDS
         # возвращается системе (app/core/reclaim.py).
         reclaimer = MemoryReclaimer(APP_CONFIG.memory_reclaim.seconds)
@@ -232,25 +280,24 @@ def create_app(
             yield
         finally:
             evictor.cancel()
-            await asyncio.gather(evictor, return_exceptions=True)
+            purger.cancel()
+            await asyncio.gather(evictor, purger, return_exceptions=True)
             await reclaimer.stop()
-            if langfuse is not None:
-                langfuse.close()
             if warm_up is not None:
                 warm_up.cancel()
+            if isinstance(memory_service, CogneeMemoryBackend):
+                await memory_service.stop_outbox()
+            if notes_model is not None:
+                await memory_service.drain()  # дописать идущие проходы извлечения
+                await notes_model.aclose()
             if cognee_client is not None:
                 await memory_service.drain()  # дождаться идущих записей и prefetch'ей Cognee
                 await cognee_client.aclose()
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
             store.memory = None
-            for client in (app.state.tts, app.state.chat, app.state.recognizer, live):
+            for client in (app.state.tts, background, live, sber):
                 if client is not None:
                     await client.aclose()
-            if fallback_warm_up is not None:
-                fallback_warm_up.cancel()
-            for part in (fallback.chat, fallback.recognizer, fallback.tts) if fallback is not None else ():
-                if part is not None:
-                    await part.aclose()
             await tracer.aclose()  # отправить в Langfuse накопленные трассы
 
     # Встроенная телеметрия FastAPI (OpenTelemetry) включается сама, когда в образе есть opentelemetry-sdk (его тянет langfuse), и
@@ -263,21 +310,21 @@ def create_app(
         max_users_in_memory=APP_CONFIG.dialog.max_users_in_memory,
         idle_end_seconds=APP_CONFIG.dialog.idle_end_seconds,
     )
-    app.state.tts = None
-    app.state.chat = None
-    app.state.recognizer = None
-    app.state.live = None
+    app.state.tts = None  # озвучка фраз (в lifespan)
+    app.state.background = None  # фоновая модель итогов (в lifespan)
+    app.state.live = None  # Gemini Live (в lifespan)
+    app.state.pipelines = {}  # голосовые пути: имя → (соединитель, озвучка фраз) (в lifespan)
+    app.state.moods = {}  # классификатор тона пути, если он не Gemini: имя → классификатор или None (в lifespan)
+    app.state.default_pipeline = "gemini"
     app.state.memory = None
-    app.state.budget = None  # бюджет токенов Gemini (только в режиме gemini_live)
-    app.state.fallback = None  # каскад как запасной путь gemini_live (GEMINI_TPM_ENFORCE)
+    app.state.budget = None  # учёт токенов Gemini (в lifespan)
     app.state.tracer = None  # подменяется в lifespan (build_tracer); None до старта приложения
-    app.state.tts_mode = "auto"  # dev-переключатель озвучки, см. app/api/dev.py
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(dialogs.router)
     app.include_router(memory.router)
-    app.include_router(dialog_ws.router)
-    app.include_router(dev.router)
+    app.include_router(digests.router)
+    app.include_router(dialogs.ws_router)
     return app
 
 

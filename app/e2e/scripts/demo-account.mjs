@@ -6,26 +6,30 @@
  * (today, yesterday, last 7 days, earlier) and a past conversation reads like a real one.
  * Then it saves the browser session where ui-shots.mjs looks for it, so the next shots use it.
  *
- * Needs the dev stack: web :3023, API :3012, Mailpit :8026, agent mock :8080 (the seed endpoint
- * lives in dev/agent-mock). Run again any time: the seed replaces the mock's dialogs for the user.
+ * Needs the dev stack of this worktree (`pnpm stand:up`): the web app, the API, Mailpit and the agent mock (the
+ * seed endpoint lives in dev/agent-mock). The addresses are the stand's (app/.stand.json; the old fixed ports
+ * without a slot); `--stack e2e` uses the e2e stack instead. Run again any time: the seed replaces the mock's
+ * dialogs for the user.
  *
- * Usage: node e2e/scripts/demo-account.mjs [--base http://localhost:3023] [--mail http://localhost:8026]
- *                                           [--agent http://localhost:8080] [--state <file>]
+ * Usage: node e2e/scripts/demo-account.mjs [--base <web app url>] [--mail <Mailpit url>]
+ *                                           [--agent <mock url>] [--state <file>] [--stack e2e]
  */
 import { chromium } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ACCOUNT, seedJournal } from './demo-data.mjs'
+import { standUrls } from './shots/stand.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const arg = (name, fallback) => {
   const at = process.argv.indexOf(`--${name}`)
   return at >= 0 ? process.argv[at + 1] : fallback
 }
-const BASE = arg('base', 'http://localhost:3023').replace(/\/$/, '')
-const MAIL = arg('mail', 'http://localhost:8026').replace(/\/$/, '')
-const AGENT = arg('agent', 'http://localhost:8080').replace(/\/$/, '')
+const urls = standUrls({ stack: arg('stack', 'dev') })
+const BASE = arg('base', urls.web).replace(/\/$/, '')
+const MAIL = arg('mail', urls.mail).replace(/\/$/, '')
+const AGENT = arg('agent', urls.mock).replace(/\/$/, '')
 const STATE = resolve(arg('state', join(repoRoot, '.playwright-mcp', 'web-state.json')))
 
 // ── mail ─────────────────────────────────────────────────────────────────────────────────────
@@ -61,14 +65,18 @@ if (!signedIn) {
   await page.locator('input[name="name"]').fill(ACCOUNT.name)
   await page.locator('input[name="email"]').fill(ACCOUNT.email)
   await page.locator('input[name="password"]').fill(ACCOUNT.password)
-  await page.getByTestId('consents').getByRole('checkbox').check()
+  // The three required consents (18+, not therapy, terms); the optional memory item is left alone.
+  for (const box of await page.getByTestId('consents').getByRole('checkbox').all()) await box.check()
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click()
   await page.getByRole('heading', { name: 'Подтверди почту' }).waitFor({ timeout: 20_000 })
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(await newestCode(ACCOUNT.email, before))
   await page.waitForURL('**/home', { timeout: 30_000 })
 }
 
-const userId = await page.evaluate(() => JSON.parse(localStorage.getItem('ryadom.user') ?? 'null')?.id ?? null)
+// The web client keeps its cached user under its own prefix (`ryadom.web.`); the PWA and the store builds under `ryadom.user`.
+const userId = await page.evaluate(
+  () => JSON.parse(localStorage.getItem('ryadom.web.user') ?? localStorage.getItem('ryadom.user') ?? 'null')?.id ?? null,
+)
 if (!userId) throw new Error('signed in, but no user id in storage')
 
 const count = await seedJournal(AGENT, userId)

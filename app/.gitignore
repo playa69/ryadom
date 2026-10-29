@@ -45,9 +45,11 @@ apps/*/CLAUDE.md
 # e2e: reports, traces and screen shots are run output, not sources
 e2e/report/
 e2e/test-results/
+e2e/evidence/
 screenshots/
 review/
 .playwright-mcp/
 
-# The repository root ignores lib/ (Python template); here lib/ is source code (apps/*/lib).
-!lib/
+# The worktree's stand (scripts/stand.mjs): the pin of its slot and what it started (pids, logs)
+.stand.json
+.stand/

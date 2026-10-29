@@ -1,18 +1,25 @@
 # Infrastructure for e2e only: its own database, its own mail server, its own agent mock.
 # The ports do not overlap with `dev/compose.yaml`, so a test run does not disturb development.
+# scripts/stack.mjs sets the E2E_*_PORT variables and the project name from the worktree's stand
+# (scripts/stand-ports.mjs), so every worktree gets containers of its own; the defaults below are the ports of
+# slot 0, the layout that existed before stands.
 name: ryadom-e2e
+
+# Who owns the containers, so that `pnpm stand:gc` can find what a removed worktree left behind.
+x-stand-labels: &stand-labels
+  com.ryadom.stand: ${STAND_ID:-manual}
+  com.ryadom.worktree: ${STAND_WORKTREE:-manual}
 
 services:
   postgres:
     image: postgres:17-alpine
+    labels: *stand-labels
     environment:
       POSTGRES_USER: ryadom
       POSTGRES_PASSWORD: ryadom
       POSTGRES_DB: ryadom
     ports:
-      - '55434:5432'
-    volumes:
-      - ../dev/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - '${E2E_PG_PORT:-55434}:5432'
     # tmpfs: the database lives only for the run, so every next run starts from a clean one.
     tmpfs:
       - /var/lib/postgresql/data
@@ -24,24 +31,33 @@ services:
 
   mailpit:
     image: axllent/mailpit:v1.27
+    labels: *stand-labels
     ports:
-      - '1027:1025'
-      - '8027:8025'
+      - '${E2E_MAIL_SMTP_PORT:-1027}:1025'
+      - '${E2E_MAIL_UI_PORT:-8027}:8025'
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8025/readyz']
       interval: 3s
       timeout: 3s
       retries: 30
 
+  # One image per machine, tagged with the hash of dev/agent-mock (see dev/compose.yaml): a changed mock gets a
+  # new tag, so there is no need to build on every run.
   agent-mock:
+    image: ryadom-agent-mock:${AGENT_MOCK_TAG:-local}
     build:
       context: ../dev/agent-mock
+    labels: *stand-labels
     environment:
       PORT: '8080'
     ports:
-      - '8081:8080'
+      - '${E2E_AGENT_MOCK_PORT:-8081}:8080'
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
       interval: 3s
       timeout: 3s
       retries: 30
+
+networks:
+  default:
+    labels: *stand-labels

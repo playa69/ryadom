@@ -43,7 +43,8 @@ const LIFETIME_MS = 4000
 const KIND_BORDER: Record<NoticeKind, string> = {
   info: 'border-input',
   success: 'border-sage-line',
-  error: 'border-danger-line',
+  // An error is the same toast as a success, in red: a red border and a red wash under the text.
+  error: 'border-danger-line bg-danger-soft',
 }
 
 export function NoticeProvider({ children }: { children: ReactNode }) {
@@ -79,6 +80,8 @@ export function NoticeProvider({ children }: { children: ReactNode }) {
         {items.map((item) => (
           <p
             key={item.id}
+            data-testid="notice"
+            data-kind={item.kind}
             className={cn(
               'rounded-lg border bg-surface-3 px-4 py-3 text-center text-[0.9375rem] text-foreground shadow-(--ryadom-shadow-2)',
               KIND_BORDER[item.kind],

@@ -8,6 +8,8 @@ export interface EndDialogOperationData {
   /** "What are you taking with you". */
   takeaway: string | null
   tensionAfter: number | null
+  /** `draft`: the takeaway, which is the recap, was pre-filled by the model. */
+  recapSource?: 'manual' | 'draft'
 }
 
 export class EndDialogOperation extends RequestData<EndDialogResult> {
@@ -22,11 +24,14 @@ export class EndDialogOperation extends RequestData<EndDialogResult> {
 
   public readonly tensionAfter: number | null
 
+  public readonly recapSource: 'manual' | 'draft'
+
   constructor(data: EndDialogOperationData) {
     super()
     this.userId = data.userId
     this.dialogId = data.dialogId
     this.takeaway = data.takeaway
     this.tensionAfter = data.tensionAfter
+    this.recapSource = data.recapSource ?? 'manual'
   }
 }

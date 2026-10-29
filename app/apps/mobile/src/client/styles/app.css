@@ -739,6 +739,37 @@ input:-webkit-autofill:focus {
   --orb-ring: rgb(247 190 130);
 }
 
+/*
+ * Mood over the state (REQ-VOICE-10). After the state rules on purpose: same specificity, the later wins.
+ * The colour properties are registered, so the change is the same slow dissolve.
+ */
+.rd-orb[data-mood='sleepy'] {
+  --orb-hi: rgb(238 228 255);
+  --orb-warm: rgb(170 130 240);
+  --orb-mid: rgb(124 77 212);
+  --orb-deep: rgb(62 38 140);
+  --orb-halo: rgb(110 70 200);
+  --orb-ring: rgb(160 120 235);
+}
+
+.rd-orb[data-mood='angry'] {
+  --orb-hi: rgb(255 226 200);
+  --orb-warm: rgb(255 120 70);
+  --orb-mid: rgb(220 38 38);
+  --orb-deep: rgb(127 20 20);
+  --orb-halo: rgb(239 68 68);
+  --orb-ring: rgb(248 113 113);
+}
+
+.rd-orb[data-mood='afraid'] {
+  --orb-hi: rgb(228 255 236);
+  --orb-warm: rgb(110 220 150);
+  --orb-mid: rgb(34 160 90);
+  --orb-deep: rgb(20 90 70);
+  --orb-halo: rgb(52 190 130);
+  --orb-ring: rgb(110 220 150);
+}
+
 /* ── Home ────────────────────────────────────────────────────────────────── */
 
 .rd-home {
@@ -2031,195 +2062,83 @@ input:-webkit-autofill:focus {
   font-size: 15px;
 }
 
-.rd-memory-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ryadom-s-2);
-  margin: var(--ryadom-s-3) var(--ryadom-s-4) 0;
-}
-
-.rd-memory-toolbar .button {
-  width: auto;
-  gap: 4px;
-}
-
-.rd-memory-fact {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: var(--ryadom-s-2) var(--ryadom-s-4);
-  padding: 14px var(--ryadom-s-4);
-  border: 1px solid var(--ryadom-line);
-  border-radius: var(--ryadom-r-m);
-  background: var(--ryadom-surface-glass);
-  box-shadow: var(--ryadom-highlight);
-  -webkit-backdrop-filter: var(--ryadom-blur);
-  backdrop-filter: var(--ryadom-blur);
-}
-
-.rd-memory-fact[data-status='proposed'] {
-  border-color: var(--ryadom-brand-100);
-}
-
-.rd-memory-fact[data-status='candidate'] {
-  border-style: dashed;
-}
-
-.rd-memory-fact-text {
-  margin: 0;
-  font-size: var(--ryadom-t-md);
-  line-height: 1.45;
-  color: var(--ryadom-text);
-  overflow-wrap: anywhere;
-}
-
-.rd-memory-fact-text--hidden {
-  color: var(--ryadom-text-faint);
-  font-style: italic;
-}
-
-.rd-memory-fact-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 0;
+/* The sheet "Что помнит Рядом": notes in groups, each with its date and a quick "×". */
+.rd-note-group-title {
+  margin: var(--ryadom-s-2) 0 0;
   font-size: 13px;
-  color: var(--ryadom-text-faint);
-}
-
-.rd-memory-badge {
-  padding: 1px 8px;
-  border: 1px solid var(--ryadom-line-strong);
-  border-radius: var(--ryadom-r-pill);
-  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--ryadom-text-dim);
 }
 
-.rd-memory-fact-actions {
+.rd-memory-note {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.rd-memory-fact-actions .button,
-.rd-memory-undo .button {
-  width: auto;
-  padding: 0 14px;
-}
-
-.button.rd-memory-forget {
-  --f7-button-text-color: var(--ryadom-danger);
-  --f7-button-border-color: var(--ryadom-danger-100);
-}
-
-.rd-memory-undo {
-  flex-direction: row;
+  gap: var(--ryadom-s-2);
   align-items: center;
   justify-content: space-between;
+  padding: 10px var(--ryadom-s-4);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
 }
 
-.rd-memory-form {
-  margin: 0;
-}
-
-.rd-memory-choice {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* Four short choices share a row; on the narrowest phone the words may wrap inside a button. */
-.rd-memory-choice .segmented .button {
-  height: auto;
-  min-height: 36px;
-  padding: 4px 8px;
-  line-height: 1.2;
-  white-space: normal;
-}
-
-/* The card "Я запомнил" on home. */
-.rd-memory-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ryadom-s-2);
-  margin: var(--ryadom-s-4) 0 0;
-  padding: var(--ryadom-s-4);
-  border-color: var(--ryadom-sage-100);
-  text-align: left;
-}
-
-.rd-memory-card-head {
-  display: flex;
-  gap: var(--ryadom-s-2);
-  align-items: center;
-}
-
-.rd-memory-card-head .rd-note-icon {
-  margin: 0;
-  color: var(--ryadom-sage);
-}
-
-.rd-memory-card-head .rd-note-title {
+.rd-memory-note-body {
   flex: 1;
-  margin: 0;
-}
-
-.rd-memory-card-close {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  margin: -6px -6px -6px 0;
+  min-width: 0;
+  padding: 0;
   border: 0;
-  border-radius: 50%;
   background: transparent;
-  color: var(--ryadom-text-faint);
+  text-align: left;
+  font: inherit;
+  color: inherit;
   cursor: pointer;
 }
 
-.rd-memory-card-items {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ryadom-s-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.rd-memory-card-item {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px var(--ryadom-s-2);
-  align-items: center;
-  justify-content: space-between;
-  padding-top: var(--ryadom-s-2);
-  border-top: 1px solid var(--ryadom-line);
-}
-
-.rd-memory-card-text {
-  flex: 1 1 180px;
-  font-size: 15px;
+.rd-memory-note-text {
+  display: block;
+  font-size: var(--ryadom-t-md);
   line-height: 1.4;
   color: var(--ryadom-text);
   overflow-wrap: anywhere;
 }
 
-.rd-memory-card-actions {
-  display: flex;
-  gap: 6px;
+.rd-memory-note-date {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--ryadom-text-faint);
 }
 
-.rd-memory-card-actions .button,
-.rd-memory-card-link.button {
+.rd-memory-note-remove {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ryadom-text-faint);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rd-memory-undo {
+  justify-content: space-between;
+}
+
+.rd-memory-undo .button {
   width: auto;
-  padding: 0 12px;
+  padding: 0 14px;
 }
 
-.rd-memory-card-link.button {
-  align-self: flex-start;
-  margin-left: -12px;
+.rd-memory-instruction {
+  margin: 0;
+}
+
+.rd-memory-result {
+  margin: 0;
 }
 
 /* "Без памяти" under the talk button. */
@@ -2567,9 +2486,23 @@ input:-webkit-autofill:focus {
     padding-left: 16px;
   }
 
+  /* The segments stay on top; the two panes take the rest of the height. */
+  .rd-diary--journal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding-bottom: 0;
+  }
+
+  .rd-diary--journal > .rd-diary-segments {
+    flex: none;
+    margin-bottom: var(--ryadom-s-3);
+  }
+
   .rd-split {
     display: flex;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
   }
 
   .rd-split-side {
@@ -2629,4 +2562,787 @@ input:-webkit-autofill:focus {
   display: inline-block;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+/* ── Mood diary ──────────────────────────────────────────────────────────── */
+
+.rd-diary {
+  padding-bottom: var(--ryadom-s-8);
+}
+
+.rd-diary-segments {
+  margin: var(--ryadom-s-3) var(--ryadom-s-4) 0;
+}
+
+.rd-diary-note {
+  padding: var(--ryadom-s-4);
+  text-align: center;
+}
+
+.rd-card-title {
+  margin: 0 0 var(--ryadom-s-3);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-mood-faces {
+  display: flex;
+  gap: 2px;
+  justify-content: space-between;
+}
+
+.rd-mood-face {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 0;
+  border: 2px solid transparent;
+  border-radius: var(--ryadom-r-m, 14px);
+  background: transparent;
+  font: inherit;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.rd-mood-face svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.rd-mood-face-label {
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: -0.1px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* 320px: five faces share about 250px, «Нормально» still has to stay in one line. */
+@media (max-width: 340px) {
+  .rd-mood-face-label {
+    font-size: 9px;
+    letter-spacing: -0.2px;
+  }
+}
+
+.rd-mood-face--on {
+  color: var(--ryadom-text);
+}
+
+.rd-mood-face--on .rd-mood-face-label {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+/* The chosen face keeps its colour and wears a check, so the choice reads without colour too; the rest go grey. */
+.rd-mood-face--on::before {
+  position: absolute;
+  top: 2px;
+  left: calc(50% + 9px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ryadom-text);
+  color: #0c1438;
+  content: '✓';
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.rd-mood-face--dim {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.rd-mood-factors-title,
+.rd-bridge-text {
+  margin: var(--ryadom-s-4) 0 var(--ryadom-s-2);
+  font-size: 15px;
+  color: var(--ryadom-text);
+}
+
+.rd-factor-strip {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  padding-bottom: 4px;
+  overflow-x: auto;
+}
+
+.rd-factor {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-pill);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-factor--on {
+  border-color: transparent;
+  background: var(--ryadom-brand-fill);
+  color: var(--ryadom-cta-ink);
+  font-weight: 600;
+}
+
+.rd-bridge {
+  margin-top: var(--ryadom-s-4);
+  padding-top: var(--ryadom-s-3);
+  border-top: 1px solid var(--ryadom-line);
+}
+
+.rd-bridge-text {
+  margin-top: 0;
+}
+
+.rd-bridge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ryadom-s-2);
+}
+
+.rd-mood-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rd-mood-head .rd-card-title {
+  margin-bottom: var(--ryadom-s-3);
+}
+
+.rd-streak {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: var(--ryadom-s-3);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-streak-flame {
+  color: #ff8a3d;
+}
+
+.rd-mood-factor-line {
+  display: block;
+  margin: var(--ryadom-s-3) 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ryadom-text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rd-chart-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.rd-chart-month-name {
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  white-space: nowrap;
+}
+
+/* The month label never squeezes the title: it sits on its own line under it. */
+.rd-chart-card .rd-chart-head {
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.rd-chart-area {
+  fill: rgba(88, 130, 255, 0.18);
+  stroke: none;
+}
+
+.rd-chart-weekend {
+  fill: rgba(255, 255, 255, 0.05);
+}
+
+.rd-chart-insight {
+  margin: var(--ryadom-s-3) 0 0;
+  padding: 10px 12px;
+  border-radius: var(--ryadom-r-m, 14px);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.rd-chart-grid {
+  stroke: var(--ryadom-line);
+  stroke-width: 1;
+}
+
+.rd-chart-line {
+  fill: none;
+  stroke: #5b86ff;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.rd-chart-dot {
+  stroke: var(--ryadom-paper);
+  stroke-width: 2;
+}
+
+.rd-chart-tick {
+  font-size: 10px;
+  fill: var(--ryadom-text-faint);
+}
+
+.rd-chart-today {
+  fill: var(--ryadom-brand);
+}
+
+.rd-chart-today-text {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--ryadom-cta-ink);
+}
+
+.rd-chart-empty {
+  padding: var(--ryadom-s-4) 0;
+}
+
+.rd-week-head {
+  display: flex;
+  gap: var(--ryadom-s-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.rd-week-refresh {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 44px;
+  margin: -12px -8px 0 0;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--ryadom-text-faint);
+  background: none;
+  border: 0;
+}
+
+.rd-week-building {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  align-items: center;
+  margin: 0;
+  font-size: 15px;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-section-title {
+  margin: var(--ryadom-s-4) var(--ryadom-s-4) var(--ryadom-s-2);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+}
+
+.rd-summary-text {
+  margin: 0 0 var(--ryadom-s-3);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ryadom-text);
+}
+
+/* ─── Итог разговора (add-mood-diary, D13) ─────────────────────────────────── */
+
+.rd-sheet-body--scroll {
+  max-height: 88vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* In a column of fixed height the children must scroll, not shrink: a squeezed button has no height left to tap. */
+.rd-sheet-body--scroll > * {
+  flex-shrink: 0;
+}
+
+.rd-recap-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-recap-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-1);
+}
+
+.rd-recap-area {
+  min-height: 64px;
+}
+
+.rd-recap-draft {
+  align-self: flex-start;
+}
+
+.rd-recap-auto {
+  display: flex;
+  align-items: center;
+  gap: var(--ryadom-s-3);
+  min-height: 44px;
+  font-size: var(--ryadom-t-md);
+}
+
+.rd-recap-auto input {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.rd-recap-auto--setting {
+  align-items: flex-start;
+  margin: var(--ryadom-s-4) var(--ryadom-s-4) 0;
+}
+
+.rd-recap-auto--setting .rd-caption {
+  display: block;
+}
+
+.rd-link-button {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 var(--ryadom-s-1);
+  border: 0;
+  background: none;
+  color: var(--ryadom-text-dim, inherit);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+p.rd-recap-text {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.rd-recap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-danger-button {
+  color: var(--ryadom-danger);
+}
+
+/* The line "Запомнил: … · Убрать" in the conversation stream (6.4). */
+.rd-memory-notice {
+  margin: var(--ryadom-s-2) var(--ryadom-s-4);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-memory-notice-undo {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
+.rd-memory-notice .rd-form-error {
+  display: block;
+}
+
+/* The block "Я запомнил" in the window after a conversation (a Framework7 dialog): the notes it left, each with "Убрать". */
+.rd-remembered {
+  margin: var(--ryadom-s-3) 0 0;
+  /* The list carries the padding above and under the notes: its fades need room there, or the first and the last note would stay faded. */
+  padding: var(--ryadom-s-2) var(--ryadom-s-3) 0;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  text-align: left;
+}
+
+.rd-remembered-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ryadom-text-dim);
+}
+
+/*
+ * About three notes are in view (a row is 44px); the rest are reached by scrolling the list, with the finger and not the page
+ * behind the window. The edges fade where there is more to scroll to; the padding above and under the notes is as tall as the
+ * fades, so with nothing to scroll to the notes stay clear of them.
+ */
+.rd-remembered-list {
+  box-sizing: border-box;
+  max-height: min(168px, 35dvh);
+  margin: 0;
+  padding: 6px 0 var(--ryadom-s-3);
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 6px, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 6px, #000 calc(100% - 12px), transparent);
+}
+
+/* The ring is drawn inside the box: the fade clips whatever lies outside it. */
+.rd-remembered-list:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ryadom-brand-400);
+  border-radius: 8px;
+}
+
+.rd-remembered-note + .rd-remembered-note {
+  border-top: 1px solid var(--ryadom-line);
+}
+
+.rd-remembered-row {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rd-remembered-text {
+  flex: 1;
+  min-width: 0;
+  padding: var(--ryadom-s-2) 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--ryadom-text);
+  overflow-wrap: anywhere;
+}
+
+.rd-remembered-remove {
+  flex: none;
+  min-height: 44px;
+  padding: 0 var(--ryadom-s-2);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
+.rd-remembered-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rd-remembered .rd-form-error {
+  display: block;
+  padding-bottom: var(--ryadom-s-2);
+  text-align: left;
+}
+
+/* "Ещё записываю…": a calm line under the text of the window, in the same voice as the text, with nothing to press. */
+.rd-remembered-late {
+  margin: var(--ryadom-s-3) 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ryadom-text-dim);
+}
+
+/* The offer to link an address, under the block, in its own paragraph of the dialog. */
+.dialog .rd-dialog-offer {
+  margin-top: var(--ryadom-s-3);
+}
+
+/* ─── Тесты внутри приложения (add-self-check-tests) ───────────────────────── */
+
+.rd-test-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rd-test-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ryadom-s-3);
+  padding: var(--ryadom-s-3) 0;
+  border-top: 1px solid var(--ryadom-line);
+}
+
+.rd-test-row:first-child {
+  border-top: 0;
+}
+
+.rd-test-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rd-tests {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-test-search {
+  width: 100%;
+  padding: 10px 16px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: 999px;
+  background: var(--ryadom-surface-glass);
+  font: inherit;
+  color: var(--ryadom-text);
+}
+
+.rd-test-search:focus {
+  border-color: var(--ryadom-brand-400);
+  outline: none;
+}
+
+.rd-test-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rd-link-button {
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+  cursor: pointer;
+}
+
+.rd-test-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-test-close {
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-test-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-test-center {
+  text-align: center;
+}
+
+.rd-test-progress-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ryadom-brand-400);
+}
+
+.rd-test-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--ryadom-line);
+}
+
+.rd-test-progress i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ryadom-brand);
+}
+
+.rd-test-item {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ryadom-text);
+}
+
+.rd-test-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rd-test-option {
+  min-height: 48px;
+  padding: 12px 16px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface);
+  font: inherit;
+  font-size: 16px;
+  color: var(--ryadom-text);
+  cursor: pointer;
+}
+
+.rd-test-option[aria-pressed='true'] {
+  border-color: var(--ryadom-brand);
+  background: rgba(var(--ryadom-brand-rgb), 0.2);
+}
+
+.rd-test-note {
+  font-size: 12px;
+}
+
+.rd-test-score {
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ryadom-text);
+}
+
+.rd-test-level {
+  align-self: flex-start;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rd-test-scale {
+  display: flex;
+  gap: 4px;
+}
+
+.rd-test-scale i {
+  flex: 1;
+  height: 10px;
+  border-radius: 5px;
+}
+
+.rd-test-specialist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: var(--ryadom-r-m);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--ryadom-text);
+  cursor: pointer;
+}
+
+/* "Не сохранять этот разговор" under "Без памяти": a tick instead of the switch. */
+.rd-unsaved {
+  cursor: pointer;
+}
+
+.rd-unsaved-check {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--ryadom-brand-400);
+}
+
+.rd-dialog-gone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+  padding-top: var(--ryadom-s-7);
+  text-align: center;
+}
+
+.rd-dialog-gone .rd-sheet-title {
+  margin: 0;
+}
+
+/* One button, not a bar across a wide window. */
+.rd-dialog-gone .button {
+  align-self: center;
+  width: min(100%, 320px);
+}
+
+.rd-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.rd-test-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rd-test-chart {
+  width: 100%;
+}
+
+.rd-test-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ryadom-s-4);
+}
+
+.rd-link-button--dim {
+  color: var(--ryadom-text-dim);
+}
+
+/* The toast after saving a result: green on success, the same toast in red on failure. */
+.toast.rd-toast--success {
+  border: 1px solid #2f8f67;
+  background: #143d2e;
+  color: var(--ryadom-text);
+}
+
+.toast.rd-toast--error {
+  border: 1px solid #e5484d;
+  background: #3d1418;
+  color: var(--ryadom-text);
 }

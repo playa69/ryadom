@@ -5,13 +5,14 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { ANONYMOUS_RETENTION_DAYS, POLICY_VERSION } from '@ryadom/contracts/api/policy'
+import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { Button } from '@ryadom/ui/components/button'
 import { formOutcome, trackForm } from '@/lib/analytics'
 import { useAuth } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
 import { ConsentGroup, NO_CONSENT, allConsented, firstMissingConsent } from '../_components/consent-group'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 import {
   AuthActions,
   AuthForm,
@@ -120,8 +121,8 @@ export default function WelcomeScreen() {
 
       {!signedIn && (
         <FinePrint>
-          Без почты разговоры хранятся {ANONYMOUS_RETENTION_DAYS} дней после последнего визита. Привязать
-          почту, чтобы их не потерять, можно в любой момент в профиле.
+          {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}. Привязать почту можно в любой момент в
+          профиле.
         </FinePrint>
       )}
     </>

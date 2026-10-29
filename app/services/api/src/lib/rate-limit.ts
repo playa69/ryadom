@@ -78,15 +78,30 @@ export const RATE_LIMITS = {
   dialogShareCreate: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
   /** Opening a link without signing in: per address, a household or a carrier NAT included, and still no use for guessing tokens. */
   sharedView: { perIp: { limit: 60, windowMs: 60_000 } },
+  /** Deleting a conversation and saving a recap: taps in the journal. */
+  dialogRecap: { perUser: { limit: 60, windowMs: 60_000 } },
+  /** «Предзаполнить»: each draft is a model call. */
+  dialogRecapDraft: { perUser: { limit: 20, windowMs: 10 * 60_000 } },
   /** Starting a dialog: protection against an accidental loop in the client. */
   dialogStart: { perUser: { limit: 30, windowMs: 60_000 } },
   /**
-   * The agent's memory. Reading covers the screen and the "I remembered" card, which asks every three
+   * The agent's memory. Reading covers the screen and the "I remembered" block, which asks every three
    * seconds for half a minute after a conversation; changes are taps on cards. Both are far above what
    * a person does and stop a client stuck in a loop from hammering the agent.
    */
   memoryRead: { perUser: { limit: 120, windowMs: 60_000 } },
   memoryWrite: { perUser: { limit: 60, windowMs: 60_000 } },
+  /** The mood diary: screens read often, notes are taps. */
+  diaryRead: { perUser: { limit: 120, windowMs: 60_000 } },
+  diarySummary: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
+  diaryWrite: { perUser: { limit: 60, windowMs: 60_000 } },
+  /** Tests inside the app: screens read often, saving is a tap after a pass. */
+  selfCheckRead: { perUser: { limit: 120, windowMs: 60_000 } },
+  selfCheckWrite: { perUser: { limit: 30, windowMs: 60_000 } },
+  /** The crisis counter takes no sign-in: per address, a few a minute is more than a person gives. */
+  selfCheckCrisis: { perIp: { limit: 20, windowMs: 60_000 } },
+  /** The Android widget with its own token: a few taps a day, plus reads when it redraws. */
+  widget: { perIp: { limit: 120, windowMs: 60_000 } },
   /** "Download my memory": the whole of it at once, so a few times per ten minutes. */
   memoryExport: { perUser: { limit: 5, windowMs: 10 * 60_000 } },
 } as const

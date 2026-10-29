@@ -1,13 +1,15 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { newestCode, newestId } from './mail.mjs'
+import { standUrls } from './stand.mjs'
 
 const ADMIN_EMAIL = 'admin@ryadom.local'
 
 /** apps/admin: an internal desktop tool; signs in with a one-time code from Mailpit, once. */
 export function adminSpec(args, repoRoot) {
-  const base = String(args.base ?? 'http://localhost:3021').replace(/\/$/, '')
-  const mail = String(args.mail ?? 'http://localhost:8026')
+  const urls = standUrls(args)
+  const base = String(args.base ?? urls.admin).replace(/\/$/, '')
+  const mail = String(args.mail ?? urls.mail)
   const state = resolve(String(args.state ?? join(repoRoot, '.playwright-mcp', 'admin-state.json')))
 
   const go = (path) => async (page) => {
@@ -35,6 +37,22 @@ export function adminSpec(args, repoRoot) {
       },
     },
     audit: { open: go('/audit') },
+    voice: { open: go('/voice') },
+    // The pipeline not in force is picked: «Сохранить» turns active.
+    'voice-picked': {
+      open: async (page) => {
+        await go('/voice')(page)
+        await page.locator('input[name="pipeline"]:not(:checked)').first().check()
+      },
+    },
+    // Saving it changes the stand: the notice shows, «Сейчас» and the line about who changed it move.
+    'voice-saved': {
+      open: async (page) => {
+        await screens['voice-picked'].open(page)
+        await page.getByRole('button', { name: 'Сохранить' }).click()
+        await page.getByText('Голосовой путь сохранён').waitFor({ timeout: 15_000 })
+      },
+    },
   }
 
   return {

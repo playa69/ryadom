@@ -11,7 +11,7 @@ import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 
 /**
- * A link to one conversation (`REQ-DATA-05`, `openspec/changes/add-dialog-share-link`): made from the
+ * A link to one conversation (`REQ-DATA-05`, `openspec/specs/dialog-share`): made from the
  * journal entry, opened by someone who is not signed in, shown again, revoked. One scenario for the
  * same reason as the other web specs (one sign-up).
  */
@@ -30,9 +30,9 @@ test('ссылка на разговор: создать, открыть чуж�
   await endConversation(page, 'Про тяжёлый день')
 
   // The finished conversation, read-only in the journal, carries the button.
-  await openWebApp(page, '/journal')
+  await openWebApp(page, '/diary/journal')
   await page.getByTestId('journal-item').first().click()
-  await expect(page).toHaveURL(/\/journal\/[^/]+$/)
+  await expect(page).toHaveURL(/\/diary\/journal\/[^/]+$/)
   await page.getByTestId('journal-share').click()
 
   // ── no link yet: the term (24 hours by default) and the warning ──────────

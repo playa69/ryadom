@@ -17,8 +17,10 @@ export interface StartedDialog {
   messageCount: number
   /** When the returned dialog last moved (its last message or its end), ISO; null when unknown. */
   lastActivityAt: string | null
-  /** The memory mode of the returned dialog: `off` is a conversation "without memory". */
+  /** The memory mode of the returned dialog: `off` is a conversation "without memory" (or an unsaved one). */
   memoryMode: AgentDialogMemoryMode
+  /** `false`: the returned dialog is held unsaved ("Не сохранять этот разговор"). */
+  saved: boolean
   /** Whether the person has memory turned on: the app offers "without memory" only then. */
   memoryEnabled: boolean
 }

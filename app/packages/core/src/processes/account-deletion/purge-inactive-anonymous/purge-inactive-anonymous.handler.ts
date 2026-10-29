@@ -1,31 +1,13 @@
 import { requestHandler, type RequestHandler } from 'mediatr-ts'
 import assertNever from 'assert-never'
-import { createLogger, inTransaction } from '../../../shared'
+import { createLogger } from '../../../shared'
 import {
   GetUserByIdQuery,
   GetUserByIdQueryErrorCode,
-  GetUserDeletionArchiveQuery,
-  GetUserDeletionArchiveQueryErrorCode,
   ListInactiveAnonymousUsersQuery,
-  SetUserDeletionArchiveCommand,
-  SetUserDeletionArchiveCommandErrorCode,
-  SoftDeleteUserCommand,
-  SoftDeleteUserCommandErrorCode,
   usersManager,
 } from '../../../managers/users-manager'
-import {
-  DeleteUserCredentialsCommand,
-  userCredentialsManager,
-} from '../../../managers/user-credentials-manager'
-import { DeleteEmailCodesCommand, emailCodesManager } from '../../../managers/email-codes-manager'
-import {
-  RevokeUserRefreshTokensCommand,
-  refreshTokensManager,
-} from '../../../managers/refresh-tokens-manager'
-import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
-import { DeleteUserDialogSharesCommand, dialogSharesManager } from '../../../managers/dialog-shares-manager'
-import { agentApiIntegration, EraseAgentUserRequest } from '../../../integrations/agent-api'
-import { buildDeletionArchive } from '../shared/deletion-archive'
+import { eraseAccount, EraseAccountRefusal } from '../shared/erase-account'
 import { PROCESSES_CONFIG } from '../../config'
 import { PurgeInactiveAnonymousOperation } from './purge-inactive-anonymous.operation'
 import type { PurgeInactiveAnonymousResult } from './purge-inactive-anonymous.types'
@@ -36,10 +18,10 @@ import type { PurgeInactiveAnonymousResult } from './purge-inactive-anonymous.ty
  * has gone quiet is a phone that was lost, wiped or traded in, and what it holds is still personal
  * data that has no reason to be kept.
  *
- * It does what "erase everything" does at the person's request, in the same order: the agent
- * erases its copy first, and only then is the account anonymized. If the agent does not answer,
- * the account is left for the next run, because data cannot be declared erased while the agent still
- * holds it. One failure does not stop the others.
+ * It erases what "erase everything" erases at the person's request (`eraseAccount`,
+ * `../shared/erase-account.ts`, the same steps in the same order): the agent erases its copy first, and
+ * only then is the account anonymized. If the agent does not answer, the account is left for the next run, because
+ * data cannot be declared erased while the agent still holds it. One failure does not stop the others.
  */
 @requestHandler(PurgeInactiveAnonymousOperation)
 export class PurgeInactiveAnonymousOperationHandler implements RequestHandler<
@@ -84,55 +66,18 @@ export class PurgeInactiveAnonymousOperationHandler implements RequestHandler<
     const user = found.user
     if (user.isDeleted || user.isEmailConfirmed || user.lastActiveAt >= inactiveSince) return false
 
-    await agentApiIntegration.execute(new EraseAgentUserRequest({ userId }))
-
-    const outcome = await inTransaction(async (): Promise<boolean> => {
-      const existing = await usersManager.execute(new GetUserDeletionArchiveQuery({ userId }))
-      if (!existing.success) {
-        switch (existing.error) {
-          case GetUserDeletionArchiveQueryErrorCode.USER_NOT_FOUND:
-            return false
-          default:
-            return assertNever(existing.error)
-        }
+    const refusal = await eraseAccount(user, { reason: PROCESSES_CONFIG.DELETION.REASON_INACTIVITY })
+    if (refusal) {
+      switch (refusal) {
+        // Gone or erased by someone else meanwhile: nothing left for this run to do.
+        case EraseAccountRefusal.USER_NOT_FOUND:
+        case EraseAccountRefusal.ALREADY_DELETED:
+          return false
+        default:
+          return assertNever(refusal)
       }
-      if (!existing.archive) {
-        const archive = await buildDeletionArchive(user, PROCESSES_CONFIG.DELETION.REASON_INACTIVITY)
-        const persisted = await usersManager.execute(new SetUserDeletionArchiveCommand({ userId, archive }))
-        if (!persisted.success) {
-          switch (persisted.error) {
-            case SetUserDeletionArchiveCommandErrorCode.USER_NOT_FOUND:
-              return false
-            default:
-              return assertNever(persisted.error)
-          }
-        }
-      }
-
-      // A linked address that was never confirmed has a password and a code waiting: neither is kept.
-      await userCredentialsManager.execute(new DeleteUserCredentialsCommand({ userId }))
-      await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
-      // Links to the person's conversations die with the account (`REQ-DATA-05`).
-      await dialogSharesManager.execute(new DeleteUserDialogSharesCommand({ userId }))
-      if (user.email !== null)
-        await emailCodesManager.execute(new DeleteEmailCodesCommand({ email: user.email }))
-
-      const deleted = await usersManager.execute(new SoftDeleteUserCommand({ userId }))
-      if (!deleted.success) {
-        switch (deleted.error) {
-          case SoftDeleteUserCommandErrorCode.USER_NOT_FOUND:
-          case SoftDeleteUserCommandErrorCode.ALREADY_DELETED:
-            return false
-          default:
-            return assertNever(deleted.error)
-        }
-      }
-      await refreshTokensManager.execute(
-        new RevokeUserRefreshTokensCommand({ userId, exceptSessionId: null, revokedAt: new Date() }),
-      )
-      return true
-    })
-    if (outcome) createLogger('account-deletion').info('Inactive anonymous account erased', { userId })
-    return outcome
+    }
+    createLogger('account-deletion').info('Inactive anonymous account erased', { userId })
+    return true
   }
 }

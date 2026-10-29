@@ -12,6 +12,7 @@ import {
   startSession,
   type User,
 } from './auth'
+import { diary } from './diary'
 import { journal } from './journal'
 import { resetMemoryState } from './memory'
 import { markTelegramSignedOut } from './telegram'
@@ -85,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     markTelegramSignedOut(false)
     await startSession(user, tokens)
     journal.reset()
+    diary.reset()
     resetMemoryState()
     let current = user
     if (options.consent) {
@@ -108,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const endSession = useCallback(async () => {
     await clearSession()
     journal.reset()
+    diary.reset()
     resetMemoryState()
     setAuth({ ...ANONYMOUS, entry: 'login' })
   }, [])
@@ -120,6 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     markTelegramSignedOut(true)
     await signOut()
     journal.reset()
+    diary.reset()
     resetMemoryState()
     setAuth({ ...ANONYMOUS, entry: options.entry ?? 'login' })
   }, [])
@@ -129,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut()
     await forgetDevice()
     journal.reset()
+    diary.reset()
     resetMemoryState()
     setAuth({ ...ANONYMOUS, entry: 'login' })
   }, [])

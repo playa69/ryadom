@@ -241,6 +241,17 @@ describe('hello и токен', () => {
   })
 })
 
+describe('разговор потерян', () => {
+  it('4011 (у агента нет такого диалога) — конец без повторов', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    ws.drop(DialogCloseCode.DialogGone)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(h.states.at(-1)).toBe('failed')
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+})
+
 describe('разброс переподключений', () => {
   /** After a drop, how long until the socket is opened again. */
   async function delayAfterDrop(random: () => number): Promise<number> {

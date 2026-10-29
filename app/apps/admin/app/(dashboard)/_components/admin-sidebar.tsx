@@ -1,6 +1,6 @@
 'use client'
 
-import { ExternalLink, ScrollText, Users, type LucideIcon } from 'lucide-react'
+import { AudioLines, ExternalLink, ScrollText, Users, type LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { BrandMark } from '@/components/brand-mark'
@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 
 const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/users', label: 'Пользователи', icon: Users },
+  { href: '/voice', label: 'Голос', icon: AudioLines },
   { href: '/audit', label: 'Журнал действий', icon: ScrollText },
 ]
 

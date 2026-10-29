@@ -20,13 +20,28 @@ export const citext = customType<{ data: string }>({
 export const EMAIL_CODE_PURPOSES = ['confirm_email', 'reset_password', 'admin_sign_in'] as const
 export type EmailCodePurpose = (typeof EMAIL_CODE_PURPOSES)[number]
 
-/** Admin actions written to `audit_log.action`. */
+/**
+ * Voice pipelines the agent can run a conversation on (`voice_settings.pipeline`, the `pipeline` of a dialog start):
+ *
+ * - `sber`: GigaASR → GigaChat → SaluteSpeech on the program's model proxy, with Gemini Live as the fallback;
+ * - `gemini`: Gemini Live, speech to speech.
+ *
+ * These values are stored in the column and understood by the agent, so they must not be changed.
+ */
+export const VOICE_PIPELINES = ['sber', 'gemini'] as const
+export type VoicePipeline = (typeof VOICE_PIPELINES)[number]
+
+/**
+ * Admin actions written to `audit_log.action`. `VOICE_PIPELINE_CHANGED` concerns no account: its target is empty and
+ * the payload holds `from` and `to`.
+ */
 export const AUDIT_LOG_ACTIONS = [
   'USER_BLOCKED',
   'USER_UNBLOCKED',
   'USER_EMAIL_CONFIRMED',
   'USER_ACCOUNT_DELETED',
   'USER_SESSIONS_REVOKED',
+  'VOICE_PIPELINE_CHANGED',
 ] as const
 export type AuditLogAction = (typeof AUDIT_LOG_ACTIONS)[number]
 
@@ -72,16 +87,19 @@ export type RequiredUserConsentKind = (typeof USER_CONSENT_KINDS)[number]
  *
  * These values are stored in the column, so they must not be changed.
  */
-export const OPTIONAL_CONSENT_KINDS = ['memory'] as const
+export const OPTIONAL_CONSENT_KINDS = ['memory', 'self_check'] as const
 export type OptionalUserConsentKind = (typeof OPTIONAL_CONSENT_KINDS)[number]
 
 export type UserConsentKind = RequiredUserConsentKind | OptionalUserConsentKind
 
 /**
  * What a person did with their consent to memory (`memory_consent_events.action`): `granted` when
- * they turned memory on after the consent sheet, `revoked` when they turned it off.
+ * they accepted the consent sheet and turned memory on, `paused` when they turned it off (the
+ * consent stays in force), `resumed` when they turned it back on under the same sheet, `revoked`
+ * when the consent itself ended. Rows written before the pause stopped counting as a withdrawal
+ * carry `revoked` for what is now `paused`; they stay as they were.
  *
  * These values are stored in the column, so they must not be changed.
  */
-export const MEMORY_CONSENT_ACTIONS = ['granted', 'revoked'] as const
+export const MEMORY_CONSENT_ACTIONS = ['granted', 'revoked', 'paused', 'resumed'] as const
 export type MemoryConsentAction = (typeof MEMORY_CONSENT_ACTIONS)[number]

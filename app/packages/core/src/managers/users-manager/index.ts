@@ -2,8 +2,10 @@
 import './commands/create-user/create-user.handler'
 import './commands/mark-user-email-confirmed/mark-user-email-confirmed.handler'
 import './commands/change-user-email/change-user-email.handler'
+import './commands/release-user-email/release-user-email.handler'
 import './commands/update-user-name/update-user-name.handler'
 import './commands/update-user-voice/update-user-voice.handler'
+import './commands/update-user-timezone/update-user-timezone.handler'
 import './commands/set-user-active/set-user-active.handler'
 import './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.handler'
 import './commands/set-user-traffic-type/set-user-traffic-type.handler'
@@ -28,8 +30,13 @@ export { MarkUserEmailConfirmedCommand } from './commands/mark-user-email-confir
 export type { MarkUserEmailConfirmedCommandData } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.command'
 export { ChangeUserEmailCommand } from './commands/change-user-email/change-user-email.command'
 export type { ChangeUserEmailCommandData } from './commands/change-user-email/change-user-email.command'
+export { ReleaseUserEmailCommand } from './commands/release-user-email/release-user-email.command'
+export type { ReleaseUserEmailCommandData } from './commands/release-user-email/release-user-email.command'
 export { UpdateUserNameCommand } from './commands/update-user-name/update-user-name.command'
 export type { UpdateUserNameCommandData } from './commands/update-user-name/update-user-name.command'
+export { UpdateUserTimezoneCommand } from './commands/update-user-timezone/update-user-timezone.command'
+export type { UpdateUserTimezoneCommandData } from './commands/update-user-timezone/update-user-timezone.command'
+export { isKnownTimezone } from './commands/update-user-timezone/update-user-timezone.validator'
 export { UpdateUserVoiceCommand } from './commands/update-user-voice/update-user-voice.command'
 export type { UpdateUserVoiceCommandData } from './commands/update-user-voice/update-user-voice.command'
 export { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
@@ -66,8 +73,12 @@ export type { MarkUserEmailConfirmedCommandResult } from './commands/mark-user-e
 export { MarkUserEmailConfirmedCommandErrorCode } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.types'
 export type { ChangeUserEmailCommandResult } from './commands/change-user-email/change-user-email.types'
 export { ChangeUserEmailCommandErrorCode } from './commands/change-user-email/change-user-email.types'
+export type { ReleaseUserEmailCommandResult } from './commands/release-user-email/release-user-email.types'
+export { ReleaseUserEmailCommandErrorCode } from './commands/release-user-email/release-user-email.types'
 export type { UpdateUserNameCommandResult } from './commands/update-user-name/update-user-name.types'
 export { UpdateUserNameCommandErrorCode } from './commands/update-user-name/update-user-name.types'
+export type { UpdateUserTimezoneCommandResult } from './commands/update-user-timezone/update-user-timezone.types'
+export { UpdateUserTimezoneCommandErrorCode } from './commands/update-user-timezone/update-user-timezone.types'
 export type { UpdateUserVoiceCommandResult } from './commands/update-user-voice/update-user-voice.types'
 export { UpdateUserVoiceCommandErrorCode } from './commands/update-user-voice/update-user-voice.types'
 export type { SetUserActiveCommandResult } from './commands/set-user-active/set-user-active.types'
@@ -100,7 +111,9 @@ export { ANALYTICS_PREFS_KEY, DELETION_ARCHIVE_KEY, TRAFFIC_TYPE_KEY } from './s
 import type { CreateUserCommand } from './commands/create-user/create-user.command'
 import type { MarkUserEmailConfirmedCommand } from './commands/mark-user-email-confirmed/mark-user-email-confirmed.command'
 import type { ChangeUserEmailCommand } from './commands/change-user-email/change-user-email.command'
+import type { ReleaseUserEmailCommand } from './commands/release-user-email/release-user-email.command'
 import type { UpdateUserNameCommand } from './commands/update-user-name/update-user-name.command'
+import type { UpdateUserTimezoneCommand } from './commands/update-user-timezone/update-user-timezone.command'
 import type { UpdateUserVoiceCommand } from './commands/update-user-voice/update-user-voice.command'
 import type { SetUserActiveCommand } from './commands/set-user-active/set-user-active.command'
 import type { SetUserAnalyticsOptOutCommand } from './commands/set-user-analytics-opt-out/set-user-analytics-opt-out.command'
@@ -120,8 +133,10 @@ export type UsersManagerRequests =
   | CreateUserCommand
   | MarkUserEmailConfirmedCommand
   | ChangeUserEmailCommand
+  | ReleaseUserEmailCommand
   | UpdateUserNameCommand
   | UpdateUserVoiceCommand
+  | UpdateUserTimezoneCommand
   | SetUserActiveCommand
   | SetUserAnalyticsOptOutCommand
   | SetUserTrafficTypeCommand

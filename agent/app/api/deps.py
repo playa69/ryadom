@@ -2,11 +2,10 @@
 
 import hmac
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
-from app.clients.speech import TextToSpeech
 from app.core.config import APP_CONFIG
 from app.core.errors import unauthorized
 from app.services.dialog_store import DialogStore
@@ -30,15 +29,6 @@ async def require_token(authorization: Annotated[str | None, Header()] = None) -
 
 def get_store(request: Request) -> DialogStore:
     return request.app.state.store
-
-
-def active_tts(app: Any) -> TextToSpeech | None:
-    """Озвучка, которая работает сейчас: настроенный провайдер, если dev-режим не выключил его (`POST /dev/tts`)."""
-    return app.state.tts if app.state.tts_mode == "auto" else None
-
-
-def get_tts(request: Request) -> TextToSpeech | None:
-    return active_tts(request.app)
 
 
 def canonical_user_id(user_id: str) -> str | None:

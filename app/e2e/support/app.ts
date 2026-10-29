@@ -64,8 +64,13 @@ export function sheetButton(page: Page, name: string | RegExp) {
   return scope.getByRole('button', { name }).or(scope.getByRole('link', { name })).first()
 }
 
-export async function openApp(page: Page): Promise<void> {
+export async function openApp(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
   await page.goto(`${PWA_URL}/`)
+  // The sheet "Рядом теперь запоминает важное" would cover home of a new account: unless a test is about it,
+  // it is already answered, like for a person who has seen it. Read when home opens.
+  if (!options.keepMemoryInvite) {
+    await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.memory-invite-dismissed')
+  }
   // A new visitor lands on the first screen, someone with a session on home.
   await expect(button(page, 'Начать').or(button(page, 'Поговорить'))).toBeVisible({ timeout: 30_000 })
   // The PWA install banner covers the bottom of the screen and is not needed in the test browser.
@@ -114,6 +119,12 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
 }
 
-export async function openTab(page: Page, label: 'Главная' | 'Журнал' | 'Профиль'): Promise<void> {
+export async function openTab(page: Page, label: 'Главная' | 'Дневник' | 'Профиль'): Promise<void> {
   await page.locator('#rd-tabbar').getByText(label, { exact: true }).click()
+}
+
+/** The journal lives inside the diary: the tab «Дневник», then its segment «Журнал». */
+export async function openJournal(page: Page): Promise<void> {
+  await openTab(page, 'Дневник')
+  await page.getByTestId('diary-segment-journal').click()
 }

@@ -3,10 +3,10 @@
 import asyncio
 import json
 import os
-import re
 import struct
+import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 # Конфиг читается при импорте приложения (fail-fast), поэтому env задаём до него.
@@ -14,20 +14,51 @@ from typing import Any
 os.environ["AGENT_INTERNAL_TOKEN"] = "test-internal-token"
 os.environ["STREAM_DELAY_MS"] = "0"
 os.environ["TTS_FRAME_INTERVAL_MS"] = "0"
-os.environ["TTS_MODE"] = "none"
-os.environ["LLM_MODE"] = "template"
 os.environ["LLM_TIMEOUT_SECONDS"] = "1"  # тест зависшей модели ждёт ровно столько
-os.environ["INCOMPLETE_HOLD_MS"] = "400"  # пауза для оборванной на полуслове реплики: в бою 1500, тесты не ждут столько
-os.environ["GEMINI_TPM_LIMIT"] = "0"  # бюджет токенов Gemini выключен; его тесты (test_gemini_budget.py) включают его сами
-os.environ["GEMINI_LAZY_OPEN"] = "false"  # сессия Gemini открывается заранее, как раньше; ленивое открытие — там же
-os.environ.pop("SALUTE_SPEECH_AUTH_KEY", None)
+os.environ["GEMINI_TPM_LIMIT"] = "0"  # учёт токенов Gemini выключен; его тесты (test_gemini_budget.py) включают его сами
 os.environ.pop("AGENT_API_TOKEN", None)
 
+import anyio  # noqa: E402
 import pytest  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.testclient import WebSocketTestSession  # noqa: E402
 
 from app.main import create_app  # noqa: E402
 from tests.fake_db import FakeDialogDatabase  # noqa: E402
+
+
+def _let_the_session_finish(session: Any) -> None:
+    """Закрыть сокет и дождаться, пока сеанс агента закончит уборку, прежде чем TestClient отменит приложение.
+
+    `WebSocketTestSession.__exit__` шлёт disconnect и тут же отменяет задачу приложения: уборка сеанса (отмена задач, закрытие
+    соединения с моделью, расход, трассы) рвалась посередине, а CancelledError выходил в тело теста. В бою сокет закрывается
+    без отмены приложения. Ждём не дольше трёх секунд: зависший сеанс не должен вешать весь прогон."""
+    parts = str(session.scope.get("path", "")).split("/")
+    store = getattr(getattr(session.app, "state", None), "store", None)
+    if store is None or len(parts) < 7 or parts[1:4] != ["v1", "users", parts[3]]:
+        return
+    try:
+        session.close(1000)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            dialog = store.get(parts[3], parts[5])
+            if dialog is None or not dialog.has_live_socket:
+                return
+            time.sleep(0.005)
+    except Exception:  # noqa: BLE001 - сокет уже закрыт или приложение остановлено: ждать нечего
+        return
+
+
+_original_exit = WebSocketTestSession.__exit__
+
+
+def _exit_after_session_finished(self: WebSocketTestSession, *args: Any) -> bool | None:
+    _let_the_session_finish(self)
+    return _original_exit(self, *args)
+
+
+WebSocketTestSession.__exit__ = _exit_after_session_finished  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)
@@ -38,13 +69,8 @@ def fake_db_files() -> Iterator[None]:
     FakeDialogDatabase.reset()
 
 # app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
-# чьё отсутствие ждут тесты (умолчания LlmSettings и отказы build_models).
-for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL", "STT_MODEL"):
-    os.environ.pop(leaked, None)
-
-# app.core.config при импорте делает load_dotenv(): значения из локального .env возвращаются. Убираем повторно те,
-# чьё отсутствие ждут тесты (умолчания LlmSettings и отказы build_models).
-for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL", "STT_MODEL"):
+# чьё отсутствие ждут тесты (умолчания BackgroundModelSettings и отказ build_background_model без ключа).
+for leaked in ("AGENT_API_TOKEN", "LLM_BASE_URL", "LLM_CHAT_MODEL"):
     os.environ.pop(leaked, None)
 
 TOKEN = "test-internal-token"
@@ -80,26 +106,15 @@ class FakeTts:
         return None
 
 
-class FakeChat:
-    """Чат-модель для тестов: ответ задан заранее, запросы запоминаются."""
+class FakeBackgroundModel:
+    """Текстовая модель для тестов (итоги разговоров и недели): ответ задан заранее, запросы запоминаются."""
 
     name = "fake-chat"
 
-    def __init__(
-        self,
-        reply: str = "Я рядом, расскажи ещё.",
-        delay: float = 0.0,
-        fail: bool = False,
-        pieces: list[str] | None = None,
-        piece_delay: float = 0.0,
-        truncated: bool = False,
-    ) -> None:
+    def __init__(self, reply: str = "Я рядом, расскажи ещё.", delay: float = 0.0, fail: bool = False) -> None:
         self.reply = reply
         self.delay = delay
         self.fail = fail
-        self.pieces = pieces
-        self.piece_delay = piece_delay
-        self.truncated = truncated
         self.calls: list[list[dict[str, str]]] = []
 
     async def complete(self, messages: list[dict[str, str]]) -> str:
@@ -107,62 +122,42 @@ class FakeChat:
         if self.delay:
             await asyncio.sleep(self.delay)
         if self.fail:
-            from app.clients.llm import ModelError
+            from app.clients.background_model import ModelError
 
             raise ModelError("модель сломана в тесте")
         return self.reply
 
-    async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        """Ответ по словам, как стрим настоящей модели. `pieces` задаёт свою нарезку, `truncated` — обрыв по токенам."""
-        self.calls.append(messages)
-        if self.delay:
-            await asyncio.sleep(self.delay)
-        if self.fail:
-            from app.clients.llm import ModelError
-
-            raise ModelError("модель сломана в тесте")
-        for piece in self.pieces if self.pieces is not None else re.findall(r"\S+\s*", self.reply):
-            yield piece
-            if self.piece_delay:
-                await asyncio.sleep(self.piece_delay)
-        if self.truncated:
-            from app.clients.llm import ReplyTruncated
-
-            raise ReplyTruncated("оборван по токенам в тесте")
-
     async def aclose(self) -> None:
         return None
 
 
-class FakeRecognizer:
-    """Распознавание для тестов: возвращает заданный текст и запоминает присланный звук."""
+def make_app(
+    connector: Any = None, tts: Any = None, background: Any = None, real_tts: bool = False, **create_kwargs: Any
+) -> FastAPI:
+    """Приложение на поддельном Gemini Live (`tests/fake_live.py`): единственного голосового пути, другого у агента нет.
 
-    name = "fake-stt"
+    `tts` — озвучка фиксированных фраз (приветствие, кризисный ответ, просьба повторить); без неё фразы не звучат, а текст
+    доходит. `real_tts=True` — настоящая обвязка фраз (`GeminiLiveTts` поверх того же поддельного Gemini с кэшем и прогревом).
+    `background` — фоновая текстовая модель (итоги разговоров, итоги недели); остальное (`database_factory`,
+    `memory_settings`) уходит в `create_app` как есть."""
+    from tests.fake_live import FakeConnector
 
-    def __init__(self, text: str = "мне сегодня тяжело", fail: bool = False) -> None:
-        self.text = text
-        self.fail = fail
-        self.calls: list[bytes] = []
-
-    async def transcribe(self, pcm: bytes) -> str:
-        self.calls.append(pcm)
-        if self.fail:
-            from app.clients.llm import ModelError
-
-            raise ModelError("распознавание сломано в тесте")
-        return self.text
-
-    async def aclose(self) -> None:
-        return None
+    live = connector or FakeConnector()
+    return create_app(
+        live_factory=lambda: live,
+        tts_factory=None if real_tts else (lambda: tts),
+        background_factory=lambda: background,
+        **create_kwargs,
+    )
 
 
-def make_client(tts: Any = None, chat: Any = None, recognizer: Any = None) -> TestClient:
-    return TestClient(create_app(lambda: tts, lambda: (chat, recognizer)))
+def make_client(tts: Any = None, background: Any = None, connector: Any = None, **kwargs: Any) -> TestClient:
+    return TestClient(make_app(connector, tts, background, **kwargs))
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    """Агент без озвучки: протокол текста и REST."""
+    """Агент на поддельном Gemini Live без озвучки фраз: протокол текста и REST."""
     with make_client(None) as c:
         yield c
 
@@ -174,7 +169,7 @@ def voice() -> FakeTts:
 
 @pytest.fixture
 def voice_client(voice: FakeTts) -> Iterator[TestClient]:
-    """Агент с поддельной озвучкой: кадры 0x02, приветствие, tts_cancel."""
+    """Агент на поддельном Gemini Live с поддельной озвучкой фраз: кадры 0x02 приветствия, tts_cancel."""
     with make_client(voice) as c:
         yield c
 
@@ -197,11 +192,34 @@ def ws_url(user_id: str, dialog_id: str) -> str:
 Frame = tuple[str, Any]
 
 
+FRAME_WAIT_SECONDS = 30  # дольше ни один тест кадра не ждёт: так долго идёт только зависший
+
+
+def receive_frame(ws: Any, frames: list[Frame]) -> Any:
+    """Следующий кадр сокета. Если его нет `FRAME_WAIT_SECONDS`, тест падает со списком уже пришедшего, а не висит вечно.
+
+    `WebSocketTestSession.receive` ждёт без срока: тест, у которого кадр так и не придёт (его отменило перебивание, сеанс
+    закончился), вешал весь прогон до убийства по таймауту, и причину было не найти. Срок ставится внутри цикла портала
+    (`_send_rx` — приёмная очередь сессии starlette), поэтому ожидание отменяется чисто."""
+
+    async def wait() -> Any:
+        with anyio.fail_after(FRAME_WAIT_SECONDS):
+            return await ws._send_rx.receive()
+
+    try:
+        return ws.portal.call(wait)
+    except TimeoutError:
+        seen = [(kind, body["type"] if kind == "json" else len(body) if kind == "bin" else body) for kind, body in frames]
+        pytest.fail(f"кадр не пришёл за {FRAME_WAIT_SECONDS} с; до этого пришло: {seen}", pytrace=False)
+
+
 def read_frames(ws: Any, stop: Callable[[list[Frame]], bool], limit: int = 400) -> list[Frame]:
-    """Читает кадры сокета, пока `stop` не скажет хватит. ("json", dict) | ("bin", bytes) | ("close", код)."""
+    """Читает кадры сокета, пока `stop` не скажет хватит. ("json", dict) | ("bin", bytes) | ("close", код).
+
+    Кадр не пришёл вовремя — тест падает (`receive_frame`), а не зависает."""
     frames: list[Frame] = []
     for _ in range(limit):
-        message = ws.receive()
+        message = receive_frame(ws, frames)
         if message["type"] == "websocket.close":
             frames.append(("close", message.get("code")))
             break

@@ -13,13 +13,15 @@ export class EndAgentDialogRequestHandler
     const body: Record<string, unknown> = {}
     if (request.takeaway !== null) body.takeaway = request.takeaway
     if (request.tensionAfter !== null) body.tensionAfter = request.tensionAfter
+    if (request.recapSource === 'draft') body.recapSource = 'draft'
 
-    const { status, body: response } = await callAgent<{ summary?: AgentDialogSummaryResponse | null }>(
+    const { status, body: response } = await callAgent<{ summary?: AgentDialogSummaryResponse | null; saved?: boolean }>(
       `${userDialogsPath(request.userId)}/${encodeURIComponent(request.dialogId)}/end`,
       { method: 'POST', body },
     )
     if (status === 404) return { success: false, error: EndAgentDialogRequestErrorCode.DIALOG_NOT_FOUND }
     if (status !== 200) throw new Error(`Agent API refused to end a dialog: ${status}`)
-    return { success: true, summary: response?.summary ?? null }
+    // `saved: false`: the dialog was held unsaved; an agent that does not say it saved everything.
+    return { success: true, summary: response?.summary ?? null, saved: response?.saved !== false }
   }
 }

@@ -19,6 +19,7 @@ import {
   accountDeletionProcess,
 } from '../src/processes/account-deletion'
 import { StartDialogOperation, dialogsProcess } from '../src/processes/dialogs'
+import { getEnqueuedJobs } from '../src/services/job-queue-service'
 import { ConfirmEmailOperation, emailConfirmationProcess } from '../src/processes/email-confirmation'
 import {
   PASSWORD,
@@ -310,7 +311,7 @@ describe('подтверждённая почта и ключ устройств
     )
     expect(await getDb().select().from(userDevices).where(eq(userDevices.userId, user.id))).toHaveLength(1)
 
-    await confirmWithCode(email)
+    await confirmWithCode(email, user.id)
 
     expect(await getDb().select().from(userDevices).where(eq(userDevices.userId, user.id))).toHaveLength(0)
     // The same key now makes a stranger's account, not this one.
@@ -335,9 +336,35 @@ describe('подтверждённая почта и ключ устройств
     await authenticationProcess.execute(
       new LinkEmailOperation({ userId: user.id, email, password: PASSWORD }),
     )
-    await confirmWithCode(email)
+    await confirmWithCode(email, user.id)
 
     const result = await dialogsProcess.execute(new StartDialogOperation({ userId: user.id }))
     expect(result.success).toBe(true)
+  })
+})
+
+describe('чистка неактивных стирает профиль в аналитике так же, как самоудаление', () => {
+  // The same erasure as the person's own request (test/account-erasure.test.ts): one job in the queue for each erased account.
+  it('каждый стёртый по сроку аккаунт ставит свою задачу, оставшийся — нет', async () => {
+    mockAgent()
+    const first = await anonymousSeen(RETENTION_DAYS + 5)
+    const second = await anonymousSeen(RETENTION_DAYS + 40)
+    const kept = await anonymousSeen(10)
+
+    expect(await purge()).toMatchObject({ purged: 2, failed: 0 })
+
+    expect(
+      getEnqueuedJobs()
+        .map((job) => [job.queue, (job.data as { userId: string }).userId])
+        .sort(),
+    ).toEqual(
+      [
+        ['analytics.erase-person', first.user.id],
+        ['analytics.erase-person', second.user.id],
+      ].sort(),
+    )
+    expect(getEnqueuedJobs().some((job) => (job.data as { userId: string }).userId === kept.user.id)).toBe(
+      false,
+    )
   })
 })

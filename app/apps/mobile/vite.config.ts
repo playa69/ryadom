@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { jsVersion } from './scripts/js-version.mjs'
 
 /**
  * The app client (src/client). Three build outputs and a dev server:
@@ -9,7 +10,7 @@ import { VitePWA } from 'vite-plugin-pwa'
  * - `vite build --mode web`: the web build, a PWA written to dist/pwa and served by the nginx image
  *   built from the Dockerfile next to this file (the API serves no client);
  * - `vite build --mode prod`: JS for store builds, prod URLs, no env switcher;
- * - `vite build --mode dev`: JS for dev builds, with the env switcher, staging by default;
+ * - `vite build --mode dev`: JS for dev builds, with the env switcher, local by default;
  * - `vite --mode dev`: dev server on http://localhost:5174, with `/api` and the WebSocket proxied
  *   to services/api.
  *
@@ -60,7 +61,7 @@ function webIndexHtmlPlugin(): Plugin {
  * host shared with other apps, and every asset URL, the service worker and the manifest are
  * resolved against it. Returns Vite's form, with a slash on both ends; `/` is a host of its own.
  *
- * Only the web build has a prefix. The store builds and the OTA bundles (`--mode prod|dev`) run
+ * Only the web build has a prefix. The store builds (`--mode prod|dev`) and the OTA bundle run
  * from the WebView at `https://localhost/` and must keep `/`.
  */
 function readWebBase(value: string | undefined): string {
@@ -127,8 +128,9 @@ export default defineConfig(({ command, mode }) => {
     ],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
-      // What analytics report as `app_version`: the image tag (`RELEASE`) when the build has one. `__APP_VERSION__`
-      // is not that: the native update check compares it, so it stays the package's version.
+      // What the native update check reports and compares: the same version the OTA manifest gives this JS.
+      __JS_VERSION__: JSON.stringify(jsVersion(pkg.version)),
+      // What analytics report as `app_version`: the image tag (`RELEASE`) when the build has one.
       __RELEASE__: JSON.stringify(process.env.RELEASE?.trim() || pkg.version),
     },
     server: {

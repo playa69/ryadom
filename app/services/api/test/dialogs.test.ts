@@ -15,11 +15,24 @@ import {
   DialogServerFrame,
   DialogWsErrorCode,
   SafetyLevel,
+  DialogRecapApiErrorCode,
+  type DeleteDialogApiResponse,
+  type DialogSettingsApiResponse,
+  type DraftDialogRecapApiResponse,
+  type EndDialogApiResponse,
+  type ListDialogRecapsApiResponse,
   type ListDialogsApiResponse,
+  type PutDialogRecapApiResponse,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { ApiPath } from '@ryadom/contracts/api/paths'
+import { eq } from 'drizzle-orm'
+import { diarySummaries } from '@ryadom/db/schema'
+import { diaryProcess } from '@ryadom/core/processes/diary'
+import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
+import { getDb } from '@ryadom/core/shared'
+import { afterDeleteJob } from '../src/jobs/after-delete'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
@@ -39,8 +52,12 @@ import {
 
 const { app, resetLimits } = makeApp()
 
+/** The dialog events reported for a person: signing up reports others, which are not what these tests look at. */
+const dialogEvents = (analytics: ReturnType<typeof recordingAnalytics>, userId: string) =>
+  analytics.events.filter((entry) => entry.userId === userId && entry.event.startsWith('dialog_')).map((entry) => entry.event)
+
 describe('REST диалогов', () => {
-  it('старт передаёт агенту только голос человека (по умолчанию мужской), режим и клиента нет, отвечает диалогом с числом сообщений и временем последней активности', async () => {
+  it('старт передаёт агенту только голос человека (по умолчанию мужской) и голосовой путь из админки (по умолчанию Сбер), режим и клиента нет, отвечает диалогом с числом сообщений и временем последней активности', async () => {
     resetLimits()
     const { user, tokens } = await signUpAndIn(app)
     const { calls } = mockAgent({
@@ -69,12 +86,13 @@ describe('REST диалогов', () => {
       messageCount: 5,
       lastActivityAt: '2026-10-01T20:12:00.000Z',
       memoryMode: DialogMemoryMode.On,
+      saved: true,
       memoryEnabled: false,
     })
 
     const agentCall = calls.at(-1)!
     expect(agentCall.url.pathname).toBe(`/v1/users/${user.id}/dialogs`)
-    expect(JSON.parse(agentCall.body)).toEqual({ voice: 'male' })
+    expect(JSON.parse(agentCall.body)).toEqual({ voice: 'male', pipeline: 'sber' })
   })
 
   it('агент не прислал messageCount и lastActivityAt — в ответе 0 и null, клиент ничего не спрашивает', async () => {
@@ -94,6 +112,7 @@ describe('REST диалогов', () => {
       messageCount: 0,
       lastActivityAt: null,
       memoryMode: DialogMemoryMode.On,
+      saved: true,
       memoryEnabled: false,
     })
   })
@@ -117,7 +136,73 @@ describe('REST диалогов', () => {
     )
 
     expect(started).toMatchObject({ dialogId: 'd-6', memoryMode: DialogMemoryMode.Off, memoryEnabled: true })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off', pipeline: 'sber' })
+  })
+
+  it('«не сохранять»: saved: false уходит агенту отдельно от memory, ответ несёт то, что подтвердил агент, аналитика молчит', async () => {
+    // add-unsaved-dialog, «Старт разговора» и «Разговор без следа».
+    const analytics = recordingAnalytics()
+    const { app: tracked, resetLimits: resetTracked } = makeApp({ analytics })
+    resetTracked()
+    const { user, tokens } = await signUpAndIn(tracked)
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-u1', resumed: false, memoryMode: 'off', saved: false, memoryEnabled: true }),
+    })
+
+    const started = ok<StartDialogApiResponse>(
+      await call(tracked, 'POST', '/api/dialogs', { startNew: true, saved: false }, tokens.accessToken),
+    )
+
+    expect(started).toMatchObject({ dialogId: 'd-u1', saved: false, memoryMode: DialogMemoryMode.Off })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, saved: false, pipeline: 'sber' })
+    expect(dialogEvents(analytics, user.id)).toEqual([]) // ни dialog_started, ничего другого
+  })
+
+  it('«без памяти» и «не сохранять» не смешиваются: memory: off уходит без saved и аналитика о старте остаётся', async () => {
+    const analytics = recordingAnalytics()
+    const { app: tracked, resetLimits: resetTracked } = makeApp({ analytics })
+    resetTracked()
+    const { user, tokens } = await signUpAndIn(tracked)
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs': () =>
+        json({ dialogId: 'd-u2', resumed: false, memoryMode: 'off', memoryEnabled: true }),
+    })
+
+    const started = ok<StartDialogApiResponse>(
+      await call(tracked, 'POST', '/api/dialogs', { memory: DialogMemoryMode.Off }, tokens.accessToken),
+    )
+
+    expect(started).toMatchObject({ memoryMode: DialogMemoryMode.Off, saved: true })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', memory: 'off', pipeline: 'sber' })
+    expect(dialogEvents(analytics, user.id)).toEqual(['dialog_started'])
+  })
+
+  it('saved не булево — 400, агента не трогаем', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent()
+    const response = await call(app, 'POST', '/api/dialogs', { saved: 'нет' }, tokens.accessToken)
+    expect(response.status).toBe(400)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('завершение не сохраняемого разговора по REST: аналитика о конце молчит', async () => {
+    const analytics = recordingAnalytics()
+    const { app: tracked, resetLimits: resetTracked } = makeApp({ analytics })
+    resetTracked()
+    const { user, tokens } = await signUpAndIn(tracked)
+    mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/end': () =>
+        json({ summary: { title: 'Разговор', themes: [], recapAvailable: false }, saved: false }),
+    })
+
+    const ended = ok<EndDialogApiResponse>(
+      await call(tracked, 'POST', '/api/dialogs/d-u3/end', { takeaway: 'секретный вывод' }, tokens.accessToken),
+    )
+
+    expect(ended.summary?.recapAvailable).toBe(false)
+    expect(dialogEvents(analytics, user.id)).toEqual([])
   })
 
   it('memory не из списка — 400, агента не трогаем', async () => {
@@ -145,14 +230,14 @@ describe('REST диалогов', () => {
     expect(again).toMatchObject({ dialogId: 'd-1', resumed: true, messageCount: 3 })
     expect(typeof again.lastActivityAt).toBe('string')
     expect(dialogs.ended).toEqual([])
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', pipeline: 'sber' })
 
     // The person answered "end it and begin a new one".
     const fresh = ok<StartDialogApiResponse>(
       await call(app, 'POST', '/api/dialogs', { startNew: true }, tokens.accessToken),
     )
     expect(fresh).toMatchObject({ dialogId: 'd-2', resumed: false, messageCount: 0, lastActivityAt: null })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, pipeline: 'sber' })
     expect(dialogs.ended).toEqual(['d-1'])
     expect(dialogs.openOf(user.id)).toBe('d-2')
   })
@@ -180,7 +265,7 @@ describe('REST диалогов', () => {
     const started = ok<StartDialogApiResponse>(
       await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken),
     )
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female', pipeline: 'sber' })
     // The voice is the profile's business: the dialog answer keeps its shape.
     expect(started).toEqual({
       dialogId: 'd-9',
@@ -190,12 +275,13 @@ describe('REST диалогов', () => {
       messageCount: 0,
       lastActivityAt: null,
       memoryMode: DialogMemoryMode.On,
+      saved: true,
       memoryEnabled: false,
     })
 
     ok(await call(app, 'PATCH', '/api/auth/me', { voice: 'male' }, tokens.accessToken))
     ok(await call(app, 'POST', '/api/dialogs', {}, tokens.accessToken))
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', pipeline: 'sber' })
   })
 
   it('старый клиент шлёт режим, новый нет — оба получают диалог', async () => {
@@ -289,6 +375,200 @@ describe('REST диалогов', () => {
   })
 })
 
+describe('итог разговора, удаление и настройка', () => {
+  const RECAP = 'Ты рассказал про работу и решил поговорить с руководителем до пятницы.'
+  const dialog = { dialogId: 'd-1', startedAt: '2026-10-20T10:00:00.000Z', endedAt: '2026-10-20T10:10:00.000Z', summary: null, messages: [] }
+
+  it('завершение несёт «Что забираешь» (оно же итог) агенту; в ответе итог и его статус, без служебного recapAt', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent({
+      'POST http://agent.test/v1/users/*/dialogs/*/end': () =>
+        json({ summary: { title: 'Разговор', themes: [], recap: RECAP, recapStatus: 'ready', recapSource: 'manual', recapAt: '2026-10-20T10:11:00Z' } }),
+    })
+    const result = ok<EndDialogApiResponse>(
+      await call(app, 'POST', '/api/dialogs/d-1/end', { takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' }, tokens.accessToken),
+    )
+    expect(result.summary).toMatchObject({ recap: RECAP, recapStatus: 'ready', recapSource: 'manual' })
+    expect(JSON.stringify(result)).not.toContain('recapAt')
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ takeaway: RECAP, tensionAfter: 4, recapSource: 'draft' })
+  })
+
+  it('итог длиннее правил или пустой — 400, агента не трогаем', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent()
+    for (const recap of ['', '   ', 'я'.repeat(501)]) {
+      expect((await call(app, 'PUT', '/api/dialogs/d-1/recap', { recap }, tokens.accessToken)).status).toBe(400)
+    }
+    expect((await call(app, 'POST', '/api/dialogs/d-1/end', { takeaway: 'я'.repeat(501) }, tokens.accessToken)).status).toBe(400)
+    expect(calls).toEqual([])
+  })
+
+  it('«Удалить разговор»: агент стирает его, ссылка гаснет, итог недели этого разговора пропадает сразу, остальные недели целы', async () => {
+    resetLimits()
+    const { user, tokens } = await signUpAndIn(app)
+    const week = (periodStart: string) => ({ userId: user.id, kind: 'week' as const, periodStart, text: 'Итог недели.', status: 'ready' as const })
+    // The conversation began on Tuesday 20 Oct 2026 (the week of the 19th); the week before has its text too.
+    await getDb().insert(diarySummaries).values([week('2026-10-19'), week('2026-10-12')])
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+      'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
+    })
+    const deleted = ok<DeleteDialogApiResponse>(await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken))
+    expect(deleted).toEqual({ deleted: true })
+    expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([`GET /v1/users/${user.id}/dialogs/d-1`, `DELETE /v1/users/${user.id}/dialogs/d-1`])
+    const rows = await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, user.id))
+    // The week of the conversation lost its text at once and waits for the tick as an empty marker; the other week is whole.
+    const byWeek = Object.fromEntries(rows.map((r) => [r.periodStart, r]))
+    expect(byWeek['2026-10-19']).toMatchObject({ status: 'pending', text: '' })
+    expect(byWeek['2026-10-12']).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+  })
+
+  // `add-job-queue`, «Когда пересчитываются итоги недели»: сценарии «Сброс после удаления не удался»
+  // и «Удаление разговора не состоялось».
+  describe('сброс недели после удаления разговора идёт через очередь', () => {
+    const week = (userId: string) => ({
+      userId,
+      kind: 'week' as const,
+      periodStart: '2026-10-19',
+      text: 'Итог недели.',
+      status: 'ready' as const,
+    })
+    const weekRow = async (userId: string) =>
+      (await getDb().select().from(diarySummaries).where(eq(diarySummaries.userId, userId)))[0]
+    /** The follow-up job as the worker runs it, on the job that stands in the queue. */
+    const runQueuedJob = async () => {
+      const [queued] = getEnqueuedJobs()
+      expect(queued?.queue).toBe('dialogs.after-delete')
+      await afterDeleteJob()(queued!.data as never, {} as never)
+    }
+
+    it('после успешного сброса в запросе задача отменена: ждать нечего', async () => {
+      resetLimits()
+      const { user, tokens } = await signUpAndIn(app)
+      await getDb().insert(diarySummaries).values(week(user.id))
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+        'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
+      })
+
+      ok<DeleteDialogApiResponse>(await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken))
+
+      expect(await weekRow(user.id)).toMatchObject({ status: 'pending', text: '' })
+      expect(getEnqueuedJobs()).toEqual([])
+    })
+
+    it('Сброс после удаления не удался: запрос ответил, неделя не сброшена, задача лежит и сбрасывает её сама', async () => {
+      resetLimits()
+      const { user, tokens } = await signUpAndIn(app)
+      await getDb().insert(diarySummaries).values(week(user.id))
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+        'DELETE http://agent.test/v1/users/*/dialogs/*': () => new Response(null, { status: 204 }),
+      })
+      // The pod restarted or the database did not answer between the agent's answer and the reset.
+      const failing = vi.spyOn(diaryProcess, 'execute').mockRejectedValueOnce(new Error('the database did not answer'))
+
+      const deleted = ok<DeleteDialogApiResponse>(
+        await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken),
+      )
+      failing.mockRestore()
+
+      expect(deleted).toEqual({ deleted: true })
+      // The text still retells the deleted conversation, and the job that will reset it is waiting.
+      expect(await weekRow(user.id)).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+      expect(getEnqueuedJobs()).toEqual([
+        expect.objectContaining({
+          queue: 'dialogs.after-delete',
+          data: { userId: user.id, dialogId: 'd-1', dialogAt: '2026-10-20T10:00:00.000Z' },
+          startAfterSeconds: 120,
+        }),
+      ])
+
+      // Two minutes later the agent confirms that the conversation is gone, and the job resets the week.
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404),
+      })
+      await runQueuedJob()
+      expect(await weekRow(user.id)).toMatchObject({ status: 'pending', text: '' })
+    })
+
+    it('Удаление разговора не состоялось: агент отказал — 503, разговор на месте, а задача ничего не сбрасывает', async () => {
+      resetLimits()
+      const { user, tokens } = await signUpAndIn(app)
+      await getDb().insert(diarySummaries).values(week(user.id))
+      mockAgent({
+        'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog),
+        'DELETE http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'boom' }, 502),
+      })
+
+      expect((await call(app, 'DELETE', '/api/dialogs/d-1', undefined, tokens.accessToken)).status).toBe(503)
+      expect(getEnqueuedJobs()).toHaveLength(1)
+
+      // The conversation is still at the agent, so the job leaves the week text as it is.
+      mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json(dialog) })
+      await runQueuedJob()
+      expect(await weekRow(user.id)).toMatchObject({ status: 'ready', text: 'Итог недели.' })
+    })
+  })
+
+  it('чужого и несуществующего разговора нет; без сессии — 401; агент лёг — 503', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: { code: 'AGENT_DIALOG_NOT_FOUND' } }, 404) })
+    refusedWith(await call(app, 'DELETE', '/api/dialogs/d-x', undefined, tokens.accessToken), DialogApiErrorCode.DIALOG_NOT_FOUND)
+    expect((await call(app, 'DELETE', '/api/dialogs/d-x')).status).toBe(401)
+    mockAgent({ 'GET http://agent.test/v1/users/*/dialogs/*': () => json({ error: 'boom' }, 502) })
+    expect((await call(app, 'DELETE', '/api/dialogs/d-x', undefined, tokens.accessToken)).status).toBe(503)
+  })
+
+  it('список итогов, черновик, запись итога из журнала', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({
+      'GET http://agent.test/v1/users/*/recaps': () =>
+        json({ items: [{ dialogId: 'd-2', startedAt: '2026-10-24T09:00:00Z', title: 'Работа', recap: RECAP, recapSource: 'auto', recapAt: '2026-10-24T09:01:00Z' }], next: null }),
+      'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ recap: RECAP }),
+      'PUT http://agent.test/v1/users/*/dialogs/*/recap': () =>
+        json({ summary: { title: 'Работа', themes: [], recap: RECAP, recapStatus: 'ready', recapSource: 'draft' } }),
+    })
+    const list = ok<ListDialogRecapsApiResponse>(await call(app, 'GET', '/api/recaps', undefined, tokens.accessToken))
+    expect(list).toEqual({
+      items: [{ dialogId: 'd-2', startedAt: '2026-10-24T09:00:00.000Z', title: 'Работа', recap: RECAP, recapSource: 'auto' }],
+      next: null,
+    })
+    expect(ok<DraftDialogRecapApiResponse>(await call(app, 'POST', '/api/dialogs/d-2/recap/draft', undefined, tokens.accessToken))).toEqual({ recap: RECAP })
+    const saved = ok<PutDialogRecapApiResponse>(await call(app, 'PUT', '/api/dialogs/d-2/recap', { recap: RECAP, source: 'draft' }, tokens.accessToken))
+    expect(saved.summary).toMatchObject({ recap: RECAP, recapSource: 'draft' })
+  })
+
+  it('черновик: нет итога у разговора, модель не написала — отказы с кодами; запись для короткого — RECAP_NOT_AVAILABLE', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
+    refusedWith(await call(app, 'POST', '/api/dialogs/d-1/recap/draft', undefined, tokens.accessToken), DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE)
+    mockAgent({ 'POST http://agent.test/v1/users/*/dialogs/*/recap/draft': () => json({ error: { code: 'RECAP_UNAVAILABLE' } }, 502) })
+    refusedWith(await call(app, 'POST', '/api/dialogs/d-1/recap/draft', undefined, tokens.accessToken), DialogRecapApiErrorCode.RECAP_UNAVAILABLE)
+    mockAgent({ 'PUT http://agent.test/v1/users/*/dialogs/*/recap': () => json({ error: { code: 'RECAP_NOT_AVAILABLE' } }, 409) })
+    refusedWith(await call(app, 'PUT', '/api/dialogs/d-1/recap', { recap: RECAP }, tokens.accessToken), DialogRecapApiErrorCode.RECAP_NOT_AVAILABLE)
+  })
+
+  it('«Подводить итог автоматически»: читается и сохраняется, отдельно от памяти; не булево — 400', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const { calls } = mockAgent({
+      'GET http://agent.test/v1/users/*/dialog-settings': () => json({ recapEnabled: true }),
+      'PUT http://agent.test/v1/users/*/dialog-settings': () => json({ recapEnabled: false }),
+    })
+    expect(ok<DialogSettingsApiResponse>(await call(app, 'GET', '/api/dialog-settings', undefined, tokens.accessToken))).toEqual({ recapEnabled: true })
+    expect(ok<DialogSettingsApiResponse>(await call(app, 'PUT', '/api/dialog-settings', { recapEnabled: false }, tokens.accessToken))).toEqual({ recapEnabled: false })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ recapEnabled: false })
+    expect((await call(app, 'PUT', '/api/dialog-settings', { recapEnabled: 'нет' }, tokens.accessToken)).status).toBe(400)
+  })
+
+})
+
 // ─── WebSocket gateway ────────────────────────────────────────────────────────
 
 interface AgentConnection {
@@ -305,6 +585,8 @@ interface FakeAgent {
   waitFor: (dialogId: string) => Promise<AgentConnection>
   /** Whether the gateway has opened a connection for this dialog. */
   opened: (dialogId: string) => boolean
+  /** The agent has no such dialog: its handshake is refused with `404`, as a restarted agent refuses an unsaved one. */
+  forget: (dialogId: string) => void
   close: () => Promise<void>
 }
 
@@ -315,7 +597,15 @@ interface FakeAgent {
  */
 async function startFakeAgent(): Promise<FakeAgent> {
   const server = createServer()
-  const wss = new WebSocketServer({ server })
+  const forgotten = new Set<string>()
+  const wss = new WebSocketServer({
+    server,
+    verifyClient: (info, done) => {
+      const parts = (info.req.url ?? '').split('?')[0]!.split('/').filter(Boolean)
+      if (forgotten.has(decodeURIComponent(parts[4] ?? ''))) done(false, 404, 'Not Found')
+      else done(true)
+    },
+  })
   const connections = new Map<string, AgentConnection>()
 
   wss.on('connection', (socket, request) => {
@@ -344,6 +634,7 @@ async function startFakeAgent(): Promise<FakeAgent> {
       return connections.get(dialogId)!
     },
     opened: (dialogId) => connections.has(dialogId),
+    forget: (dialogId) => void forgotten.add(dialogId),
     close: () =>
       new Promise<void>((resolve) => {
         // terminate rather than close: otherwise wss.close waits for clients and the hook times out.
@@ -537,6 +828,20 @@ describe('WebSocket-шлюз', () => {
     client.close()
   })
 
+  it('кадр mood от агента доходит до клиента, чужие значения отбрасываются (PROTEUS-168)', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-mood-1' }))
+    const agentSide = await agent.waitFor('d-mood-1')
+
+    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'furious', intensity: 1 }))
+    agentSide.socket.send(JSON.stringify({ type: 'mood', tone: 'angry', intensity: 7, risk: 'self_harm', at: 5 }))
+    const mood = await nextFrame(client, DialogServerFrame.Mood)
+    expect(mood).toEqual({ v: 1, type: 'mood', tone: 'angry', intensity: 1, at: 5 })
+    client.close()
+  })
+
   it('аналитика: завершённый диалог — счётчики реплик, длительность и перемена напряжения, но не текст', async () => {
     const { userId, accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
@@ -668,6 +973,64 @@ describe('WebSocket-шлюз', () => {
     const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
     expect(mine[0]!.properties).toEqual({ input: 'text' })
     client.close()
+  })
+
+  it('не сохраняемый разговор (ready с saved: false): ни реплик, ни вызовов частей агента, ни конца в аналитике, текст идёт как обычно', async () => {
+    const dialogId = 'e7c1a9d2-3b44-4f08-9a61-5d2b8c0e1f77'
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId }))
+    const agentSide = await agent.waitFor(dialogId)
+    agentSide.socket.send(JSON.stringify({ type: 'ready', saved: false }))
+    await nextFrame(client, DialogServerFrame.Ready)
+
+    client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'секретная реплика' }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
+    agentSide.socket.send(JSON.stringify({ type: 'transcript', text: 'ну вот', final: true, messageId: 'm-9' }))
+    agentSide.socket.send(JSON.stringify({ type: 'component', component: 'tts', outcome: 'ok', cached: true }))
+    agentSide.socket.send(JSON.stringify({ type: 'assistant_end', messageId: 'm-2', text: 'секретный ответ' }))
+    client.send(JSON.stringify({ type: DialogClientFrame.End, takeaway: 'секретный вывод' }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'end' })))
+    agentSide.socket.send(JSON.stringify({ type: 'ended', summary: { title: 'Разговор', themes: [] } }))
+    const ended = await nextFrame(client, DialogServerFrame.Ended)
+    await new Promise<void>((resolve) => client.once('close', () => resolve()))
+
+    expect(ended.summary).toMatchObject({ title: 'Разговор' }) // клиент получает сводку как обычно
+    expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toEqual([])
+  })
+
+  it('не сохраняемый разговор: оборвавшаяся связь не даёт dialog_interrupted', async () => {
+    const dialogId = 'b3f5d7a1-9c20-4e66-8d14-7a0e2c6b9f35'
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId }))
+    const agentSide = await agent.waitFor(dialogId)
+    agentSide.socket.send(JSON.stringify({ type: 'ready', saved: false }))
+    await nextFrame(client, DialogServerFrame.Ready)
+    client.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'привет' }))
+    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'user_message' })))
+
+    client.close()
+    await new Promise<void>((resolve) => setTimeout(resolve, 300))
+    expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toEqual([])
+  })
+
+  it('агент отвечает 404 на рукопожатие (разговор потерян при перезапуске): DIALOG_NOT_FOUND и закрытие 4011, а не «агент недоступен»', async () => {
+    const dialogId = 'c9d2e4f6-1a3b-4c5d-8e7f-0a1b2c3d4e5f'
+    agent.forget(dialogId)
+    const { userId, accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    const closed = new Promise<number>((resolve) => client.once('close', (code) => resolve(code)))
+    const error = nextFrame(client, DialogServerFrame.Error)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId }))
+
+    expect(await error).toMatchObject({ code: DialogWsErrorCode.DIALOG_NOT_FOUND })
+    expect(await closed).toBe(DialogCloseCode.DialogGone)
+    // A lost dialog is not an interruption worth reporting: the client has nothing to reconnect to.
+    expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toEqual([])
   })
 
   it('аналитика: клиент оборвал связь после реплики — dialog_interrupted, и ровно один раз', async () => {
@@ -1020,6 +1383,24 @@ describe('WebSocket-шлюз', () => {
     for (let sequence = 0; sequence < 40; sequence++) client.send(micFrame(sequence))
 
     await vi.waitFor(() => expect(agentSide.binaryFrames).toHaveLength(40))
+    expect(client.readyState).toBe(WebSocket.OPEN)
+
+    client.close()
+  })
+
+  it('кадры по 40 мс: запас перед речью и несколько секунд речи разом не рвут соединение', async () => {
+    // `add-sber-voice-pipeline`, «Коды закрытия, ошибки и лимиты соединения»
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-40ms' }))
+    const agentSide = await agent.waitFor('d-40ms')
+
+    client.send(JSON.stringify({ type: DialogClientFrame.AudioStart, sampleRate: 16000 }))
+    // 600 ms of pre-roll plus five seconds of 40 ms frames after a stall: 140 frames, more than the old burst of 60.
+    for (let sequence = 0; sequence < 140; sequence++) client.send(micFrame(sequence))
+
+    await vi.waitFor(() => expect(agentSide.binaryFrames).toHaveLength(140))
     expect(client.readyState).toBe(WebSocket.OPEN)
 
     client.close()

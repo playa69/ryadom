@@ -11,6 +11,7 @@ import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
+import { optionalAuth } from '../../lib/auth-guard'
 import type { AppEnv, RouteDeps } from '../../lib/context'
 import { limitByIp, RATE_LIMITS } from '../../lib/rate-limit'
 import { jsonBody } from '../../lib/request'
@@ -19,16 +20,25 @@ import { inputOrNull } from '../../lib/rules'
 /**
  * `POST /api/auth/confirm-email` — the code from the email confirms the address. The
  * per-IP limit is mandatory, otherwise a six-digit code can simply be guessed.
+ *
+ * The session, when the client has one, says whose request it is. A registration is confirmed with
+ * no session at all; an address that a guest account linked is confirmed only from that account's
+ * own session, because a code proves the mailbox and the mailbox may be a stranger's. The clients
+ * send the token of their session on every request, so no client changes.
  */
 const bodySchema = z.object({
   email: z.string().min(1),
   code: z.string().min(1),
 })
 
-export function confirmEmailRoutes(app: Hono<AppEnv>, { rateLimiter, analytics }: RouteDeps): void {
+export function confirmEmailRoutes(
+  app: Hono<AppEnv>,
+  { jwt, sessions, rateLimiter, analytics }: RouteDeps,
+): void {
   app.post(
     ApiPath.ConfirmEmail,
     limitByIp(rateLimiter, 'confirm-email', RATE_LIMITS.attempt.perIp),
+    optionalAuth(jwt, sessions),
     jsonBody(bodySchema),
     async (c) => {
       const body = c.req.valid('json')
@@ -37,7 +47,9 @@ export function confirmEmailRoutes(app: Hono<AppEnv>, { rateLimiter, analytics }
       const code = inputOrNull(codeInputSchema, body.code)
       if (code === null) return apiError(c, 422, 'Code must be 6 digits')
 
-      const result = await emailConfirmationProcess.execute(new ConfirmEmailOperation({ email, code }))
+      const result = await emailConfirmationProcess.execute(
+        new ConfirmEmailOperation({ email, code, callerUserId: c.get('auth')?.userId ?? null }),
+      )
       if (!result.success) {
         switch (result.error) {
           case ConfirmEmailOperationErrorCode.CODE_INVALID:

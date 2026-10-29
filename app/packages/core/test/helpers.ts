@@ -30,14 +30,19 @@ export async function registerUser(opts: { email?: string; password?: string; na
   return { ...result.user, email: result.user.email }
 }
 
-/** Confirms the address the way a person does, with the code from the letter. */
-export async function confirmWithCode(email: string): Promise<void> {
+/**
+ * Confirms the address the way a person does, with the code from the letter. `callerUserId` is the
+ * account the request is made from: an address held by a guest account only confirms from its own session.
+ */
+export async function confirmWithCode(email: string, callerUserId: string | null = null): Promise<void> {
   const code = codeFromEmail(lastEmailTo(email))
-  const result = await emailConfirmationProcess.execute(new ConfirmEmailOperation({ email, code }))
+  const result = await emailConfirmationProcess.execute(
+    new ConfirmEmailOperation({ email, code, callerUserId }),
+  )
   if (!result.success) throw new Error(`confirm failed: ${result.error}`)
 }
 
-export async function confirmEmailDirectly(userId: string): Promise<void> {
+async function confirmEmailDirectly(userId: string): Promise<void> {
   await getDb().update(users).set({ isEmailConfirmed: true }).where(eq(users.id, userId))
 }
 
@@ -121,7 +126,7 @@ export function codeFromEmail(email: SentEmail): string {
 }
 
 /** Moves the core clock: only Date is faked, timers stay real because the DB driver needs them. */
-export function travelTo(date: Date): void {
+function travelTo(date: Date): void {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(date)
 }
@@ -141,7 +146,7 @@ export function noContent(): Response {
   return new Response(null, { status: 204 })
 }
 
-export interface FetchCall {
+interface FetchCall {
   method: string
   url: URL
   body: string
@@ -187,7 +192,7 @@ export function mockFetch(routes: Record<string, Route>) {
  * `new: true` the open dialog is ended and a fresh one created (`resumed: false`), except that an empty
  * one is just reused. Ids go d-1, d-2, ...; `say` puts messages into the person's open dialog.
  */
-export function fakeAgentDialogs() {
+function fakeAgentDialogs() {
   let counter = 0
   const open = new Map<string, { id: string; messages: number; lastActivityAt: string | null }>()
   /** Dialogs a fresh start ended, in order. */

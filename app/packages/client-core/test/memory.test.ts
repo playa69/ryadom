@@ -1,9 +1,11 @@
 /**
- * Memory on the client: the groups of the screen, the labels of a fact, its actions, the card "Я
- * запомнил" (whether to show it and the polling behind it) and "Забыть" with time to take it back.
+ * Memory on the client: the groups of the screen, the labels of a fact, its actions, the block "Я
+ * запомнил" in the closing window (whether to look for it, the polling behind it and its "Убрать")
+ * and "Забыть" with time to take it back.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ForgetMemoryApiErrorCode,
   MEMORY_CONSENT_VERSION,
   MemoryChangeOp,
   MemoryChangesStatus,
@@ -11,39 +13,28 @@ import {
   MemoryFactOrigin,
   MemoryFactSensitivity,
   MemoryFactStatus,
-  MemoryServiceMode,
   type MemoryChangesApiResponse,
   type MemoryFactApiResponse,
 } from '@ryadom/contracts/api/memory'
-import { InputLimit } from '@ryadom/contracts/api/limits'
-import type { ApiOutcome } from '../src/errors'
+import { ApiError, NETWORK_ERROR_STATUS, NETWORK_ERROR_TEXT, type ApiOutcome } from '../src/errors'
 import {
   FORGET_UNDO_MS,
-  MEMORY_CARD_MAX_ITEMS,
-  cleanPersonSlots,
-  createMemoryCard,
+  MEMORY_FORGET_ERRORS,
+  MEMORY_RECAP,
+  createMemoryRecap,
   createPendingForgets,
   dialogMemoryMark,
   groupMemory,
-  memoryCardContent,
-  memoryEditKind,
   memoryExportFileName,
-  memoryFactBody,
-  memoryFactDraft,
   memoryFactActions,
-  memoryFactChange,
   memoryFactSource,
   memoryInUse,
+  memoryRecapNotes,
   memorySectionStatus,
-  memoryTextProblem,
   needsMemoryConsent,
-  newMemoryFactCategories,
-  personSlotsProblem,
   pollMemoryChanges,
-  shouldShowMemoryCard,
-  shouldShowMemorySection,
   shouldWatchMemoryChanges,
-  styleSlotsProblem,
+  type ForgetNote,
 } from '../src/memory'
 
 let nextId = 1
@@ -63,9 +54,7 @@ function fact(patch: Partial<MemoryFactApiResponse> = {}): MemoryFactApiResponse
     sources: [{ dialogId: 'd-1', date: '2026-10-12' }],
     createdAt: '2026-10-12T10:00:00Z',
     updatedAt: '2026-10-12T10:00:00Z',
-    lastConfirmedAt: null,
     expiresAt: null,
-    confirmCount: 0,
     seenByUser: false,
     ...patch,
   }
@@ -80,6 +69,9 @@ function changes(
 
 const ok = <T>(data: T): ApiOutcome<T, string> => ({ ok: true, data })
 
+/** A status the contract does not have (a newer or an older server): the client must not wait for it. */
+const UNKNOWN_STATUS = 'archived' as MemoryChangesStatus
+
 afterEach(() => {
   vi.useRealTimers()
 })
@@ -91,49 +83,26 @@ describe('лист согласия', () => {
     expect(needsMemoryConsent({ consentVersion: '2020-01-01' })).toBe(true)
     expect(needsMemoryConsent({ consentVersion: MEMORY_CONSENT_VERSION })).toBe(false)
   })
+
+  it('включение с паузы: тот же текст не спрашивают заново, новый — спрашивают', () => {
+    // Агент отдаёт согласие и на паузе, поэтому «на паузе, согласие на этот текст» — обычное состояние после выключения.
+    const paused = { enabled: false, consentVersion: MEMORY_CONSENT_VERSION }
+    expect(needsMemoryConsent(paused)).toBe(false)
+    expect(needsMemoryConsent({ ...paused, consentVersion: '2020-01-01' })).toBe(true)
+  })
 })
 
-describe('показывать ли раздел «Память»', () => {
-  const memory = (patch: {
-    mode?: MemoryServiceMode
-    enabled?: boolean
-    facts?: MemoryFactApiResponse[]
-  }) => ({
-    mode: MemoryServiceMode.Off,
-    enabled: false,
-    facts: [] as MemoryFactApiResponse[],
-    ...patch,
-  })
-
-  it('функция выключена на сервере и у человека ничего нет — раздела нет', () => {
-    expect(shouldShowMemorySection(memory({}))).toBe(false)
-  })
-
-  it('функция работает (on или shadow) — раздел есть, даже пустой', () => {
-    expect(shouldShowMemorySection(memory({ mode: MemoryServiceMode.On }))).toBe(true)
-    expect(shouldShowMemorySection(memory({ mode: MemoryServiceMode.Shadow }))).toBe(true)
-  })
-
-  it('выключена на сервере, но человек её включал или что-то запомнено — раздел остаётся', () => {
-    expect(shouldShowMemorySection(memory({ enabled: true }))).toBe(true)
-    expect(shouldShowMemorySection(memory({ facts: [fact()] }))).toBe(true)
-  })
-
-  it('запрос не удался — раздела нет', () => {
-    expect(shouldShowMemorySection(null)).toBe(false)
-  })
-
+describe('память в работе', () => {
   it('«Без памяти» предлагается, только когда память правда работает', () => {
-    const on = { mode: MemoryServiceMode.On, enabled: true, available: true }
+    const on = { enabled: true, available: true }
     expect(memoryInUse(on)).toBe(true)
     expect(memoryInUse({ ...on, enabled: false })).toBe(false)
-    expect(memoryInUse({ ...on, mode: MemoryServiceMode.Off })).toBe(false)
     expect(memoryInUse({ ...on, available: false })).toBe(false)
   })
 
   it('слово у строки в профиле', () => {
     expect(memorySectionStatus({ enabled: true, available: true })).toBe('включена')
-    expect(memorySectionStatus({ enabled: false, available: true })).toBe('выключена')
+    expect(memorySectionStatus({ enabled: false, available: true })).toBe('на паузе')
     expect(memorySectionStatus({ enabled: true, available: false })).toBe('недоступна')
   })
 })
@@ -143,6 +112,11 @@ describe('пометка в журнале', () => {
     expect(dialogMemoryMark({ memoryMode: 'off' })?.label).toBe('Без памяти')
     expect(dialogMemoryMark({ memoryMode: 'on' })).toBeNull()
     expect(dialogMemoryMark({})).toBeNull()
+  })
+
+  it('не сохранённый разговор тоже memoryMode: off, но «Без памяти» на нём нет: у него своя пометка', () => {
+    expect(dialogMemoryMark({ memoryMode: 'off', saved: false })).toBeNull()
+    expect(dialogMemoryMark({ memoryMode: 'off', saved: true })?.label).toBe('Без памяти')
   })
 })
 
@@ -173,12 +147,12 @@ describe('экран «Память»: группы', () => {
   it('ждущие ответа — отдельно, предположения — последней группой, истёкшие не видны', () => {
     const proposed = fact({ category: MemoryFactCategory.Situation, status: MemoryFactStatus.Proposed })
     const guess = fact({ category: MemoryFactCategory.Works, status: MemoryFactStatus.Candidate })
-    const pinned = fact({ category: MemoryFactCategory.Works, status: MemoryFactStatus.Pinned })
+    const settled = fact({ category: MemoryFactCategory.Works })
     const expired = fact({ category: MemoryFactCategory.Works, status: MemoryFactStatus.Expired })
-    const view = groupMemory([proposed, guess, pinned, expired])
+    const view = groupMemory([proposed, guess, settled, expired])
     expect(view.proposed).toEqual([proposed])
     expect(view.groups.map((group) => group.id)).toEqual(['helps', 'guesses'])
-    expect(view.groups[0]!.facts).toEqual([pinned])
+    expect(view.groups[0]!.facts).toEqual([settled])
     expect(view.groups[1]!.facts).toEqual([guess])
     expect(view.count).toBe(3)
   })
@@ -224,147 +198,15 @@ describe('откуда факт', () => {
 })
 
 describe('действия с фактом', () => {
-  it('по статусу', () => {
-    expect(memoryFactActions(fact())).toEqual(['edit', 'pin', 'delete'])
-    expect(memoryFactActions(fact({ status: MemoryFactStatus.Pinned }))).toEqual(['edit', 'unpin', 'delete'])
-    expect(memoryFactActions(fact({ status: MemoryFactStatus.Proposed }))).toEqual(['accept', 'decline'])
-    expect(memoryFactActions(fact({ status: MemoryFactStatus.Candidate }))).toEqual([
-      'confirm',
-      'edit',
-      'delete',
-    ])
+  it('по статусу: исправить и забыть; ждущему ответа — только «Не запоминать»', () => {
+    expect(memoryFactActions(fact())).toEqual(['edit', 'delete'])
+    expect(memoryFactActions(fact({ status: MemoryFactStatus.Candidate }))).toEqual(['edit', 'delete'])
+    expect(memoryFactActions(fact({ status: MemoryFactStatus.Proposed }))).toEqual(['decline'])
     expect(memoryFactActions(fact({ status: MemoryFactStatus.Expired }))).toEqual([])
   })
-
-  it('запросы PATCH', () => {
-    expect(memoryFactChange('pin')).toEqual({ status: MemoryFactStatus.Pinned })
-    expect(memoryFactChange('unpin')).toEqual({ status: MemoryFactStatus.Active })
-    expect(memoryFactChange('accept')).toEqual({ status: MemoryFactStatus.Active })
-    expect(memoryFactChange('confirm')).toEqual({ confirm: true })
-  })
-
-  it('правка: стиль и близкие — полями, остальное — текстом', () => {
-    expect(memoryEditKind(MemoryFactCategory.Style)).toBe('style')
-    expect(memoryEditKind(MemoryFactCategory.Person)).toBe('person')
-    expect(memoryEditKind(MemoryFactCategory.Works)).toBe('text')
-  })
 })
 
-describe('проверка правки', () => {
-  it('текст: не пустой, не короче 8 и не длиннее предела категории', () => {
-    expect(memoryTextProblem('  ', MemoryFactCategory.Works)).not.toBeNull()
-    expect(memoryTextProblem('коротко', MemoryFactCategory.Works)).not.toBeNull()
-    // The agent's minimum, from the contract: eight characters pass, seven do not.
-    expect(memoryTextProblem('а'.repeat(InputLimit.MemoryFactMin), MemoryFactCategory.Works)).toBeNull()
-    expect(
-      memoryTextProblem('а'.repeat(InputLimit.MemoryFactMin - 1), MemoryFactCategory.Works),
-    ).not.toBeNull()
-    expect(memoryTextProblem('Помогают вечерние прогулки', MemoryFactCategory.Works)).toBeNull()
-    expect(memoryTextProblem('а'.repeat(161), MemoryFactCategory.Works)).toBe('Не длиннее 160 знаков')
-    expect(memoryTextProblem('а'.repeat(121), MemoryFactCategory.Boundary)).toBe('Не длиннее 120 знаков')
-  })
-
-  it('стиль: хотя бы одно поле, имя без цифр и ссылок', () => {
-    expect(styleSlotsProblem({})).not.toBeNull()
-    expect(styleSlotsProblem({ address: '   ' })).not.toBeNull()
-    expect(styleSlotsProblem({ form: 'ty' })).toBeNull()
-    expect(styleSlotsProblem({ address: 'Марина' })).toBeNull()
-    expect(styleSlotsProblem({ address: 'Марина 2000' })).not.toBeNull()
-    expect(styleSlotsProblem({ address: 'https://x.ru' })).not.toBeNull()
-  })
-
-  it('близкий человек: роль обязательна, имя одним словом с заглавной', () => {
-    expect(personSlotsProblem({ name: 'Аня' })).toBe('Выбери, кто это')
-    expect(personSlotsProblem({ role: 'сестра', name: 'Аня Петрова' })).not.toBeNull()
-    expect(personSlotsProblem({ role: 'сестра', name: 'аня', note: 'поддерживает' })).toBeNull()
-    expect(personSlotsProblem({ role: 'сестра', note: 'а'.repeat(61) })).not.toBeNull()
-    expect(cleanPersonSlots({ role: ' Сестра ', name: 'аня', note: ' ' })).toEqual({
-      role: 'сестра',
-      name: 'Аня',
-    })
-  })
-})
-
-describe('форма «Исправить» / «Добавить»', () => {
-  it('стиль и близкие уходят только полями, остальное — только текстом', () => {
-    expect(
-      memoryFactBody(MemoryFactCategory.Person, {
-        text: 'лишнее',
-        style: {},
-        person: { role: 'сестра', name: 'аня' },
-      }),
-    ).toEqual({ body: { slots: { role: 'сестра', name: 'Аня' } } })
-    expect(
-      memoryFactBody(MemoryFactCategory.Style, { text: '', style: { form: 'ty', address: ' ' }, person: {} }),
-    ).toEqual({ body: { slots: { form: 'ty' } } })
-    expect(
-      memoryFactBody(MemoryFactCategory.Works, {
-        text: '  Помогают прогулки  ',
-        style: { form: 'ty' },
-        person: {},
-      }),
-    ).toEqual({ body: { text: 'Помогают прогулки' } })
-  })
-
-  it('у полей минимума нет: «на ты» и «мама» проходят', () => {
-    expect(memoryFactBody(MemoryFactCategory.Style, { text: '', style: { form: 'ty' }, person: {} })).toEqual(
-      {
-        body: { slots: { form: 'ty' } },
-      },
-    )
-    expect(
-      memoryFactBody(MemoryFactCategory.Person, { text: '', style: {}, person: { role: 'мама' } }),
-    ).toEqual({
-      body: { slots: { role: 'мама' } },
-    })
-  })
-
-  it('правка стиля шлёт весь набор полей: сервер заменяет слоты целиком', () => {
-    const style = fact({
-      category: MemoryFactCategory.Style,
-      slots: { address: 'Марина', form: 'ty', advice: 'ask_first' },
-    })
-    const draft = memoryFactDraft(style)
-    draft.style.length = 'short'
-    expect(memoryFactBody(MemoryFactCategory.Style, draft)).toEqual({
-      body: { slots: { address: 'Марина', form: 'ty', length: 'short', advice: 'ask_first' } },
-    })
-  })
-
-  it('ошибка формы вместо запроса', () => {
-    expect(memoryFactBody(MemoryFactCategory.Person, { text: '', style: {}, person: {} })).toEqual({
-      problem: 'Выбери, кто это',
-    })
-    expect('problem' in memoryFactBody(MemoryFactCategory.Works, { text: 'да', style: {}, person: {} })).toBe(
-      true,
-    )
-  })
-
-  it('правка начинается с полей или текста факта', () => {
-    const person = fact({
-      category: MemoryFactCategory.Person,
-      text: 'Сестра Аня',
-      slots: { role: 'сестра', name: 'Аня' },
-    })
-    expect(memoryFactDraft(person)).toEqual({ text: '', style: {}, person: { role: 'сестра', name: 'Аня' } })
-    expect(memoryFactDraft(fact({ text: 'Любит джаз' }))).toEqual({
-      text: 'Любит джаз',
-      style: {},
-      person: {},
-    })
-    expect(memoryFactDraft(null)).toEqual({ text: '', style: {}, person: {} })
-  })
-
-  it('«как со мной говорить» добавляется, только пока его нет; пересказ не добавляется никогда', () => {
-    expect(newMemoryFactCategories([])).toContain(MemoryFactCategory.Style)
-    expect(newMemoryFactCategories([])).not.toContain(MemoryFactCategory.Recap)
-    expect(newMemoryFactCategories([fact({ category: MemoryFactCategory.Style })])).not.toContain(
-      MemoryFactCategory.Style,
-    )
-  })
-})
-
-describe('карточка «Я запомнил»: что показывать', () => {
+describe('блок «Я запомнил»: что показывать', () => {
   it('только ready и только новое: подтверждение уже известного — не новость', () => {
     const added = fact()
     const confirmed = fact()
@@ -372,44 +214,35 @@ describe('карточка «Я запомнил»: что показывать'
       { op: MemoryChangeOp.Add, fact: added },
       { op: MemoryChangeOp.Confirm, fact: confirmed },
     ])
-    expect(memoryCardContent(ready).items.map((item) => item.fact)).toEqual([added])
-    expect(shouldShowMemoryCard(ready)).toBe(true)
+    expect(memoryRecapNotes(ready)).toEqual([{ id: added.id, text: added.text }])
   })
 
-  it('pending, skipped, пусто и null — карточки нет', () => {
+  it('pending, незнакомый статус, пусто и null — заметок нет', () => {
     const one = [{ op: MemoryChangeOp.Add, fact: fact() }]
-    expect(shouldShowMemoryCard(changes(MemoryChangesStatus.Pending, one))).toBe(false)
-    expect(shouldShowMemoryCard(changes(MemoryChangesStatus.Skipped, one))).toBe(false)
-    expect(shouldShowMemoryCard(changes(MemoryChangesStatus.Ready))).toBe(false)
-    expect(shouldShowMemoryCard(null)).toBe(false)
+    expect(memoryRecapNotes(changes(MemoryChangesStatus.Pending, one))).toEqual([])
+    expect(memoryRecapNotes(changes(UNKNOWN_STATUS, one))).toEqual([])
+    expect(memoryRecapNotes(changes(MemoryChangesStatus.Ready))).toEqual([])
+    expect(memoryRecapNotes(null)).toEqual([])
   })
 
-  it('предположения и истёкшие в карточку не идут, один факт — один пункт', () => {
-    const active = fact()
+  it('предположения и истёкшие в блок не идут, одна заметка — один пункт, порядок сервера сохраняется', () => {
+    const first = fact()
+    const second = fact()
     const ready = changes(MemoryChangesStatus.Ready, [
-      { op: MemoryChangeOp.Add, fact: active },
-      { op: MemoryChangeOp.Update, fact: active },
+      { op: MemoryChangeOp.Add, fact: first },
       { op: MemoryChangeOp.Add, fact: fact({ status: MemoryFactStatus.Candidate }) },
+      { op: MemoryChangeOp.Update, fact: first },
+      { op: MemoryChangeOp.Add, fact: second },
       { op: MemoryChangeOp.Supersede, fact: fact({ status: MemoryFactStatus.Expired }) },
     ])
-    expect(memoryCardContent(ready).items.map((item) => item.fact.id)).toEqual([active.id])
+    expect(memoryRecapNotes(ready).map((note) => note.id)).toEqual([first.id, second.id])
   })
 
-  it('ждущие «Запомнить» — первыми; не больше четырёх, остальное считается', () => {
-    const plain = Array.from({ length: 4 }, () => ({ op: MemoryChangeOp.Add, fact: fact() }))
-    const proposed = fact({ status: MemoryFactStatus.Proposed })
-    const content = memoryCardContent(
-      changes(MemoryChangesStatus.Ready, [...plain, { op: MemoryChangeOp.Add, fact: proposed }]),
-    )
-    expect(content.items).toHaveLength(MEMORY_CARD_MAX_ITEMS)
-    expect(content.items[0]).toEqual({ fact: proposed, proposed: true })
-    expect(content.more).toBe(1)
-  })
-
-  it('ждать ли карточку: не после разговора «Без памяти» и не при выключенной памяти', () => {
+  it('ждать ли блок: не после «Без памяти», «Не сохранять» и не при выключенной памяти', () => {
     expect(shouldWatchMemoryChanges({ memoryMode: 'on', memoryEnabled: true })).toBe(true)
     expect(shouldWatchMemoryChanges({ memoryMode: 'off', memoryEnabled: true })).toBe(false)
     expect(shouldWatchMemoryChanges({ memoryMode: 'on', memoryEnabled: false })).toBe(false)
+    expect(shouldWatchMemoryChanges({ memoryMode: 'on', memoryEnabled: true, unsaved: true })).toBe(false)
     // An older gateway says nothing: one request finds out.
     expect(shouldWatchMemoryChanges({})).toBe(true)
   })
@@ -443,19 +276,40 @@ describe('опрос изменений после разговора', () => {
     expect(clock.waits).toEqual([3000, 3000])
   })
 
-  it('pending до конца — null через 30 с, 11 запросов', async () => {
+  it('pending до конца — последний pending-ответ через 30 с, 11 запросов', async () => {
     const clock = fakeClock()
     const load = vi.fn(async () => ok(changes(MemoryChangesStatus.Pending)))
-    expect(await pollMemoryChanges(load, clock)).toBeNull()
+    expect(await pollMemoryChanges(load, clock)).toEqual(changes(MemoryChangesStatus.Pending))
     expect(load).toHaveBeenCalledTimes(11)
     expect(clock.now()).toBe(30_000)
   })
 
-  it('skipped — сразу null, без повторов', async () => {
+  it('ready на последнем запросе, ровно на 30-й секунде, ещё считается', async () => {
     const clock = fakeClock()
-    const load = vi.fn(async () => ok(changes(MemoryChangesStatus.Skipped)))
-    expect(await pollMemoryChanges(load, clock)).toBeNull()
+    const ready = changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: fact() }])
+    let calls = 0
+    const load = vi.fn(async () => ok(++calls === 11 ? ready : changes(MemoryChangesStatus.Pending)))
+    expect(await pollMemoryChanges(load, clock)).toEqual(ready)
+    expect(clock.now()).toBe(30_000)
+  })
+
+  it('статус, которого клиент не знает, — конец ожидания без повторов', async () => {
+    const clock = fakeClock()
+    const unknown = changes(UNKNOWN_STATUS)
+    const load = vi.fn(async () => ok(unknown))
+    expect(await pollMemoryChanges(load, clock)).toEqual(unknown)
     expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('последний запрос не удался — ответа нет (null), хотя раньше было pending', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const load = vi.fn(async (): Promise<ApiOutcome<MemoryChangesApiResponse, string>> => {
+      if (++calls === 11) throw new Error('HTTP 503')
+      return ok(changes(MemoryChangesStatus.Pending))
+    })
+    expect(await pollMemoryChanges(load, clock)).toBeNull()
+    expect(load).toHaveBeenCalledTimes(11)
   })
 
   it('отказ с кодом (чужой или неизвестный диалог) — null без повторов', async () => {
@@ -489,66 +343,217 @@ describe('опрос изменений после разговора', () => {
   })
 })
 
-describe('карточка как состояние модуля', () => {
+describe('блок «Я запомнил» как состояние окна завершения', () => {
   const instant = { wait: async () => {} }
   type Load = (dialogId: string) => Promise<ApiOutcome<MemoryChangesApiResponse, string>>
 
-  it('готовые изменения — карточка с владельцем; убрать последний пункт — карточки нет', async () => {
-    const item = fact()
-    const card = createMemoryCard(instant)
+  function readyWith(facts: MemoryFactApiResponse[]): Load {
+    return async () => ok(changes(MemoryChangesStatus.Ready, facts.map((item) => ({ op: MemoryChangeOp.Add, fact: item }))))
+  }
+  const forgot = (): ForgetNote => async () => ({ ok: true, data: undefined })
+
+  it('готовые заметки — блок; сообщает подписчикам', async () => {
+    const [first, second] = [fact({ text: 'Зовут Алекс' }), fact({ text: 'Работает в продажах' })]
+    const recap = createMemoryRecap(instant)
     const listener = vi.fn()
-    card.subscribe(listener)
-    await card.watch('d-1', 'user-a', async () =>
-      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: item }])),
-    )
-    expect(card.getSnapshot()).toMatchObject({ dialogId: 'd-1', owner: 'user-a', items: [{ fact: item }] })
+    recap.subscribe(listener)
+    await recap.watch('d-1', readyWith([first!, second!]))
+    expect(recap.getSnapshot()).toEqual({
+      dialogId: 'd-1',
+      kind: 'notes',
+      items: [
+        { id: first!.id, text: 'Зовут Алекс' },
+        { id: second!.id, text: 'Работает в продажах' },
+      ],
+      busyId: null,
+      errors: {},
+    })
     expect(listener).toHaveBeenCalled()
-
-    card.remove(item.id)
-    expect(card.getSnapshot()).toBeNull()
   })
 
-  it('skipped — карточки нет и ничего не сообщается', async () => {
-    const card = createMemoryCard(instant)
-    await card.watch('d-1', 'user-a', async () => ok(changes(MemoryChangesStatus.Skipped)))
-    expect(card.getSnapshot()).toBeNull()
+  it('проход ещё идёт — блока нет, он появляется, когда заметки готовы', async () => {
+    const item = fact()
+    const answers = [
+      ok(changes(MemoryChangesStatus.Pending)),
+      ok(changes(MemoryChangesStatus.Pending)),
+      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: item }])),
+    ]
+    const recap = createMemoryRecap(instant)
+    const seen: Array<string | undefined> = []
+    recap.subscribe(() => seen.push(recap.getSnapshot()?.items[0]?.id))
+    await recap.watch('d-1', async () => answers.shift()!)
+    expect(seen).toEqual([item.id])
+    expect(recap.getSnapshot()?.items).toHaveLength(1)
   })
 
-  it('«Запомнить» на карточке: пункт остаётся, но больше не ждёт', async () => {
-    const proposed = fact({ status: MemoryFactStatus.Proposed })
-    const card = createMemoryCard(instant)
-    await card.watch('d-1', 'user-a', async () =>
-      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: proposed }])),
+  it('пустой ready, незнакомый статус, отказ, сбой запросов до конца — ни блока, ни строки «Ещё записываю»', async () => {
+    for (const load of [
+      async () => ok(changes(MemoryChangesStatus.Ready)),
+      async () => ok(changes(UNKNOWN_STATUS)),
+      async (): Promise<ApiOutcome<MemoryChangesApiResponse, string>> => ({ ok: false, code: 'DIALOG_NOT_FOUND' }),
+      async (): Promise<ApiOutcome<MemoryChangesApiResponse, string>> => Promise.reject(new Error('HTTP 503')),
+    ] as Load[]) {
+      const recap = createMemoryRecap({ ...fakeClock() })
+      await recap.watch('d-1', load)
+      expect(recap.getSnapshot()).toBeNull()
+    }
+  })
+
+  it('pending все 30 секунд — состояние late без заметок, один раз и только в конце', async () => {
+    const recap = createMemoryRecap({ ...fakeClock() })
+    const seen: Array<string | undefined> = []
+    recap.subscribe(() => seen.push(recap.getSnapshot()?.kind))
+    const load = vi.fn(async () => ok(changes(MemoryChangesStatus.Pending)))
+    await recap.watch('d-1', load)
+    expect(load).toHaveBeenCalledTimes(11)
+    expect(seen).toEqual(['late'])
+    expect(recap.getSnapshot()).toEqual({ dialogId: 'd-1', kind: 'late', items: [], busyId: null, errors: {} })
+    expect(MEMORY_RECAP.late).toContain('Ещё записываю')
+  })
+
+  it('late: убирать нечего; выход с экрана и новый разговор строку снимают', async () => {
+    const recap = createMemoryRecap({ ...fakeClock() })
+    await recap.watch('d-1', async () => ok(changes(MemoryChangesStatus.Pending)))
+    const forget = vi.fn(forgot())
+    expect(await recap.remove('f-1', forget)).toBe(false)
+    expect(forget).not.toHaveBeenCalled()
+
+    recap.reset()
+    expect(recap.getSnapshot()).toBeNull()
+
+    await recap.watch('d-1', async () => ok(changes(MemoryChangesStatus.Pending)))
+    expect(recap.getSnapshot()?.kind).toBe('late')
+    const next = recap.watch('d-2', readyWith([fact()]))
+    expect(recap.getSnapshot()).toBeNull() // the old line goes at once, the new answer is awaited
+    await next
+    expect(recap.getSnapshot()).toMatchObject({ dialogId: 'd-2', kind: 'notes' })
+  })
+
+  it('pending, а потом ready до конца срока — блок, а не late', async () => {
+    const recap = createMemoryRecap(fakeClock())
+    let calls = 0
+    const item = fact()
+    await recap.watch('d-1', async () =>
+      ok(
+        calls++ < 10
+          ? changes(MemoryChangesStatus.Pending)
+          : changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: item }]),
+      ),
     )
-    card.update({ ...proposed, status: MemoryFactStatus.Active })
-    expect(card.getSnapshot()?.items).toEqual([
-      { fact: { ...proposed, status: MemoryFactStatus.Active }, proposed: false },
-    ])
+    expect(recap.getSnapshot()).toMatchObject({ kind: 'notes', items: [{ id: item.id }] })
   })
 
-  it('выход из аккаунта во время опроса — ответ, пришедший позже, не показывается', async () => {
+  it('все заметки разговора в том порядке, как их сказали, сколько бы их ни было', async () => {
+    const all = Array.from({ length: 12 }, (_, index) => fact({ text: `заметка ${index + 1}` }))
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith(all))
+    expect(recap.getSnapshot()!.items.map((item) => item.id)).toEqual(all.map((item) => item.id))
+    expect(recap.getSnapshot()).not.toHaveProperty('more')
+  })
+
+  it('«Убрать» из середины списка: остальные на месте и в том же порядке; убрали всё — блока нет', async () => {
+    const all = Array.from({ length: 6 }, (_, index) => fact({ text: `заметка ${index + 1}` }))
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith(all))
+
+    expect(await recap.remove(all[2]!.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()!.items.map((item) => item.text)).toEqual([
+      'заметка 1',
+      'заметка 2',
+      'заметка 4',
+      'заметка 5',
+      'заметка 6',
+    ])
+    expect(await recap.remove(all[5]!.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()!.items.map((item) => item.text)).toEqual(['заметка 1', 'заметка 2', 'заметка 4', 'заметка 5'])
+
+    for (const item of [all[0]!, all[1]!, all[3]!, all[4]!]) expect(await recap.remove(item.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()).toBeNull() // убрали всё — блока нет
+  })
+
+  it('«Убрать» зовёт удаление заметки и убирает её из блока, остальные на месте', async () => {
+    const [a, b] = [fact(), fact()]
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a, b]))
+    const forget = vi.fn<ForgetNote>(async () => ({ ok: true, data: undefined }))
+    expect(await recap.remove(a.id, forget)).toBe(true)
+    expect(forget).toHaveBeenCalledExactlyOnceWith(a.id)
+    expect(recap.getSnapshot()?.items.map((item) => item.id)).toEqual([b.id])
+    expect(recap.getSnapshot()?.busyId).toBeNull()
+  })
+
+  it('отказ сервера: заметка остаётся, рядом ошибка; повтор получается и ошибку снимает', async () => {
+    const [a, b] = [fact(), fact()]
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a, b]))
+    const refused: ForgetNote = async () => ({ ok: false, code: ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE })
+    expect(await recap.remove(a.id, refused)).toBe(false)
+    expect(recap.getSnapshot()).toMatchObject({
+      items: [{ id: a.id }, { id: b.id }],
+      busyId: null,
+      errors: { [a.id]: MEMORY_FORGET_ERRORS[ForgetMemoryApiErrorCode.MEMORY_UNAVAILABLE] },
+    })
+    expect(await recap.remove(a.id, forgot())).toBe(true)
+    expect(recap.getSnapshot()).toMatchObject({ items: [{ id: b.id }], errors: {} })
+  })
+
+  it('сбой самого запроса: заметка остаётся, ошибка по статусу, а не текст исключения', async () => {
+    const a = fact()
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a]))
+    expect(await recap.remove(a.id, async () => Promise.reject(new ApiError(NETWORK_ERROR_STATUS)))).toBe(false)
+    expect(recap.getSnapshot()?.errors[a.id]).toBe(NETWORK_ERROR_TEXT)
+    expect(await recap.remove(a.id, async () => Promise.reject(new Error('boom')))).toBe(false)
+    expect(recap.getSnapshot()?.errors[a.id]).toBe('Не получилось убрать')
+  })
+
+  it('второе «Убрать» при идущем первом ничего не делает; незнакомая заметка — тоже', async () => {
+    const [a, b] = [fact(), fact()]
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a, b]))
+    let finish!: () => void
+    const slow: ForgetNote = () => new Promise((resolve) => (finish = () => resolve({ ok: true, data: undefined })))
+    const first = recap.remove(a.id, slow)
+    expect(recap.getSnapshot()?.busyId).toBe(a.id)
+    const other = vi.fn(forgot())
+    expect(await recap.remove(b.id, other)).toBe(false)
+    expect(other).not.toHaveBeenCalled()
+    finish()
+    expect(await first).toBe(true)
+    expect(await recap.remove('unknown', other)).toBe(false)
+    expect(other).not.toHaveBeenCalled()
+  })
+
+  it('выход с экрана во время опроса — ответ, пришедший позже, не показывается', async () => {
     let answer!: (value: ApiOutcome<MemoryChangesApiResponse, string>) => void
-    const card = createMemoryCard(instant)
-    const watching = card.watch('d-1', 'user-a', () => new Promise((resolve) => (answer = resolve)))
-    card.reset()
+    const recap = createMemoryRecap(instant)
+    const watching = recap.watch('d-1', () => new Promise((resolve) => (answer = resolve)))
+    recap.reset()
     answer(ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: fact() }])))
     await watching
-    expect(card.getSnapshot()).toBeNull()
+    expect(recap.getSnapshot()).toBeNull()
   })
 
-  it('новый разговор заменяет карточку прежнего', async () => {
-    const first = fact()
-    const second = fact()
+  it('выход с экрана во время «Убрать» — запоздалый ответ блок не перерисовывает', async () => {
+    const a = fact()
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', readyWith([a]))
+    let finish!: () => void
+    const removing = recap.remove(a.id, () => new Promise((resolve) => (finish = () => resolve({ ok: true, data: undefined }))))
+    recap.reset()
+    finish()
+    expect(await removing).toBe(true) // заметка удалена, но блока уже нет
+    expect(recap.getSnapshot()).toBeNull()
+  })
+
+  it('новый разговор заменяет заметки прежнего', async () => {
+    const [first, second] = [fact(), fact()]
     const load: Load = async (dialogId) =>
-      ok(
-        changes(MemoryChangesStatus.Ready, [
-          { op: MemoryChangeOp.Add, fact: dialogId === 'd-1' ? first : second },
-        ]),
-      )
-    const card = createMemoryCard(instant)
-    await card.watch('d-1', 'user-a', load)
-    await card.watch('d-2', 'user-a', load)
-    expect(card.getSnapshot()).toMatchObject({ dialogId: 'd-2', items: [{ fact: second }] })
+      ok(changes(MemoryChangesStatus.Ready, [{ op: MemoryChangeOp.Add, fact: dialogId === 'd-1' ? first : second }]))
+    const recap = createMemoryRecap(instant)
+    await recap.watch('d-1', load)
+    await recap.watch('d-2', load)
+    expect(recap.getSnapshot()).toMatchObject({ dialogId: 'd-2', items: [{ id: second.id }] })
   })
 })
 
@@ -605,5 +610,125 @@ describe('«Забыть» с пятью секундами на «Вернут�
 describe('скачать мою память', () => {
   it('имя файла — по местному дню', () => {
     expect(memoryExportFileName(new Date(2026, 9, 2, 23, 59))).toBe('ryadom-memory-2026-10-02.json')
+  })
+})
+
+// ─── notes: the sheet "Что помнит Рядом" ──────────────────────────────────────
+
+import {
+  MemoryInstructionApiErrorCode as InstructionErrors,
+  MemoryNoteKind,
+  type MemoryInstructionApiResponse,
+  type MemoryNoteApiResponse,
+} from '@ryadom/contracts/api/memory'
+import {
+  groupNotes,
+  instructionResultText,
+  MEMORY_INSTRUCTION_ERRORS,
+  memorySwitches,
+  noteDateLabel,
+  replaceNote,
+} from '../src/memory'
+
+function note(overrides: Partial<MemoryNoteApiResponse> = {}): MemoryNoteApiResponse {
+  return {
+    id: 'n-1',
+    kind: MemoryNoteKind.Situation,
+    text: 'Работает в продажах',
+    sensitive: false,
+    eventDate: null,
+    createdAt: '2026-10-12T10:00:00.000Z',
+    updatedAt: '2026-10-12T10:00:00.000Z',
+    dialogId: null,
+    ...overrides,
+  }
+}
+
+describe('заметки в листе «Что помнит Рядом»', () => {
+  it('группы идут в порядке экрана, пустые не показываются, порядок внутри группы — как у сервера', () => {
+    const view = groupNotes([
+      note({ id: 'a', kind: MemoryNoteKind.Boundary, text: 'Не хочет обсуждать отца' }),
+      note({ id: 'b', kind: MemoryNoteKind.Name, text: 'Зовут Алекс' }),
+      note({ id: 'c', kind: MemoryNoteKind.Style, text: 'Просит на ты' }),
+      note({ id: 'd', kind: MemoryNoteKind.Wellbeing, sensitive: true, text: 'Плохо спит' }),
+    ])
+    expect(view.count).toBe(4)
+    expect(view.groups.map((g) => g.title)).toEqual([
+      'Обо мне и как со мной говорить',
+      'О чём не говорить',
+      'Самочувствие',
+    ])
+    expect(view.groups[0]!.notes.map((n) => n.id)).toEqual(['b', 'c'])
+  })
+
+  it('неизвестный вид нового сервера всё равно виден — «Другое»', () => {
+    const view = groupNotes([note({ id: 'x', kind: 'future_kind' as MemoryNoteKind })])
+    expect(view.groups.map((g) => g.title)).toEqual(['Другое'])
+  })
+
+  it('дата заметки и дата события', () => {
+    const now = new Date('2026-10-26T12:00:00Z')
+    expect(noteDateLabel(note(), now)).toBe('12 окт.')
+    expect(noteDateLabel(note({ eventDate: '2026-11-01' }), now)).toContain('событие')
+  })
+
+  it('ответ на «Скажи, что поправить»: что изменено; ничего; отказ правила — нейтрально, без причины', () => {
+    const empty: MemoryInstructionApiResponse = { added: [], updated: [], deleted: [], blocked: [] }
+    expect(instructionResultText({ ...empty, updated: [note()], deleted: ['x', 'y'] })).toBe('Изменено: 1, удалено: 2')
+    expect(instructionResultText(empty)).toBe('Ничего не нашлось')
+    const refused = instructionResultText({ ...empty, blocked: ['medication'] })
+    expect(refused).toBe('Так запомнить не получится')
+    expect(refused).not.toContain('medication')
+  })
+
+  it('тексты отказов поля правки есть на каждый код', () => {
+    for (const code of Object.values(InstructionErrors)) expect(MEMORY_INSTRUCTION_ERRORS[code]).toBeTruthy()
+  })
+
+  it('переключатели чувствительного и поиска недоступны на паузе и без сервиса', () => {
+    const on = { enabled: true, available: true, sensitiveEnabled: false, chatSearchEnabled: true }
+    expect(memorySwitches(on)).toMatchObject({ memory: true, sensitive: false, chatSearch: true, sensitiveDisabled: false })
+    expect(memorySwitches({ ...on, enabled: false })).toMatchObject({ sensitiveDisabled: true, chatSearchDisabled: true })
+    expect(memorySwitches({ ...on, available: false }).sensitiveDisabled).toBe(true)
+  })
+
+  it('замена и удаление заметки в списке экрана', () => {
+    const list = [note({ id: 'a' }), note({ id: 'b' })]
+    expect(replaceNote(list, 'a', note({ id: 'a', text: 'Новый текст' }))[0]!.text).toBe('Новый текст')
+    expect(replaceNote(list, 'a', null).map((n) => n.id)).toEqual(['b'])
+  })
+})
+
+describe('«Запомнил: … · Убрать» и лист «Рядом теперь запоминает важное»', () => {
+  it('новые чувствительные заметки — только новые и только чувствительные', async () => {
+    const { newSensitiveNotes, noteIds } = await import('../src/memory')
+    const start = [note({ id: 'old', sensitive: true, kind: MemoryNoteKind.Wellbeing })]
+    const known = noteIds(start)
+    const later = [
+      ...start,
+      note({ id: 'plain', text: 'Работает в продажах' }),
+      note({ id: 'fresh', sensitive: true, kind: MemoryNoteKind.Wellbeing, text: 'Плохо спит' }),
+    ]
+    expect(newSensitiveNotes(known, later).map((n) => n.id)).toEqual(['fresh'])
+    known.add('fresh')
+    expect(newSensitiveNotes(known, later)).toEqual([])
+  })
+
+  it('лист-приглашение: один раз, тому, кто ещё не решал; согласие и «Не сейчас» его снимают', async () => {
+    const { shouldInviteToMemory } = await import('../src/memory')
+    const fresh = { available: true, consentVersion: null }
+    expect(shouldInviteToMemory(fresh, false)).toBe(true)
+    expect(shouldInviteToMemory(fresh, true)).toBe(false) // «Не сейчас»
+    expect(shouldInviteToMemory({ ...fresh, available: false }, false)).toBe(false)
+    expect(shouldInviteToMemory(null, false)).toBe(false)
+  })
+
+  it('лист-приглашение не возвращается к тому, кто давал согласие: включил, поставил на паузу, согласие на старый текст', async () => {
+    const { shouldInviteToMemory } = await import('../src/memory')
+    // Пауза не отзывает согласие: агент отдаёт версию и при выключенной памяти, а приглашение смотрит только на неё.
+    const person = (enabled: boolean, consentVersion: string | null) => ({ available: true, enabled, consentVersion })
+    expect(shouldInviteToMemory(person(false, MEMORY_CONSENT_VERSION), false)).toBe(false) // на паузе
+    expect(shouldInviteToMemory(person(true, MEMORY_CONSENT_VERSION), false)).toBe(false) // включена
+    expect(shouldInviteToMemory(person(false, '2020-01-01'), false)).toBe(false) // новый текст — лист согласия, не приглашение
   })
 })

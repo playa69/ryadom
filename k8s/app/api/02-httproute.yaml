@@ -8,9 +8,7 @@
 # обслуживает и его запросы: /api хоста маршрутизирует gateway, а не nginx PWA.
 #
 # Приоритет совпадения (побеждает самый длинный префикс):
-#   /api/v1/*  → Python backend (k8s/backend/02-httproute.yaml, ns backend)
-#   /api/*     → этот роут (Node api; его пути /api/auth, /api/dialogs, ... с /api/v1
-#                не пересекаются)
+#   /api/*     → этот роут (Node api: /api/auth, /api/dialogs, ...)
 #   /app/*     → app-web (веб-клиент)
 #   /pwa/*     → app-pwa (PWA)
 #   всё прочее → landing (корень)

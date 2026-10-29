@@ -3,7 +3,7 @@
 import { BookOpen, EyeOff, Heart, MessageCircle, Moon, type LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import {
@@ -11,21 +11,22 @@ import {
   StartDialogApiErrorCode,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
-import { chosenMemoryMode, nextStartStep } from '@ryadom/client-core/dialog-start'
-import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+import { chosenStart, nextStartStep } from '@ryadom/client-core/dialog-start'
+import { rememberUnsaved, UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
+import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import { memoryInUse } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
+import { Checkbox } from '@ryadom/ui/components/checkbox'
 import { cn } from '@ryadom/ui/lib/utils'
 import { useAuth, useClient } from '@/lib/auth'
-import { memoryCard } from '@/lib/memory'
 import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import { BUTTON, FOCUS_RING } from './controls'
 import { rememberDialogStart } from './dialog-start'
-import MemoryCard from './MemoryCard'
+import MemoryInvite from './MemoryInvite'
 import ResumeDialogSheet from './ResumeDialogSheet'
 import { unlockSpeech } from '@ryadom/client-core/voice/speech'
 
@@ -38,7 +39,8 @@ import { unlockSpeech } from '@ryadom/client-core/voice/speech'
  * or close the question and stay here with the draft untouched.
  *
  * With memory on, a switch "Без памяти" beside the modes holds the next conversation without it, and
- * after a conversation the card "Я запомнил" shows up here.
+ * after a conversation the card "Я запомнил" shows up here. A tick "Не сохранять этот разговор" is a choice
+ * of its own, always there: that conversation leaves nothing behind, memory or no memory.
  *
  * In v0 only the venting mode works. The other modes exist in the contract, but enabling them
  * before the agent supports them would be a promise the product cannot keep.
@@ -97,7 +99,13 @@ export default function HomeScreen() {
   const memoryEnabled = user?.memoryEnabled
   /** "Без памяти" for the next conversation; home starts without it every time. */
   const [withoutMemory, setWithoutMemory] = useState(false)
-  const wanted = chosenMemoryMode(memoryEnabled, withoutMemory)
+  /** "Не сохранять этот разговор" for the next conversation; like "Без памяти", it is off at every visit and fixed once the conversation starts. */
+  const [unsaved, setUnsaved] = useState(false)
+  const unsavedId = useId()
+  /** What the server said about memory, for the invitation; null until it arrives. */
+  const [memoryState, setMemoryState] = useState<MemoryApiResponse | null>(null)
+  const choice = chosenStart(memoryEnabled, withoutMemory, unsaved)
+  const wanted = choice.memory
 
   // Whether to offer "Без памяти" is asked each time home opens: the person's switch and whether the
   // server uses memory at all can both change elsewhere. A failed request leaves what was known.
@@ -107,7 +115,9 @@ export default function HomeScreen() {
     client
       .getMemory()
       .then((memory) => {
-        if (!cancelled) updateUser({ memoryEnabled: memoryInUse(memory) })
+        if (cancelled) return
+        setMemoryState(memory)
+        updateUser({ memoryEnabled: memoryInUse(memory) })
       })
       .catch(() => {})
     return () => {
@@ -122,8 +132,8 @@ export default function HomeScreen() {
 
   /** Hands a started dialog to the dialog screen, with what the person typed or asked for on home. */
   function openDialog(data: StartDialogApiResponse, draft: string, listen: boolean) {
-    // A new conversation makes the card of the previous one old news.
-    memoryCard.close()
+    // Only the answer decides: a gateway that did not hold the dialog unsaved has promised nothing.
+    if (data.saved === false) rememberUnsaved(data.dialogId)
     rememberDialogStart(
       data.dialogId,
       {
@@ -131,6 +141,7 @@ export default function HomeScreen() {
         resumed: data.resumed,
         sinceLastDialogHours: data.sinceLastDialogHours,
         memoryMode: data.memoryMode,
+        saved: data.saved,
         memoryEnabled: data.memoryEnabled,
       },
       { draft, listen },
@@ -147,7 +158,7 @@ export default function HomeScreen() {
     setLoading(true)
     let leaving = false
     try {
-      let result = await client.startDialog(mode, { memory: wanted })
+      let result = await client.startDialog(mode, { memory: wanted, saved: choice.saved })
       // The handoff is armed only for a screen that is still here to push to the dialog: one armed for a
       // person who has left would wait for the next visit to that dialog and send the draft then.
       if (!alive.current) return
@@ -159,7 +170,7 @@ export default function HomeScreen() {
         return
       }
       learnMemory(result.data)
-      const step = nextStartStep(result.data, wanted)
+      const step = nextStartStep(result.data, wanted, choice.saved)
       if (step === 'ask') {
         // Something was said in the conversation left open. Nothing changes until the person answers, and the
         // text they typed stays in the box; the press is released below so that the sheet's buttons can work.
@@ -168,8 +179,8 @@ export default function HomeScreen() {
         return
       }
       if (step === 'restart') {
-        // An empty open conversation in the other memory mode: nothing in it to lose, a new one in the chosen mode.
-        result = await client.startDialog(mode, { startNew: true, memory: wanted })
+        // An empty open conversation chosen otherwise (memory, saving): nothing in it to lose, a new one as chosen.
+        result = await client.startDialog(mode, { startNew: true, memory: wanted, saved: choice.saved })
         if (!alive.current) return
         if (!result.ok) {
           setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
@@ -210,7 +221,7 @@ export default function HomeScreen() {
     setRenewing(true)
     let leaving = false
     try {
-      const result = await client.startDialog(mode, { startNew: true, memory: wanted })
+      const result = await client.startDialog(mode, { startNew: true, memory: wanted, saved: choice.saved })
       if (!alive.current) return
       if (!result.ok) {
         if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
@@ -292,8 +303,6 @@ export default function HomeScreen() {
             </p>
           )}
 
-          <MemoryCard />
-
           {/* Capped at the width of two chips per row until all four fit in one, so a narrow window gets a 2 + 2 grid, not 3 + 1. */}
           <div
             role="group"
@@ -365,11 +374,31 @@ export default function HomeScreen() {
               </Button>
               <p className="text-xs leading-normal text-faint" aria-live="polite">
                 {withoutMemory
-                  ? 'Этот разговор я не запомню, а сам он удалится через сутки'
+                  ? 'Этот разговор я не запомню'
                   : 'Можно провести следующий разговор так, чтобы я его не запомнил'}
               </p>
             </div>
           )}
+
+          {/* Always there, memory or no memory: this conversation is kept out of the journal, the recaps and the analytics. */}
+          <div className="flex max-w-md flex-col items-center gap-1 text-center" data-testid="unsaved">
+            <div className="flex items-center gap-2.5">
+              <Checkbox
+                id={unsavedId}
+                checked={unsaved}
+                onCheckedChange={(checked) => setUnsaved(checked === true)}
+                data-testid="unsaved-toggle"
+                className={cn(
+                  FOCUS_RING,
+                  'cursor-pointer rounded-[6px] border-2 bg-surface data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground [&_svg]:stroke-[3.75] forced-colors:data-[state=checked]:border-[Highlight] dark:forced-colors:data-[state=checked]:bg-[Highlight] forced-colors:data-[state=checked]:text-[HighlightText] forced-colors:data-[state=checked]:forced-color-adjust-none',
+                )}
+              />
+              <label htmlFor={unsavedId} className="cursor-pointer text-sm text-dim">
+                {UNSAVED_LABEL}
+              </label>
+            </div>
+            <p className="text-xs leading-normal text-faint">{UNSAVED_HINT}</p>
+          </div>
 
           <div className="flex max-w-[52ch] flex-col items-center pt-2 text-center short:pt-0">
             <p className="text-xs leading-normal text-faint">
@@ -389,6 +418,8 @@ export default function HomeScreen() {
         </div>
       </div>
 
+      <MemoryInvite memory={memoryState} onMemory={setMemoryState} />
+
       <ResumeDialogSheet
         open={pending !== null}
         onContinue={continueDialog}
@@ -396,11 +427,15 @@ export default function HomeScreen() {
         onClose={dismissQuestion}
         busy={renewing}
         error={pendingError}
-        // A returned conversation keeps the mode it began in: "Без памяти" applies only to a new one.
+        // A returned conversation keeps the choices it began with: "Без памяти" and "Не сохранять" apply only to a new one.
         note={
-          wanted === DialogMemoryMode.Off && pending?.data.memoryMode !== DialogMemoryMode.Off
-            ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
-            : undefined
+          unsaved && pending?.data.saved === false
+            ? undefined
+            : unsaved
+              ? '«Не сохранять» будет только у нового разговора: этот продолжится как обычно.'
+              : wanted === DialogMemoryMode.Off && pending?.data.memoryMode !== DialogMemoryMode.Off
+                ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
+                : undefined
         }
       />
     </>

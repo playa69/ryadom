@@ -3,8 +3,12 @@ import type { UpdateMemorySettingsResult } from './update-memory-settings.types'
 
 export interface UpdateMemorySettingsOperationData {
   userId: string
-  /** The switch "Remember". */
-  enabled: boolean
+  /** The switch "Remember"; undefined changes only the switches below. */
+  enabled?: boolean
+  /** The switch "Remember sensitive". */
+  sensitiveEnabled?: boolean
+  /** The switch "Rely on past conversations". */
+  chatSearchEnabled?: boolean
   /** The person accepted the memory consent sheet just now: required to turn memory on. */
   consentAccepted: boolean
   /** The version of the sheet that was on the screen, a date: required to turn memory on. */
@@ -16,7 +20,9 @@ export class UpdateMemorySettingsOperation extends RequestData<UpdateMemorySetti
   static readonly requestName = 'UpdateMemorySettingsOperation'
 
   public readonly userId: string
-  public readonly enabled: boolean
+  public readonly enabled: boolean | undefined
+  public readonly sensitiveEnabled: boolean | undefined
+  public readonly chatSearchEnabled: boolean | undefined
   public readonly consentAccepted: boolean
   public readonly consentVersion: string | null
 
@@ -24,6 +30,8 @@ export class UpdateMemorySettingsOperation extends RequestData<UpdateMemorySetti
     super()
     this.userId = data.userId
     this.enabled = data.enabled
+    this.sensitiveEnabled = data.sensitiveEnabled
+    this.chatSearchEnabled = data.chatSearchEnabled
     this.consentAccepted = data.consentAccepted
     this.consentVersion = data.consentVersion
   }

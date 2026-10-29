@@ -68,15 +68,25 @@ export async function checkConsent(page: Page): Promise<void> {
   }
 }
 
+/** The sheet is answered ("Не сейчас") in this browser, as for a person who has seen it. Same origin, read when home opens. */
+export async function dismissMemoryInvite(page: Page): Promise<void> {
+  await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.web.memory-invite-dismissed')
+}
+
 /**
  * The first screen as a new visitor meets it: all three agreements, then "Начать". An account is made
  * behind the scenes and the person is on the home screen, with no address and no password.
  */
-export async function startAnonymously(page: Page): Promise<void> {
+export async function startAnonymously(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
   await expect(page).toHaveURL(/\/welcome$/)
+  // The sheet "Рядом теперь запоминает важное" would cover home for a new account: unless a test is about it,
+  // it is already answered ("Не сейчас"), like for a person who has seen it. Same origin, read when home opens.
+  if (!options.keepMemoryInvite) await dismissMemoryInvite(page)
   await checkConsent(page)
   await button(page, 'Начать').click()
-  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
+  // An open sheet makes the page behind it inert, so the button is not seen by role then.
+  const ready = options.keepMemoryInvite ? talkButton(page).or(page.getByTestId('memory-invite')) : talkButton(page)
+  await expect(ready).toBeVisible({ timeout: 30_000 })
 }
 
 /** What a layout decision hangs on: the sidebar is a drawer below 768px and a column from there up. */
@@ -236,6 +246,7 @@ export async function endConversation(page: Page, takeaway: string): Promise<voi
 }
 
 export async function signIn(page: Page, email: string, password = PASSWORD): Promise<void> {
+  await dismissMemoryInvite(page)
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(password)
   await button(page, 'Войти').click()
@@ -244,6 +255,7 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
 
 /** Sign-up with email confirmation: afterwards the person is already inside, on the home screen. */
 export async function registerAndConfirm(page: Page, email: string, name = 'Тест'): Promise<void> {
+  await dismissMemoryInvite(page)
   // A new visitor meets the first screen and opens the sign-in from it; from the sign-in screen the
   // way to the sign-up is one link away.
   const haveAccount = page.getByTestId('have-account')

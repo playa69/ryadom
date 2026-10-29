@@ -5,8 +5,10 @@ import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { ACCOUNT_UNAVAILABLE_EVENT, deviceLogin, getCurrentUser, hasDevice, linkTelegram, telegramLogin } from '../lib/api'
 import { initAppUpdates } from '../lib/app-update'
 import { initBackButton, initBackTrap, initTelegramBackButton } from '../lib/native'
+import { initLaunchRouting } from '../lib/launch'
 import { TAB_IDS } from '../lib/nav'
 import { isWebBuild } from '../lib/platform'
+import { syncTimezone } from '../lib/timezone'
 import { initScreenTracking } from '../lib/screen-tracking'
 import { AuthProvider, useAuth } from '../lib/store'
 import { isTelegramMiniApp, telegramInitData, wasTelegramSignedOut } from '../lib/telegram'
@@ -16,6 +18,8 @@ import InstallBanner from './InstallBanner'
 import OfflineBar from './OfflineBar'
 import { routes } from './routes'
 import SosSheet, { openSos } from './SosSheet'
+import HistorySheet from './self-check/HistorySheet'
+import TestSheet from './self-check/TestSheet'
 
 /**
  * The app root: Framework7 (the md theme gives one layout on every platform, and the dark palette
@@ -50,7 +54,8 @@ const f7params = {
 
 const TABS = [
   { id: TAB_IDS.home, url: '/home/', label: 'Главная', icon: 'house', iconActive: 'house_fill' },
-  { id: TAB_IDS.journal, url: '/journal/', label: 'Журнал', icon: 'book', iconActive: 'book_fill' },
+  // The mood diary (`REQ-WELL-01`), on for everyone.
+  { id: TAB_IDS.diary, url: '/diary/', label: 'Дневник', icon: 'face_smiling', iconActive: 'face_smiling_fill' },
   {
     id: TAB_IDS.profile,
     url: '/profile/',
@@ -61,6 +66,22 @@ const TABS = [
 ]
 
 function SignedInViews() {
+  const { auth } = useAuth()
+  const userId = auth.user?.id ?? null
+
+  // The diary's day and the summaries follow the person's zone: the device tells it on
+  // opening and whenever the app comes back (a trip changes it).
+  useEffect(() => {
+    if (!userId) return
+    void syncTimezone(userId)
+    const onVisible = () => document.visibilityState === 'visible' && void syncTimezone(userId)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [userId])
+
+  // The PWA shortcut opens the diary.
+  useEffect(() => initLaunchRouting(), [])
+
   return (
     <Views tabs className="safe-areas">
       <Toolbar tabbar icons bottom id="rd-tabbar">
@@ -247,6 +268,9 @@ export default function F7App() {
         <Shell />
         <AppUpdateGate />
         <OfflineBar />
+        {/* The test sheet first: the help sheet opened from its crisis screen must be above it (later in the DOM). */}
+        <HistorySheet />
+        <TestSheet />
         <SosSheet />
         {/* Inside Telegram the app is already where the person keeps it: nothing to install. */}
         {isWebBuild() && !isTelegramMiniApp() && <InstallBanner />}

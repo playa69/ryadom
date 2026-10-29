@@ -9,6 +9,7 @@ import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
 import { ACCESS_TTL_SECONDS, REFRESH_TTL_SECONDS, createJwt } from '../src/lib/jwt'
 import { createRateLimiter } from '../src/lib/rate-limit'
 import {
+  EMPTY_POLICY,
   compareVersions,
   isVersionString,
   resolveAppStatus,
@@ -26,6 +27,7 @@ const POLICY: ReleasePolicy = {
   ios: { minVersionCode: 5, latestVersionCode: 7, downloadUrl: null },
   js: {
     latestVersion: '1.2.0',
+    minVersion: null,
     bundleUrl: 'http://localhost:3002/api/ota/ryadom-prod-1.2.0.zip',
     checksum: 'a'.repeat(64),
   },
@@ -129,6 +131,64 @@ describe('health и политика версий', () => {
     expect(status(AppPlatform.Android, 9, '1.0.0')).toMatchObject({
       runtimeUpdate: UpdateAvailability.Required,
     })
+    expect(status(AppPlatform.Android, 12, '1.2.0')).toMatchObject({
+      jsUpdate: UpdateAvailability.NotAvailable,
+      jsBundleUrl: null,
+      jsBundleChecksum: null,
+    })
+  })
+
+  // `add-required-js-update`, «Решение сервера по версии JS».
+  it('минимум JS: ниже него пакет применяется сразу, выше — тихо', () => {
+    const withMin = (minVersion: string) => ({ ...POLICY, js: { ...POLICY.js, minVersion } })
+    const status = (policy: ReleasePolicy, jsVersion: string) =>
+      resolveAppStatus(policy, { platform: AppPlatform.Android, versionCode: 12, jsVersion }, null)
+
+    expect(status(withMin('1.2.0'), '1.1.5')).toMatchObject({
+      jsUpdate: UpdateAvailability.Required,
+      jsBundleUrl: POLICY.js.bundleUrl,
+      jsBundleChecksum: POLICY.js.checksum,
+    })
+    expect(status(withMin('1.1.0'), '1.1.5')).toMatchObject({ jsUpdate: UpdateAvailability.Available })
+    expect(status(withMin('1.1.5'), '1.1.5')).toMatchObject({ jsUpdate: UpdateAvailability.Available })
+    // A minimum above the bundle cannot be met: whoever runs the bundle is left alone.
+    expect(status(withMin('2.0.0'), '1.1.5')).toMatchObject({ jsUpdate: UpdateAvailability.Required })
+    expect(status(withMin('2.0.0'), '1.2.0')).toMatchObject({ jsUpdate: UpdateAvailability.NotAvailable })
+    // Clients already in the field report the bare package version, which is below every bundle.
+    expect(status(withMin('0.1.0.42'), '0.1.0')).toMatchObject({ jsUpdate: UpdateAvailability.Required })
+  })
+
+  it('минимум JS без пакета или для слишком старого натива ничего не требует', () => {
+    const noBundle: ReleasePolicy = { ...POLICY, js: { ...EMPTY_POLICY.js, minVersion: '1.2.0' } }
+    expect(
+      resolveAppStatus(
+        noBundle,
+        { platform: AppPlatform.Android, versionCode: 12, jsVersion: '1.0.0' },
+        null,
+      ),
+    ).toMatchObject({ jsUpdate: UpdateAvailability.NotAvailable, jsBundleUrl: null })
+    expect(
+      resolveAppStatus(
+        { ...POLICY, js: { ...POLICY.js, minVersion: '1.2.0' } },
+        { platform: AppPlatform.Android, versionCode: 10, jsVersion: '1.0.0' },
+        null,
+        { [AppPlatform.Android]: 11 },
+      ),
+    ).toMatchObject({ jsUpdate: UpdateAvailability.NotAvailable, jsBundleUrl: null })
+  })
+
+  it('устаревший JS ниже минимума не получает 426', async () => {
+    const { app: strictApp } = makeApp({ policy: { ...POLICY, js: { ...POLICY.js, minVersion: '1.2.0' } } })
+    await expectTransportError(
+      await strictApp.request('/api/auth/me', {
+        headers: {
+          [AppHeader.Platform]: AppPlatform.Android,
+          [AppHeader.AppVersion]: '12',
+          [AppHeader.JsVersion]: '1.0.0',
+        },
+      }),
+      401,
+    )
   })
 
   it('минимальная поддерживаемая сборка натива для бандла: свежий JS не предлагается слишком старому нативу', () => {

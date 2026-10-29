@@ -1,0 +1,9 @@
+# Added to dev/compose.yaml for the stand of an agent (scripts/stand.mjs): its database lives in memory and goes
+# with the container, so a removed worktree leaves no volume behind. `pnpm infra:up` does not use this file:
+# the database of a person's own development stack stays on its volume.
+services:
+  postgres:
+    volumes:
+      # Same target as the volume in compose.yaml, so this entry replaces it.
+      - type: tmpfs
+        target: /var/lib/postgresql/data

@@ -64,6 +64,34 @@
       "when": 1792865064328,
       "tag": "0008_dialog_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792869230612,
+      "tag": "0009_agent_voice_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793096840038,
+      "tag": "0010_mood_diary",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793124480105,
+      "tag": "0011_self_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793228327958,
+      "tag": "0012_voice_settings",
+      "breakpoints": true
     }
   ]
 }

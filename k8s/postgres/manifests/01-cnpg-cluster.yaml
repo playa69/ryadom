@@ -50,8 +50,9 @@ spec:
     name: ryadom-db-superuser
 
   # Декларативные роли (CNPG managed roles, с 1.20+). developer — общий
-  # логин коллег-разработчиков (SA developer, ns agent/backend): LOGIN +
-  # CREATEDB, БЕЗ superuser/createrole. Владелец баз agent и backend.
+  # логин коллег-разработчиков (SA developer, ns agent): LOGIN + CREATEDB,
+  # БЕЗ superuser/createrole. Создавал базу agent (владелец теперь — роль
+  # agent, созданная один раз Job'ом, манифест которого остался в истории git).
   # Пароль — Secret developer-pg-role (key: password), создаётся через
   # kubectl create secret (шаблон в 00-secrets.yaml), в git НЕ коммитим.
   managed:

@@ -11,7 +11,7 @@ interface ForgotPasswordEmailProps {
 }
 
 /** Code for changing the password. Entered together with the new password in one form. */
-export function ForgotPasswordEmail({ userName, code, expiresInMinutes }: ForgotPasswordEmailProps) {
+function ForgotPasswordEmail({ userName, code, expiresInMinutes }: ForgotPasswordEmailProps) {
   return (
     <EmailLayout preview={`Код для смены пароля: ${code}`} heading={greeting(userName)}>
       <Paragraph>Введи этот код в приложении и задай новый пароль.</Paragraph>

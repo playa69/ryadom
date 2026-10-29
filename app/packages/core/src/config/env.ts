@@ -39,7 +39,7 @@ const optionalInt = (min = 0) => z.preprocess(emptyToUndefined, z.coerce.number(
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'] as const
 /** memory is for tests only (APP_ENV=local): emails are collected in process memory. */
-export const EMAIL_TRANSPORTS = ['smtp', 'console', 'memory'] as const
+export const EMAIL_TRANSPORTS = ['smtp', 'memory'] as const
 /**
  * Codecs of the agent's speech the dialog gateway can send, by their names in the client contract
  * (`TTS_CODECS` in @ryadom/contracts; the core does not depend on it, so the names are repeated here).
@@ -84,12 +84,10 @@ const adminEmails = z.preprocess(
 )
 
 const baseShape = {
-  APP_ENV: z.enum(['local', 'staging', 'prod']),
+  APP_ENV: z.enum(['local', 'prod']),
   LOG_LEVEL: z.preprocess(emptyToUndefined, z.enum(LOG_LEVELS).default('info')),
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
   AUTH_SECRET: z.string().min(32, 'must be at least 32 characters'),
-  /** Kill switch of links to a conversation (`REQ-DATA-05`): on by default, this turns creating and opening them off. */
-  DIALOG_SHARE_DISABLED: booleanFlag,
   PUBLIC_WEB_URL: publicUrl,
   /** Where the web client lives (`https://host/app`); the link to a conversation opens there. Without it: `<PUBLIC_APP_URL>/app`. */
   PUBLIC_WEBAPP_URL: z.preprocess(emptyToUndefined, publicUrl.optional()),
@@ -136,14 +134,6 @@ const baseShape = {
    * when there is no session; the limit is what a copy that leaked is good for.
    */
   TELEGRAM_INIT_DATA_MAX_AGE_SEC: optionalInt(60).transform((value) => value ?? 86_400),
-  // Logs over OTLP when the infrastructure collects them; the OTel exporter reads these from
-  // process.env on its own.
-  OTEL_ENABLED: booleanFlag,
-  OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(
-    emptyToUndefined,
-    z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
-  ),
-  OTEL_SERVICE_NAME: optionalString,
 }
 
 const appShape = {
@@ -175,12 +165,12 @@ const appShape = {
     .preprocess(emptyToUndefined, z.coerce.number().int().min(6_000).max(128_000).optional())
     .transform((value) => value ?? 24_000),
   /**
-   * State shared by the replicas; for now only the rate limits. Off by default: each replica then
-   * counts on its own, and the real limit is the stated one times the number of replicas. With it
-   * on, the address is either `REDIS_URL` (one node, local development) or Sentinel, whose password
-   * `REDIS_PASSWORD` serves the Sentinel nodes and the master alike.
+   * State shared by the replicas; for now only the rate limits. Used when an address is set: either
+   * `REDIS_URL` (one node, local development) or Sentinel (`REDIS_SENTINEL_HOST` and
+   * `REDIS_MASTER_NAME`), whose password `REDIS_PASSWORD` serves the Sentinel nodes and the master
+   * alike. With no address each replica counts on its own, and the real limit is the stated one times
+   * the number of replicas.
    */
-  REDIS_ENABLED: booleanFlag,
   REDIS_URL: z.preprocess(
     emptyToUndefined,
     z.url({ protocol: /^rediss?$/, error: 'must be a redis:// URL' }).optional(),
@@ -189,12 +179,6 @@ const appShape = {
   REDIS_SENTINEL_PORT: optionalInt(1).transform((value) => value ?? 26379),
   REDIS_MASTER_NAME: optionalString,
   REDIS_PASSWORD: optionalString,
-  /**
-   * The hourly job that erases anonymous accounts nobody has opened for `ANONYMOUS_RETENTION_DAYS`
-   * (contracts). On by default, because the app promises it; this is the switch to stop it, for
-   * instance while the agent is being migrated and could not confirm its erasures.
-   */
-  ANONYMOUS_PURGE_DISABLED: booleanFlag,
   /**
    * Native version gate: store links plus the min/latest build per platform. There is
    * no bucket manifest any more - the JS/OTA axis is baked into the image (`lib/ota-bundle.ts`) and
@@ -211,13 +195,26 @@ const appShape = {
   MOBILE_IOS_MIN_VERSION_CODE: optionalInt(0).transform((value) => value ?? 0),
   MOBILE_IOS_LATEST_VERSION_CODE: optionalInt(0).transform((value) => value ?? 0),
   /**
+   * The one lever on the JS axis that is not baked into the image: a client whose JS is older than this
+   * applies the image's bundle at once instead of quietly at the next launch. In env for the same
+   * reason as the native minimum: "this bundle is mandatory" is decided after the deploy, without a
+   * rebuild. Same format as the `js_version` the clients send (services/api `isVersionString`).
+   */
+  MOBILE_JS_MIN_VERSION: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\d{1,6}(\.\d{1,6}){0,3}$/, 'must be a version like 0.1.0.42')
+      .optional(),
+  ),
+  /**
    * Product analytics (PostHog). The project token is public by design (it only lets events in), so
    * it belongs in the ConfigMap rather than a Secret. Empty switches analytics off altogether: the
-   * server reports nothing, `/api/ingest` is a 404 and the clients are told not to load the SDK.
-   * What the clients do with it is decided here and handed to them by `GET /api/analytics/config`.
+   * server reports nothing, `/api/ingest` is a 404 and the clients are told not to load the SDK
+   * (`GET /api/analytics/config`). What the clients collect is fixed in their code (`buildSdkConfig`).
    *
    * LEGAL RISKS (Russian law) of every option below, in short. A research summary from 2026-10-10, not a
-   * lawyer's opinion; sources and detail in docs/analytics.md ("Правовые риски"):
+   * lawyer's opinion:
    * - events with an account id stay personal data of the operator (152-FZ art. 3 p. 1, 9, art. 13.1):
    *   "depersonalised" does not mean "not personal data", and they are never "anonymous";
    * - a cloud analytics service abroad is a cross-border transfer (art. 3 p. 11, art. 12): Roskomnadzor must
@@ -236,7 +233,7 @@ const appShape = {
   POSTHOG_KEY: optionalString,
   /** Where events go. The EU cloud keeps the data in the EU. */
   POSTHOG_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.i.posthog.com')),
-  /** Where the SDK's lazy-loaded scripts come from (replay, dead clicks, web vitals, error tracking). */
+  /** Where the SDK's lazy-loaded scripts come from (dead clicks, web vitals, error tracking). */
   POSTHOG_ASSETS_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu-assets.i.posthog.com')),
   /** The PostHog web app, for links such as the toolbar, and the host of its management API. */
   POSTHOG_UI_HOST: z.preprocess(emptyToUndefined, publicUrl.default('https://eu.posthog.com')),
@@ -259,16 +256,6 @@ const appShape = {
     z.string().regex(/^\d+$/, 'must be the numeric id of the PostHog project').optional(),
   ),
   /**
-   * Whether erasing a deleted account's person in PostHog also erases that person's events. On by
-   * default: «erase everything». Off keeps the events (the profile and recordings still go), so past
-   * activity can still be counted; the events are then pseudonymous (an account id, no text, no email)
-   * and not anonymous while the deletion archive in the database still maps that id to a person.
-   *
-   * RISK of off: personal data kept longer than the purpose (art. 5 part 7) and, after withdrawal of consent
-   * or achievement of the purpose, due for destruction within 30 days (art. 21 parts 4-5).
-   */
-  POSTHOG_ERASE_EVENTS: booleanFlag.transform((value) => value ?? true),
-  /**
    * The build that runs (the image tag), sent with every analytics event as `app_version` so a figure can be
    * split by release. Set at image build time (`--build-arg RELEASE=<tag>`); empty means the events carry none.
    */
@@ -281,54 +268,15 @@ const appShape = {
    */
   ANALYTICS_TEST_DEVICE_PREFIX: z.string().trim().max(32).default('loadtest-'),
   /**
-   * Session replay with every piece of text and every input masked. Off: it is the most sensitive switch.
-   * RISK, HIGH: a recording of behaviour on screen is the largest processing there is. Even masked it shows
-   * layout, pauses and taps on screens with personal content, possibly the person's state (art. 10: written
-   * consent). Only with a separate consent and an updated policy. The recording's own events carry raw page
-   * addresses (secret codes among them): scrub those first.
+   * Whether this process works the job queue off (the schedules and the jobs of `lib/jobs.ts`). Queuing a job
+   * works either way. Not a feature flag: the workers live in the API for now, and this is how they move to a
+   * pod of their own later (`JOBS_WORKERS_ENABLED=false` on the API).
    */
-  POSTHOG_SESSION_REPLAY: booleanFlag.transform((value) => value ?? false),
-  /**
-   * Clicks, dead clicks and rage clicks as the structure of the page (the text is masked and cut).
-   * RISK, MEDIUM: the events carry the account id and describe behaviour in detail (art. 5 parts 1-2,
-   * proportionality). If the scrubbing ever lets an element's text through, it is page content, and on
-   * conversation and profile screens data about the person (art. 10). SOS, hotlines and screens with
-   * content carry `ph-no-capture`; so must every new crisis-path button.
-   */
-  POSTHOG_CLICK_CAPTURE: booleanFlag.transform((value) => value ?? false),
-  /**
-   * Heatmaps (where people tap): coordinates and the route, no text. OFF, and meant to stay off for now.
-   * RISK, MEDIUM until reworked: the SDK takes clicks and mouse moves at the `document` in the capture
-   * phase and knows nothing of `ph-no-capture`, so a tap on SOS or on a hotline becomes a point under the
-   * account id, which defeats `trackAnonymous` (and the hour-rounded time) for the crisis path. Switch it
-   * on only after the client cuts the points inside `ph-no-capture` (docs/analytics.md, "Тепловые карты").
-   * The event also takes the same cross-border path as every other.
-   */
-  POSTHOG_HEATMAP_CAPTURE: booleanFlag.transform((value) => value ?? false),
-  /**
-   * Unhandled errors of the clients, reported as exceptions.
-   * RISK, LOW-MEDIUM: an error's text and stack could hold page data (a name, a piece of typed text in an
-   * engine message, a page address with a secret code in a frame's file name), art. 5 part 5 (minimisation).
-   * In code the text is made impersonal (what is quoted, addresses and mail addresses are replaced, 80
-   * characters at most) and a frame keeps its line, column and a scrubbed file address. Clients shipped
-   * before 2026-10-10 do not do this.
-   */
-  POSTHOG_ERROR_TRACKING: booleanFlag.transform((value) => value ?? true),
-  /**
-   * Core Web Vitals and page load timings.
-   * RISK, LOW: load timings and device data; attribution (which element and resource were slowest) is off
-   * and also cut in code.
-   */
-  POSTHOG_WEB_VITALS: booleanFlag.transform((value) => value ?? true),
-  /**
-   * Feature flags for the clients (and `analytics.isFeatureEnabled` on the server).
-   * OFF in the ConfigMap (there are no flags in the product). RISK, MEDIUM: the request for flags goes around
-   * the scrubbing of events and carries the stored initial properties of the person: the full entry address
-   * with its query (utm, click ids, anything), the referrer, the account id, the device id and the time zone.
-   * A transfer even without events. The client does not send it after an opt-out or with "do not track", but
-   * flags may be switched on only once the body of that request is scrubbed in the ingest proxy.
-   */
-  POSTHOG_FEATURE_FLAGS: booleanFlag.transform((value) => value ?? true),
+  JOBS_WORKERS_ENABLED: booleanFlag.transform((value) => value ?? true),
+  /** Connections of the queue's own pool, for queuing, the workers and the upkeep together. */
+  JOBS_POOL_MAX: optionalInt(1).transform((value) => value ?? 4),
+  /** How long the stop of a pod waits for the jobs that are running; the ones that do not finish go to another replica. */
+  JOBS_STOP_TIMEOUT_MS: optionalInt(1000).transform((value) => value ?? 10_000),
 }
 
 const adminShape = {
@@ -355,20 +303,17 @@ function refineBase(env: BaseEnvInput, ctx: z.RefinementCtx): void {
       message: 'memory is allowed only with APP_ENV=local',
     })
   }
-  if (env.OTEL_ENABLED) require('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_ENABLED=true')
 }
 
-/** The app's own conditional requirements: Redis needs an address. */
+/** The app's own conditional requirements: Sentinel needs the name of its master. */
 function refineApp(env: z.infer<typeof appObject>, ctx: z.RefinementCtx): void {
-  if (!env.REDIS_ENABLED || env.REDIS_URL) return
-  for (const key of ['REDIS_SENTINEL_HOST', 'REDIS_MASTER_NAME'] as const) {
-    if (env[key] === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: [key],
-        message: 'required when REDIS_ENABLED=true without REDIS_URL',
-      })
-    }
+  if (env.REDIS_URL || env.REDIS_SENTINEL_HOST === undefined) return
+  if (env.REDIS_MASTER_NAME === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['REDIS_MASTER_NAME'],
+      message: 'required with REDIS_SENTINEL_HOST (without REDIS_URL)',
+    })
   }
 }
 

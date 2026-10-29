@@ -1,3 +1,12 @@
+import type {
+  DeleteSelfCheckApiResponse,
+  SaveSelfCheckApiRequest,
+  SelfCheckApiErrorCode,
+  SelfCheckConsentApiResponse,
+  SelfCheckLatestApiResponse,
+  SelfCheckResultApi,
+  SelfCheckResultsApiResponse,
+} from '@ryadom/contracts/api/self-check'
 import type { AppStatusApiResponse } from '@ryadom/contracts/api/app-status'
 import type {
   ConfirmEmailApiErrorCode,
@@ -56,7 +65,14 @@ import type {
   DialogApiErrorCode,
   DialogApiResponse,
   DialogMode,
+  DeleteDialogApiResponse,
+  DialogRecapApiErrorCode,
+  DialogSettingsApiResponse,
+  DraftDialogRecapApiResponse,
   EndDialogApiRequest,
+  ListDialogRecapsApiResponse,
+  PutDialogRecapApiRequest,
+  PutDialogRecapApiResponse,
   EndDialogApiResponse,
   ListDialogsApiResponse,
   StartDialogApiErrorCode,
@@ -68,9 +84,9 @@ import { AppHeader } from '@ryadom/contracts/api/headers'
 import {
   DialogMemoryMode,
   MEMORY_CONSENT_VERSION,
-  type CreateMemoryFactApiErrorCode,
-  type CreateMemoryFactApiRequest,
   type ForgetMemoryApiErrorCode,
+  type MemoryInstructionApiErrorCode,
+  type MemoryInstructionApiResponse,
   type MemoryApiResponse,
   type MemoryChangesApiErrorCode,
   type MemoryChangesApiResponse,
@@ -89,9 +105,21 @@ import {
   type SharedDialogApiResponse,
 } from '@ryadom/contracts/api/dialog-shares'
 import {
+  DiaryApiErrorCode,
+  type CreateWeekSummaryApiRequest,
+  type DiaryApiResponse,
+  type DiarySummariesApiResponse,
+  type DiarySummaryApi,
+  type PutMoodCheckinApiRequest,
+  type PutMoodCheckinApiResponse,
+  type WidgetTokenApiResponse,
+} from '@ryadom/contracts/api/diary'
+import {
   ApiPath,
   dialogEndPath,
   dialogPath,
+  selfCheckResultPath,
+  dialogRecapPath,
   dialogSharePath,
   memoryFactPath,
   sessionPath,
@@ -581,6 +609,10 @@ export function createClient(config: ClientConfig) {
       code: string,
     ): Promise<ApiOutcome<void, ConfirmEmailApiErrorCode>> => {
       const body: ConfirmEmailApiRequest = { email, code }
+      // An address a guest account linked is confirmed only from that account's session. This route is
+      // public, so unlike the others it does not answer 401 to a cold start (the access token lives in
+      // memory only): the token has to be there before the request, not after a refusal.
+      if (sessionToken && !accessToken) await refreshSession()
       return voidOutcome(
         await apiOutcome<null, ConfirmEmailApiErrorCode>(ApiPath.ConfirmEmail, { method: 'POST', body }),
       )
@@ -663,15 +695,17 @@ export function createClient(config: ClientConfig) {
      * A plain start returns the open dialog if there is one (see `nextStartStep`); `startNew` is the
      * person's answer "end it and begin a new one", and is sent only then. `memory` goes out only as
      * `off` (a conversation "without memory"): `on` is the server's default, so a start that asks for
-     * nothing special looks exactly as it did before memory existed.
+     * nothing special looks exactly as it did before memory existed. `saved` goes out only as `false`
+     * ("Не сохранять этот разговор"), for the same reason; it is a choice apart from `memory`.
      */
     startDialog: (
       mode: DialogMode,
-      options: { startNew?: boolean; memory?: DialogMemoryMode } = {},
+      options: { startNew?: boolean; memory?: DialogMemoryMode; saved?: boolean } = {},
     ): Promise<ApiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>> => {
       const body: StartDialogApiRequest = { mode }
       if (options.startNew) body.startNew = true
       if (options.memory === DialogMemoryMode.Off) body.memory = DialogMemoryMode.Off
+      if (options.saved === false) body.saved = false
       return apiOutcome<StartDialogApiResponse, StartDialogApiErrorCode>(ApiPath.Dialogs, {
         method: 'POST',
         body,
@@ -732,6 +766,40 @@ export function createClient(config: ClientConfig) {
         body: data,
       }),
 
+    /** «Удалить разговор»: the conversation, its recap and the share link go; the facts of memory stay. */
+    deleteDialog: (dialogId: string): Promise<ApiOutcome<DeleteDialogApiResponse, DialogApiErrorCode>> =>
+      apiOutcome<DeleteDialogApiResponse, DialogApiErrorCode>(dialogPath(dialogId), { method: 'DELETE' }),
+
+    /** The recap of an ended conversation, written by the person in the journal. */
+    putDialogRecap: (
+      dialogId: string,
+      data: PutDialogRecapApiRequest,
+    ): Promise<ApiOutcome<PutDialogRecapApiResponse, DialogRecapApiErrorCode>> =>
+      apiOutcome<PutDialogRecapApiResponse, DialogRecapApiErrorCode>(dialogRecapPath(dialogId), {
+        method: 'PUT',
+        body: data,
+      }),
+
+    /** «Предзаполнить»: a draft the person edits; nothing is saved. */
+    draftDialogRecap: (
+      dialogId: string,
+    ): Promise<ApiOutcome<DraftDialogRecapApiResponse, DialogRecapApiErrorCode>> =>
+      apiOutcome<DraftDialogRecapApiResponse, DialogRecapApiErrorCode>(`${dialogRecapPath(dialogId)}/draft`, {
+        method: 'POST',
+      }),
+
+    listDialogRecaps: (before?: string): Promise<ListDialogRecapsApiResponse> =>
+      apiFetch<ListDialogRecapsApiResponse>(
+        `${ApiPath.DialogRecaps}${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    /** «Подводить итог автоматически». */
+    getDialogSettings: (): Promise<DialogSettingsApiResponse> =>
+      apiFetch<DialogSettingsApiResponse>(ApiPath.DialogSettings),
+
+    putDialogSettings: (recapEnabled: boolean): Promise<DialogSettingsApiResponse> =>
+      apiFetch<DialogSettingsApiResponse>(ApiPath.DialogSettings, { method: 'PUT', body: { recapEnabled } }),
+
     /** A live dialog connection bound to this client's session and address. */
     createDialogSocket: (
       dialogId: string,
@@ -760,6 +828,91 @@ export function createClient(config: ClientConfig) {
     getAppStatus: (query: string): Promise<AppStatusApiResponse> =>
       apiFetch<AppStatusApiResponse>(`${ApiPath.AppStatus}?${query}`),
 
+    // ─── mood diary ───────────────────────────────────────────────────────────
+    // Moods and summaries are the person's own: the screens show them and keep them in memory only,
+    // never in logs or analytics.
+
+    /** Today's note, the last 28 days, the streak and the week. */
+    getDiary: (): Promise<DiaryApiResponse> => apiFetch<DiaryApiResponse>(ApiPath.Diary),
+
+    /** Saves or replaces the note of today (`date` is for the offline queue: today or yesterday). */
+    putMoodCheckin: (
+      data: PutMoodCheckinApiRequest,
+    ): Promise<ApiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>> =>
+      apiOutcome<PutMoodCheckinApiResponse, DiaryApiErrorCode>(ApiPath.DiaryCheckinToday, {
+        method: 'PUT',
+        body: data,
+      }),
+
+    listDiarySummaries: (before?: string): Promise<DiarySummariesApiResponse> =>
+      apiFetch<DiarySummariesApiResponse>(
+        `${ApiPath.DiarySummaries}?kind=week${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    /** «Обновить итоги»: writes the text of the current week again now (once in ten minutes). */
+    createWeekSummary: (
+      data: CreateWeekSummaryApiRequest,
+    ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
+      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
+
+    /** The token of the Android widget; shown once. */
+    createWidgetToken: (): Promise<WidgetTokenApiResponse> =>
+      apiFetch<WidgetTokenApiResponse>(ApiPath.DiaryWidgetToken, { method: 'POST' }),
+
+    // ─── tests inside the app (add-self-check-tests) ───────────────────────────
+    // A result is a fact about health: the screens show it and keep it in memory only, never in logs or analytics.
+
+    getSelfCheckConsent: (): Promise<SelfCheckConsentApiResponse> =>
+      apiFetch<SelfCheckConsentApiResponse>(ApiPath.SelfCheckConsent),
+
+    giveSelfCheckConsent: (version: string): Promise<SelfCheckConsentApiResponse> =>
+      apiFetch<SelfCheckConsentApiResponse>(ApiPath.SelfCheckConsent, { method: 'POST', body: { version } }),
+
+    /** Withdrawing the consent also deletes every saved result. */
+    revokeSelfCheckConsent: (): Promise<DeleteSelfCheckApiResponse> =>
+      apiFetch<DeleteSelfCheckApiResponse>(ApiPath.SelfCheckConsent, { method: 'DELETE' }),
+
+    /** The server recounts the answers; `CONSENT_REQUIRED` means the consent sheet comes first. */
+    saveSelfCheckResult: (
+      data: SaveSelfCheckApiRequest,
+    ): Promise<ApiOutcome<SelfCheckResultApi, SelfCheckApiErrorCode>> =>
+      apiOutcome<SelfCheckResultApi, SelfCheckApiErrorCode>(ApiPath.SelfCheckResults, { method: 'POST', body: data }),
+
+    /**
+     * A crisis answer was given: the server's counter grows by one. No sign-in, no session headers and no tracing ids go
+     * with it, so nothing ties the count to a person; a failure (no network) is silent.
+     */
+    reportSelfCheckCrisis: (testId: string): Promise<void> =>
+      fetch(`${config.apiBase()}${ApiPath.SelfCheckCrisis}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testId }),
+        credentials: 'omit',
+        keepalive: true,
+        signal: AbortSignal.timeout(5_000),
+      }).then(
+        () => undefined,
+        () => undefined,
+      ),
+
+    latestSelfCheckResults: (): Promise<SelfCheckLatestApiResponse> =>
+      apiFetch<SelfCheckLatestApiResponse>(ApiPath.SelfCheckLatest),
+
+    listSelfCheckResults: (testId: string, before?: string): Promise<SelfCheckResultsApiResponse> =>
+      apiFetch<SelfCheckResultsApiResponse>(
+        `${ApiPath.SelfCheckResults}?testId=${encodeURIComponent(testId)}${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+      ),
+
+    deleteSelfCheckResult: (resultId: string): Promise<DeleteSelfCheckApiResponse> =>
+      apiFetch<DeleteSelfCheckApiResponse>(selfCheckResultPath(resultId), { method: 'DELETE' }),
+
+    /** All results of one test, or of every test without `testId`. */
+    deleteSelfCheckResults: (testId?: string): Promise<DeleteSelfCheckApiResponse> =>
+      apiFetch<DeleteSelfCheckApiResponse>(
+        testId ? `${ApiPath.SelfCheckResults}?testId=${encodeURIComponent(testId)}` : ApiPath.SelfCheckResults,
+        { method: 'DELETE' },
+      ),
+
     // ─── memory ───────────────────────────────────────────────────────────────
     // What comes back holds the person's own words: the screens show it and keep it in memory only,
     // never in logs, analytics or storage.
@@ -786,16 +939,16 @@ export function createClient(config: ClientConfig) {
       )
     },
 
-    /** A fact the person writes themselves: it is theirs and pinned. */
-    createMemoryFact: (
-      fact: CreateMemoryFactApiRequest,
-    ): Promise<ApiOutcome<MemoryFactApiResponse, CreateMemoryFactApiErrorCode>> =>
-      apiOutcome<MemoryFactApiResponse, CreateMemoryFactApiErrorCode>(ApiPath.MemoryFacts, {
-        method: 'POST',
-        body: fact,
+    /** The switches "Запоминать чувствительное" and "Опираться на прошлые разговоры": without `enabled`, so no consent is involved. */
+    updateMemorySettings: (
+      change: Pick<UpdateMemorySettingsApiRequest, 'sensitiveEnabled' | 'chatSearchEnabled'>,
+    ): Promise<ApiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>> =>
+      apiOutcome<UpdateMemorySettingsApiResponse, UpdateMemorySettingsApiErrorCode>(ApiPath.MemorySettings, {
+        method: 'PUT',
+        body: change,
       }),
 
-    /** One change at a time: a correction, "Запомнить", pin or unpin, or "Верно". */
+    /** The person corrects the text of a note; the answer is that note in the shape of a fact (`text`, `updatedAt`). */
     updateMemoryFact: (
       factId: string,
       change: UpdateMemoryFactApiRequest,
@@ -805,17 +958,17 @@ export function createClient(config: ClientConfig) {
         body: change,
       }),
 
-    /** "Забыть" and "Не запоминать". A fact that is gone already counts as forgotten. */
+    /** "Забыть". A note that is gone already counts as forgotten. */
     forgetMemoryFact: async (factId: string): Promise<ApiOutcome<void, ForgetMemoryApiErrorCode>> =>
       voidOutcome(
         await apiOutcome<null, ForgetMemoryApiErrorCode>(memoryFactPath(factId), { method: 'DELETE' }),
       ),
 
-    /** "Забыть всё": the facts go, the conversations and the switch stay. */
+    /** "Забыть всё": the notes go, the conversations and the switch stay. */
     forgetAllMemory: async (): Promise<ApiOutcome<void, ForgetMemoryApiErrorCode>> =>
       voidOutcome(await apiOutcome<null, ForgetMemoryApiErrorCode>(ApiPath.Memory, { method: 'DELETE' })),
 
-    /** What one conversation added to memory, for the card "Я запомнил" (see `pollMemoryChanges`). */
+    /** The notes one conversation left, for the block "Я запомнил" in its closing window (see `pollMemoryChanges`). */
     getMemoryChanges: (
       dialogId: string,
     ): Promise<ApiOutcome<MemoryChangesApiResponse, MemoryChangesApiErrorCode>> =>
@@ -823,7 +976,16 @@ export function createClient(config: ClientConfig) {
         `${ApiPath.MemoryChanges}?dialogId=${encodeURIComponent(dialogId)}`,
       ),
 
-    /** "Скачать мою память": everything, guesses and proposed facts included. */
+    /** "Скажи, что поправить или убрать": a request in the person's words, carried out on the notes. */
+    memoryInstruction: (
+      text: string,
+    ): Promise<ApiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>> =>
+      apiOutcome<MemoryInstructionApiResponse, MemoryInstructionApiErrorCode>(ApiPath.MemoryInstruction, {
+        method: 'POST',
+        body: { text },
+      }),
+
+    /** "Скачать мою память": everything the agent keeps about the person. */
     exportMemory: (): Promise<MemoryExportApiResponse> =>
       apiFetch<MemoryExportApiResponse>(ApiPath.MemoryExport),
   }

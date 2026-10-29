@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DialogMode } from '@ryadom/contracts/api/dialogs'
-import { DialogMemoryMode, MEMORY_CONSENT_VERSION, MemoryFactStatus } from '@ryadom/contracts/api/memory'
+import { DialogMemoryMode, MEMORY_CONSENT_VERSION } from '@ryadom/contracts/api/memory'
 import { createClient, type ClientConfig } from '../src/client'
 import { ApiError } from '../src/errors'
 import { envelope, makeToken, memoryStorage, userOf, type MemoryStorage } from './helpers'
@@ -209,6 +209,44 @@ describe('сессия: несколько вкладок на одном хра
   })
 })
 
+describe('подтверждение почты', () => {
+  it('после перезапуска сначала обновляет токен: адрес гостя подтверждается только из его сессии', async () => {
+    stubFetch()
+    const storage = memoryStorage()
+    storage.refreshToken = makeToken('a')
+    storage.user = userOf('a')
+    const { client } = setup(storage)
+    await client.restoreSession()
+    expect(client.getAccessToken()).toBeNull()
+
+    fetchMock
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'access-2', refreshToken: storage.refreshToken, expiresAt: 0 }),
+      )
+      .mockResolvedValueOnce(envelope(null))
+    expect(await client.confirmEmail('a@example.com', '123456')).toEqual({ ok: true, data: undefined })
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'http://api.test/api/auth/refresh',
+      'http://api.test/api/auth/confirm-email',
+    ])
+    const confirmHeaders = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>
+    expect(confirmHeaders.Authorization).toBe('Bearer access-2')
+  })
+
+  it('без сессии (регистрация) токена не ищет и сразу отправляет код', async () => {
+    stubFetch()
+    const { client } = setup()
+    fetchMock.mockResolvedValueOnce(envelope(null))
+
+    expect(await client.confirmEmail('a@example.com', '123456')).toEqual({ ok: true, data: undefined })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>
+    expect(headers.Authorization).toBeUndefined()
+  })
+})
+
 describe('трассировка', () => {
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
@@ -346,13 +384,13 @@ describe('память', () => {
     expect(await client.setMemoryEnabled(true)).toEqual({ ok: false, code: 'MEMORY_UNAVAILABLE' })
   })
 
-  it('пути и методы: факт, забыть, забыть всё, изменения разговора, экспорт', async () => {
+  it('пути и методы: правка заметки, забыть, забыть всё, изменения разговора, экспорт', async () => {
     stubFetch()
     const { client } = setup()
     await client.startSession(userOf('a'), tokens(makeToken('a')))
     fetchMock.mockImplementation(async () => envelope(null))
 
-    await client.updateMemoryFact('f/1', { status: MemoryFactStatus.Pinned })
+    await client.updateMemoryFact('f/1', { text: 'Работает в продажах' })
     await client.forgetMemoryFact('f/1')
     await client.forgetAllMemory()
     await client.getMemoryChanges('d 1')
@@ -361,7 +399,7 @@ describe('память', () => {
     expect(call(0)).toMatchObject({
       url: 'http://api.test/api/memory/facts/f%2F1',
       method: 'PATCH',
-      body: { status: 'pinned' },
+      body: { text: 'Работает в продажах' },
     })
     expect(call(1)).toMatchObject({ url: 'http://api.test/api/memory/facts/f%2F1', method: 'DELETE' })
     expect(call(2)).toMatchObject({ url: 'http://api.test/api/memory', method: 'DELETE' })

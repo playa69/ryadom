@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createAnalyticsAdmin } from '../src/admin'
 
-function makeAdmin(
-  respond: (url: URL, init: RequestInit) => Response | Promise<Response>,
-  deleteEvents = true,
-) {
+function makeAdmin(respond: (url: URL, init: RequestInit) => Response | Promise<Response>) {
   const calls: { url: URL; init: RequestInit }[] = []
   const fetchStub = vi.fn(async (input: string | URL, init: RequestInit = {}) => {
     const url = new URL(String(input))
@@ -15,7 +12,6 @@ function makeAdmin(
     apiHost: 'https://eu.posthog.com/',
     projectId: '300786',
     personalApiKey: 'phx_secret',
-    deleteEvents,
     fetch: fetchStub as unknown as typeof fetch,
   })
   return { admin, calls }
@@ -39,16 +35,6 @@ describe('createAnalyticsAdmin', () => {
     expect(JSON.parse(String(init.body))).toEqual({
       distinct_ids: ['user-1'],
       delete_events: true,
-      delete_recordings: true,
-    })
-  })
-
-  it('можно оставить историю событий: профиль и записи уходят, события нет', async () => {
-    const { admin, calls } = makeAdmin(accepted, false)
-    expect(await admin.deletePerson('user-1')).toBe(true)
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
-      distinct_ids: ['user-1'],
-      delete_events: false,
       delete_recordings: true,
     })
   })

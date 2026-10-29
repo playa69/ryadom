@@ -1,21 +1,24 @@
-import { Button, Icon, Page } from 'framework7-react'
+import { Button, Icon, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { chosenMemoryMode, nextStartStep } from '@ryadom/client-core/dialog-start'
+import { chosenStart, nextStartStep } from '@ryadom/client-core/dialog-start'
+import { rememberUnsaved, UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
 import { DialogMode, StartDialogApiErrorCode, type StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
-import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
-import { memoryInUse } from '@ryadom/client-core/memory'
+import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
+import { memoryInUse, shouldInviteToMemory } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText, getMemory, startDialog } from '../../../lib/api'
+import { dismissMemoryInvite, enableMemory, memoryInviteDismissed } from '../../../lib/memory'
+import { START_TALK_EVENT } from '../../../lib/nav'
 import { unlockSpeech } from '../../../lib/voice/speech'
 import { useAuth } from '../../../lib/store'
 import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import Breathing from '../../Breathing'
 import Switch from '../../Switch'
 import { SosButton, openSos } from '../../SosSheet'
-import { memoryCard } from '../../../lib/memory'
-import MemoryCard from './MemoryCard'
+import MemoryConsentSheet from '../profile/MemoryConsentSheet'
+import MemoryInviteSheet from './MemoryInviteSheet'
 import ResumeDialogSheet from './ResumeDialogSheet'
 
 /**
@@ -102,20 +105,62 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const memoryEnabled = auth.user?.memoryEnabled
   /** "Без памяти" for the next conversation; it goes back to off once a conversation starts. */
   const [withoutMemory, setWithoutMemory] = useState(false)
-  const wanted = chosenMemoryMode(memoryEnabled, withoutMemory)
+  /** "Не сохранять этот разговор" for the next conversation, a choice of its own; it goes back to off once a conversation starts. */
+  const [unsaved, setUnsaved] = useState(false)
+  /** The invitation to memory: the sheet with the offer, then the consent sheet after "Включить". */
+  const [invite, setInvite] = useState<'invite' | 'consent' | null>(null)
+  const [invitedMemory, setInvitedMemory] = useState<MemoryApiResponse | null>(null)
+  const [consentBusy, setConsentBusy] = useState(false)
+  const [consentError, setConsentError] = useState('')
+  const choice = chosenStart(memoryEnabled, withoutMemory, unsaved)
+  const wanted = choice.memory
 
   // Whether to offer "Без памяти" is asked whenever home comes into view: the person's switch and
   // whether the server uses memory at all can both change elsewhere. A failure leaves what was known.
   const loadMemory = useCallback(() => {
     if (!userId) return
     getMemory()
-      .then((memory) => updateUser({ memoryEnabled: memoryInUse(memory) }))
+      .then((memory) => {
+        updateUser({ memoryEnabled: memoryInUse(memory) })
+        // The invitation comes once, to someone who has not decided; never while a conversation is starting.
+        if (!starting.current && shouldInviteToMemory(memory, memoryInviteDismissed())) {
+          setInvitedMemory(memory)
+          setInvite((current) => current ?? 'invite')
+        }
+      })
       .catch(() => {})
   }, [userId, updateUser])
 
   useEffect(() => {
     loadMemory()
   }, [loadMemory])
+
+  /** Whatever the answer, the offer is made once: it is not shown again on this device. */
+  function declineInvite() {
+    dismissMemoryInvite()
+    // A close that follows "Включить" belongs to the consent sheet now.
+    setInvite((current) => (current === 'invite' ? null : current))
+  }
+
+  function acceptInvite() {
+    dismissMemoryInvite()
+    setConsentError('')
+    setInvite('consent')
+  }
+
+  async function acceptConsent() {
+    setConsentBusy(true)
+    setConsentError('')
+    const result = await enableMemory()
+    setConsentBusy(false)
+    if (!result.ok) {
+      setConsentError(result.text)
+      return
+    }
+    updateUser({ memoryEnabled: invitedMemory !== null && memoryInUse({ ...invitedMemory, ...result.data }) })
+    setInvite(null)
+    f7.toast.create({ text: 'Память включена', closeTimeout: 2500 }).open()
+  }
 
   function release(navigated: boolean) {
     if (navigated) setTimeout(() => (starting.current = false), NAVIGATION_LOCK_MS)
@@ -128,20 +173,22 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   }
 
   function openDialog(data: StartDialogApiResponse) {
-    // A new conversation makes the card of the previous one old news.
-    memoryCard.close()
+    // Only the answer decides: a gateway that did not hold the dialog unsaved has promised nothing.
+    if (data.saved === false) rememberUnsaved(data.dialogId)
     f7router.navigate(`/dialog/${data.dialogId}/`, {
       props: {
         greeting: data.greeting,
         resumed: data.resumed,
         sinceLastDialogHours: data.sinceLastDialogHours,
         memoryMode: data.memoryMode ?? DialogMemoryMode.On,
+        saved: data.saved,
         memoryEnabled: data.memoryEnabled,
         // The button says "talk": the conversation opens on the voice screen and already listens.
         listen: true,
       },
     })
     setWithoutMemory(false)
+    setUnsaved(false)
   }
 
   async function handleTalk() {
@@ -153,7 +200,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     setLoading(true)
     let navigated = false
     try {
-      let result = await startDialog(mode, { memory: wanted })
+      let result = await startDialog(mode, { memory: wanted, saved: choice.saved })
       if (!result.ok) {
         // The server has no agreement on record for this account: forget what was cached, and the
         // app's gate takes the person through the first screen.
@@ -162,7 +209,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         return
       }
       learnMemory(result.data)
-      const step = nextStartStep(result.data, wanted)
+      const step = nextStartStep(result.data, wanted, choice.saved)
       if (step === 'ask') {
         // Something was said in the conversation left open. Nothing changes until the person answers.
         answered.current = false
@@ -170,8 +217,8 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         return
       }
       if (step === 'restart') {
-        // An empty open conversation in the other memory mode: nothing in it to lose, a new one in the chosen mode.
-        result = await startDialog(mode, { startNew: true, memory: wanted })
+        // An empty open conversation chosen otherwise (memory, saving): nothing in it to lose, a new one as chosen.
+        result = await startDialog(mode, { startNew: true, memory: wanted, saved: choice.saved })
         if (!result.ok) {
           setError(codeText(START_ERRORS, result.code, 'Не получилось начать разговор'))
           return
@@ -186,6 +233,15 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
       release(navigated)
     }
   }
+
+  // The diary's bridge: «Поговорить» there is this button, pressed from afar.
+  const talkRef = useRef(handleTalk)
+  talkRef.current = handleTalk
+  useEffect(() => {
+    const onTalk = () => void talkRef.current()
+    window.addEventListener(START_TALK_EVENT, onTalk)
+    return () => window.removeEventListener(START_TALK_EVENT, onTalk)
+  }, [])
 
   /** "Продолжить": the same dialog, as a start without a question used to open it. */
   function continueDialog() {
@@ -208,7 +264,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     setRenewing(true)
     let navigated = false
     try {
-      const result = await startDialog(mode, { startNew: true, memory: wanted })
+      const result = await startDialog(mode, { startNew: true, memory: wanted, saved: choice.saved })
       if (!result.ok) {
         if (result.code === StartDialogApiErrorCode.CONSENT_REQUIRED) updateUser({ consentVersion: null })
         setError(codeText(START_ERRORS, result.code, 'Не получилось начать новый разговор'))
@@ -269,7 +325,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                   <span className="rd-incognito-title">Без памяти</span>
                   <span className="rd-caption">
                     {withoutMemory
-                      ? 'Этот разговор я не запомню, а сам он удалится через сутки'
+                      ? 'Этот разговор я не запомню'
                       : 'Следующий разговор не попадёт в память'}
                   </span>
                 </span>
@@ -282,9 +338,21 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                 />
               </div>
             )}
+            {/* Always there, memory or no memory: this conversation is kept out of the journal, the recaps and the analytics. */}
+            <label className="rd-incognito rd-unsaved" data-testid="unsaved">
+              <span className="rd-incognito-text">
+                <span className="rd-incognito-title">{UNSAVED_LABEL}</span>
+                <span className="rd-caption">{UNSAVED_HINT}</span>
+              </span>
+              <input
+                type="checkbox"
+                className="rd-unsaved-check"
+                data-testid="unsaved-toggle"
+                checked={unsaved}
+                onChange={(event) => setUnsaved(event.target.checked)}
+              />
+            </label>
           </div>
-
-          <MemoryCard owner={userId} />
 
           <div className="rd-modes">
             {MODES.map((item) => (
@@ -341,15 +409,28 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
       <ResumeDialogSheet
         opened={prompt !== null}
         busy={renewing}
-        // A returned conversation keeps the mode it began in: "Без памяти" applies only to a new one.
+        // A returned conversation keeps the choices it began with: "Без памяти" and "Не сохранять" apply only to a new one.
         note={
-          wanted === DialogMemoryMode.Off && prompt?.memoryMode !== DialogMemoryMode.Off
-            ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
-            : undefined
+          unsaved && prompt?.saved === false
+            ? undefined
+            : unsaved
+              ? '«Не сохранять» будет только у нового разговора: этот продолжится как обычно.'
+              : wanted === DialogMemoryMode.Off && prompt?.memoryMode !== DialogMemoryMode.Off
+                ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
+                : undefined
         }
         onContinue={continueDialog}
         onStartNew={() => void startNew()}
         onClose={closeQuestion}
+      />
+      <MemoryInviteSheet opened={invite === 'invite'} onAccept={acceptInvite} onDecline={declineInvite} />
+      <MemoryConsentSheet
+        opened={invite === 'consent'}
+        kind="consent"
+        busy={consentBusy}
+        error={consentError}
+        onAccept={() => void acceptConsent()}
+        onClose={() => !consentBusy && setInvite(null)}
       />
     </Page>
   )

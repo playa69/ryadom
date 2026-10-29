@@ -1,21 +1,28 @@
-# Local infrastructure for development: `pnpm infra:up` / `pnpm infra:down`.
-# The ports are non-standard so they do not clash with Postgres and Mailpit of other projects
-# on the machine.
+# Local infrastructure for development: `pnpm infra:up` / `pnpm infra:down` by hand (the ports below), or
+# `pnpm stand:up` for the worktree's own stand: scripts/stand.mjs gives it a compose project of its own and
+# shifts every port through the DEV_* variables (stand-ports.mjs). Without them everything stays as it was.
+# The ports are non-standard so they do not clash with Postgres and Mailpit of other projects on the machine.
 name: ryadom-dev
+
+# Who owns the containers, so that `pnpm stand:gc` can find what a removed worktree left behind.
+x-stand-labels: &stand-labels
+  com.ryadom.stand: ${STAND_ID:-manual}
+  com.ryadom.worktree: ${STAND_WORKTREE:-manual}
 
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       POSTGRES_USER: ryadom
       POSTGRES_PASSWORD: ryadom
       POSTGRES_DB: ryadom
     ports:
-      - '55433:5432'
+      - '${DEV_PG_PORT:-55433}:5432'
     volumes:
+      # compose.tmpfs.yaml replaces this volume with tmpfs for the stands of agents, whose data must not outlive them.
       - pg_data:/var/lib/postgresql/data
-      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ryadom -d ryadom']
       interval: 5s
@@ -25,17 +32,19 @@ services:
   mailpit:
     image: axllent/mailpit:v1.27
     restart: unless-stopped
+    labels: *stand-labels
     ports:
-      - '1026:1025' # SMTP
-      - '8026:8025' # web UI: http://localhost:8026
+      - '${DEV_MAIL_SMTP_PORT:-1026}:1025' # SMTP
+      - '${DEV_MAIL_UI_PORT:-8026}:8025' # web UI: http://localhost:8026
 
-  # Shared rate limits. With REDIS_ENABLED=true and REDIS_URL=redis://localhost:56379 in
-  # services/api/.env.local every API process counts in here; without it each one counts for itself.
+  # Shared rate limits. With REDIS_URL=redis://localhost:56379 in services/api/.env.local every API
+  # process counts in here; without an address each one counts for itself.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    labels: *stand-labels
     ports:
-      - '56379:6379'
+      - '${DEV_REDIS_PORT:-56379}:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -43,18 +52,27 @@ services:
       retries: 20
 
   # agent-api mock: REST + WebSocket, dialogs held in process memory.
+  # One image per machine: stand.mjs builds it under a tag made of the hash of dev/agent-mock and passes the
+  # tag in AGENT_MOCK_TAG, so stands with the same mock share the image instead of each building its own.
   agent-mock:
+    image: ryadom-agent-mock:${AGENT_MOCK_TAG:-local}
     build: ./agent-mock
     restart: unless-stopped
+    labels: *stand-labels
     environment:
       PORT: '8080'
     ports:
-      - '8080:8080'
+      - '${DEV_AGENT_MOCK_PORT:-8080}:8080'
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
       interval: 10s
       timeout: 3s
       retries: 5
 
+networks:
+  default:
+    labels: *stand-labels
+
 volumes:
   pg_data:
+    labels: *stand-labels

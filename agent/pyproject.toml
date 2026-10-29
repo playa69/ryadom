@@ -1,10 +1,10 @@
 [project]
 name = "ryadom-agent"
 version = "0.1.0"
-description = "Агент «Слышу Рядом» — упрощённая версия: контракт agent-api, ответы чат-модели и распознавание речи через прокси, озвучка (Qwen TTS / SaluteSpeech / espeak-ng)"
+description = "Агент «Слышу Рядом»: контракт agent-api, голос — Gemini Live (речь в речь), текстовая модель прокси для итогов и заметок, память"
 requires-python = ">=3.12"
-# Намеренно минимум. LangGraph, БД, память и классификаторы из openspec/changes/add-agent-service
-# подключаются позже; чат и распознавание — обычные HTTP-вызовы прокси через httpx, без SDK.
+# Намеренно минимум. LangGraph и классификаторы не подключены;
+# вызовы прокси, Cognee и Langfuse usage — обычный httpx, без SDK.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -14,9 +14,9 @@ dependencies = [
     "httpx>=0.27",
     "prometheus-client>=0.20",
     # Трейсинг LLM в self-hosted Langfuse (сервер v3 → SDK v3, OTel; v4 требует сервера v4).
-    # Используется только при LANGFUSE_ENABLED=true (app/core/tracing.py).
+    # Используется, когда заданы ключи Langfuse (app/core/tracing.py).
     "langfuse>=3,<4",
-    # Режим VOICE_PIPELINE=gemini_live (речь в речь через Gemini Live). Импортируется только в нём.
+    # Голос агента: речь в речь через Gemini Live (app/clients/gemini_live.py).
     "google-genai>=2.0",
     # Диалоги в PostgreSQL (DIALOG_DATABASE_URL, app/services/dialog_db.py). Синхронный драйвер и пул:
     # интерфейс хранилища диалогов синхронный (threading.Lock + asyncio.to_thread в DialogStore).

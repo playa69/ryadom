@@ -3,7 +3,15 @@
  * Brings up the stack for e2e and holds it until Playwright is done.
  *
  * Its own compose project and its own ports: a test run must not break the database used for
- * development (`pnpm infra:up` on 55433). The ports here are 55434 / 8080+ / 3100 / 3102 / 3103 / 3104.
+ * development (`pnpm stand:up` / `pnpm infra:up`). Which ports and which project come from the worktree's stand
+ * (scripts/stand-ports.mjs): in a worktree that has a slot they are 20000 + 100 * slot + 50 + k, with no slot the
+ * old fixed ones (55434 / 8081 / 3100 / 3102 / 3103 / 3104). playwright.config.ts computes the same addresses.
+ * If any of those ports is taken the stack refuses to start: tests that ran against a stranger's servers
+ * proved nothing.
+ *
+ * The apps are built through Turborepo with its cache: an app whose sources (and those of the packages it
+ * uses) did not change since a previous build comes back in seconds. TURBO_CACHE_DIR can point several
+ * checkouts at one cache.
  *
  * Built servers rather than `dev`: what has to be checked is what ships in the image. The one
  * exception is the PWA: in production it is an nginx image (apps/mobile/Dockerfile), here the same
@@ -11,23 +19,29 @@
  * origin, as it is behind the gateway. The nginx behaviour (headers, cache, fallback) is checked on
  * the image itself, not here.
  */
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { cp } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { busyPorts, compose, ensureMockImage, forgetProcess, isOurs, killTree, readState, recordProcess, spawnCommandSync } from '../../scripts/stand.mjs'
+import { resolveStand } from '../../scripts/stand-ports.mjs'
 
 const e2eRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = join(e2eRoot, '..')
-const isWindows = process.platform === 'win32'
 
-const DB_URL = 'postgres://ryadom:ryadom@127.0.0.1:55434/ryadom'
-const AGENT_URL = 'http://127.0.0.1:8081'
-// 3100 is the landing site (its env var is still called WEB_*: the legal pages live there), 3102
-// is the API, 3103 is the signed-in web app and 3104 is the PWA.
-const WEB_PORT = '3100'
-const APP_PORT = '3102'
-const WEBAPP_PORT = '3103'
-const PWA_PORT = '3104'
+const stand = resolveStand({ appRoot: repoRoot })
+const ports = stand.ports.e2e
+const port = (name) => String(ports[name])
+
+const DB_URL = stand.databases.e2e
+// E2E_REAL_AGENT_URL runs the scenarios against a real agent (started locally, with a real model) instead of the mock.
+const AGENT_URL = process.env.E2E_REAL_AGENT_URL ?? stand.urls.e2e.mock
+// The landing site's env var is still called WEB_*: the legal pages live there. API is the API, WEBAPP the
+// signed-in web app, PWA the PWA.
+const WEB_PORT = port('landing')
+const APP_PORT = port('api')
+const WEBAPP_PORT = port('web')
+const PWA_PORT = port('pwa')
 
 const children = []
 let shuttingDown = false
@@ -36,27 +50,30 @@ function log(message) {
   process.stdout.write(`[stack] ${message}\n`)
 }
 
+function composeDown() {
+  // Always tear the containers down, including on failure: they hold a tmpfs database, and the
+  // next run must start from an empty one.
+  compose(stand, 'e2e', ['down', '-v', '--remove-orphans'])
+}
+
 function runSync(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    stdio: 'inherit',
-    shell: isWindows,
-    cwd: repoRoot,
-    ...options,
-  })
+  // pnpm is a .cmd shim on Windows, which spawnCommandSync starts through a shell; everything long-lived below is plain node.
+  const result = spawnCommandSync(command, args, { stdio: 'inherit', cwd: repoRoot, ...options })
   if (result.status !== 0) {
     log(`команда упала: ${command} ${args.join(' ')}`)
     shutdown(result.status ?? 1)
   }
 }
 
-function start(name, command, args, options = {}) {
-  const child = spawn(command, args, {
+/** Runs a node script as a child. No shell between us and it, so killing the child ends the server. */
+function start(name, args, options = {}) {
+  const child = spawn(process.execPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: isWindows,
     cwd: repoRoot,
     ...options,
   })
   children.push({ name, child })
+  recordProcess(stand, name, { pid: child.pid, startedAt: Date.now(), port: 0, command: name })
   const prefix = (stream) => (chunk) => {
     for (const line of String(chunk).split('\n')) {
       if (line.trim()) stream.write(`[${name}] ${line}\n`)
@@ -76,14 +93,13 @@ function start(name, command, args, options = {}) {
 function shutdown(code) {
   if (shuttingDown) return
   shuttingDown = true
-  for (const { child } of children) child.kill()
-  // Always tear the containers down, including on failure: they hold a tmpfs database, and the
-  // next run must start from an empty one.
-  spawnSync('node', ['scripts/docker.mjs', 'compose', '-f', 'e2e/compose.yaml', 'down', '-v'], {
-    stdio: 'inherit',
-    shell: isWindows,
-    cwd: repoRoot,
-  })
+  // kill() on a child would end only that process; taskkill /T takes whatever it started too.
+  for (const { name, child } of children) {
+    killTree(child.pid)
+    forgetProcess(stand, name)
+  }
+  composeDown()
+  forgetProcess(stand, 'e2e-stack')
   process.exit(code)
 }
 
@@ -107,20 +123,46 @@ async function waitFor(url, what, timeoutMs = 120_000) {
   }
 }
 
+// A stack of this stand that is alive is somebody's run: clearing the containers below would pull the ground
+// from under it, so it is refused before anything is touched.
+const alive = readState(stand).processes['e2e-stack']
+if (alive && alive.pid !== process.pid && isOurs(alive)) {
+  log(`стек стенда "${stand.id}" уже запущен (pid ${alive.pid}). Остановить: pnpm stand:down; использовать готовый: E2E_REUSE=1`)
+  process.exit(1)
+}
+recordProcess(stand, 'e2e-stack', { pid: process.pid, startedAt: Date.now() - process.uptime() * 1000, port: ports.landing, command: 'e2e-stack' })
+log(`стенд "${stand.id}", слот ${stand.slot}: порты ${ports.landing}..${ports.postgres}`)
+
+// A stack of this stand that a crashed run left behind would hold the ports and the database of the previous run.
+composeDown()
+
+const busy = await busyPorts([ports.landing, ports.api, ports.web, ports.pwa, ports.mock, ports.mailUi, ports.mailSmtp, ports.postgres])
+if (busy.length) {
+  const list = busy.map(({ port: p, code }) => `${p}${code === 'EACCES' ? ' (зарезервирован системой)' : ''}`).join(', ')
+  log(`заняты порты стенда: ${list}. Чужой процесс? Тесты на чужом стенде ничего не доказывают, поэтому стек не стартует.`)
+  log('Свои остатки снимает `pnpm stand:down`; работа в новом worktree: `pnpm e2e` сам берёт слот с другими портами.')
+  shutdown(1)
+}
+
 log('поднимаю Postgres, Mailpit и заглушку агента')
-// --build: without it compose reuses a cached image, and a changed agent mock silently would
-// not reach the tests.
-runSync('node', ['scripts/docker.mjs', 'compose', '-f', 'e2e/compose.yaml', 'up', '-d', '--wait', '--build'])
+// The mock image is one per machine, tagged with the hash of its sources: a changed mock gets a new tag, and an
+// unchanged one is not built again.
+const up = compose(stand, 'e2e', ['up', '-d', '--wait'], { AGENT_MOCK_TAG: await ensureMockImage(stand) })
+if (up.status !== 0) {
+  log('docker compose up не удался')
+  shutdown(up.status)
+}
 
 log('применяю миграции')
 runSync('pnpm', ['--filter', '@ryadom/db', 'migrate'], { env: { ...process.env, DATABASE_URL: DB_URL } })
 
 log('собираю клиент, api, сайт и веб-приложение')
 // apps/mobile's "build" is build:pwa: the web build into dist/pwa, which `vite preview` serves below.
-runSync('pnpm', ['--filter', '@ryadom/mobile', 'build'])
-runSync('pnpm', ['--filter', '@ryadom/api', 'build'])
-runSync('pnpm', ['--filter', '@ryadom/landing', 'build'])
-runSync('pnpm', ['--filter', '@ryadom/web', 'build'])
+// Two at a time: four Next.js and Vite builds at once would need several gigabytes of memory.
+runSync('pnpm', [
+  'exec', 'turbo', 'run', 'build', '--concurrency=2', '--output-logs=new-only',
+  '--filter=@ryadom/mobile', '--filter=@ryadom/api', '--filter=@ryadom/landing', '--filter=@ryadom/web',
+])
 
 const apiEnv = {
   ...process.env,
@@ -137,7 +179,7 @@ const apiEnv = {
   EMAIL_TRANSPORT: 'smtp',
   EMAIL_FROM: 'Рядом <noreply@ryadom.local>',
   SMTP_HOST: '127.0.0.1',
-  SMTP_PORT: '1027',
+  SMTP_PORT: port('mailSmtp'),
   AGENT_API_URL: AGENT_URL,
   AGENT_TIMEOUT_MS: '10000',
   DIALOG_IDLE_TIMEOUT_SEC: '900',
@@ -152,7 +194,7 @@ const apiEnv = {
 
 log('запускаю api')
 // cwd is services/api: from there the server finds the native argon2.
-start('api', 'node', ['dist/index.js'], { env: apiEnv, cwd: join(repoRoot, 'services', 'api') })
+start('api', ['dist/index.js'], { env: apiEnv, cwd: join(repoRoot, 'services', 'api') })
 await waitFor(`http://127.0.0.1:${APP_PORT}/api/health`, 'api')
 
 log('запускаю PWA')
@@ -161,9 +203,8 @@ log('запускаю PWA')
 // environment) are not there, which is fine: the client falls back to relative legal links.
 start(
   'pwa',
-  'pnpm',
-  ['--filter', '@ryadom/mobile', 'exec', 'vite', 'preview', '--mode', 'web', '--host', '127.0.0.1', '--port', PWA_PORT, '--strictPort'],
-  { env: { ...process.env, API_PROXY_TARGET: `http://127.0.0.1:${APP_PORT}` } },
+  [join(repoRoot, 'apps', 'mobile', 'node_modules', 'vite', 'bin', 'vite.js'), 'preview', '--mode', 'web', '--host', '127.0.0.1', '--port', PWA_PORT, '--strictPort'],
+  { env: { ...process.env, API_PROXY_TARGET: `http://127.0.0.1:${APP_PORT}` }, cwd: join(repoRoot, 'apps', 'mobile') },
 )
 await waitFor(`http://127.0.0.1:${PWA_PORT}/`, 'PWA')
 
@@ -179,7 +220,7 @@ await cp(join(repoRoot, 'apps', 'web', 'public'), join(webStandalone, 'public'),
 log('запускаю веб-приложение')
 // Its two addresses are runtime config, like in the image: the browser talks to the API directly
 // (the CSP connect-src is built from PUBLIC_API_URL), and the legal links point at the landing.
-start('web', 'node', ['server.js'], {
+start('web', ['server.js'], {
   cwd: webStandalone,
   env: {
     ...process.env,
@@ -200,7 +241,7 @@ await cp(join(repoRoot, 'apps', 'landing', 'public'), join(landingStandalone, 'p
 
 // The landing starts last: Playwright's webServer polls it, so once it answers everything is up.
 log('запускаю сайт')
-start('landing', 'node', ['server.js'], {
+start('landing', ['server.js'], {
   cwd: landingStandalone,
   env: {
     ...process.env,

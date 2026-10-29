@@ -6,18 +6,7 @@ import { client } from './platform-adapter'
  * client-core (shared with the web app), and only re-exported here.
  */
 
-export {
-  AGENT_ERROR_TEXT,
-  ApiError,
-  NETWORK_ERROR_STATUS,
-  NETWORK_ERROR_TEXT,
-  SERVER_ERROR_TEXT,
-  apiErrorText,
-  codeText,
-  type ApiErrorTexts,
-  type ApiOutcome,
-  type LoginResult,
-} from '@ryadom/client-core/index'
+export { ApiError, NETWORK_ERROR_STATUS, apiErrorText, codeText } from '@ryadom/client-core/index'
 export { ACCOUNT_UNAVAILABLE_EVENT, setSessionEndHandler } from './platform-adapter'
 
 export const {
@@ -47,15 +36,30 @@ export const {
   getDialogShare,
   createDialogShare,
   revokeDialogShare,
-  endDialog,
-  getAppStatus,
-  refreshSession,
+  deleteDialog,
+  putDialogRecap,
+  draftDialogRecap,
+  getDialogSettings,
+  putDialogSettings,
   getMemory,
+  getMemoryChanges,
   setMemoryEnabled,
-  createMemoryFact,
+  updateMemorySettings,
+  memoryInstruction,
   updateMemoryFact,
   forgetMemoryFact,
   forgetAllMemory,
-  getMemoryChanges,
   exportMemory,
+  createWeekSummary,
+  getDiary,
+  putMoodCheckin,
+  getSelfCheckConsent,
+  reportSelfCheckCrisis,
+  giveSelfCheckConsent,
+  revokeSelfCheckConsent,
+  saveSelfCheckResult,
+  latestSelfCheckResults,
+  listSelfCheckResults,
+  deleteSelfCheckResult,
+  deleteSelfCheckResults,
 } = client

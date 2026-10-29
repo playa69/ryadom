@@ -11,6 +11,7 @@ interface RawStart {
   messageCount?: unknown
   lastActivityAt?: unknown
   memoryMode?: unknown
+  saved?: unknown
   memoryEnabled?: unknown
 }
 
@@ -20,8 +21,8 @@ interface RawStart {
  * choice) and `new: true` when a fresh dialog is asked for. Without `new` the call changes nothing: the
  * open dialog comes back as it is, with how many messages it holds and when it last moved, so the app
  * can ask the person what to do with it. With `new: true` the agent ends the open dialog (an empty one
- * is just reused) and starts another. `memory: "off"` holds a new dialog "without memory". With none
- * of the fields there is no body.
+ * is just reused) and starts another. `memory: "off"` holds a new dialog "without memory", `saved: false` holds it unsaved:
+ * two independent choices. `pipeline` is the voice pipeline an admin picked. With none of the fields there is no body.
  */
 @requestHandler(StartAgentDialogRequest)
 export class StartAgentDialogRequestHandler implements RequestHandler<
@@ -31,8 +32,11 @@ export class StartAgentDialogRequestHandler implements RequestHandler<
   async handle(request: StartAgentDialogRequest): Promise<StartAgentDialogResponse> {
     const payload = {
       ...(request.voice ? { voice: request.voice } : {}),
+      ...(request.voiceName ? { voiceName: request.voiceName } : {}),
       ...(request.startNew ? { new: true } : {}),
       ...(request.memory ? { memory: request.memory } : {}),
+      ...(request.saved === false ? { saved: false } : {}),
+      ...(request.pipeline ? { pipeline: request.pipeline } : {}),
     }
     const { status, body } = await callAgent<RawStart>(userDialogsPath(request.userId), {
       method: 'POST',
@@ -56,6 +60,8 @@ export class StartAgentDialogRequestHandler implements RequestHandler<
         typeof body.lastActivityAt === 'string' && body.lastActivityAt ? body.lastActivityAt : null,
       // An agent without memory holds every dialog as before, and nobody has memory turned on there.
       memoryMode: body.memoryMode === 'off' ? 'off' : 'on',
+      // Only what the agent confirms counts: an older agent ignores `saved` and keeps the dialog, and says nothing.
+      saved: body.saved !== false,
       memoryEnabled: body.memoryEnabled === true,
     }
   }

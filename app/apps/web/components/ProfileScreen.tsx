@@ -5,7 +5,7 @@ import { useEffect, useId, useState, type FormEvent } from 'react'
 import { LogOut, UserRound } from 'lucide-react'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { apiErrorText } from '@ryadom/client-core/errors'
-import { memoryInUse, memorySectionStatus, shouldShowMemorySection } from '@ryadom/client-core/memory'
+import { memoryInUse, memorySectionStatus } from '@ryadom/client-core/memory'
 import { nameProblem } from '@ryadom/client-core/validation'
 import { Avatar, AvatarFallback } from '@ryadom/ui/components/avatar'
 import { Card, CardContent } from '@ryadom/ui/components/card'
@@ -21,6 +21,7 @@ import { Busy, FIELD_FOCUS, ModalActions, ModalText, ProfileButton, SettingsSect
 import { Page } from './Page'
 import ProfileAnalytics from './ProfileAnalytics'
 import ProfileRow from './ProfileRow'
+import ProfileSelfCheck from './ProfileSelfCheck'
 import ProfileHandsFree from './ProfileHandsFree'
 import ProfileVoice from './ProfileVoice'
 
@@ -43,8 +44,8 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
   const [loggingOut, setLoggingOut] = useState(false)
   const userId = user?.id ?? null
   /**
-   * The section "Память": shown only when the feature works or the person has something there, and
-   * not at all when that cannot be learnt. Only the decision and a word are kept, never the facts.
+   * The section "Память": shown once the server has answered, not at all when that cannot be learnt.
+   * Only a word is kept, never the facts.
    */
   const [memorySection, setMemorySection] = useState<{ status: string } | null>(null)
 
@@ -55,7 +56,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
       .getMemory()
       .then((memory) => {
         if (cancelled) return
-        setMemorySection(shouldShowMemorySection(memory) ? { status: memorySectionStatus(memory) } : null)
+        setMemorySection({ status: memorySectionStatus(memory) })
         updateUser({ memoryEnabled: memoryInUse(memory) })
       })
       .catch(() => {
@@ -80,6 +81,8 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           isEmailConfirmed: me.isEmailConfirmed,
           createdAt: me.createdAt,
           voice: me.voice,
+          voiceName: me.voiceName,
+          voicePipeline: me.voicePipeline,
         })
       })
       .catch(() => {})
@@ -158,6 +161,8 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           </ProfileButton>
         </CardContent>
       </Card>
+
+      <ProfileSelfCheck />
 
       <SettingsSection
         title="Безопасность"

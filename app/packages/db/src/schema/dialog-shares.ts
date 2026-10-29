@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm'
 import { users } from './users'
 
 /**
- * A link to one conversation (`REQ-DATA-05`, `openspec/changes/add-dialog-share-link`).
+ * A link to one conversation (`REQ-DATA-05`, `openspec/specs/dialog-share`).
  *
  * Neither the token nor a word of the conversation is stored here: the token is derived from `id`
  * with a server secret (so the owner can see the link again), `token_hash` is only how a visit finds

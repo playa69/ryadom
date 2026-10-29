@@ -3,15 +3,32 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  ConfirmUserEmailOperation,
+  accountDeletionProcess,
   DeleteUserAccountOperation,
   DeleteUserAccountOperationErrorCode,
+} from '../src/processes/account-deletion'
+import {
+  ConfirmUserEmailOperation,
+  RevokeUserSessionsOperation,
   ToggleUserActivationOperation,
   ToggleUserActivationOperationErrorCode,
   userManagementProcess,
 } from '../src/processes/user-management'
 import { LoginOperationErrorCode } from '../src/processes/authentication'
-import { ADMIN_EMAIL, auditRows, getUserRow, login, mockAgent, registerConfirmedUser, registerUser } from './helpers'
+import {
+  getEnqueuedJobs,
+  memoryJobQueueTransport,
+  registerJobQueueTransport,
+} from '../src/services/job-queue-service'
+import {
+  ADMIN_EMAIL,
+  auditRows,
+  getUserRow,
+  login,
+  mockAgent,
+  registerConfirmedUser,
+  registerUser,
+} from './helpers'
 
 const toggle = (userId: string) =>
   userManagementProcess.execute(new ToggleUserActivationOperation({ adminEmail: ADMIN_EMAIL, userId }))
@@ -28,13 +45,19 @@ describe('блокировка', () => {
 
     const journal = await auditRows()
     expect(journal.map((row) => row.action)).toEqual(['USER_BLOCKED', 'USER_UNBLOCKED'])
-    expect(journal[0]).toMatchObject({ adminEmail: ADMIN_EMAIL, targetUserId: user.id, targetEmail: user.email })
+    expect(journal[0]).toMatchObject({
+      adminEmail: ADMIN_EMAIL,
+      targetUserId: user.id,
+      targetEmail: user.email,
+    })
   })
 
   it('удалённый аккаунт не блокируется', async () => {
     const user = await registerConfirmedUser()
     mockAgent()
-    await userManagementProcess.execute(new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }))
+    await accountDeletionProcess.execute(
+      new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
+    )
     expect(await toggle(user.id)).toEqual({
       success: false,
       error: ToggleUserActivationOperationErrorCode.USER_DELETED,
@@ -64,11 +87,13 @@ describe('удаление аккаунта админом', () => {
     const user = await registerConfirmedUser()
     const { calls } = mockAgent()
 
-    const result = await userManagementProcess.execute(
+    const result = await accountDeletionProcess.execute(
       new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
     )
     expect(result).toEqual({ success: true })
-    expect(calls.some((call) => call.method === 'DELETE' && call.url.pathname === `/v1/users/${user.id}`)).toBe(true)
+    expect(
+      calls.some((call) => call.method === 'DELETE' && call.url.pathname === `/v1/users/${user.id}`),
+    ).toBe(true)
 
     const row = await getUserRow(user.id)
     expect(row?.isDeleted).toBe(true)
@@ -86,11 +111,39 @@ describe('удаление аккаунта админом', () => {
   it('повтор — ALREADY_DELETED', async () => {
     const user = await registerConfirmedUser()
     mockAgent()
-    await userManagementProcess.execute(new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }))
+    await accountDeletionProcess.execute(
+      new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
+    )
     expect(
-      await userManagementProcess.execute(
+      await accountDeletionProcess.execute(
         new DeleteUserAccountOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
       ),
     ).toEqual({ success: false, error: DeleteUserAccountOperationErrorCode.ALREADY_DELETED })
+  })
+})
+
+describe('действия админки, кроме удаления, не ставят задач в очередь', () => {
+  // Blocking, confirming an address and ending sessions need no transport and queue nothing; the deletion by an administrator
+  // erases what the person's own request erases and queues the erasure in analytics (test/account-erasure.test.ts).
+  it('блокировка, подтверждение почты и отзыв сессий работают без транспорта и ничего не ставят', async () => {
+    registerJobQueueTransport(undefined)
+    const user = await registerUser()
+    const other = await registerConfirmedUser()
+
+    expect(await toggle(other.id)).toEqual({ success: true, isActive: false })
+    expect(await toggle(other.id)).toEqual({ success: true, isActive: true })
+    expect(
+      await userManagementProcess.execute(
+        new ConfirmUserEmailOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
+      ),
+    ).toEqual({ success: true })
+    expect(
+      await userManagementProcess.execute(
+        new RevokeUserSessionsOperation({ adminEmail: ADMIN_EMAIL, userId: other.id }),
+      ),
+    ).toMatchObject({ success: true })
+
+    registerJobQueueTransport(memoryJobQueueTransport)
+    expect(getEnqueuedJobs()).toEqual([])
   })
 })

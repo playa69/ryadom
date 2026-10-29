@@ -1,10 +1,84 @@
-<!-- BEGIN:turborepo-agent-rules -->
+# app/: правила кода
 
-# This is NOT the Turborepo you know
+Общие правила репозитория — в корневом `AGENTS.md`. Здесь — как устроен код `app/` (pnpm + Turborepo, Node 24,
+TypeScript); запуск и проверки — скиллы `local-dev` и `e2e`. У ядра (`packages/core`: слои, менеджеры, процессы,
+транзакции) свои правила — `packages/core/AGENTS.md`.
 
-Turborepo configuration, task behavior, and CLI commands can vary between installed versions and may differ from your training data. Resolve the `turbo` package from this file's directory or relevant workspace; in monorepos, it may not be visible from the repository root. For example, run `node -p "require.resolve('turbo/package.json')"` from a workspace that depends on `turbo`.
+## Совместимость с живыми клиентами
 
-Read `docs/README.md` inside that installed package first, then read the relevant pages from its `docs/` directory before changing Turborepo configuration or commands. Heed deprecation notices. These bundled docs match the installed package version and are available without network access.
+Формат публичного API — типы в `packages/contracts`: их используют и `services/api`, и клиенты. Сервер выкатывается
+сразу, а клиенты живут дольше: нативные сборки — месяцами (нативная часть обновляется только через магазин, JS — по
+воздуху), PWA и вкладки веба — до обновления.
 
-This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
-<!-- END:turborepo-agent-rules -->
+- **Контракт меняется только добавлением.** Новое поле — необязательное; поле, значение enum, маршрут и заголовок не
+  удаляются и не переименовываются; смысл существующего не меняется. Нужно сломать — «расширь и сузь» (два выката) или
+  нативный минимум, и только с решением человека и пометкой **BREAKING** в `proposal.md` change'а.
+- Меняешь запрос или ответ — сначала контракт, потом обе стороны.
+- Нативное и версии клиента — раздел ниже.
+- **Проверка обязательна.** Тронул `packages/contracts`, маршруты или ответы `services/api`, `apps/mobile` — до сдачи
+  `node .agents/skills/release-check/scripts/release-check.mjs` (скилл `release-check`). Нарушение (код выхода 1) —
+  сдавать нельзя; находки `REVIEW` и `BREAKING` разбери в отчёте. Образы api, pwa и web `build.sh` без этой проверки
+  не соберёт.
+
+## Мобильный клиент: нативное и версии (`apps/mobile`)
+
+Один код `src/client` — три оболочки: PWA (образ `pwa`, ворот версий нет), Android и iOS (Capacitor). JS доезжает до
+нативных сборок пакетом OTA из образа api (`<version>.<число коммитов>`, и тот же код — в образе pwa); нативное
+(`android/`, `ios/`, `capacitor.config.ts`, плагины Capacitor в `package.json`) — только новой сборкой из магазина.
+
+- **Новый плагин, разрешение или нативный код, на которые опирается JS, — в одном коммите с `OTA_MIN_NATIVE_BUILD`**
+  (`services/api/src/lib/release-policy.ts`) = номер сборки, где они появились: иначе пакет получат сборки без них.
+  Пакет с такой зависимостью выкатывай только после появления сборки в магазине.
+- **`version` в `apps/mobile/package.json` меняй только на нативном релизе и не понижай.** Сервер сравнивает версию
+  пакета как число: понижение откатит все устройства. Рост `version` старые нативные сборки не изолирует — их
+  изолирует только `OTA_MIN_NATIVE_BUILD`.
+- **Версию JS задаёт один модуль** — `apps/mobile/scripts/js-version.mjs` (его читают `vite.config.ts` и сборка
+  пакета). Не вычисляй её где-то ещё: расхождение версии в манифесте и в самом JS уже ломало обновления.
+- **Номер нативной сборки** (`versionCode`, у iOS `CURRENT_PROJECT_VERSION`) задаёт релизная сборка, и он только
+  растёт; `versionName` = `version`.
+- **Тексты и поведение экранов обновления** (`AppUpdateGate`, `lib/app-update.ts`) описаны в спеке `app-updates`:
+  меняешь их — OpenSpec change (скилл `openspec`).
+
+## Конфигурация сервера
+
+- Переменные сервера описаны zod-схемами в `packages/core/src/config/env.ts`: `appEnvSchema` для `services/api`,
+  `adminEnvSchema` для админки, общая часть — в обеих. Сервер проверяет их при старте
+  (`services/api/src/lib/env.ts`, `apps/admin/lib/env.ts`) и падает со списком всех ошибок. Пустая строка — «не задано».
+- Новая переменная — поле в схеме, строка в `.env.example` приложения и, если нужна в проде, ключ в
+  `k8s/app/00-app-config.yaml` (секрет — в Secret, в репозитории только его имя). Прямых `process.env` в коде сервера
+  не добавлять.
+
+## Фоновая работа
+
+- Таймеров `setInterval` в `services/api` нет: расписание и отложенное действие — задача очереди pg-boss в базе `app`
+  (схема `pgboss`). Ядро ставит задачу через порт `job-queue-service` (`packages/core/src/services`). Каталог очередей,
+  их создание и транспорт лежат в `packages/db/src/jobs`, воркеры — в `services/api/src/jobs`; pg-boss знают они,
+  мигратор и `services/api/src/lib/jobs.ts`, ядро и админка его не импортируют. Админка (`apps/admin`) воркеров не запускает, а ставит задачи сама:
+  производящий экземпляр pg-boss (`lib/jobs.ts`, пул из двух соединений) создаёт нужные ей очереди и пишет задачу
+  в транзакции удаления; HTTP-вызова админки в api для этого нет.
+- Доставка «хотя бы один раз»: обработчик идемпотентен, в данных задачи только идентификаторы (без текстов и почты).
+- Схему очереди ставит мигратор (`packages/db`), не api; новая очередь — запись в каталоге с полным набором параметров.
+  Очередь события (стирание, сброс недели) имеет повторы и копию в `jobs.dead-letter`, расписание — ни того ни другого.
+- Удаление аккаунта (человеком, администратором, чисткой гостей) — один состав стирания,
+  `processes/account-deletion/shared/erase-account.ts`: новый вид данных человека стирается там и только там, а не в
+  каждой из трёх операций.
+
+## Логи
+
+- Логгер — `createLogger('<компонент>')` из `packages/core` (pino, JSON в stdout; в кластере его собирает Loki).
+- Поля с личными данными в контрактах запросов ядра помечаются `@hasPII()` (`packages/core/src/shared/pii-protection.ts`):
+  `LoggingBehavior` маскирует их в логах (какую маску выбрать — `packages/core/AGENTS.md`). Тексты разговоров в лог не
+  пишутся.
+
+## Заголовки трассировки
+
+- Клиенты шлют на каждый запрос пять заголовков — `TracingHeader` в `packages/contracts/src/api/headers.ts`:
+  `x-trace-id`, `x-request-time`, `x-client-id`, `x-session-id`, `x-user-id`.
+- API читает их один раз на входе (HTTP-middleware, апгрейд WebSocket) в `RequestContext`
+  (`packages/core/src/shared/request-context.ts`, AsyncLocalStorage): оттуда их берут записи лога и исходящие вызовы
+  агента (`tracingHeaders()`). Через аргументы функций контекст не передают.
+- За токеном `x-user-id` заменяется проверенным аккаунтом.
+
+## Язык
+
+Комментарии в коде — по-английски и только о причинах; тексты интерфейса и документация — по-русски.

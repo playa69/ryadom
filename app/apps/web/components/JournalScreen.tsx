@@ -4,7 +4,6 @@ import { MessagesSquare } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useId, useMemo, useState } from 'react'
 import type { DialogListItemApiResponse } from '@ryadom/contracts/api/dialogs'
-import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { dialogMemoryMark } from '@ryadom/client-core/memory'
 import { Alert } from '@ryadom/ui/components/alert'
 import { Badge } from '@ryadom/ui/components/badge'
@@ -17,9 +16,12 @@ import { groupJournal } from '@/lib/journal-groups'
 import { BUSY } from './busy'
 import { BUTTON } from './controls'
 import { BADGE_COMPACT, conversationHref, RetryButton, StatePanel } from './JournalParts'
-import { Page, SECTION_HEADING } from './Page'
+import { SECTION_HEADING } from './Page'
+import RecapAutoSetting from './RecapAutoSetting'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
 function entryTitle(item: DialogListItemApiResponse): string {
+  if (item.saved === false) return 'Разговор не сохранён'
   return item.summary?.title || 'Разговор'
 }
 
@@ -156,7 +158,7 @@ export default function JournalScreen() {
   const isEmpty = items !== null && items.length === 0
 
   return (
-    <Page title="Все разговоры" measure="reading" className="gap-8" data-testid="journal">
+    <div className="flex flex-col gap-8" data-testid="journal">
       {items === null && <ListSkeleton />}
 
       {isEmpty && (
@@ -190,8 +192,8 @@ export default function JournalScreen() {
               data-testid="journal-link-email"
             >
               <span className="min-w-0 flex-1 basis-60">
-                Разговоры хранятся только на этом устройстве, {ANONYMOUS_RETENTION_DAYS} дней после последнего
-                визита. Привяжи почту, чтобы не потерять их.
+                {DIALOG_KEEP_NOTE} Без почты аккаунт открывается только на этом устройстве и {GUEST_LIFE_CLAUSE}.
+                Привяжи почту, чтобы сохранить аккаунт.
               </span>
               <Button asChild variant="outline" size="sm" className={cn(BUTTON, 'border-input! px-4')}>
                 <Link href="/profile?linkEmail=1">
@@ -200,6 +202,10 @@ export default function JournalScreen() {
               </Button>
             </Alert>
           )}
+          {/* The term of the conversations is said to everyone; a guest on a narrow screen already has it in the note above. */}
+          <p className={cn('px-1 text-xs text-dim', keepsConversations && 'hidden md:block')} data-testid="journal-retention">
+            {DIALOG_KEEP_NOTE}
+          </p>
 
           {error && (
             // The button inside brings its own 44px of height, so the note itself takes little padding.
@@ -222,6 +228,8 @@ export default function JournalScreen() {
               </Button>
             </Alert>
           )}
+
+          <RecapAutoSetting />
 
           <div className="flex flex-col gap-7" data-testid="journal-list">
             {groups.map((group) => (
@@ -265,6 +273,6 @@ export default function JournalScreen() {
           </p>
         </>
       )}
-    </Page>
+    </div>
   )
 }

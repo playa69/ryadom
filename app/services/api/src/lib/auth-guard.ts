@@ -28,7 +28,7 @@ function bearerToken(header: string | undefined): string | null {
   return token || null
 }
 
-export async function getUserFromRequest(jwt: Jwt, authorization: string | undefined): Promise<AuthUser | null> {
+async function getUserFromRequest(jwt: Jwt, authorization: string | undefined): Promise<AuthUser | null> {
   const token = bearerToken(authorization)
   if (!token) return null
   const payload = await jwt.verifyToken(token, 'access')
@@ -42,6 +42,25 @@ export function requireAuth(jwt: Jwt): MiddlewareHandler<AppEnv> {
     if (!user) return apiError(c, 401, 'Unauthorised')
     c.set('auth', user)
     // `x-user-id` is whatever the client wrote; behind a verified token the log and the agent get the account.
+    updateRequestContext({ userId: user.userId })
+    await next()
+  }
+}
+
+/**
+ * For routes that serve people with and without a session (confirming an address): no token at all
+ * passes as nobody, a token that is expired or whose session has ended is the same 401 as behind
+ * `requireAuth` (the client refreshes and asks again), and a good one sets `auth` as usual. A bad
+ * token must not pass as nobody: the person would be treated as a stranger on their own account.
+ */
+export function optionalAuth(jwt: Jwt, sessions: Pick<Sessions, 'isActive'>): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const header = c.req.header(AppHeader.Authorization)
+    if (bearerToken(header) === null) return next()
+    const user = await getUserFromRequest(jwt, header)
+    if (!user) return apiError(c, 401, 'Unauthorised')
+    if (user.sessionId && !(await sessions.isActive(user.sessionId))) return apiError(c, 401, 'Session ended')
+    c.set('auth', user)
     updateRequestContext({ userId: user.userId })
     await next()
   }

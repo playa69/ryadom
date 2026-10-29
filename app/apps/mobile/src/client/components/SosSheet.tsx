@@ -12,7 +12,7 @@ import { HOTLINES, telHref } from '../lib/hotlines'
  * into the app and works with no network; when the agent sends its own list, that one is shown.
  */
 
-export const SOS_EVENT = 'ryadom:sos'
+const SOS_EVENT = 'ryadom:sos'
 
 export type SosSource = AnalyticsEventProperties[AnalyticsEvent.SosOpened]['source']
 

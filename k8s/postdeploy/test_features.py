@@ -93,9 +93,9 @@ def wait_changes(api: Api, token: str, dialog_id: str) -> dict:
 
 
 def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) -> None:
-    # 0. Сервер в нужном режиме; чистое начало (тест повторяем).
+    # 0. Память на сервере доступна; чистое начало (тест повторяем).
     memory = api.result("GET", "/api/memory", token=token)
-    assert memory["mode"] == os.environ.get("EXPECT_MEMORY_MODE", "on") and memory["available"] is True
+    assert memory["available"] is True
     api.result("DELETE", "/api/memory", token=token)
     api.result("PUT", "/api/memory/settings", token=token, body={"enabled": False})
 
@@ -124,7 +124,7 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
     memory = api.result("GET", "/api/memory", token=token)
     facts = memory["facts"]
     assert facts, "память пуста после извлечения"
-    assert all(fact["status"] in ("active", "pinned", "candidate", "proposed") for fact in facts)
+    assert all(fact["status"] == "active" for fact in facts)
     assert any(source["dialogId"] == first["dialogId"] for fact in facts for source in fact["sources"]), "у фактов нет источника"
     assert len(facts) <= memory["limits"]["maxFacts"]
 
@@ -134,10 +134,10 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
     assert {fact["id"] for fact in export["facts"]} >= {fact["id"] for fact in facts}
     assert export["events"], "журнал изменений пуст"
 
-    # 4. Человек управляет фактом: закрепляет (агент такой факт не перезапишет).
+    # 4. Человек правит заметку: в ответе заметка с новым текстом.
     target = facts[0]
-    pinned = api.result("PATCH", f"/api/memory/facts/{target['id']}", token=token, body={"status": "pinned"})
-    assert pinned["status"] == "pinned"
+    edited = api.result("PATCH", f"/api/memory/facts/{target['id']}", token=token, body={"text": "Любит прогулки у воды"})
+    assert edited["id"] == target["id"] and edited["text"] == "Любит прогулки у воды"
 
     # 5. Разговор «Без памяти»: ничего не запоминается.
     before = len(api.result("GET", "/api/memory", token=token)["facts"])
@@ -156,7 +156,7 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
     assert turn.tts_codec in (None, "pcm16") and turn.audio_frames, "озвучка не пришла"
     end_dialog(api, token, third["dialogId"])
 
-    # 7. Забыть один факт (повтор тоже успешен), затем забыть всё.
+    # 7. Забыть одну заметку (повтор тоже успешен), затем забыть всё.
     victim = api.result("GET", "/api/memory", token=token)["facts"][0]["id"]
     api.result("DELETE", f"/api/memory/facts/{victim}", token=token)
     api.result("DELETE", f"/api/memory/facts/{victim}", token=token)
@@ -173,3 +173,23 @@ def test_memory_from_consent_to_forgetting(api: Api, token: str, account: dict) 
 def test_the_account_is_not_a_person_for_analytics(account: dict) -> None:
     """Напоминание, а не проверка: пометку «тестовый» api ставит при создании по префиксу id устройства."""
     assert account["deviceId"].startswith("loadtest-")
+
+
+def test_voice_choice_is_saved_on_the_account(api: Api, token: str) -> None:
+    """Выбор голоса агента (PROTEUS-182, REQ-ACC-07, выкат 0.9.0): голос и род сохраняются в аккаунте; в конце аккаунт возвращается на голос рода."""
+    me = api.result("GET", "/api/auth/me", token=token)
+    assert me["voice"] in ("male", "female") and isinstance(me["voiceName"], str)
+
+    picked = api.result("PATCH", "/api/auth/me", token=token, body={"voiceName": "Aoede"})
+    assert (picked["voice"], picked["voiceName"]) == ("female", "Aoede")
+    assert api.result("GET", "/api/auth/me", token=token)["voiceName"] == "Aoede"
+
+    # Имя вне каталога и род, не совпадающий с голосом, отвергаются, выбор не меняется.
+    for bad in ({"voiceName": "Robot"}, {"voice": "male", "voiceName": "Aoede"}):
+        with pytest.raises(ApiError):
+            api.result("PATCH", "/api/auth/me", token=token, body=bad)
+    assert api.result("GET", "/api/auth/me", token=token)["voiceName"] == "Aoede"
+
+    # Только род сбрасывает конкретный голос на голос рода (мужской — Charon).
+    back = api.result("PATCH", "/api/auth/me", token=token, body={"voice": "male"})
+    assert (back["voice"], back["voiceName"]) == ("male", "Charon")

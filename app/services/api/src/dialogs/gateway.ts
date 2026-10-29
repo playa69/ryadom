@@ -72,6 +72,7 @@ function interruptReason(code: DialogCloseCode, reason: string): DialogInterrupt
   switch (code) {
     case DialogCloseCode.Restarting:
     case DialogCloseCode.Superseded:
+    case DialogCloseCode.DialogGone:
       return null
     case DialogCloseCode.Unauthorized:
       return 'unauthorized'
@@ -99,6 +100,8 @@ interface AgentTextFrame {
   [key: string]: unknown
 }
 
+const MOOD_TONES = ['neutral', 'sleepy', 'angry', 'afraid', 'sad', 'calm'] as const
+
 class DialogSession {
   private readonly logger = createLogger('dialog-gateway')
   private agent: AgentSocket | null = null
@@ -111,6 +114,11 @@ class DialogSession {
   private userMessages = 0
   private assistantMessages = 0
   private hasTakeaway = false
+  /**
+   * The agent said (`ready`) that this conversation is held unsaved ("Не сохранять этот разговор"): nothing about it goes to the
+   * product analytics, not even counts.
+   */
+  private unsaved = false
   private outcomeReported = false
   private plannedClose = false
   private closeReason: DialogInterruptReason | null = null
@@ -211,7 +219,7 @@ class DialogSession {
    * close, or nothing was said and the agent was fine (a reconnect that went nowhere is not news).
    */
   private reportInterruption(): void {
-    if (this.outcomeReported || this.plannedClose || !this.userId) return
+    if (this.outcomeReported || this.plannedClose || !this.userId || this.unsaved) return
     this.outcomeReported = true
     const reason = this.closeReason ?? 'client_closed'
     if (this.userMessages === 0 && reason !== 'agent_unavailable') return
@@ -313,6 +321,8 @@ class DialogSession {
           type: 'end',
           takeaway: typeof frame.takeaway === 'string' ? frame.takeaway : undefined,
           tensionAfter: typeof frame.tensionAfter === 'number' ? frame.tensionAfter : undefined,
+          // The takeaway is the recap; `draft` marks one pre-filled by the model (add-mood-diary D13).
+          recapSource: frame.recapSource === 'draft' ? 'draft' : 'manual',
         })
         return
       case DialogClientFrame.AudioStart:
@@ -405,7 +415,7 @@ class DialogSession {
 
   /** One accepted reply of the person: the target action of the product (see `AnalyticsEvent.DialogTurn`). Never its text. */
   private reportTurn(input: 'text' | 'voice'): void {
-    if (!this.userId) return
+    if (!this.userId || this.unsaved) return
     this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogTurn, { ...dialogIdProperty(this.dialogId), input })
   }
 
@@ -467,6 +477,19 @@ class DialogSession {
           // before closing (its `ended`, the last of its speech still in the encoder) goes out first.
           const closeCode = code === 1000 ? DialogCloseCode.Done : DialogCloseCode.AgentUnavailable
           this.toClientInOrder.push(null, () => this.close(closeCode, reason || 'agent closed'))
+        },
+        onRejected: (status) => {
+          if (status !== 404) {
+            this.logger.warn('Агент отказал в соединении', { userId, dialogId, status })
+            return this.fail(
+              DialogWsErrorCode.AGENT_UNAVAILABLE,
+              'agent is unavailable',
+              DialogCloseCode.AgentUnavailable,
+            )
+          }
+          // The agent has no such dialog: one held unsaved is lost when the agent restarts. Reconnecting cannot bring it back.
+          this.logger.info('У агента нет такого диалога', { userId, dialogId })
+          this.fail(DialogWsErrorCode.DIALOG_NOT_FOUND, 'dialog not found', DialogCloseCode.DialogGone)
         },
         onError: (error) => {
           this.logger.warn('Ошибка соединения с агентом', error, { userId, dialogId })
@@ -554,6 +577,7 @@ class DialogSession {
 
     switch (frame.type) {
       case 'ready':
+        this.unsaved = frame.saved === false
         return this.toClient({
           type: DialogServerFrame.Ready,
           dialogId: this.dialogId!,
@@ -626,7 +650,7 @@ class DialogSession {
         // One real call of one of the agent's parts for this dialog: a name, how it went, whether it was cached.
         // Nothing else of the frame is read, so a prompt or a vendor's error text cannot reach a report.
         const component = COMPONENT_NAMES.find((name) => name === frame.component) as ComponentName | undefined
-        if (!component || !this.userId) return
+        if (!component || !this.userId || this.unsaved) return
         this.deps.analytics.capture(this.userId, AnalyticsEvent.ComponentCalled, {
           ...dialogIdProperty(this.dialogId),
           component,
@@ -634,6 +658,18 @@ class DialogSession {
           cached: frame.cached === true,
         })
         return
+      }
+      case 'mood': {
+        // The tone of the person's last turn, from the agent's classifier (PROTEUS-168). Only known values pass.
+        const tone = MOOD_TONES.find((name) => name === frame.tone)
+        const intensity = num('intensity')
+        if (!tone || intensity === null) return
+        return this.toClient({
+          type: DialogServerFrame.Mood,
+          tone,
+          intensity: Math.min(1, Math.max(0, intensity)),
+          at: num('at') ?? Date.now(),
+        })
       }
       case 'safety': {
         // The hotlines in this frame are always filled in: if the agent gave none, we substitute
@@ -652,9 +688,14 @@ class DialogSession {
         // (DialogSummary).
         const raw = (frame.summary ?? null) as (DialogSummaryApiResponse & AgentSummaryCounts) | null
         // The counts of the whole dialog are for analytics only: they are not part of the contract with clients.
-        const { userMessages: _user, assistantMessages: _assistant, ...publicSummary } = raw ?? {}
+        const {
+          userMessages: _user,
+          assistantMessages: _assistant,
+          recapAt: _recapAt,
+          ...publicSummary
+        } = (raw ?? {}) as DialogSummaryApiResponse & AgentSummaryCounts & { recapAt?: unknown }
         const summary = raw ? (publicSummary as DialogSummaryApiResponse) : null
-        if (this.userId && !this.outcomeReported) {
+        if (this.userId && !this.outcomeReported && !this.unsaved) {
           this.outcomeReported = true
           this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogEnded, {
             ...dialogIdProperty(this.dialogId),
@@ -726,11 +767,4 @@ export function closeAllDialogSessions(spreadMs = 0): void {
     if (spreadMs > 0) setTimeout(() => session.shutdown(), Math.random() * spreadMs)
     else session.shutdown()
   }
-}
-
-/** For metrics and tests: how many dialogs are open right now. */
-export function openDialogCount(): number {
-  let total = 0
-  for (const sessions of sessionsByUser.values()) total += sessions.size
-  return total
 }

@@ -1,4 +1,4 @@
-"""Проверки после выката против боевого адреса (README.md, ранбук k8s/agent/POSTDEPLOY-0.6.0.md).
+"""Проверки после выката против боевого адреса (README.md).
 
 Три группы:
   1. сервисы живы: api, web, PWA, лендинг отвечают, закрытое закрыто;
@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 
 import pytest
@@ -24,8 +23,6 @@ from common import (
     DialogSocket,
     opus_packets,
 )
-
-EXPECT_MEMORY_MODE = os.environ.get("EXPECT_MEMORY_MODE", "off")
 
 
 def instant(value: str) -> datetime:
@@ -181,9 +178,9 @@ def test_mulaw_is_negotiated(api: Api, token: str, baseline: dict) -> None:
 
 
 @pytest.mark.post_only
-def test_memory_is_in_the_expected_mode(api: Api, token: str) -> None:
+def test_memory_of_the_test_account_is_off_and_empty(api: Api, token: str) -> None:
     memory = api.result("GET", "/api/memory", token=token)
-    assert memory["mode"] == EXPECT_MEMORY_MODE
+    assert memory["mode"] == "on", "поле оставлено для старых клиентов и всегда on"
     assert memory["enabled"] is False, "у тестового аккаунта память включать не нужно"
     assert memory["facts"] == []
 

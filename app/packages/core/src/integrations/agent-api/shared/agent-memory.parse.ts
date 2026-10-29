@@ -7,10 +7,10 @@ import {
   AGENT_MEMORY_FACT_ORIGINS,
   AGENT_MEMORY_FACT_SENSITIVITIES,
   AGENT_MEMORY_FACT_STATUSES,
-  AGENT_MEMORY_MODES,
   type AgentMemoryChangesResponse,
   type AgentMemoryExportResponse,
   type AgentMemoryFactResponse,
+  type AgentMemoryNoteResponse,
   type AgentMemoryResponse,
   type AgentMemorySettingsResponse,
 } from './agent-memory.types'
@@ -50,9 +50,7 @@ const factSchema = z.object({
   sources: z.array(z.object({ dialogId: z.string(), date: z.string() })).catch([]),
   createdAt: z.string(),
   updatedAt: z.string(),
-  lastConfirmedAt: nullableString,
   expiresAt: nullableString,
-  confirmCount: z.number().catch(0),
   seenByUser: z.boolean().catch(false),
 })
 
@@ -61,7 +59,7 @@ function fieldsOf(error: z.ZodError): string[] {
 }
 
 /** One fact, or null when it does not hold up (logged without its content). */
-export function parseAgentFact(raw: unknown): AgentMemoryFactResponse | null {
+function parseAgentFact(raw: unknown): AgentMemoryFactResponse | null {
   const parsed = factSchema.safeParse(raw)
   if (parsed.success) {
     const { slots, ...fact } = parsed.data
@@ -90,24 +88,65 @@ function parseOrThrow<S extends z.ZodType>(schema: S, body: unknown, what: strin
   return parsed.data
 }
 
+const noteSchema = z.object({
+  id: z.string().min(1),
+  kind: z.string(),
+  text: z.string(),
+  sensitive: z.boolean().catch(false),
+  eventDate: nullableString,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  dialogId: nullableString,
+})
+
+/** The notes the agent gave; one that does not hold up is left out (logged by its id), like a fact. */
+export function parseNotesList(raw: unknown[]): AgentMemoryNoteResponse[] {
+  return parseNotes(raw)
+}
+
+function parseNotes(raw: unknown[]): AgentMemoryNoteResponse[] {
+  const notes: AgentMemoryNoteResponse[] = []
+  for (const item of raw) {
+    const parsed = noteSchema.safeParse(item)
+    if (parsed.success) notes.push(parsed.data)
+    else {
+      const id = typeof item === 'object' && item !== null ? (item as { id?: unknown }).id : undefined
+      createLogger('agent-api').warn('Agent API returned a malformed memory note, left out', undefined, {
+        noteId: typeof id === 'string' ? id : null,
+        fields: fieldsOf(parsed.error),
+      })
+    }
+  }
+  return notes
+}
+
 const memorySchema = z.object({
   available: z.boolean(),
-  mode: z.enum(AGENT_MEMORY_MODES),
   enabled: z.boolean(),
   consentVersion: nullableString,
   consentAt: nullableString,
   rulesVersion: z.string().catch(''),
-  limits: z.object({ maxFacts: z.number().nullable() }),
+  limits: z.object({
+    maxFacts: z.number().nullable(),
+    maxNotes: z.number().nullable().catch(null),
+  }),
+  // An older agent (before notes) has none of these: pause follows `enabled`, the switches take their defaults.
+  paused: z.boolean().optional(),
+  sensitiveEnabled: z.boolean().catch(false),
+  chatSearchEnabled: z.boolean().catch(true),
+  notes: z.array(z.unknown()).catch([]),
   facts: z.array(z.unknown()),
 })
 
 export function parseAgentMemory(body: unknown): AgentMemoryResponse {
-  const memory = parseOrThrow(memorySchema, body, 'memory')
-  return { ...memory, facts: parseFacts(memory.facts) }
+  const { paused, notes, ...memory } = parseOrThrow(memorySchema, body, 'memory')
+  return { ...memory, paused: paused ?? !memory.enabled, notes: parseNotes(notes), facts: parseFacts(memory.facts) }
 }
 
 const settingsSchema = z.object({
   enabled: z.boolean(),
+  sensitiveEnabled: z.boolean().catch(false),
+  chatSearchEnabled: z.boolean().catch(true),
   consentVersion: nullableString,
   consentAt: nullableString,
 })
@@ -116,10 +155,43 @@ export function parseAgentMemorySettings(body: unknown): AgentMemorySettingsResp
   return parseOrThrow(settingsSchema, body, 'memory settings answer')
 }
 
-export function parseAgentMemoryFactOrThrow(body: unknown): AgentMemoryFactResponse {
-  const fact = parseAgentFact(body)
-  if (!fact) throw new Error('Agent API returned a malformed memory fact')
-  return fact
+/** The note the agent answered a correction with; one that does not hold up is an error, not an empty answer. */
+export function parseAgentMemoryNoteOrThrow(body: unknown): AgentMemoryNoteResponse {
+  return parseOrThrow(noteSchema, body, 'memory note')
+}
+
+/** The category of the old fact a note kind is shown as (what the agent puts in `facts`). */
+const FACT_CATEGORY_OF_NOTE_KIND: Record<string, AgentMemoryFactResponse['category']> = {
+  name: 'style',
+  style: 'style',
+  person: 'person',
+  situation: 'situation',
+  event: 'situation',
+  agreement: 'goal',
+  interest: 'interest',
+  boundary: 'boundary',
+  wellbeing: 'situation',
+  beliefs: 'situation',
+}
+
+/** A note in the shape of the old fact, as the agent shows it in `facts`: the clients that predate notes read that shape. */
+export function agentNoteAsFact(note: AgentMemoryNoteResponse): AgentMemoryFactResponse {
+  return {
+    id: note.id,
+    category: FACT_CATEGORY_OF_NOTE_KIND[note.kind] ?? 'situation',
+    text: note.text,
+    slots: null,
+    importance: 5,
+    confidence: 1,
+    status: 'active',
+    origin: 'user_edit',
+    sensitivity: note.sensitive ? 'sensitive' : 'normal',
+    sources: note.dialogId ? [{ dialogId: note.dialogId, date: note.createdAt.slice(0, 10) }] : [],
+    createdAt: note.createdAt,
+    updatedAt: note.updatedAt,
+    expiresAt: null,
+    seenByUser: true,
+  }
 }
 
 const changesSchema = z.object({
@@ -148,6 +220,7 @@ const exportSchema = z.object({
     epochAt: nullableString,
     updatedAt: nullableString,
   }),
+  notes: z.array(z.unknown()).catch([]),
   facts: z.array(z.unknown()),
   events: z
     .array(
@@ -164,11 +237,12 @@ const exportSchema = z.object({
 
 export function parseAgentMemoryExport(body: unknown): AgentMemoryExportResponse {
   const exported = parseOrThrow(exportSchema, body, 'memory export')
-  return { ...exported, facts: parseFacts(exported.facts) }
+  const { notes, ...rest } = exported
+  return { ...rest, notes: parseNotes(notes), facts: parseFacts(exported.facts) }
 }
 
 /**
- * `details.reason` of `FACT_REJECTED`: a code of the rule that refused the fact (`contact_pii`,
+ * `details.reason` of `NOTE_REJECTED`: a code of the rule that refused the note (`contact_pii`,
  * `diagnosis`...). Only something that looks like a code is kept, so that no text of the fact can
  * ride along into a log or an answer.
  */

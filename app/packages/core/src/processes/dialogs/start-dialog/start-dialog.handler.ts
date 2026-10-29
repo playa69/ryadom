@@ -3,6 +3,7 @@ import assertNever from 'assert-never'
 import { createLogger } from '../../../shared'
 import { agentApiIntegration, StartAgentDialogRequest } from '../../../integrations/agent-api'
 import { GetUserByIdQuery, usersManager } from '../../../managers/users-manager'
+import { GetVoicePipelineQuery, voiceSettingsManager } from '../../../managers/voice-settings-manager'
 import { DialogAccessRefusal, ensureActiveUser } from '../shared/ensure-active-user'
 import { hasAllConsents } from '../shared/ensure-consents'
 import { recordActivity } from '../shared/record-activity'
@@ -41,12 +42,18 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
     // The voice is the person's profile setting; the agent applies it to the greeting and to every reply.
     const found = await usersManager.execute(new GetUserByIdQuery({ userId: operation.userId }))
     const voice = found.success ? found.user.agentVoice : undefined
+    const voiceName = found.success ? (found.user.agentVoiceName ?? undefined) : undefined
+    // The pipeline is an admin's choice for everyone; sent on every start so a resumed dialog follows a change too.
+    const { pipeline } = (await voiceSettingsManager.execute(new GetVoicePipelineQuery())).settings
     const started = await agentApiIntegration.execute(
       new StartAgentDialogRequest({
         userId: operation.userId,
         voice,
+        voiceName,
         startNew: operation.startNew,
         memory: operation.memory,
+        saved: operation.saved,
+        pipeline,
       }),
     )
     createLogger('dialogs').info('Dialog started', {
@@ -55,6 +62,8 @@ export class StartDialogOperationHandler implements RequestHandler<StartDialogOp
       resumed: started.resumed,
       startNew: operation.startNew,
       memoryMode: started.memoryMode,
+      saved: started.saved,
+      pipeline,
     })
     return { success: true, dialog: started }
   }

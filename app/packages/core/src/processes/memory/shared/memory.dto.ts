@@ -6,10 +6,10 @@ import type {
   AgentMemoryFactCategory,
   AgentMemoryFactOrigin,
   AgentMemoryFactResponse,
+  AgentMemoryNoteResponse,
   AgentMemoryFactSensitivity,
   AgentMemoryFactSlots,
   AgentMemoryFactStatus,
-  AgentMemoryMode,
   AgentMemoryResponse,
   AgentMemorySettingsResponse,
 } from '../../../integrations/agent-api'
@@ -53,25 +53,40 @@ export interface MemoryFactDTO {
   sources: MemoryFactSourceDTO[]
   createdAt: Date
   updatedAt: Date
-  lastConfirmedAt: Date | null
   expiresAt: Date | null
-  confirmCount: number
   seenByUser: boolean
+}
+
+export interface MemoryNoteDTO {
+  id: string
+  kind: string
+  text: string
+  sensitive: boolean
+  eventDate: string | null
+  createdAt: Date
+  updatedAt: Date
+  dialogId: string | null
 }
 
 export interface MemoryDTO {
   available: boolean
-  mode: AgentMemoryMode
   enabled: boolean
   consentVersion: string | null
   consentAt: Date | null
   rulesVersion: string
   maxFacts: number
+  maxNotes: number
+  paused: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
+  notes: MemoryNoteDTO[]
   facts: MemoryFactDTO[]
 }
 
 export interface MemorySettingsDTO {
   enabled: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
   consentVersion: string | null
   consentAt: Date | null
 }
@@ -82,7 +97,8 @@ export interface MemoryChangeDTO {
 }
 
 export interface MemoryChangesDTO {
-  status: AgentMemoryChangesStatus
+  /** What the app is told: `skipped` of an older agent is already an empty `ready` here. */
+  status: Exclude<AgentMemoryChangesStatus, 'skipped'>
   reason: string | null
   items: MemoryChangeDTO[]
 }
@@ -105,6 +121,7 @@ export interface MemoryExportDTO {
     epochAt: Date | null
     updatedAt: Date | null
   }
+  notes: MemoryNoteDTO[]
   facts: MemoryFactDTO[]
   events: MemoryEventDTO[]
 }
@@ -144,9 +161,7 @@ export function toMemoryFactDTO(fact: AgentMemoryFactResponse): MemoryFactDTO {
     // The agent writes ISO strings; an unusable date is not replaced with "now", let it show.
     createdAt: toDate(fact.createdAt) ?? new Date(0),
     updatedAt: toDate(fact.updatedAt) ?? new Date(0),
-    lastConfirmedAt: toDate(fact.lastConfirmedAt),
     expiresAt: toDate(fact.expiresAt),
-    confirmCount: fact.confirmCount,
     seenByUser: fact.seenByUser,
   }
 }
@@ -160,25 +175,46 @@ const DEFAULT_MAX_FACTS = 200
 export function toMemoryDTO(memory: AgentMemoryResponse): MemoryDTO {
   return {
     available: memory.available,
-    mode: memory.mode,
     enabled: memory.enabled,
     consentVersion: memory.consentVersion,
     consentAt: toDate(memory.consentAt),
     rulesVersion: memory.rulesVersion,
     maxFacts: memory.limits.maxFacts ?? DEFAULT_MAX_FACTS,
+    maxNotes: memory.limits.maxNotes ?? DEFAULT_MAX_FACTS,
+    paused: memory.paused,
+    sensitiveEnabled: memory.sensitiveEnabled,
+    chatSearchEnabled: memory.chatSearchEnabled,
+    notes: memory.notes.map(toMemoryNoteDTO),
     facts: memory.facts.map(toMemoryFactDTO),
+  }
+}
+
+export function toMemoryNoteDTO(note: AgentMemoryNoteResponse): MemoryNoteDTO {
+  return {
+    id: note.id,
+    kind: note.kind,
+    text: note.text,
+    sensitive: note.sensitive,
+    eventDate: note.eventDate,
+    createdAt: toDate(note.createdAt) ?? new Date(0),
+    updatedAt: toDate(note.updatedAt) ?? new Date(0),
+    dialogId: note.dialogId,
   }
 }
 
 export function toMemorySettingsDTO(settings: AgentMemorySettingsResponse): MemorySettingsDTO {
   return {
     enabled: settings.enabled,
+    sensitiveEnabled: settings.sensitiveEnabled,
+    chatSearchEnabled: settings.chatSearchEnabled,
     consentVersion: settings.consentVersion,
     consentAt: toDate(settings.consentAt),
   }
 }
 
 export function toMemoryChangesDTO(changes: AgentMemoryChangesResponse): MemoryChangesDTO {
+  // Tolerance for an agent older than this gateway: its `skipped` means there is nothing to list, which is an empty `ready`.
+  if (changes.status === 'skipped') return { status: 'ready', reason: changes.reason, items: [] }
   return {
     status: changes.status,
     reason: changes.reason,
@@ -197,6 +233,7 @@ export function toMemoryExportDTO(exported: AgentMemoryExportResponse): MemoryEx
       epochAt: toDate(exported.settings.epochAt),
       updatedAt: toDate(exported.settings.updatedAt),
     },
+    notes: exported.notes.map(toMemoryNoteDTO),
     facts: exported.facts.map(toMemoryFactDTO),
     events: exported.events.map((event) => ({
       factId: event.factId,

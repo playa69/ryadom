@@ -18,11 +18,11 @@ import { normalizePath, roundedToHour, sanitizeProperties, scrubEvent } from './
  *    most) until the SDK is ready, and are dropped if analytics turn out to be off. A call site never
  *    has to ask "is it ready?".
  * 3. **Everything goes through our reverse proxy** (`/api/ingest`), never to a PostHog host.
- * 4. **Nothing personal.** Cookies are not used, click capture is off unless the server turns it on and
- *    then reports the structure of the page, never its text (`mask_all_text`, and `scrubEvent` cuts what
- *    is left), session replay is off unless the server turns it on and then masks all text and inputs,
- *    URLs are stripped of query strings and ids, and every property passes `sanitizeProperties`. Elements
- *    that carry the `ph-no-capture` class (SOS, hotlines, screens with a conversation) are never captured.
+ * 4. **Nothing personal.** Cookies are not used, click capture reports the structure of the page, never
+ *    its text (`mask_all_text`, and `scrubEvent` cuts what is left), there is no session replay, no
+ *    heatmaps and no feature flags, URLs are stripped of query strings and ids, and every property passes
+ *    `sanitizeProperties`. Elements that carry the `ph-no-capture` class (SOS, hotlines, screens with a
+ *    conversation) are never captured.
  * 5. **The person can opt out** (`setAnalyticsOptOut`), and a browser's Do Not Track is honoured.
  *
  * Nothing here throws: a failure of analytics must never become a failure of the app.
@@ -43,7 +43,6 @@ let commonProperties: Record<string, string> = {}
 const queue: Array<(posthog: PostHog) => void> = []
 const MAX_QUEUE = 50
 
-const flagListeners = new Set<() => void>()
 const optOutListeners = new Set<() => void>()
 
 const OPT_OUT_KEY = 'ryadom.analytics.optout'
@@ -84,15 +83,7 @@ export function setAnalyticsOptOut(optOut: boolean): void {
   } catch {
     // Storage may be blocked; the SDK's own flag below still applies for this session.
   }
-  whenReady((posthog) => {
-    if (optOut) {
-      posthog.opt_out_capturing()
-      // The request for flags goes on after an opt-out unless it is switched off too.
-      posthog.set_config({ advanced_disable_flags: true })
-    } else {
-      posthog.opt_in_capturing()
-    }
-  })
+  whenReady((posthog) => (optOut ? posthog.opt_out_capturing() : posthog.opt_in_capturing()))
   notify(optOutListeners)
 }
 
@@ -189,27 +180,17 @@ export const NEVER_CAPTURE = [
 ]
 
 /**
- * The SDK's settings for a server-provided configuration. Exported so a test can pin them down.
+ * The SDK's settings. Exported so a test can pin them down. What is collected is fixed here and not taken
+ * from the server: `config.features` is there only for clients shipped before that (see the contract).
  *
  * Above every option stands its legal risk under Russian law, in short ("Legal risk"). A research summary
- * from 2026-10-10, not a lawyer's opinion; sources and detail in docs/analytics.md ("Правовые риски").
+ * from 2026-10-10, not a lawyer's opinion.
  * What is true of every option: events with an account id stay personal data of the operator (152-FZ
  * art. 3 p. 1, 9, art. 13.1: "depersonalised" is not "not personal data"); they go to a processor abroad
  * (cross-border transfer, art. 12: notify Roskomnadzor before it starts) through our proxy straight into a
  * foreign database (localisation, art. 18 part 5); and the opt-out switch is not consent (art. 9).
  */
 export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: string): Partial<PostHogConfig> {
-  // Every switch is read as `=== true`: an answer from an older API has no such field, and an undefined
-  // would hand the decision to the PostHog project's own settings, which are on for several of them.
-  const on = (flag: boolean | undefined): boolean => flag === true
-  const features = {
-    sessionReplay: on(config.features.sessionReplay),
-    clickCapture: on(config.features.clickCapture),
-    heatmapCapture: on(config.features.heatmapCapture),
-    errorTracking: on(config.features.errorTracking),
-    webVitals: on(config.features.webVitals),
-    featureFlags: on(config.features.featureFlags),
-  }
   return {
     // The proxy, not a PostHog host: see ingest-proxy.ts.
     api_host: `${apiBase}${ApiPath.Ingest}`,
@@ -242,46 +223,33 @@ export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: stri
     // lets an element's text through, it is page content, and on conversation and profile screens data about
     // the person's state (art. 10: written consent, higher fines). SOS, hotlines and screens with content
     // carry `ph-no-capture`; every new crisis-path button must carry it too.
-    autocapture: features.clickCapture
-      ? { dom_event_allowlist: ['click'], capture_copied_text: false, css_selector_ignorelist: NEVER_CAPTURE }
-      : false,
+    autocapture: { dom_event_allowlist: ['click'], capture_copied_text: false, css_selector_ignorelist: NEVER_CAPTURE },
     // Legal risk, reduces it: no element text leaves the device.
     mask_all_text: true,
     mask_all_element_attributes: false,
     // Legal risk, MEDIUM: the same as `autocapture` (dead clicks carry the same element data).
-    capture_dead_clicks: features.clickCapture ? { css_selector_ignorelist: NEVER_CAPTURE } : false,
+    capture_dead_clicks: { css_selector_ignorelist: NEVER_CAPTURE },
     // Rage clicks are part of click capture, and ignore the same elements.
-    rageclick: features.clickCapture ? { css_selector_ignorelist: NEVER_CAPTURE } : false,
-    // Explicit either way: the project-level switch in PostHog is on, and the SDK would follow it.
-    // Legal risk, MEDIUM while it stays as it is: coordinates and the route, no text, addresses scrubbed, but
-    // the SDK takes clicks and mouse moves at the `document` in the capture phase and knows nothing of
-    // `ph-no-capture`, so a tap on SOS or on a hotline becomes a point under the account id. That defeats
-    // `trackAnonymous` for the crisis path. Off in the ConfigMap for that reason.
-    capture_heatmaps: features.heatmapCapture,
+    rageclick: { css_selector_ignorelist: NEVER_CAPTURE },
+    // Off, and explicitly so: the project-level switch in PostHog is on, and the SDK would follow it. The SDK
+    // takes clicks and mouse moves at the `document` in the capture phase and knows nothing of `ph-no-capture`,
+    // so a tap on SOS or on a hotline would become a point under the account id and defeat `trackAnonymous`
+    // for the crisis path.
+    capture_heatmaps: false,
     // Legal risk, LOW-MEDIUM: an error's text and stack could hold page data (a name, typed text in an engine
     // message, a secret code in a frame's file address), art. 5 part 5 (minimisation); `scrubEvent` makes the
     // text impersonal (quoted pieces, addresses and mail addresses replaced, 80 characters) and scrubs frames.
-    capture_exceptions: features.errorTracking,
+    capture_exceptions: true,
     // No attribution: it names the element and the resource that were slowest, which is page content.
     // Legal risk, LOW: load timings and device data.
-    capture_performance: features.webVitals ? { web_vitals: true, web_vitals_attribution: false } : false,
-    // Legal risk, HIGH: a recording of behaviour on screen is the largest processing there is. Even masked it
-    // shows layout, pauses and taps on screens with personal content, possibly the person's state (art. 10).
-    // Only with a separate consent and an updated policy.
-    disable_session_recording: !features.sessionReplay,
-    session_recording: {
-      // A replay shows the layout and the taps and nothing that was written or said.
-      maskAllInputs: true,
-      maskTextSelector: '*',
-      blockSelector: '[data-ph-block]',
-      recordCrossOriginIframes: false,
-    },
-    // Legal risk, MEDIUM: the request for flags goes around `before_send` and carries the stored initial
-    // properties of the person (full entry address with its query, referrer, account id, device id, time zone).
-    // Off in the ConfigMap; flags may be switched on only once the body of that request is scrubbed in the proxy.
-    // Also off for a person who opted out or sends "do not track": the request for flags carries the account id,
-    // the device id and the time zone, and the SDK does not hold it back for those (found by the review).
-    advanced_disable_flags: !features.featureFlags || readStoredOptOut() || doNotTrackEnabled(),
+    capture_performance: { web_vitals: true, web_vitals_attribution: false },
+    // Off: a recording of behaviour on screen is the largest processing there is. Even masked it shows layout,
+    // pauses and taps on screens with personal content, possibly the person's state (art. 10).
+    disable_session_recording: true,
+    // Off: the product has no flags, and the request for them goes around `before_send` carrying the stored
+    // initial properties of the person (full entry address with its query, referrer, account id, device id,
+    // time zone).
+    advanced_disable_flags: true,
     // Nothing the product does not use is loaded. Surveys are not used: a pop-up with a question in
     // the middle of someone's bad day is not something this product does.
     disable_surveys: true,
@@ -320,7 +288,6 @@ export function startAnalytics(options: StartAnalyticsOptions): Promise<boolean>
         // The person's own time zone and language already travel with each event.
         $geoip_disable: true,
       })
-      posthog.onFeatureFlags(() => notify(flagListeners))
 
       anonymousChannel = {
         url: `${options.apiBase}${ApiPath.Ingest}/e/?ip=0`,
@@ -446,33 +413,6 @@ export function captureError(error: unknown, context?: object): void {
   whenReady((posthog) => posthog.captureException(error, clean))
 }
 
-// ── Feature flags ───────────────────────────────────────────────────────────────────────────
-
-/** The value of a flag for this person; undefined while flags have not loaded or analytics are off. */
-export function getFeatureFlag(flag: string): string | boolean | undefined {
-  if (status !== 'ready' || !client) return undefined
-  try {
-    return client.getFeatureFlag(flag)
-  } catch {
-    return undefined
-  }
-}
-
-export function isFeatureEnabled(flag: string): boolean | undefined {
-  if (status !== 'ready' || !client) return undefined
-  try {
-    return client.isFeatureEnabled(flag)
-  } catch {
-    return undefined
-  }
-}
-
-/** Called whenever the flags change (they load after the SDK does, and again after `identify`). */
-export function subscribeFeatureFlags(listener: () => void): () => void {
-  flagListeners.add(listener)
-  return () => flagListeners.delete(listener)
-}
-
 /** For tests: back to a fresh page load. */
 export function resetAnalyticsForTests(): void {
   status = 'idle'
@@ -481,6 +421,5 @@ export function resetAnalyticsForTests(): void {
   anonymousChannel = null
   commonProperties = {}
   queue.length = 0
-  flagListeners.clear()
   optOutListeners.clear()
 }

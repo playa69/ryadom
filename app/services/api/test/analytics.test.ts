@@ -3,6 +3,7 @@
  * PostHog, and the events the routes report. Nothing here talks to PostHog: `fetch` is stubbed for the
  * proxy and the reports are recorded by a stand-in.
  */
+import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { describe, expect, it, vi } from 'vitest'
 import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics'
 import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
@@ -32,15 +33,14 @@ function only(analytics: { events: RecordedEvent[] }, event: AnalyticsEvent): Re
 }
 
 describe('GET /api/analytics/config', () => {
-  it('без ключа PostHog аналитика выключена и клиенту не отдаётся ничего лишнего', async () => {
+  it('без ключа PostHog аналитика выключена и токена нет', async () => {
     const { app } = makeApp()
     const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
     expect(config.enabled).toBe(false)
     expect(config.key).toBeNull()
-    expect(Object.values(config.features).every((on) => on === false)).toBe(true)
   })
 
-  it('с ключом: токен, окружение и безопасные значения по умолчанию', async () => {
+  it('с ключом: токен, окружение и для старых клиентов то, что собирают новые', async () => {
     const { app } = makeApp({ env: POSTHOG })
     const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
     expect(config).toMatchObject({
@@ -49,43 +49,39 @@ describe('GET /api/analytics/config', () => {
       uiHost: 'https://eu.posthog.com',
       environment: 'local',
     })
-    // The sensitive switches are off until someone turns them on; the harmless ones are on.
+    // Older clients take from here what to collect; the current ones have the same built in.
     expect(config.features).toEqual({
       sessionReplay: false,
-      clickCapture: false,
+      clickCapture: true,
       heatmapCapture: false,
       errorTracking: true,
       webVitals: true,
-      featureFlags: true,
+      featureFlags: false,
       autocapture: false,
       heatmaps: false,
     })
   })
 
-  it('каждый переключатель включается своей переменной', async () => {
+  it('прежние переменные-переключатели ничего не меняют', async () => {
     const { app } = makeApp({
       env: {
         ...POSTHOG,
         POSTHOG_SESSION_REPLAY: 'true',
-        POSTHOG_CLICK_CAPTURE: 'on',
+        POSTHOG_CLICK_CAPTURE: 'off',
         POSTHOG_HEATMAP_CAPTURE: 'yes',
         POSTHOG_ERROR_TRACKING: 'false',
         POSTHOG_WEB_VITALS: '0',
-        POSTHOG_FEATURE_FLAGS: 'no',
+        POSTHOG_FEATURE_FLAGS: 'yes',
       },
     })
     const { features } = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
-    expect(features).toEqual({
-      sessionReplay: true,
+    expect(features).toMatchObject({
+      sessionReplay: false,
       clickCapture: true,
-      heatmapCapture: true,
-      errorTracking: false,
-      webVitals: false,
+      heatmapCapture: false,
+      errorTracking: true,
+      webVitals: true,
       featureFlags: false,
-      // The names old clients read stay off whatever the switches say: they cannot strip element text
-      // or page addresses, so a ConfigMap change must never turn those on in them.
-      autocapture: false,
-      heatmaps: false,
     })
   })
 
@@ -102,7 +98,7 @@ describe('GET /api/analytics/config', () => {
       policy: {
         android: { minVersionCode: 100, latestVersionCode: 100, downloadUrl: null },
         ios: { minVersionCode: 0, latestVersionCode: 0, downloadUrl: null },
-        js: { latestVersion: null, bundleUrl: null, checksum: null },
+        js: { latestVersion: null, minVersion: null, bundleUrl: null, checksum: null },
       },
     })
     const response = await app.request('/api/analytics/config', {
@@ -193,7 +189,7 @@ describe('/api/ingest: обратный прокси к PostHog', () => {
       policy: {
         android: { minVersionCode: 100, latestVersionCode: 100, downloadUrl: null },
         ios: { minVersionCode: 0, latestVersionCode: 0, downloadUrl: null },
-        js: { latestVersion: null, bundleUrl: null, checksum: null },
+        js: { latestVersion: null, minVersion: null, bundleUrl: null, checksum: null },
       },
     })
     stubPostHog()
@@ -348,8 +344,12 @@ describe('события сервера', () => {
     expect(only(analytics, AnalyticsEvent.AccountDeleted)).toEqual([
       { userId: null, event: 'account_deleted', properties: {} },
     ])
-    // The promise is "erase everything": the pseudonymous profile in PostHog goes with the account.
-    await vi.waitFor(() => expect(analytics.erased).toEqual([user.id]))
+    // The promise is "erase everything": the pseudonymous profile in PostHog goes with the account. The request does
+    // not erase it; the erasure is queued with the deletion and a worker does it (test/jobs.test.ts).
+    expect(getEnqueuedJobs()).toEqual([
+      expect.objectContaining({ queue: 'analytics.erase-person', data: { userId: user.id } }),
+    ])
+    expect(analytics.erased).toEqual([])
   })
 
   it('диалог: старт и завершение по REST, с изменением напряжения без текста', async () => {
@@ -437,14 +437,13 @@ describe('отказ человека от аналитики (сервер ег
     const client = {
       capture: vi.fn(),
       identify: vi.fn(),
-      isFeatureEnabled: vi.fn(async () => true),
       captureException: vi.fn(),
       shutdown: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),
       on: vi.fn(),
     }
     const env = parseEnv({ ...process.env, ...POSTHOG })
-    const analytics = createAnalytics(env, createLogger('silent'), { client, erasureDelayMs: 0 })
+    const analytics = createAnalytics(env, createLogger('silent'), { client })
     return { client, analytics }
   }
 
@@ -535,14 +534,13 @@ describe('тип трафика аккаунта (сервер помечает 
     const client = {
       capture: vi.fn(),
       identify: vi.fn(),
-      isFeatureEnabled: vi.fn(async () => true),
       captureException: vi.fn(),
       shutdown: vi.fn(async () => {}),
       flush: vi.fn(async () => {}),
       on: vi.fn(),
     }
     const env = parseEnv({ ...process.env, ...POSTHOG, RELEASE: '9.9.9' })
-    return { client, analytics: createAnalytics(env, createLogger('silent'), { client, erasureDelayMs: 0 }) }
+    return { client, analytics: createAnalytics(env, createLogger('silent'), { client }) }
   }
 
   const propertiesOf = (client: { capture: ReturnType<typeof vi.fn> }, event: string) =>

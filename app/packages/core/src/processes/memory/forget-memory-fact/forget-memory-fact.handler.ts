@@ -11,9 +11,9 @@ import { ForgetMemoryFactOperation } from './forget-memory-fact.operation'
 import { ForgetMemoryFactOperationErrorCode, type ForgetMemoryFactResult } from './forget-memory-fact.types'
 
 /**
- * "Forget" one fact, or "Don't remember" a proposed one. It works with memory off and in any mode,
- * and a repeat succeeds: what was asked for, the fact gone, holds. The agent remembers that the
- * person forgot it, so the next extraction does not bring it back.
+ * "Forget" one note. It works with memory off, and a repeat succeeds: what was asked for, the note
+ * gone, holds. The agent remembers that the person forgot it, so the next extraction does not
+ * bring it back.
  */
 @requestHandler(ForgetMemoryFactOperation)
 export class ForgetMemoryFactOperationHandler implements RequestHandler<
@@ -31,13 +31,11 @@ export class ForgetMemoryFactOperationHandler implements RequestHandler<
       switch (forgotten.error) {
         case DeleteAgentMemoryFactRequestErrorCode.MEMORY_UNAVAILABLE:
           return { success: false, error: ForgetMemoryFactOperationErrorCode.MEMORY_UNAVAILABLE }
-        case DeleteAgentMemoryFactRequestErrorCode.UNSUPPORTED:
-          return { success: false, error: ForgetMemoryFactOperationErrorCode.UNSUPPORTED }
         default:
           return assertNever(forgotten.error)
       }
     }
-    createLogger('memory').info('Memory fact forgotten', {
+    createLogger('memory').info('Memory note forgotten', {
       userId: operation.userId,
       factId: operation.factId,
     })

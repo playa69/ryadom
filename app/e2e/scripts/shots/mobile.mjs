@@ -3,11 +3,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { seedJournal, ACCOUNT } from '../demo-data.mjs'
+import { standUrls } from './stand.mjs'
 
 /** apps/mobile: the Framework7 client (PWA build served by vite), on the demo account. */
 export function mobileSpec(args, repoRoot) {
-  const base = String(args.base ?? 'http://localhost:5184').replace(/\/$/, '')
-  const agent = String(args.agent ?? 'http://localhost:8080')
+  const urls = standUrls(args)
+  const base = String(args.base ?? urls.pwa).replace(/\/$/, '')
+  const agent = String(args.agent ?? urls.mock)
   const state = resolve(String(args.state ?? join(repoRoot, '.playwright-mcp', 'mobile-state.json')))
 
   const userId = () => {
@@ -26,13 +28,32 @@ export function mobileSpec(args, repoRoot) {
   }
   const welcome = async (page) => {
     await page.goto(`${base}/`)
-    await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
+    await page.waitForSelector('.page-current [data-testid="have-account"]', { timeout: 30_000 })
     await dismissBanner(page)
+  }
+  // The first screen starts a conversation without registration; the form of an account is two taps away:
+  // «У меня уже есть аккаунт», then «Создать аккаунт» on the sign-in screen.
+  const registerForm = async (page, email) => {
+    await welcome(page)
+    await page.locator('.page-current [data-testid="have-account"]').click()
+    await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
+    await page.locator('.page-current').getByText('Создать аккаунт', { exact: true }).click()
+    await page.waitForSelector('.page-current input[name="name"]', { timeout: 30_000 })
+    await page.locator('.page-current input[name="name"]').fill('Женя')
+    await page.locator('.page-current input[name="email"]').fill(email)
+    await page.locator('.page-current input[name="password"]').fill('Password-123')
   }
   const home = async (page) => {
     await page.goto(`${base}/`)
     await page.waitForSelector('#rd-tabbar', { state: 'visible', timeout: 30_000 })
     await dismissBanner(page)
+  }
+  // The journal is a segment of the «Дневник» tab (segments: Дневник, Журнал, Тесты).
+  const journalList = async (page) => {
+    await home(page)
+    await tab(page, 'Дневник')
+    await page.locator('.page-current').getByTestId('diary-segment-journal').click()
+    await page.locator('.page-current').getByTestId('journal-item').first().waitFor({ timeout: 30_000 })
   }
   const tab = async (page, label) => {
     await page.locator('#rd-tabbar').getByText(label, { exact: true }).click()
@@ -57,7 +78,8 @@ export function mobileSpec(args, repoRoot) {
     await home(page)
     await page.locator('.page-current').getByText('Поговорить').first().click()
     await page.locator('.page-current .rd-voice').waitFor({ timeout: 30_000 })
-    await page.getByRole('button', { name: 'Остановить запись' }).waitFor({ timeout: 30_000 })
+    // The conversation starts hands-free: it is listening as soon as the voice screen is up.
+    await page.locator('.page-current [data-testid="voice-caption"]').waitFor({ timeout: 30_000 })
   }
   // The text feed: a voice turn would put the mock's "[голосовая реплика]" into every picture, so these
   // screens come in without a microphone and the voice screen falls back to the text by itself.
@@ -76,18 +98,15 @@ export function mobileSpec(args, repoRoot) {
     await page.waitForTimeout(800)
     const caption = page.locator('.page-current [data-testid="voice-caption"]')
     const greeting = (await caption.textContent()) ?? ''
-    await page.getByRole('button', { name: 'Остановить запись' }).click()
-    // The mock answers a voice turn after a pause in the frames; the greeting is replaced by the reply,
-    // which then streams in word by word.
-    await page.waitForFunction(
-      (before) => {
-        const text = document.querySelector('.page-current [data-testid="voice-caption"]')?.textContent ?? ''
-        const hint = document.querySelector('.page-current .rd-voice-hint')?.textContent ?? ''
-        return text !== '' && text !== before && hint.startsWith('Нажми на шар')
-      },
-      greeting,
-      { timeout: 30_000 },
-    )
+    // Hands-free: the fake microphone speaks, the turn ends by itself and the reply replaces the greeting; if it
+    // does not come in time, the picture shows the voice screen as it is.
+    await page
+      .waitForFunction(
+        (before) => (document.querySelector('.page-current [data-testid="voice-caption"]')?.textContent ?? '') !== before,
+        greeting,
+        { timeout: 20_000 },
+      )
+      .catch(() => {})
   }
   const chat = async (page) => {
     await startChat(page)
@@ -115,24 +134,17 @@ export function mobileSpec(args, repoRoot) {
     welcome: { anon: true, open: welcome },
     register: {
       anon: true,
-      open: async (page) => {
-        await welcome(page)
-        await page.locator('.page-current').getByText('Создать аккаунт').click()
-        await page.locator('.page-current input[name="name"]').fill('Женя')
-        await page.locator('.page-current input[name="email"]').fill('zhenya@example.com')
-        await page.locator('.page-current input[name="password"]').fill('Password-123')
-      },
+      open: (page) => registerForm(page, 'zhenya@example.com'),
     },
     'confirm-email': {
       anon: true,
       open: async (page) => {
-        await welcome(page)
-        await page.locator('.page-current').getByText('Создать аккаунт').click()
-        await page.locator('.page-current input[name="name"]').fill('Женя')
-        await page.locator('.page-current input[name="email"]').fill(`shot-${Date.now()}-${randomBytes(2).toString('hex')}@example.com`)
-        await page.locator('.page-current input[name="password"]').fill('Password-123')
-        await page.locator('.page-current .rd-consents .icon-checkbox').click()
-        await page.locator('.page-current').getByText('Создать аккаунт').click()
+        await registerForm(page, `shot-${Date.now()}-${randomBytes(2).toString('hex')}@example.com`)
+        // Three separate agreements (18+, not therapy, terms and personal data): all of them are needed.
+        const boxes = page.locator('.page-current .rd-consents .icon-checkbox')
+        const count = await boxes.count()
+        for (let i = 0; i < count; i++) await boxes.nth(i).click()
+        await page.locator('.page-current').getByText('Создать аккаунт', { exact: true }).click()
         await page.waitForSelector('text=Подтверди почту', { timeout: 30_000 })
       },
     },
@@ -150,12 +162,13 @@ export function mobileSpec(args, repoRoot) {
         await page.locator('.page-current').getByText('Посмотреть').first().click()
       },
     },
-    journal: { open: async (page) => { await home(page); await tab(page, 'Журнал') } },
+    journal: { open: journalList },
     'journal-entry': {
       open: async (page) => {
-        await home(page)
-        await tab(page, 'Журнал')
-        await page.locator('.page-current').getByText('Поговорю с мамой после работы').first().click()
+        await journalList(page)
+        // A finished conversation of the demo journal. On a wide screen the entry opens in the pane beside the list.
+        await page.locator('.page-current').getByTestId('journal-item').filter({ hasText: 'Поговорю с мамой после работы' }).first().click()
+        await page.locator('.page-current .rd-entry .message').first().waitFor({ timeout: 30_000 })
       },
     },
     profile: { open: async (page) => { await home(page); await tab(page, 'Профиль') } },
@@ -215,10 +228,24 @@ export function mobileSpec(args, repoRoot) {
       const ip = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`
       await context.route((url) => url.pathname.startsWith('/api/'), (route) => route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': ip } }))
     },
+    // Every signed-in shot signs in on its own: the refresh token rotates, so one saved session cannot serve many contexts.
+    async signIn(page) {
+      await page.goto(`${base}/`)
+      await page.waitForSelector('.page-current [data-testid="have-account"]', { timeout: 30_000 })
+      await page.locator('.page-current [data-testid="have-account"]').click()
+      await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
+      await page.locator('.page-current input[name="email"]').fill(ACCOUNT.email)
+      await page.locator('.page-current input[name="password"]').fill(ACCOUNT.password)
+      await page.locator('.page-current a.button-fill').first().click()
+      await page.waitForSelector('#rd-tabbar', { timeout: 30_000 })
+    },
     async login(browser) {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ru-RU' })
       const page = await context.newPage()
       await page.goto(`${base}/`)
+      // The first screen offers a conversation without registration; the sign-in form is one tap away.
+      await page.waitForSelector('.page-current [data-testid="have-account"]', { timeout: 30_000 })
+      await page.locator('.page-current [data-testid="have-account"]').click()
       await page.waitForSelector('.page-current input[name="email"]', { timeout: 30_000 })
       await page.locator('.page-current input[name="email"]').fill(ACCOUNT.email)
       await page.locator('.page-current input[name="password"]').fill(ACCOUNT.password)

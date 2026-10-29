@@ -73,7 +73,8 @@ test('первый запуск, привязка почты, выход: акк
 
   // ── the session is gone but the key is on the phone: the app signs back in without a screen ─
   await page.evaluate(() => {
-    for (const key of Object.keys(localStorage)) if (!/device/.test(key)) localStorage.removeItem(key)
+    for (const key of Object.keys(localStorage))
+      if (!/device|memory-invite/.test(key)) localStorage.removeItem(key)
   })
   await page.reload()
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })

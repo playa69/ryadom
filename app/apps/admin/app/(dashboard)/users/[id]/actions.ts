@@ -1,10 +1,13 @@
 'use server'
 
 import {
-  ConfirmUserEmailOperation,
-  ConfirmUserEmailOperationErrorCode,
+  accountDeletionProcess,
   DeleteUserAccountOperation,
   DeleteUserAccountOperationErrorCode,
+} from '@ryadom/core/processes/account-deletion'
+import {
+  ConfirmUserEmailOperation,
+  ConfirmUserEmailOperationErrorCode,
   RevokeUserSessionsOperation,
   RevokeUserSessionsOperationErrorCode,
   ToggleUserActivationOperation,
@@ -15,7 +18,7 @@ import { AgentUnavailableError, createLogger } from '@ryadom/core/shared'
 import assertNever from 'assert-never'
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/session'
-import { INITIAL_USER_ACTION_STATE, type UserActionState } from './shared'
+import type { UserActionState } from './shared'
 
 const logger = createLogger('admin.users')
 
@@ -116,7 +119,7 @@ export async function deleteAccount(_prev: UserActionState, formData: FormData):
   }
 
   try {
-    const result = await userManagementProcess.execute(
+    const result = await accountDeletionProcess.execute(
       new DeleteUserAccountOperation({ adminEmail: session.email, userId }),
     )
     if (!result.success) {
@@ -140,8 +143,4 @@ export async function deleteAccount(_prev: UserActionState, formData: FormData):
 
   refresh(userId)
   return { ok: 'Аккаунт удалён, разговоры стёрты.', error: null }
-}
-
-export async function noopState(): Promise<UserActionState> {
-  return INITIAL_USER_ACTION_STATE
 }

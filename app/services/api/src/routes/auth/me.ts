@@ -6,6 +6,9 @@ import {
   SetUserAnalyticsOptOutCommandErrorCode,
   UpdateUserNameCommand,
   UpdateUserNameCommandErrorCode,
+  UpdateUserTimezoneCommand,
+  UpdateUserTimezoneCommandErrorCode,
+  isKnownTimezone,
   UpdateUserVoiceCommand,
   UpdateUserVoiceCommandErrorCode,
   usersManager,
@@ -15,11 +18,13 @@ import {
   DeleteAccountOperation,
   DeleteAccountOperationErrorCode,
 } from '@ryadom/core/processes/account-deletion'
+import { GetVoicePipelineQuery, voiceSettingsManager } from '@ryadom/core/managers/voice-settings-manager'
 import { consentsProcess, GetConsentStatusOperation } from '@ryadom/core/processes/consents'
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
 import { z } from 'zod'
 import { AnalyticsEvent, type ProfileField } from '@ryadom/analytics/events'
+import { findVoice } from '@ryadom/contracts/voices'
 import { AGENT_VOICES, MeApiErrorCode, type MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { apiError, apiOk, apiRefused } from '../../lib/api-response'
@@ -37,7 +42,9 @@ import { inputOrNull } from '../../lib/rules'
 const patchBody = z.object({
   name: z.string().optional(),
   voice: z.enum(AGENT_VOICES).optional(),
+  voiceName: z.string().optional(),
   analyticsOptOut: z.boolean().optional(),
+  timezone: z.string().optional(),
 })
 
 /** The profile in contract shape; null means there is no such user. Shared by GET and PATCH. */
@@ -52,7 +59,9 @@ async function readMe(userId: string): Promise<MeApiResponse | null> {
     }
   }
   const { status } = await consentsProcess.execute(new GetConsentStatusOperation({ userId }))
-  return toMe(found.user, status)
+  // The path is the profile's too: on the Sber path one voice speaks whatever the person chose.
+  const { settings } = await voiceSettingsManager.execute(new GetVoicePipelineQuery())
+  return toMe(found.user, status, settings.pipeline)
 }
 
 export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDeps): void {
@@ -65,12 +74,29 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
   /** The profile can change the name and the agent's voice; the email never changes at all. */
   app.patch(ApiPath.Me, requireAuth(jwt), jsonBody(patchBody), async (c) => {
     const body = c.req.valid('json')
-    if (body.name === undefined && body.voice === undefined && body.analyticsOptOut === undefined) {
-      return apiError(c, 422, 'Nothing to update: send name, voice and/or analyticsOptOut')
+    if (
+      body.name === undefined &&
+      body.voice === undefined &&
+      body.voiceName === undefined &&
+      body.analyticsOptOut === undefined &&
+      body.timezone === undefined
+    ) {
+      return apiError(c, 422, 'Nothing to update: send name, voice, voiceName, analyticsOptOut and/or timezone')
     }
     // Both are checked before anything is written: a bad name must not leave a half-applied change.
     const name = body.name === undefined ? undefined : inputOrNull(nameInputSchema, body.name)
     if (name === null) return apiError(c, 422, 'Name length is out of range')
+    if (body.timezone !== undefined && !isKnownTimezone(body.timezone)) {
+      return apiError(c, 422, 'Unknown IANA time zone')
+    }
+
+    // A concrete voice fixes the gender with it: the two cannot be set apart (400 when they disagree).
+    const picked = body.voiceName === undefined ? undefined : findVoice(body.voiceName)
+    if (body.voiceName !== undefined && !picked) return apiError(c, 400, 'Unknown voiceName')
+    if (picked && body.voice !== undefined && body.voice !== picked.gender) {
+      return apiError(c, 400, 'voice does not match the gender of voiceName')
+    }
+    const voice = picked?.gender ?? body.voice
 
     const { userId } = authUser(c)
     // First, so that a "no" said together with other changes already silences their report.
@@ -100,11 +126,25 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
         }
       }
     }
-    if (body.voice !== undefined) {
-      const updated = await usersManager.execute(new UpdateUserVoiceCommand({ userId, voice: body.voice }))
+    if (voice !== undefined) {
+      const updated = await usersManager.execute(
+        new UpdateUserVoiceCommand({ userId, voice, voiceName: picked?.id ?? null }),
+      )
       if (!updated.success) {
         switch (updated.error) {
           case UpdateUserVoiceCommandErrorCode.USER_NOT_FOUND:
+            return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
+          default:
+            return assertNever(updated.error)
+        }
+      }
+    }
+
+    if (body.timezone !== undefined) {
+      const updated = await usersManager.execute(new UpdateUserTimezoneCommand({ userId, timezone: body.timezone }))
+      if (!updated.success) {
+        switch (updated.error) {
+          case UpdateUserTimezoneCommandErrorCode.USER_NOT_FOUND:
             return apiRefused(c, MeApiErrorCode.USER_NOT_FOUND, 'User not found')
           default:
             return assertNever(updated.error)
@@ -116,7 +156,7 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
     // report about turning reports off would be the thing the person just asked not to have.
     const fields: ProfileField[] = []
     if (name !== undefined) fields.push('name')
-    if (body.voice !== undefined) fields.push('voice')
+    if (voice !== undefined) fields.push('voice')
     if (fields.length > 0) analytics.capture(userId, AnalyticsEvent.ProfileUpdated, { fields })
 
     const me = await readMe(userId)
@@ -152,12 +192,8 @@ export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDep
     logger.info({ userId }, 'Аккаунт удалён по запросу пользователя')
     // Counted without the person: someone who has just asked to be erased gets no new record of themselves.
     analytics.captureAnonymous(AnalyticsEvent.AccountDeleted)
-    // «Erase everything» includes the pseudonymous profile in PostHog. In the background: the account is
-    // already gone, and the answer must not wait for another service. A failure is logged with the id
-    // so the profile can be removed by hand.
-    void analytics.erasePerson(userId).then((outcome) => {
-      if (outcome === 'failed') logger.warn({ userId }, 'Не удалось стереть профиль удалённого аккаунта в PostHog')
-    })
+    // «Erase everything» includes the pseudonymous profile in PostHog: the erasure was queued with the deletion
+    // (`analytics.erase-person`), so it outlives a restart and is retried; the answer does not wait for it.
     return apiOk(c, null)
   })
 }

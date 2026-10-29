@@ -1,14 +1,14 @@
 import { createServer } from 'node:http'
 import { serve } from '@hono/node-server'
-import { configureLogger, shutdownTelemetry, startTelemetry } from '@ryadom/core/shared'
+import { configureLogger } from '@ryadom/core/shared'
 import { WebSocketServer } from 'ws'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { createApp } from './app'
 import { closeAllDialogSessions, handleDialogSocket } from './dialogs/gateway'
 import { createAnalytics, hasInvalidProjectToken } from './lib/analytics'
-import { purgeInactiveAnonymous } from './lib/anonymous-retention'
 import { shutdownCore } from './lib/core'
 import { EnvValidationError, parseEnv } from './lib/env'
+import { startJobs, type Jobs } from './lib/jobs'
 import { createJwt } from './lib/jwt'
 import { startDraining } from './lib/lifecycle'
 import { createLogger, LOG_REDACT } from './lib/logger'
@@ -41,9 +41,8 @@ function loadEnvOrExit() {
 }
 
 const env = loadEnvOrExit()
-// Logger settings and OTLP log export must be in place before the first log entry.
+// Logger settings must be in place before the first log entry.
 configureLogger({ redact: LOG_REDACT })
-startTelemetry()
 const logger = createLogger(env.LOG_LEVEL)
 // Product analytics (PostHog). A no-op object without POSTHOG_KEY; its queue is flushed on shutdown.
 const analytics = createAnalytics(env, logger)
@@ -79,25 +78,17 @@ const rateLimiter = redis
 const app = createApp({ env, logger, policy, rateLimiter, analytics })
 const jwt = createJwt(env.MOBILE_JWT_SECRET)
 
-// Refresh tokens that have long expired are of no use even for spotting a replay. Hourly is plenty:
-// the table only grows by the sessions of the day, and every replica doing it is harmless.
 const sessions = createSessions(jwt)
-setInterval(() => {
-  sessions
-    .purgeExpired()
-    .catch((error: unknown) => logger.warn({ err: error }, 'Не удалось очистить реестр refresh-токенов'))
-}, 60 * 60_000).unref()
 
-// Anonymous accounts that nobody has opened for the retention period are erased, the agent's copy
-// included. The first pass comes shortly after start so that a pod that is restarted often still
-// gets to it; the switch is for stopping the job without a rebuild.
-if (!env.ANONYMOUS_PURGE_DISABLED) {
-  const purge = () =>
-    purgeInactiveAnonymous().catch((error: unknown) =>
-      logger.warn({ err: error }, 'Не удалось очистить неактивные анонимные аккаунты'),
-    )
-  setTimeout(() => void purge(), 2 * 60_000).unref()
-  setInterval(() => void purge(), 60 * 60_000).unref()
+// The background work (hourly cleanups, the diary's week texts, erasing a person in analytics) is jobs of the
+// queue that lives in the database: they survive a restart, run on one replica and are retried. The schema of the
+// queue is installed by the migrator; without it the process does not start, and the pod stays out of rotation.
+let jobs: Jobs
+try {
+  jobs = await startJobs({ config: env, deps: { sessions, analytics } })
+} catch (error) {
+  logger.fatal({ err: error }, 'очередь задач не запустилась (схема pgboss ставится образом migrate)')
+  process.exit(1)
 }
 
 const server = serve({ fetch: app.fetch, port: env.PORT, createServer }, (info) => {
@@ -129,12 +120,15 @@ server.on('error', (error: NodeJS.ErrnoException) => {
  */
 const shutdown = createShutdown({
   startDraining,
+  stopTakingJobs: () => void jobs.stopTaking(),
   closeSessions: closeAllDialogSessions,
   closeServer: (done) => server.close(done),
   finish: () => {
-    // Logging shuts down last so that it still records what happened while the DB pool closed.
-    void Promise.allSettled([shutdownCore(), redis?.quit(), analytics.shutdown()])
-      .finally(() => shutdownTelemetry())
+    // The jobs first: a job that is still running uses the pool of the core and the analytics queue.
+    void jobs
+      .stop()
+      .catch((error: unknown) => logger.warn({ err: error }, 'очередь задач не остановилась вовремя'))
+      .then(() => Promise.allSettled([shutdownCore(), redis?.quit(), analytics.shutdown()]))
       .finally(() => process.exit(0))
   },
   forceExit: () => process.exit(0),

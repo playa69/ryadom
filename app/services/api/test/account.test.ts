@@ -3,7 +3,9 @@
  */
 import { describe, expect, it } from 'vitest'
 import { ToggleUserActivationOperation, userManagementProcess } from '@ryadom/core/processes/user-management'
+import { ChangeVoicePipelineOperation, voiceSettingsProcess } from '@ryadom/core/processes/voice-settings'
 import { getSentEmails } from '@ryadom/core/services/email-sender-service'
+import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
 import { ChangePasswordApiErrorCode } from '@ryadom/contracts/api/auth/password'
@@ -11,6 +13,7 @@ import { RefreshApiErrorCode, type RefreshApiResponse } from '@ryadom/contracts/
 import { RegisterApiErrorCode, type RegisterApiResponse } from '@ryadom/contracts/api/auth/register'
 import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import type { LoginApiResponse } from '@ryadom/contracts/api/auth/shared'
+import { SBER_VOICE } from '@ryadom/contracts/voices'
 import {
   call,
   codeFor,
@@ -18,6 +21,7 @@ import {
   mockAgent,
   ok,
   PASSWORD,
+  recordingAnalytics,
   refusedWith,
   signUpAndIn,
   uniqueEmail,
@@ -165,6 +169,85 @@ describe('регистрация и вход', () => {
     ).toBe(422)
     expect(await read()).toMatchObject({ name: 'Анна', voice: 'male' })
   })
+
+  it('часовой пояс (REQ-WELL-01): по умолчанию Москва, меняется на известное имя IANA, чужое — 422', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    expect((await read()).timezone).toBe('Europe/Moscow')
+
+    const changed = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { timezone: 'Asia/Yekaterinburg' }, tokens.accessToken),
+    )
+    expect(changed.timezone).toBe('Asia/Yekaterinburg')
+
+    for (const bad of ['Mars/Olympus', '+03:00', '']) {
+      expect((await call(app, 'PATCH', '/api/auth/me', { timezone: bad }, tokens.accessToken)).status).toBe(422)
+    }
+    // A refused zone next to a good name changes nothing.
+    expect(
+      (await call(app, 'PATCH', '/api/auth/me', { name: 'Анна', timezone: 'Mars/Olympus' }, tokens.accessToken))
+        .status,
+    ).toBe(422)
+    expect((await read()).timezone).toBe('Asia/Yekaterinburg')
+  })
+
+  it('конкретный голос: по умолчанию голос рода, выбор задаёт и род, несовпадение и чужое имя — 400', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    const patch = (body: object) =>
+      call<MeApiResponse>(app, 'PATCH', '/api/auth/me', body, tokens.accessToken)
+    expect(await read()).toMatchObject({ voice: 'male', voiceName: 'Charon' })
+
+    // The voice fixes the gender with it, without the client saying it twice.
+    expect(ok<MeApiResponse>(await patch({ voiceName: 'Aoede' }))).toMatchObject({
+      voice: 'female',
+      voiceName: 'Aoede',
+    })
+    expect(await read()).toMatchObject({ voice: 'female', voiceName: 'Aoede' })
+    expect(ok<MeApiResponse>(await patch({ voice: 'male', voiceName: 'Puck' }))).toMatchObject({
+      voice: 'male',
+      voiceName: 'Puck',
+    })
+
+    // The gender alone goes back to the default voice of that gender.
+    expect(ok<MeApiResponse>(await patch({ voice: 'female' }))).toMatchObject({
+      voice: 'female',
+      voiceName: 'Kore',
+    })
+
+    // A name outside the catalog and a gender that disagrees with the name change nothing.
+    expect((await patch({ voiceName: 'Robot' })).status).toBe(400)
+    expect((await patch({ voice: 'male', voiceName: 'Aoede' })).status).toBe(400)
+    expect(await read()).toMatchObject({ voice: 'female', voiceName: 'Kore' })
+  })
+
+  // `add-sber-voice-pipeline`, «Выбор голоса агента»
+  it('голосовой путь в профиле: по умолчанию Сбер, смена в админке видна сразу, выбор голоса не трогает', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    expect(await read()).toMatchObject({ voicePipeline: 'sber', voice: 'male', voiceName: 'Charon' })
+
+    // The person's choice is for Gemini Live and stays as it is on the Sber path.
+    const picked = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { voiceName: 'Puck' }, tokens.accessToken),
+    )
+    expect(picked).toMatchObject({ voicePipeline: 'sber', voiceName: 'Puck' })
+
+    await voiceSettingsProcess.execute(
+      new ChangeVoicePipelineOperation({ adminEmail: 'admin@example.com', pipeline: 'gemini' }),
+    )
+    expect(await read()).toMatchObject({ voicePipeline: 'gemini', voice: 'male', voiceName: 'Puck' })
+
+    // The one voice of the Sber path is not a choice: the profile stores Gemini Live voices only.
+    const refused = await call(app, 'PATCH', '/api/auth/me', { voiceName: SBER_VOICE.id }, tokens.accessToken)
+    expect(refused.status).toBe(400)
+  })
 })
 
 describe('пароль', () => {
@@ -274,6 +357,33 @@ describe('состояние аккаунта проверяет только re
     ok(await call(app, 'POST', '/api/auth/register', { email: user.email, password: PASSWORD, name: 'Аня' }))
   })
 
+  // `add-job-queue`, «Профиль и события в аналитике»: сценарии «(API) Удаление человеком»
+  // и «(API) Удаление не состоялось».
+  it('удаление ставит задачу стирания профиля в аналитике с выдержкой 30 секунд, не дожидаясь её', async () => {
+    resetLimits()
+    const analytics = recordingAnalytics()
+    const { app: withAnalytics } = makeApp({ analytics })
+    const { user, tokens } = await signUpAndIn(withAnalytics)
+    mockAgent()
+
+    expect(ok(await call(withAnalytics, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
+
+    expect(getEnqueuedJobs()).toEqual([
+      expect.objectContaining({
+        queue: 'analytics.erase-person',
+        data: { userId: user.id },
+        startAfterSeconds: 30,
+        singletonKey: user.id,
+      }),
+    ])
+    // The answer did not wait for analytics, and the request itself no longer erases anything.
+    expect(analytics.erased).toEqual([])
+
+    // A repeated request is a success and queues nothing more.
+    expect(ok(await call(withAnalytics, 'DELETE', '/api/auth/me', undefined, tokens.accessToken))).toBeNull()
+    expect(getEnqueuedJobs()).toHaveLength(1)
+  })
+
   it('агент не стёр данные — 503, аккаунт остаётся', async () => {
     resetLimits()
     const { user, tokens } = await signUpAndIn(app)
@@ -287,5 +397,7 @@ describe('состояние аккаунта проверяет только re
 
     // The account is still there: signing in keeps working.
     ok(await call(app, 'POST', '/api/auth/login', { email: user.email, password: PASSWORD }))
+    // «Удаление не состоялось»: nothing was queued for analytics, the person stays.
+    expect(getEnqueuedJobs()).toEqual([])
   })
 })

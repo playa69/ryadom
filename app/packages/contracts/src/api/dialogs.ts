@@ -17,6 +17,9 @@ export enum DialogMode {
   RitualEvening = 'ritual_evening',
 }
 
+/** Tone of the person's last turn, as the voice model reports it (PROTEUS-168). */
+export type MoodTone = 'neutral' | 'sleepy' | 'angry' | 'afraid' | 'sad' | 'calm'
+
 export enum SafetyLevel {
   /** The classifier grew wary: a careful question, and the screen does not switch. */
   Concern = 'concern',
@@ -44,11 +47,16 @@ export interface StartDialogApiRequest {
    */
   startNew?: boolean
   /**
-   * `off` holds this conversation "without memory": the agent neither uses nor adds to what it remembers, and the
-   * conversation is deleted 24 hours after its last message. Only a new dialog takes it; a returned open one keeps
-   * its own (send `startNew` with it). Default `on`.
+   * `off` holds this conversation "without memory" (no memory block, notes or search; the journal, the recap and the retention
+   * stay as for any conversation). Only a new dialog takes it; a returned open one keeps its own (send `startNew` with it). Default `on`.
    */
   memory?: DialogMemoryMode
+  /**
+   * `false` holds this conversation unsaved ("Не сохранять этот разговор"): nothing of it is written to the database, to memory or to
+   * the analytics; after it ends only a mark without text stays in the journal. Independent of `memory`. Only a new dialog takes it, like
+   * `memory`. Default `true`; builds that never send it keep saving.
+   */
+  saved?: boolean
 }
 
 export interface StartDialogApiResponse {
@@ -63,11 +71,24 @@ export interface StartDialogApiResponse {
   messageCount: number
   /** When the returned dialog last moved (its last message or its end), ISO; null when unknown. */
   lastActivityAt: string | null
-  /** The memory mode of the returned dialog: a returned open one keeps the mode it was started with. */
+  /** The memory mode of the returned dialog: a returned open one keeps the mode it was started with. Always `off` for an unsaved one. */
   memoryMode: DialogMemoryMode
+  /**
+   * `false`: the returned dialog is held unsaved. Absent (a gateway older than the client) or `true`: an ordinary one. The client
+   * promises "not saved" only when this field says so, not because it asked.
+   */
+  saved?: boolean
   /** Whether the person has memory turned on: the "without memory" switch is shown only then. */
   memoryEnabled: boolean
 }
+
+/** `pending`: being written (up to a minute); `ready`: there; `none`: there is none (short, crisis or switched off). */
+export type DialogRecapStatus = 'pending' | 'ready' | 'none'
+/** `manual`: written by the person; `draft`: pre-filled by the model and edited; `auto`: written in the background. */
+export type DialogRecapSource = 'manual' | 'draft' | 'auto'
+
+/** The recap is one free-form text in the second person (the «What you take with you» field). */
+export const RECAP_MAX = 500
 
 export interface DialogSummaryApiResponse {
   title: string
@@ -75,6 +96,12 @@ export interface DialogSummaryApiResponse {
   /** Self-reported tension before and after, 1 to 10. */
   tensionBefore: number | null
   tensionAfter: number | null
+  /** Absent from a server that has no recaps; a client reads a missing field as `none`. */
+  recap?: string | null
+  recapStatus?: DialogRecapStatus
+  recapSource?: DialogRecapSource | null
+  /** `false`: no recap can be made for this conversation (little said, a crisis, an unsaved conversation): the journal does not offer one. */
+  recapAvailable?: boolean
 }
 
 export interface DialogListItemApiResponse {
@@ -84,8 +111,13 @@ export interface DialogListItemApiResponse {
   startedAt: string
   endedAt: string | null
   summary: DialogSummaryApiResponse | null
-  /** `off`: a conversation "without memory", deleted 24 hours after its last message. */
+  /** `off`: a conversation "without memory" (or an unsaved one: see `saved`). */
   memoryMode: DialogMemoryMode
+  /**
+   * `false`: a conversation the person asked not to keep (PROTEUS-246): the journal shows a mark without text,
+   * with the date, the time and how long it lasted. Absent or `true`: an ordinary conversation.
+   */
+  saved?: boolean
 }
 
 export interface ListDialogsApiResponse {
@@ -118,6 +150,61 @@ export interface EndDialogApiRequest {
   takeaway?: string
   /** Tension after the conversation, 1 to 10. */
   tensionAfter?: number
+  /** The takeaway is the recap: `draft` when it was pre-filled with «Pre-fill» and maybe edited; empty takeaway and "Write the recap myself" on: one is written in the background. */
+  recapSource?: 'manual' | 'draft'
+}
+
+/** `PUT /api/dialogs/:id/recap`: the recap of an ended conversation, written in the journal. */
+export interface PutDialogRecapApiRequest {
+  recap: string
+  source?: 'manual' | 'draft'
+}
+
+export interface PutDialogRecapApiResponse {
+  summary: DialogSummaryApiResponse | null
+}
+
+/** `POST /api/dialogs/:id/recap/draft`: a draft for "Pre-fill"; nothing is saved. */
+export interface DraftDialogRecapApiResponse {
+  recap: string
+}
+
+export enum DialogRecapApiErrorCode {
+  USER_NOT_FOUND = 'USER_NOT_FOUND',
+  USER_INACTIVE = 'USER_INACTIVE',
+  DIALOG_NOT_FOUND = 'DIALOG_NOT_FOUND',
+  /** No recap for this conversation: the person said too little, there was a crisis, or it is not kept. */
+  RECAP_NOT_AVAILABLE = 'RECAP_NOT_AVAILABLE',
+  /** The model did not write a draft: the person can write the recap themselves. */
+  RECAP_UNAVAILABLE = 'RECAP_UNAVAILABLE',
+}
+
+/** `DELETE /api/dialogs/:id`: the conversation, its recap and the share link go; the facts of memory stay. */
+export interface DeleteDialogApiResponse {
+  deleted: true
+}
+
+/** A line of `GET /api/recaps`: a conversation with its recap (the journal reads it). */
+export interface DialogRecapItemApiResponse {
+  dialogId: string
+  startedAt: string
+  title: string | null
+  recap: string
+  recapSource: DialogRecapSource | null
+}
+
+export interface ListDialogRecapsApiResponse {
+  items: DialogRecapItemApiResponse[]
+  next: string | null
+}
+
+/** `GET`/`PUT /api/dialog-settings`: "Write the recap automatically" (on by default), apart from the settings of memory. */
+export interface DialogSettingsApiResponse {
+  recapEnabled: boolean
+}
+
+export interface PutDialogSettingsApiRequest {
+  recapEnabled: boolean
 }
 
 export interface EndDialogApiResponse {
@@ -148,6 +235,7 @@ export enum DialogServerFrame {
   TtsStart = 'tts_start',
   TtsEnd = 'tts_end',
   Safety = 'safety',
+  Mood = 'mood',
   Ended = 'ended',
   Error = 'error',
   Pong = 'pong',
@@ -178,6 +266,8 @@ export enum DialogCloseCode {
   /** The same person connected again: one active connection per user. */
   Superseded = 4009,
   AgentUnavailable = 4010,
+  /** The agent has no such dialog any more (an unsaved one is lost when the agent restarts): reconnecting is pointless. */
+  DialogGone = 4011,
 }
 
 export interface HelloFrame {
@@ -207,6 +297,7 @@ export interface EndFrame {
   type: DialogClientFrame.End
   takeaway?: string
   tensionAfter?: number
+  recapSource?: 'manual' | 'draft'
 }
 
 export interface AudioStartFrame {
@@ -241,6 +332,8 @@ export type DialogServerMessage =
   | { type: DialogServerFrame.TtsStart; messageId: string; codec: TtsCodec; sampleRate: number }
   | { type: DialogServerFrame.TtsEnd; messageId: string }
   | { type: DialogServerFrame.Safety; level: SafetyLevel; text: string | null; hotlines: HotlineApiResponse[] }
+  /** After each turn of the person: how they sound. Only the colour of the sphere follows it; the SOS path is separate. */
+  | { type: DialogServerFrame.Mood; tone: MoodTone; intensity: number; at: number }
   | { type: DialogServerFrame.Ended; summary: DialogSummaryApiResponse | null }
   | { type: DialogServerFrame.Error; code: DialogWsErrorCode; message: string }
   | { type: DialogServerFrame.Pong }

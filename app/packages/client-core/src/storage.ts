@@ -11,7 +11,12 @@ import type { DeviceCredentials } from './device'
  * Only the switch, never what is remembered.
  */
 export type User = AuthUserApiResponse &
-  Partial<Pick<MeApiResponse, 'isEmailConfirmed' | 'createdAt' | 'consentVersion' | 'voice'>> & {
+  Partial<
+    Pick<
+      MeApiResponse,
+      'isEmailConfirmed' | 'createdAt' | 'consentVersion' | 'voice' | 'voiceName' | 'voicePipeline'
+    >
+  > & {
     memoryEnabled?: boolean
   }
 

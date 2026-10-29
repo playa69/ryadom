@@ -21,7 +21,6 @@ export {
   updateRequestContext,
   type RequestContext,
 } from './request-context'
-export { startTelemetry, shutdownTelemetry } from './telemetry'
 export {
   getDb,
   inTransaction,
@@ -35,3 +34,12 @@ export { validateInput } from './validation'
 export { addSeconds, addMinutes, addHours, addDays } from './time'
 export { resolveClientIp, UNKNOWN_CLIENT_IP } from './client-ip'
 export { describeUserAgent, type UserAgentNames } from './user-agent'
+export {
+  addDaysToDate,
+  isValidDate,
+  localMoment,
+  minutesToTime,
+  timeToMinutes,
+  weekStart,
+  type LocalMoment,
+} from './local-time'

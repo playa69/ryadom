@@ -6,7 +6,6 @@ function fakeClient(overrides: Partial<ServerAnalyticsClient> = {}) {
   const client = {
     capture: vi.fn<ServerAnalyticsClient['capture']>(),
     identify: vi.fn<ServerAnalyticsClient['identify']>(),
-    isFeatureEnabled: vi.fn<ServerAnalyticsClient['isFeatureEnabled']>(async () => true),
     captureException: vi.fn<ServerAnalyticsClient['captureException']>(),
     shutdown: vi.fn<ServerAnalyticsClient['shutdown']>(async () => {}),
     on: vi.fn(),
@@ -15,14 +14,13 @@ function fakeClient(overrides: Partial<ServerAnalyticsClient> = {}) {
   return Object.assign(client, overrides) as typeof client
 }
 
-const base = { host: 'https://eu.i.posthog.com', appEnv: 'staging', service: 'api' }
+const base = { host: 'https://eu.i.posthog.com', appEnv: 'prod', service: 'api' }
 
 describe('createServerAnalytics', () => {
   it('без ключа всё выключено и ничего не делает', async () => {
     const analytics = createServerAnalytics({ ...base, key: '' })
     expect(analytics.enabled).toBe(false)
     expect(() => analytics.capture('u1', AnalyticsEvent.EmailConfirmed)).not.toThrow()
-    expect(await analytics.isFeatureEnabled('x', 'u1')).toBe(false)
     await expect(analytics.shutdown()).resolves.toBeUndefined()
   })
 
@@ -33,7 +31,7 @@ describe('createServerAnalytics', () => {
     expect(client.capture).toHaveBeenCalledWith({
       distinctId: 'user-1',
       event: 'account_created',
-      properties: { kind: 'email', app_env: 'staging', service: 'api', traffic_type: 'real' },
+      properties: { kind: 'email', app_env: 'prod', service: 'api', traffic_type: 'real' },
       disableGeoip: true,
     })
   })
@@ -47,7 +45,7 @@ describe('createServerAnalytics', () => {
       takeaway: 'тяжело',
     } as never)
     const { properties } = client.capture.mock.calls[0]![0]
-    expect(properties).toEqual({ fields: ['name'], app_env: 'staging', service: 'api', traffic_type: 'real' })
+    expect(properties).toEqual({ fields: ['name'], app_env: 'prod', service: 'api', traffic_type: 'real' })
   })
 
   it('анонимное событие не привязано к человеку и не создаёт профиль', () => {
@@ -109,27 +107,13 @@ describe('createServerAnalytics', () => {
     expect(onError).toHaveBeenCalledTimes(1)
   })
 
-  it('флаг: при ошибке PostHog — false, а не исключение', async () => {
-    const onError = vi.fn()
-    const client = fakeClient({ isFeatureEnabled: vi.fn(async () => Promise.reject(new Error('timeout'))) })
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, onError })
-    expect(await analytics.isFeatureEnabled('beta', 'u1')).toBe(false)
-    expect(onError).toHaveBeenCalled()
-  })
-
-  it('флаг: undefined от PostHog означает «не включён»', async () => {
-    const client = fakeClient({ isFeatureEnabled: vi.fn(async () => undefined) })
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
-    expect(await analytics.isFeatureEnabled('beta', 'u1')).toBe(false)
-  })
-
   it('стирание человека: сначала отправляется очередь, потом PostHog просят удалить профиль', async () => {
     const order: string[] = []
     const client = fakeClient({
       flush: vi.fn(async () => void order.push('flush')),
     })
     const admin = { deletePerson: vi.fn(async () => (order.push('delete'), true)) }
-    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin, erasureDelayMs: 0 })
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin })
 
     expect(analytics.canErase).toBe(true)
     expect(await analytics.erasePerson('user-1')).toBe('erased')
@@ -144,7 +128,6 @@ describe('createServerAnalytics', () => {
       key: 'phc_test',
       client: fakeClient(),
       admin: { deletePerson: async () => false },
-      erasureDelayMs: 0,
     })
     expect(await refusing.erasePerson('user-1')).toBe('failed')
 
@@ -155,42 +138,24 @@ describe('createServerAnalytics', () => {
     expect(await createServerAnalytics({ ...base, key: '' }).erasePerson('user-1')).toBe('not_configured')
   })
 
-  it('стирание откладывается: запоздавший клиентский батч не успевает воскресить профиль', async () => {
-    vi.useFakeTimers()
-    try {
-      const admin = { deletePerson: vi.fn(async () => true) }
-      const analytics = createServerAnalytics({
-        ...base,
-        key: 'phc_test',
-        client: fakeClient(),
-        admin,
-        erasureDelayMs: 30_000,
-      })
-      const outcome = analytics.erasePerson('user-1')
-      await vi.advanceTimersByTimeAsync(29_000)
-      expect(admin.deletePerson).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(1_500)
-      expect(admin.deletePerson).toHaveBeenCalledWith('user-1')
-      expect(await outcome).toBe('erased')
-    } finally {
-      vi.useRealTimers()
-    }
+  it('стирание идёт сразу: выдержку в 30 секунд держит очередь задач, а не таймер в памяти пода', async () => {
+    const admin = { deletePerson: vi.fn(async () => true) }
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client: fakeClient(), admin })
+
+    // The promise settles when PostHog has been asked: no timer stands between the call and the request.
+    expect(await analytics.erasePerson('user-1')).toBe('erased')
+    expect(admin.deletePerson).toHaveBeenCalledTimes(1)
   })
 
-  it('остановка пода не теряет ожидающее стирание: оно исполняется сразу, ровно один раз', async () => {
+  it('остановка пода ничего не стирает: ожидающие стирания лежат в очереди и дойдут после запуска', async () => {
     const admin = { deletePerson: vi.fn(async () => true) }
-    const analytics = createServerAnalytics({
-      ...base,
-      key: 'phc_test',
-      client: fakeClient(),
-      admin,
-      erasureDelayMs: 60_000,
-    })
-    const outcome = analytics.erasePerson('user-1')
-    expect(admin.deletePerson).not.toHaveBeenCalled()
+    const client = fakeClient()
+    const analytics = createServerAnalytics({ ...base, key: 'phc_test', client, admin })
+
     await analytics.shutdown()
-    expect(admin.deletePerson).toHaveBeenCalledTimes(1)
-    expect(await outcome).toBe('erased')
+
+    expect(admin.deletePerson).not.toHaveBeenCalled()
+    expect(client.shutdown).toHaveBeenCalledTimes(1)
   })
 
   describe('тип трафика аккаунта', () => {
@@ -274,8 +239,6 @@ describe('createServerAnalytics', () => {
       expect(client.capture.mock.calls[0]![0]).toMatchObject({ distinctId: 'talker' })
       expect(client.identify).not.toHaveBeenCalled()
       expect(client.captureException).not.toHaveBeenCalled()
-      expect(await analytics.isFeatureEnabled('beta', 'quiet')).toBe(false)
-      expect(client.isFeatureEnabled).not.toHaveBeenCalled()
     })
 
     it('спрашивает один раз на пачку событий и помнит ответ', async () => {

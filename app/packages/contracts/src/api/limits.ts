@@ -14,10 +14,8 @@ export enum InputLimit {
   /** The "what you take with you" field on the closing screen. */
   TakeawayMax = 500,
   /**
-   * A remembered fact the person writes or corrects (`POST`/`PATCH /api/memory/facts`). The agent itself is stricter per
-   * category (120 or 160 characters) and answers `FACT_REJECTED` with `too_long`.
+   * A note the person corrects (`PATCH /api/memory/facts/:id`). The agent itself is stricter and answers `FACT_REJECTED` with
+   * `too_long`.
    */
   MemoryFactMax = 200,
-  /** Shorter free text is refused by the agent (`FACT_REJECTED`, `too_short`); facts built from slots have no minimum. */
-  MemoryFactMin = 8,
 }

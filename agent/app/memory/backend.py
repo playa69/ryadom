@@ -14,7 +14,7 @@ class MemoryBackend(MemoryLink, Protocol):
     """Память людей: `MemoryLink` хранилища диалогов плюс REST-операции и готовность."""
 
     def status(self) -> str:
-        """Для /health/ready: off | shadow | on | unavailable."""
+        """Для /health/ready: on | unavailable."""
         ...
 
     @property
@@ -30,36 +30,23 @@ class MemoryBackend(MemoryLink, Protocol):
         """Состояние памяти человека для REST: настройки, факты, сводка."""
         ...
 
-    async def update_settings(self, user_id: str, enabled: bool, consent_version: str | None) -> dict[str, Any]:
-        """Включить (только с версией согласия) или выключить память человека."""
-        ...
-
-    async def add_fact(self, user_id: str, category: str, text: Any, slots: Any) -> dict[str, Any]:
-        """Факт, который человек написал сам."""
-        ...
-
-    async def patch_fact(
+    async def update_settings(
         self,
         user_id: str,
-        fact_id: str,
-        text: Any = None,
-        slots: Any = None,
-        status: str | None = None,
-        confirm: bool = False,
+        enabled: bool | None,
+        consent_version: str | None,
+        sensitive_enabled: bool | None = None,
+        chat_search_enabled: bool | None = None,
     ) -> dict[str, Any]:
-        """Исправить, закрепить, «Запомнить», «Верно»."""
-        ...
-
-    async def delete_fact(self, user_id: str, fact_id: str) -> None:
-        """«Забыть» факт."""
+        """Включить (только с версией согласия) или выключить память человека; переключатели чувствительного и поиска."""
         ...
 
     async def forget_all(self, user_id: str, actor: str = "user") -> None:
         """«Забыть всё»."""
         ...
 
-    async def changes(self, user_id: str, dialog_id: str) -> dict[str, Any]:
-        """Что разговор добавил в память: карточка «Я запомнил»."""
+    async def changes(self, dialog: Dialog) -> dict[str, Any]:
+        """Заметки разговора для блока «Я запомнил»: `pending`, пока финальный проход извлечения не закончен, потом `ready`."""
         ...
 
     async def export(self, user_id: str) -> dict[str, Any]:

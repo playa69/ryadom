@@ -1,12 +1,13 @@
-"""Режим gemini_live: контекст сессии переносится текстом (GEMINI_TEXT_CONTEXT), а не копится аудио.
+"""Режим gemini_live: контекст сессии переносится текстом, а не копится аудио.
 
 Gemini оплачивает весь контекст сессии на каждый ход, поэтому после ответа (turn_complete) агент в фоне открывает свежую
-сессию и кладёт в неё прошлые реплики текстом, а старую закрывает. Тесты идут против поддельной модели (tests/test_live.py),
+сессию и кладёт в неё прошлые реплики текстом, а старую закрывает. Тесты идут против поддельной модели (tests/fake_live.py),
 без сети и настоящего Gemini.
 """
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -18,26 +19,22 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import LiveDialogSession, LiveTurn
+from app.api.dialog_session import DialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveConnector, LiveError, LiveEvent, _translate, live_config
 from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.dialog_store import DialogStore
 from tests.conftest import AUTH, FakeTts, audio_in_frame, has, read_frames, send_user_message, start_dialog, ws_url
-from tests.test_live import FakeConnector, FakeLink, make_live_client, reply_done, speak_turn
+from tests.fake_live import FakeConnector, FakeLink, reply_done, speak_turn
+from tests.test_live import make_live_client
 
 FIRST, SECOND = "Первая реплика", "Вторая реплика"
 
 
 @pytest.fixture(autouse=True)
 def pinned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Настройки live не зависят от .env разработчика: по умолчанию контекст переносится текстом."""
-    for name, value in (("text_context", True), ("session_resumption", True), ("history_messages", 40), ("rotate_every", 1)):
+    """Настройки live не зависят от .env разработчика."""
+    for name, value in (("history_messages", 40), ("rotate_every", 1)):
         monkeypatch.setattr(APP_CONFIG.gemini, name, value)
-
-
-@pytest.fixture
-def without_text_context(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(APP_CONFIG.gemini, "text_context", False)
 
 
 # ─── Помощники ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -107,19 +104,19 @@ def start_speaking(ws: Any, link: FakeLink) -> None:
     wait_until(lambda: ("start",) in link.commands, "начало речи дошло до модели")
 
 
-def make_session(connector: FakeConnector, *messages: tuple[str, str]) -> LiveDialogSession:
+def make_session(connector: FakeConnector, *messages: tuple[str, str]) -> DialogSession:
     """Сессия без сокета: для проверки внутренних шагов (`_history`, `_ensure_link`, `_read`). Роли: "u" и "a"."""
     store = DialogStore()
     dialog, _, _ = store.start(str(uuid.uuid4()))
     for role, text in messages:
         store.add_message(dialog, "user" if role == "u" else "assistant", text)
-    return LiveDialogSession(None, store, dialog, lambda: None, connector)  # type: ignore[arg-type]
+    return DialogSession(None, store, dialog, lambda: None, connector)  # type: ignore[arg-type]
 
 
 def test_live_instructions_carry_the_russian_only_rule() -> None:
     """Агент говорит только по-русски и на просьбу переключиться отвечает, что поддерживает только русский."""
     session = make_session(FakeConnector())
-    for instructions in (session._instructions(), session._instructions(resumed=True)):
+    for instructions in (session._instructions(),):
         lower = instructions.lower()
         assert "говори только по-русски" in lower and "поддерживаешь только русский" in lower
         assert "на его языке" not in lower
@@ -139,7 +136,7 @@ def test_session_is_replaced_after_the_answer_and_the_next_phrase_goes_to_the_ne
         assert connector.history_calls == [None, [("user", connector.heard), ("model", connector.reply)]]
         assert new.history == [("user", connector.heard), ("model", connector.reply)]
         assert first.closed and not new.closed  # старая закрыта, новая живёт
-        assert connector.open_calls == [("male", None), ("male", None)]  # handle не используется
+        assert connector.open_calls == ["male", "male"]
         assert connector.heard not in new.instructions  # история отдельными репликами, в промпте её нет
         wait_until(lambda: refreshed("ok") == ok + 1, "метрика ok")
         assert sample("agent_gemini_context_refresh_seconds_count") == seconds + 1
@@ -315,49 +312,18 @@ def test_history_starts_with_the_person_and_alternates_whatever_the_dialog() -> 
     assert [role for role, _ in history] == (["user", "model"] * len(history))[: len(history)]  # модель принимает только чередование
 
 
-# ─── GEMINI_TEXT_CONTEXT=false: прежний путь ──────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.usefixtures("without_text_context")
-def test_without_text_context_the_session_is_kept_and_history_stays_in_the_prompt(user_id: str) -> None:
-    connector = FakeConnector(turn_complete=True)
-    ok, failed = refreshed("ok"), refreshed("failed")
-    with talk(connector, user_id) as (_, ws, _):
-        say(ws, "c-1", FIRST)
-        time.sleep(0.3)
-        assert len(connector.links) == 1 and not connector.links[0].closed  # turn_complete сессию не меняет
-        ws.send_text(json.dumps({"type": "set_voice", "voice": "female"}))  # новое соединение посреди диалога
-        say(ws, "c-2", SECOND)
-    second = connector.links[1]
-    assert connector.history_calls == [None, None]  # open вызывается без history
-    assert second.history is None
-    assert f"Человек: {FIRST}" in second.instructions and f"Ты: {connector.reply}" in second.instructions
-    assert SECOND not in second.instructions
-    assert (refreshed("ok"), refreshed("failed")) == (ok, failed)
-
-
-@pytest.mark.usefixtures("without_text_context")
-def test_without_text_context_the_session_is_resumed_by_handle(user_id: str) -> None:
-    connector = FakeConnector(after_first_reply="go_away")
-    two_messages(connector, user_id)
-    assert connector.open_calls == [("male", None), ("male", "handle-1")]
-    assert connector.history_calls == [None, None]
-
-
-def test_instructions_carry_history_only_without_text_context(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_instructions_carry_no_history(monkeypatch: pytest.MonkeyPatch) -> None:
     session = make_session(FakeConnector(), ("u", FIRST), ("a", "Ответ"))
-    assert "Уже сказано" not in session._instructions()  # история уходит отдельными репликами
-    monkeypatch.setattr(APP_CONFIG.gemini, "text_context", False)
-    assert f"Человек: {FIRST}\nТы: Ответ" in session._instructions()
-    assert "Уже сказано" not in session._instructions(resumed=True)  # возобновлённая сессия помнит сама
+    assert "Уже сказано" not in session._instructions()  # история уходит отдельными репликами, в промпт не входит
+    assert FIRST not in session._instructions()
 
 
 @pytest.mark.parametrize("signal", ["go_away", "drop"])
-def test_reopening_after_go_away_or_drop_loads_the_text_history_without_handle(user_id: str, signal: str) -> None:
+def test_reopening_after_go_away_or_drop_loads_the_text_history(user_id: str, signal: str) -> None:
     connector = FakeConnector(after_first_reply=signal)
     frames = two_messages(connector, user_id)
     assert not has(frames, "error")  # человек ничего не заметил
-    assert connector.open_calls == [("male", None), ("male", None)]  # handle у text_context не нужен
+    assert connector.open_calls == ["male", "male"]
     second = connector.links[1]
     assert second.history == [("user", FIRST), ("model", connector.reply)]
     assert FIRST not in second.instructions
@@ -390,10 +356,10 @@ def test_closing_the_socket_during_a_replacement_does_not_hang(user_id: str) -> 
 
         cancelled = False
 
-        async def open(self, voice, instructions, resume_handle=None, history=None):  # noqa: ANN001, ANN201
+        async def open(self, voice, instructions, history=None):  # noqa: ANN001, ANN201
             if not self.open_calls:
-                return await super().open(voice, instructions, resume_handle, history)
-            self.open_calls.append((voice, resume_handle))
+                return await super().open(voice, instructions, history)
+            self.open_calls.append(voice)
             try:
                 await asyncio.sleep(3600)
             except asyncio.CancelledError:
@@ -415,8 +381,8 @@ def test_replacement_is_not_triggered_by_a_session_that_has_not_answered_yet(use
         """Сервер подтверждает загрузку истории событием turn_complete, пока человек ещё ничего не сказал: смены сессий
         не должны цепляться одна за другую."""
 
-        async def open(self, voice, instructions, resume_handle=None, history=None):  # noqa: ANN001, ANN201
-            link = await super().open(voice, instructions, resume_handle, history)
+        async def open(self, voice, instructions, history=None):  # noqa: ANN001, ANN201
+            link = await super().open(voice, instructions, history)
             if history:
                 link.push(LiveEvent("turn_complete"))
             return link
@@ -428,6 +394,223 @@ def test_replacement_is_not_triggered_by_a_session_that_has_not_answered_yet(use
         wait_until(lambda: len(connector.links) >= 2, "первая смена сессии")
         time.sleep(0.3)
     assert len(connector.links) == 2, f"смен сессии без единой реплики человека: {len(connector.links) - 1}"
+
+
+# ─── Память в сессии ──────────────────────────────────────────────────────────────────────────────────────────────
+
+BRIEF = "Человека зовут Аня, она работает учительницей."
+FOUND = "По недавнему вопросу человека в памяти нашлось: экзамены в школе."
+
+
+class Memory:
+    """Память человека для сессии без сокета: сводка из кэша (`text`) и загрузка, которая идёт `delay` секунд."""
+
+    def __init__(self, text: str = "", delay: float = 0.0, loaded: str | None = None, fail: bool = False) -> None:
+        self.text = text
+        self.delay = delay
+        self.loaded = loaded  # сводка, которая окажется в кэше, когда загрузка дойдёт
+        self.fail = fail
+        self.ready = False
+        self.calls = 0
+        self.removed = 0  # сколько раз человек убрал что-то из сводки (`removals`)
+
+    def brief(self, dialog: Any, count: bool = True) -> str:
+        return self.text
+
+    def removals(self, user_id: str) -> int:
+        return self.removed
+
+    def enabled(self, user_id: str) -> bool:
+        return True
+
+    def user_message(self, dialog: Any, text: str) -> None:
+        return None
+
+    def dialog_ended(self, dialog: Any) -> None:
+        return None
+
+    async def user_loaded(self, user_id: str) -> None:
+        return None
+
+    def user_unloaded(self, user_id: str) -> None:
+        return None
+
+    def remove(self, text: str) -> None:
+        """Человек убрал заметку: в сводке её нет, счётчик убранного вырос."""
+        self.text = text
+        self.removed += 1
+
+    async def prepare(self, dialog: Any) -> None:
+        self.calls += 1
+        if self.ready:
+            return  # уже в кэше: как у Cognee, сразу
+        await asyncio.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("Cognee не ответил в тесте")
+        if self.loaded is not None:
+            self.text = self.loaded
+        self.ready = True
+
+
+def with_memory(memory: Memory, connector: FakeConnector, *messages: tuple[str, str]) -> DialogSession:
+    session = make_session(connector, *messages)
+    session._store.memory = memory  # type: ignore[assignment]
+    return session
+
+
+async def test_slow_memory_does_not_hold_back_the_session(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Поиск в Cognee бывает дольше минуты: сессия открывается через MEMORY_WAIT_SECONDS со сводкой, что есть, загрузка
+    доходит в фоне и при следующем открытии не начинается заново. Задержка первой сессии — одной строкой в журнале."""
+    monkeypatch.setattr("app.api.dialog_session.MEMORY_WAIT_SECONDS", 0.1)
+    caplog.set_level(logging.INFO, logger="agent.live")
+    connector = FakeConnector()
+    memory = Memory(delay=0.6, loaded=BRIEF)
+    session = with_memory(memory, connector, ("u", FIRST), ("a", "Ответ"))
+    began = time.monotonic()
+    link = await session._ensure_link()
+    assert link is not None and time.monotonic() - began < 0.4  # загрузку целиком не ждали
+    assert BRIEF not in link.instructions
+    session._link_used = True
+    second = await session._ensure_link(rotate=True)
+    assert second is not None and second is not link
+    assert memory.calls == 1 and not memory.ready  # ждали ту же загрузку, и её не отменили
+    deadline = time.monotonic() + 3
+    while not memory.ready and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert memory.ready  # дошла в фоне
+    session._link_used = True
+    third = await session._ensure_link(rotate=True)
+    assert third is not None and BRIEF in third.instructions  # плановая смена взяла догрузившуюся сводку
+    first_open = [r.getMessage() for r in caplog.records if r.getMessage().startswith("gemini live first open")]
+    assert len(first_open) == 1 and "purpose=start" in first_open[0] and "since_socket_ms=" in first_open[0]
+    await session._drop_link()
+
+
+async def test_a_memory_failure_does_not_stop_the_session() -> None:
+    session = with_memory(Memory(fail=True), FakeConnector())
+    link = await session._ensure_link()
+    assert link is not None and not link.closed
+    await session._drop_link()
+
+
+async def test_a_new_or_grown_brief_waits_for_the_planned_rotation() -> None:
+    """Сводка догрузилась после открытия, к ней добавилась находка поиска по реплике или её переписало извлечение: сессия не
+    переоткрывается (каждое переоткрытие — пауза в разговоре и потеря звукового контекста), сводку берёт плановая смена."""
+    connector = FakeConnector()
+    memory = Memory()
+    session = with_memory(memory, connector, ("u", FIRST), ("a", "Ответ"))
+    link = await session._ensure_link()
+    assert link is not None and BRIEF not in link.instructions
+    memory.text = BRIEF  # загрузка дошла уже после открытия
+    assert await session._ensure_link() is link
+    session._link_used = True  # на сессии был ход: плановая смена (GEMINI_ROTATE_EVERY)
+    rotated = await session._ensure_link(rotate=True)
+    assert rotated is not None and rotated is not link and BRIEF in rotated.instructions
+    memory.text = BRIEF + "\n\n" + FOUND  # фоновый поиск по реплике что-то нашёл
+    assert await session._ensure_link() is rotated
+    memory.text = "Человека зовут Аня."  # извлечение переписало сводку
+    assert await session._ensure_link() is rotated
+    assert len(connector.links) == 2
+    session._link_used = True
+    latest = await session._ensure_link(rotate=True)
+    assert latest is not None and "Человека зовут Аня." in latest.instructions and FOUND not in latest.instructions
+    await session._drop_link()
+
+
+async def test_a_revoked_brief_reopens_the_session_without_it() -> None:
+    """Человек выключил память, забыл всё или стёр аккаунт посреди разговора: следующий ход уже без сводки (MEM-13.3)."""
+    connector = FakeConnector()
+    memory = Memory(text=BRIEF)
+    session = with_memory(memory, connector)
+    link = await session._ensure_link()
+    assert link is not None and BRIEF in link.instructions
+    memory.text = ""
+    new = await session._ensure_link()
+    assert new is not None and new is not link and link.closed and BRIEF not in new.instructions
+    assert await session._ensure_link() is new  # без сводки дальше не переоткрывается
+    await session._drop_link()
+
+
+NOTE_A, NOTE_B = "Работает учительницей.", "Есть сестра Маша."
+TWO_NOTES = f"- {NOTE_A}\n- {NOTE_B}"
+
+
+async def test_something_removed_by_the_person_reopens_the_session_without_it() -> None:
+    """Правило приватности: человек удалил (или поправил) заметку, выключил чувствительное, стёр память или разговор — убранное
+    лежит в контексте сессии, и к следующему ходу она открывается заново с сводкой без него. Остальная сводка остаётся."""
+    connector = FakeConnector()
+    memory = Memory(text=TWO_NOTES)
+    session = with_memory(memory, connector, ("u", FIRST), ("a", "Ответ"))
+    link = await session._ensure_link()
+    assert link is not None and NOTE_B in link.instructions
+    before = sample("agent_gemini_opens_total", purpose="privacy", result="ok")
+
+    memory.remove(f"- {NOTE_A}")  # человек удалил заметку про сестру
+    new = await session._ensure_link()
+    assert new is not None and new is not link and link.closed
+    assert NOTE_B not in new.instructions and NOTE_A in new.instructions
+    assert sample("agent_gemini_opens_total", purpose="privacy", result="ok") == before + 1
+    assert await session._ensure_link() is new  # дальше не переоткрывается, пока снова ничего не убрали
+
+    memory.text += f"\n- {NOTE_B}"  # добавление ждёт плановой смены сессии
+    assert await session._ensure_link() is new
+    memory.remove("")  # «Удалить всю память»
+    last = await session._ensure_link()
+    assert last is not None and last is not new and NOTE_A not in last.instructions
+    await session._drop_link()
+
+
+async def test_a_removal_before_the_open_is_not_counted_again() -> None:
+    """Убранное до открытия сессии в ней уже не лежит: счётчик запоминается при открытии, второго открытия нет."""
+    connector = FakeConnector()
+    memory = Memory(text=NOTE_A)
+    memory.removed = 3  # человек убирал и раньше, до разговора
+    session = with_memory(memory, connector)
+    link = await session._ensure_link()
+    assert link is not None and await session._ensure_link() is link
+    assert len(connector.links) == 1
+    await session._drop_link()
+
+
+def test_the_next_turn_after_a_removal_goes_to_a_new_session(user_id: str) -> None:
+    connector = FakeConnector()
+    memory = Memory(text=TWO_NOTES)
+    privacy = sample("agent_gemini_opens_total", purpose="privacy", result="ok")
+    with make_live_client(connector, FakeTts()) as client:
+        client.app.state.store.memory = memory
+        dialog_id = start_dialog(client, user_id)["dialogId"]
+        with client.websocket_connect(ws_url(user_id, dialog_id), headers=AUTH) as ws:
+            say(ws, "c-1", FIRST)
+            assert len(connector.links) == 1 and NOTE_B in connector.links[0].instructions
+            memory.remove(f"- {NOTE_A}")  # человек удалил заметку в разделе «Память» посреди разговора
+            time.sleep(0.2)
+            assert len(connector.links) == 1  # пока он молчит, ничего не открывается
+            say(ws, "c-2", SECOND)
+    assert len(connector.links) == 2 and connector.links[0].closed
+    second = connector.links[1]
+    assert NOTE_B not in second.instructions and ("text", SECOND) in second.commands
+    assert second.history == [("user", FIRST), ("model", connector.reply)]  # разговор продолжается: история текстом
+    assert sample("agent_gemini_opens_total", purpose="privacy", result="ok") == privacy + 1
+
+
+def test_a_removal_is_picked_up_when_the_person_starts_speaking(user_id: str) -> None:
+    """Голос: новая сессия открывается за речью, как только человек заговорил, а не после её конца."""
+    connector = FakeConnector()
+    memory = Memory(text=TWO_NOTES)
+    with make_live_client(connector, FakeTts()) as client:
+        client.app.state.store.memory = memory
+        dialog_id = start_dialog(client, user_id)["dialogId"]
+        with client.websocket_connect(ws_url(user_id, dialog_id), headers=AUTH) as ws:
+            say(ws, "c-1", FIRST)
+            memory.remove(f"- {NOTE_A}")
+            ws.send_text(json.dumps({"type": "audio_start"}))
+            wait_until(lambda: len(connector.links) == 2, "сессия без убранного открыта сразу, за речью")
+            for i in range(4):
+                ws.send_bytes(audio_in_frame(i, loud=True))
+            ws.send_text(json.dumps({"type": "audio_end"}))
+            read_frames(ws, reply_done)
+    assert NOTE_B not in connector.links[1].instructions and ("end",) in connector.links[1].commands
+    assert len(connector.links) == 2
 
 
 # ─── usage ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -508,17 +691,12 @@ def test_usage_metadata_becomes_a_usage_event_before_turn_complete() -> None:
 # ─── Настройки сессии и загрузка истории ──────────────────────────────────────────────────────────────────────────
 
 
-def test_live_config_with_text_context_has_no_resumption_and_loads_history() -> None:
-    on = GeminiSettings.model_validate({"GEMINI_TEXT_CONTEXT": True, "GEMINI_SESSION_RESUMPTION": True})
-    config = live_config(on, "Kore", "промпт", "h-1", history=True)
-    assert config.session_resumption is None  # возобновлять по handle незачем, даже если он есть
+def test_live_config_has_no_resumption_and_loads_history() -> None:
+    settings = GeminiSettings()
+    config = live_config(settings, "Kore", "промпт", history=True)
+    assert config.session_resumption is None  # возобновлять по handle незачем: контекст новой сессии приходит текстом
     assert config.history_config is not None and config.history_config.initial_history_in_client_content is True
-    assert live_config(on, "Kore", "промпт").history_config is None  # без истории (первая сессия, озвучка фраз) блока нет
-
-    legacy = GeminiSettings.model_validate({"GEMINI_TEXT_CONTEXT": False, "GEMINI_SESSION_RESUMPTION": True})
-    resumed = live_config(legacy, "Kore", "промпт", "h-1")
-    assert resumed.session_resumption is not None and resumed.session_resumption.handle == "h-1"
-    assert resumed.history_config is None
+    assert live_config(settings, "Kore", "промпт").history_config is None  # без истории (первая сессия, озвучка фраз) блока нет
 
 
 class StubSession:
@@ -564,11 +742,11 @@ class StubClient:
 def stub_connector(monkeypatch: pytest.MonkeyPatch) -> GeminiLiveConnector:
     StubClient.session, StubClient.connections = StubSession(), []
     monkeypatch.setattr("google.genai.Client", StubClient)
-    return GeminiLiveConnector(GeminiSettings.model_validate({"GEMINI_API_KEY": "test-key", "GEMINI_TEXT_CONTEXT": True}))
+    return GeminiLiveConnector(GeminiSettings.model_validate({"GEMINI_API_KEY": "test-key"}))
 
 
 async def test_connector_loads_the_history_as_client_content(stub_connector: GeminiLiveConnector) -> None:
-    link = await stub_connector.open("male", "промпт", None, [("user", "Привет"), ("model", "Я рядом"), ("user", "Тяжело")])
+    link = await stub_connector.open("male", "промпт", [("user", "Привет"), ("model", "Я рядом"), ("user", "Тяжело")])
     [(config, connection)] = StubClient.connections
     assert config.history_config.initial_history_in_client_content is True and config.session_resumption is None
     ((turns, turn_complete),) = StubClient.session.sent
@@ -584,11 +762,21 @@ async def test_connector_always_names_the_voice_to_google(stub_connector: Gemini
     """Каждая сессия идёт с явным голосом (speech_config), в том числе без истории и озвучка фразы; имя голоса видно в соединении."""
     for history in (None, [("user", "Привет"), ("model", "Я рядом")]):
         StubClient.connections.clear()
-        link = await stub_connector.open(voice, "промпт", None, history)  # type: ignore[arg-type]
+        link = await stub_connector.open(voice, "промпт", history)  # type: ignore[arg-type]
         config = StubClient.connections[0][0]
         assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == name
         assert link.voice == voice and link.voice_name == name
         await link.aclose()
+
+
+@pytest.mark.parametrize(("voice", "name"), [("Aoede", "Aoede"), ("Puck", "Puck")])
+async def test_connector_takes_the_voice_the_person_picked_by_name(stub_connector: GeminiLiveConnector, voice: str, name: str) -> None:
+    """Выбранное в профиле имя из списка идёт в Google как есть, а ключ голоса сессии — это имя (смена голоса откроет новую сессию)."""
+    StubClient.connections.clear()
+    link = await stub_connector.open(voice, "промпт")  # type: ignore[arg-type]
+    assert StubClient.connections[0][0].speech_config.voice_config.prebuilt_voice_config.voice_name == name
+    assert link.voice == voice and link.voice_name == name
+    await link.aclose()
 
 
 async def test_connector_refuses_an_unknown_voice_instead_of_picking_one(stub_connector: GeminiLiveConnector) -> None:
@@ -607,13 +795,13 @@ async def test_connector_without_history_sends_nothing(stub_connector: GeminiLiv
 async def test_connector_closes_the_connection_when_the_history_is_not_accepted(stub_connector: GeminiLiveConnector) -> None:
     StubClient.session = StubSession(fail=RuntimeError("отказ"))
     with pytest.raises(LiveError):
-        await stub_connector.open("male", "промпт", None, [("user", "Привет"), ("model", "Я рядом")])
+        await stub_connector.open("male", "промпт", [("user", "Привет"), ("model", "Я рядом")])
     assert StubClient.connections[0][1].closed  # наполовину открытую сессию не оставляем
 
 
 async def test_connector_closes_the_connection_when_the_replacement_is_cancelled(stub_connector: GeminiLiveConnector) -> None:
     StubClient.session = StubSession(hang=True)
-    task = asyncio.create_task(stub_connector.open("male", "промпт", None, [("user", "Привет"), ("model", "Я рядом")]))
+    task = asyncio.create_task(stub_connector.open("male", "промпт", [("user", "Привет"), ("model", "Я рядом")]))
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

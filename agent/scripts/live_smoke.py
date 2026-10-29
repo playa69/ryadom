@@ -1,9 +1,10 @@
-"""Живая сквозная проверка режима `VOICE_PIPELINE=gemini_live` против настоящего Gemini Live.
+"""Живая сквозная проверка голоса агента против настоящего Gemini Live.
 
     python scripts/live_smoke.py --url http://127.0.0.1:8011 --token <AGENT_INTERNAL_TOKEN> \
-        --pcm-dir <каталог с in_0_16k.pcm … in_4_16k.pcm и in_crisis_16k.pcm> --wav-dir <куда сохранить голос ответов>
+        --pcm-dir <каталог с in_0_16k.pcm … in_4_16k.pcm и in_crisis_16k.pcm> --wav-dir <куда сохранить голос ответов> \
+        [--pipeline sber|gemini]
 
-Агент уже запущен в режиме gemini_live (скрипт его не запускает). Скрипт ходит так же, как шлюз приложения: заголовок
+Агент уже запущен (скрипт его не запускает). Скрипт ходит так же, как шлюз приложения: заголовок
 Authorization, те же JSON-кадры и двоичные кадры голоса. Входные реплики — готовые PCM16 16 кГц моно (синтезированные
 голосом заранее); кризисная фраза «Я больше не хочу жить» лежит в `in_crisis_16k.pcm`.
 
@@ -17,7 +18,8 @@ Authorization, те же JSON-кадры и двоичные кадры голо
   г  кризис голосом и текстом: transcript, safety, ровно CRISIS_REPLY, ничего от модели
   д  тишина: transcript с пустым text, без ответа (плюс повторное подключение не повторяет приветствие)
 
-Код возврата 1, если хоть одна проверка не прошла. Ключ Gemini скрипту не нужен: он у агента.
+Код возврата 1, если хоть одна проверка не прошла. Ключ Gemini скрипту не нужен: он у агента. `--pipeline` — голосовой путь
+диалогов (`sber` или `gemini`, PROTEUS-258); без него — путь агента по умолчанию.
 """
 
 import argparse
@@ -50,9 +52,11 @@ def load_replies(token: str) -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app.services import replies
 
-    CRISIS_REPLY, CRISIS_SAFETY_TEXT, REPLIES = replies.CRISIS_REPLY, replies.CRISIS_SAFETY_TEXT, replies.REPLIES
+    # Шаблонных ответов у агента больше нет (`REPLIES` убран из кода): проверка «не шаблон» тогда ничего не отсеивает.
+    CRISIS_REPLY, CRISIS_SAFETY_TEXT, REPLIES = replies.CRISIS_REPLY, replies.CRISIS_SAFETY_TEXT, getattr(replies, "REPLIES", ())
 
-IN_FRAME = 3200  # 100 мс PCM16 16 кГц
+IN_FRAME = 1280  # 40 мс PCM16 16 кГц, как у клиента
+PIPELINE: str | None = None  # голосовой путь диалогов (`--pipeline`)
 TTS_RATE = 24_000
 TTS_FRAME_FULL = 5 + 9600  # заголовок + 200 мс
 ANSWER_TIMEOUT = 45.0
@@ -177,7 +181,7 @@ def has(sl: list[Ev], type_: str, **match) -> bool:  # noqa: ANN003
 
 
 async def send_voice(conn: Conn, pcm: bytes, pace: float, with_start: bool = True) -> float:
-    """Голосовая реплика: audio_start, кадры по 100 мс, audio_end. Возвращает момент отправки audio_end."""
+    """Голосовая реплика: audio_start, кадры по 40 мс, audio_end. Возвращает момент отправки audio_end."""
     if with_start:
         await conn.send({"type": "audio_start"})
     for n, at in enumerate(range(0, len(pcm), IN_FRAME)):
@@ -332,7 +336,8 @@ def f0_median(pcm24: bytes) -> float | None:
 
 
 async def open_dialog(http: httpx.AsyncClient, auth: dict, user: str, voice: str | None = None) -> dict:
-    started = await http.post(f"/v1/users/{user}/dialogs", headers=auth, json={"voice": voice} if voice else None)
+    body = {**({"voice": voice} if voice else {}), **({"pipeline": PIPELINE} if PIPELINE else {})}
+    started = await http.post(f"/v1/users/{user}/dialogs", headers=auth, json=body or None)
     check(started.status_code == 200 and "dialogId" in started.json(), "POST /dialogs", started.text)
     return started.json()
 
@@ -709,7 +714,8 @@ async def run(args) -> int:  # noqa: ANN001
         info = ready.json()
         scenario("0", "стенд")
         check(ready.status_code == 200, "GET /health/ready", ready.text)
-        check(str(info.get("pipeline", "")).startswith("gemini-live"), "режим gemini_live включён", str(info))
+        check(str(info.get("pipeline", "")).startswith("gemini-live"), "Gemini Live есть (основной или запасной путь)", str(info))
+        note(f"голосовой путь диалогов: {PIPELINE or info.get('voicePipeline', 'gemini')}")
         note(f"готовность: {info}")
         user0 = str(uuid.uuid4())
         check((await http.post(f"/v1/users/{user0}/dialogs")).status_code == 401, "POST /dialogs без токена → 401")
@@ -747,9 +753,11 @@ if __name__ == "__main__":
     parser.add_argument("--token", default=os.environ.get("AGENT_INTERNAL_TOKEN"))
     parser.add_argument("--pcm-dir", required=True, help="каталог с in_0_16k.pcm … in_3_16k.pcm и in_crisis_16k.pcm")
     parser.add_argument("--wav-dir", help="куда сохранить голос ответов (WAV 24 кГц) для прослушивания")
-    parser.add_argument("--pace", type=float, default=0.02, help="пауза между кадрами голоса, с (0,1 — реальное время)")
+    parser.add_argument("--pace", type=float, default=0.02, help="пауза между кадрами голоса, с (0,04 — реальное время)")
     parser.add_argument("--only", help="только эти сценарии, буквами без разделителей, например: авб")
+    parser.add_argument("--pipeline", choices=("sber", "gemini"), help="голосовой путь диалогов; без него — путь агента по умолчанию")
     args = parser.parse_args()
+    PIPELINE = args.pipeline
     if not args.token:
         sys.exit("нужен --token или AGENT_INTERNAL_TOKEN")
     sys.exit(asyncio.run(run(args)))

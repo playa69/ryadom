@@ -58,10 +58,9 @@ LIVE_REPEAT_REQUESTS_TOTAL = Counter(
 )
 
 # Где уходит время от конца реплики человека до первого звука. Этапы (label `stage`, всегда один из этого списка):
-#   stt            audio_end → готов текст (только голос)
-#   first_sentence начало обработки → первое предложение ответа готово (assistant_start)
-#   tts_first      синтез первого куска у провайдера озвучки
+#   tts_first      первый кусок звука у источника (озвучка фразы или очередь звука ответа модели)
 #   first_sound    конец реплики человека (или его сообщение) → tts_start: то, что человек ощущает как паузу
+# Разбивка ответа модели по этапам (расшифровка, первый звук) — в журнале `live timeline`.
 # label `memory`: on — в разговор подмешана сводка памяти, off — нет (сравнение задержки с памятью и без, MEM-15).
 VOICE_LATENCY_SECONDS = Histogram(
     "agent_voice_latency_seconds",
@@ -75,12 +74,7 @@ VOICE_ECHO_TOTAL = Counter(
     "Реплики, начатые поверх озвучки, чей текст — слова самого агента: микрофон поймал динамик, ответа не будет.",
 )
 
-VOICE_HELD_TURNS_TOTAL = Counter(
-    "agent_voice_held_turns_total",
-    "Реплики, оборванные на полуслове (союз, запятая): ответ задержан, пока человек договаривает.",
-)
-
-# Диалоги на диске (DIALOG_DB_PATH). op: open | load | write | erase | delete.
+# Диалоги на диске (DIALOG_DATABASE_URL). op: open | load | write | erase | delete | mark | clear | purge.
 DIALOG_DB_ERRORS_TOTAL = Counter(
     "agent_dialog_db_errors_total",
     "Сбои базы диалогов на диске: при сбое запись повторяется, диалоги остаются в памяти.",
@@ -116,11 +110,36 @@ DIALOG_EVICTIONS_TOTAL = Counter(
 )
 
 # reason: socket — у диалога живой сокет; dirty — есть незаписанное на диск (ждёт записи, запись идёт или не удалась);
-# memory_off — у человека жив разговор «Без памяти» (срок его удаления живёт только в памяти).
+# unsaved — у человека открыт разговор «Не сохранять этот разговор», который есть только в памяти процесса.
 DIALOG_EVICTIONS_SKIPPED_TOTAL = Counter(
     "agent_dialog_evictions_skipped_total",
     "Проверки выгрузки, после которых человек остался в памяти: срок или потолок вышел, но выгружать нельзя.",
     ["reason"],
+)
+
+# Срок хранения разговоров (D14, add-mood-diary).
+DIALOG_RETENTION_DELETED_TOTAL = Counter(
+    "agent_dialogs_retention_deleted_total",
+    "Разговоры, удалённые проходом по сроку хранения (DIALOG_RETENTION_DAYS).",
+)
+
+# Физическая очистка мягко стёртого (app/services/dialog_purge.py, PROTEUS-255). table у счётчика удалённого: dialogs | messages |
+# client_ids | memory_sources | voice_prefs; у gauge: dialogs | voice_prefs.
+DIALOG_PURGE_OVERDUE_ROWS = Gauge(
+    "agent_dialog_purge_overdue_rows",
+    "Строки, помеченные стёртыми больше 2 часов назад и всё ещё лежащие в базе: очистка убирает помеченное через час.",
+    ["table"],
+)
+
+DIALOG_PURGE_DELETED_ROWS_TOTAL = Counter(
+    "agent_dialog_purge_deleted_rows_total",
+    "Строки, физически удалённые очисткой стёртого, по таблицам.",
+    ["table"],
+)
+
+DIALOG_PURGE_USAGE_ANONYMIZED_TOTAL = Counter(
+    "agent_dialog_purge_usage_anonymized_total",
+    "Строки расхода моделей (model_usage), у которых очистка убрала dialog_id и message_id; сами строки остаются.",
 )
 
 # kind: first — первая загрузка человека после старта пода; reload — загрузка после выгрузки.
@@ -139,20 +158,21 @@ DIALOG_LOAD_SECONDS = Histogram(
 # Расход моделей (app/services/usage.py): каждый вызов модели, в том числе вне диалогов (прогрев фраз при старте). По
 # диалогам то же лежит в таблице model_usage базы диалогов; здесь без id, поэтому стирание человека сумм не трогает.
 # Метки, всегда из коротких списков:
-#   model      имя модели, как его знает провайдер (gemini-3.8-live, gigachat3.5-432b-a28b, whisper-large-v3, ...)
-#   task       live (ход речь в речь) | phrase (озвучка фиксированной фразы) | stt | chat | tts
+#   model      имя модели, как его знает провайдер (gemini-3.8-live, gigachat3.5-432b-a28b, ...)
+#   task       live (ход речь в речь) | phrase (озвучка фиксированной фразы) | mood (классификатор цвета шарика) | chat (фоновая
+#              модель: итоги и заметки)
 #   direction  input | output
 #   modality   text | audio | thinking | other (часть итога провайдера без разбивки по модальностям)
-#   unit       tokens | seconds (аудио) | chars (текст на озвучку)
+#   unit       tokens
 MODEL_USAGE_TOTAL = Counter(
     "agent_model_usage_total",
     "Расход моделей: токены, секунды аудио или символы, по модели, задаче, направлению и модальности.",
     ["model", "task", "direction", "modality", "unit"],
 )
 
-# Обращения к компонентам агента: сколько раз он реально позвал распознавание, проверку безопасности, модель, озвучку.
+# Обращения к компонентам агента: сколько раз он реально позвал проверку безопасности, модель, озвучку.
 # Без id: по человеку и диалогу те же вызовы уходят кадром `component` в шлюз и дальше в продуктовую аналитику.
-#   component  stt | safety | llm | live | tts | memory
+#   component  safety | llm | live | tts | memory
 #   outcome    ok | error
 #   cached     true: ответ взят из памяти фраз, провайдера не звали
 COMPONENT_CALLS_TOTAL = Counter(
@@ -173,7 +193,7 @@ SPEECH_SECONDS_TOTAL = Counter(
     ["speaker"],
 )
 
-# ─── Бюджет входных токенов в минуту (GEMINI_TPM_*, app/services/gemini_budget.py) ───
+# ─── Учёт входных токенов в минуту (GEMINI_TPM_*, app/services/gemini_budget.py) ───
 
 GEMINI_TPM_WINDOW_TOKENS = Gauge(
     "agent_gemini_tpm_window_tokens",
@@ -182,20 +202,22 @@ GEMINI_TPM_WINDOW_TOKENS = Gauge(
 
 GEMINI_TPM_LIMIT_TOKENS = Gauge(
     "agent_gemini_tpm_limit_tokens",
-    "Действующий лимит входных токенов в минуту: GEMINI_TPM_LIMIT или ниже, если Google отказал раньше (автокалибровка).",
+    "Лимит входных токенов в минуту, с которым сравнивают окно (GEMINI_TPM_LIMIT).",
 )
 
-# 0 ok, 1 trim, 2 admit_off, 3 hard, 4 cooldown
-GEMINI_BUDGET_LEVEL = Gauge(
-    "agent_gemini_budget_level",
-    "Уровень нагрузки на Gemini: 0 ok, 1 trim, 2 admit_off, 3 hard, 4 cooldown (пауза после 1011).",
-)
-
-# purpose: start | rotate | reconnect | voice | tts; result: ok | failed | quota
+# purpose: start | rotate | reconnect | voice | recover | privacy | tts; result: ok | failed | quota
 GEMINI_OPENS_TOTAL = Counter(
     "agent_gemini_opens_total",
-    "Открытия сессий Gemini Live: первая в разговоре, смена после ответа, переоткрытие, смена голоса, озвучка фразы.",
+    "Открытия сессий Gemini Live: первая в разговоре, смена после ответа, переоткрытие, смена голоса, повторная просьба, убранное из памяти, озвучка фразы.",
     ["purpose", "result"],
+)
+
+# Цвет шарика (app/clients/mood_classifier.py): сколько раз определён тон и через сколько после конца реплики.
+GEMINI_MOOD_TOTAL = Counter("agent_gemini_mood_total", "Определения тона реплики классификатором.", ["tone"])
+GEMINI_MOOD_DELAY_SECONDS = Histogram(
+    "agent_gemini_mood_delay_seconds",
+    "От конца реплики человека до кадра mood.",
+    buckets=(0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10),
 )
 
 # where: open | session | tts
@@ -205,32 +227,12 @@ GEMINI_QUOTA_ERRORS_TOTAL = Counter(
     ["where"],
 )
 
-# pipeline: live | cascade
-GEMINI_ADMISSION_TOTAL = Counter(
-    "agent_gemini_admission_total",
-    "Новые сокеты в режиме gemini_live: начаты в Gemini или, когда бюджет исчерпан (GEMINI_TPM_ENFORCE), в каскаде.",
-    ["pipeline"],
-)
-
-# reason: hard | cooldown
-GEMINI_TURNS_DEGRADED_TOTAL = Counter(
-    "agent_gemini_turns_degraded_total",
-    "Ходы идущего разговора, отданные шаблону без Gemini: окно у лимита (hard) или пауза после 1011 (cooldown).",
-    ["reason"],
-)
-
-GEMINI_BUDGET_WAIT_SECONDS = Histogram(
-    "agent_gemini_budget_wait_seconds",
-    "Сколько ход ждал места в окне токенов (GEMINI_TPM_ENFORCE), прежде чем уйти модели или в шаблон.",
-    buckets=(0.0, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0),
-)
-
 GEMINI_SESSIONS_OPEN = Gauge(
     "agent_gemini_sessions_open",
     "Открытые сейчас сессии Gemini Live (разговоры и озвучка фраз).",
 )
 
-# result: ok | failed | deferred. Смена сессии после ответа (GEMINI_TEXT_CONTEXT): новая сессия с текстовой историей вместо накопленного аудио.
+# result: ok | failed | deferred. Смена сессии после ответа: новая сессия с текстовой историей вместо накопленного аудио.
 GEMINI_CONTEXT_REFRESH_TOTAL = Counter(
     "agent_gemini_context_refresh_total",
     "Смены сессии Gemini Live с переносом контекста текстом.",
@@ -292,18 +294,17 @@ MEMORY_BRIEF_CACHE_TOTAL = Counter(
     ["result"],
 )
 
-# action: enable | disable | add | edit | active | pinned | confirm | delete | forget_all | export
-MEMORY_USER_ACTIONS_TOTAL = Counter(
-    "agent_memory_user_actions_total",
-    "Действия людей с памятью.",
-    ["action"],
-)
-
 # status: queued | running | done | skipped | failed
 MEMORY_JOBS = Gauge(
     "agent_memory_jobs",
     "Задания извлечения памяти в базе по статусам.",
     ["status"],
+)
+
+# Очередь операций Cognee (`memory_outbox`): сколько операций ждут выполнения или повтора.
+MEMORY_OUTBOX_PENDING = Gauge(
+    "agent_memory_outbox_pending",
+    "Операции Cognee (индекс разговоров, удаление) в очереди.",
 )
 
 # Возврат памяти процесса (app/core/reclaim.py, настройка MEMORY_RECLAIM_SECONDS). Сама память процесса и работа сборщика мусора видны в

@@ -8,7 +8,8 @@ import type { AppServerEnv } from './env'
  * Version policy: two axes, two owners, no bucket.
  *
  * - **JS/OTA** ships in step with the server - same commit, same deploy, same image - so it is
- *   baked in (`lib/ota-bundle.ts`) rather than read from anywhere at runtime.
+ *   baked in (`lib/ota-bundle.ts`) rather than read from anywhere at runtime. Only its minimum is in
+ *   env: whether a bundle is mandatory is decided after it is out, like the native minimum.
  * - **Native** (store min/latest build, store links) changes only on a store release, which does
  *   not happen in step with a deploy - RuStore takes hours, App Store up to three days of review -
  *   so it stays in env, meant for a ConfigMap the release process edits by hand.
@@ -17,14 +18,16 @@ import type { AppServerEnv } from './env'
  * process (env is a pod's spec, the bundle is baked into its image), so there is nothing to poll.
  */
 
-export interface NativePolicy {
+interface NativePolicy {
   minVersionCode: number
   latestVersionCode: number
   downloadUrl: string | null
 }
 
-export interface JsPolicy {
+interface JsPolicy {
   latestVersion: string | null
+  /** Clients below this apply the bundle at once rather than at the next launch. */
+  minVersion: string | null
   bundleUrl: string | null
   checksum: string | null
 }
@@ -40,7 +43,7 @@ const EMPTY_NATIVE: NativePolicy = { minVersionCode: 0, latestVersionCode: 0, do
 export const EMPTY_POLICY: ReleasePolicy = {
   android: EMPTY_NATIVE,
   ios: EMPTY_NATIVE,
-  js: { latestVersion: null, bundleUrl: null, checksum: null },
+  js: { latestVersion: null, minVersion: null, bundleUrl: null, checksum: null },
 }
 
 /**
@@ -98,7 +101,7 @@ function nativeOf(env: AppServerEnv, platform: AppPlatform): NativePolicy {
 }
 
 /** The policy for this process: native axis from env, JS axis from the bundle baked into the image. */
-export function buildReleasePolicy(env: AppServerEnv): ReleasePolicy {
+function buildReleasePolicy(env: AppServerEnv): ReleasePolicy {
   const bundle = otaBundleFor(env.APP_ENV)
   return {
     android: nativeOf(env, AppPlatform.Android),
@@ -106,6 +109,7 @@ export function buildReleasePolicy(env: AppServerEnv): ReleasePolicy {
     js: bundle
       ? {
           latestVersion: bundle.version,
+          minVersion: env.MOBILE_JS_MIN_VERSION ?? null,
           bundleUrl: `${env.PUBLIC_APP_URL}${otaBundlePath(bundle.file)}`,
           checksum: bundle.checksum,
         }
@@ -164,7 +168,11 @@ export function resolveAppStatus(
   let jsUpdate = UpdateAvailability.NotAvailable
   if (client.jsVersion !== null && bundleReachable && latestJs !== null) {
     const cmp = compareVersions(client.jsVersion, latestJs)
-    if (cmp < 0) jsUpdate = UpdateAvailability.Available
+    const belowMin =
+      policy.js.minVersion !== null && compareVersions(client.jsVersion, policy.js.minVersion) < 0
+    // Only a client behind the bundle can be pushed to it: a minimum above the bundle cannot be met,
+    // so the client that already runs the bundle is left alone.
+    if (cmp < 0) jsUpdate = belowMin ? UpdateAvailability.Required : UpdateAvailability.Available
     // A client newer than the server means a broken bundle is being rolled back: apply at once.
     else if (cmp > 0) jsUpdate = UpdateAvailability.Required
   }

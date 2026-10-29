@@ -6,7 +6,7 @@ interface Audio {
   stopped: number
   closed: number
   tracks: { stop: ReturnType<typeof vi.fn> }[]
-  /** The worklet's port: `emit` plays a 100 ms frame from the audio thread. */
+  /** The worklet's port: `emit` plays a 40 ms frame from the audio thread. */
   emit(samples: Int16Array): void
 }
 
@@ -128,15 +128,15 @@ describe('startCapture: без рук (gated)', () => {
     const audio = stubAudio()
     const sent: ArrayBuffer[] = []
     const capture = await startCapture((frame) => sent.push(frame), { gated: true })
-    for (let i = 1; i <= 20; i++) audio.emit(Int16Array.of(i))
+    for (let i = 1; i <= 30; i++) audio.emit(Int16Array.of(i))
     expect(sent).toEqual([])
 
     capture.open()
-    const kept = PRE_ROLL_MS / 100
+    const kept = Math.ceil(PRE_ROLL_MS / 40)
     // The held frames are the latest ones, in order: the first syllable comes before the detector fires.
-    expect(sent.map(firstSampleOf)).toEqual(Array.from({ length: kept }, (_, i) => 20 - kept + 1 + i))
-    audio.emit(Int16Array.of(21))
-    expect(sent.map(firstSampleOf).at(-1)).toBe(21)
+    expect(sent.map(firstSampleOf)).toEqual(Array.from({ length: kept }, (_, i) => 30 - kept + 1 + i))
+    audio.emit(Int16Array.of(31))
+    expect(sent.map(firstSampleOf).at(-1)).toBe(31)
     // Numbered from zero in the order they leave, without holes for the frames that never did.
     expect(sent.map(sequenceOf)).toEqual(Array.from({ length: kept + 1 }, (_, i) => i))
   })

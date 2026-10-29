@@ -15,10 +15,9 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from app.main import create_app
 from app.services.dialog_db import DialogDbError, DialogWrite
 from app.services.dialog_store import DialogStore
-from tests.conftest import AUTH, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 
 
@@ -58,7 +57,7 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
             [
                 DialogWrite(
                     dialog_id=dialog_id,
-                    row=(dialog_id, owner, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2, "on", 0),
+                    row=(dialog_id, owner, "2026-10-12T10:00:00.000Z", None, None, "Привет", "female", 2, "on", 0, True),
                     messages=[
                         ("m1", dialog_id, 0, "user", "Мне тревожно", "2026-10-12T10:00:01.000Z", 3.2),
                         ("m2", dialog_id, 1, "assistant", "Я рядом.", "2026-10-12T10:00:02.000Z", None),
@@ -84,8 +83,9 @@ def test_database_roundtrip_and_erase(tmp_path: Path) -> None:
     db.erase_user(user)  # идемпотентно
     assert db.load_user(user) == ([], None)
     assert len(db.load_user(other)[0]) == 1  # чужой не тронут
-    assert db.counts() == (1, 2)
-    assert {row[0] for row in db._state().usage} == {"d2"}  # расход стёртого ушёл вместе с диалогом
+    # Стирание мягкое: строки стёртого остаются с пометкой до физической очистки, чтения их не видят.
+    assert db.counts() == (2, 4)
+    assert {row[0] for row in db._state().usage} == {"d1", "d2"}
     db.close()
 
 
@@ -192,7 +192,7 @@ async def test_erase_removes_memory_and_disk_and_late_writes_do_not_bring_the_pe
     assert await store.flush()
     assert store.get(user, dialog.id) is None
     assert db.load_user(user) == ([], None)  # ни диалога, ни выбора голоса
-    assert db.counts() == (0, 0)
+    assert db.counts() == (1, 1)  # мягко: строки с пометкой ждут физической очистки, поздняя реплика не дописалась
     await store.erase_user_durable(user)  # повтор допустим
     await store.detach()
 
@@ -253,7 +253,7 @@ async def test_store_without_a_database_behaves_as_before() -> None:
 
 
 def app_client(path: Path) -> TestClient:
-    return TestClient(create_app(lambda: None, lambda: (None, None), database_factory=lambda: DialogDatabase(str(path))))
+    return TestClient(make_app(database_factory=lambda: DialogDatabase(str(path))))
 
 
 def say(client: TestClient, user: str, dialog_id: str, text: str, msg_id: str, until: str = "assistant_end") -> list[Any]:
@@ -334,7 +334,7 @@ def test_agent_keeps_serving_in_memory_when_the_disk_is_not_available(tmp_path: 
 
 
 def test_without_a_path_dialogs_are_in_memory_as_before() -> None:
-    with TestClient(create_app(lambda: None, lambda: (None, None))) as client:
+    with TestClient(make_app()) as client:
         assert client.get("/health/ready").json()["dialogs"] == "memory"
 
 

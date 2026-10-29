@@ -34,7 +34,7 @@ export const LIT_BUTTON = cn(
   FOCUS_RING,
 )
 
-export function BrandMark({ size = 28 }: { size?: number }) {
+function BrandMark({ size = 28 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
       <rect width="64" height="64" rx="16" fill="#00051a" />

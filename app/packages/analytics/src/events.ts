@@ -104,16 +104,72 @@ export enum AnalyticsEvent {
   MemoryScreenOpened = 'memory_screen_opened',
   /** The switch "Запоминать" took effect (on after the consent sheet, or off). */
   MemoryEnabled = 'memory_enabled',
-  /** One action on one fact on the screen "Память"; `delete` is counted when the request goes, after "Вернуть" had its chance. */
-  MemoryFactAction = 'memory_fact_action',
   /** "Забыть всё" was confirmed and done. */
   MemoryForgetAll = 'memory_forget_all',
   /** "Скачать мою память": the file was handed to the person. */
   MemoryExport = 'memory_export',
   /** The switch "Без памяти" on home, before a conversation. */
   MemoryIncognitoToggled = 'memory_incognito_toggled',
-  /** A point of the card "Я запомнил" after a conversation was taken off or accepted. */
-  MemoryCardAction = 'memory_card_action',
+  /** The sheet "Что помнит Рядом" was opened. */
+  MemorySheetOpened = 'memory_sheet_opened',
+  /** A note was corrected by hand and saved. */
+  MemoryNoteEdited = 'memory_note_edited',
+  /**
+   * A note was deleted with "×" of the sheet (no `source`), or with "Убрать" of the block "Я запомнил" (`source: 'recap'`, never
+   * `undone`: there is no "Вернуть" there); `undone` when "Вернуть" took it back within its seconds.
+   */
+  MemoryNoteDeleted = 'memory_note_deleted',
+  /** The block "Я запомнил" came up in the closing window of a conversation. Neither a text, a kind nor a count. */
+  MemoryRecapShown = 'memory_recap_shown',
+  /** "Скажи, что поправить или убрать" was used. */
+  MemoryInstructionUsed = 'memory_instruction_used',
+  /** "Удалить всю память" was confirmed and done. */
+  MemoryReset = 'memory_reset',
+  /** One of the three switches of the section changed. */
+  MemorySettingChanged = 'memory_setting_changed',
+  // ── Mood diary (REQ-WELL-01…04). Only that an action happened: never a mood, a factor or a text. ──
+  /** Server. A note of the day was saved or replaced. */
+  MoodCheckedIn = 'mood_checked_in',
+  /** Server. A week summary was written by the background pass or re-run by hand («Обновить итоги»). */
+  WeekSummaryGenerated = 'week_summary_generated',
+  /** Client. A diary segment was opened. */
+  DiaryOpened = 'diary_opened',
+  /** Client. A tap on the bridge after a heavy day: «Поговорить» or «Люди рядом». */
+  MoodBridgeClicked = 'mood_bridge_clicked',
+
+  // ── Self-check tests ────────────────────────────────────────────────────────────────────────
+  // Which test and which step, never a score, a level, an answer or whether a crisis item fired: the
+  // crisis help screen has no event of its own (only the server counter `self_check_crisis_total{test}`),
+  // and the card "Поговорить со специалистом" is not counted because a tap on it would show a high level.
+  /** The list of tests was opened: in the diary block, in the segment "Тесты" or on the screen of one test. */
+  SelfCheckOpened = 'self_check_opened',
+  /** A search in the catalog: whether it found anything, never the words. */
+  SelfCheckSearched = 'self_check_searched',
+  /** The first question was shown. */
+  SelfCheckStarted = 'self_check_started',
+  /** "← Назад" on a question. */
+  SelfCheckStepBack = 'self_check_step_back',
+  /** "Прервать тест?" was answered: go on or stop. `progress` is a third of the way, not the exact question. */
+  SelfCheckInterruptChoice = 'self_check_interrupt_choice',
+  /** The last question was answered and the result was computed. Nothing about the result is reported. */
+  SelfCheckCompleted = 'self_check_completed',
+  /** A button on the result sheet. */
+  SelfCheckResultAction = 'self_check_result_action',
+  /** The sheet of consent for storing results was shown / answered. */
+  SelfCheckConsentShown = 'self_check_consent_shown',
+  SelfCheckConsentChoice = 'self_check_consent_choice',
+  /** Saving failed on the client ("Не получилось сохранить"). */
+  SelfCheckSaveFailed = 'self_check_save_failed',
+  /** The screen of one test, with the history and the chart. */
+  SelfCheckHistoryOpened = 'self_check_history_opened',
+  /** The warning before a clinical screening (wave 3) was answered. */
+  SelfCheckWarningChoice = 'self_check_warning_choice',
+  /** Server: a result was saved (the server recomputed it from the answers). */
+  SelfCheckSaved = 'self_check_saved',
+  /** Server: results were deleted: one, all of one test, or all of them. */
+  SelfCheckResultDeleted = 'self_check_result_deleted',
+  /** Server: the consent for storing results was withdrawn. */
+  SelfCheckConsentRevoked = 'self_check_consent_revoked',
 
   // ── Client: the landing ─────────────────────────────────────────────────────────────────────
   FaqOpened = 'faq_opened',
@@ -214,11 +270,22 @@ export type ResumeChoice = 'continue' | 'new' | 'dismissed'
 
 export type ProfileField = 'name' | 'voice'
 
-/** What was done with a fact of memory: the names are those of the buttons' meaning, never of the fact. */
-export type MemoryFactActionName = 'edit' | 'pin' | 'unpin' | 'delete' | 'confirm' | 'accept' | 'decline'
+/** Which switch of the memory section: "Память", "Запоминать чувствительное", "Опираться на прошлые разговоры". */
+export type MemorySettingName = 'memory' | 'sensitive' | 'chat_search'
 
-/** A point of the card "Я запомнил": taken off ("убрать") or accepted ("Запомнить"). */
-export type MemoryCardActionName = 'dismiss_item' | 'accept_item'
+/** Where a note was deleted: the sheet "Что помнит Рядом" (the default, no `source`) or the block "Я запомнил" of the closing window. */
+export type MemoryNoteSource = 'sheet' | 'recap'
+
+/** Where the list of tests was opened from. */
+export type SelfCheckFrom = 'diary' | 'tests' | 'history'
+/** A test id from the catalog (`phq9`, `gad7`…): a fixed short set, never typed by a person. */
+export type SelfCheckTestId = string
+export type SelfCheckProgress = 'first_third' | 'second_third' | 'last_third'
+export type SelfCheckResultActionName = 'close' | 'save' | 'copy_summary' | 'retake'
+export type SelfCheckDeleteScope = 'one' | 'test' | 'all'
+
+export type DiaryTab = 'diary' | 'journal' | 'tests'
+export type MoodSourceName = 'app' | 'widget' | 'reminder' | 'telegram'
 
 export type PasswordChangeKind = 'change' | 'reset'
 
@@ -307,14 +374,39 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }
   [AnalyticsEvent.MemoryScreenOpened]: NoProperties
   [AnalyticsEvent.MemoryEnabled]: { enabled: boolean }
-  [AnalyticsEvent.MemoryFactAction]: { action: MemoryFactActionName }
   [AnalyticsEvent.MemoryForgetAll]: NoProperties
   [AnalyticsEvent.MemoryExport]: NoProperties
   [AnalyticsEvent.MemoryIncognitoToggled]: { on: boolean }
-  [AnalyticsEvent.MemoryCardAction]: { action: MemoryCardActionName }
+  [AnalyticsEvent.MemorySheetOpened]: { source: 'profile' }
+  [AnalyticsEvent.MemoryNoteEdited]: NoProperties
+  [AnalyticsEvent.MemoryNoteDeleted]: { undone: boolean; source?: MemoryNoteSource }
+  [AnalyticsEvent.MemoryRecapShown]: NoProperties
+  [AnalyticsEvent.MemoryInstructionUsed]: NoProperties
+  [AnalyticsEvent.MemoryReset]: NoProperties
+  [AnalyticsEvent.MemorySettingChanged]: { setting: MemorySettingName; enabled: boolean }
+  [AnalyticsEvent.MoodCheckedIn]: { source: MoodSourceName; with_factor: boolean; changed: boolean }
+  [AnalyticsEvent.WeekSummaryGenerated]: { trigger: 'button' | 'auto' }
+  [AnalyticsEvent.DiaryOpened]: { tab: DiaryTab }
+  [AnalyticsEvent.MoodBridgeClicked]: { target: 'dialog' | 'people' }
   [AnalyticsEvent.InstallPrompt]: { action: InstallPromptAction }
   [AnalyticsEvent.AppUpdate]: { kind: AppUpdateKind; action: AppUpdateAction }
   [AnalyticsEvent.OfflineShown]: NoProperties
+
+  [AnalyticsEvent.SelfCheckOpened]: { from: SelfCheckFrom }
+  [AnalyticsEvent.SelfCheckSearched]: { found: boolean }
+  [AnalyticsEvent.SelfCheckStarted]: { test_id: SelfCheckTestId; from: SelfCheckFrom }
+  [AnalyticsEvent.SelfCheckStepBack]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckInterruptChoice]: { test_id: SelfCheckTestId; action: 'continue' | 'abort'; progress: SelfCheckProgress }
+  [AnalyticsEvent.SelfCheckCompleted]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckResultAction]: { test_id: SelfCheckTestId; action: SelfCheckResultActionName }
+  [AnalyticsEvent.SelfCheckConsentShown]: NoProperties
+  [AnalyticsEvent.SelfCheckConsentChoice]: { action: 'accepted' | 'declined' }
+  [AnalyticsEvent.SelfCheckSaveFailed]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckHistoryOpened]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckWarningChoice]: { test_id: SelfCheckTestId; action: 'start' | 'later' }
+  [AnalyticsEvent.SelfCheckSaved]: { test_id: SelfCheckTestId }
+  [AnalyticsEvent.SelfCheckResultDeleted]: { scope: SelfCheckDeleteScope }
+  [AnalyticsEvent.SelfCheckConsentRevoked]: NoProperties
 
   [AnalyticsEvent.FaqOpened]: { question: string }
   [AnalyticsEvent.StoreLinkClicked]: { store: StoreLink }

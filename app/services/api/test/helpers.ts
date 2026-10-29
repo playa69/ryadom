@@ -14,7 +14,7 @@ import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 export const PASSWORD = 'correct-horse-battery'
 
 /** Version policy straight from an object: tests need no env and no OTA bundle on disk. */
-export function staticPolicy(policy: ReleasePolicy = EMPTY_POLICY): PolicySource {
+function staticPolicy(policy: ReleasePolicy = EMPTY_POLICY): PolicySource {
   return { get: () => policy }
 }
 
@@ -53,7 +53,6 @@ export function recordingAnalytics(): RecordingAnalytics {
     capture: (userId, event, ...args) => void events.push({ userId, event, properties: { ...args[0] } }),
     captureAnonymous: (event, ...args) => void events.push({ userId: null, event, properties: { ...args[0] } }),
     identify: (userId, traits) => void identified.push({ userId, traits: { ...traits } }),
-    isFeatureEnabled: async () => false,
     captureException: () => {},
     shutdown: async () => {},
   }
@@ -68,7 +67,6 @@ const DISABLED_ANALYTICS: ServerAnalytics = {
   capture() {},
   captureAnonymous() {},
   identify() {},
-  isFeatureEnabled: async () => false,
   captureException() {},
   shutdown: async () => {},
 }
@@ -168,7 +166,9 @@ export function json(body: unknown, status = 200): Response {
 }
 
 /** A fetch stub: the key is "METHOD origin/path", and `*` in the path matches one segment. */
-export function mockFetch(routes: Record<string, Route>) {
+export function mockFetch(given: Record<string, Route>) {
+  // The diary reads the recaps of the week's conversations with the marks: unless a test says otherwise there are none.
+  const routes: Record<string, Route> = { 'GET http://agent.test/v1/users/*/recaps': () => json({ items: [], next: null }), ...given }
   const calls: { method: string; url: URL; body: string; headers: Headers }[] = []
   const patterns = Object.keys(routes)
     .sort((a, b) => b.length - a.length)
@@ -199,7 +199,7 @@ export function mockFetch(routes: Record<string, Route>) {
  * `new: true` the open dialog is ended and a fresh one created (`resumed: false`), except that an empty
  * one is just reused. Ids go d-1, d-2, ...; `say` puts messages into the person's open dialog.
  */
-export function fakeAgentDialogs() {
+function fakeAgentDialogs() {
   let counter = 0
   const open = new Map<string, { id: string; messages: number; lastActivityAt: string | null }>()
   /** Dialogs a fresh start ended, in order. */
@@ -262,7 +262,7 @@ export function mockAgent(overrides: Record<string, Route> = {}) {
 }
 
 /** What the first screen of the app sends: all three agreements, in the version it showed. */
-export async function acceptConsents(app: Hono<AppEnv>, accessToken: string): Promise<void> {
+async function acceptConsents(app: Hono<AppEnv>, accessToken: string): Promise<void> {
   ok(
     await call(
       app,

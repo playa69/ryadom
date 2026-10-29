@@ -5,16 +5,16 @@ import { PwaMeta } from '@ryadom/contracts/pwa'
  *
  * Two builds rather than two environments:
  * - prod always points at prod, and the switcher code is physically absent from its bundle;
- * - dev points at staging by default and can switch to local and prod (seven taps on the logo on
- *   the sign-in screen, or on the version in the profile).
+ * - dev points at local by default and can switch to prod (seven taps on the logo on the sign-in
+ *   screen, or on the version in the profile).
  *
  * All switcher code lives in env-switcher.ts and is imported only under the
  * `import.meta.env.VITE_FLAVOR === 'dev'` check, spelled out as a literal in place: in a prod build
  * Vite substitutes `"prod" === "dev"`, and the minifier drops the branch together with the module,
- * and with it the staging and local URLs.
+ * and with it the local URLs.
  */
 
-export type EnvId = 'local' | 'staging' | 'prod'
+export type EnvId = 'local' | 'prod'
 
 export interface Endpoints {
   /** No trailing slash. An empty string means the same origin (web build, Vite dev server). */
@@ -41,7 +41,7 @@ export function prodEndpoints(): Endpoints {
  * website URL arrives in a meta tag that the PWA image inserts into index.html when its container
  * starts.
  */
-export function webEndpoints(): Endpoints {
+function webEndpoints(): Endpoints {
   const meta = document.querySelector(`meta[name="${PwaMeta.WebUrl}"]`)
   return { apiBase: '', webUrl: trimSlash(meta?.getAttribute('content') ?? '') }
 }
@@ -86,13 +86,4 @@ export function getWsBase(): string {
   const base = getApiBase()
   if (base) return base.replace(/^http/, 'ws')
   return `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
-}
-
-/**
- * The environment the server served the page from, web build only: one image serves both staging
- * and prod, so there is no other way to tell them apart.
- */
-export function getServerAppEnv(): EnvId | null {
-  const value = document.querySelector(`meta[name="${PwaMeta.AppEnv}"]`)?.getAttribute('content')
-  return value === 'local' || value === 'staging' || value === 'prod' ? value : null
 }

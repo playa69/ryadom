@@ -17,8 +17,6 @@ export enum DialogShareApiErrorCode {
   SHARE_EXISTS = 'SHARE_EXISTS',
   /** The account holds as many active links as it may. */
   SHARE_LIMIT = 'SHARE_LIMIT',
-  /** Links are switched off on the server. */
-  SHARE_DISABLED = 'SHARE_DISABLED',
 }
 
 export interface CreateDialogShareApiRequest {

@@ -23,9 +23,8 @@ export enum AppPlatform {
 }
 
 /**
- * Tracing headers: the same five that `backend/` and `agent/` take and pass on
- * (`.agents/skills/api-headers-rules`). The app sends them on every request, the API puts them in
- * its log records and forwards them to the agent. Lower case, as they travel on the wire.
+ * Tracing headers (`app/AGENTS.md`). The app sends them on every request, the API puts them in its
+ * log records and forwards them to the agent. Lower case, as they travel on the wire.
  */
 export enum TracingHeader {
   /** Id of one request, the same in the logs of every service it passes through (`rqUId`). */

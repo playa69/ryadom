@@ -30,6 +30,11 @@ export const tokens = {
   sage50: 'rgba(121, 210, 194, 0.12)',
   sage100: 'rgba(121, 210, 194, 0.28)',
 
+  mood1: '#e5645f',
+  mood2: '#ee9a55',
+  mood3: '#e9d36b',
+  mood4: '#86cf86',
+  mood5: '#4ec5d9',
   danger: '#ff7a7a',
   danger600: '#d13333',
   danger50: 'rgba(255, 107, 107, 0.12)',

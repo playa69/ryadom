@@ -6,7 +6,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./migrate": "./src/migrate.ts"
+    "./migrate": "./src/migrate.ts",
+    "./jobs": "./src/jobs/index.ts",
+    "./job-queues": "./src/jobs/queues.ts",
+    "./test-db": "./src/test-db.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -17,8 +20,8 @@
     "build": "node build.mjs"
   },
   "dependencies": {
-    "@opentelemetry/api": "^1.9.1",
     "drizzle-orm": "^0.45.3",
+    "pg-boss": "12.38.0",
     "postgres": "^3.4.9"
   },
   "devDependencies": {

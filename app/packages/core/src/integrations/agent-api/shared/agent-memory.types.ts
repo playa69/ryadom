@@ -5,12 +5,8 @@
  * log, an error message or analytics. Ids, codes and counts may.
  */
 
-/** Whether the feature works on the agent at all; not the person's own switch. */
-export const AGENT_MEMORY_MODES = ['off', 'shadow', 'on'] as const
-export type AgentMemoryMode = (typeof AGENT_MEMORY_MODES)[number]
-
 /** Memory for one dialog: `off` is a conversation "without memory". */
-export const AGENT_DIALOG_MEMORY_MODES = ['on', 'off'] as const
+const AGENT_DIALOG_MEMORY_MODES = ['on', 'off'] as const
 export type AgentDialogMemoryMode = (typeof AGENT_DIALOG_MEMORY_MODES)[number]
 
 export const AGENT_MEMORY_FACT_CATEGORIES = [
@@ -25,7 +21,7 @@ export const AGENT_MEMORY_FACT_CATEGORIES = [
 ] as const
 export type AgentMemoryFactCategory = (typeof AGENT_MEMORY_FACT_CATEGORIES)[number]
 
-export const AGENT_MEMORY_FACT_STATUSES = ['candidate', 'proposed', 'active', 'pinned', 'expired'] as const
+export const AGENT_MEMORY_FACT_STATUSES = ['candidate', 'proposed', 'active', 'expired'] as const
 export type AgentMemoryFactStatus = (typeof AGENT_MEMORY_FACT_STATUSES)[number]
 
 export const AGENT_MEMORY_FACT_ORIGINS = ['auto', 'user_said', 'user_edit'] as const
@@ -34,6 +30,11 @@ export type AgentMemoryFactOrigin = (typeof AGENT_MEMORY_FACT_ORIGINS)[number]
 export const AGENT_MEMORY_FACT_SENSITIVITIES = ['normal', 'sensitive'] as const
 export type AgentMemoryFactSensitivity = (typeof AGENT_MEMORY_FACT_SENSITIVITIES)[number]
 
+/**
+ * `skipped` is what an agent older than this gateway answers for a conversation that has nothing to list ("without memory",
+ * memory off, too short). The agent now answers an empty `ready`; the gateway still accepts the old word until every agent is
+ * the new one, and `toMemoryChangesDTO` turns it into that `ready`.
+ */
 export const AGENT_MEMORY_CHANGES_STATUSES = ['pending', 'ready', 'skipped'] as const
 export type AgentMemoryChangesStatus = (typeof AGENT_MEMORY_CHANGES_STATUSES)[number]
 
@@ -72,27 +73,42 @@ export interface AgentMemoryFactResponse {
   /** ISO 8601, as the agent wrote them. */
   createdAt: string
   updatedAt: string
-  lastConfirmedAt: string | null
   expiresAt: string | null
-  confirmCount: number
   seenByUser: boolean
+}
+
+/** One note as the agent returns it (`design.md` D3). */
+export interface AgentMemoryNoteResponse {
+  id: string
+  kind: string
+  text: string
+  sensitive: boolean
+  eventDate: string | null
+  createdAt: string
+  updatedAt: string
+  dialogId: string | null
 }
 
 /** `GET /memory`. */
 export interface AgentMemoryResponse {
   available: boolean
-  mode: AgentMemoryMode
   enabled: boolean
   consentVersion: string | null
   consentAt: string | null
   rulesVersion: string
-  limits: { maxFacts: number | null }
+  limits: { maxFacts: number | null; maxNotes: number | null }
+  paused: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
+  notes: AgentMemoryNoteResponse[]
   facts: AgentMemoryFactResponse[]
 }
 
 /** `PUT /memory/settings`. */
 export interface AgentMemorySettingsResponse {
   enabled: boolean
+  sensitiveEnabled: boolean
+  chatSearchEnabled: boolean
   consentVersion: string | null
   consentAt: string | null
 }
@@ -125,6 +141,7 @@ export interface AgentMemoryExportResponse {
     epochAt: string | null
     updatedAt: string | null
   }
+  notes: AgentMemoryNoteResponse[]
   facts: AgentMemoryFactResponse[]
   events: AgentMemoryEventResponse[]
 }

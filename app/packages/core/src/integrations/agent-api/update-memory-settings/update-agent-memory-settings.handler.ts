@@ -23,7 +23,12 @@ export class UpdateAgentMemorySettingsRequestHandler implements RequestHandler<
       `${userMemoryPath(request.userId)}/settings`,
       {
         method: 'PUT',
-        body: { enabled: request.enabled, consentVersion: request.consentVersion },
+        body: {
+          ...(request.enabled !== undefined ? { enabled: request.enabled } : {}),
+          consentVersion: request.consentVersion,
+          ...(request.sensitiveEnabled !== undefined ? { sensitiveEnabled: request.sensitiveEnabled } : {}),
+          ...(request.chatSearchEnabled !== undefined ? { chatSearchEnabled: request.chatSearchEnabled } : {}),
+        },
         handledErrorCodes: ['MEMORY_UNAVAILABLE'],
       },
     )
@@ -31,8 +36,6 @@ export class UpdateAgentMemorySettingsRequestHandler implements RequestHandler<
     switch (errorCode) {
       case 'MEMORY_UNAVAILABLE':
         return { success: false, error: UpdateAgentMemorySettingsRequestErrorCode.MEMORY_UNAVAILABLE }
-      case 'MEMORY_NOT_ALLOWED':
-        return { success: false, error: UpdateAgentMemorySettingsRequestErrorCode.MEMORY_NOT_ALLOWED }
       case 'AGENT_VALIDATION':
         // Our input as the agent read it. The same code on a 404 is a route an older agent does not have.
         if (status === 400 || status === 422) {

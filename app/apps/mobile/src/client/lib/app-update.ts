@@ -5,7 +5,7 @@ import { AppHeader, AppPlatform } from '@ryadom/contracts/api/headers'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { reportAppUpdate } from './analytics'
 import { getVersionInfo } from './device'
-import { getApiBase, getEnvId } from './env'
+import { getApiBase } from './env'
 import { onNetworkChange } from './native'
 import { isIosNative, isNative, isWebBuild } from './platform'
 import { initServiceWorker } from './service-worker'
@@ -21,8 +21,8 @@ import { initServiceWorker } from './service-worker'
  * uses a service worker instead.
  */
 
-/** Version of this JS bundle: `version` from package.json at the time it was built. */
-const JS_VERSION = __APP_VERSION__
+/** Version of this JS: the version the OTA manifest gives it, so that an applied bundle stops being offered. */
+const JS_VERSION = __JS_VERSION__
 
 const LAST_VERSION_CODE_KEY = 'ryadom.update.lastVersionCode'
 const NEXT_BUNDLE_KEY = 'ryadom.update.nextJsVersion'
@@ -40,8 +40,6 @@ export type UpdateUiState =
   | { kind: 'store-banner'; storeUrl: string | null; downloadUrl: string | null; versionCode: number }
   /** A mandatory JS bundle is downloading and is about to restart the WebView. */
   | { kind: 'js-updating' }
-  /** A mandatory update is waiting for a critical operation to finish. */
-  | { kind: 'pending' }
   /** Web build: a new service worker is installed and waiting to activate (lib/service-worker.ts). */
   | { kind: 'web-update' }
 
@@ -57,13 +55,13 @@ function currentPlatform(): AppPlatform {
 }
 
 /**
- * Whether this build is on its own OTA channel. Bundles are built per flavour: prod serves prod
- * bundles, staging serves dev bundles. A dev build pointed at prod must not pick up a foreign
- * bundle, and must not send its JS version there either, or a foreign minimum could lock it out.
+ * Whether this build takes OTA bundles: only the prod flavour, the only one prod serves. A dev build
+ * pointed at prod must not pick up a foreign bundle, and must not send its JS version there either, or
+ * a foreign minimum could lock it out.
  */
 function otaEnabled(): boolean {
   if (!isNative()) return false
-  return import.meta.env.VITE_FLAVOR === 'prod' || getEnvId() === 'staging'
+  return import.meta.env.VITE_FLAVOR === 'prod'
 }
 
 /**
@@ -81,33 +79,9 @@ export async function getVersionHeaders(): Promise<Record<string, string>> {
   }
 }
 
-// ─── critical operations ──────────────────────────────────────────────────────
-
-let criticalOps = 0
-let pendingRequired: AppStatusApiResponse | null = null
-
-/**
- * A mandatory update must not restart the WebView in the middle of a photo
- * upload or a message being sent: operations wrapped here defer applying it
- * until they finish.
- */
-export async function withCriticalOperation<T>(operation: () => Promise<T>): Promise<T> {
-  criticalOps++
-  try {
-    return await operation()
-  } finally {
-    criticalOps--
-    if (criticalOps === 0 && pendingRequired) {
-      const status = pendingRequired
-      pendingRequired = null
-      void applyRequired(status)
-    }
-  }
-}
-
 // ─── status check ─────────────────────────────────────────────────────────────
 
-export type CheckTrigger = 'launch' | 'resume' | 'network' | 'http-426'
+type CheckTrigger = 'launch' | 'resume' | 'network' | 'http-426'
 
 // resume and network fire often, so at most once a minute; launch and 426 always run.
 const ROUTINE_THROTTLE_MS = 60_000
@@ -116,7 +90,7 @@ let inFlight: Promise<void> | null = null
 let lastCheckAt = 0
 let firstRunAfterNativeUpdate = false
 
-export function checkAppStatus(trigger: CheckTrigger): Promise<void> {
+function checkAppStatus(trigger: CheckTrigger): Promise<void> {
   if (!isNative()) return Promise.resolve()
   if ((trigger === 'resume' || trigger === 'network') && Date.now() - lastCheckAt < ROUTINE_THROTTLE_MS) {
     return Promise.resolve()
@@ -205,12 +179,7 @@ async function handleStatus(status: AppStatusApiResponse): Promise<void> {
   switch (jsUpdate) {
     case UpdateAvailability.Required:
       if (!status.jsBundleUrl) break
-      if (criticalOps > 0) {
-        pendingRequired = status
-        emit({ kind: 'pending' })
-      } else {
-        await applyRequired(status)
-      }
+      await applyRequired(status)
       return // the WebView is about to restart, so the banner is pointless
     case UpdateAvailability.Available:
       if (status.jsBundleUrl) void downloadForNextLaunch(status)

@@ -18,14 +18,14 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from app.api.dialog_live import LiveTurn
-from app.api.dialog_ws import DialogSession, Synthesis
+from app.api.dialog_session import DialogSession, LiveTurn, Synthesis
 from app.clients.gemini_live import GeminiLiveLink
 from app.core import reclaim
 from app.core.config import APP_CONFIG
 from app.core.reclaim import MemoryReclaimer, forget_cancellation
-from tests.conftest import AUTH, FakeChat, FakeTts, has, make_client, read_frames, send_user_message, start_dialog, ws_url
-from tests.test_live import FakeConnector, make_live_client, reply_done, speak_turn
+from tests.conftest import AUTH, FakeTts, has, make_client, read_frames, send_user_message, start_dialog, ws_url
+from tests.fake_live import FakeConnector, reply_done, speak_turn
+from tests.test_live import make_live_client
 
 OURS = (DialogSession, Synthesis, LiveTurn, GeminiLiveLink)
 
@@ -115,6 +115,34 @@ def test_a_closed_live_session_leaves_no_cycles_of_our_code(user_id: str) -> Non
     assert ours_in(cyclic_garbage()) == []
 
 
+def test_a_session_closed_while_the_memory_loads_leaves_no_cycles(user_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Загрузка памяти, не успевшая к открытию сессии, идёт и после закрытия сокета; дойдя, она не оставляет сеанс в цикле."""
+    monkeypatch.setattr("app.api.dialog_session.MEMORY_WAIT_SECONDS", 0.05)
+    loaded = threading.Event()
+    gc.collect()
+    with make_live_client(FakeConnector(turn_complete=True), FakeTts()) as client:
+        store = client.app.state.store
+        real = store.memory
+
+        class SlowMemory:
+            def __getattr__(self, name: str) -> Any:
+                return getattr(real, name)
+
+            async def prepare(self, dialog: Any) -> None:
+                await asyncio.sleep(0.3)
+                loaded.set()
+
+        store.memory = SlowMemory()
+        dialog = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
+            send_user_message(ws, "c-1", "Мне сегодня тревожно")
+            read_frames(ws, reply_done)
+            assert not loaded.is_set()  # сокет закрывается, пока память ещё грузится
+        assert loaded.wait(3)
+        time.sleep(0.05)  # колбэки законченной задачи
+    assert ours_in(cyclic_garbage()) == []
+
+
 def test_cut_off_speech_leaves_no_cycles_of_our_code(user_id: str) -> None:
     class Slow(FakeTts):
         async def stream(self, text: str, voice: str = "male") -> Any:
@@ -123,7 +151,7 @@ def test_cut_off_speech_leaves_no_cycles_of_our_code(user_id: str) -> None:
             yield b"\x01\x00" * 4800
 
     gc.collect()
-    with make_client(Slow(), chat=FakeChat(reply="Первый ответ.")) as client:
+    with make_client(Slow(), connector=FakeConnector(reply="Первый ответ.")) as client:
         dialog = start_dialog(client, user_id)
         with client.websocket_connect(ws_url(user_id, dialog["dialogId"]), headers=AUTH) as ws:
             read_frames(ws, lambda f: has(f, "tts_start"))  # приветствие зазвучало и застряло
