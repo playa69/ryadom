@@ -26,7 +26,7 @@ import json
 import logging
 import re
 from array import array
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
 import httpx
@@ -208,6 +208,9 @@ class SaluteSpeaker:
 
 class SberVoiceLink:
     """Соединение одного голоса: сессия распознавания, сессия синтеза и история разговора для GigaChat."""
+
+    # Токены GigaChat не входят в окно токенов Gemini (`GEMINI_TPM_LIMIT`), даже когда эта ссылка запасная у пути Gemini Live.
+    counts_tokens = False
 
     def __init__(
         self,
@@ -595,7 +598,8 @@ class SaluteTts:
 
 
 class FallbackTts:
-    """Фраза голосом основного провайдера, а если он не дал ни кусочка звука, — запасного (Gemini Live)."""
+    """Фраза голосом основного провайдера, а если он не дал ни кусочка звука, — запасного: у пути Сбера это Gemini Live, у пути
+    Gemini Live — SaluteSpeech."""
 
     def __init__(self, primary: TextToSpeech, fallback: TextToSpeech) -> None:
         self._primary = primary
@@ -628,21 +632,44 @@ class FallbackTts:
 
 
 class FallbackConnector:
-    """Основной голосовой путь, а если его соединение не открылось, — запасной (Gemini Live). Оборвался основной посреди
-    разговора — сессия открывает соединение заново (`DialogSession._ensure_link`), и снова сначала основной."""
+    """Основной голосовой путь, а если его соединение не открылось, — запасной: у пути Сбера это Gemini Live, у пути Gemini
+    Live — Сбер. Оборвался основной посреди разговора — сессия открывает соединение заново (`DialogSession._ensure_link`), и
+    снова сначала основной.
 
-    def __init__(self, primary: LiveConnector, fallback: LiveConnector) -> None:
+    `skip_primary`: основной путь сейчас заведомо откажет (пауза после отказа Google по квоте), открывать его незачем.
+    `on_primary_error`: основной путь не открылся — вызывающий узнаёт об этом (так отказ по квоте при открытии начинает паузу).
+    """
+
+    # Сессия разговора видит: у соединителя есть куда отступить, поэтому пауза основного пути не должна задерживать открытие.
+    has_fallback = True
+
+    def __init__(
+        self,
+        primary: LiveConnector,
+        fallback: LiveConnector,
+        model: str | None = None,
+        skip_primary: Callable[[], bool] | None = None,
+        on_primary_error: Callable[[Exception], None] | None = None,
+    ) -> None:
         self._primary = primary
         self._fallback = fallback
+        self._skip_primary = skip_primary
+        self._on_primary_error = on_primary_error
         self.name = f"{primary.name}>{fallback.name}"
-        # Расход пишется по модели соединения (`LiveLink.model`); у соединения без неё это модель запасного пути.
-        self.model = fallback.model
+        # Расход пишется по модели соединения (`LiveLink.model`); у соединения без неё — по модели Gemini Live: у ссылки пути
+        # Сбера своя модель, у ссылки Gemini её нет. По умолчанию это модель запасного пути (путь Сбера с запасным Gemini).
+        self.model = model or fallback.model
 
     async def open(self, voice: Voice, instructions: str, history: LiveHistory | None = None) -> LiveLink:
+        if self._skip_primary is not None and self._skip_primary():
+            logger.info("голосовой путь %s на паузе, разговор идёт на %s", self._primary.name, self._fallback.name)
+            return await self._fallback.open(voice, instructions, history)
         try:
             return await self._primary.open(voice, instructions, history)
         except LiveError as error:
             logger.warning("голосовой путь %s не открылся, разговор идёт на %s: %s", self._primary.name, self._fallback.name, error)
+            if self._on_primary_error is not None:
+                self._on_primary_error(error)
             return await self._fallback.open(voice, instructions, history)
 
     async def aclose(self) -> None:

@@ -317,8 +317,8 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
         pipeline = dialog.pipeline if dialog.pipeline in app.state.pipelines else app.state.default_pipeline
         connector, tts_source = app.state.pipelines.get(pipeline, (app.state.live, lambda: app.state.tts))
         logger.info("socket pipeline dialog=%s pipeline=%s voice=%s", dialog.id, pipeline, connector.name)
-        # Окно токенов Gemini считает только разговоры Gemini Live: токены GigaChat его квоту не тратят (запасной Gemini в пути
-        # Сбера тоже не учитывается — он редкий).
+        # Окно токенов Gemini считает только разговоры Gemini Live: токены GigaChat его квоту не тратят. Запасной Gemini в пути
+        # Сбера не учитывается (он редкий), а запасной Сбер в пути Gemini Live сессия сама оставляет вне окна (`counts_tokens`).
         budget = app.state.budget if pipeline == "gemini" else None
         # Тон реплики: у пути Сбера свой классификатор (GigaChat), у Gemini Live — Gemini.
         mood = app.state.moods.get(pipeline, "gemini")

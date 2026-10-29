@@ -160,6 +160,25 @@ async def test_fallback_connector_uses_sber_when_it_opens() -> None:
     assert link.voice_name == "sber" and gemini.opened == 0
 
 
+async def test_gemini_live_path_falls_back_to_sber_and_reports_the_refusal() -> None:
+    gemini, sber = _Opener("gemini", fail=True), _Opener("sber")
+    errors: list[Exception] = []
+    connector = FallbackConnector(gemini, sber, model="gemini-live", on_primary_error=errors.append)
+    link = await connector.open("male", "промпт")
+    assert link.voice_name == "sber" and gemini.opened == 1 and sber.opened == 1
+    assert len(errors) == 1 and "недоступен" in str(errors[0])
+    assert connector.model == "gemini-live" and connector.has_fallback
+
+
+async def test_fallback_connector_does_not_try_a_paused_primary() -> None:
+    gemini, sber = _Opener("gemini"), _Opener("sber")
+    paused = [True]
+    connector = FallbackConnector(gemini, sber, skip_primary=lambda: paused[0])
+    assert (await connector.open("male", "промпт")).voice_name == "sber" and gemini.opened == 0
+    paused[0] = False  # пауза кончилась: снова сначала основной путь
+    assert (await connector.open("male", "промпт")).voice_name == "gemini" and gemini.opened == 1
+
+
 class _Tts:
     def __init__(self, name: str, pieces: list[bytes] | None = None, fail_after: int | None = None) -> None:
         self.name = name

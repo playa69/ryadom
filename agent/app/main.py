@@ -209,17 +209,32 @@ def create_app(
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
             warm_up_parallel = WARM_UP_GEMINI_SESSIONS
-        # Голосовые пути: Gemini Live и, если есть ключ прокси, Сбер с запасным Gemini Live (фразы — SaluteSpeech, запасная озвучка — Gemini).
+        # Голосовые пути: Gemini Live и, если есть ключ прокси, Сбер. Запасные — друг для друга: путь Сбера при отказе уходит на
+        # Gemini Live (фразы — SaluteSpeech, запасная озвучка — Gemini), путь Gemini Live — на Сбер (фразы — Gemini, запасная
+        # озвучка — SaluteSpeech). Пока идёт пауза после отказа Google по квоте, путь Gemini Live не пробуется.
         app.state.pipelines = {"gemini": (live, lambda: app.state.tts)}
         app.state.moods = {}
         sber = make_sber()
         salute: CachedTts | None = None
         if sber is not None:
+            from app.clients.gemini_live import is_quota_error
             from app.clients.sber_voice import FallbackConnector, FallbackTts, SaluteTts
 
             salute = CachedTts(SaluteTts(sber), APP_CONFIG.speech.tts_cache_items or 1)
             sber_tts = FallbackTts(salute, app.state.tts) if app.state.tts is not None else salute
             app.state.pipelines["sber"] = (FallbackConnector(sber, live), lambda: sber_tts)
+
+            def gemini_open_failed(error: Exception) -> None:
+                if is_quota_error(str(error)):
+                    budget.on_quota_error("open")  # отказ по квоте при открытии начинает паузу, как и в разговоре без запасного пути
+
+            gemini_tts = FallbackTts(app.state.tts, salute) if app.state.tts is not None else salute
+            app.state.pipelines["gemini"] = (
+                FallbackConnector(
+                    live, sber, model=live.model, skip_primary=budget.cooling, on_primary_error=gemini_open_failed
+                ),
+                lambda: gemini_tts,
+            )
             # Тон реплики в пути Сбера — его же моделью; без своего классификатора шарик не красится, но и в Gemini слова не уходят.
             mood_classifier = getattr(sber, "mood_classifier", None)
             app.state.moods["sber"] = mood_classifier() if mood_classifier is not None else None

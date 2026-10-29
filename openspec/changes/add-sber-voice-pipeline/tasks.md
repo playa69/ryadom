@@ -1,7 +1,7 @@
 ## 0. Решения
 
 - [x] 0.1 Основной путь — Сбер, запасной — Gemini Live, путь новых разговоров выбирает администратор в админке (владелец,
-  PROTEUS-258). Приёмка: записано в `proposal.md`.
+  PROTEUS-258); 29.10.2026 владелец добавил обратное: запасной путь Gemini Live — Сбер. Приёмка: записано в `proposal.md`.
 - [x] 0.2 Селектор голосов в пути Сбера — решение владельца (29.10.2026): профиль показывает голоса действующего пути, выбор голоса
   Gemini сохраняется и возвращается с путём Gemini Live; делается в этом change (`design.md`, «Голос в профиле по пути»). Приёмка:
   записано в PROTEUS-258.
@@ -54,6 +54,12 @@
   `agent/tests/test_sber_voice.py` (разбор ответа, повтор), `agent/tests/test_voice_pipeline.py` (тон пути Сбера без Gemini,
   путь Сбера без своего классификатора не берёт Gemini).
 
+- [x] 2.8 Запасной путь Gemini Live — Сбер: `FallbackConnector(gemini, sber)` и `FallbackTts(gemini, salute)` в
+  `agent/app/main.py`, `skip_primary` и `on_primary_error` в `agent/app/clients/sber_voice.py`, `_can_open` и учёт токенов только
+  Gemini в `agent/app/api/dialog_session.py`; текст карточки «Gemini Live» в админке. Приёмка: `agent/tests/test_sber_voice.py`
+  (соединитель: отказ, пауза), `agent/tests/test_voice_pipeline.py` (Gemini не открылся — ответ Сбера, пауза после квоты — Сбер
+  сразу, токены Сбера не в окне Gemini).
+
 ## 3. Шлюз API
 
 - [x] 3.1 Лимит звуковых кадров — 50 в секунду с запасом 150 (`app/services/api/src/dialogs/limits.ts`). Приёмка:
@@ -89,8 +95,9 @@
   `app/e2e/tests/web-hands-free.spec.ts` (desktop) и `app/e2e/tests/app-dialog.spec.ts` (mobile); «(Сбер) Распознавание идёт по
   ходу речи» — `agent/tests/test_sber_voice.py` (пересчёт по кадрам) и живой прогон из 5.1.
 - [ ] 5.3 `dialog-voice`, «Озвучка ответов и фиксированных фраз», «Сбои голосовой модели», «Манера и границы ответов агента»,
-  «Выбор голоса агента» — сценарии «(Сбер)»: `agent/tests/test_sber_voice.py` (по предложениям, без списков, род, запасной путь
-  и запасная озвучка); голос и род — живой прогон из 5.1 (0 мужских форм о себе).
+  «Выбор голоса агента» — сценарии «(Сбер)» и «(Gemini Live)»: `agent/tests/test_sber_voice.py` (по предложениям, без списков, род,
+  запасные пути и запасная озвучка); `agent/tests/test_voice_pipeline.py` (запасной Сбер у Gemini Live, пауза после квоты); голос
+  и род — живой прогон из 5.1 (0 мужских форм о себе).
 - [x] 5.4 `dialog`, «Коды закрытия, ошибки и лимиты соединения»: `app/services/api/test/dialogs.test.ts` — кадры по 40 мс с
   запасом перед речью проходят, поток быстрее 50 в секунду сверх запаса — `RATE_LIMITED` и 4008.
 - [x] 5.5 `admin-console`, «Выбор голосового пути», «Журнал действий», «Каркас админки»: `app/packages/core/test/voice-settings.test.ts`

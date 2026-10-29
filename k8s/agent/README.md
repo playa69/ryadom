@@ -175,8 +175,10 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|agent started|live 
 приложение своим голосом), строки `live timeline … ms: sent=… in_first=… out_first=… tts_start=…` (этапы хода в мс от конца реплики,
 без текстов) и `first sound … ms=` (на стенде 0,9-1,2 с).
 
-**Если релей, ключ или `GEMINI_BASE_URL` не работают,** голоса нет совсем: запасного пути нет. Агент отвечает `error
-VOICE_UNAVAILABLE`, а в журнале `gemini live not available`. Порядок: проверки 1 и 2 в `agent/relay/README.md` («Проверка»), затем
+**Если релей, ключ или `GEMINI_BASE_URL` не работают,** разговоры идут на путь Сбера (запасной путь): человек слышит женский голос,
+ошибки нет, а в журнале `голосовой путь gemini-live… не открылся, разговор идёт на sber-voice…`. Голоса нет совсем, только если
+недоступен и прокси программы (`LLM_BASE_URL`, `AGENT_API_TOKEN`): тогда агент отвечает `error VOICE_UNAVAILABLE`, а в журнале
+`gemini live not available`. Порядок: проверки 1 и 2 в `agent/relay/README.md` («Проверка»), затем
 ключ Gemini и `GEMINI_BASE_URL` в Secret'е `agent-gemini`, затем сервер релея. Откатывать образ незачем: чинится релей или
 Secret (смена токена и пересоздание сервера описаны там же).
 

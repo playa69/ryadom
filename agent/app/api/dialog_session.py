@@ -1024,7 +1024,10 @@ class DialogSession:
         memory_wait = await self._await_memory()
         instructions = self._instructions()
         cost = budget.open_estimate([instructions, *(text for _, text in history)])
-        if not self._may_open():
+        # Нужное открытие (старт, переподключение, восстановление, смена голоса) может уйти на запасной путь; плановая смена
+        # сессии и переоткрытие ради приватности остаются на Gemini и в паузе откладываются.
+        needed = purpose in ("start", "reconnect", "recover", "voice")
+        if not (self._can_open() if needed else self._may_open()):
             # Пауза после 1011: открытие заведомо получит тот же отказ.
             logger.info(
                 "gemini live open skipped dialog=%s purpose=%s cost=%d cooldown_ms=%d",
@@ -1083,7 +1086,10 @@ class DialogSession:
                 budget.on_quota_error("open", self._dialog.id)
             return None
         trace.end()
-        budget.opened(link, rid)
+        if getattr(link, "counts_tokens", True):
+            budget.opened(link, rid)
+        else:
+            budget.cancel(rid)  # открыл запасной путь (Сбер): Google этого открытия не считал
         GEMINI_OPENS_TOTAL.labels(purpose, "ok").inc()
         session_opened(link)
         self._opened += 1
@@ -1162,7 +1168,9 @@ class DialogSession:
             usage.get("output_text", 0),
             usage.get("output_thinking", 0),
         )
-        if self._budget.enabled:
+        if self._budget.enabled and not getattr(link, "counts_tokens", True):
+            self._budget.cancel(self._take_reservation(link))  # токены запасного пути (Сбера) окно Google не считает
+        elif self._budget.enabled:
             self._budget.settle_turn(link, self._take_reservation(link), total["input"])
             # Ответ модели, который войдёт в контекст следующего хода на этой же сессии; размышление в контекст не попадает.
             self._last_response = total["output"] - usage.get("output_thinking", 0)
@@ -1183,8 +1191,14 @@ class DialogSession:
         return estimate_turn(text, seconds, self._last_response if reused else 0)
 
     def _may_open(self) -> bool:
-        """Новую сессию можно открывать: нет паузы после 1011 (открытие в паузе заведомо получит тот же отказ)."""
+        """Новую сессию Gemini можно открывать: нет паузы после 1011 (открытие в паузе заведомо получит тот же отказ)."""
         return not self._budget.cooling()
+
+    def _can_open(self) -> bool:
+        """Сессию можно открыть хоть каким-то путём: у пути Gemini Live есть запасной (Сбер), и в паузе после 1011 соединитель
+        открывает его сразу. Нужна ходу, которому без новой сессии не обойтись; плановая смена и переоткрытие «по желанию» идут
+        через `_may_open`, чтобы здоровый разговор не уходил на запасной путь ради них."""
+        return self._may_open() or getattr(self._connector, "has_fallback", False)
 
     def _wait_left(self, turn: LiveTurn) -> float:
         """Сколько ещё ход может ждать конца паузы после 1011: COOLDOWN_WAIT_SECONDS от конца реплики или от набранного сообщения."""
@@ -1204,7 +1218,7 @@ class DialogSession:
         """Ходу нужна новая сессия, а открывать её нельзя (пауза после 1011): пока человек говорит, ждём (этого не слышно,
         сказанное копится в очереди), после конца реплики или набранного сообщения — ещё не дольше COOLDOWN_WAIT_SECONDS.
         True — можно открывать."""
-        while not self._may_open():
+        while not self._can_open():
             if (turn.kind == "text" or turn.spoken) and self._wait_left(turn) <= 0:
                 return False
             await asyncio.sleep(0.05)
@@ -1316,7 +1330,7 @@ class DialogSession:
         turn.mark("sent")
 
     async def _start_activity(self, turn: LiveTurn) -> None:
-        if self._budget.enabled and self._needs_open() and not self._may_open():
+        if self._budget.enabled and self._needs_open() and not self._can_open():
             await self._wait_open(turn)
         link = await self._ensure_link()
         if link is None:
@@ -1875,7 +1889,7 @@ class DialogSession:
             # 0,8 с к ответу экономится); заговорит человек — его реплика пойдёт в неё же, и в её истории будет и эта.
             self._refresh = True
             self._recovering = True
-            if delay and self._may_open():
+            if delay and self._can_open():
                 self._prepare_link()
         logger.info(
             "live turn unanswered dialog=%s kind=%s reason=%s recover_in_ms=%d",

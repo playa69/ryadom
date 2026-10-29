@@ -235,7 +235,7 @@
 | `REQ-VOICE-04` | Укладываться в 0,9 с | `dialog-voice` | частично | кэш фраз в памяти процесса |
 | `REQ-VOICE-05` | Перебивание | `dialog-voice` | есть |  |
 | `REQ-VOICE-06` | Разговор без рук | `dialog-voice` | есть |  |
-| `REQ-VOICE-07` | Деградация голоса | `dialog-voice` | есть | запасного пути нет: `VOICE_UNAVAILABLE` |
+| `REQ-VOICE-07` | Деградация голоса | `dialog-voice` | есть | путь Сбера и путь Gemini Live — запасные друг для друга; `VOICE_UNAVAILABLE`, если недоступны оба |
 | `REQ-VOICE-08` | Озвучка по требованию | `dialog-voice` | нет |  |
 | `REQ-VOICE-09` | Сжатие озвучки к клиенту | `dialog-voice` | есть |  |
 | `REQ-VOICE-10` | Цвет шарика по настроению | `orb-mood` | есть |  |

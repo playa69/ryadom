@@ -18,7 +18,8 @@ const OPTIONS: { value: VoicePipeline; description: string }[] = [
   },
   {
     value: 'gemini',
-    description: 'Речь в речь в одной модели. Звучит голос, выбранный человеком в профиле. Запасного пути нет.',
+    description:
+      'Речь в речь в одной модели. Звучит голос, выбранный человеком в профиле. Если путь недоступен — запасной Сбер (один женский голос).',
   },
 ]
 
@@ -45,7 +46,9 @@ export function VoicePipelineForm({ current, changedLine }: { current: VoicePipe
             key={value}
             className={cn(
               'flex cursor-pointer items-start gap-3 rounded-md border bg-white p-4',
-              picked === value ? 'border-gray-900 ring-1 ring-gray-900' : 'border-gray-200 hover:border-gray-300',
+              picked === value
+                ? 'border-gray-900 ring-1 ring-gray-900'
+                : 'border-gray-200 hover:border-gray-300',
             )}
           >
             <input

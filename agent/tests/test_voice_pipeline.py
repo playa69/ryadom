@@ -23,6 +23,11 @@ class FakeSber(FakeConnector):
     name = "fake-sber"
     model = "fake-gigachat"
 
+    async def open(self, voice: str, instructions: str, history: Any = None) -> Any:
+        link = await super().open(voice, instructions, history)
+        link.counts_tokens = False  # как у настоящей ссылки пути Сбера: токены GigaChat окно Gemini не считает
+        return link
+
     async def speaker(self) -> Any:
         raise LiveError("синтеза фраз в тесте нет")
 
@@ -182,3 +187,61 @@ def test_a_sber_path_without_its_own_classifier_does_not_fall_back_to_gemini(gem
         dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
         frames = voice_turn(client, user_id, dialog, reply_done)
         assert moods(frames) == [] and gemini_tone == []
+
+
+def gemini_dialog(client: TestClient) -> tuple[str, str]:
+    user_id = str(uuid.uuid4())
+    return user_id, start(client, user_id, pipeline="gemini").json()["dialogId"]
+
+
+def test_when_gemini_live_does_not_open_the_dialog_goes_on_sber() -> None:
+    gemini, sber = FakeConnector(fail=True), FakeSber(reply="Ответ Сбера.")
+    with sber_client(gemini, sber) as client:
+        user_id, dialog = gemini_dialog(client)
+        with client.websocket_connect(ws_url(user_id, dialog), headers=AUTH) as ws:
+            send_user_message(ws, "c1", "Мне сегодня тяжело")
+            frames = read_frames(ws, lambda fs: has(fs, "assistant_end"))
+        assert has(frames, "assistant_end", text="Ответ Сбера.")
+        assert not has(frames, "error")
+        assert gemini.open_calls and sber.open_calls  # Gemini Live пробовался первым
+
+
+def test_a_gemini_quota_refusal_starts_the_pause_and_the_next_opens_go_straight_to_sber(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(APP_CONFIG.gemini, "tpm_limit", 1_000_000)  # учёт включён: есть пауза после отказа по квоте
+    gemini, sber = FakeConnector(), FakeSber(reply="Ответ Сбера.")
+    gemini.quota_from = 1
+    with sber_client(gemini, sber) as client:
+        budget = client.app.state.budget
+        user_id, dialog = gemini_dialog(client)
+        one_turn(client, user_id, dialog)
+        assert budget.cooling()  # отказ по квоте при открытии начал паузу, хотя разговор не прервался
+        assert len(gemini.open_calls) == 1 and sber.open_calls
+
+        # В паузе Gemini Live не пробуется: открытие идёт сразу на Сбер, ход не ждёт конца паузы.
+        user_id, dialog = gemini_dialog(client)
+        one_turn(client, user_id, dialog)
+        assert len(gemini.open_calls) == 1
+
+
+def test_in_the_pause_a_turn_is_answered_by_sber_instead_of_waiting_for_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(APP_CONFIG.gemini, "tpm_limit", 1_000_000)
+    gemini, sber = FakeConnector(reply="Ответ Gemini."), FakeSber(reply="Ответ Сбера.")
+    with sber_client(gemini, sber) as client:
+        client.app.state.budget.on_quota_error("open")
+        assert client.app.state.budget.cooling()
+        user_id, dialog = gemini_dialog(client)
+        with client.websocket_connect(ws_url(user_id, dialog), headers=AUTH) as ws:
+            send_user_message(ws, "c1", "Мне сегодня тяжело")
+            frames = read_frames(ws, lambda fs: has(fs, "assistant_end"))
+        assert has(frames, "assistant_end", text="Ответ Сбера.") and not has(frames, "error")
+        assert not gemini.open_calls
+
+
+def test_sber_tokens_do_not_enter_the_gemini_window_when_sber_is_the_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(APP_CONFIG.gemini, "tpm_limit", 1_000_000)
+    gemini, sber = FakeConnector(fail=True), FakeSber(usage={"input": 500})
+    with sber_client(gemini, sber) as client:
+        user_id, dialog = gemini_dialog(client)
+        one_turn(client, user_id, dialog)
+        assert sber.open_calls
+        assert client.app.state.budget.window_tokens() == 0

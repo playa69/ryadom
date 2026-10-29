@@ -603,5 +603,6 @@ def test_metrics_exist_and_labels_carry_no_text(user_id: str, tune: Callable[...
         for s in family.samples
         if s.labels
     }
-    allowed = {"purpose", "result", "where", "reason", "direction", "modality", "le"}
+    # `tone` — один из шести тонов классификатора цвета шарика (`MOOD_TONES`), не текст.
+    allowed = {"purpose", "result", "where", "reason", "direction", "modality", "le", "tone"}
     assert all(set(names) <= allowed for _, names in labels), labels
