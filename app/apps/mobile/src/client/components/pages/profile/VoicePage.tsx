@@ -1,8 +1,8 @@
-import { Button, Icon, Link, List, ListItem, Navbar, Page, Segmented, f7 } from 'framework7-react'
+import { Block, Button, Icon, Link, List, ListItem, Navbar, Page, Segmented, f7 } from 'framework7-react'
 import { useEffect, useState } from 'react'
 import { playVoiceSample, stopVoiceSample } from '@ryadom/client-core/voice-sample'
 import { DEFAULT_AGENT_VOICE, type AgentVoice } from '@ryadom/contracts/api/auth/me'
-import { DEFAULT_VOICE_ID, FEMALE_VOICES, MALE_VOICES, findVoice } from '@ryadom/contracts/voices'
+import { DEFAULT_VOICE_ID, FEMALE_VOICES, MALE_VOICES, SBER_VOICE, findVoice } from '@ryadom/contracts/voices'
 import { apiErrorText, updateProfile } from '../../../lib/api'
 import { useAuth } from '../../../lib/store'
 
@@ -15,6 +15,9 @@ const TABS: { id: Tab; label: string }[] = [
 /**
  * Выбор голоса агента (PROTEUS-182): отдельная страница профиля. Голоса сгруппированы по
  * полу, каждый можно послушать (▶) до выбора; тап по строке выбирает и сразу сохраняет. Голос сохраняется в аккаунте и следует за человеком на другое устройство.
+ *
+ * While conversations start on the Sber path, its one voice speaks whatever was chosen: the page shows that voice and
+ * says the choice is kept, instead of offering a choice that would not be heard.
  */
 export default function VoicePage({ f7router }: { f7router: { back: () => void } }) {
   const { auth, updateUser } = useAuth()
@@ -22,6 +25,7 @@ export default function VoicePage({ f7router }: { f7router: { back: () => void }
   const gender: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
   // The voice is on the account; until the person picks one, the default of the gender speaks.
   const savedId = user?.voiceName ?? DEFAULT_VOICE_ID[gender]
+  const onSber = user?.voicePipeline === 'sber'
   const [draft, setDraft] = useState(savedId)
   const [tab, setTab] = useState<Tab>(findVoice(savedId)?.gender ?? 'male')
   const [playingId, setPlayingId] = useState<string | null>(null)
@@ -56,6 +60,49 @@ export default function VoicePage({ f7router }: { f7router: { back: () => void }
     }
   }
 
+  const sampleLink = (v: { id: string; name: string }) => (
+    <Link
+      slot="media"
+      iconOnly
+      aria-label={`${playingId === v.id ? 'Остановить' : 'Прослушать'}: ${v.name}`}
+      onClick={(e: { preventDefault: () => void; stopPropagation: () => void }) => {
+        e.preventDefault()
+        e.stopPropagation()
+        toggle(v.id)
+      }}
+    >
+      <Icon f7={playingId === v.id ? 'stop_circle_fill' : 'play_circle_fill'} size={28} />
+    </Link>
+  )
+
+  if (onSber) {
+    return (
+      <Page name="voice" className="ph-no-capture">
+        <Navbar backLink="Назад" title="Голос агента" />
+        <Block style={{ marginBottom: 8 }}>
+          <p className="rd-caption" data-testid="voice-single-note">
+            Сейчас у агента один голос — {SBER_VOICE.name}. Твой выбор, {findVoice(savedId)?.name}, сохранён и
+            вернётся, когда другие голоса снова станут доступны.
+          </p>
+        </Block>
+        <List
+          strong
+          inset
+          className="rd-menu"
+          style={{ marginTop: 0, marginBottom: 0 }}
+          data-testid="voice-list"
+        >
+          {[
+            <ListItem key={SBER_VOICE.id} title={SBER_VOICE.name} data-testid={`voice-${SBER_VOICE.id}`}>
+              {sampleLink(SBER_VOICE)}
+              <Icon slot="after" f7="checkmark_alt" size={22} />
+            </ListItem>,
+          ]}
+        </List>
+      </Page>
+    )
+  }
+
   // An array of ListItem, not a fragment: Framework7's List wraps direct ListItem children in <ul>, and without it the <li> get bullets.
   const rows = (list: readonly { id: string; name: string }[]) =>
     list.map((v) => (
@@ -70,18 +117,7 @@ export default function VoicePage({ f7router }: { f7router: { back: () => void }
         onChange={() => void choose(v.id)}
         data-testid={`voice-${v.id}`}
       >
-        <Link
-          slot="media"
-          iconOnly
-          aria-label={`${playingId === v.id ? 'Остановить' : 'Прослушать'}: ${v.name}`}
-          onClick={(e: { preventDefault: () => void; stopPropagation: () => void }) => {
-            e.preventDefault()
-            e.stopPropagation()
-            toggle(v.id)
-          }}
-        >
-          <Icon f7={playingId === v.id ? 'stop_circle_fill' : 'play_circle_fill'} size={28} />
-        </Link>
+        {sampleLink(v)}
       </ListItem>
     ))
 

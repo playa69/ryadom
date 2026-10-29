@@ -30,6 +30,7 @@ import {
   GetActiveDialogShareQuery,
 } from '../src/managers/dialog-shares-manager'
 import { UpdateUserVoiceCommand, usersManager } from '../src/managers/users-manager'
+import { ChangeVoicePipelineOperation, voiceSettingsProcess } from '../src/processes/voice-settings'
 import { AFTER_DELETE_DELAY_SECONDS, getEnqueuedJobs } from '../src/services/job-queue-service'
 import { AgentUnavailableError } from '../src/shared'
 import { blockDirectly, json, mockAgent, mockFetch, registerConfirmedUser } from './helpers'
@@ -39,7 +40,7 @@ const startNew = (userId: string) =>
   dialogsProcess.execute(new StartDialogOperation({ userId, startNew: true }))
 
 describe('начать разговор', () => {
-  it('агенту уходит пользователь в пути и его голос (по умолчанию мужской), больше ничего; возвращает диалог', async () => {
+  it('агенту уходит пользователь в пути, его голос (по умолчанию мужской) и голосовой путь, больше ничего; возвращает диалог', async () => {
     const user = await registerConfirmedUser()
     const { calls } = mockAgent({
       'POST http://agent.test/v1/users/*/dialogs': () =>
@@ -73,8 +74,9 @@ describe('начать разговор', () => {
     expect(call.method).toBe('POST')
     expect(call.url.pathname).toBe(`/v1/users/${user.id}/dialogs`)
     expect(call.headers.get('Authorization')).toBe('Bearer test-agent-token')
-    // A plain start only carries the voice the person picked: no request for a new dialog, nothing about the mode or the client.
-    expect(JSON.parse(call.body)).toEqual({ voice: 'male' })
+    // A plain start only carries the voice the person picked and the admin's voice pipeline (Sber until one is picked): no
+    // request for a new dialog, nothing about the mode or the client.
+    expect(JSON.parse(call.body)).toEqual({ voice: 'male', pipeline: 'sber' })
   })
 
   it('агент не прислал messageCount, lastActivityAt и поля памяти (старый агент) — 0, null, on и false: спрашивать не о чем', async () => {
@@ -115,7 +117,7 @@ describe('начать разговор', () => {
       success: true,
       dialog: { dialogId: 'd-9', memoryMode: 'off', memoryEnabled: true },
     })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off', pipeline: 'sber' })
   })
 
   it('«не сохранять»: saved: false уходит агенту отдельно от memory, в ответе то, что агент подтвердил', async () => {
@@ -131,7 +133,7 @@ describe('начать разговор', () => {
     )
 
     expect(result).toMatchObject({ success: true, dialog: { dialogId: 'd-10', memoryMode: 'off', saved: false } })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, saved: false })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, saved: false, pipeline: 'sber' })
   })
 
   it('«без памяти» не значит «не сохранять»: memory: off уходит без saved, в ответе saved: true', async () => {
@@ -146,7 +148,7 @@ describe('начать разговор', () => {
     )
 
     expect(result).toMatchObject({ success: true, dialog: { memoryMode: 'off', saved: true } })
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, memory: 'off', pipeline: 'sber' })
   })
 
   it('старый агент не знает saved и не подтверждает его: клиенту уходит saved: true, обещать нечего', async () => {
@@ -175,18 +177,33 @@ describe('начать разговор', () => {
     const { calls } = mockAgent()
 
     await start(user.id)
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', pipeline: 'sber' })
 
     await usersManager.execute(new UpdateUserVoiceCommand({ userId: user.id, voice: 'female' }))
     await start(user.id)
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female', pipeline: 'sber' })
 
     // A concrete voice the person picked goes to the agent next to the gender.
     await usersManager.execute(
       new UpdateUserVoiceCommand({ userId: user.id, voice: 'female', voiceName: 'Aoede' }),
     )
     await start(user.id)
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female', voiceName: 'Aoede' })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'female', voiceName: 'Aoede', pipeline: 'sber' })
+  })
+
+  it('голосовой путь из админки уходит агенту при каждом старте, в том числе при возобновлении', async () => {
+    // `add-sber-voice-pipeline`, «Голосовой путь разговора»
+    const user = await registerConfirmedUser()
+    const { calls } = mockAgent()
+
+    await start(user.id)
+    expect(JSON.parse(calls.at(-1)!.body)).toMatchObject({ pipeline: 'sber' })
+
+    await voiceSettingsProcess.execute(new ChangeVoicePipelineOperation({ adminEmail: 'admin@example.com', pipeline: 'gemini' }))
+    await start(user.id)
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', pipeline: 'gemini' })
+    await startNew(user.id)
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, pipeline: 'gemini' })
   })
 
   it('startNew: агенту уходит new: true вместе с голосом', async () => {
@@ -195,7 +212,7 @@ describe('начать разговор', () => {
 
     await startNew(user.id)
 
-    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true })
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({ voice: 'male', new: true, pipeline: 'sber' })
   })
 
   it('простой старт при открытом диалоге с репликами возвращает его же: resumed, messageCount и lastActivityAt, ничего не завершено', async () => {

@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { ToggleUserActivationOperation, userManagementProcess } from '@ryadom/core/processes/user-management'
+import { ChangeVoicePipelineOperation, voiceSettingsProcess } from '@ryadom/core/processes/voice-settings'
 import { getSentEmails } from '@ryadom/core/services/email-sender-service'
 import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-email'
@@ -12,6 +13,7 @@ import { RefreshApiErrorCode, type RefreshApiResponse } from '@ryadom/contracts/
 import { RegisterApiErrorCode, type RegisterApiResponse } from '@ryadom/contracts/api/auth/register'
 import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import type { LoginApiResponse } from '@ryadom/contracts/api/auth/shared'
+import { SBER_VOICE } from '@ryadom/contracts/voices'
 import {
   call,
   codeFor,
@@ -221,6 +223,30 @@ describe('регистрация и вход', () => {
     expect((await patch({ voiceName: 'Robot' })).status).toBe(400)
     expect((await patch({ voice: 'male', voiceName: 'Aoede' })).status).toBe(400)
     expect(await read()).toMatchObject({ voice: 'female', voiceName: 'Kore' })
+  })
+
+  // `add-sber-voice-pipeline`, «Выбор голоса агента»
+  it('голосовой путь в профиле: по умолчанию Сбер, смена в админке видна сразу, выбор голоса не трогает', async () => {
+    resetLimits()
+    const { tokens } = await signUpAndIn(app)
+    const read = async () =>
+      ok<MeApiResponse>(await call(app, 'GET', '/api/auth/me', undefined, tokens.accessToken))
+    expect(await read()).toMatchObject({ voicePipeline: 'sber', voice: 'male', voiceName: 'Charon' })
+
+    // The person's choice is for Gemini Live and stays as it is on the Sber path.
+    const picked = ok<MeApiResponse>(
+      await call(app, 'PATCH', '/api/auth/me', { voiceName: 'Puck' }, tokens.accessToken),
+    )
+    expect(picked).toMatchObject({ voicePipeline: 'sber', voiceName: 'Puck' })
+
+    await voiceSettingsProcess.execute(
+      new ChangeVoicePipelineOperation({ adminEmail: 'admin@example.com', pipeline: 'gemini' }),
+    )
+    expect(await read()).toMatchObject({ voicePipeline: 'gemini', voice: 'male', voiceName: 'Puck' })
+
+    // The one voice of the Sber path is not a choice: the profile stores Gemini Live voices only.
+    const refused = await call(app, 'PATCH', '/api/auth/me', { voiceName: SBER_VOICE.id }, tokens.accessToken)
+    expect(refused.status).toBe(400)
   })
 })
 

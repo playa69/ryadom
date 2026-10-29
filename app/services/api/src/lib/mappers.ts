@@ -19,7 +19,7 @@ import type {
 } from '@ryadom/core/processes/memory'
 import { describeUserAgent } from '@ryadom/core/shared'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
-import { DEFAULT_VOICE_ID } from '@ryadom/contracts/voices'
+import { DEFAULT_VOICE_ID, type VoicePipeline } from '@ryadom/contracts/voices'
 import { SessionClient, type SessionApiResponse } from '@ryadom/contracts/api/auth/sessions'
 import type { AuthUserApiResponse } from '@ryadom/contracts/api/auth/shared'
 import {
@@ -57,7 +57,7 @@ export function toAuthUser(user: UserDTO): AuthUserApiResponse {
   return { id: user.id, email: user.email, name: user.name, telegramLinked: user.telegramId !== null }
 }
 
-export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
+export function toMe(user: UserDTO, consent: ConsentStatusDTO, voicePipeline: VoicePipeline): MeApiResponse {
   return {
     id: user.id,
     email: user.email,
@@ -69,6 +69,7 @@ export function toMe(user: UserDTO, consent: ConsentStatusDTO): MeApiResponse {
     consentVersion: consent.offerVersion,
     voice: user.agentVoice,
     voiceName: user.agentVoiceName ?? DEFAULT_VOICE_ID[user.agentVoice],
+    voicePipeline,
     analyticsOptOut: user.analyticsOptOut,
     timezone: user.timezone,
   }

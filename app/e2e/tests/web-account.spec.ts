@@ -24,6 +24,7 @@ import {
 import { clearMailbox, waitForCode } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
+import { setVoicePipeline } from '../support/voice'
 
 /**
  * The whole account path in the web app, the counterpart of app-account.spec.ts: sign-up with the
@@ -36,8 +37,13 @@ import { step } from '../support/evidence'
  * as a column and as a drawer. The whole run is a single page load, which is what lets the policy
  * watcher at the end speak for every screen visited on the way.
  */
+// The voice path is global: put the default back whatever the test did with it.
+test.afterEach(() => setVoicePipeline(null))
+
 test('путь аккаунта в вебе: регистрация, профиль, смена пароля, вход, удаление', async ({ page, shot }) => {
   test.setTimeout(150_000)
+  // The choice of a voice is Gemini Live's; the Sber path is checked further down.
+  await setVoicePipeline('gemini')
   const violations = await watchCsp(page)
   const email = uniqueEmail('web-account')
   await clearMailbox()
@@ -106,6 +112,8 @@ test('путь аккаунта в вебе: регистрация, профи�
   await page.getByTestId('voice-apply').click()
   await expect(page.getByTestId('voice-name')).toContainText('Алиса')
   await step(page, 'voice-applied', 'Голос сохранён: в профиле теперь Алиса')
+  // `add-sber-voice-pipeline`, «Выбор голоса агента»: the admin switched to the Sber path.
+  await setVoicePipeline('sber')
 
   // The help lines are also a page of their own: one column at every width, nothing sideways.
   await page.getByTestId('row-people').click()
@@ -123,8 +131,16 @@ test('путь аккаунта в вебе: регистрация, профи�
   // There is no "back" on this page: the profile is a menu item away.
   await openProfile(page)
   await expect(page.getByTestId('profile-name')).toBeVisible()
-  // The profile is read from the server again, and the voice is still the one chosen.
-  await expect(page.getByTestId('voice-name')).toContainText('Алиса')
+  // The profile is read from the server again: on the Sber path it names the one voice that speaks, and the choice is kept.
+  await expect(page.getByTestId('voice-name')).toContainText('Вера')
+  await page.getByTestId('voice-name').click()
+  await expect(page.getByTestId('voice-single-note')).toContainText('Твой выбор, Алиса, сохранён')
+  await expect(page.getByRole('tab')).toHaveCount(0)
+  await expect(page.getByLabel('Прослушать: Вера')).toBeVisible()
+  await step(page, 'voice-sber', 'Путь Сбера: в профиле голос Вера, выбранная Алиса сохранена')
+  await page.getByTestId('voice-close').click()
+  // Back on Gemini Live, the next read of the profile (after the password change) names the chosen voice again.
+  await setVoicePipeline('gemini')
 
   // ── password change ──────────────────────────────────────────────────────
   await page.getByTestId('row-change-password').click()
@@ -141,6 +157,7 @@ test('путь аккаунта в вебе: регистрация, профи�
   // Changing the password does not sign the person out: the screen returns to the profile.
   await expect(page.getByText('Пароль изменён')).toBeVisible({ timeout: 20_000 })
   await expect(page).toHaveURL(/\/profile$/)
+  await expect(page.getByTestId('voice-name')).toContainText('Алиса')
 
   // ── sign out and in again: the new password is the one that works ────────
   // A second tab of the same browser shares the session; it must not outlive the sign-out.

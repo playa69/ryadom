@@ -44,7 +44,7 @@ from app.clients.gemini_live import (
     session_closed,
     session_opened,
 )
-from app.clients.mood_classifier import MoodClassifier
+from app.clients.mood_classifier import MoodClassifier, ToneClassifier
 from app.clients.speech import FRAME_BYTES, TTS_RATE, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
@@ -93,17 +93,19 @@ FRAME_KIND_AUDIO_IN = 0x01
 # Набранный текст шлюз приложения ограничивает 4000 символов сам; запас здесь — для голоса:
 # пять минут речи (VOICE_TURN_MAX_SECONDS) — это 4-5 тысяч символов расшифровки.
 MAX_USER_TEXT = 8000
-# Один кадр голоса человека — 100 мс (specs/agent-api «Голос — формат и ввод»); вход — PCM16 моно, 16 кГц.
-AUDIO_FRAME_SECONDS = 0.1
+# Голос человека — PCM16 моно, 16 кГц, кадрами по 40 мс (specs/agent-api «Голос — формат и ввод»; старые клиенты шлют по 100 мс).
+# Длительность и запас перед речью считаются по байтам, поэтому длина кадра агенту не важна.
 AUDIO_IN_RATE = 16_000
+AUDIO_IN_BYTES_PER_SECOND = AUDIO_IN_RATE * 2
 # Одна голосовая реплика — не длиннее VOICE_TURN_MAX_SECONDS: остальное отбрасывается, память не растёт без предела.
 MAX_AUDIO_BYTES = AUDIO_IN_RATE * 2 * APP_CONFIG.dialog.voice_turn_max_seconds
 # Тише этого (среднеквадратичное по PCM16, около -50 дБ) — тишина: в модель она не идёт.
 SILENCE_RMS = 100
 # Сколько предложений фиксированной фразы синтезируется одновременно: звучащее и следующее. Больше не надо.
 SPEECH_PREFETCH = 2
-# Сколько мс тишины перед началом речи уходит модели вместе с ней (кадры по 100 мс): начало слова не обрезается.
-PRE_ROLL_FRAMES = 5
+# Сколько тишины перед началом речи уходит модели вместе с ней: начало слова не обрезается.
+PRE_ROLL_SECONDS = 0.5
+PRE_ROLL_BYTES = int(AUDIO_IN_BYTES_PER_SECOND * PRE_ROLL_SECONDS)
 # Хвост ответа прерванной модели, которая ещё может прислать события, считается чужим столько секунд.
 STALE_SECONDS = 1.0
 # Сколько открытие сессии ждёт сводку памяти. Поиск в Cognee бывает дольше минуты, и человек всё это время говорил бы
@@ -303,6 +305,7 @@ class DialogSession:
         connector: LiveConnector,
         budget: TokenBudget | None = None,
         tracer: Tracer | None = None,
+        mood: "ToneClassifier | Literal['gemini'] | None" = "gemini",
     ) -> None:
         self._ws = websocket
         self._store = store
@@ -313,6 +316,10 @@ class DialogSession:
         self._tracer = tracer or NullTracer()
         self._connector = connector
         self._cfg = APP_CONFIG.gemini
+        # Классификатор тона для цвета шарика: свой у пути (у Сбера — GigaChat, слова человека не уходят в Google), "gemini" —
+        # Gemini, если есть его ключ, None — без классификатора.
+        self._mood_classifier: ToneClassifier | None = None if mood == "gemini" else mood
+        self._mood_on = self._cfg.api_key is not None if mood == "gemini" else mood is not None
         # Учёт токенов Gemini (выключен, если сессию создали без приложения или GEMINI_TPM_LIMIT=0).
         self._budget = budget or TokenBudget.disabled()
         self._stream_delay = APP_CONFIG.dialog.stream_delay_ms / 1000
@@ -330,7 +337,7 @@ class DialogSession:
         self._cancelled: set[str] = set()
         self._voice_error_sent = False
         self._audio_open = False
-        self._audio_frames = 0
+        self._audio_bytes = 0
         # Когда пришёл последний кадр с речью (monotonic): по нему видно, сколько тишины ждал детектор конца реплики.
         self._last_voiced: float | None = None
         # Озвучку перебили, и следующая голосовая реплика — ответ на это перебивание.
@@ -502,7 +509,7 @@ class DialogSession:
                 await self._on_user_message(frame)
             case "audio_start":
                 self._audio_open = True
-                self._audio_frames = 0
+                self._audio_bytes = 0
                 self._last_voiced = None
                 # tts_cancel прямо перед audio_start — перебивание голосом: реплику начинаем с чистого листа.
                 self._turn_interrupts, self._interrupted = self._interrupted, False
@@ -844,7 +851,7 @@ class DialogSession:
             asyncio.create_task(self._send_loop()),
             asyncio.create_task(self._pump()),
         ]
-        if self._cfg.api_key is not None:
+        if self._mood_on:
             self._tasks.append(asyncio.create_task(self._warm_mood_classifier()))  # первый запрос иначе ждёт TLS и релей
         self._tasks.append(asyncio.create_task(self._ensure_link()))  # соединение готово к первой реплике
         try:
@@ -1017,7 +1024,10 @@ class DialogSession:
         memory_wait = await self._await_memory()
         instructions = self._instructions()
         cost = budget.open_estimate([instructions, *(text for _, text in history)])
-        if not self._may_open():
+        # Нужное открытие (старт, переподключение, восстановление, смена голоса) может уйти на запасной путь; плановая смена
+        # сессии и переоткрытие ради приватности остаются на Gemini и в паузе откладываются.
+        needed = purpose in ("start", "reconnect", "recover", "voice")
+        if not (self._can_open() if needed else self._may_open()):
             # Пауза после 1011: открытие заведомо получит тот же отказ.
             logger.info(
                 "gemini live open skipped dialog=%s purpose=%s cost=%d cooldown_ms=%d",
@@ -1076,7 +1086,10 @@ class DialogSession:
                 budget.on_quota_error("open", self._dialog.id)
             return None
         trace.end()
-        budget.opened(link, rid)
+        if getattr(link, "counts_tokens", True):
+            budget.opened(link, rid)
+        else:
+            budget.cancel(rid)  # открыл запасной путь (Сбер): Google этого открытия не считал
         GEMINI_OPENS_TOTAL.labels(purpose, "ok").inc()
         session_opened(link)
         self._opened += 1
@@ -1088,7 +1101,7 @@ class DialogSession:
             purpose,
             voice,
             getattr(link, "voice_name", ""),
-            self._cfg.live_model,
+            getattr(link, "model", None) or self._cfg.live_model,  # у пути Сбера своя модель (GigaChat), у Gemini — из настроек
             len(history),
             (time.monotonic() - began) * 1000,
         )
@@ -1137,7 +1150,8 @@ class DialogSession:
         if link is None or link is self._link:
             self._session_audio = usage.get("input_audio", 0)  # звук контекста растёт с каждым ходом: порог смены сессии
         with model_usage.collect() as spent:
-            record_usage(self._connector.model, "live", usage)
+            # Модель соединения: у пути Сбера с запасным Gemini Live соединение бывает любого из двух.
+            record_usage(getattr(link, "model", None) or self._connector.model, "live", usage)
         if turn is not None and turn.generating:
             turn.usage.extend(spent)
         else:
@@ -1154,7 +1168,9 @@ class DialogSession:
             usage.get("output_text", 0),
             usage.get("output_thinking", 0),
         )
-        if self._budget.enabled:
+        if self._budget.enabled and not getattr(link, "counts_tokens", True):
+            self._budget.cancel(self._take_reservation(link))  # токены запасного пути (Сбера) окно Google не считает
+        elif self._budget.enabled:
             self._budget.settle_turn(link, self._take_reservation(link), total["input"])
             # Ответ модели, который войдёт в контекст следующего хода на этой же сессии; размышление в контекст не попадает.
             self._last_response = total["output"] - usage.get("output_thinking", 0)
@@ -1175,8 +1191,14 @@ class DialogSession:
         return estimate_turn(text, seconds, self._last_response if reused else 0)
 
     def _may_open(self) -> bool:
-        """Новую сессию можно открывать: нет паузы после 1011 (открытие в паузе заведомо получит тот же отказ)."""
+        """Новую сессию Gemini можно открывать: нет паузы после 1011 (открытие в паузе заведомо получит тот же отказ)."""
         return not self._budget.cooling()
+
+    def _can_open(self) -> bool:
+        """Сессию можно открыть хоть каким-то путём: у пути Gemini Live есть запасной (Сбер), и в паузе после 1011 соединитель
+        открывает его сразу. Нужна ходу, которому без новой сессии не обойтись; плановая смена и переоткрытие «по желанию» идут
+        через `_may_open`, чтобы здоровый разговор не уходил на запасной путь ради них."""
+        return self._may_open() or getattr(self._connector, "has_fallback", False)
 
     def _wait_left(self, turn: LiveTurn) -> float:
         """Сколько ещё ход может ждать конца паузы после 1011: COOLDOWN_WAIT_SECONDS от конца реплики или от набранного сообщения."""
@@ -1196,7 +1218,7 @@ class DialogSession:
         """Ходу нужна новая сессия, а открывать её нельзя (пауза после 1011): пока человек говорит, ждём (этого не слышно,
         сказанное копится в очереди), после конца реплики или набранного сообщения — ещё не дольше COOLDOWN_WAIT_SECONDS.
         True — можно открывать."""
-        while not self._may_open():
+        while not self._can_open():
             if (turn.kind == "text" or turn.spoken) and self._wait_left(turn) <= 0:
                 return False
             await asyncio.sleep(0.05)
@@ -1308,7 +1330,7 @@ class DialogSession:
         turn.mark("sent")
 
     async def _start_activity(self, turn: LiveTurn) -> None:
-        if self._budget.enabled and self._needs_open() and not self._may_open():
+        if self._budget.enabled and self._needs_open() and not self._can_open():
             await self._wait_open(turn)
         link = await self._ensure_link()
         if link is None:
@@ -1368,13 +1390,15 @@ class DialogSession:
         if not (self._audio_open and len(data) > 5 and data[0] == FRAME_KIND_AUDIO_IN):
             return
         pcm = data[5:]
-        self._audio_frames += 1
+        self._audio_bytes += len(pcm)
         voiced = not is_silence(pcm)
         if voiced:
             self._last_voiced = time.monotonic()
         if not self._act_started:
             if not voiced:
-                self._pre = (self._pre + [pcm])[-PRE_ROLL_FRAMES:]  # тишину до речи модель не получает, кроме запаса
+                self._pre.append(pcm)  # тишину до речи модель не получает, кроме запаса
+                while sum(map(len, self._pre)) > PRE_ROLL_BYTES:
+                    self._pre.pop(0)
                 return
             self._act_started = True
             turn = LiveTurn(kind="voice", interrupts=self._turn_interrupts)
@@ -1406,8 +1430,8 @@ class DialogSession:
             VOICE_TURN_END_DELAY_SECONDS.observe(time.monotonic() - self._last_voiced)
         turn = self._voice_turn
         if turn is not None:
-            turn.audio_seconds = round(self._audio_frames * AUDIO_FRAME_SECONDS, 3)
-        self._audio_open, self._audio_frames = False, 0
+            turn.audio_seconds = round(self._audio_bytes / AUDIO_IN_BYTES_PER_SECOND, 3)
+        self._audio_open, self._audio_bytes = False, 0
         self._last_voiced, self._turn_interrupts = None, False
         self._voice_turn, self._pre, self._act_started = None, [], False
         if turn is None:  # речи в записи не было
@@ -1594,7 +1618,7 @@ class DialogSession:
 
     def _classify_mood_soon(self, turn: LiveTurn) -> None:
         """Прототип PROTEUS-168: когда слова расшифровки перестали приходить, реплика уходит на классификатор тона."""
-        if self._cfg.api_key is None:
+        if not self._mood_on:
             return
         previous = self._mood_task
         if previous is not None:
@@ -1603,19 +1627,19 @@ class DialogSession:
         self._mood_task = asyncio.create_task(self._classify_mood(turn, heard))
 
     _mood_task: "asyncio.Task[None] | None" = None
-    _mood_classifier: MoodClassifier | None = None
+
+    def _mood(self) -> ToneClassifier:
+        if self._mood_classifier is None:
+            self._mood_classifier = MoodClassifier(self._cfg)
+        return self._mood_classifier
 
     async def _warm_mood_classifier(self) -> None:
         """Соединение классификатора открывается до первой реплики: холодный первый запрос укладывался не в срок."""
-        if self._mood_classifier is None:
-            self._mood_classifier = MoodClassifier(self._cfg)
-        await self._mood_classifier.classify("привет")
+        await self._mood().warm()
 
     async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
         await asyncio.sleep(MOOD_DEBOUNCE_SECONDS)
-        if self._mood_classifier is None:
-            self._mood_classifier = MoodClassifier(self._cfg)
-        mood = await self._mood_classifier.classify(heard)
+        mood = await self._mood().classify(heard)
         if mood is not None and not self._closed:
             await self._on_mood(mood, turn)
 
@@ -1865,7 +1889,7 @@ class DialogSession:
             # 0,8 с к ответу экономится); заговорит человек — его реплика пойдёт в неё же, и в её истории будет и эта.
             self._refresh = True
             self._recovering = True
-            if delay and self._may_open():
+            if delay and self._can_open():
                 self._prepare_link()
         logger.info(
             "live turn unanswered dialog=%s kind=%s reason=%s recover_in_ms=%d",

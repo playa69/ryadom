@@ -1,3 +1,5 @@
+import type { VoicePipeline } from '../../voices'
+
 /**
  * The current user's profile:
  *
@@ -28,6 +30,12 @@ export interface MeApiResponse {
   voice: AgentVoice
   /** The concrete voice the agent speaks with (`id` in `@ryadom/contracts/voices`); always matches `voice`. */
   voiceName: string
+  /**
+   * The voice path conversations start on now (the admin console switches it). On `sber` the one voice of that path
+   * (`SBER_VOICE` in `@ryadom/contracts/voices`) speaks, and `voice`/`voiceName` keep the person's choice for Gemini
+   * Live, which speaks again once the path is back.
+   */
+  voicePipeline: VoicePipeline
   /**
    * The person turned product analytics off for their account. The server then reports nothing about
    * them, on any device; the clients follow it (and tell the account about a "no" said before sign-in).

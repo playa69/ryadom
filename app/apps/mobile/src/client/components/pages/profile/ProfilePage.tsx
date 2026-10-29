@@ -9,7 +9,7 @@ import { memoryInUse, memorySectionStatus } from '@ryadom/client-core/memory'
 import { apiErrorText, getCurrentUser, getMemory, updateProfile } from '../../../lib/api'
 import { getVersionInfo } from '../../../lib/device'
 import { DEFAULT_AGENT_VOICE, type AgentVoice } from '@ryadom/contracts/api/auth/me'
-import { DEFAULT_VOICE_ID, findVoice } from '@ryadom/contracts/voices'
+import { DEFAULT_VOICE_ID, SBER_VOICE, findVoice } from '@ryadom/contracts/voices'
 import { ANONYMOUS_RETENTION_DAYS } from '@ryadom/contracts/api/policy'
 import { ENV_SWITCHER_TAPS } from '../../../lib/env'
 import { openExternal, privacyUrl, termsUrl } from '../../../lib/links'
@@ -53,6 +53,9 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
   }, [loadMemorySection])
   // The voice the agent speaks with; it is saved on the account and applies from the next conversation.
   const voice: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
+  // On the Sber path its one voice speaks whatever was chosen, so that is the voice to name.
+  const voiceShown =
+    user?.voicePipeline === 'sber' ? SBER_VOICE : findVoice(user?.voiceName ?? DEFAULT_VOICE_ID[voice])
   // Hands-free belongs to this device, not the account: it applies from the next conversation.
   const [handsFree, setHandsFree] = useState(() => readHandsFree(HANDS_FREE_KEY))
   // Reporting of taps and counts is on until the person turns it off; this device only, like hands-free.
@@ -80,6 +83,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
           createdAt: me.createdAt,
           voice: me.voice,
           voiceName: me.voiceName,
+          voicePipeline: me.voicePipeline,
         }),
       )
       .catch(() => {})
@@ -288,7 +292,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
             <ListItem
               link
               title="Голос"
-              after={findVoice(user?.voiceName ?? DEFAULT_VOICE_ID[voice])?.name}
+              after={voiceShown?.name}
               data-testid="voice-name"
               onClick={() => f7router.navigate('/profile/voice/')}
             />

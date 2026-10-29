@@ -7,7 +7,7 @@ import { levelOf } from './level'
 import { PRE_ROLL_MS } from './turn-detector'
 
 /**
- * Microphone capture: getUserMedia -> AudioWorklet -> 100 ms PCM16 frames at 16 kHz.
+ * Microphone capture: getUserMedia -> AudioWorklet -> 40 ms PCM16 frames at 16 kHz.
  *
  * Why not MediaRecorder: on Android it produces WebM/Opus and on iOS MP4/AAC, both of which the
  * agent would have to transcode, and fragments without the first chunk do not decode. PCM16 costs
@@ -61,8 +61,8 @@ export interface StartCaptureOptions {
   gated?: boolean
 }
 
-/** One worklet frame is 100 ms (see voice-worklet.js). */
-const FRAME_MS = 100
+/** One worklet frame is 40 ms (see voice-worklet.js). */
+const FRAME_MS = 40
 
 /**
  * Starts capture and pushes frames to `onFrame`. The browser or the OS asks for permission; a

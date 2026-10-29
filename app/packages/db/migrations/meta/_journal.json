@@ -85,6 +85,13 @@
       "when": 1793124480105,
       "tag": "0011_self_check",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793228327958,
+      "tag": "0012_voice_settings",
+      "breakpoints": true
     }
   ]
 }

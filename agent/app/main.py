@@ -78,6 +78,21 @@ def _build_live() -> "LiveConnector":
     return build_live(APP_CONFIG.gemini)
 
 
+def _build_sber() -> "LiveConnector | None":
+    """Голосовой путь Сбера (GigaASR → GigaChat → SaluteSpeech, app/clients/sber_voice.py) на прокси фоновой модели: тот же адрес
+    и ключ. Нет ключа или адреса — пути нет, разговоры идут на Gemini Live."""
+    cfg = APP_CONFIG.background_model
+    if cfg.api_key is None or not cfg.base_url:
+        return None
+    from app.clients.sber_voice import SberVoiceConnector
+
+    return SberVoiceConnector(cfg.base_url, cfg.api_key.get_secret_value())
+
+
+async def _together(*jobs: Any) -> None:
+    await asyncio.gather(*jobs)
+
+
 def _build_notes_model(memory_cfg: MemorySettings) -> ProxyBackgroundModel | None:
     """Модель извлечения заметок: свой экземпляр фоновой модели (`MEMORY_NOTES_MODEL`, по умолчанию `LLM_CHAT_MODEL`).
     Нет ключа прокси — извлечения нет, разговор идёт как раньше."""
@@ -100,6 +115,7 @@ def create_app(
     background_factory: Callable[[], BackgroundModel | None] | None = None,
     database_factory: Callable[[], DialogDatabase | None] | None = None,
     memory_settings: MemorySettings | None = None,
+    sber_factory: Callable[[], "LiveConnector | None"] | None = None,
 ) -> FastAPI:
     """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию всё берётся из конфига.
 
@@ -119,10 +135,15 @@ def create_app(
 
     Учёт токенов Gemini (`GEMINI_TPM_LIMIT`, app/services/gemini_budget.py) создаётся всегда (при лимите 0 он выключен): окно
     только измеряется, а после отказа Google по квоте включается пауза.
+
+    Голосовых путей два (`app.state.pipelines`): `sber` — GigaASR → GigaChat → SaluteSpeech с запасным Gemini Live (`sber_factory`;
+    по умолчанию собирается, если задан ключ прокси, а в тестах с `live_factory` — нет) и `gemini` — Gemini Live. Путь выбирает
+    старт диалога (`pipeline`), без него — Сбер, если он есть.
     """
     logging.basicConfig(level=APP_CONFIG.app.log_lvl, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _quiet_service_endpoints()
     make_live = live_factory or _build_live
+    make_sber = sber_factory or (_build_sber if live_factory is None else (lambda: None))
     make_background = background_factory or (lambda: build_background_model(APP_CONFIG.background_model))
 
     def make_configured_database() -> DialogDatabase | None:
@@ -188,6 +209,36 @@ def create_app(
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
             warm_up_parallel = WARM_UP_GEMINI_SESSIONS
+        # Голосовые пути: Gemini Live и, если есть ключ прокси, Сбер. Запасные — друг для друга: путь Сбера при отказе уходит на
+        # Gemini Live (фразы — SaluteSpeech, запасная озвучка — Gemini), путь Gemini Live — на Сбер (фразы — Gemini, запасная
+        # озвучка — SaluteSpeech). Пока идёт пауза после отказа Google по квоте, путь Gemini Live не пробуется.
+        app.state.pipelines = {"gemini": (live, lambda: app.state.tts)}
+        app.state.moods = {}
+        sber = make_sber()
+        salute: CachedTts | None = None
+        if sber is not None:
+            from app.clients.gemini_live import is_quota_error
+            from app.clients.sber_voice import FallbackConnector, FallbackTts, SaluteTts
+
+            salute = CachedTts(SaluteTts(sber), APP_CONFIG.speech.tts_cache_items or 1)
+            sber_tts = FallbackTts(salute, app.state.tts) if app.state.tts is not None else salute
+            app.state.pipelines["sber"] = (FallbackConnector(sber, live), lambda: sber_tts)
+
+            def gemini_open_failed(error: Exception) -> None:
+                if is_quota_error(str(error)):
+                    budget.on_quota_error("open")  # отказ по квоте при открытии начинает паузу, как и в разговоре без запасного пути
+
+            gemini_tts = FallbackTts(app.state.tts, salute) if app.state.tts is not None else salute
+            app.state.pipelines["gemini"] = (
+                FallbackConnector(
+                    live, sber, model=live.model, skip_primary=budget.cooling, on_primary_error=gemini_open_failed
+                ),
+                lambda: gemini_tts,
+            )
+            # Тон реплики в пути Сбера — его же моделью; без своего классификатора шарик не красится, но и в Gemini слова не уходят.
+            mood_classifier = getattr(sber, "mood_classifier", None)
+            app.state.moods["sber"] = mood_classifier() if mood_classifier is not None else None
+        app.state.default_pipeline = "sber" if sber is not None else "gemini"
         # Фоновая модель: итоги разговоров и недели (заметки памяти берут свой экземпляр, `_build_notes_model`).
         background = make_background()
         if background is None:
@@ -197,8 +248,9 @@ def create_app(
         store.recap_timeout_seconds = APP_CONFIG.dialog.recap_timeout_seconds
         store.retention_days = APP_CONFIG.dialog.retention_days
         logger.info(
-            "agent started: voice=%s tts=%s background=%s dialogs=%s memory=%s tracing=%s gemini budget limit=%d (measure only)",
-            live.name,
+            "agent started: voice=%s default=%s tts=%s background=%s dialogs=%s memory=%s tracing=%s gemini budget limit=%d (measure only)",
+            " ".join(f"{name}={connector.name}" for name, (connector, _) in app.state.pipelines.items()),
+            app.state.default_pipeline,
             app.state.tts.name if app.state.tts else "none",
             background.name if background else "none",
             store.persistence,
@@ -210,10 +262,13 @@ def create_app(
         # Фиксированные фразы (приветствия, кризисный ответ, просьба повторить) готовим заранее и держим в памяти фраз: каждая
         # звучит оттуда тем же голосом, без новой сессии Gemini на показ. Ответы модели так не подготовить: их звук приходит
         # от самой модели.
-        warm_up = None
+        sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
+        warm_ups = []
         if isinstance(app.state.tts, CachedTts):
-            sentences = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
-            warm_up = asyncio.create_task(app.state.tts.warm_up(sentences, parallel=warm_up_parallel))
+            warm_ups.append(app.state.tts.warm_up(sentences, parallel=warm_up_parallel))
+        if salute is not None:
+            warm_ups.append(salute.warm_up(sentences, parallel=WARM_UP_GEMINI_SESSIONS))
+        warm_up = asyncio.create_task(_together(*warm_ups)) if warm_ups else None
         # Давно неактивные люди уходят из памяти пода (с диском), метрики памяти обновляются; останавливается до `detach`.
         evictor = asyncio.create_task(store.evict_loop(APP_CONFIG.dialog.evict_interval_seconds), name="dialog-evictor")
         purger = asyncio.create_task(purge_loop(lambda: store.database), name="dialog-purger")  # физически убирает мягко стёртое
@@ -240,7 +295,7 @@ def create_app(
                 await cognee_client.aclose()
             await store.detach()  # дописать на диск всё несохранённое, пока сокеты ещё закрываются
             store.memory = None
-            for client in (app.state.tts, background, live):
+            for client in (app.state.tts, background, live, sber):
                 if client is not None:
                     await client.aclose()
             await tracer.aclose()  # отправить в Langfuse накопленные трассы
@@ -258,6 +313,9 @@ def create_app(
     app.state.tts = None  # озвучка фраз (в lifespan)
     app.state.background = None  # фоновая модель итогов (в lifespan)
     app.state.live = None  # Gemini Live (в lifespan)
+    app.state.pipelines = {}  # голосовые пути: имя → (соединитель, озвучка фраз) (в lifespan)
+    app.state.moods = {}  # классификатор тона пути, если он не Gemini: имя → классификатор или None (в lifespan)
+    app.state.default_pipeline = "gemini"
     app.state.memory = None
     app.state.budget = None  # учёт токенов Gemini (в lifespan)
     app.state.tracer = None  # подменяется в lifespan (build_tracer); None до старта приложения
