@@ -1,0 +1,119 @@
+# =============================================================================
+# Job app-migrate-0006 — миграции БД app 0009…0012 и схема очереди задач pgboss (ns prod)
+#
+# Что делает (образ app/migrate:0.10.0 — из packages/db/Dockerfile той же ревизии, что api 0.10.0, в нём миграции 0000…0012):
+#   0009_agent_voice_name  колонка users.agent_voice_name (выбранный голос Gemini по имени)
+#   0010_mood_diary        таблицы diary_summaries, mood_checkins, widget_tokens; колонка users.timezone
+#                          (text NOT NULL DEFAULT 'Europe/Moscow')
+#   0011_self_check        таблицы self_check_consent_events, self_check_results
+#   0012_voice_settings    таблица voice_settings (одна строка: голосовой путь новых разговоров sber | gemini);
+#                          строки нет, пока администратор не выберет путь, — тогда действует умолчание кода (sber)
+# После миграций тот же процесс ставит схему очереди задач `pgboss` (pg-boss): api без неё не стартует, поэтому Job
+# идёт ПЕРЕД выкатом api. Всё только добавляет: старый api (0.9.x) новых таблиц и колонок не замечает, миграции можно
+# применять заранее. Старые записи не меняются и не удаляются. Единственная правка существующей таблицы — колонка
+# users.timezone с умолчанием: на малой таблице users это мгновенно.
+#
+# Порядок в выкате:
+#   kubectl apply -f k8s/app/db/06-job-migrate-0006.yaml
+#   kubectl -n prod wait --for=condition=complete job/app-migrate-0006 --timeout=240s
+#   kubectl -n prod logs job/app-migrate-0006
+# Проверка: в журнале «applied N of 13» (0010_mood_diary, 0011_self_check, 0012_voice_settings; плюс 0009_agent_voice_name,
+# если выкат голоса 24.10 с migrate 0.9.0 в прод не применялся) и «job queue schema installed or upgraded»; в
+# drizzle.__drizzle_migrations 13 записей (0000…0012). Ненулевой код выхода =
+# миграция не применена (под повторит до трёх раз). drizzle применяет только ещё не применённые миграции.
+# Откат: миграции назад не откатываются, но откат api безопасен (прежний образ новых таблиц не читает). Если
+# схему всё же нужно вернуть: DROP TABLE voice_settings, self_check_results, self_check_consent_events, widget_tokens,
+# mood_checkins, diary_summaries; ALTER TABLE users DROP COLUMN timezone, DROP COLUMN agent_voice_name; записи журнала
+# drizzle убрать вместе с ними; схема pgboss — только по явному «да» (DROP SCHEMA pgboss CASCADE). Перед выкатом —
+# копия базы app (скилл backup).
+#
+# Предыдущий Job (app-migrate-0005, миграция 0008) уже применён и удаляется сам по ttlSecondsAfterFinished;
+# если ещё есть: kubectl -n prod delete job app-migrate-0005 --ignore-not-found.
+#
+# NB: миграции разрабатываются на PG 17 (app/docker-compose.yaml), в кластере PG 16.4 — Job первым покажет,
+# если что-то несовместимо.
+# sidecar.istio.io/inject=false: Job с istio-сайдкаром зависает, если сайдкар не умеет завершаться вместе с
+# приложением; PG в ryadom-db вне mesh, так что сайдкар здесь ничего не даёт.
+# =============================================================================
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: app-migrate-0006
+  namespace: prod
+  labels:
+    app: app-migrate
+    app.kubernetes.io/part-of: ryadom
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: app-migrate
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        # Образ node:alpine запускается как USER node (uid 1000) — числовой uid
+        # нужен kubelet'у, чтобы проверить runAsNonRoot
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/migrate:0.10.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # DATABASE_URL собирается из несекретных DB_* (ConfigMap app-config) и
+            # DB_PASSWORD (Secret). Порядок важен: $(VAR) раскрывается только для
+            # переменных, объявленных ВЫШЕ в этом списке env.
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}

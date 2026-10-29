@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: admin
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/admin:0.2.1
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/admin:0.3.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
