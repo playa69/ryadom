@@ -2,8 +2,9 @@
 
 - [x] 0.1 Основной путь — Сбер, запасной — Gemini Live, путь новых разговоров выбирает администратор в админке (владелец,
   PROTEUS-258). Приёмка: записано в `proposal.md`.
-- [ ] 0.2 Селектор голосов в пути Сбера (`design.md`, «Открытые вопросы») — решение владельца. Приёмка: ответ в PROTEUS-258; по
-  нему — отдельный change или «снято» с причиной.
+- [x] 0.2 Селектор голосов в пути Сбера — решение владельца (29.10.2026): профиль показывает голоса действующего пути, выбор голоса
+  Gemini сохраняется и возвращается с путём Gemini Live; делается в этом change (`design.md`, «Голос в профиле по пути»). Приёмка:
+  записано в PROTEUS-258.
 - [ ] 0.3 Мужские голоса SaluteSpeech на 24 кГц — запрос владельцам модельного прокси. Приёмка: ответ в PROTEUS-258.
 
 ## 1. Данные и контракты
@@ -20,6 +21,11 @@
   `app/packages/core/src/processes/dialogs/start-dialog/start-dialog.handler.ts`,
   `app/packages/core/src/integrations/agent-api/start-dialog`. Приёмка: `app/packages/core/test/dialogs.test.ts` — тело запроса к
   агенту содержит `pipeline: "sber"` без выбора и `"gemini"` после смены в админке, в том числе при возобновлении.
+
+- [x] 1.4 Путь в профиле: `VOICE_PIPELINES` и голос пути Сбера `SBER_VOICE` («Вера», `Bab-Freespeech`) в
+  `app/packages/contracts/src/voices.ts`, поле `voicePipeline` в `MeApiResponse` (`app/packages/contracts/src/api/auth/me.ts`),
+  сэмпл `voice-samples/Bab-Freespeech.mp3` в `app/apps/web/public` и `app/apps/mobile/public`. Приёмка:
+  `pnpm --filter @ryadom/contracts typecheck`.
 
 ## 2. Агент
 
@@ -47,6 +53,10 @@
 - [x] 3.1 Лимит звуковых кадров — 50 в секунду с запасом 150 (`app/services/api/src/dialogs/limits.ts`). Приёмка:
   `app/services/api/test/dialogs.test.ts` («поток кадров быстрее, чем говорит человек, — RATE_LIMITED») зелёный с новым лимитом.
 
+- [x] 3.2 `GET` и `PATCH /api/auth/me` отдают `voicePipeline` (`app/services/api/src/routes/auth/me.ts`,
+  `app/services/api/src/lib/mappers.ts`); голос Сбера в `voiceName` — 400, как любое имя вне каталога Gemini. Приёмка:
+  `app/services/api/test/account.test.ts` («голосовой путь в профиле…»).
+
 ## 4. Клиенты
 
 - [x] 4.1 (web, pwa, android, ios, tg) Звук реплики кадрами по 40 мс: `app/packages/client-core/src/voice/capture.ts`,
@@ -56,6 +66,11 @@
   `voice/_components/voice-pipeline-form.tsx`, пункт меню в `app/apps/admin/app/(dashboard)/_components/admin-sidebar.tsx`,
   подпись и подробности записи журнала в `app/apps/admin/app/(dashboard)/_lib/labels.ts`. Макет —
   `mockups/admin-voice.html`. Приёмка: `pnpm --filter @ryadom/admin typecheck`; скриншоты из раздела 5.
+
+- [x] 4.3 (web, pwa, android, ios, tg) Голос пути Сбера в профиле: `app/apps/web/components/ProfileVoice.tsx`,
+  `app/apps/mobile/src/client/components/pages/profile/VoicePage.tsx`, строка «Голос» в
+  `app/apps/mobile/src/client/components/pages/profile/ProfilePage.tsx`, путь в сохранённом пользователе
+  (`app/packages/client-core/src/storage.ts`, `app/apps/web/components/ProfileScreen.tsx`). Приёмка: e2e и скриншоты из 5.8.
 
 ## 5. Проверка
 
@@ -78,6 +93,11 @@
 - [x] 5.6 `agent-api`, «Служебные эндпоинты»: `agent/tests/test_voice_pipeline.py` — `voicePipeline` в `GET /health/ready`.
 - [ ] 5.7 Перед сдачей: typecheck и тесты затронутых пакетов app, pytest агента, ruff, `pnpm e2e` (desktop и mobile),
   `node .agents/skills/release-check/scripts/release-check.mjs`.
+
+- [x] 5.8 `dialog-voice`, «Выбор голоса агента», сценарии «(Сбер)»: «Голос в пути Сбера» и «Выбор возвращается с путём Gemini
+  Live» — e2e `app/e2e/tests/web-account.spec.ts` (desktop, mobile) и `app/e2e/tests/app-account.spec.ts` (mobile, desktop);
+  «Голос Сбера не выбирается» — `app/services/api/test/account.test.ts`; скриншоты шага `voice-sber` на 390 и 1280
+  (`pnpm evidence`).
 
 ## 6. Выкат
 

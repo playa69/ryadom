@@ -18,6 +18,7 @@ import {
   DeleteAccountOperation,
   DeleteAccountOperationErrorCode,
 } from '@ryadom/core/processes/account-deletion'
+import { GetVoicePipelineQuery, voiceSettingsManager } from '@ryadom/core/managers/voice-settings-manager'
 import { consentsProcess, GetConsentStatusOperation } from '@ryadom/core/processes/consents'
 import assertNever from 'assert-never'
 import type { Hono } from 'hono'
@@ -58,7 +59,9 @@ async function readMe(userId: string): Promise<MeApiResponse | null> {
     }
   }
   const { status } = await consentsProcess.execute(new GetConsentStatusOperation({ userId }))
-  return toMe(found.user, status)
+  // The path is the profile's too: on the Sber path one voice speaks whatever the person chose.
+  const { settings } = await voiceSettingsManager.execute(new GetVoicePipelineQuery())
+  return toMe(found.user, status, settings.pipeline)
 }
 
 export function meRoutes(app: Hono<AppEnv>, { jwt, logger, analytics }: RouteDeps): void {

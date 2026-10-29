@@ -7,8 +7,15 @@
  */
 export type VoiceGender = 'male' | 'female'
 
+/**
+ * The voice path conversations start on, chosen in the admin console: `sber` (GigaASR, GigaChat and SaluteSpeech on
+ * the model proxy) or `gemini` (Gemini Live). The values are stored in the app database and sent to the agent.
+ */
+export const VOICE_PIPELINES = ['sber', 'gemini'] as const
+export type VoicePipeline = (typeof VOICE_PIPELINES)[number]
+
 export interface VoiceOption {
-  /** Gemini voice name, the value the profile stores and the agent uses. */
+  /** The provider's voice name: what the profile stores and the agent uses; the sample is `voice-samples/<id>.mp3`. */
   id: string
   /** The name shown to the person. */
   name: string
@@ -56,6 +63,13 @@ export const AGENT_VOICE_OPTIONS: readonly VoiceOption[] = [...FEMALE_VOICES, ..
 /** The voice a gender gets until the person picks another one (what the agent used before the choice existed). */
 export const DEFAULT_VOICE_ID: Record<VoiceGender, string> = { male: 'Charon', female: 'Kore' }
 
+/**
+ * The one voice of the Sber path (SaluteSpeech on the model proxy has no other): it speaks whatever voice the person
+ * chose, so the profile shows it instead of the choice while conversations start on that path.
+ */
+export const SBER_VOICE: VoiceOption = { id: 'Bab-Freespeech', name: 'Вера', gender: 'female' }
+
+/** A Gemini Live voice by `id`: the only voices a person can choose and the profile stores. */
 export function findVoice(id: string | null | undefined): VoiceOption | undefined {
   return AGENT_VOICE_OPTIONS.find((voice) => voice.id === id)
 }

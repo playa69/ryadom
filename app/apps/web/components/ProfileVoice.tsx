@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { DEFAULT_AGENT_VOICE, type AgentVoice } from '@ryadom/contracts/api/auth/me'
-import { DEFAULT_VOICE_ID, FEMALE_VOICES, MALE_VOICES, findVoice } from '@ryadom/contracts/voices'
+import { DEFAULT_VOICE_ID, FEMALE_VOICES, MALE_VOICES, SBER_VOICE, findVoice } from '@ryadom/contracts/voices'
 import { Check, Play, Square } from 'lucide-react'
 import { playVoiceSample, stopVoiceSample } from '@ryadom/client-core/voice-sample'
 import { cn } from '@ryadom/ui/lib/utils'
@@ -25,6 +25,9 @@ const genderOf = (id: string): AgentVoice => findVoice(id)?.gender ?? 'male'
  * voices grouped by gender. Each voice can be heard (▶) before it is chosen, and the choice is
  * applied by the button. The voice is saved on the account and reaches the agent when the next
  * conversation starts, so it follows the person to another device. One row of the settings list: the caller wraps it in a section.
+ *
+ * While conversations start on the Sber path, its one voice speaks whatever was chosen: the row and the modal show that
+ * voice and say the choice is kept, instead of offering a choice that would not be heard.
  */
 export default function ProfileVoice() {
   const client = useClient()
@@ -32,6 +35,7 @@ export default function ProfileVoice() {
   const gender: AgentVoice = user?.voice ?? DEFAULT_AGENT_VOICE
   // The concrete voice is on the account; until the person picks one, the gender's default is the voice that speaks.
   const savedId = user?.voiceName ?? DEFAULT_VOICE_ID[gender]
+  const onSber = user?.voicePipeline === 'sber'
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(savedId)
   const [playingId, setPlayingId] = useState<string | null>(null)
@@ -70,6 +74,46 @@ export default function ProfileVoice() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const sampleButton = (v: { id: string; name: string }) => (
+    <button
+      type="button"
+      aria-label={`${playingId === v.id ? 'Остановить' : 'Прослушать'}: ${v.name}`}
+      onClick={() => toggle(v.id)}
+      className="grid size-9 place-items-center rounded-full text-dim hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+    >
+      {playingId === v.id ? <Square className="size-4" /> : <Play className="size-4" />}
+    </button>
+  )
+
+  if (onSber) {
+    return (
+      <li data-testid="voice-choice">
+        <ProfileRow icon="voice" label="Голос" value={SBER_VOICE.name} onClick={show} testId="voice-name" />
+        <Modal open={open} onClose={close} title="Голос агента">
+          <p className="text-[0.9375rem] leading-[1.5] text-dim" data-testid="voice-single-note">
+            Сейчас у агента один голос — {SBER_VOICE.name}. Твой выбор, {findVoice(savedId)?.name}, сохранён и
+            вернётся, когда другие голоса снова станут доступны.
+          </p>
+          <div
+            className="flex items-center gap-1 rounded-lg border border-brand-400/50 bg-brand-soft pr-1"
+            data-testid="voice-modal"
+          >
+            <span className="flex h-11 flex-1 items-center justify-between px-3 text-base">
+              {SBER_VOICE.name}
+              <Check className="size-4 text-brand-400" aria-hidden="true" />
+            </span>
+            {sampleButton(SBER_VOICE)}
+          </div>
+          <ModalActions>
+            <ProfileButton type="button" onClick={close} data-testid="voice-close">
+              Закрыть
+            </ProfileButton>
+          </ModalActions>
+        </Modal>
+      </li>
+    )
   }
 
   return (
@@ -133,14 +177,7 @@ export default function ProfileVoice() {
                       {v.name}
                       {draft === v.id && <Check className="size-4 text-brand-400" aria-hidden="true" />}
                     </button>
-                    <button
-                      type="button"
-                      aria-label={`${playingId === v.id ? 'Остановить' : 'Прослушать'}: ${v.name}`}
-                      onClick={() => toggle(v.id)}
-                      className="grid size-9 place-items-center rounded-full text-dim hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
-                    >
-                      {playingId === v.id ? <Square className="size-4" /> : <Play className="size-4" />}
-                    </button>
+                    {sampleButton(v)}
                   </div>
                 ))}
               </div>

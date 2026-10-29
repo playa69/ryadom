@@ -13,6 +13,7 @@ import {
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
+import { setVoicePipeline } from '../support/voice'
 
 /**
  * The whole account path: sign-up, the code from the email, SOS, password change, deletion.
@@ -22,7 +23,12 @@ import { step } from '../support/evidence'
  * and sign-in is rate limited per address, so the suite would run into its own brute-force
  * protection.
  */
+// The voice path is global: put the default back whatever the test did with it.
+test.afterEach(() => setVoicePipeline(null))
+
 test('путь аккаунта: регистрация, вход, смена пароля, удаление', async ({ page, shot }) => {
+  // The choice of a voice is Gemini Live's; the Sber path is checked further down.
+  await setVoicePipeline('gemini')
   const email = uniqueEmail('account')
   await clearMailbox()
 
@@ -60,6 +66,25 @@ test('путь аккаунта: регистрация, вход, смена п
   await page.locator('.navbar a.back').click()
   await expect(page.getByTestId('voice-name')).toContainText('Алиса')
   await step(page, 'voice-profile', 'В профиле теперь голос Алиса')
+
+  // `openspec/changes/add-sber-voice-pipeline`, «Выбор голоса агента»: on the Sber path the profile, read again,
+  // names the one voice that speaks, and the choice is kept for Gemini Live.
+  await setVoicePipeline('sber')
+  await page.reload()
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await openTab(page, 'Профиль')
+  await expect(page.getByTestId('voice-name')).toContainText('Вера')
+  await page.getByTestId('voice-name').click()
+  await expect(page.getByTestId('voice-single-note')).toContainText('Твой выбор, Алиса, сохранён')
+  await expect(page.locator('.segmented')).toHaveCount(0)
+  await expect(page.getByLabel('Прослушать: Вера')).toBeVisible()
+  await step(page, 'voice-sber', 'Путь Сбера: на странице один голос — Вера, выбранная Алиса сохранена')
+  await page.locator('.navbar a.back').click()
+  await setVoicePipeline('gemini')
+  await page.reload()
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await openTab(page, 'Профиль')
+  await expect(page.getByTestId('voice-name')).toContainText('Алиса')
 
   await page.getByText('Изменить пароль', { exact: true }).click()
 

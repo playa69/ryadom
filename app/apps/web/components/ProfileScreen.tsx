@@ -82,6 +82,7 @@ export default function ProfileScreen({ webUrl }: { webUrl: string }) {
           createdAt: me.createdAt,
           voice: me.voice,
           voiceName: me.voiceName,
+          voicePipeline: me.voicePipeline,
         })
       })
       .catch(() => {})
