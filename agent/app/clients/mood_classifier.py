@@ -1,13 +1,15 @@
 """Тон и риск реплики человека отдельным быстрым запросом к текстовой модели (прототип PROTEUS-168).
 
 Разговорную сессию Gemini Live не трогает: вызов функции внутри неё подменял или задерживал ответ (замеры в задаче),
-поэтому классификатор живёт рядом и ответу не мешает. Результат — тот же словарь, что у `parse_mood`. Классификатор работает
-всегда, когда есть ключ Gemini; модель и таймаут — константы.
+поэтому классификатор живёт рядом и ответу не мешает. Результат — тот же словарь, что у `parse_mood`. В пути Gemini Live
+классификатор работает, когда есть ключ Gemini; в пути Сбера тон определяет GigaChat (`GigaChatMoodClassifier` в
+`app/clients/sber_voice.py`), чтобы слова человека не уходили в Google. Модель и таймаут — константы.
 """
 
 import asyncio
 import json
 import logging
+from typing import Protocol
 
 from app.core.config import GeminiSettings
 from app.services import usage as model_usage
@@ -45,6 +47,14 @@ SCHEMA = {
 }
 
 
+class ToneClassifier(Protocol):
+    """Классификатор тона пути разговора: прогрев соединения до первой реплики и тон реплики (`parse_mood`) или None."""
+
+    async def warm(self) -> None: ...
+
+    async def classify(self, text: str) -> dict | None: ...
+
+
 class MoodClassifier:
     def __init__(self, settings: GeminiSettings) -> None:
         from google import genai
@@ -58,6 +68,10 @@ class MoodClassifier:
             headers = {"X-Relay-Token": settings.relay_token.get_secret_value()} if settings.relay_token else None
             options = types.HttpOptions(base_url=settings.base_url, headers=headers)
         self._client = genai.Client(api_key=settings.api_key.get_secret_value(), http_options=options)  # type: ignore[union-attr]
+
+    async def warm(self) -> None:
+        """Соединение открывается до первой реплики: холодный первый запрос через релей не укладывался в срок."""
+        await self.classify("привет")
 
     async def classify(self, text: str) -> dict | None:
         t = self._types

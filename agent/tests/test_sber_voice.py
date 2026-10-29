@@ -1,5 +1,5 @@
 """Голосовой путь Сбера (app/clients/sber_voice.py) без сети: пересчёт звука, нарезка ответа GigaChat на куски для синтеза
-(поддельный прокси, httpx.MockTransport), запасной путь соединения и озвучки фраз."""
+(поддельный прокси, httpx.MockTransport), запасной путь соединения и озвучки фраз, классификатор тона на GigaChat."""
 
 import asyncio
 import json
@@ -14,6 +14,7 @@ from app.clients.sber_voice import (
     CHAT_MODEL,
     FallbackConnector,
     FallbackTts,
+    GigaChatMoodClassifier,
     SberVoiceLink,
     Upsampler,
     own_gender,
@@ -193,3 +194,29 @@ async def test_fallback_tts_does_not_restart_a_phrase_that_already_sounds() -> N
         async for piece in tts.stream("Привет.", "male"):
             heard.append(piece)
     assert heard == [b"\x01\x00"]  # половина фразы одним голосом и целая другим звучали бы дважды
+
+
+async def test_gigachat_tone_classifier_reads_json_and_distrusts_the_model() -> None:
+    answers = iter(['Вот ответ: {"tone": "sad", "intensity": 0.6}', '{"tone": "furious", "intensity": 1}'])
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        usage = {"prompt_tokens": 50, "completion_tokens": 9}
+        return httpx.Response(200, json={"choices": [{"message": {"content": next(answers)}}], "usage": usage})
+
+    classifier = GigaChatMoodClassifier(_Connector(handler))  # type: ignore[arg-type]
+    assert await classifier.classify("мне грустно") == {"tone": "sad", "intensity": 0.6}
+    assert seen[0]["model"] == CHAT_MODEL and seen[0]["messages"][-1] == {"role": "user", "content": "мне грустно"}
+    assert await classifier.classify("ну и ладно") is None  # тона вне списка нет
+
+
+async def test_gigachat_tone_classifier_gives_up_after_one_retry() -> None:
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(500)
+
+    assert await GigaChatMoodClassifier(_Connector(handler)).classify("мне страшно") is None  # type: ignore[arg-type]
+    assert len(calls) == 2

@@ -44,7 +44,7 @@ from app.clients.gemini_live import (
     session_closed,
     session_opened,
 )
-from app.clients.mood_classifier import MoodClassifier
+from app.clients.mood_classifier import MoodClassifier, ToneClassifier
 from app.clients.speech import FRAME_BYTES, TTS_RATE, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
@@ -305,6 +305,7 @@ class DialogSession:
         connector: LiveConnector,
         budget: TokenBudget | None = None,
         tracer: Tracer | None = None,
+        mood: "ToneClassifier | Literal['gemini'] | None" = "gemini",
     ) -> None:
         self._ws = websocket
         self._store = store
@@ -315,6 +316,10 @@ class DialogSession:
         self._tracer = tracer or NullTracer()
         self._connector = connector
         self._cfg = APP_CONFIG.gemini
+        # Классификатор тона для цвета шарика: свой у пути (у Сбера — GigaChat, слова человека не уходят в Google), "gemini" —
+        # Gemini, если есть его ключ, None — без классификатора.
+        self._mood_classifier: ToneClassifier | None = None if mood == "gemini" else mood
+        self._mood_on = self._cfg.api_key is not None if mood == "gemini" else mood is not None
         # Учёт токенов Gemini (выключен, если сессию создали без приложения или GEMINI_TPM_LIMIT=0).
         self._budget = budget or TokenBudget.disabled()
         self._stream_delay = APP_CONFIG.dialog.stream_delay_ms / 1000
@@ -846,7 +851,7 @@ class DialogSession:
             asyncio.create_task(self._send_loop()),
             asyncio.create_task(self._pump()),
         ]
-        if self._cfg.api_key is not None:
+        if self._mood_on:
             self._tasks.append(asyncio.create_task(self._warm_mood_classifier()))  # первый запрос иначе ждёт TLS и релей
         self._tasks.append(asyncio.create_task(self._ensure_link()))  # соединение готово к первой реплике
         try:
@@ -1599,7 +1604,7 @@ class DialogSession:
 
     def _classify_mood_soon(self, turn: LiveTurn) -> None:
         """Прототип PROTEUS-168: когда слова расшифровки перестали приходить, реплика уходит на классификатор тона."""
-        if self._cfg.api_key is None:
+        if not self._mood_on:
             return
         previous = self._mood_task
         if previous is not None:
@@ -1608,19 +1613,19 @@ class DialogSession:
         self._mood_task = asyncio.create_task(self._classify_mood(turn, heard))
 
     _mood_task: "asyncio.Task[None] | None" = None
-    _mood_classifier: MoodClassifier | None = None
+
+    def _mood(self) -> ToneClassifier:
+        if self._mood_classifier is None:
+            self._mood_classifier = MoodClassifier(self._cfg)
+        return self._mood_classifier
 
     async def _warm_mood_classifier(self) -> None:
         """Соединение классификатора открывается до первой реплики: холодный первый запрос укладывался не в срок."""
-        if self._mood_classifier is None:
-            self._mood_classifier = MoodClassifier(self._cfg)
-        await self._mood_classifier.classify("привет")
+        await self._mood().warm()
 
     async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
         await asyncio.sleep(MOOD_DEBOUNCE_SECONDS)
-        if self._mood_classifier is None:
-            self._mood_classifier = MoodClassifier(self._cfg)
-        mood = await self._mood_classifier.classify(heard)
+        mood = await self._mood().classify(heard)
         if mood is not None and not self._closed:
             await self._on_mood(mood, turn)
 

@@ -48,6 +48,12 @@
   `REQ-GEN-02`), строка про единственный голосовой путь в `.agents/skills/openspec/SKILL.md` (+ `node scripts/sync-agent-skills.mjs`).
   Приёмка: `node scripts/sync-agent-skills.mjs --check`.
 
+- [x] 2.7 Тон реплики в пути Сбера — GigaChat: `GigaChatMoodClassifier` и `SberVoiceConnector.mood_classifier()` в
+  `agent/app/clients/sber_voice.py`, классификатор пути в `DialogSession` (`mood`, `agent/app/api/dialog_session.py`), выбор в
+  `agent/app/api/dialogs.py` и `agent/app/main.py` (`app.state.moods`); напоминание о формате без фразы про советы. Приёмка:
+  `agent/tests/test_sber_voice.py` (разбор ответа, повтор), `agent/tests/test_voice_pipeline.py` (тон пути Сбера без Gemini,
+  путь Сбера без своего классификатора не берёт Gemini).
+
 ## 3. Шлюз API
 
 - [x] 3.1 Лимит звуковых кадров — 50 в секунду с запасом 150 (`app/services/api/src/dialogs/limits.ts`). Приёмка:
@@ -98,6 +104,9 @@
   Live» — e2e `app/e2e/tests/web-account.spec.ts` (desktop, mobile) и `app/e2e/tests/app-account.spec.ts` (mobile, desktop);
   «Голос Сбера не выбирается» — `app/services/api/test/account.test.ts`; скриншоты шага `voice-sber` на 390 и 1280
   (`pnpm evidence`).
+
+- [x] 5.9 `orb-mood`, «Определение тона реплики», «(Сбер) Тон без Gemini»: `agent/tests/test_voice_pipeline.py`; качество
+  классификатора — замер 24 синтетических реплик на прокси (`design.md`, «Тон реплики в пути Сбера определяет GigaChat»).
 
 ## 6. Выкат
 

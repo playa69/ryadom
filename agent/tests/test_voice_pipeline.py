@@ -1,16 +1,20 @@
 """Голосовой путь разговора по старту (`openspec/changes/add-sber-voice-pipeline`, «Голосовой путь разговора», «Служебные
-эндпоинты»): поле `pipeline` старта, путь по умолчанию, соединитель сокета и окно токенов Gemini только для Gemini Live."""
+эндпоинты»): поле `pipeline` старта, путь по умолчанию, соединитель сокета, окно токенов Gemini только для Gemini Live и
+классификатор тона пути Сбера без Gemini."""
 
 import uuid
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+from app.clients import mood_classifier
 from app.clients.gemini_live import LiveError
-from app.core.config import GeminiSettings
+from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.gemini_budget import TokenBudget
 from tests.conftest import AUTH, FakeTts, has, make_app, read_frames, send_user_message, ws_url
-from tests.fake_live import FakeConnector
+from tests.fake_live import FakeConnector, reply_done, speak_turn
 
 
 class FakeSber(FakeConnector):
@@ -23,8 +27,57 @@ class FakeSber(FakeConnector):
         raise LiveError("синтеза фраз в тесте нет")
 
 
+class FakeTone:
+    """Классификатор тона пути Сбера без сети: запоминает реплики и отвечает грустью."""
+
+    def __init__(self) -> None:
+        self.heard: list[str] = []
+
+    async def warm(self) -> None:
+        return None
+
+    async def classify(self, text: str) -> dict:
+        self.heard.append(text)
+        return {"tone": "sad", "intensity": 0.5}
+
+
+class FakeSberWithTone(FakeSber):
+    def __init__(self, tone: FakeTone, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.tone = tone
+
+    def mood_classifier(self) -> FakeTone:
+        return self.tone
+
+
 def sber_client(gemini: FakeConnector, sber: FakeConnector | None) -> TestClient:
     return TestClient(make_app(gemini, FakeTts(), sber_factory=lambda: sber))
+
+
+@pytest.fixture
+def gemini_tone(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Есть ключ Gemini, его классификатор тона поддельный; в списке — всё, что он получил, включая прогрев."""
+    heard: list[str] = []
+
+    async def classify(self: object, text: str) -> dict:
+        heard.append(text)
+        return {"tone": "afraid", "intensity": 0.7}
+
+    monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings: None)
+    monkeypatch.setattr(mood_classifier.MoodClassifier, "classify", classify)
+    monkeypatch.setattr(APP_CONFIG.gemini, "api_key", SecretStr("x"))
+    monkeypatch.setattr("app.api.dialog_session.MOOD_DEBOUNCE_SECONDS", 0)
+    return heard
+
+
+def moods(frames: list[Any]) -> list[str]:
+    return [f[1]["tone"] for f in frames if f[0] == "json" and f[1]["type"] == "mood"]
+
+
+def voice_turn(client: TestClient, user_id: str, dialog_id: str, until: Any) -> list[Any]:
+    with client.websocket_connect(ws_url(user_id, dialog_id), headers=AUTH) as ws:
+        speak_turn(ws)
+        return read_frames(ws, until)
 
 
 def start(client: TestClient, user_id: str, **body: Any) -> Any:
@@ -103,3 +156,29 @@ def test_the_gemini_token_window_counts_only_gemini_live_dialogs() -> None:
         start(client, user_id, pipeline="gemini")
         one_turn(client, user_id, dialog)
         assert budget.window_tokens() > 0
+
+
+def test_on_the_sber_path_the_tone_comes_from_gigachat_and_nothing_goes_to_gemini(gemini_tone: list[str]) -> None:
+    tone = FakeTone()
+    gemini, sber = FakeConnector(heard="мне грустно"), FakeSberWithTone(tone, heard="мне грустно")
+    with_mood = lambda frames: reply_done(frames) and bool(moods(frames))  # noqa: E731
+    with sber_client(gemini, sber) as client:
+        user_id = str(uuid.uuid4())
+        dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
+        assert moods(voice_turn(client, user_id, dialog, with_mood)) == ["sad"]
+        assert tone.heard and "мне грустно" in tone.heard[-1]
+        assert gemini_tone == []  # ни прогрева, ни реплики: слова человека в Gemini не ушли
+
+        # Путь Gemini Live по-прежнему красит шарик классификатором Gemini.
+        start(client, user_id, pipeline="gemini")
+        assert moods(voice_turn(client, user_id, dialog, with_mood)) == ["afraid"]
+        assert "мне грустно" in gemini_tone[-1]
+
+
+def test_a_sber_path_without_its_own_classifier_does_not_fall_back_to_gemini(gemini_tone: list[str]) -> None:
+    gemini, sber = FakeConnector(), FakeSber(heard="мне страшно")
+    with sber_client(gemini, sber) as client:
+        user_id = str(uuid.uuid4())
+        dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
+        frames = voice_turn(client, user_id, dialog, reply_done)
+        assert moods(frames) == [] and gemini_tone == []

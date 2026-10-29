@@ -211,6 +211,7 @@ def create_app(
             warm_up_parallel = WARM_UP_GEMINI_SESSIONS
         # Голосовые пути: Gemini Live и, если есть ключ прокси, Сбер с запасным Gemini Live (фразы — SaluteSpeech, запасная озвучка — Gemini).
         app.state.pipelines = {"gemini": (live, lambda: app.state.tts)}
+        app.state.moods = {}
         sber = make_sber()
         salute: CachedTts | None = None
         if sber is not None:
@@ -219,6 +220,9 @@ def create_app(
             salute = CachedTts(SaluteTts(sber), APP_CONFIG.speech.tts_cache_items or 1)
             sber_tts = FallbackTts(salute, app.state.tts) if app.state.tts is not None else salute
             app.state.pipelines["sber"] = (FallbackConnector(sber, live), lambda: sber_tts)
+            # Тон реплики в пути Сбера — его же моделью; без своего классификатора шарик не красится, но и в Gemini слова не уходят.
+            mood_classifier = getattr(sber, "mood_classifier", None)
+            app.state.moods["sber"] = mood_classifier() if mood_classifier is not None else None
         app.state.default_pipeline = "sber" if sber is not None else "gemini"
         # Фоновая модель: итоги разговоров и недели (заметки памяти берут свой экземпляр, `_build_notes_model`).
         background = make_background()
@@ -295,6 +299,7 @@ def create_app(
     app.state.background = None  # фоновая модель итогов (в lifespan)
     app.state.live = None  # Gemini Live (в lifespan)
     app.state.pipelines = {}  # голосовые пути: имя → (соединитель, озвучка фраз) (в lifespan)
+    app.state.moods = {}  # классификатор тона пути, если он не Gemini: имя → классификатор или None (в lifespan)
     app.state.default_pipeline = "gemini"
     app.state.memory = None
     app.state.budget = None  # учёт токенов Gemini (в lifespan)

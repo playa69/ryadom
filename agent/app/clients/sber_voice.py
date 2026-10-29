@@ -34,6 +34,8 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.protocol import State
 
 from app.clients.gemini_live import LiveConnector, LiveError, LiveEvent, LiveHistory, LiveLink
+from app.clients.mood_classifier import INSTRUCTIONS as MOOD_INSTRUCTIONS
+from app.clients.mood_classifier import MOOD_TIMEOUT_SECONDS, parse_mood
 from app.clients.speech import TextToSpeech, TtsError, Voice, pcm_stream
 from app.services import usage as model_usage
 from app.services.replies import SELF_GENDER
@@ -74,9 +76,10 @@ _LIST_START = re.compile(r"^(?:[-•–]|\d+[.)])\s+")
 # (проверено 28.10.2026: с ним 140–200 знаков против 220–740, списков нет).
 VOICE_RULES = (
     "\n\nНапоминание о формате: ответ звучит голосом в живом разговоре. Одна–четыре короткие фразы обычной речью; никаких "
-    "списков, пунктов, тире в начале строк и перечислений через переносы. Если советов несколько — назови один-два главных и "
-    "спроси, что из этого подходит."
+    "списков, пунктов, тире в начале строк и перечислений через переносы."
 )
+# Классификатор тона в пути Сбера отвечает JSON по просьбе в инструкции: так GigaChat 3.5 ответил разбираемо 24 раза из 24.
+MOOD_SYSTEM = MOOD_INSTRUCTIONS + ' Ответь только JSON без пояснений: {"tone": "...", "intensity": 0.0}.'
 
 
 def own_gender(instructions: str) -> str:
@@ -508,8 +511,57 @@ class SberVoiceConnector:
             raise error if isinstance(error, LiveError) else LiveError(str(error)[:200])
         return SberVoiceLink(self, asr, speaker, voice, instructions, history)
 
+    def mood_classifier(self) -> "GigaChatMoodClassifier":
+        """Тон реплики в пути Сбера определяет GigaChat на том же прокси, а не Gemini."""
+        return GigaChatMoodClassifier(self)
+
     async def aclose(self) -> None:
         await self.http.aclose()
+
+
+class GigaChatMoodClassifier:
+    """Тон реплики человека для цвета шарика в пути Сбера: GigaChat на модельном прокси, чтобы слова человека не уходили в Google.
+
+    Замер 29.10.2026 на 24 синтетических репликах: GigaChat 3.5 угадал тон 24 раза, медиана 0,5 с (p90 0,63 с);
+    gemini-3.1-flash-lite через тот же прокси — 21 раз, медиана 0,9 с; gigachat3-10b быстрее (0,2 с), но 22 из 24 и выдумывал тон.
+    """
+
+    def __init__(self, connector: SberVoiceConnector) -> None:
+        self._connector = connector
+
+    async def warm(self) -> None:
+        self._connector.prewarm()
+
+    async def classify(self, text: str) -> dict | None:
+        body = {
+            "model": CHAT_MODEL,
+            "messages": [{"role": "system", "content": MOOD_SYSTEM}, {"role": "user", "content": text}],
+            "temperature": 0,
+            "max_tokens": 60,
+        }
+        for attempt in (1, 2):  # один повтор, как у классификатора Gemini
+            try:
+                response = await asyncio.wait_for(
+                    self._connector.http.post(self._connector.chat_url, json=body), MOOD_TIMEOUT_SECONDS
+                )
+                response.raise_for_status()
+                data = response.json()
+                usage = data.get("usage") or {}
+                model_usage.record(CHAT_MODEL, "mood", "input", "text", "tokens", int(usage.get("prompt_tokens") or 0))
+                model_usage.record(CHAT_MODEL, "mood", "output", "text", "tokens", int(usage.get("completion_tokens") or 0))
+                return parse_mood(_json_object(data["choices"][0]["message"]["content"]))
+            except Exception as error:  # noqa: BLE001
+                logger.warning("классификатор тона GigaChat (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
+        return None
+
+
+def _json_object(text: str) -> dict | None:
+    """JSON из ответа модели, даже если вокруг него слова или разметка."""
+    match = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        return json.loads(match.group(0)) if match else None
+    except json.JSONDecodeError:
+        return None
 
 
 class SaluteTts:
