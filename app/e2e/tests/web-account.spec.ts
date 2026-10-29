@@ -112,7 +112,7 @@ test('путь аккаунта в вебе: регистрация, профи�
   await page.getByTestId('voice-apply').click()
   await expect(page.getByTestId('voice-name')).toContainText('Алиса')
   await step(page, 'voice-applied', 'Голос сохранён: в профиле теперь Алиса')
-  // `openspec/changes/add-sber-voice-pipeline`, «Выбор голоса агента»: the admin switched to the Sber path.
+  // `add-sber-voice-pipeline`, «Выбор голоса агента»: the admin switched to the Sber path.
   await setVoicePipeline('sber')
 
   // The help lines are also a page of their own: one column at every width, nothing sideways.

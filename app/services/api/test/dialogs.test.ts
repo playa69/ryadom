@@ -1389,7 +1389,7 @@ describe('WebSocket-шлюз', () => {
   })
 
   it('кадры по 40 мс: запас перед речью и несколько секунд речи разом не рвут соединение', async () => {
-    // `openspec/changes/add-sber-voice-pipeline`, «Коды закрытия, ошибки и лимиты соединения»
+    // `add-sber-voice-pipeline`, «Коды закрытия, ошибки и лимиты соединения»
     const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
     await waitOpen(client)

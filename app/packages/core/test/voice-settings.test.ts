@@ -1,5 +1,5 @@
 /**
- * The voice pipeline of new conversations, picked by an admin (`openspec/changes/add-sber-voice-pipeline`,
+ * The voice pipeline of new conversations, picked by an admin (`add-sber-voice-pipeline`,
  * «Выбор голосового пути», «Журнал действий»).
  */
 import { describe, expect, it } from 'vitest'

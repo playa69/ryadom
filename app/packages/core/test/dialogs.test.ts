@@ -192,7 +192,7 @@ describe('начать разговор', () => {
   })
 
   it('голосовой путь из админки уходит агенту при каждом старте, в том числе при возобновлении', async () => {
-    // `openspec/changes/add-sber-voice-pipeline`, «Голосовой путь разговора»
+    // `add-sber-voice-pipeline`, «Голосовой путь разговора»
     const user = await registerConfirmedUser()
     const { calls } = mockAgent()
 

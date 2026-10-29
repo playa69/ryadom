@@ -225,7 +225,7 @@ describe('регистрация и вход', () => {
     expect(await read()).toMatchObject({ voice: 'female', voiceName: 'Kore' })
   })
 
-  // `openspec/changes/add-sber-voice-pipeline`, «Выбор голоса агента»
+  // `add-sber-voice-pipeline`, «Выбор голоса агента»
   it('голосовой путь в профиле: по умолчанию Сбер, смена в админке видна сразу, выбор голоса не трогает', async () => {
     resetLimits()
     const { tokens } = await signUpAndIn(app)

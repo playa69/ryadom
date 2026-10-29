@@ -67,7 +67,7 @@ test('путь аккаунта: регистрация, вход, смена п
   await expect(page.getByTestId('voice-name')).toContainText('Алиса')
   await step(page, 'voice-profile', 'В профиле теперь голос Алиса')
 
-  // `openspec/changes/add-sber-voice-pipeline`, «Выбор голоса агента»: on the Sber path the profile, read again,
+  // `add-sber-voice-pipeline`, «Выбор голоса агента»: on the Sber path the profile, read again,
   // names the one voice that speaks, and the choice is kept for Gemini Live.
   await setVoicePipeline('sber')
   await page.reload()
