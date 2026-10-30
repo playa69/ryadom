@@ -359,6 +359,18 @@ describe('рекламные метки и значения кампаний (н
     expect(scrubEvent(event)!.properties).toEqual({ utm_source: 'tg', $initial_utm_medium: 'post' })
   })
 
+  // `openspec/changes/add-telegram-start-param`, «Метка запуска Telegram Mini App»
+  it('метка запуска Mini App проходит только короткой меткой: ни почты, ни имени, ни длинной строки', () => {
+    expect(sanitizeProperties({ standalone: false, start_param: 'tgads_oct.2' })).toEqual({
+      standalone: false,
+      start_param: 'tgads_oct.2',
+    })
+    for (const value of ['anna@example.com', 'Anna Ivanova', 'мне плохо', 'a'.repeat(41), '', 42, true, null]) {
+      expect(sanitizeProperties({ standalone: false, start_param: value })).toEqual({ standalone: false })
+    }
+    expect(sanitizeProperties({ start_param: 'a'.repeat(40) })).toEqual({ start_param: 'a'.repeat(40) })
+  })
+
   it('внешняя ссылка: остаётся сайт, путь (профиль человека) и телефон уходят', () => {
     expect(scrubEvent({ properties: { $external_click_url: 'https://t.me/anna_ivanova?x=1' } })!.properties).toEqual({
       $external_click_url: 'https://t.me',

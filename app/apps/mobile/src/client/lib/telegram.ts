@@ -65,6 +65,14 @@ export function telegramInitData(): string | null {
   return webApp?.initData || null
 }
 
+/**
+ * The label of the link the Mini App was opened by (`t.me/<bot>?startapp=<label>`), for the report of where people
+ * come from. Passed on as written: the analytics layer keeps it only if it is a short slug.
+ */
+export function telegramStartParam(): string | null {
+  return webApp?.initDataUnsafe.start_param || null
+}
+
 /** The first name in the person's Telegram profile: a suggestion for how the agent calls them, never sent by itself. */
 export function telegramFirstName(): string {
   return webApp?.initDataUnsafe.user?.first_name?.trim() ?? ''

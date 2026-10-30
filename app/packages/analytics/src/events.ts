@@ -347,7 +347,15 @@ export interface AnalyticsEventProperties {
   }
   [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
 
-  [AnalyticsEvent.AppOpened]: { standalone: boolean; first_launch?: boolean }
+  [AnalyticsEvent.AppOpened]: {
+    standalone: boolean
+    first_launch?: boolean
+    /**
+     * Telegram Mini App only: the label of the link it was opened by (`?startapp=<label>`). A short slug;
+     * `sanitizeProperties` drops anything else.
+     */
+    start_param?: string
+  }
   [AnalyticsEvent.CtaClicked]: { cta: CtaId; placement: string }
   [AnalyticsEvent.AuthFormSubmitted]: { form: AuthForm; outcome: FormOutcome }
   [AnalyticsEvent.EmailCodeResent]: { form: 'confirm_email' | 'reset_password' }
