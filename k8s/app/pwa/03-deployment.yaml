@@ -54,7 +54,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: pwa
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/pwa:0.9.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/pwa:0.9.1
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
