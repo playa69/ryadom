@@ -102,6 +102,11 @@ export function sanitizeProperties(properties: object | null | undefined): Clean
   for (const [key, value] of Object.entries(properties)) {
     // PostHog's own `$`-prefixed fields are set by the SDK and handled by the URL scrubber.
     if (!key.startsWith('$') && isDeniedKey(key)) continue
+    // The author of a link writes this one, and a free value is where a name or an address would end up.
+    if (key === 'start_param') {
+      if (typeof value === 'string' && CAMPAIGN_VALUE.test(value)) clean[key] = value
+      continue
+    }
     if (Array.isArray(value)) {
       const items = value.slice(0, MAX_ARRAY).map(cleanPrimitive)
       if (items.every((item): item is Primitive => item !== undefined)) clean[key] = items

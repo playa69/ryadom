@@ -4,9 +4,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// The SDK touches the document when it loads; the tests give the page a stand-in `Telegram.WebApp` instead.
+vi.mock('@twa-dev/sdk', () => ({ default: {} }))
+
 let session: Map<string, string>
 
-function stubWindow(hash: string) {
+function stubWindow(hash: string, telegram?: { startParam?: string }) {
   vi.stubGlobal('window', {
     location: { hash },
     sessionStorage: {
@@ -14,6 +17,17 @@ function stubWindow(hash: string) {
       setItem: (key: string, value: string) => void session.set(key, value),
       removeItem: (key: string) => void session.delete(key),
     },
+    ...(telegram && {
+      Telegram: {
+        WebApp: {
+          initData: 'query_id=AAH',
+          initDataUnsafe: telegram.startParam === undefined ? {} : { start_param: telegram.startParam },
+          ready: () => {},
+          expand: () => {},
+          isVersionAtLeast: () => false,
+        },
+      },
+    }),
   })
 }
 
@@ -50,6 +64,39 @@ describe('запуск из Telegram', () => {
     expect(await telegram.initTelegram()).toBeNull()
     expect(telegram.isTelegramMiniApp()).toBe(false)
     expect(telegram.telegramInitData()).toBeNull()
+  })
+})
+
+// `openspec/changes/add-telegram-start-param`, «Метка запуска Telegram Mini App»
+describe('метка запуска Mini App', () => {
+  it('запуск по ссылке с startapp отдаёт метку', async () => {
+    stubWindow('#tgWebAppData=x', { startParam: 'tgads_oct' })
+    const telegram = await load()
+    expect(telegram.telegramStartParam()).toBeNull()
+    await telegram.initTelegram()
+    expect(telegram.telegramStartParam()).toBe('tgads_oct')
+  })
+
+  it('запуск без параметра (кнопка меню бота) метки не даёт', async () => {
+    stubWindow('#tgWebAppData=x', {})
+    const telegram = await load()
+    await telegram.initTelegram()
+    expect(telegram.isTelegramMiniApp()).toBe(true)
+    expect(telegram.telegramStartParam()).toBeNull()
+  })
+
+  it('пустой параметр метки не даёт', async () => {
+    stubWindow('#tgWebAppData=x', { startParam: '' })
+    const telegram = await load()
+    await telegram.initTelegram()
+    expect(telegram.telegramStartParam()).toBeNull()
+  })
+
+  it('обычная вкладка браузера: метки нет', async () => {
+    stubWindow('#/home/')
+    const telegram = await load()
+    await telegram.initTelegram()
+    expect(telegram.telegramStartParam()).toBeNull()
   })
 })
 

@@ -15,7 +15,7 @@ import { analyticsPlatform } from './lib/analytics'
 import { getApiBase, loadEnv } from './lib/env'
 import { initSystemBarsStyle } from './lib/native'
 import { isAndroid, isIosNative, isNative, isStandalone } from './lib/platform'
-import { initTelegram } from './lib/telegram'
+import { initTelegram, telegramStartParam } from './lib/telegram'
 
 /**
  * Client entry point. Inter comes from the @fontsource package, so the app never fetches it from
@@ -42,7 +42,11 @@ async function start(): Promise<void> {
     }),
     appVersion: __RELEASE__,
   })
-  track(AnalyticsEvent.AppOpened, { standalone: isNative() || isStandalone() })
+  const startParam = telegramStartParam()
+  track(AnalyticsEvent.AppOpened, {
+    standalone: isNative() || isStandalone(),
+    ...(startParam ? { start_param: startParam } : {}),
+  })
   initSystemBarsStyle()
   const root = document.getElementById('app')
   if (!root) throw new Error('#app not found')
