@@ -167,9 +167,9 @@ test('память в приложении: согласие → разгово�
   await shot(page, 'memory-deleted')
 })
 
-// ── the invitation to memory on home (REQ-MEM-*, task 6.7) ─────────────────────────────────────────
+// ── «Запоминать важное» on home (`openspec/changes/merge-first-screen-into-home`) ─────────────────────
 
-test('приглашение к памяти: аноним видит лист; «Не сейчас» не возвращается; «Включить» → согласие → память включена', async ({
+test('«Запоминать важное» на главной: окно само не открывается; переключатель → согласие → память включена, на месте — «Без памяти»', async ({
   page,
   shot,
 }) => {
@@ -177,41 +177,34 @@ test('приглашение к памяти: аноним видит лист; 
   await openApp(page, { keepMemoryInvite: true })
   await startAnonymously(page)
 
-  const invite = page.locator('.sheet-modal.modal-in').getByTestId('memory-invite')
-  await expect(invite).toBeVisible({ timeout: 20_000 })
-  await expect(invite).toContainText('Рядом теперь запоминает важное')
-  await shot(page, 'memory-invite')
+  const home = page.locator('.page-current')
+  const row = home.getByTestId('memory-switch')
+  await expect(row).toBeVisible({ timeout: 20_000 })
+  // Nothing interrupts: no sheet opens by itself.
+  await page.waitForTimeout(2500)
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await shot(page, 'memory-switch')
 
-  // "Не сейчас": closes, and does not come back after a reload.
+  // A declined consent leaves memory off and the switch off.
+  await row.locator('.toggle').click()
+  const consent = page.locator('.sheet-modal.modal-in')
+  await expect(consent.getByTestId('memory-consent')).toBeVisible({ timeout: 10_000 })
   await sheetButton(page, 'Не сейчас').click()
   await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
-  await page.reload()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await page.waitForTimeout(2500)
-  await expect(page.getByTestId('memory-invite')).toBeHidden()
-  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await expect(row.locator('input[type="checkbox"]')).not.toBeChecked()
 
-  // A second person on a fresh device: "Включить" leads to the consent sheet, then memory is on.
-  await page.evaluate((key) => window.localStorage.removeItem(key), 'ryadom.memory-invite-dismissed')
-  await page.reload()
-  await expect(invite).toBeVisible({ timeout: 20_000 })
-  await sheetButton(page, 'Включить').first().click()
-  const consent = page.locator('.sheet-modal.modal-in')
+  // Accepted: memory is on, and «Без памяти» takes the switch's place.
+  await row.locator('.toggle').click()
   await expect(consent.getByTestId('memory-consent')).toBeVisible({ timeout: 10_000 })
   await sheetButton(page, 'Включить память').click()
   await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await expect(home.getByTestId('incognito')).toBeVisible({ timeout: 20_000 })
+  await expect(row).toHaveCount(0)
 
   await openTab(page, 'Профиль')
   await page.locator('.page-current').getByTestId('row-memory').click()
   const memory = page.locator('.page-current[data-name="memory"]')
   await expect(memory.getByTestId('memory-switch').locator('input[type="checkbox"]')).toBeChecked()
-
-  // Memory on: the invitation is not shown any more, even when the answer was forgotten.
-  await page.evaluate((key) => window.localStorage.removeItem(key), 'ryadom.memory-invite-dismissed')
-  await page.reload()
-  await expect(page.locator('.page-current')).toBeVisible()
-  await page.waitForTimeout(2500)
-  await expect(page.getByTestId('memory-invite')).toBeHidden()
 })
 
 // ── "Запомнил: … · Убрать" in the conversation (task 6.4) ──────────────────────────────────────────

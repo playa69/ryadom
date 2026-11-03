@@ -40,22 +40,3 @@ export async function enableMemory(): Promise<
     return { ok: false, text: apiErrorText(error, {}, fallback) }
   }
 }
-
-/** The invitation is answered once on this device; storage that fails reads as "not dismissed". */
-const MEMORY_INVITE_STORAGE_KEY = 'ryadom.memory-invite-dismissed'
-
-export function memoryInviteDismissed(): boolean {
-  try {
-    return localStorage.getItem(MEMORY_INVITE_STORAGE_KEY) !== null
-  } catch {
-    return false
-  }
-}
-
-export function dismissMemoryInvite(): void {
-  try {
-    localStorage.setItem(MEMORY_INVITE_STORAGE_KEY, String(Date.now()))
-  } catch {
-    // The sheet may come back next time: nothing worse.
-  }
-}

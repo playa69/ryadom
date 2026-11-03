@@ -92,7 +92,7 @@ export async function startAnonymously(page: Page): Promise<void> {
     JSON.stringify(JSON.stringify(device)),
   )
   await page.reload()
-  await expect(screen(page).getByTestId('consent-notice'), 'не первый экран, а главная').toHaveCount(0, {
+  await expect(screen(page).getByTestId('welcome-talk'), 'не первый экран, а главная').toHaveCount(0, {
     timeout: 30_000,
   })
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })

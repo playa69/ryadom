@@ -64,11 +64,14 @@ export default function AppSidebar() {
   }, [pathname])
   const inDiary = pathname === '/diary' || pathname.startsWith('/diary/')
 
+  /** Someone new, before the first message: nothing of theirs to list yet, and a way into an account. */
+  const guest = user === null
+
   // The history is cheap to re-read (parallel calls share one request) and a conversation that just
   // ended or started must show up as soon as the person navigates.
   useEffect(() => {
     void refresh()
-  }, [pathname, refresh])
+  }, [pathname, refresh, user])
 
   // The drawer on a phone closes itself when the person picks something.
   useEffect(() => {
@@ -136,26 +139,32 @@ export default function AppSidebar() {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    tooltip={isMobile ? undefined : 'Дневник'}
-                    isActive={inDiary}
-                    className="h-10 text-[0.9375rem]"
-                  >
-                    <Link href={diaryHref} aria-current={inDiary ? 'page' : undefined} data-testid="nav-diary">
-                      <BookHeart />
-                      <span>Дневник</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                {!guest && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={isMobile ? undefined : 'Дневник'}
+                      isActive={inDiary}
+                      className="h-10 text-[0.9375rem]"
+                    >
+                      <Link
+                        href={diaryHref}
+                        aria-current={inDiary ? 'page' : undefined}
+                        data-testid="nav-diary"
+                      >
+                        <BookHeart />
+                        <span>Дневник</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
 
           {/* The history has no icon-rail form: a column of identical glyphs says nothing. */}
           <div className="min-h-0 flex-1 overflow-y-auto group-data-[collapsible=icon]:hidden">
-            {items === null && !error && (
+            {!guest && items === null && !error && (
               <SidebarGroup>
                 <SidebarGroupContent>
                   <SidebarMenu aria-busy="true">
@@ -169,7 +178,7 @@ export default function AppSidebar() {
               </SidebarGroup>
             )}
 
-            {items !== null && items.length === 0 && (
+            {(guest || (items !== null && items.length === 0)) && (
               <p className="px-4 py-3 text-sm leading-snug text-faint">
                 Здесь появятся твои разговоры. Аудио не сохраняется — только текст.
               </p>
@@ -240,73 +249,87 @@ export default function AppSidebar() {
       </nav>
 
       <SidebarFooter className="border-t border-line p-2 group-data-[collapsible=icon]:px-3">
-        {anonymous && (
-          <div
-            data-testid="guest-card"
-            className="mb-1 flex flex-col gap-2 rounded-lg border border-brand-line bg-brand-soft p-3 group-data-[collapsible=icon]:hidden"
+        {guest ? (
+          <Button
+            asChild
+            variant="outline"
+            className="h-11 w-full rounded-full text-[0.9375rem] group-data-[collapsible=icon]:hidden"
           >
-            <p className="text-sm font-semibold text-foreground">Сохрани аккаунт</p>
-            <p className="text-xs leading-snug text-dim">
-              Без почты аккаунт {GUEST_LIFE_CLAUSE}. С почтой он не удалится и откроется на другом
-              устройстве.
-            </p>
-            <Button asChild size="sm" className="h-10 w-full bg-clip-border text-[0.9375rem]">
-              <Link href="/profile?linkEmail=1" data-testid="guest-card-link">
-                {awaitsCode ? 'Подтвердить почту' : 'Привязать почту'}
-              </Link>
-            </Button>
-          </div>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarMenuButton
-              size="lg"
-              // The drawer has no icon rail to label, and a hidden tooltip that opens on focus would take the first Esc meant for the drawer.
-              tooltip={isMobile ? undefined : name}
-              className="h-14 data-[state=open]:bg-sidebar-accent"
-              data-testid="account-menu"
-            >
-              <Avatar className="size-9 rounded-full group-data-[collapsible=icon]:size-8">
-                <AvatarFallback className="rounded-full bg-brand-soft font-semibold text-brand-400">
-                  {anonymous && !named && !user?.email ? (
-                    <UserRound className="size-5" strokeWidth={1.8} aria-hidden="true" />
-                  ) : (
-                    initial
-                  )}
-                </AvatarFallback>
-              </Avatar>
-              <span className="grid min-w-0 flex-1 text-left leading-tight">
-                <span className="truncate text-[0.9375rem] font-semibold">
-                  {named || (anonymous ? 'Гость' : 'Аккаунт')}
-                </span>
-                <span className="truncate text-xs text-faint">{user?.email ?? 'Без регистрации'}</span>
-              </span>
-              <ChevronsUpDown className="ml-auto size-4 shrink-0 text-faint" />
-            </SidebarMenuButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            side="top"
-            align="start"
-            className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
-          >
-            <DropdownMenuItem asChild className="h-11">
-              <Link href="/profile">
-                <UserRound />
-                Профиль
-              </Link>
-            </DropdownMenuItem>
-            {/* An account opened by this device alone has nothing to sign out of: the profile says how to leave it. */}
-            {!anonymous && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="h-11" onSelect={() => void logout()}>
-                  <LogOut />
-                  Выйти
-                </DropdownMenuItem>
-              </>
+            <Link href="/login" data-testid="have-account">
+              Войти
+            </Link>
+          </Button>
+        ) : (
+          <>
+            {anonymous && (
+              <div
+                data-testid="guest-card"
+                className="mb-1 flex flex-col gap-2 rounded-lg border border-brand-line bg-brand-soft p-3 group-data-[collapsible=icon]:hidden"
+              >
+                <p className="text-sm font-semibold text-foreground">Сохрани аккаунт</p>
+                <p className="text-xs leading-snug text-dim">
+                  Без почты аккаунт {GUEST_LIFE_CLAUSE}. С почтой он не удалится и откроется на другом
+                  устройстве.
+                </p>
+                <Button asChild size="sm" className="h-10 w-full bg-clip-border text-[0.9375rem]">
+                  <Link href="/profile?linkEmail=1" data-testid="guest-card-link">
+                    {awaitsCode ? 'Подтвердить почту' : 'Привязать почту'}
+                  </Link>
+                </Button>
+              </div>
             )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton
+                  size="lg"
+                  // The drawer has no icon rail to label, and a hidden tooltip that opens on focus would take the first Esc meant for the drawer.
+                  tooltip={isMobile ? undefined : name}
+                  className="h-14 data-[state=open]:bg-sidebar-accent"
+                  data-testid="account-menu"
+                >
+                  <Avatar className="size-9 rounded-full group-data-[collapsible=icon]:size-8">
+                    <AvatarFallback className="rounded-full bg-brand-soft font-semibold text-brand-400">
+                      {anonymous && !named && !user?.email ? (
+                        <UserRound className="size-5" strokeWidth={1.8} aria-hidden="true" />
+                      ) : (
+                        initial
+                      )}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="grid min-w-0 flex-1 text-left leading-tight">
+                    <span className="truncate text-[0.9375rem] font-semibold">
+                      {named || (anonymous ? 'Гость' : 'Аккаунт')}
+                    </span>
+                    <span className="truncate text-xs text-faint">{user?.email ?? 'Без регистрации'}</span>
+                  </span>
+                  <ChevronsUpDown className="ml-auto size-4 shrink-0 text-faint" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
+              >
+                <DropdownMenuItem asChild className="h-11">
+                  <Link href="/profile">
+                    <UserRound />
+                    Профиль
+                  </Link>
+                </DropdownMenuItem>
+                {/* An account opened by this device alone has nothing to sign out of: the profile says how to leave it. */}
+                {!anonymous && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="h-11" onSelect={() => void logout()}>
+                      <LogOut />
+                      Выйти
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
       </SidebarFooter>
     </Sidebar>
   )
