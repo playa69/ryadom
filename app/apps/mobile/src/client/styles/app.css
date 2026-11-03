@@ -832,6 +832,18 @@ input:-webkit-autofill:focus {
   margin: 0;
 }
 
+/* «Люди рядом» on home: a padded line of text, a finger needs 44px. */
+.rd-home-people-link {
+  align-self: center;
+  min-height: 44px;
+  padding: 0 var(--ryadom-s-3);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
 .rd-welcome-name {
   width: 100%;
   max-width: 360px;

@@ -71,6 +71,11 @@ test('первый запуск: строка о согласии, «Погов�
   await openSidebar(page)
   await expect(page.getByTestId('have-account')).toHaveText('Войти')
   await closeSidebar(page)
+  // «Люди рядом» are open without an account too.
+  await openWebApp(page, '/people')
+  await expect(page).toHaveURL(/\/people$/)
+  await expect(page.getByText('Позвонить прямо сейчас')).toBeVisible()
+  await openWebApp(page)
   await expect(page.getByTestId('consent-notice')).toContainText(
     'Начиная разговор, ты подтверждаешь, что тебе есть 18, принимаешь условия использования и даёшь согласие на обработку данных',
   )

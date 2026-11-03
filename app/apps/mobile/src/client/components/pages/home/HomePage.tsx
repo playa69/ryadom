@@ -1,4 +1,4 @@
-import { Button, Icon, Page, f7 } from 'framework7-react'
+import { Button, Page, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
@@ -285,7 +285,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
       {/* One column on a phone; from WIDE the circle and the actions stand side by side. */}
       <div className="rd-home">
         <div className="rd-home-orb">
-          <Breathing size={isWide ? 280 : isShort ? 188 : 232} />
+          <Breathing size={isWide ? 280 : isShort ? 140 : 176} />
         </div>
         <div className="rd-home-main">
           <p className="rd-home-greeting">{greeting(auth.user?.name ?? null)}</p>
@@ -355,28 +355,19 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             </p>
           )}
 
-          <div className="rd-home-people">
-            <div className="rd-note">
-              <span className="rd-note-tile">
-                <Icon f7="person_2" size={22} className="rd-note-icon" />
-              </span>
-              <div className="rd-note-body">
-                <p className="rd-note-title">Люди рядом</p>
-                <p className="rd-note-text">
-                  Линии помощи, а со временем&nbsp;— группы поддержки и специалисты. Разговор со мной не
-                  заменяет живых людей.
-                </p>
-                <Button small round outline className="ph-no-capture" onClick={() => openSos({ source: 'home' })}>
-                  Посмотреть
-                </Button>
-              </div>
-            </div>
-          </div>
-
           {/* The foot of home, as on the first screen: what starting a conversation agrees to, with the terms and the policy. */}
           <div className="rd-welcome-foot" data-testid="home-foot">
             <ConsentNote />
             <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>
+            {/* As on the web: a line, not a card, so that the foot stays in view above the tabs. */}
+            <button
+              type="button"
+              className="rd-inline-link rd-home-people-link ph-no-capture"
+              onClick={() => openSos({ source: 'home' })}
+              data-testid="home-people"
+            >
+              Люди рядом&nbsp;— линии помощи
+            </button>
           </div>
         </div>
       </div>
