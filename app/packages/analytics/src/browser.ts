@@ -3,7 +3,8 @@ import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics
 import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import type { AnalyticsEvent, AnalyticsEventArgs, AnalyticsPlatform, AnalyticsTraits } from './events'
-import { normalizePath, roundedToHour, sanitizeProperties, scrubEvent } from './sanitize'
+import { metrikaHit, resetMetrikaForTests, setMetrikaSuppressed, startMetrika } from './metrika'
+import { normalizePath, roundedToHour, sanitizeProperties, sanitizeUrl, scrubEvent } from './sanitize'
 
 /**
  * Product analytics in the browser and in the store builds' WebView: one module for the web app, the
@@ -40,6 +41,8 @@ let anonymousChannel: { url: string; key: string; common: Record<string, string>
  * but `posthog.reset()` (sign-out) wipes those, and events after it lost them: they are put back in `before_send`.
  */
 let commonProperties: Record<string, string> = {}
+/** Where this client's screens are reported to Metrika, see `StartAnalyticsOptions.pageBase`. */
+let metrikaPageBase: string | undefined
 const queue: Array<(posthog: PostHog) => void> = []
 const MAX_QUEUE = 50
 
@@ -84,6 +87,8 @@ export function setAnalyticsOptOut(optOut: boolean): void {
     // Storage may be blocked; the SDK's own flag below still applies for this session.
   }
   whenReady((posthog) => (optOut ? posthog.opt_out_capturing() : posthog.opt_in_capturing()))
+  // Metrika follows the same switch: stopped for the rest of the page's life, started anew when turned back on.
+  setMetrikaSuppressed(optOut || doNotTrackEnabled())
   notify(optOutListeners)
 }
 
@@ -140,10 +145,20 @@ export interface StartAnalyticsOptions {
   apiBase: string
   platform: AnalyticsPlatform
   appVersion?: string | undefined
+  /**
+   * The address, with no trailing slash, under which this client's screens are reported to Metrika:
+   * `<origin>/pwa` for the PWA and Telegram, `<public origin>/android` and `/ios` for the store builds. Set by
+   * clients whose address bar does not follow their screens (Framework7 does not change it) or is not the
+   * site's (the WebView of a store build is `localhost`). Without it, the page's own address is reported, cleaned
+   * (`sanitizeUrl`): that is how the landing and the web app, which have real addresses, are seen.
+   */
+  pageBase?: string | undefined
   /** For tests. */
   fetch?: typeof fetch
   /** For tests: how the SDK is loaded. */
   loadSdk?: () => Promise<PostHog>
+  /** For tests: how the Metrika tag is put on the page. */
+  loadMetrikaTag?: () => void
 }
 
 async function defaultLoadSdk(): Promise<PostHog> {
@@ -268,9 +283,19 @@ export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: stri
 export function startAnalytics(options: StartAnalyticsOptions): Promise<boolean> {
   if (starting) return starting
   status = 'starting'
+  metrikaPageBase = options.pageBase
   starting = (async () => {
     try {
       const config = await loadAnalyticsConfig(options.apiBase, options.fetch)
+      // Metrika has its own switch on the server and does not depend on PostHog: it is started (or dropped, when
+      // the server did not name a counter or could not be reached) before PostHog's key is looked at.
+      startMetrika({
+        config: config?.metrika,
+        platform: options.platform,
+        appVersion: options.appVersion,
+        suppressed: readStoredOptOut() || doNotTrackEnabled(),
+        ...(options.loadMetrikaTag ? { loadTag: options.loadMetrikaTag } : {}),
+      })
       if (!config?.enabled || !config.key) return turnOff()
 
       const posthog = await (options.loadSdk ?? defaultLoadSdk)()
@@ -394,6 +419,14 @@ export function trackPageview(path?: string): void {
   whenReady((posthog) =>
     posthog.capture('$pageview', { $current_url: `${globalThis.location?.origin ?? ''}${route}`, screen: route }),
   )
+  // Metrika gets the address at the moment of the call, so a queued hit keeps the screen it was made for.
+  metrikaHit(metrikaPageUrl(path))
+}
+
+/** The address a screen is reported under to Metrika: our own base and the route, or the page's cleaned address. */
+function metrikaPageUrl(path: string | undefined): string {
+  if (metrikaPageBase !== undefined) return `${metrikaPageBase}${normalizePath(path ?? '/')}`
+  return sanitizeUrl(globalThis.location?.href ?? '')
 }
 
 /** The person signed in (or the session was restored). The id is the account's, never the email. */
@@ -420,6 +453,8 @@ export function resetAnalyticsForTests(): void {
   starting = null
   anonymousChannel = null
   commonProperties = {}
+  metrikaPageBase = undefined
   queue.length = 0
   optOutListeners.clear()
+  resetMetrikaForTests()
 }

@@ -62,6 +62,42 @@ describe('GET /api/analytics/config', () => {
     })
   })
 
+  it('Метрика: номер счётчика не задан — поля metrika в ответе нет', async () => {
+    const { app } = makeApp({ env: POSTHOG })
+    const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
+    expect(config).not.toHaveProperty('metrika')
+  })
+
+  it('Метрика: с номером ответ несёт номер и разрешения окружения, по умолчанию запись и карта кликов выключены', async () => {
+    const { app } = makeApp({ env: { YANDEX_METRIKA_COUNTER_ID: '114043323' } })
+    const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
+    expect(config.metrika).toEqual({ counterId: 114043323, webvisor: false, clickmap: false })
+  })
+
+  it('Метрика: запись экрана и карта кликов включаются окружением', async () => {
+    const { app } = makeApp({
+      env: { YANDEX_METRIKA_COUNTER_ID: '114043323', YANDEX_METRIKA_WEBVISOR: 'true', YANDEX_METRIKA_CLICKMAP: '1' },
+    })
+    const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
+    expect(config.metrika).toEqual({ counterId: 114043323, webvisor: true, clickmap: true })
+  })
+
+  it('Метрика без PostHog: PostHog выключен, а Метрика работает', async () => {
+    const { app } = makeApp({ env: { YANDEX_METRIKA_COUNTER_ID: '114043323' } })
+    const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
+    expect(config).toMatchObject({ enabled: false, key: null })
+    expect(config.metrika?.counterId).toBe(114043323)
+  })
+
+  it.each(['abc', '12ab', '0', '-5', '1.5', ' 114043323;alert(1)', '9'.repeat(13)])(
+    'Метрика: значение %j не номер счётчика — поля metrika нет',
+    async (value) => {
+      const { app } = makeApp({ env: { YANDEX_METRIKA_COUNTER_ID: value } })
+      const config = ok<AnalyticsConfigApiResponse>(await call(app, 'GET', '/api/analytics/config'))
+      expect(config).not.toHaveProperty('metrika')
+    },
+  )
+
   it('прежние переменные-переключатели ничего не меняют', async () => {
     const { app } = makeApp({
       env: {

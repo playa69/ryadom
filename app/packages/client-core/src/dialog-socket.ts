@@ -74,6 +74,12 @@ export interface DialogSocketHandlers {
    * screen's own voice stays out of it, and the microphone waits for the end.
    */
   onSpeech?(messageId: string, phase: 'start' | 'end'): void
+  /**
+   * The server accepted another reply of the person (typed and acknowledged, or spoken and transcribed):
+   * `count` is how many accepted replies this feed holds, `delta` how many it gained since the last call. A
+   * `delta` above one is the record loaded after a drop, not a person speaking.
+   */
+  onUserReplies?(count: number, delta: number): void
 }
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 8000]
@@ -104,6 +110,8 @@ export class DialogSocket {
   private readonly tts: TtsReceiver
   /** What `hello` will name as decodable; found out while the socket opens. */
   private codecs: Promise<TtsCodec[] | null> | null = null
+  /** The most replies of the person this feed has held as accepted by the server (see `onUserReplies`). */
+  private acceptedReplies = 0
 
   constructor(
     private readonly deps: DialogSocketDeps,
@@ -136,6 +144,20 @@ export class DialogSocket {
 
   private emitMessages(): void {
     this.handlers.onMessages([...this.messages])
+    this.noteAcceptedReplies()
+  }
+
+  /** Every change of the feed passes through `emitMessages`, so this is the one place that sees a reply accepted. */
+  private noteAcceptedReplies(): void {
+    const count = this.messages.filter((message) => message.role === 'user' && !message.pending).length
+    if (count <= this.acceptedReplies) return
+    const delta = count - this.acceptedReplies
+    this.acceptedReplies = count
+    try {
+      this.handlers.onUserReplies?.(count, delta)
+    } catch {
+      // A counter on the screen must not break the dialog.
+    }
   }
 
   connect(): void {

@@ -11,7 +11,7 @@ import Framework7 from 'framework7/lite-bundle'
 import Framework7React from 'framework7-react'
 import { createRoot } from 'react-dom/client'
 import F7App from './components/F7App'
-import { analyticsPlatform } from './lib/analytics'
+import { analyticsPlatform, metrikaPageBase } from './lib/analytics'
 import { getApiBase, loadEnv } from './lib/env'
 import { initSystemBarsStyle } from './lib/native'
 import { isAndroid, isIosNative, isNative, isStandalone } from './lib/platform'
@@ -32,15 +32,24 @@ async function start(): Promise<void> {
   // Not awaited: the app does not wait for analytics, and calls made while it loads are queued. The API
   // address is the environment's, so this is after loadEnv: empty for the web build (the same origin),
   // absolute in a store build, where the WebView's own origin is `https://localhost`.
+  const platform = analyticsPlatform({
+    android: isAndroid(),
+    ios: isIosNative(),
+    standalone: isStandalone(),
+    telegram: telegram !== null,
+  })
   void startAnalytics({
     apiBase: getApiBase(),
-    platform: analyticsPlatform({
-      android: isAndroid(),
-      ios: isIosNative(),
-      standalone: isStandalone(),
-      telegram: telegram !== null,
-    }),
+    platform,
     appVersion: __RELEASE__,
+    // The address bar does not follow the screens here, and in a store build it is `localhost`: Yandex Metrika
+    // is told our own address for each screen instead.
+    pageBase: metrikaPageBase({
+      platform,
+      apiBase: getApiBase(),
+      origin: window.location.origin,
+      baseUrl: import.meta.env.BASE_URL,
+    }),
   })
   const startParam = telegramStartParam()
   track(AnalyticsEvent.AppOpened, {

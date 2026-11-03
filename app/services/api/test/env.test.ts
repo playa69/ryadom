@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   createAnalytics,
+  hasInvalidMetrikaCounterId,
   hasInvalidProjectToken,
+  metrikaCounterId,
   projectToken,
   toAnalyticsConfig,
 } from '../src/lib/analytics'
@@ -60,6 +62,31 @@ describe('настройка PostHog', () => {
     const env = parseEnv({ ...process.env, POSTHOG_KEY: 'phc_ValidProjectToken0123456789' })
     expect(hasInvalidProjectToken(env)).toBe(false)
     expect(toAnalyticsConfig(env)).toMatchObject({ enabled: true, key: 'phc_ValidProjectToken0123456789' })
+  })
+
+  it('Метрика: пустой номер не ошибка и не включает её, настоящий номер принимается', () => {
+    const empty = parseEnv({ ...process.env, YANDEX_METRIKA_COUNTER_ID: '' })
+    expect(metrikaCounterId(empty)).toBeUndefined()
+    expect(hasInvalidMetrikaCounterId(empty)).toBe(false)
+    expect(toAnalyticsConfig(empty)).not.toHaveProperty('metrika')
+
+    const valid = parseEnv({ ...process.env, YANDEX_METRIKA_COUNTER_ID: '114043323' })
+    expect(metrikaCounterId(valid)).toBe(114043323)
+    expect(hasInvalidMetrikaCounterId(valid)).toBe(false)
+  })
+
+  it('Метрика: не номер в YANDEX_METRIKA_COUNTER_ID не роняет запуск, выключает Метрику и не раскрывается клиентам', () => {
+    const wrong = 'x"; alert(1); "'
+    const env = parseEnv({ ...process.env, YANDEX_METRIKA_COUNTER_ID: wrong })
+    expect(hasInvalidMetrikaCounterId(env)).toBe(true)
+    expect(metrikaCounterId(env)).toBeUndefined()
+    expect(JSON.stringify(toAnalyticsConfig(env))).not.toContain('alert')
+  })
+
+  it('Метрика: запись экрана и карта кликов по умолчанию выключены', () => {
+    const env = parseEnv({ ...process.env, YANDEX_METRIKA_COUNTER_ID: '114043323' })
+    expect(env.YANDEX_METRIKA_WEBVISOR).toBe(false)
+    expect(env.YANDEX_METRIKA_CLICKMAP).toBe(false)
   })
 
   it('id проекта — число', () => {

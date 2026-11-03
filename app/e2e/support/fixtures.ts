@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { installMetrikaStub } from './metrika'
 import { installMicrophone, installSpeechStub } from './speech'
 
 /**
@@ -34,6 +35,8 @@ function addressFor(key: string): string {
 async function prepareContext(context: BrowserContext, address: string, handsFree: boolean): Promise<void> {
   await installSpeechStub(context)
   await installMicrophone(context, handsFree)
+  // The stack names a Metrika counter, so every test would load its tag: the stand-in keeps it off the network.
+  await installMetrikaStub(context)
   await context.route(/\/api\//, (route) =>
     route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': address } }),
   )

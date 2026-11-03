@@ -188,6 +188,11 @@ const apiEnv = {
   DIALOG_SESSION_CHECK_SEC: '2',
   // As in production: Chromium decodes Opus with WebCodecs, so the voice scenarios play Opus speech.
   DIALOG_AUDIO_CODECS: 'opus,mulaw',
+  // A made-up Metrika counter (support/metrika.ts keeps its tag off the network). Recording and the click map are
+  // allowed by the environment, so the tests show that only the landing acts on them.
+  YANDEX_METRIKA_COUNTER_ID: '999000111',
+  YANDEX_METRIKA_WEBVISOR: 'true',
+  YANDEX_METRIKA_CLICKMAP: 'true',
   // A made-up bot: support/telegram.ts signs the Mini App launches with the same value.
   TELEGRAM_BOT_TOKEN: '100000001:e2e-only-telegram-bot-token-0123456789',
 }
@@ -251,6 +256,9 @@ start('landing', ['server.js'], {
     // "Open the app" leads to the web app; the download page also links the PWA.
     PUBLIC_WEBAPP_URL: `http://127.0.0.1:${WEBAPP_PORT}`,
     PUBLIC_PWA_URL: `http://127.0.0.1:${PWA_PORT}`,
+    // Where the site's analytics read their settings (in production the site's own host): without it the
+    // landing asks a default port, and nothing about analytics on the landing could be tested.
+    PUBLIC_APP_URL: `http://127.0.0.1:${APP_PORT}`,
     PUBLIC_SUPPORT_EMAIL: 'support@ryadom.local',
   },
 })

@@ -5,7 +5,7 @@ import { WebSocketServer } from 'ws'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import { createApp } from './app'
 import { closeAllDialogSessions, handleDialogSocket } from './dialogs/gateway'
-import { createAnalytics, hasInvalidProjectToken } from './lib/analytics'
+import { createAnalytics, hasInvalidMetrikaCounterId, hasInvalidProjectToken } from './lib/analytics'
 import { shutdownCore } from './lib/core'
 import { EnvValidationError, parseEnv } from './lib/env'
 import { startJobs, type Jobs } from './lib/jobs'
@@ -51,6 +51,12 @@ if (hasInvalidProjectToken(env)) {
   logger.error(
     'POSTHOG_KEY не похож на токен проекта PostHog (phc_…), аналитика выключена. ' +
       'Личный ключ (phx_…) задаётся как POSTHOG_PERSONAL_API_KEY и никогда не отдаётся клиентам',
+  )
+}
+if (hasInvalidMetrikaCounterId(env)) {
+  // The value is not logged: it reaches every visitor, so a wrong one must not be copied into the log too.
+  logger.error(
+    'YANDEX_METRIKA_COUNTER_ID не похож на номер счётчика (целое положительное число), Метрика выключена',
   )
 }
 if (analytics.enabled && !analytics.canErase) {

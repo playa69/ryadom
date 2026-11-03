@@ -256,6 +256,24 @@ const appShape = {
     z.string().regex(/^\d+$/, 'must be the numeric id of the PostHog project').optional(),
   ),
   /**
+   * Yandex Metrika (web analytics, one counter for the landing, the web app, the PWA, Telegram, Android and
+   * iOS), separate from PostHog. The number is public (it is in the page source of every site that uses
+   * Metrika), so it belongs in the ConfigMap. It is not baked into any client: they read it from
+   * `GET /api/analytics/config`. Empty switches Metrika off everywhere. A value that is not a positive whole
+   * number is ignored with a line in the log (`metrikaCounterId`), not a startup failure.
+   *
+   * What differs from PostHog, and the policy says so: Metrika sets its own cookie and receives the visitor's
+   * IP address straight from the browser, not through our proxy.
+   */
+  YANDEX_METRIKA_COUNTER_ID: optionalString,
+  /**
+   * Whether session recording (Webvisor) and the click map may run. Only the landing acts on them: in the apps
+   * (conversations, e-mail, SOS) they are off whatever these say. Off by default: they are switched on after
+   * the hotline links on the landing are hidden from them.
+   */
+  YANDEX_METRIKA_WEBVISOR: booleanFlag.transform((value) => value ?? false),
+  YANDEX_METRIKA_CLICKMAP: booleanFlag.transform((value) => value ?? false),
+  /**
    * The build that runs (the image tag), sent with every analytics event as `app_version` so a figure can be
    * split by release. Set at image build time (`--build-arg RELEASE=<tag>`); empty means the events carry none.
    */
