@@ -87,8 +87,9 @@ export interface DeviceSession {
 export async function deviceLogin(
   request: APIRequestContext,
   device: { deviceId: string; deviceKey: string },
+  headers: Record<string, string> = {},
 ): Promise<DeviceSession> {
-  const response = await request.post(`${APP_URL}/api/auth/device`, { data: device })
+  const response = await request.post(`${APP_URL}/api/auth/device`, { data: device, headers })
   expect(response.status(), 'вход по устройству').toBe(200)
   const body = (await response.json()) as { status: boolean; result: DeviceSession }
   expect(body.status, 'вход по устройству принят').toBe(true)
@@ -108,9 +109,13 @@ export async function guestDevice(
     deviceId: randomBytes(16).toString('base64url'),
     deviceKey: randomBytes(32).toString('base64url'),
   }
-  const session = await deviceLogin(request, device)
+  // An address of its own, like the test's pages have (see fixtures): direct API calls are not routed through
+  // the page, and the device sign-in is limited per address.
+  const [a, b, c] = randomBytes(3)
+  const from = { 'x-forwarded-for': `10.${a}.${b}.${c}` }
+  const session = await deviceLogin(request, device, from)
   const response = await request.post(`${APP_URL}/api/auth/me/consents`, {
-    headers: { Authorization: `Bearer ${session.tokens.accessToken}` },
+    headers: { ...from, Authorization: `Bearer ${session.tokens.accessToken}` },
     data: { ageConfirmed: true, disclaimerAccepted: true, offerAccepted: true, offerVersion: POLICY_VERSION },
   })
   expect(response.status(), 'согласия записаны').toBe(200)

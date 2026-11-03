@@ -11,6 +11,7 @@ import {
   talkButton,
   uniqueEmail,
   watchCsp,
+  openSignIn,
 } from '../support/web'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
@@ -41,8 +42,8 @@ async function presentAs(page: Page, userAgent: string): Promise<void> {
 /** The second device signs in to the account. */
 async function signInOn(device: Page, email: string): Promise<void> {
   await openWebApp(device)
-  await expect(device.getByTestId('first-screen')).toBeVisible()
-  await device.getByTestId('have-account').click()
+  await expect(device.getByTestId('consent-notice')).toBeVisible()
+  await openSignIn(device)
   await signIn(device, email)
 }
 

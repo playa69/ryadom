@@ -24,6 +24,7 @@ import {
   uniqueEmail,
   watchCsp,
   webUrl,
+  openSignIn,
 } from '../support/web'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
@@ -355,8 +356,8 @@ test('меню аккаунта: профиль и выход', async ({ page })
 
   // Signed out means signed out: home without a session is the first screen, not the account ...
   await openWebApp(page, '/home')
-  await expect(page.getByTestId('first-screen')).toBeVisible()
-  await page.getByTestId('have-account').click()
+  await expect(page.getByTestId('consent-notice')).toBeVisible()
+  await openSignIn(page)
   await expect(button(page, 'Войти')).toBeVisible()
   // ... and the account is still there for the next sign-in.
   await signIn(page, email)

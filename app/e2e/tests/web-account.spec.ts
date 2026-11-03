@@ -20,6 +20,7 @@ import {
   uniqueEmail,
   viewportWidth,
   watchCsp,
+  openSignIn,
 } from '../support/web'
 import { clearMailbox, waitForCode } from '../support/mail'
 import { expect, test } from '../support/fixtures'
@@ -53,10 +54,10 @@ test('путь аккаунта в вебе: регистрация, профи�
   // The root has no screen of its own: a visitor with no account lands on home, which is the first screen
   // for them, and the sign-in is a door they open themselves.
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('first-screen')).toBeVisible()
+  await expect(page.getByTestId('consent-notice')).toBeVisible()
   await expectNoHorizontalOverflow(page)
   await shot(page, 'web-welcome')
-  await page.getByTestId('have-account').click()
+  await openSignIn(page)
   await expect(page).toHaveURL(/\/login$/)
   await expect(button(page, 'Войти')).toBeVisible()
   await expectNoHorizontalOverflow(page)

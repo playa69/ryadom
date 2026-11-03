@@ -314,47 +314,36 @@ test('память в вебе: разговор «Без памяти» нич�
   await shot(page, 'web-memory-incognito-sheet')
 })
 
-const invite = (page: Page) => page.getByTestId('memory-invite')
-
-test('приглашение «Рядом теперь запоминает важное»: «Не сейчас» закрывает насовсем, «Включить» ведёт через согласие', async ({
-  browser,
+// `openspec/changes/merge-first-screen-into-home`, «Переключатель «Запоминать важное» на главном экране».
+test('«Запоминать важное» на главной: окно само не открывается; отказ в согласии ничего не меняет; согласие включает память', async ({
   page,
   shot,
 }) => {
   test.setTimeout(180_000)
-  // REQ-MEM: nothing is chosen in advance; "Не сейчас" is remembered in this browser.
   await openWebApp(page)
   await startAnonymously(page, { keepMemoryInvite: true })
-  await expect(invite(page)).toBeVisible({ timeout: 20_000 })
-  await expect(modal(page)).toContainText('Рядом теперь запоминает важное')
-  await expect(modal(page).getByRole('checkbox')).toHaveCount(0)
-  await shot(page, 'web-memory-invite')
+  const toggle = page.getByTestId('memory-switch-toggle')
+  await expect(toggle).toBeVisible({ timeout: 20_000 })
+  // Nothing interrupts: no sheet opens by itself.
+  await page.waitForTimeout(2_000)
+  await expect(modal(page)).toHaveCount(0)
+  await shot(page, 'web-memory-switch')
+
+  // The consent sheet declined: memory stays off.
+  await toggle.click()
+  await expect(page.getByTestId('memory-consent')).toBeVisible()
   await modalButton(page, 'Не сейчас').click()
   await expect(modal(page)).toHaveCount(0)
-  await page.reload()
-  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
-  await page.waitForTimeout(2_000)
-  await expect(invite(page)).toHaveCount(0)
-  // Not asked again, and memory stayed off.
-  await openMemory(page)
-  await expect(memorySwitch(page)).not.toBeChecked()
+  await expect(toggle).toBeVisible()
 
-  // Another person: "Включить" opens the consent sheet, accepting it turns memory on.
-  const other = await browser.newContext(test.info().project.use)
-  try {
-    const second = await other.newPage()
-    await openWebApp(second)
-    await startAnonymously(second, { keepMemoryInvite: true })
-    await expect(invite(second)).toBeVisible({ timeout: 20_000 })
-    await modalButton(second, 'Включить').click()
-    await expect(second.getByTestId('memory-consent')).toBeVisible()
-    await modalButton(second, 'Включить память').click()
-    await expect(modal(second)).toHaveCount(0)
-    await openMemory(second)
-    await expect(memorySwitch(second)).toBeChecked()
-  } finally {
-    await other.close()
-  }
+  // Accepted: memory is on, and «Без памяти» takes the switch's place.
+  await toggle.click()
+  await modalButton(page, 'Включить память').click()
+  await expect(modal(page)).toHaveCount(0)
+  await expect(page.getByTestId('incognito')).toBeVisible({ timeout: 20_000 })
+  await expect(toggle).toHaveCount(0)
+  await openMemory(page)
+  await expect(memorySwitch(page)).toBeChecked()
 })
 
 test('«Запомнил: … · Убрать» в разговоре: новая чувствительная заметка → строка → «Убрать» удаляет; без «чувствительного» строки нет', async ({

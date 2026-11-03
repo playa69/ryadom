@@ -808,13 +808,28 @@ input:-webkit-autofill:focus {
   margin-top: var(--ryadom-s-2);
 }
 
-/* The first screen is home for someone new: the mark and «Войти» sit above it, where home has its bar. */
+/* The first screen is home for someone new: the mark and «Войти» sit above it, where home has its bar;
+   SOS keeps its own place in the corner, as on home. */
 .rd-welcome-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--ryadom-s-3);
   padding: calc(var(--ryadom-s-3) + var(--f7-safe-area-top, 0px)) calc(var(--ryadom-s-5) + var(--f7-safe-area-right, 0px)) 0
     calc(var(--ryadom-s-5) + var(--f7-safe-area-left, 0px));
+}
+
+/* The foot of the first screen: the agreement and the terms of keeping, last in the column. */
+.rd-welcome-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-1);
+  width: 100%;
+  max-width: 420px;
+  margin-top: var(--ryadom-s-3);
+}
+
+.rd-welcome-foot .rd-fineprint {
+  margin: 0;
 }
 
 .rd-welcome-name {
