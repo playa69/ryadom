@@ -808,6 +808,26 @@ input:-webkit-autofill:focus {
   margin-top: var(--ryadom-s-2);
 }
 
+/* The first screen is home for someone new: the mark and «Войти» sit above it, where home has its bar. */
+.rd-welcome-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(var(--ryadom-s-3) + var(--f7-safe-area-top, 0px)) calc(var(--ryadom-s-5) + var(--f7-safe-area-right, 0px)) 0
+    calc(var(--ryadom-s-5) + var(--f7-safe-area-left, 0px));
+}
+
+.rd-welcome-name {
+  width: 100%;
+  max-width: 360px;
+  margin: 0;
+}
+
+.rd-welcome-sos {
+  margin-top: var(--ryadom-s-2);
+  color: var(--ryadom-text-dim);
+}
+
 /* Same width as the rows above, so the note reads as the last item of the column. */
 .rd-home-people {
   width: 100%;

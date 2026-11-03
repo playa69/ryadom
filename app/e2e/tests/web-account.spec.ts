@@ -353,7 +353,6 @@ test('неподтверждённую почту можно зарегистр�
     await field(page, 'name').fill(name)
     await field(page, 'email').fill(email)
     await field(page, 'password').fill(password)
-    await checkConsent(page)
     await button(page, 'Создать аккаунт').click()
     await expect(page.getByRole('heading', { name: 'Подтверди почту' })).toBeVisible({ timeout: 20_000 })
   }

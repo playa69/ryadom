@@ -1,8 +1,9 @@
 import { PWA_URL } from '../playwright.config'
-import { button, checkConsent, field, openTab } from '../support/app'
+import { button, field, openTab } from '../support/app'
 import { profileOf, storedDevice, trackSession } from '../support/session'
 import { telegramLaunchUrl, uniqueTelegramId } from '../support/telegram'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 
 /**
  * The PWA as the Telegram Mini App: the person is their Telegram user. The launch is made by hand
@@ -27,8 +28,10 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   // The sheet "Рядом теперь запоминает важное" is already answered, like for a person who has seen it (not this test's subject).
   await page.addInitScript(() => window.localStorage.setItem('ryadom.memory-invite-dismissed', '1'))
   await page.goto(launch)
-  await expect(button(page, 'Начать')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
   await expect(field(page, 'name')).toHaveValue('Аня')
+  await expect(page.locator('.page-current').getByTestId('consent-notice')).toBeVisible()
+  await step(page, 'tg-welcome', 'Первый экран в Telegram: имя из профиля, «Поговорить», строка о согласии')
   await expect(page.getByText(/Аккаунт привязан к твоему Telegram/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Скрыть' }), 'баннера установки в Telegram нет').toHaveCount(0)
   expect(await page.evaluate(() => Boolean((window as { Telegram?: unknown }).Telegram)), 'скрипт Telegram загружен').toBe(
@@ -37,9 +40,10 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await shot(page, 'app-telegram-welcome')
 
   await field(page, 'name').fill('Аня Т')
-  await checkConsent(page)
-  await button(page, 'Начать').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  // `openspec/changes/simplify-first-screen`, «Первый экран в Mini App: разговор с первого нажатия».
+  await button(page, 'Поговорить').click()
+  await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
+  await step(page, 'tg-voice', '«Поговорить» в Telegram: аккаунт создан, разговор открыт, агент здоровается')
   const accountId = session.userId()
   expect(await profileOf(request, session.accessToken())).toMatchObject({
     id: accountId,
@@ -49,6 +53,8 @@ test('Mini App: аккаунт пользователя Telegram, повторн
     consentsCompleted: true,
   })
   expect(await storedDevice(page), 'удостоверение устройства не нужно').toBeNull()
+  await page.locator('.page-current .navbar a.back').click()
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
 
   // ── the profile: not a guest, the way in is Telegram ─
   await openTab(page, 'Профиль')
@@ -78,6 +84,6 @@ test('Mini App: аккаунт пользователя Telegram, повторн
 
 test('обычная вкладка: скрипт Telegram не загружается', async ({ page }) => {
   await page.goto(`${PWA_URL}/`)
-  await expect(button(page, 'Начать').or(button(page, 'Поговорить'))).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
   expect(await page.evaluate(() => 'Telegram' in window)).toBe(false)
 })

@@ -141,14 +141,14 @@ test('адаптивность: на входе, регистрации и пе�
       await page.setViewportSize({ width, height: 800 })
       await expectNoHorizontalOverflow(page)
       // The form stays inside the window at every width, whichever way the card is laid out. The first
-      // screen has no address field: its edge to hold is the group of agreements.
+      // screen has no address field: its edge to hold is the line about the agreement.
       const edge =
-        path === '/welcome' ? page.getByTestId('consents') : field(page, 'email')
+        path === '/welcome' ? page.getByTestId('consent-notice') : field(page, 'email')
       const box = await edge.boundingBox()
       expect(box!.x, `${path}@${width}: форма слева`).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width, `${path}@${width}: форма справа`).toBeLessThanOrEqual(width)
       await expect(
-        button(page, path === '/welcome' ? 'Начать' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
+        button(page, path === '/welcome' ? 'Поговорить' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
       ).toBeVisible()
     }
   }

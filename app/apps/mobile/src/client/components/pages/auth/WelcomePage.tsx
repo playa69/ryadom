@@ -1,39 +1,50 @@
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
-import { Block, Button, List, ListInput, Page } from 'framework7-react'
+import { Button, List, ListInput, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, deviceLogin, telegramLogin, updateProfile } from '../../../lib/api'
+import { requestTalkOnHome, takeTalkRequest } from '../../../lib/nav'
 import { useAuth } from '../../../lib/store'
 import { isTelegramMiniApp, telegramFirstName, telegramInitData } from '../../../lib/telegram'
 import { telegramLoginErrorText } from '../../../lib/telegram-account'
 import { nameProblem } from '../../../lib/validation'
 import { useEnvSwitcherTaps } from '../../../lib/use-env-switcher'
+import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
+import { unlockSpeech } from '../../../lib/voice/speech'
 import { BrandMark } from '../../Brand'
-import ConsentList, { NO_CONSENT, allConsented } from '../../ConsentList'
+import Breathing from '../../Breathing'
+import ConsentNote from '../../ConsentNote'
 import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 
+function partOfDay(): string {
+  const hour = new Date().getHours()
+  return hour < 5 ? 'Поздний вечер' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер'
+}
+
 /**
- * The first screen. Someone new here sees what the service is, agrees to what it needs (being 18, the
- * disclaimer, the terms and the processing of personal data), and one press later is talking: an
- * account is made for this phone behind the scenes, with no address and no password to think of.
- * Registration by email is offered later, where it has something to give.
+ * The first screen. Someone new meets home itself: the breathing circle, «Поговорить» and, under it,
+ * what starting means. The press is the agreement: it makes an account for this phone behind the scenes,
+ * records the consents and asks home for a conversation, which home starts as soon as the tabs appear;
+ * the companion greets the person there. Nothing is sent before that press.
  *
  * The same screen is also the gate for someone who is already signed in but has not agreed to the
  * current version of the terms (an account from before this screen existed, or a newer version of the
- * terms): there it only records the agreement and goes on, and there is no account to make.
+ * terms): there it only records the agreement on «Продолжить» and goes on, and there is no account to make.
  *
  * In the Telegram Mini App the account is made for the person's Telegram user instead of this phone,
  * and the name from their Telegram profile is offered for the agent to call them by: it is saved only
- * as it stands in the field when they press «Начать», so they can change it or clear it.
+ * as it stands in the field when they press «Поговорить», so they can change it or clear it.
  */
 export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   const { auth, login, acceptConsents, updateUser } = useAuth()
   // Entry to the env picker (dev build): taps on the mark, reachable even when the server is down.
   const onLogoTap = useEnvSwitcherTaps()
-  const [consent, setConsent] = useState(NO_CONSENT)
+  const isWide = useMediaQuery(WIDE_QUERY)
+  const isShort = useMediaQuery(SHORT_QUERY)
+  const [hello] = useState(partOfDay)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const signedIn = auth.isAuthenticated
@@ -41,20 +52,15 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   const [name, setName] = useState(() => (telegram ? telegramFirstName().slice(0, InputLimit.NameMax) : ''))
   const startForm = telegram ? 'telegram_start' : 'device_start'
 
-  async function handleStart() {
-    // Only the anonymous start is a form of its own; for a signed-in account this screen is the terms gate.
-    if (!signedIn) {
-      track(AnalyticsEvent.CtaClicked, {
-        cta: telegram ? 'start_telegram' : 'start_anonymous',
-        placement: 'welcome',
-      })
-    }
-    if (!allConsented(consent)) {
-      if (!signedIn) reportForm(startForm, 'invalid')
-      setError('Чтобы начать, нужны все три согласия')
-      return
-    }
-    const problem = telegram && !signedIn && name.trim() ? nameProblem(name) : null
+  async function handleTalk() {
+    if (loading) return
+    // The conversation opens on the voice and the sphere speaks first: speech is let through by this tap.
+    unlockSpeech()
+    track(AnalyticsEvent.CtaClicked, {
+      cta: telegram ? 'start_telegram' : 'start_anonymous',
+      placement: 'welcome',
+    })
+    const problem = telegram && name.trim() ? nameProblem(name) : null
     if (problem) {
       reportForm(startForm, 'invalid')
       setError(problem)
@@ -63,19 +69,19 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
     setError('')
     setLoading(true)
     try {
-      if (signedIn) {
-        // The app's gate sees the recorded version and moves on by itself.
-        if (!(await acceptConsents())) setError('Не получилось сохранить согласие. Попробуй ещё раз')
-      } else if (telegram) {
+      if (telegram) {
         await startWithTelegram()
       } else {
         const { user, tokens } = await deviceLogin()
+        // Asked before the session starts: home appears with the tabs and takes it at once.
+        requestTalkOnHome()
         await login(user, tokens, { consent: true })
         reportForm('device_start', 'success')
       }
     } catch (err) {
-      if (!signedIn) reportForm(startForm, outcomeFromError(err))
-      setError(apiErrorText(err, {}, 'Не получилось начать. Попробуй ещё раз'))
+      takeTalkRequest()
+      reportForm(startForm, outcomeFromError(err))
+      setError(apiErrorText(err, {}, 'Не получилось начать разговор. Попробуй ещё раз'))
     } finally {
       setLoading(false)
     }
@@ -89,6 +95,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
       return
     }
     const { user, tokens } = outcome.data
+    requestTalkOnHome()
     await login(user, tokens, { consent: true })
     reportForm('telegram_start', 'success')
     // A name the account already has (the person came back after signing out) is theirs: it stays.
@@ -102,66 +109,27 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
     }
   }
 
+  async function handleAgree() {
+    if (loading) return
+    setError('')
+    setLoading(true)
+    // The app's gate sees the recorded version and moves on by itself.
+    if (!(await acceptConsents())) setError('Не получилось сохранить согласие. Попробуй ещё раз')
+    setLoading(false)
+  }
+
   return (
     <Page name="welcome" className="rd-page-auth ph-no-capture">
-      <div className="rd-auth-head rd-auth-head--top">
-        <div className="rd-auth-orb" aria-hidden="true" />
+      <div className="rd-welcome-top">
         <button type="button" className="rd-logo-button" onClick={onLogoTap} aria-label="Рядом">
-          <BrandMark size={56} />
+          <BrandMark size={36} />
         </button>
-        <h1 className="rd-title rd-title--lg">Рядом</h1>
-        <p className="rd-muted">
-          {signedIn
-            ? 'Один раз подтверди, что согласен(на), — и можно говорить.'
-            : telegram
-              ? 'Когда нужно, чтобы кто‑то был рядом. Вход через твой Telegram — без почты и паролей.'
-              : 'Когда нужно, чтобы кто‑то был рядом. Поговорить можно сразу, без регистрации.'}
-        </p>
-      </div>
-
-      {telegram && !signedIn && (
-        <List form className="rd-form" onSubmit={(event) => event.preventDefault()}>
-          <ListInput
-            label="Как к тебе обращаться"
-            name="name"
-            type="text"
-            value={name}
-            outline
-            floatingLabel
-            clearButton
-            autocomplete="given-name"
-            maxlength={InputLimit.NameMax}
-            info="Можно оставить пустым и указать позже в профиле"
-            onInput={(event: ChangeEvent<HTMLInputElement>) => {
-              setName(event.target.value)
-              setError('')
-            }}
-            data-testid="welcome-name"
-          />
-        </List>
-      )}
-
-      <ConsentList
-        value={consent}
-        onChange={(next) => {
-          setConsent(next)
-          setError('')
-        }}
-      />
-
-      <Block className="rd-form-actions">
-        {error && (
-          <p className="rd-form-error" data-testid="form-error">
-            {error}
-          </p>
-        )}
-        <Button fill large preloader loading={loading} disabled={loading} onClick={() => void handleStart()}>
-          {signedIn ? 'Продолжить' : 'Начать'}
-        </Button>
         {!signedIn && (
           <Button
-            large
+            small
             outline
+            round
+            className="rd-welcome-login"
             disabled={loading}
             onClick={() => {
               track(AnalyticsEvent.CtaClicked, { cta: 'login', placement: 'welcome' })
@@ -169,22 +137,81 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
             }}
             data-testid="have-account"
           >
-            У меня уже есть аккаунт
+            Войти
           </Button>
         )}
-        {!signedIn && !telegram && (
-          <p className="rd-fineprint">
-            {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}. Привязать почту можно в любой момент в
-            профиле.
+      </div>
+
+      <div className="rd-home">
+        <div className="rd-home-orb">
+          <Breathing size={isWide ? 280 : isShort ? 160 : 208} />
+        </div>
+        <div className="rd-home-main">
+          <p className="rd-home-greeting">{hello}</p>
+          <p className="rd-muted rd-home-lead">
+            {signedIn
+              ? 'Один раз подтверди, что согласен(на), — и можно говорить.'
+              : 'Я здесь и никуда не спешу. О чём хочется сказать?'}
           </p>
-        )}
-        {!signedIn && telegram && (
-          <p className="rd-fineprint">
-            Аккаунт привязан к твоему Telegram, и открыть его можно в Telegram на любом устройстве.
-            {DIALOG_KEEP_NOTE} Почту для входа вне Telegram можно добавить в профиле.
-          </p>
-        )}
-      </Block>
+
+          {telegram && !signedIn && (
+            <List form className="rd-form rd-welcome-name" onSubmit={(event) => event.preventDefault()}>
+              <ListInput
+                label="Как к тебе обращаться"
+                name="name"
+                type="text"
+                value={name}
+                outline
+                floatingLabel
+                clearButton
+                autocomplete="given-name"
+                maxlength={InputLimit.NameMax}
+                info="Можно оставить пустым и указать позже в профиле"
+                onInput={(event: ChangeEvent<HTMLInputElement>) => {
+                  setName(event.target.value)
+                  setError('')
+                }}
+                data-testid="welcome-name"
+              />
+            </List>
+          )}
+
+          <div className="rd-talk">
+            {error && (
+              <p className="rd-form-error" data-testid="form-error">
+                {error}
+              </p>
+            )}
+            <Button
+              fill
+              large
+              preloader
+              loading={loading}
+              disabled={loading}
+              onClick={() => void (signedIn ? handleAgree() : handleTalk())}
+              data-testid="welcome-talk"
+            >
+              {signedIn ? 'Продолжить' : 'Поговорить'}
+            </Button>
+            <ConsentNote action={signedIn ? 'Продолжить' : undefined} />
+            {/* Before any agreement, as on home: the way to help in danger needs no account. */}
+            <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>
+          </div>
+
+          {!signedIn && !telegram && (
+            <p className="rd-fineprint">
+              {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}. Привязать почту можно в любой момент в
+              профиле.
+            </p>
+          )}
+          {!signedIn && telegram && (
+            <p className="rd-fineprint">
+              Аккаунт привязан к твоему Telegram, и открыть его можно в Telegram на любом устройстве.{' '}
+              {DIALOG_KEEP_NOTE} Почту для входа вне Telegram можно добавить в профиле.
+            </p>
+          )}
+        </div>
+      </div>
     </Page>
   )
 }

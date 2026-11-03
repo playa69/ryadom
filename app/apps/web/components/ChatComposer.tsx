@@ -23,7 +23,7 @@ export interface ChatComposerProps {
   /** `hero` is the big box in the middle of the home page; `dock` is the one pinned under a conversation. */
   variant: 'hero' | 'dock'
   /** Prefix of the data-testid values: `home-input`, `dialog-mic`, ... */
-  testIdPrefix: 'home' | 'dialog'
+  testIdPrefix: 'home' | 'welcome' | 'dialog'
   placeholder: string
   /** Actions can go out now. Until then the draft just stays in the field (the socket is still connecting). */
   ready?: boolean

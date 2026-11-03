@@ -32,9 +32,12 @@ export default function AuthFrame({ webUrl, children }: { webUrl: string; childr
 
   if (status === 'authenticated' && !keepsSignedIn) return <BootSplash />
 
+  // The first screen is home itself, not a card: someone new starts talking from it.
+  if (keepsSignedIn) return <AuthFlowProvider webUrl={webUrl}>{children}</AuthFlowProvider>
+
   // Phone, secondary screens: the brand shrinks to a single line so the form gets the height. The
-  // first screens of a visit (this one and the sign-in) lead with the brand and the sphere.
-  const leading = pathname === '/login' || pathname === '/welcome'
+  // first screen of a visit to an account (the sign-in) leads with the brand and the sphere.
+  const leading = pathname === '/login'
   const compact = !leading
 
   return (

@@ -57,3 +57,20 @@ export function startTalk(): void {
     setTimeout(() => window.dispatchEvent(new Event(START_TALK_EVENT)), 80)
   })
 }
+
+/**
+ * A conversation asked for on the first screen, carried over the sign-in: the app swaps its screens for
+ * the tabs when the session starts, so the first screen cannot open the conversation itself. Home takes
+ * the request once, when it appears, and starts the conversation as its own button does.
+ */
+let talkRequested = false
+
+export function requestTalkOnHome(): void {
+  talkRequested = true
+}
+
+export function takeTalkRequest(): boolean {
+  const requested = talkRequested
+  talkRequested = false
+  return requested
+}
