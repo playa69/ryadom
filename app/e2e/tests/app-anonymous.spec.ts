@@ -13,6 +13,7 @@ import {
 import { clearMailbox, waitForCode } from '../support/mail'
 import { deviceLogin, profileOf, sessionAlive, storedDevice, trackSession } from '../support/session'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 
 /**
  * Anonymous entry in the Framework7 client (the PWA), the counterpart of web-anonymous.spec.ts: the
@@ -41,15 +42,34 @@ test('первый запуск, привязка почты, выход: акк
   const email = uniqueEmail('app-anonymous')
   await clearMailbox()
 
-  // ── a new visitor: the first screen, not a sign-in ───────────────────────
-  await openApp(page)
-  await expect(page.locator('.page-current').getByTestId('consents')).toBeVisible()
+  // ── a new visitor: home itself, with what starting means under «Поговорить» ─
+  // `openspec/changes/simplify-first-screen`, «Первый экран: разговор с первого действия».
+  // The memory sheet is not answered beforehand: the start must not be covered by it.
+  await openApp(page, { keepMemoryInvite: true })
+  const first = page.locator('.page-current')
+  await expect(first.getByTestId('consent-notice')).toContainText(
+    'Начиная разговор, ты подтверждаешь, что тебе есть 18',
+  )
+  await expect(first.getByText('В опасной ситуации звони 112.')).toBeVisible()
+  await expect(first.locator('input[type="checkbox"]'), 'флажков нет').toHaveCount(0)
   await shot(page, 'app-welcome')
-  await button(page, 'Начать').click()
-  await expect(page.getByTestId('form-error')).toHaveText('Чтобы начать, нужны все три согласия')
-  expect(await storedDevice(page), 'пока согласий нет, удостоверения нет').toBeNull()
+  await step(
+    page,
+    'app-welcome',
+    'Первый экран приложения: шар, «Поговорить», строка о согласии и 112, флажков нет',
+  )
+  expect(await storedDevice(page), 'до нажатия удостоверения нет').toBeNull()
 
-  await startAnonymously(page)
+  // ── «Поговорить»: the account, the consents and the conversation, where the companion greets ─
+  await first.getByTestId('welcome-talk').click()
+  await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
+  // A closed sheet stays in the page: what must not be there is an open one.
+  await expect(page.locator('.sheet-modal.modal-in'), 'окно про память не мешает началу').toHaveCount(0)
+  await step(
+    page,
+    'app-welcome-voice',
+    '«Поговорить»: разговор открыт голосом, агент здоровается, окна про память нет',
+  )
   const accountId = session.userId()
   expect(await storedDevice(page), 'удостоверение устройства сохранено').not.toBeNull()
   expect(await profileOf(request, session.accessToken())).toMatchObject({
@@ -58,6 +78,11 @@ test('первый запуск, привязка почты, выход: акк
     consentsCompleted: true,
     consentVersion: POLICY_VERSION,
   })
+  // Home offers memory on the visit after the start, which is not this test's subject: answered beforehand,
+  // like for a person who has seen it (read when home checks).
+  await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.memory-invite-dismissed')
+  await page.locator('.page-current .navbar a.back').click()
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
 
   // ── the profile offers an address, not a password, and says how long the account lives ─
   await openTab(page, 'Профиль')
@@ -112,7 +137,7 @@ test('первый запуск, привязка почты, выход: акк
   await expect(button(page, 'Войти')).toBeVisible({ timeout: 20_000 })
   expect(await sessionAlive(request, ended), 'сессия завершена на сервере').toBe(false)
   await openApp(page)
-  await expect(button(page, 'Начать')).toBeVisible()
+  await expect(page.locator('.page-current').getByTestId('consent-notice')).toBeVisible()
   await page.locator('.page-current').getByTestId('have-account').click()
   await signIn(page, email)
   expect(session.userId(), 'тот же аккаунт со всем, что в нём было').toBe(accountId)
@@ -145,7 +170,7 @@ test('удаление аккаунта без регистрации: устр�
   await page.locator('.dialog.modal-in').getByText('ОК').click()
 
   // Back at the start, not at a sign-in for an account the person never had.
-  await expect(button(page, 'Начать')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.page-current').getByTestId('consent-notice')).toBeVisible({ timeout: 20_000 })
   expect(await storedDevice(page), 'ключ устройства стёрт вместе с аккаунтом').toBeNull()
   expect(await sessionAlive(request, oldSession), 'сессия удалённого аккаунта закончена').toBe(false)
 

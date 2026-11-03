@@ -10,7 +10,7 @@ import { nameProblem, passwordProblem } from '@ryadom/client-core/validation'
 import { codeOutcome, formOutcome, trackForm } from '@/lib/analytics'
 import { useClient } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
-import { ConsentGroup, NO_CONSENT, allConsented, firstMissingConsent } from '../_components/consent-group'
+import { ConsentNotice } from '../_components/consent-group'
 import { PasswordField, TextField } from '../_components/fields'
 import {
   AuthActions,
@@ -46,7 +46,6 @@ export default function RegisterScreen() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [consent, setConsent] = useState(NO_CONSENT)
   const [loading, setLoading] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
 
@@ -69,9 +68,6 @@ export default function RegisterScreen() {
     if (!password) return refuse('Введи почту и пароль', 'password')
     const passwordError = passwordProblem(password)
     if (passwordError) return refuse(passwordError, 'password')
-    if (!allConsented(consent)) {
-      return refuse('Без всех трёх согласий аккаунт не создать', firstMissingConsent(consent))
-    }
 
     setProblem(null)
     setLoading(true)
@@ -155,21 +151,11 @@ export default function RegisterScreen() {
           }}
         />
 
-        {/* Consent is given explicitly: being 18+, the disclaimer, personal data processing (152-FZ). */}
-        <ConsentGroup
-          value={consent}
-          invalid={problem?.field?.startsWith('consent') ?? false}
-          onChange={(next) => {
-            setConsent(next)
-            setProblem(null)
-          }}
-          termsUrl={flow.termsUrl}
-          privacyUrl={flow.privacyUrl}
-        />
-
         <AuthActions>
           <FormError problem={problem} />
           <SubmitButton loading={loading}>Создать аккаунт</SubmitButton>
+          {/* The press is the agreement: the line says what it agrees to, the account records it on the first session. */}
+          <ConsentNotice action="Создать аккаунт" termsUrl={flow.termsUrl} privacyUrl={flow.privacyUrl} />
         </AuthActions>
       </AuthForm>
     </>

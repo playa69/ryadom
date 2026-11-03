@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 import { PWA_URL } from '../playwright.config'
 import { waitForCode } from './mail'
+import { guestDevice } from './session'
 
 /**
  * Steps that repeat across scenarios.
@@ -36,8 +37,8 @@ export function button(page: Page, name: string | RegExp) {
 }
 
 /**
- * The consent checkbox. Framework7 hides the `input` itself and draws an icon, so `check()` on
- * the field does nothing; the icon is what has to be clicked.
+ * The checkbox that confirms an account deletion. Framework7 hides the `input` itself and draws an
+ * icon, so `check()` on the field does nothing; the icon is what has to be clicked.
  */
 export async function checkConsent(page: Page): Promise<void> {
   const consent = screen(page).getByTestId('consents')
@@ -71,20 +72,29 @@ export async function openApp(page: Page, options: { keepMemoryInvite?: boolean 
   if (!options.keepMemoryInvite) {
     await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.memory-invite-dismissed')
   }
-  // A new visitor lands on the first screen, someone with a session on home.
-  await expect(button(page, 'Начать').or(button(page, 'Поговорить'))).toBeVisible({ timeout: 30_000 })
+  // A new visitor lands on the first screen, someone with a session on home: «Поговорить» on both.
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
   // The PWA install banner covers the bottom of the screen and is not needed in the test browser.
   const dismiss = page.getByRole('button', { name: 'Скрыть' })
   if (await dismiss.isVisible().catch(() => false)) await dismiss.click()
 }
 
 /**
- * The first screen as a new visitor meets it: all three agreements, then "Начать". An account is made
- * behind the scenes and the person is on the home screen, with no address and no password.
+ * A guest on home, with no address and no password. The first screen makes an account only together with
+ * the first conversation, so for scenarios about anything else this browser becomes a known device (see
+ * `guestDevice`) and the app signs in by itself; the first screen is covered by its own scenarios.
  */
 export async function startAnonymously(page: Page): Promise<void> {
-  await checkConsent(page)
-  await button(page, 'Начать').click()
+  const device = await guestDevice(page.request)
+  // The secure-storage shim of the PWA keeps the JSON it is given as a JSON string of its own.
+  await page.evaluate(
+    (value) => window.localStorage.setItem('ryadom_device', value),
+    JSON.stringify(JSON.stringify(device)),
+  )
+  await page.reload()
+  await expect(screen(page).getByTestId('consent-notice'), 'не первый экран, а главная').toHaveCount(0, {
+    timeout: 30_000,
+  })
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
 }
 
@@ -107,8 +117,7 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await field(page, 'name').fill(name)
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(PASSWORD)
-  // Consent to data processing is mandatory: without it the account is not created.
-  await checkConsent(page)
+  // No boxes: the press is the agreement, recorded once the code is entered.
   await button(page, 'Создать аккаунт').click()
 
   await expect(page.getByText('Подтверди почту')).toBeVisible({ timeout: 20_000 })

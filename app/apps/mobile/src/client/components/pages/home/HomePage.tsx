@@ -10,7 +10,7 @@ import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/
 import { memoryInUse, shouldInviteToMemory } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText, getMemory, startDialog } from '../../../lib/api'
 import { dismissMemoryInvite, enableMemory, memoryInviteDismissed } from '../../../lib/memory'
-import { START_TALK_EVENT } from '../../../lib/nav'
+import { START_TALK_EVENT, takeTalkRequest } from '../../../lib/nav'
 import { unlockSpeech } from '../../../lib/voice/speech'
 import { useAuth } from '../../../lib/store'
 import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
@@ -117,13 +117,17 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
 
   // Whether to offer "Без памяти" is asked whenever home comes into view: the person's switch and
   // whether the server uses memory at all can both change elsewhere. A failure leaves what was known.
+  // «Поговорить» on the first screen, carried over the sign-in: taken once, when home first appears.
+  const fromWelcome = useRef<boolean | null>(null)
+  if (fromWelcome.current === null) fromWelcome.current = takeTalkRequest()
+
   const loadMemory = useCallback(() => {
     if (!userId) return
     getMemory()
       .then((memory) => {
         updateUser({ memoryEnabled: memoryInUse(memory) })
         // The invitation comes once, to someone who has not decided; never while a conversation is starting.
-        if (!starting.current && shouldInviteToMemory(memory, memoryInviteDismissed())) {
+        if (!starting.current && !fromWelcome.current && shouldInviteToMemory(memory, memoryInviteDismissed())) {
           setInvitedMemory(memory)
           setInvite((current) => current ?? 'invite')
         }
@@ -241,6 +245,12 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     const onTalk = () => void talkRef.current()
     window.addEventListener(START_TALK_EVENT, onTalk)
     return () => window.removeEventListener(START_TALK_EVENT, onTalk)
+  }, [])
+
+  // The first screen's press: the conversation starts at once, and the memory sheet waits for a later visit.
+  useEffect(() => {
+    if (!fromWelcome.current) return
+    void talkRef.current().finally(() => (fromWelcome.current = false))
   }, [])
 
   /** "Продолжить": the same dialog, as a start without a question used to open it. */

@@ -65,8 +65,7 @@ if (!signedIn) {
   await page.locator('input[name="name"]').fill(ACCOUNT.name)
   await page.locator('input[name="email"]').fill(ACCOUNT.email)
   await page.locator('input[name="password"]').fill(ACCOUNT.password)
-  // The three required consents (18+, not therapy, terms); the optional memory item is left alone.
-  for (const box of await page.getByTestId('consents').getByRole('checkbox').all()) await box.check()
+  // No consent boxes: «Создать аккаунт» is the agreement.
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click()
   await page.getByRole('heading', { name: 'Подтверди почту' }).waitFor({ timeout: 20_000 })
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(await newestCode(ACCOUNT.email, before))

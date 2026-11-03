@@ -120,7 +120,7 @@
 | `password_reset_requested` | запрос кода сброса (**без человека**) | — |
 | `email_linked` | анонимный аккаунт получил почту | — |
 | `telegram_linked` | аккаунт взял Telegram, в котором открыт Mini App (после входа по почте там или анонимный аккаунт этого устройства) | — |
-| `consents_accepted` | первый экран: возраст, «это не терапия», условия | `policy_version` |
+| `consents_accepted` | первое действие на первом экране (или «Продолжить» в воротах условий): возраст, «это не терапия», условия | `policy_version` |
 | `profile_updated` | изменено имя и/или голос | `fields` (только названия полей) |
 | `account_deleted` | аккаунт удалён (**без человека**) | — |
 | `dialog_started` | `POST /api/dialogs` | `dialog_id`, `resumed`, `hours_since_last` |

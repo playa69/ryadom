@@ -1,5 +1,7 @@
+import { randomBytes } from 'node:crypto'
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 import type { MeApiResponse } from '@ryadom/contracts/api/auth/me'
+import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { APP_URL } from '../playwright.config'
 
 /**
@@ -91,6 +93,28 @@ export async function deviceLogin(
   const body = (await response.json()) as { status: boolean; result: DeviceSession }
   expect(body.status, 'вход по устройству принят').toBe(true)
   return body.result
+}
+
+/**
+ * A guest for scenarios about something other than the first screen: an account made for fresh device
+ * credentials, with the consents the first screen records. Handed to a client, the credentials make it a
+ * known device, which signs in by itself and opens home with no screen at all. The first screen itself,
+ * where an account is made only together with the first conversation, has scenarios of its own.
+ */
+export async function guestDevice(
+  request: APIRequestContext,
+): Promise<{ deviceId: string; deviceKey: string }> {
+  const device = {
+    deviceId: randomBytes(16).toString('base64url'),
+    deviceKey: randomBytes(32).toString('base64url'),
+  }
+  const session = await deviceLogin(request, device)
+  const response = await request.post(`${APP_URL}/api/auth/me/consents`, {
+    headers: { Authorization: `Bearer ${session.tokens.accessToken}` },
+    data: { ageConfirmed: true, disclaimerAccepted: true, offerAccepted: true, offerVersion: POLICY_VERSION },
+  })
+  expect(response.status(), 'согласия записаны').toBe(200)
+  return device
 }
 
 /** The profile the server holds for this access token: what it knows about the account, not what the screen shows. */

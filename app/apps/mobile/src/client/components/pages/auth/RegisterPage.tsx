@@ -6,7 +6,7 @@ import { InputLimit } from '@ryadom/contracts/api/limits'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, codeText, register } from '../../../lib/api'
 import { nameProblem, passwordProblem } from '../../../lib/validation'
-import ConsentList, { NO_CONSENT, allConsented } from '../../ConsentList'
+import ConsentNote from '../../ConsentNote'
 import PasswordInput from '../../PasswordInput'
 
 /**
@@ -28,7 +28,6 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [consent, setConsent] = useState(NO_CONSENT)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -43,7 +42,6 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
     if (!trimmedEmail || !password) return invalid('Введи почту и пароль')
     const problem = passwordProblem(password)
     if (problem) return invalid(problem)
-    if (!allConsented(consent)) return invalid('Без всех трёх согласий аккаунт не создать')
 
     setError('')
     setLoading(true)
@@ -126,20 +124,13 @@ export default function RegisterPage({ f7router }: { f7router: Router.Router }) 
         />
       </List>
 
-      {/* Consent is given explicitly: being 18+, the disclaimer, personal data processing (152-FZ). */}
-      <ConsentList
-        value={consent}
-        onChange={(next) => {
-          setConsent(next)
-          setError('')
-        }}
-      />
-
       <Block className="rd-form-actions">
         {error && <p className="rd-form-error" data-testid="form-error">{error}</p>}
         <Button fill large preloader loading={loading} disabled={loading} onClick={() => void handleRegister()}>
           Создать аккаунт
         </Button>
+        {/* The press is the agreement: the line says what it agrees to, the account records it on the first session. */}
+        <ConsentNote action="Создать аккаунт" />
       </Block>
     </Page>
   )
