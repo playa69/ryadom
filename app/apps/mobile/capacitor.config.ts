@@ -9,9 +9,10 @@ import type { CapacitorConfig } from '@capacitor/cli'
 const liveReloadUrl = process.env.CAP_LIVE_RELOAD_URL
 
 const config: CapacitorConfig = {
-  // Permanent: this is the applicationId in the stores and the Java package of the native code.
-  // Gradle adds the .dev suffix for the dev flavour.
-  appId: 'ru.ryadom.app',
+  // Permanent: the Android applicationId in the stores (RuStore fixes it once the app exists).
+  // Gradle adds the .dev suffix for the dev flavour; the Java package stays ru.ryadom.app, and the
+  // iOS bundle id lives in the Xcode project.
+  appId: 'ru.ryadom.companion',
   appName: 'Рядом',
   webDir: 'dist/client',
   backgroundColor: '#00051a',
