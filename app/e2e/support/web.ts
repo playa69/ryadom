@@ -268,7 +268,7 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await dismissMemoryInvite(page)
   // A new visitor meets the first screen and opens the sign-in from it; from the sign-in screen the
   // way to the sign-up is one link away.
-  const guestHome = page.getByTestId('consent-notice')
+  const guestHome = page.getByTestId('guest-note')
   const createAccount = page.getByRole('link', { name: 'Создать аккаунт', exact: true })
   await expect(guestHome.or(createAccount)).toBeVisible({ timeout: 30_000 })
   if (await guestHome.isVisible()) await openSignIn(page)

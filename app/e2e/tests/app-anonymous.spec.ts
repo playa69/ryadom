@@ -139,7 +139,7 @@ test('первый запуск, привязка почты, выход: акк
   await expect(button(page, 'Войти')).toBeVisible({ timeout: 20_000 })
   expect(await sessionAlive(request, ended), 'сессия завершена на сервере').toBe(false)
   await openApp(page)
-  await expect(page.locator('.page-current').getByTestId('consent-notice')).toBeVisible()
+  await expect(page.locator('.page-current').getByTestId('welcome-talk')).toBeVisible()
   await page.locator('.page-current').getByTestId('have-account').click()
   await signIn(page, email)
   expect(session.userId(), 'тот же аккаунт со всем, что в нём было').toBe(accountId)
@@ -172,7 +172,7 @@ test('удаление аккаунта без регистрации: устр�
   await page.locator('.dialog.modal-in').getByText('ОК').click()
 
   // Back at the start, not at a sign-in for an account the person never had.
-  await expect(page.locator('.page-current').getByTestId('consent-notice')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.page-current').getByTestId('welcome-talk')).toBeVisible({ timeout: 20_000 })
   expect(await storedDevice(page), 'ключ устройства стёрт вместе с аккаунтом').toBeNull()
   expect(await sessionAlive(request, oldSession), 'сессия удалённого аккаунта закончена').toBe(false)
 

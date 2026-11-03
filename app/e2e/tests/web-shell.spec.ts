@@ -356,7 +356,7 @@ test('меню аккаунта: профиль и выход', async ({ page })
 
   // Signed out means signed out: home without a session is the first screen, not the account ...
   await openWebApp(page, '/home')
-  await expect(page.getByTestId('consent-notice')).toBeVisible()
+  await expect(page.getByTestId('guest-note')).toBeVisible()
   await openSignIn(page)
   await expect(button(page, 'Войти')).toBeVisible()
   // ... and the account is still there for the next sign-in.

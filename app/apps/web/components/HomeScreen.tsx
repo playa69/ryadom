@@ -480,26 +480,21 @@ export default function HomeScreen() {
           </div>
         </div>
 
-        {/* The foot of the page, always in the same place: for someone new, what the first message agrees to. */}
+        {/* The foot of the page, always in the same place and for everyone: what starting a conversation agrees
+            to, with the terms and the policy one tap away; the terms of keeping for someone new. */}
         <div
           className="mx-auto flex max-w-2xl flex-col items-center gap-1 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] text-center"
           data-testid="home-foot"
         >
-          {guest ? (
-            <>
-              <ConsentNotice
-                termsUrl={`${siteUrl}/terms`}
-                privacyUrl={`${siteUrl}/privacy`}
-                className="text-xs"
-              />
-              <p className="text-xs leading-normal text-dim">В опасной ситуации звони&nbsp;112.</p>
-              <p className="text-xs leading-normal text-faint text-balance">
-                {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}.
-              </p>
-            </>
-          ) : (
-            <p className="text-xs leading-normal text-faint">
-              «Рядом»&nbsp;— самоподдержка, не психотерапия. В опасной ситуации звони&nbsp;112.
+          <ConsentNotice
+            termsUrl={`${siteUrl}/terms`}
+            privacyUrl={`${siteUrl}/privacy`}
+            className="text-xs"
+          />
+          <p className="text-xs leading-normal text-dim">В опасной ситуации звони&nbsp;112.</p>
+          {guest && (
+            <p className="text-xs leading-normal text-faint text-balance" data-testid="guest-note">
+              {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}.
             </p>
           )}
           {/* A padded link: a line of text is 16px high, a finger needs 44. */}

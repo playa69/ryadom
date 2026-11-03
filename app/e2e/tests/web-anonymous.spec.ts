@@ -65,7 +65,7 @@ test('первый запуск: строка о согласии, «Погов�
   // `openspec/changes/merge-first-screen-into-home`: the first screen has no address of its own.
   await openWebApp(page)
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('consent-notice')).toBeVisible()
+  await expect(page.getByTestId('guest-note')).toBeVisible()
   // The same frame as for an account: SOS in the header, the menu with «Войти» at its foot.
   await expect(page.getByRole('button', { name: 'SOS' })).toBeVisible()
   await openSidebar(page)
@@ -118,6 +118,9 @@ test('первый запуск: строка о согласии, «Погов�
   await openWebApp(page)
   await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
   await expect(page).toHaveURL(/\/home$/)
+  // The foot of home is the same with an account: the agreement with the terms and the policy, and 112.
+  await expect(page.getByTestId('consent-notice')).toBeVisible()
+  await expect(page.getByTestId('guest-note')).toHaveCount(0)
 
   // ── the session is gone but the device is known: `/` signs back in, with no screen at all ─
   await page.evaluate(() => {
@@ -133,7 +136,7 @@ test('первый запуск: строка о согласии, «Погов�
   await page.evaluate(() => localStorage.clear())
   await openWebApp(page)
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('consent-notice')).toBeVisible()
+  await expect(page.getByTestId('guest-note')).toBeVisible()
 })
 
 test('первый запуск текстом: набранное уходит первым сообщением после приветствия', async ({ page }) => {
@@ -294,7 +297,7 @@ test('аккаунт без почты: профиль, привязка, под
   await page.getByTestId('logout-confirm').click()
   await expect(page).toHaveURL(/\/login$/)
   await openWebApp(page)
-  await expect(page.getByTestId('consent-notice')).toBeVisible()
+  await expect(page.getByTestId('guest-note')).toBeVisible()
   await openSignIn(page)
   await signIn(page, email)
   await openProfile(page)
@@ -436,7 +439,7 @@ test('удаление аккаунта без регистрации: устр�
   await page.getByTestId('deleted-ok').click()
   // Back at the start, not at a sign-in for an account the person never had.
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('consent-notice')).toBeVisible()
+  await expect(page.getByTestId('guest-note')).toBeVisible()
 
   expect(await sessionAlive(request, oldSession), 'сессия удалённого аккаунта закончена').toBe(false)
 
@@ -534,7 +537,7 @@ test('вход по почте на новом устройстве даёт т�
   const otherSession = trackSession(other)
   await openWebApp(other)
   await dismissMemoryInvite(other) // a new device: the sheet "Рядом теперь запоминает важное" is not this test's subject
-  await expect(other.getByTestId('consent-notice')).toBeVisible()
+  await expect(other.getByTestId('guest-note')).toBeVisible()
   await openSignIn(other)
   await field(other, 'email').fill(email)
   await field(other, 'password').fill(PASSWORD)

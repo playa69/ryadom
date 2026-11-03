@@ -15,6 +15,7 @@ import { unlockSpeech } from '../../../lib/voice/speech'
 import { useAuth } from '../../../lib/store'
 import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import Breathing from '../../Breathing'
+import ConsentNote from '../../ConsentNote'
 import Switch from '../../Switch'
 import { SosButton, openSos } from '../../SosSheet'
 import MemoryConsentSheet from '../profile/MemoryConsentSheet'
@@ -370,6 +371,12 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                 </Button>
               </div>
             </div>
+          </div>
+
+          {/* The foot of home, as on the first screen: what starting a conversation agrees to, with the terms and the policy. */}
+          <div className="rd-welcome-foot" data-testid="home-foot">
+            <ConsentNote />
+            <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>
           </div>
         </div>
       </div>
