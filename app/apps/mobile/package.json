@@ -1,6 +1,6 @@
 {
   "name": "@ryadom/mobile",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "«Рядом» — клиент (Framework7 + Capacitor): PWA, Android, iOS. Говорит с services/api по HTTPS/WSS, своего сервера не имеет.",
