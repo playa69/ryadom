@@ -4,6 +4,7 @@ import type { ComponentProps } from 'react'
 import Link from 'next/link'
 import { track, trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, type CtaId, type StoreLink } from '@ryadom/analytics/events'
+import { HOTLINE_NO_CAPTURE } from '@/lib/hotlines'
 
 /*
  * The site is rendered on the server, so a click cannot be counted from there. These are the thin
@@ -38,11 +39,12 @@ function onClickWith<E>(onClick: ((event: E) => void) | undefined, tracking: Tra
 
 /**
  * A tap on a hotline is counted without a browser (`trackAnonymous`). Click autocapture would count it
- * again under the browser's own id, so the SDK is told to leave that link alone (`ph-no-capture`).
+ * again under the browser's own id, so the SDK is told to leave that link alone (`ph-no-capture`), and so is
+ * Yandex Metrika's click map and session recording (the `ym-*` classes of `HOTLINE_NO_CAPTURE`).
  */
 function withNoCaptureForHotline(className: string | undefined, tracking: Tracking): string | undefined {
   if ('store' in tracking || tracking.cta !== 'hotline') return className
-  return className ? `${className} ph-no-capture` : 'ph-no-capture'
+  return className ? `${className} ${HOTLINE_NO_CAPTURE}` : HOTLINE_NO_CAPTURE
 }
 
 /** A plain `<a>`: for addresses outside the site, `mailto:`, `tel:` and in-page anchors. */

@@ -90,15 +90,34 @@ const LEGACY_CLIENT_FEATURES: AnalyticsConfigApiResponse['features'] = {
   heatmaps: false,
 }
 
+/**
+ * The Metrika counter number, or undefined when `YANDEX_METRIKA_COUNTER_ID` is empty OR is not a positive whole
+ * number. It is handed to every visitor and goes into a script call, so only digits get through.
+ */
+export function metrikaCounterId(env: Pick<AppServerEnv, 'YANDEX_METRIKA_COUNTER_ID'>): number | undefined {
+  const value = env.YANDEX_METRIKA_COUNTER_ID
+  if (value === undefined || !/^[1-9]\d{0,11}$/.test(value)) return undefined
+  return Number(value)
+}
+
+/** True when `YANDEX_METRIKA_COUNTER_ID` is set to something that is not a counter number (and so is ignored). */
+export function hasInvalidMetrikaCounterId(env: Pick<AppServerEnv, 'YANDEX_METRIKA_COUNTER_ID'>): boolean {
+  return env.YANDEX_METRIKA_COUNTER_ID !== undefined && metrikaCounterId(env) === undefined
+}
+
 /** What the clients are told at startup: whether to report, and with which token. */
 export function toAnalyticsConfig(env: AppServerEnv): AnalyticsConfigApiResponse {
   const key = projectToken(env)
+  const counterId = metrikaCounterId(env)
   return {
     enabled: key !== undefined,
     key: key ?? null,
     uiHost: env.POSTHOG_UI_HOST,
     environment: env.APP_ENV,
     features: LEGACY_CLIENT_FEATURES,
+    ...(counterId !== undefined
+      ? { metrika: { counterId, webvisor: env.YANDEX_METRIKA_WEBVISOR, clickmap: env.YANDEX_METRIKA_CLICKMAP } }
+      : {}),
   }
 }
 

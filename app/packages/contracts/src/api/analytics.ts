@@ -33,6 +33,21 @@ export interface AnalyticsFeatures {
   heatmaps: false
 }
 
+/**
+ * Yandex Metrika, one counter for every surface. Absent when no counter is configured, and then no client
+ * loads the tag. It is independent of PostHog: either can be on without the other.
+ */
+export interface MetrikaConfigApiResponse {
+  /** The counter number: public (it is in the page source of every site that uses Metrika). */
+  counterId: number
+  /**
+   * What the environment allows. Only the landing acts on these (session recording and the click map would
+   * record conversations, e-mail and SOS in the apps); the apps never turn them on, whatever is said here.
+   */
+  webvisor: boolean
+  clickmap: boolean
+}
+
 export interface AnalyticsConfigApiResponse {
   /** false: the client sends nothing and loads nothing. `key` is then null. */
   enabled: boolean
@@ -50,4 +65,6 @@ export interface AnalyticsConfigApiResponse {
   environment: string
   /** Kept for older clients (see `AnalyticsFeatures`). */
   features: AnalyticsFeatures
+  /** Yandex Metrika; absent without `YANDEX_METRIKA_COUNTER_ID`. Optional: older clients do not know it. */
+  metrika?: MetrikaConfigApiResponse
 }

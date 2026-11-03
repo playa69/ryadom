@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
+import { reportDialogReplies } from '@ryadom/analytics/metrika'
 import {
   DialogApiErrorCode,
   DialogWsErrorCode,
@@ -458,6 +459,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         if (next !== 'ready') setAwaitingReply(false)
       },
       onMessages: setMessages,
+      // The server accepted another reply of the person: the goals of Yandex Metrika. Not in a conversation held unsaved.
+      onUserReplies: (count, delta) => {
+        if (!unsavedRef.current) reportDialogReplies(count, delta)
+      },
       onSpeech: (messageId, phase) =>
         phase === 'start' ? startAgentSpeech(messageId) : replyVoice.agentSpeechEnded(messageId),
       onTranscript: (text, final) => {

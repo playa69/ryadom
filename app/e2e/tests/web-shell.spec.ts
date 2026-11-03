@@ -60,10 +60,16 @@ test('страницы приходят со строгой политикой �
   expect(policy['style-src'] ?? []).not.toContain("'unsafe-inline'")
   expect(policy['frame-ancestors']).toEqual(["'none'"])
   expect(policy['object-src']).toEqual(["'none'"])
-  // The browser talks to the API directly: its address (REST and WebSocket) is the only extra origin.
+  // The browser talks to the API directly: its address (REST and WebSocket) is the only extra origin, besides
+  // the two hosts of Yandex Metrika, which is not behind our proxy (it reports to mc.yandex.com).
   expect(policy['connect-src']).toEqual(
     expect.arrayContaining(["'self'", new URL(APP_URL).origin, APP_URL.replace(/^http/, 'ws')]),
   )
+  const metrika = ['https://mc.yandex.ru', 'https://mc.yandex.com']
+  expect(policy['connect-src']).toEqual(expect.arrayContaining(metrika))
+  expect(policy['img-src']).toEqual(expect.arrayContaining(metrika))
+  // The tag is inserted by our own script, which `strict-dynamic` trusts: no host is added to script-src.
+  expect(scripts.filter((source) => source.includes('yandex'))).toEqual([])
 
   // The nonce in the header is the one the page's scripts carry, and every request gets a new one.
   const nonce = nonceOf(policy)

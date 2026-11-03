@@ -81,10 +81,12 @@ http {
     # open it in a webview of their own, outside any frame).
     # worker-src has blob: left from the analytics SDK's session-recording worker; replay is off for good
     # (packages/analytics/src/browser.ts), so nothing here creates one now. Product analytics go to
-    # /api/ingest on this origin, so connect-src and script-src need nothing else. script-src has 'wasm-unsafe-eval' (WebAssembly only, no eval) for the
+    # /api/ingest on this origin, so PostHog needs nothing else. Yandex Metrika is not behind our proxy: its tag comes
+    # from mc.yandex.ru and it reports to mc.yandex.com (hits, JSONP answers and the pixel that checks its cookie), so
+    # both hosts are in script-src, connect-src and img-src. script-src has 'wasm-unsafe-eval' (WebAssembly only, no eval) for the
     # WASM Opus decoder of the agent's voice on browsers without one of their own (iOS before 26,
     # Firefox on Android); without it they get μ-law instead.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors https://web.telegram.org" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://mc.yandex.ru https://mc.yandex.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://mc.yandex.ru https://mc.yandex.com; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss: https://mc.yandex.ru https://mc.yandex.com; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors https://web.telegram.org" always;
     add_header X-Robots-Tag "noindex" always;
     add_header X-Content-Type-Options "nosniff" always;
     # No `always`: an error response must not be marked immutable.

@@ -70,6 +70,8 @@ interface Harness {
   audio: PcmChunk[]
   speech: { messageId: string; phase: 'start' | 'end' }[]
   safety: unknown[]
+  /** What `onUserReplies` was told: [count, delta] each time the server accepted more replies of the person. */
+  replies: [number, number][]
 }
 
 function harness(
@@ -86,6 +88,7 @@ function harness(
   const audio: PcmChunk[] = []
   const speech: Harness['speech'] = []
   const safety: unknown[] = []
+  const replies: [number, number][] = []
   const deps = {
     token: makeToken('a') as string | null,
     getAccessToken() {
@@ -110,9 +113,10 @@ function harness(
     onTranscript: (text, final) => heard.push({ text, final }),
     onAudio: (frame) => audio.push(frame),
     onSpeech: (messageId, phase) => speech.push({ messageId, phase }),
+    onUserReplies: (count, delta) => replies.push([count, delta]),
   }
   const socket = new DialogSocket(deps, 'dialog-1', handlers, options.greeting)
-  return { socket, deps, states, feed: () => messages, heard, audio, speech, safety }
+  return { socket, deps, states, feed: () => messages, heard, audio, speech, safety, replies }
 }
 
 /** Opens the connection and lets `hello` go out (it waits on a microtask when the token needs refreshing). */
@@ -633,5 +637,96 @@ describe('голос', () => {
     expect(h.socket.isConnected()).toBe(true)
     ws.drop(1006)
     expect(h.socket.isConnected()).toBe(false)
+  })
+})
+
+describe('реплики человека, принятые сервером (цели Метрики)', () => {
+  it('набранная реплика считается, когда сервер её подтвердил, а не когда она набрана', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    h.socket.sendMessage('привет')
+    expect(h.replies).toEqual([])
+    const clientId = ws.framesOf(DialogClientFrame.Message)[0]!.clientId as string
+    ws.receive({ type: DialogServerFrame.Ack, clientId, messageId: 'srv-1' })
+    expect(h.replies).toEqual([[1, 1]])
+  })
+
+  it('реплика, которая не дошла до сервера, не считается', async () => {
+    const h = harness()
+    h.socket.sendMessage('нет связи')
+    expect(h.feed()[0]?.pending).toBe(true)
+    expect(h.replies).toEqual([])
+  })
+
+  it('сказанная реплика считается по итоговой расшифровке, один раз', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    ws.receive({ type: DialogServerFrame.Transcript, text: 'мне тяж', final: false })
+    expect(h.replies).toEqual([])
+    ws.receive({ type: DialogServerFrame.Transcript, text: 'мне тяжело', final: true, messageId: 'v1' })
+    ws.receive({ type: DialogServerFrame.Transcript, text: 'мне тяжело', final: true, messageId: 'v1' })
+    ws.receive({ type: DialogServerFrame.Ack, clientId: 'v1', messageId: 'v1' })
+    expect(h.replies).toEqual([[1, 1]])
+  })
+
+  it('пустая расшифровка (кашель, эхо) не реплика', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    ws.receive({ type: DialogServerFrame.Transcript, text: '  ', final: true, messageId: 'v1' })
+    expect(h.replies).toEqual([])
+  })
+
+  it('три принятые реплики идут по одной: 1, 2, 3', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    for (const [index, text] of ['раз', 'два', 'три'].entries()) {
+      h.socket.sendMessage(text)
+      const clientId = ws.framesOf(DialogClientFrame.Message)[index]!.clientId as string
+      ws.receive({ type: DialogServerFrame.Ack, clientId, messageId: `srv-${index}` })
+    }
+    expect(h.replies).toEqual([
+      [1, 1],
+      [2, 1],
+      [3, 1],
+    ])
+  })
+
+  it('ответы агента реплик человека не прибавляют', async () => {
+    const h = harness({ greeting: 'Я рядом' })
+    const ws = await connect(h)
+    ws.receive({ type: DialogServerFrame.AssistantStart, messageId: 'a1' })
+    ws.receive({ type: DialogServerFrame.AssistantEnd, messageId: 'a1', text: 'Я слушаю' })
+    expect(h.replies).toEqual([])
+  })
+
+  it('запись разговора после переподключения приходит прыжком больше единицы: это не человек говорит', async () => {
+    const history: DialogMessageView[] = [
+      { id: 'u1', role: 'user', text: 'раз' },
+      { id: 'a1', role: 'assistant', text: 'ответ' },
+      { id: 'u2', role: 'user', text: 'два' },
+    ]
+    const h = harness({ loadHistory: vi.fn(async () => history) })
+    const first = await connect(h)
+    first.drop(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    const next = last()
+    next.open()
+    await vi.advanceTimersByTimeAsync(0)
+    next.receive({ type: DialogServerFrame.Ready, dialogId: 'dialog-1', greeting: null, sinceLastDialogHours: null })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.replies).toEqual([[2, 2]])
+  })
+
+  it('исключение в обработчике счёта не ломает разговор', async () => {
+    const h = harness()
+    const original = h.socket as unknown as { handlers: DialogSocketHandlers }
+    original.handlers.onUserReplies = () => {
+      throw new Error('counter broke')
+    }
+    const ws = await connect(h)
+    h.socket.sendMessage('привет')
+    const clientId = ws.framesOf(DialogClientFrame.Message)[0]!.clientId as string
+    expect(() => ws.receive({ type: DialogServerFrame.Ack, clientId, messageId: 'srv-1' })).not.toThrow()
+    expect(h.feed()[0]?.pending).toBe(false)
   })
 })

@@ -182,6 +182,18 @@ export enum AnalyticsEvent {
  */
 export type AnalyticsPlatform = 'web' | 'pwa' | 'telegram' | 'android' | 'ios' | 'landing'
 
+/**
+ * Goals of Yandex Metrika, by the identifiers they have in the counter's cabinet (JavaScript-event goals with an
+ * exact match). They are not PostHog events and carry no properties. "Transition to the product" is not here: the
+ * cabinet counts it by the addresses `/app/` and `/pwa/`, so the apps need no code for it.
+ */
+export enum MetrikaGoal {
+  /** The server accepted the first reply of the person in a dialog (typed or spoken). */
+  FirstReply = 'first_reply',
+  /** The main goal: the third accepted reply in a dialog, once per device. */
+  FirstDialog3Replies = 'first_dialog_3_replies',
+}
+
 /** How an account signs in or was made: an address wins over Telegram, Telegram over the device alone. */
 export type AccountKind = 'email' | 'telegram' | 'anonymous'
 

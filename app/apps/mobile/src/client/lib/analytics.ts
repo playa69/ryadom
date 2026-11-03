@@ -35,6 +35,38 @@ export function analyticsPlatform(env: {
   return env.standalone ? 'pwa' : 'web'
 }
 
+/**
+ * The address under which this app's screens are reported to Yandex Metrika (`pageBase` of `startAnalytics`).
+ * Framework7 does not change the address bar, so the PWA's address is always its start page; the WebView of a
+ * store build is `localhost`, which the counter does not accept. So the screens are reported under the site's
+ * origin and a prefix of the surface: the PWA and Telegram under the prefix the PWA is published at (`/pwa`: that is
+ * how the cabinet's goal "Переход в продукт" recognises the product), the store builds under `/android` and `/ios`.
+ * No trailing slash.
+ */
+export function metrikaPageBase(env: {
+  platform: AnalyticsPlatform
+  /** `getApiBase()`: absolute in a store build, empty for the web build. */
+  apiBase: string
+  /** The page's own origin. */
+  origin: string
+  /** `import.meta.env.BASE_URL`: `/pwa/` for the web build, `/` in a store build. */
+  baseUrl: string
+}): string {
+  if (env.platform === 'android' || env.platform === 'ios') {
+    return `${siteOrigin(env.apiBase, env.origin)}/${env.platform}`
+  }
+  return `${env.origin}${env.baseUrl.replace(/\/+$/, '')}`
+}
+
+/** The site's origin: the API's, which lives on the same host as the site, or the page's own when it is relative. */
+function siteOrigin(apiBase: string, fallback: string): string {
+  try {
+    return new URL(apiBase).origin
+  } catch {
+    return fallback
+  }
+}
+
 // ── Forms ───────────────────────────────────────────────────────────────────────────────────
 
 /**

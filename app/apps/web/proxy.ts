@@ -18,7 +18,11 @@ export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
   const isDev = process.env.NODE_ENV === 'development'
   const api = readApiBase()
-  const connect = ["'self'", api, toWsBase(api)].join(' ')
+  // Yandex Metrika reports to mc.yandex.com (hits, and the pixel that checks its cookie); the tag comes from
+  // mc.yandex.ru. Unlike PostHog it is not behind our proxy, so its hosts are named. No `script-src` entry:
+  // 'strict-dynamic' trusts what our own script inserts, and an allow-list would be ignored next to it.
+  const metrika = 'https://mc.yandex.ru https://mc.yandex.com'
+  const connect = ["'self'", api, toWsBase(api), metrika].join(' ')
 
   const csp = [
     "default-src 'self'",
@@ -26,7 +30,7 @@ export function proxy(request: NextRequest) {
     // A nonce makes browsers ignore 'unsafe-inline', so dev drops it: HMR and the error overlay inject <style>.
     isDev ? "style-src 'self' 'unsafe-inline'" : `style-src 'self' 'nonce-${nonce}'`,
     `connect-src ${connect}`,
-    "img-src 'self' data: blob:",
+    `img-src 'self' data: blob: ${metrika}`,
     "media-src 'self' blob:",
     "font-src 'self' data:",
     "worker-src 'self' blob:",

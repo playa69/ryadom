@@ -3,7 +3,7 @@ import { cn } from '@ryadom/ui/lib/utils'
 import { BookOpen, Heart, MessageCircle, Mic, Sparkles, Sprout, type LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { connection } from 'next/server'
-import { HOTLINES, telHref } from '@/lib/hotlines'
+import { HOTLINE_NO_CAPTURE, HOTLINES, telHref } from '@/lib/hotlines'
 import { getWebEnv } from '@/lib/env'
 import { FOCUS_RING, SHELL, SiteFooter, SiteHeader } from './_components/chrome'
 import { HomeFaq } from './_components/home-faq'
@@ -225,7 +225,8 @@ export default async function LandingPage() {
                 variant="outline"
                 className={cn(
                   COPY,
-                  'ph-no-capture glass-2 relative min-h-0 flex-col flex-nowrap items-start gap-y-1 overflow-hidden rounded-lg px-[18px] py-3.5 [box-shadow:var(--ryadom-highlight),var(--ryadom-shadow-1)] min-[720.02px]:px-[22px] min-[720.02px]:py-4',
+                  HOTLINE_NO_CAPTURE,
+                  'glass-2 relative min-h-0 flex-col flex-nowrap items-start gap-y-1 overflow-hidden rounded-lg px-[18px] py-3.5 [box-shadow:var(--ryadom-highlight),var(--ryadom-shadow-1)] min-[720.02px]:px-[22px] min-[720.02px]:py-4',
                   'min-[720.02px]:max-[1024px]:grid min-[720.02px]:max-[1024px]:grid-cols-[13.5rem_1fr] min-[720.02px]:max-[1024px]:items-center min-[720.02px]:max-[1024px]:gap-x-6',
                 )}
               >

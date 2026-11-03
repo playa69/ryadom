@@ -11,6 +11,7 @@ vi.mock('@ryadom/analytics/browser', () => ({ track: sdk.track }))
 
 import {
   analyticsPlatform,
+  metrikaPageBase,
   micFailureReason,
   outcomeFromCode,
   outcomeFromError,
@@ -21,6 +22,42 @@ import {
 
 beforeEach(() => {
   sdk.track.mockClear()
+})
+
+describe('адрес экранов для Яндекс Метрики', () => {
+  const site = 'https://xn--site.test'
+
+  it('PWA и Telegram — под префиксом, на котором опубликована PWA: по нему кабинет узнаёт продукт', () => {
+    for (const platform of ['pwa', 'telegram', 'web'] as const) {
+      expect(metrikaPageBase({ platform, apiBase: '', origin: site, baseUrl: '/pwa/' })).toBe(`${site}/pwa`)
+    }
+  })
+
+  it('PWA на корне хоста (разработка) — без префикса и без косой черты в конце', () => {
+    expect(
+      metrikaPageBase({ platform: 'pwa', apiBase: '', origin: 'http://localhost:5174', baseUrl: '/' }),
+    ).toBe('http://localhost:5174')
+  })
+
+  it('сборки магазинов — под адресом сайта (а не localhost WebView) и своим префиксом', () => {
+    expect(
+      metrikaPageBase({ platform: 'android', apiBase: site, origin: 'https://localhost', baseUrl: '/' }),
+    ).toBe(`${site}/android`)
+    expect(
+      metrikaPageBase({
+        platform: 'ios',
+        apiBase: `${site}/`,
+        origin: 'capacitor://localhost',
+        baseUrl: '/',
+      }),
+    ).toBe(`${site}/ios`)
+  })
+
+  it('если адрес API неизвестен, берётся собственный адрес страницы', () => {
+    expect(
+      metrikaPageBase({ platform: 'android', apiBase: '', origin: 'https://localhost', baseUrl: '/' }),
+    ).toBe('https://localhost/android')
+  })
 })
 
 describe('платформа аналитики', () => {

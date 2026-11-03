@@ -29,6 +29,14 @@ export const HOTLINES: Hotline[] = [
   },
 ]
 
+/**
+ * Classes that keep a hotline out of every analytics tool that watches clicks. `ph-no-capture` is for PostHog's
+ * click capture; for Yandex Metrika `ym-disable-clickmap` (and `ym-clickmap-ignore`, the same thing) keep it out
+ * of the click map and `ym-hide-content` makes session recording show it blank. A tap on a hotline is counted
+ * only without a browser (`trackAnonymous`). The names are the ones the Metrika tag itself looks for.
+ */
+export const HOTLINE_NO_CAPTURE = 'ph-no-capture ym-disable-clickmap ym-clickmap-ignore ym-hide-content'
+
 /** The number is written the way it is read aloud; `tel:` keeps only the digits and the plus sign. */
 export function telHref(phone: string): string {
   return `tel:${phone.replace(/[^+\d]/g, '')}`
