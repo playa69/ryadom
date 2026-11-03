@@ -103,7 +103,7 @@ test('несуществующая страница отвечает 404 по-р
 test('экраны входа укладываются в политику, а worklet микрофона не блокируется', async ({ page }) => {
   const violations = await watchCsp(page)
   const titles: Array<[string, string]> = [
-    ['/welcome', 'Добро пожаловать — Рядом'],
+    ['/home', 'Новый разговор — Рядом'],
     ['/login', 'Вход — Рядом'],
     ['/register', 'Регистрация — Рядом'],
     ['/forgot-password', 'Восстановление пароля — Рядом'],
@@ -135,7 +135,7 @@ test('экраны входа укладываются в политику, а w
 test('адаптивность: на входе, регистрации и первом экране нет горизонтальной прокрутки от 360 до 1920', async ({
   page,
 }) => {
-  for (const path of ['/welcome', '/login', '/register']) {
+  for (const path of ['/home', '/login', '/register']) {
     await openWebApp(page, path)
     for (const width of [360, 820, 1280, 1920]) {
       await page.setViewportSize({ width, height: 800 })
@@ -143,12 +143,12 @@ test('адаптивность: на входе, регистрации и пе�
       // The form stays inside the window at every width, whichever way the card is laid out. The first
       // screen has no address field: its edge to hold is the line about the agreement.
       const edge =
-        path === '/welcome' ? page.getByTestId('consent-notice') : field(page, 'email')
+        path === '/home' ? page.getByTestId('consent-notice') : field(page, 'email')
       const box = await edge.boundingBox()
       expect(box!.x, `${path}@${width}: форма слева`).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width, `${path}@${width}: форма справа`).toBeLessThanOrEqual(width)
       await expect(
-        button(page, path === '/welcome' ? 'Поговорить' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
+        button(page, path === '/home' ? 'Поговорить' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
       ).toBeVisible()
     }
   }
@@ -353,9 +353,10 @@ test('меню аккаунта: профиль и выход', async ({ page })
   await expect(page).toHaveURL(/\/login$/)
   await expect(button(page, 'Войти')).toBeVisible({ timeout: 20_000 })
 
-  // Signed out means signed out: the app does not open without a session ...
+  // Signed out means signed out: home without a session is the first screen, not the account ...
   await openWebApp(page, '/home')
-  await expect(page).toHaveURL(/\/login$/)
+  await expect(page.getByTestId('first-screen')).toBeVisible()
+  await page.getByTestId('have-account').click()
   await expect(button(page, 'Войти')).toBeVisible()
   // ... and the account is still there for the next sign-in.
   await signIn(page, email)

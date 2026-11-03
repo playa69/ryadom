@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, EyeOff, Heart, MessageCircle, Moon, type LucideIcon } from 'lucide-react'
+import { EyeOff } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -16,7 +16,6 @@ import { rememberUnsaved, UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-cor
 import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import { memoryInUse } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
-import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
 import { Checkbox } from '@ryadom/ui/components/checkbox'
 import { cn } from '@ryadom/ui/lib/utils'
@@ -38,20 +37,13 @@ import { unlockSpeech } from '@ryadom/client-core/voice/speech'
  * something said in it), the start waits for their answer: continue it, end it and begin a new one,
  * or close the question and stay here with the draft untouched.
  *
- * With memory on, a switch "Без памяти" beside the modes holds the next conversation without it, and
+ * With memory on, a switch "Без памяти" under the box holds the next conversation without it, and
  * after a conversation the card "Я запомнил" shows up here. A tick "Не сохранять этот разговор" is a choice
  * of its own, always there: that conversation leaves nothing behind, memory or no memory.
  *
- * In v0 only the venting mode works. The other modes exist in the contract, but enabling them
- * before the agent supports them would be a promise the product cannot keep.
+ * There are no modes to pick: one conversation, which starts as `vent` (the server ignores the mode).
  */
-
-const MODES: Array<{ id: DialogMode; label: string; icon: LucideIcon; ready: boolean }> = [
-  { id: DialogMode.Vent, label: 'Выговориться', icon: Heart, ready: true },
-  { id: DialogMode.Chat, label: 'Поболтать', icon: MessageCircle, ready: false },
-  { id: DialogMode.Journal, label: 'Дневник', icon: BookOpen, ready: false },
-  { id: DialogMode.RitualEvening, label: 'Вечерний ритуал', icon: Moon, ready: false },
-]
+const mode = DialogMode.Vent
 
 const START_ERRORS: Record<StartDialogApiErrorCode, string> = {
   [StartDialogApiErrorCode.USER_NOT_FOUND]: 'Аккаунт недоступен. Войди заново',
@@ -70,7 +62,6 @@ export default function HomeScreen() {
   const { user, updateUser } = useAuth()
   const client = useClient()
   const router = useRouter()
-  const [mode, setMode] = useState<DialogMode>(DialogMode.Vent)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   /** A ref beside the state: two presses in one tick would both see `loading` as still false. */
@@ -302,51 +293,6 @@ export default function HomeScreen() {
               {error}
             </p>
           )}
-
-          {/* Capped at the width of two chips per row until all four fit in one, so a narrow window gets a 2 + 2 grid, not 3 + 1. */}
-          <div
-            role="group"
-            aria-label="О чём поговорим"
-            className="flex max-w-md flex-wrap justify-center gap-2 min-[1056px]:max-w-3xl"
-          >
-            {MODES.map(({ id, label, icon: ModeIcon, ready }) => (
-              <Button
-                key={id}
-                type="button"
-                variant="outline"
-                size="sm"
-                aria-pressed={mode === id}
-                disabled={!ready}
-                onClick={() => setMode(id)}
-                data-testid="home-mode"
-                className={cn(
-                  BUTTON,
-                  // `outline-none`: the shared button's transparent outline would paint a second ring in forced-colors modes.
-                  'outline-none',
-                  // Not dimmed when disabled: the "скоро" mark is information, so the text keeps its readable tone.
-                  'gap-1.5 border-input! px-3.5 text-sm text-dim disabled:opacity-100 enabled:hover:text-foreground',
-                  // A phone: tighter chips so the four of them make two rows of two, not a ragged 2 + 1 + 1.
-                  'max-[26rem]:gap-1 max-[26rem]:px-2.5 max-[26rem]:text-[0.8125rem]',
-                  'aria-pressed:border-brand-line! aria-pressed:bg-brand-soft aria-pressed:text-foreground',
-                )}
-              >
-                <ModeIcon
-                  aria-hidden="true"
-                  className={cn('size-4', mode === id && ready && 'text-brand-400')}
-                />
-                {label}
-                {/* Hover text would never show on touch; a mode that is not ready has to say so in plain sight. */}
-                {!ready && (
-                  <Badge
-                    variant="outline"
-                    className="h-5 px-1.5 font-semibold text-faint max-[26rem]:px-1 max-[26rem]:text-[0.6875rem]"
-                  >
-                    скоро
-                  </Badge>
-                )}
-              </Button>
-            ))}
-          </div>
 
           {/* Only while memory is on: without it every conversation is "without memory" anyway. */}
           {memoryEnabled === true && (

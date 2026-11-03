@@ -27,8 +27,9 @@ test('разговор: приветствие, ответ, кризис, жур
   await openApp(page)
   await registerAndConfirm(page, email)
 
-  await expect(page.getByRole('button', { name: 'Выговориться' })).toBeVisible()
-  await shot(page, 'dialog-modes')
+  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`).
+  await expect(page.locator('.page-current').getByText('Выговориться')).toHaveCount(0)
+  await shot(page, 'dialog-home')
 
   // ── conversation: voice first ────────────────────────────────────────────
   await button(page, 'Поговорить').click()

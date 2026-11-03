@@ -11,15 +11,14 @@ import { unlockSpeech } from '@ryadom/client-core/voice/speech'
 import { DialogMode, StartDialogApiErrorCode } from '@ryadom/contracts/api/dialogs'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { Button } from '@ryadom/ui/components/button'
-import Breathing from '@/components/Breathing'
-import { Wordmark } from '@/components/Brand'
-import ChatComposer from '@/components/ChatComposer'
-import { rememberDialogStart } from '@/components/dialog-start'
+import Breathing from './Breathing'
+import { Wordmark } from './Brand'
+import ChatComposer from './ChatComposer'
+import { rememberDialogStart } from './dialog-start'
 import { formOutcome, trackForm } from '@/lib/analytics'
+import { ConsentNotice } from '@/app/(auth)/_components/consent-group'
+import { PRIMARY_BUTTON } from '@/app/(auth)/_components/parts'
 import { useAuth, useClient } from '@/lib/auth'
-import { useAuthFlow } from '../auth-flow'
-import { ConsentNotice } from '../_components/consent-group'
-import { PRIMARY_BUTTON } from '../_components/parts'
 
 const START_FALLBACK = 'Не получилось начать разговор. Попробуй ещё раз'
 
@@ -35,19 +34,29 @@ function partOfDay(): string {
 }
 
 /**
- * The first screen. Someone new meets home itself: the sphere, the box to write or speak, and under it
- * what starting means. The first message or the microphone is the agreement: that press makes an
- * account for this device behind the scenes, records the consents, starts the conversation and opens
- * it, where the companion greets the person. Nothing is sent before that press.
+ * Home for someone new: the sphere, the box to write or speak, and under it what starting means. There
+ * is no separate first screen: the app shell draws this one on `/home` for a visitor without a session.
+ * The first message or the microphone is the agreement: that press makes an account for this device
+ * behind the scenes, records the consents, starts the conversation and opens it, where the companion
+ * greets the person. Nothing is sent before that press.
  *
  * The same screen is also the gate for someone who is already signed in but has not agreed to the
  * current version of the terms (an account from before this screen existed, or a newer version of the
- * terms): there it only records the agreement on "Продолжить" and goes on to home.
+ * terms): drawn in place of whatever page was open, it only records the agreement on "Продолжить", and
+ * the page opens.
  */
-export default function WelcomeScreen() {
+export default function FirstScreen({
+  termsUrl,
+  privacyUrl,
+  onStarting,
+}: {
+  termsUrl: string
+  privacyUrl: string
+  /** A start is under way: the shell keeps this screen until the conversation opens, not home in between. */
+  onStarting(starting: boolean): void
+}) {
   const { status, user, startAnonymously, acceptConsents } = useAuth()
   const client = useClient()
-  const { termsUrl, privacyUrl } = useAuthFlow()
   const router = useRouter()
   const starting = useRef(false)
   const [loading, setLoading] = useState(false)
@@ -57,15 +66,11 @@ export default function WelcomeScreen() {
   useEffect(() => setHello(partOfDay()), [])
 
   const signedIn = status === 'authenticated'
-  // Agreed already (the gate just recorded it, or another tab did): nothing is left to ask. A start under
-  // way agrees on its own and moves on to the conversation, not home.
   const agreed = signedIn && user?.consentVersion === POLICY_VERSION
-  useEffect(() => {
-    if (agreed && !starting.current) router.replace('/home')
-  }, [agreed, router])
 
   function fail(text: string) {
     starting.current = false
+    onStarting(false)
     setLoading(false)
     setProblem(text)
   }
@@ -75,6 +80,7 @@ export default function WelcomeScreen() {
     // The conversation opens on the voice and the sphere speaks first: this press lets speech through.
     unlockSpeech()
     starting.current = true
+    onStarting(true)
     setProblem('')
     setLoading(true)
     if (!signedIn) {
@@ -115,7 +121,7 @@ export default function WelcomeScreen() {
     starting.current = true
     setProblem('')
     setLoading(true)
-    // On success the effect above sees the recorded version and moves on.
+    // On success the shell sees the recorded version and opens the page.
     if (!(await acceptConsents())) fail('Не получилось сохранить согласие. Попробуй ещё раз')
     else starting.current = false
   }
@@ -125,7 +131,7 @@ export default function WelcomeScreen() {
   const gate = signedIn && !agreed && !loading
 
   return (
-    <div className="flex min-h-dvh flex-col" data-testid="welcome">
+    <div className="flex min-h-dvh flex-col" data-testid="first-screen">
       <header className="flex items-center justify-between gap-4 pt-[max(1rem,env(safe-area-inset-top,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] pl-[max(1rem,env(safe-area-inset-left,0px))] tab:px-6">
         <Wordmark className="text-[22px]" />
         {!signedIn && (

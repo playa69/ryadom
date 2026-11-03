@@ -61,8 +61,10 @@ test('первый запуск: строка о согласии, «Погов�
   const session = trackSession(page)
 
   // ── a new visitor: home itself, with what starting means under the box ──
+  // `openspec/changes/merge-first-screen-into-home`: the first screen has no address of its own.
   await openWebApp(page)
-  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page).toHaveURL(/\/home$/)
+  await expect(page.getByTestId('first-screen')).toBeVisible()
   await expect(page.getByTestId('have-account')).toHaveText('Войти')
   await expect(page.getByTestId('consent-notice')).toContainText(
     'Начиная разговор, ты подтверждаешь, что тебе есть 18, принимаешь условия использования и даёшь согласие на обработку данных',
@@ -123,13 +125,14 @@ test('первый запуск: строка о согласии, «Погов�
   // ── a browser that knows nothing about this person meets the first screen ─
   await page.evaluate(() => localStorage.clear())
   await openWebApp(page)
-  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page).toHaveURL(/\/home$/)
+  await expect(page.getByTestId('first-screen')).toBeVisible()
 })
 
 test('первый запуск текстом: набранное уходит первым сообщением после приветствия', async ({ page }) => {
   test.setTimeout(90_000)
   await openWebApp(page)
-  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page).toHaveURL(/\/home$/)
   await page.getByTestId('welcome-input').fill('Сегодня был длинный день')
   await step(page, 'welcome-typed', 'Человек набрал первую фразу на первом экране')
   await page.getByTestId('welcome-input').press('Enter')
@@ -284,7 +287,7 @@ test('аккаунт без почты: профиль, привязка, под
   await page.getByTestId('logout-confirm').click()
   await expect(page).toHaveURL(/\/login$/)
   await openWebApp(page)
-  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page.getByTestId('first-screen')).toBeVisible()
   await page.getByTestId('have-account').click()
   await signIn(page, email)
   await openProfile(page)
@@ -425,7 +428,8 @@ test('удаление аккаунта без регистрации: устр�
   expect(await storedDevice(page), 'ключ устройства стёрт вместе с аккаунтом').toBeNull()
   await page.getByTestId('deleted-ok').click()
   // Back at the start, not at a sign-in for an account the person never had.
-  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page).toHaveURL(/\/home$/)
+  await expect(page.getByTestId('first-screen')).toBeVisible()
 
   expect(await sessionAlive(request, oldSession), 'сессия удалённого аккаунта закончена').toBe(false)
 
@@ -523,7 +527,7 @@ test('вход по почте на новом устройстве даёт т�
   const otherSession = trackSession(other)
   await openWebApp(other)
   await dismissMemoryInvite(other) // a new device: the sheet "Рядом теперь запоминает важное" is not this test's subject
-  await expect(other).toHaveURL(/\/welcome$/)
+  await expect(other.getByTestId('first-screen')).toBeVisible()
   await other.getByTestId('have-account').click()
   await field(other, 'email').fill(email)
   await field(other, 'password').fill(PASSWORD)

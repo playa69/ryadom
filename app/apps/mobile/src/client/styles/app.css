@@ -840,107 +840,6 @@ input:-webkit-autofill:focus {
   margin: 0;
 }
 
-/* The modes are a list of lit rows: an icon tile, a title with a line of explanation, and either a
-   chevron or the "скоро" mark. */
-.rd-modes {
-  display: grid;
-  gap: 8px;
-  width: 100%;
-  max-width: 440px;
-  margin: 4px 0 0;
-}
-
-.rd-mode {
-  --tint: var(--ryadom-teal-rgb);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 64px;
-  padding: 8px 16px 8px 12px;
-  box-sizing: border-box;
-  border: 1px solid var(--ryadom-line);
-  border-radius: var(--ryadom-r-m);
-  background: var(--ryadom-surface-glass);
-  box-shadow: var(--ryadom-highlight);
-  -webkit-backdrop-filter: var(--ryadom-blur);
-  backdrop-filter: var(--ryadom-blur);
-  font: inherit;
-  text-align: left;
-  color: var(--ryadom-text);
-  cursor: pointer;
-}
-
-.rd-mode:nth-child(3n + 2) {
-  --tint: var(--ryadom-indigo-rgb);
-}
-
-.rd-mode:nth-child(3n) {
-  --tint: var(--ryadom-violet-rgb);
-}
-
-.rd-mode:first-child {
-  --tint: var(--ryadom-brand-rgb);
-}
-
-.rd-mode--active {
-  border-color: var(--ryadom-brand-100);
-  background: linear-gradient(135deg, rgba(var(--ryadom-brand-rgb), 0.18), var(--ryadom-surface-glass));
-}
-
-/* Not dimmed with opacity: the "скоро" label is information, so the text keeps its readable tone. */
-.rd-mode:disabled {
-  cursor: default;
-}
-
-.rd-mode-icon {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background: linear-gradient(145deg, rgba(var(--tint), 0.55), rgba(var(--tint), 0.18));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
-  color: var(--ryadom-text);
-}
-
-.rd-mode-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.rd-mode-label {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.rd-mode-hint {
-  font-size: 13px;
-  line-height: 1.35;
-  color: var(--ryadom-text-faint);
-  /* A hint that wraps splits evenly instead of leaving one word ("себя", "чём") on the second line. */
-  text-wrap: balance;
-}
-
-.rd-mode > .icon {
-  flex-shrink: 0;
-  color: var(--ryadom-text-faint);
-}
-
-.rd-mode-soon {
-  flex-shrink: 0;
-  padding: 2px 10px;
-  border: 1px solid var(--ryadom-line);
-  border-radius: var(--ryadom-r-pill);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ryadom-text-dim);
-}
-
 /* ── Dialog ──────────────────────────────────────────────────────────────── */
 
 /*
@@ -1980,7 +1879,6 @@ input:-webkit-autofill:focus {
       .list a.item-link,
       #rd-tabbar a,
       .rd-icon-button,
-      .rd-mode,
       .rd-scale button,
       .rd-hotline,
       .rd-journal-item,

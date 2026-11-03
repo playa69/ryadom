@@ -53,9 +53,8 @@ test('разговор в вебе: приветствие, ответ, криз
   await registerAndConfirm(page, email)
 
   // ── home ─────────────────────────────────────────────────────────────────
-  // Only venting works in v0: the other modes are visibly dimmed instead of promising more.
-  await expect(page.getByRole('button', { name: 'Выговориться' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('button', { name: /Поболтать/ })).toBeDisabled()
+  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`).
+  await expect(page.getByRole('button', { name: /Выговориться|Поболтать/ })).toHaveCount(0)
   await expectSingleSos(page)
   await expectNoHorizontalOverflow(page)
   await shot(page, 'web-dialog-modes')

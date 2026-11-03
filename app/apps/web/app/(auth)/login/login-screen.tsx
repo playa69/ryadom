@@ -157,10 +157,10 @@ export default function LoginScreen() {
           >
             Не получается войти?
           </Button>
-          {/* The way to the first screen, for someone who came here by mistake or is new. */}
+          {/* The way home, where someone new starts talking, for someone who came here by mistake or is new. */}
           <Button asChild variant="link" size="sm" className={LINK_BUTTON}>
             <Link
-              href="/welcome"
+              href="/home"
               data-testid="start-anonymously"
               onClick={() => track(AnalyticsEvent.CtaClicked, { cta: 'start_anonymous', placement: 'login' })}
             >

@@ -22,47 +22,17 @@ import MemoryInviteSheet from './MemoryInviteSheet'
 import ResumeDialogSheet from './ResumeDialogSheet'
 
 /**
- * Home screen: the breathing circle, one large talk button and the modes. If the person left a
+ * Home screen: the breathing circle and one large talk button. If the person left a
  * conversation unfinished (with something said in it), the talk button waits for their answer:
  * continue it, end it and begin a new one, or close the question and stay here.
  *
  * With memory on, a switch "Без памяти" under the button holds the next conversation without it, and
  * after a conversation the card "Я запомнил" shows up here.
  *
- * In v0 only the venting mode works. The other modes exist in the contract, but enabling them
- * before the agent supports them would be a promise the product cannot keep.
+ * There are no modes to pick: one conversation, which starts as `vent` (the server ignores the mode).
  */
 
-const MODES: Array<{ id: DialogMode; label: string; hint: string; icon: string; ready: boolean }> = [
-  {
-    id: DialogMode.Vent,
-    label: 'Выговориться',
-    hint: 'Просто слушаю, без советов',
-    icon: 'heart',
-    ready: true,
-  },
-  {
-    id: DialogMode.Chat,
-    label: 'Поболтать',
-    hint: 'Лёгкий разговор ни о чём',
-    icon: 'chat_bubble',
-    ready: false,
-  },
-  {
-    id: DialogMode.Journal,
-    label: 'Дневник',
-    hint: 'Вопросы, чтобы лучше понять себя',
-    icon: 'book',
-    ready: false,
-  },
-  {
-    id: DialogMode.RitualEvening,
-    label: 'Вечерний ритуал',
-    hint: 'Дыхание, слова, маленькое действие',
-    icon: 'moon',
-    ready: false,
-  },
-]
+const mode = DialogMode.Vent
 
 /**
  * How long a start stays locked after it navigated. The home page stays mounted under the dialog, so
@@ -88,7 +58,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const { auth, updateUser } = useAuth()
   const isWide = useMediaQuery(WIDE_QUERY)
   const isShort = useMediaQuery(SHORT_QUERY)
-  const [mode, setMode] = useState<DialogMode>(DialogMode.Vent)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -364,32 +333,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             </label>
           </div>
 
-          <div className="rd-modes">
-            {MODES.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`rd-mode${mode === item.id ? ' rd-mode--active' : ''}`}
-                disabled={!item.ready}
-                onClick={() => setMode(item.id)}
-              >
-                <span className="rd-mode-icon">
-                  <Icon f7={item.icon} size={22} />
-                </span>
-                <span className="rd-mode-text">
-                  <span className="rd-mode-label">{item.label}</span>
-                  <span className="rd-mode-hint">{item.hint}</span>
-                </span>
-                {/* `title` alone is a tooltip, and touch input never fires hover, so on a phone a row
-                  that is not ready explained nothing (design review). Visible text works everywhere. */}
-                {item.ready ? (
-                  <Icon f7="chevron_right" size={16} />
-                ) : (
-                  <span className="rd-mode-soon">скоро</span>
-                )}
-              </button>
-            ))}
-          </div>
           {error && (
             <p className="rd-form-error" data-testid="form-error">
               {error}

@@ -41,7 +41,7 @@ async function presentAs(page: Page, userAgent: string): Promise<void> {
 /** The second device signs in to the account. */
 async function signInOn(device: Page, email: string): Promise<void> {
   await openWebApp(device)
-  await expect(device).toHaveURL(/\/welcome$/)
+  await expect(device.getByTestId('first-screen')).toBeVisible()
   await device.getByTestId('have-account').click()
   await signIn(device, email)
 }

@@ -77,7 +77,7 @@ export async function dismissMemoryInvite(page: Page): Promise<void> {
  * `guestDevice`) and the app signs in by itself; the first screen is covered by its own scenarios.
  */
 export async function startAnonymously(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
-  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page).toHaveURL(/\/home$/)
   // The sheet "Рядом теперь запоминает важное" would cover home for a new account: unless a test is about it,
   // it is already answered ("Не сейчас"), like for a person who has seen it. Same origin, read when home opens.
   if (!options.keepMemoryInvite) await dismissMemoryInvite(page)
