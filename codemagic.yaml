@@ -4,8 +4,10 @@
 # запускает `pnpm android:ci` из app/apps/mobile через REST API. Codemagic читает этот файл из
 # собираемой ветки, поэтому ветка без него не соберётся.
 #
-# Групп переменных в Codemagic нет. Ключи подписи остаются в Lockbox: скрипт запуска читает их и
-# передаёт переменными в теле запроса на одну сборку. Ранбук — app/apps/mobile/android/README.md.
+# Ключи подписи — в секретных группах переменных Codemagic android_debug_signing и
+# android_release_signing (копии из Lockbox, в журнале замаскированы). Через запрос на запуск секреты
+# не передаются: такие переменные Codemagic печатает в журнал открытым текстом.
+# Ранбук — app/apps/mobile/android/README.md.
 #
 # Merge-ключи `<<:` не используются: в YAML 1.2 их нет, поэтому окружение повторено в каждом
 # workflow.
@@ -38,6 +40,8 @@ workflows:
     environment:
       node: 24
       java: 21
+      groups:
+        - android_debug_signing
       vars:
         VITE_PROD_API_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
         VITE_PROD_WEB_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
@@ -52,8 +56,8 @@ workflows:
       - name: Командный debug-ключ
         script: |
           if [ -z "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
-            echo "ANDROID_DEBUG_KEYSTORE не передан: сборка подпишется ключом машины,"
-            echo "и тестовые пуши RuStore до неё не дойдут. Запускай через pnpm android:ci."
+            echo "ANDROID_DEBUG_KEYSTORE нет в группе android_debug_signing: сборка подпишется"
+            echo "ключом машины, и тестовые пуши RuStore до неё не дойдут."
             exit 0
           fi
           mkdir -p app/apps/mobile/android/keystores
@@ -70,16 +74,19 @@ workflows:
     environment:
       node: 24
       java: 21
+      groups:
+        - android_release_signing
       vars:
         VITE_PROD_API_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
         VITE_PROD_WEB_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
     scripts:
       - *verify_commit
-      - name: Ключ и номер сборки переданы
+      - name: Ключ и номер сборки на месте
         script: |
           for v in ANDROID_RELEASE_KEYSTORE ANDROID_RELEASE_KEYSTORE_PASSWORD ANDROID_RELEASE_KEY_ALIAS RYADOM_VERSION_CODE; do
             if [ -z "$(printenv "$v")" ]; then
-              echo "$v не передан: релиз без подписи и номера не собираем. Запускай через pnpm android:ci."
+              echo "$v не задан: релиз без подписи и номера не собираем."
+              echo "Ключ — в группе android_release_signing, номер — pnpm android:ci release --version-code <n>."
               exit 1
             fi
           done

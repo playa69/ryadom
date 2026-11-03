@@ -7,9 +7,10 @@
  *   pnpm android:ci release --version-code <n> [--branch <name>]
  *
  * Codemagic clones the branch from GitHub, so it has to be pushed; a release refuses to start when
- * the local checkout differs from GitHub. Signing keys and the API token are read from Lockbox with
- * the yc CLI (YC_PROFILE picks a profile) and travel in the request body for this one build only:
- * Codemagic keeps no copy. Runbook: android/README.md.
+ * the local checkout differs from GitHub. Signing keys live in Codemagic's secure variable groups:
+ * variables sent with the start request are printed to the build log in plain text, so the request
+ * carries only the commit and the version code. The API token is read from Lockbox with the yc CLI
+ * (YC_PROFILE picks a profile). Runbook: android/README.md.
  */
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -18,13 +19,9 @@ import { fileURLToPath } from 'node:url'
 
 const APP_ID = '6aea2d6ffa6ad410c45e38f2'
 const WORKFLOWS = { debug: 'android-debug', release: 'android-release' }
-// Lockbox secrets by id, so the profile's default folder does not matter.
-const APP_SECRETS_ID = 'e6qlbsdv554cav7urkn2' // ryadom-app-secrets
-const ACCESS_SECRETS_ID = 'e6q41s4369rfldovjc1k' // ryadom-cluster-access
-const KEYS = {
-  debug: ['ANDROID_DEBUG_KEYSTORE'],
-  release: ['ANDROID_RELEASE_KEYSTORE', 'ANDROID_RELEASE_KEYSTORE_PASSWORD', 'ANDROID_RELEASE_KEY_ALIAS'],
-}
+// Lockbox secret ryadom-cluster-access, addressed by id so the profile's default folder does not matter.
+const TOKEN_SECRET_ID = 'e6q41s4369rfldovjc1k'
+const TOKEN_ENTRY = 'codemagic-api-token'
 const DONE = new Set(['finished', 'warning'])
 const FAILED = new Set(['failed', 'canceled', 'timeout', 'skipped'])
 
@@ -55,13 +52,13 @@ function git(...args) {
   return r.status === 0 ? r.stdout.trim() : ''
 }
 
-function lockbox(secretId) {
-  const args = ['lockbox', 'payload', 'get', '--id', secretId, '--format', 'json']
+function apiToken() {
+  const args = ['lockbox', 'payload', 'get', '--id', TOKEN_SECRET_ID, '--key', TOKEN_ENTRY]
   if (process.env.YC_PROFILE) args.unshift('--profile', process.env.YC_PROFILE)
-  const r = spawnSync('yc', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  const r = spawnSync('yc', args, { encoding: 'utf8' })
   if (r.error || r.status !== 0)
     fail(`yc failed: ${r.error?.message ?? r.stderr.trim()} (check Lockbox access)`)
-  return Object.fromEntries(JSON.parse(r.stdout).entries.map((e) => [e.key, e.text_value]))
+  return r.stdout.trim()
 }
 
 const opts = parseArgs(process.argv.slice(2))
@@ -83,14 +80,9 @@ if (branch === current) {
   }
 }
 
-const token = lockbox(ACCESS_SECRETS_ID)['codemagic-api-token']
-if (!token) fail('Lockbox entry codemagic-api-token is missing')
-const secrets = lockbox(APP_SECRETS_ID)
+const token = apiToken()
+if (!token) fail(`Lockbox entry ${TOKEN_ENTRY} is empty`)
 const variables = { EXPECTED_SHA: remoteSha }
-for (const key of KEYS[opts.kind]) {
-  if (!secrets[key]) fail(`Lockbox entry ${key} is missing`)
-  variables[key] = secrets[key]
-}
 if (opts.versionCode) variables.RYADOM_VERSION_CODE = opts.versionCode
 
 async function api(method, path, body) {

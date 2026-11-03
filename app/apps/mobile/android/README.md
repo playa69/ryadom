@@ -56,10 +56,12 @@ pnpm android:ci release --version-code <номер>   # prodRelease: AAB и APK 
 - Codemagic собирает ветку с GitHub, не рабочий каталог: сначала закоммить и запушь. Если локальная ветка
   расходится с GitHub, `debug` предупреждает, а `release` не запускается. Первый шаг сборки сверяет коммит
   (`EXPECTED_SHA`), чтобы не собрать то, что запушили между проверкой и клоном.
-- Скрипт читает из Lockbox токен API Codemagic (`ryadom-cluster-access`, запись `codemagic-api-token`) и ключи
-  подписи (`ryadom-app-secrets`: `ANDROID_DEBUG_KEYSTORE` или `ANDROID_RELEASE_*`) и передаёт их переменными в
-  запросе на одну сборку. Групп переменных в Codemagic нет, копии ключей там не хранятся. Нужны yc CLI и право
-  читать эти секреты, профиль задаётся `YC_PROFILE`.
+- Ключи подписи лежат в секретных группах переменных приложения в Codemagic: `android_debug_signing`
+  (`ANDROID_DEBUG_KEYSTORE`) и `android_release_signing` (`ANDROID_RELEASE_*`). Это копии записей из
+  `ryadom-app-secrets` в Lockbox, в журнале сборки они замаскированы. Сменился ключ в Lockbox — обнови и группу.
+  Через запрос на запуск секреты не передавай: такие переменные Codemagic печатает в журнал открытым текстом.
+- Скрипт берёт из Lockbox только токен API Codemagic (`ryadom-cluster-access`, запись `codemagic-api-token`),
+  а в запросе передаёт коммит и номер сборки. Нужны yc CLI и право читать секрет, профиль задаётся `YC_PROFILE`.
 - `--version-code` строго больше номера последней выпущенной сборки, `versionName` берётся из
   `app/apps/mobile/package.json`.
 - Скрипт ждёт окончания сборки (ссылка на её страницу с журналом — в выводе) и скачивает результат в
