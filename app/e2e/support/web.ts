@@ -2,6 +2,7 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { WEBAPP_URL } from '../playwright.config'
 import { PASSWORD } from './app'
 import { waitForCode } from './mail'
+import { guestDevice } from './session'
 
 /**
  * Steps that repeat across the scenarios of the web app (apps/web), the counterpart of app.ts for
@@ -53,10 +54,7 @@ export function modalButton(page: Page, name: string): Locator {
   return modal(page).getByRole('button', { name, exact: true })
 }
 
-/**
- * Every checkbox of the `consents` group: the three agreements of the first screen and of sign-up,
- * or the single one that confirms an account deletion.
- */
+/** Every checkbox of the `consents` group: the one that confirms an account deletion. */
 export async function checkConsent(page: Page): Promise<void> {
   const boxes = page.getByTestId('consents').getByRole('checkbox')
   await expect(boxes.first()).toBeVisible()
@@ -74,16 +72,18 @@ export async function dismissMemoryInvite(page: Page): Promise<void> {
 }
 
 /**
- * The first screen as a new visitor meets it: all three agreements, then "Начать". An account is made
- * behind the scenes and the person is on the home screen, with no address and no password.
+ * A guest on home, with no address and no password. The first screen makes an account only together with
+ * the first conversation, so for scenarios about anything else this browser becomes a known device (see
+ * `guestDevice`) and the app signs in by itself; the first screen is covered by its own scenarios.
  */
 export async function startAnonymously(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
   await expect(page).toHaveURL(/\/welcome$/)
   // The sheet "Рядом теперь запоминает важное" would cover home for a new account: unless a test is about it,
   // it is already answered ("Не сейчас"), like for a person who has seen it. Same origin, read when home opens.
   if (!options.keepMemoryInvite) await dismissMemoryInvite(page)
-  await checkConsent(page)
-  await button(page, 'Начать').click()
+  const device = await guestDevice(page.request)
+  await page.evaluate((value) => window.localStorage.setItem('ryadom.web.device', value), JSON.stringify(device))
+  await openWebApp(page)
   // An open sheet makes the page behind it inert, so the button is not seen by role then.
   const ready = options.keepMemoryInvite ? talkButton(page).or(page.getByTestId('memory-invite')) : talkButton(page)
   await expect(ready).toBeVisible({ timeout: 30_000 })
@@ -268,8 +268,7 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await field(page, 'name').fill(name)
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(PASSWORD)
-  // Consent to data processing is mandatory: without it the account is not created.
-  await checkConsent(page)
+  // No boxes: the press is the agreement, recorded once the code is entered.
   await button(page, 'Создать аккаунт').click()
 
   await expect(page.getByRole('heading', { name: 'Подтверди почту' })).toBeVisible({ timeout: 20_000 })

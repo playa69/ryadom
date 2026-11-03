@@ -35,12 +35,14 @@ import {
   storedDevice,
   trackSession,
 } from '../support/session'
+import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 
 /**
- * Anonymous entry, the way a person meets it: a first screen with the three agreements and no sign-up,
- * an account made behind it, a profile that offers an address where it has something to give, and a
- * server that keeps to what the app promises.
+ * Anonymous entry, the way a person meets it: a first screen that is home itself, with a line about the
+ * agreement and no boxes; the first press makes the account behind it and opens the conversation; a
+ * profile that offers an address where it has something to give, and a server that keeps to what the app
+ * promises. `openspec/changes/simplify-first-screen`, «Первый экран: разговор с первого действия».
  *
  * Scenarios rather than one test per step, for the reason the account scenarios give: every test
  * would start its own session, and the entry points are rate limited per address.
@@ -49,7 +51,7 @@ import { expect, test } from '../support/fixtures'
 const DEVICE_ID = /^[\w-]{16,64}$/
 const DEVICE_KEY = /^[\w-]{32,128}$/
 
-test('первый запуск: согласия, аккаунт без почты и сразу дом; потом без экранов', async ({
+test('первый запуск: строка о согласии, «Поговорить» — и сразу разговор; потом без экранов', async ({
   page,
   request,
   shot,
@@ -58,27 +60,35 @@ test('первый запуск: согласия, аккаунт без поч�
   const violations = await watchCsp(page)
   const session = trackSession(page)
 
-  // ── a new visitor: the first screen, not a sign-in ───────────────────────
+  // ── a new visitor: home itself, with what starting means under the box ──
   await openWebApp(page)
   await expect(page).toHaveURL(/\/welcome$/)
-  await expect(page.getByTestId('have-account')).toBeVisible()
-  await expect(page.getByTestId('consents').getByRole('checkbox')).toHaveCount(3)
+  await expect(page.getByTestId('have-account')).toHaveText('Войти')
+  await expect(page.getByTestId('consent-notice')).toContainText(
+    'Начиная разговор, ты подтверждаешь, что тебе есть 18, принимаешь условия использования и даёшь согласие на обработку данных',
+  )
+  await expect(page.getByText('В опасной ситуации звони 112.')).toBeVisible()
+  await expect(page.getByRole('checkbox'), 'флажков нет').toHaveCount(0)
   await expectNoHorizontalOverflow(page)
   await shot(page, 'web-welcome')
+  await step(
+    page,
+    'welcome',
+    'Первый экран: шар, поле «Напиши или скажи», строка о согласии и 112, флажков нет',
+  )
+  // Nothing is made before the press: no account, no key on the device.
+  expect(await storedDevice(page), 'до нажатия удостоверения нет').toBeNull()
 
-  // Nothing is made until everything is agreed to: no account, no key on the device.
-  await button(page, 'Начать').click()
-  await expect(page.getByTestId('form-error')).toHaveText('Чтобы начать, нужны все три согласия')
-  await page.getByTestId('consents').getByRole('checkbox').first().check()
-  await button(page, 'Начать').click()
-  await expect(page.getByTestId('form-error')).toBeVisible()
-  await expect(page).toHaveURL(/\/welcome$/)
-  expect(await storedDevice(page), 'пока согласий нет, удостоверения нет').toBeNull()
-  await shot(page, 'web-welcome-refused')
-
-  // ── all three: an account is made behind the screen, the person is on home ─
-  await startAnonymously(page)
-  await expect(page).toHaveURL(/\/home$/)
+  // ── «Поговорить»: the account, the consents and the conversation, where the companion greets ─
+  await page.getByTestId('welcome-talk').click()
+  await expect(page).toHaveURL(/\/dialog\//, { timeout: 30_000 })
+  await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('memory-invite'), 'окно про память не мешает началу').toHaveCount(0)
+  await step(
+    page,
+    'welcome-voice',
+    '«Поговорить»: разговор открыт голосом, агент здоровается «Я рядом. С чего начнём?»',
+  )
   const accountId = session.userId()
   const device = await storedDevice(page)
   expect(device?.deviceId, 'идентификатор устройства сохранён').toMatch(DEVICE_ID)
@@ -94,8 +104,9 @@ test('первый запуск: согласия, аккаунт без поч�
   })
   expect(await violations(), 'нарушения политики безопасности').toEqual([])
 
-  // ── a reload keeps the session; the first screen does not come back ──────
-  await page.reload({ waitUntil: 'networkidle' })
+  // ── the root keeps the session; the first screen does not come back ──────
+  await dismissMemoryInvite(page)
+  await openWebApp(page)
   await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
   await expect(page).toHaveURL(/\/home$/)
 
@@ -113,6 +124,23 @@ test('первый запуск: согласия, аккаунт без поч�
   await page.evaluate(() => localStorage.clear())
   await openWebApp(page)
   await expect(page).toHaveURL(/\/welcome$/)
+})
+
+test('первый запуск текстом: набранное уходит первым сообщением после приветствия', async ({ page }) => {
+  test.setTimeout(90_000)
+  await openWebApp(page)
+  await expect(page).toHaveURL(/\/welcome$/)
+  await page.getByTestId('welcome-input').fill('Сегодня был длинный день')
+  await step(page, 'welcome-typed', 'Человек набрал первую фразу на первом экране')
+  await page.getByTestId('welcome-input').press('Enter')
+  await expect(page).toHaveURL(/\/dialog\//, { timeout: 30_000 })
+  await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Сегодня был длинный день').first()).toBeVisible({ timeout: 30_000 })
+  await step(
+    page,
+    'welcome-text',
+    'Разговор открыт текстом: приветствие, затем набранная фраза первым сообщением',
+  )
 })
 
 test('сервер не начинает разговор без согласий, и «мне нет 18» — отдельный отказ', async ({ request }) => {

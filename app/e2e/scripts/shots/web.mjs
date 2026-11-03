@@ -74,6 +74,7 @@ export function webSpec(args, repoRoot) {
   }
 
   const screens = {
+    welcome: { anon: true, open: go('/welcome') },
     login: { anon: true, open: go('/login') },
     register: { anon: true, open: go('/register') },
     'forgot-password': { anon: true, open: go('/forgot-password') },
