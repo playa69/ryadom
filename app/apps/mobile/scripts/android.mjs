@@ -42,6 +42,12 @@ if (mode === 'dev' || !existsSync(join(root, 'dist', 'client', 'index.html'))) {
   run('pnpm', ['exec', 'vite', 'build', '--mode', 'dev'])
 }
 run('pnpm', ['exec', 'cap', 'sync', 'android'], { env })
-run(join(root, 'android', isWindows ? 'gradlew.bat' : 'gradlew'), ['assembleDevDebug'], { cwd: join(root, 'android') })
-run('adb', ['install', '-r', join('android', 'app', 'build', 'outputs', 'apk', 'dev', 'debug', 'app-dev-debug.apk')])
+run(join(root, 'android', isWindows ? 'gradlew.bat' : 'gradlew'), ['assembleDevDebug'], {
+  cwd: join(root, 'android'),
+})
+run('adb', [
+  'install',
+  '-r',
+  join('android', 'app', 'build', 'outputs', 'apk', 'dev', 'debug', 'app-dev-debug.apk'),
+])
 run('adb', ['shell', 'am', 'start', '-n', 'ru.ryadom.companion.dev/ru.ryadom.app.MainActivity'])
