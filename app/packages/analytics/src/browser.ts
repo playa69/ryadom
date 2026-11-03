@@ -43,6 +43,8 @@ let anonymousChannel: { url: string; key: string; common: Record<string, string>
 let commonProperties: Record<string, string> = {}
 /** Where this client's screens are reported to Metrika, see `StartAnalyticsOptions.pageBase`. */
 let metrikaPageBase: string | undefined
+/** A build from a store (Android, iOS): its address is the WebView's own, and PostHog keeps it (see `screenAddress`). */
+let inStoreShell = false
 const queue: Array<(posthog: PostHog) => void> = []
 const MAX_QUEUE = 50
 
@@ -284,6 +286,7 @@ export function startAnalytics(options: StartAnalyticsOptions): Promise<boolean>
   if (starting) return starting
   status = 'starting'
   metrikaPageBase = options.pageBase
+  inStoreShell = options.platform === 'android' || options.platform === 'ios'
   starting = (async () => {
     try {
       const config = await loadAnalyticsConfig(options.apiBase, options.fetch)
@@ -416,11 +419,36 @@ function randomId(): string {
  */
 export function trackPageview(path?: string): void {
   const route = normalizePath(path ?? globalThis.location?.pathname ?? '/')
-  whenReady((posthog) =>
-    posthog.capture('$pageview', { $current_url: `${globalThis.location?.origin ?? ''}${route}`, screen: route }),
-  )
+  const address = screenAddress(route)
+  whenReady((posthog) => posthog.capture('$pageview', { ...address, screen: route }))
   // Metrika gets the address at the moment of the call, so a queued hit keeps the screen it was made for.
   metrikaHit(metrikaPageUrl(path))
+}
+
+/**
+ * The address a screen is reported under to PostHog: where the screen really lives, so that it names a page that exists
+ * on the site and agrees with Metrika. The router hands over a route without the prefix the app is published under
+ * (`/app`, `/pwa`), so `origin + route` pointed at pages that are not there.
+ * - web and the landing: the page's own address (the web app's has `/app`), without query and fragment;
+ * - the PWA and Telegram: its own base (`<site>/pwa`) and the route, because Framework7 never changes the address bar;
+ * - a store build: the WebView's own address, as before (`localhost`); the platform is `app_platform`, and no prefix is
+ *   made up for PostHog (Metrika has one only because its counter accepts the site's address alone).
+ * `$host` and `$pathname` are set from the same address, or the SDK would fill them from `window.location`
+ * (`/pwa/` for every screen of the PWA). `screen`, the logical route, is not touched.
+ */
+function screenAddress(route: string): { $current_url: string; $host?: string; $pathname?: string } {
+  const origin = globalThis.location?.origin ?? ''
+  if (inStoreShell) return { $current_url: `${origin}${route}` }
+  const url =
+    metrikaPageBase !== undefined
+      ? `${metrikaPageBase}${route}`
+      : `${origin}${normalizePath(globalThis.location?.pathname ?? route)}`
+  try {
+    const parsed = new URL(url)
+    return { $current_url: url, $host: parsed.host, $pathname: parsed.pathname }
+  } catch {
+    return { $current_url: url }
+  }
 }
 
 /** The address a screen is reported under to Metrika: our own base and the route, or the page's cleaned address. */
@@ -454,6 +482,7 @@ export function resetAnalyticsForTests(): void {
   anonymousChannel = null
   commonProperties = {}
   metrikaPageBase = undefined
+  inStoreShell = false
   queue.length = 0
   optOutListeners.clear()
   resetMetrikaForTests()

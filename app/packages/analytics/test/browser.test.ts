@@ -13,6 +13,7 @@ import {
   resetIdentity,
   setAnalyticsOptOut,
   startAnalytics,
+  type StartAnalyticsOptions,
   track,
   trackAnonymous,
   trackPageview,
@@ -54,7 +55,11 @@ function fakePostHog() {
   return posthog
 }
 
-function start(config: AnalyticsConfigApiResponse | null, posthog = fakePostHog()) {
+function start(
+  config: AnalyticsConfigApiResponse | null,
+  posthog = fakePostHog(),
+  extra: Partial<StartAnalyticsOptions> = {},
+) {
   const fetchStub = vi.fn(async () => (config ? envelope(config) : new Response('{}', { status: 500 })))
   const loadSdk = vi.fn(async () => posthog as unknown as PostHog)
   const started = startAnalytics({
@@ -63,6 +68,7 @@ function start(config: AnalyticsConfigApiResponse | null, posthog = fakePostHog(
     appVersion: '1.2.3',
     fetch: fetchStub as unknown as typeof fetch,
     loadSdk,
+    ...extra,
   })
   return { posthog, fetchStub, loadSdk, started }
 }
@@ -204,13 +210,34 @@ describe('отправка', () => {
     expect(posthog.capture).toHaveBeenCalledWith('self_check_result_deleted', { scope: 'all' })
   })
 
-  it('просмотр экрана отправляется по маршруту, без идентификаторов и запроса', async () => {
+  it('(веб) просмотр экрана несёт настоящий адрес с /app, без идентификаторов, запроса и фрагмента; screen — маршрут роутера', async () => {
+    // Next hands the router's path over without the prefix the app is published under; the page's own address has it.
+    vi.stubGlobal('location', {
+      origin: 'https://app.test',
+      pathname: '/app/dialog/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f',
+      href: 'https://app.test/app/dialog/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f?x=1#frag',
+    })
     const { posthog, started } = start(CONFIG)
     await started
-    trackPageview('/dialog/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f?x=1')
+    trackPageview('/dialog/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f')
     expect(posthog.capture).toHaveBeenCalledWith('$pageview', {
-      $current_url: 'https://app.test/dialog/:id',
+      $current_url: 'https://app.test/app/dialog/:id',
+      $host: 'app.test',
+      $pathname: '/app/dialog/:id',
       screen: '/dialog/:id',
+    })
+  })
+
+  it('(лендинг) адрес без префикса остаётся как есть', async () => {
+    vi.stubGlobal('location', { origin: 'https://app.test', pathname: '/privacy', href: 'https://app.test/privacy?utm_source=x' })
+    const { posthog, started } = start(CONFIG, fakePostHog(), { platform: 'landing' })
+    await started
+    trackPageview('/privacy')
+    expect(posthog.capture).toHaveBeenCalledWith('$pageview', {
+      $current_url: 'https://app.test/privacy',
+      $host: 'app.test',
+      $pathname: '/privacy',
+      screen: '/privacy',
     })
   })
 
@@ -218,8 +245,38 @@ describe('отправка', () => {
     const { posthog, started } = start(CONFIG)
     await started
     trackPageview()
-    expect(posthog.capture).toHaveBeenCalledWith('$pageview', { $current_url: 'https://app.test/home', screen: '/home' })
+    expect(posthog.capture).toHaveBeenCalledWith('$pageview', {
+      $current_url: 'https://app.test/home',
+      $host: 'app.test',
+      $pathname: '/home',
+      screen: '/home',
+    })
   })
+
+  it('(PWA и Telegram) экран несёт адрес под префиксом /pwa, а не адрес стартовой страницы; host и pathname из него же', async () => {
+    // Framework7 never changes the address bar: the page is always `/pwa/`, and the router's route has no prefix.
+    vi.stubGlobal('location', { origin: 'https://app.test', pathname: '/pwa/', href: 'https://app.test/pwa/' })
+    const { posthog, started } = start(CONFIG, fakePostHog(), { platform: 'telegram', pageBase: 'https://app.test/pwa' })
+    await started
+    trackPageview('/diary/journal/3f2a1c9e-5b7d-4e1a-9c3d-0a1b2c3d4e5f/')
+    expect(posthog.capture).toHaveBeenCalledWith('$pageview', {
+      $current_url: 'https://app.test/pwa/diary/journal/:id/',
+      $host: 'app.test',
+      $pathname: '/pwa/diary/journal/:id/',
+      screen: '/diary/journal/:id/',
+    })
+  })
+
+  it.each(['android', 'ios'] as const)(
+    '(%s) в оболочке магазина адрес остаётся адресом оболочки: выдуманного префикса и подмены host нет',
+    async (platform) => {
+      vi.stubGlobal('location', { origin: 'https://localhost', pathname: '/', href: 'https://localhost/' })
+      const { posthog, started } = start(CONFIG, fakePostHog(), { platform, pageBase: `https://app.test/${platform}` })
+      await started
+      trackPageview('/home/')
+      expect(posthog.capture).toHaveBeenCalledWith('$pageview', { $current_url: 'https://localhost/home/', screen: '/home/' })
+    },
+  )
 
   it('выход сбрасывает личность, ошибка уходит как исключение', async () => {
     const { posthog, started } = start(CONFIG)
