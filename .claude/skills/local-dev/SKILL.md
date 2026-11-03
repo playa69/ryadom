@@ -164,6 +164,9 @@ uvx ruff check --select F app tests           # ruff в окружение аг�
 - **Один Postgres на два прогона** (проверка, что они друг другу не мешают): `STAND_SLOT=1 STAND_ID=a pnpm test` и
   то же с `STAND_ID=b` в двух терминалах; разные `STAND_ID` без `STAND_SLOT` берут разные слоты и разные контейнеры.
 - **Разговоры людей** в тесты и фикстуры не переносить: только синтетические фразы.
+- **Подпись Android.** Debug-сборки подписываются командным ключом `app/apps/mobile/android/keystores/debug.keystore`;
+  в новом worktree его нет — `pnpm android:debug-key` из `app/apps/mobile` (ранбук `app/apps/mobile/android/README.md`).
+  Без ключа Gradle предупреждает, сборка подписывается личным ключом, и пуши RuStore до неё не дойдут.
 
 Связано: [[e2e]] — сквозные тесты и проверка в браузере; [[screenshots]] — снимки экранов и доказательства;
 [[commit]] — что проверить перед коммитом.

@@ -17,7 +17,8 @@
     "test": "vitest run --passWithNoTests",
     "cap:sync": "cap sync",
     "android:dev": "node scripts/android.mjs dev",
-    "android:live": "node scripts/android.mjs live"
+    "android:live": "node scripts/android.mjs live",
+    "android:debug-key": "node scripts/android-debug-key.mjs"
   },
   "dependencies": {
     "@aparajita/capacitor-secure-storage": "^8.0.1",
