@@ -1,0 +1,126 @@
+# Сборки Android в Codemagic.
+#
+# Приложение подключено по ссылке на публичный репозиторий, секции `triggering` нет: сборку
+# запускает `pnpm android:ci` из app/apps/mobile через REST API. Codemagic читает этот файл из
+# собираемой ветки, поэтому ветка без него не соберётся.
+#
+# Ключи подписи — в секретных группах переменных Codemagic android_debug_signing и
+# android_release_signing (копии из Lockbox, в журнале замаскированы). Через запрос на запуск секреты
+# не передаются: такие переменные Codemagic печатает в журнал открытым текстом.
+# Ранбук — app/apps/mobile/android/README.md.
+#
+# Merge-ключи `<<:` не используются: в YAML 1.2 их нет, поэтому окружение повторено в каждом
+# workflow.
+
+definitions:
+  # Между сборками сохраняются хранилище pnpm и кэши Gradle (зависимости, обёртка, кэш сборки):
+  # без них каждая сборка заново скачивает всё.
+  cache: &cache
+    cache_paths:
+      - $HOME/.pnpm-store
+      - $HOME/.gradle/caches
+      - $HOME/.gradle/wrapper
+
+  scripts:
+    # Скрипт запуска передаёт коммит, который он проверил на GitHub. Если между проверкой и клоном
+    # кто-то запушил, сборка падает здесь. При запуске из интерфейса переменной нет — шаг пропускается.
+    - &verify_commit
+      name: Сверка коммита
+      script: |
+        if [ -n "${EXPECTED_SHA:-}" ] && [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ]; then
+          echo "Ожидался $EXPECTED_SHA, склонирован $(git rev-parse HEAD)"
+          exit 1
+        fi
+        git log -1 --oneline
+
+    # Только мобильное приложение и его пакеты: Next-приложения, api и e2e для сборки не нужны.
+    - &install
+      name: Зависимости
+      script: |
+        corepack enable
+        cd app && pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store" --filter "@ryadom/mobile..."
+
+workflows:
+  android-debug:
+    name: Android debug (devDebug, APK)
+    # Бесплатные минуты личного аккаунта есть только на macOS M2.
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    cache: *cache
+    environment:
+      node: 24
+      java: 21
+      groups:
+        - android_debug_signing
+      vars:
+        VITE_PROD_API_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
+        VITE_PROD_WEB_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
+        # Кэш сборки и параллельные задачи; памяти больше, чем в gradle.properties (там под ноутбук).
+        GRADLE_FLAGS: --build-cache --parallel --console=plain -Dorg.gradle.jvmargs=-Xmx4g
+    scripts:
+      - *verify_commit
+      - *install
+      - name: Веб-часть (flavor dev) и cap sync
+        script: |
+          cd app/apps/mobile
+          VITE_FLAVOR=dev pnpm exec vite build --mode dev
+          pnpm exec cap sync android
+      - name: Командный debug-ключ
+        script: |
+          if [ -z "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
+            echo "ANDROID_DEBUG_KEYSTORE нет в группе android_debug_signing: сборка подпишется"
+            echo "ключом машины, и тестовые пуши RuStore до неё не дойдут."
+            exit 0
+          fi
+          mkdir -p app/apps/mobile/android/keystores
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 --decode > app/apps/mobile/android/keystores/debug.keystore
+      - name: assembleDevDebug
+        script: cd app/apps/mobile/android && ./gradlew assembleDevDebug $GRADLE_FLAGS
+    artifacts:
+      - app/apps/mobile/android/app/build/outputs/apk/dev/debug/*.apk
+
+  android-release:
+    name: Android release (prodRelease, APK)
+    instance_type: mac_mini_m2
+    max_build_duration: 40
+    cache: *cache
+    environment:
+      node: 24
+      java: 21
+      groups:
+        - android_release_signing
+      vars:
+        VITE_PROD_API_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
+        VITE_PROD_WEB_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
+        # Кэш сборки и параллельные задачи; памяти больше, чем в gradle.properties (там под ноутбук).
+        GRADLE_FLAGS: --build-cache --parallel --console=plain -Dorg.gradle.jvmargs=-Xmx4g
+    scripts:
+      - *verify_commit
+      - name: Ключ и номер сборки на месте
+        script: |
+          for v in ANDROID_RELEASE_KEYSTORE ANDROID_RELEASE_KEYSTORE_PASSWORD ANDROID_RELEASE_KEY_ALIAS RYADOM_VERSION_CODE; do
+            if [ -z "$(printenv "$v")" ]; then
+              echo "$v не задан: релиз без подписи и номера не собираем."
+              echo "Ключ — в группе android_release_signing, номер — pnpm android:ci release --version-code <n>."
+              exit 1
+            fi
+          done
+      - *install
+      - name: Веб-часть (flavor prod) и cap sync
+        script: |
+          cd app/apps/mobile
+          VITE_FLAVOR=prod pnpm exec vite build --mode prod
+          pnpm exec cap sync android
+      # Только APK: его загружают в RuStore. AAB нужен Google Play — тогда вернуть bundleProdRelease
+      # и путь outputs/bundle/prodRelease/*.aab в artifacts.
+      - name: assembleProdRelease
+        script: |
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE" | base64 --decode > "$CM_BUILD_DIR/release.keystore"
+          export RYADOM_KEYSTORE_PATH="$CM_BUILD_DIR/release.keystore"
+          export RYADOM_KEYSTORE_PASSWORD="$ANDROID_RELEASE_KEYSTORE_PASSWORD"
+          export RYADOM_KEY_PASSWORD="$ANDROID_RELEASE_KEYSTORE_PASSWORD"
+          export RYADOM_KEY_ALIAS="$ANDROID_RELEASE_KEY_ALIAS"
+          export RYADOM_VERSION_NAME="$(node -p "require('./app/apps/mobile/package.json').version")"
+          cd app/apps/mobile/android && ./gradlew assembleProdRelease $GRADLE_FLAGS
+    artifacts:
+      - app/apps/mobile/android/app/build/outputs/apk/prod/release/*.apk

@@ -23,6 +23,7 @@ Debug-сборки (`devDebug`, `prodDebug`) у всех в команде по�
    ```
 
    Скрипт берёт запись `ANDROID_DEBUG_KEYSTORE` (base64) и кладёт файл в `android/keystores/debug.keystore`.
+
 3. Проверка из `app/apps/mobile/android`: `./gradlew :app:signingReport` (Windows: `gradlew.bat :app:signingReport`).
    У вариантов `devDebug` и `prodDebug` должно быть:
 
@@ -40,8 +41,34 @@ Debug-сборки (`devDebug`, `prodDebug`) у всех в команде по�
 Отпечаток вводят в тестовый пуш-проект RuStore (пакет debug-сборки с суффиксом `.dev`). Флаг production у этого
 проекта не ставят.
 
+## Сборка в Codemagic
+
+Debug- и релизные сборки для команды и агентов собирает Codemagic (`codemagic.yaml` в корне репозитория,
+macOS M2: бесплатные минуты есть только там). Репозиторий подключён по ссылке, поэтому сборки по push нет — их
+запускает скрипт из `app/apps/mobile`:
+
+```bash
+pnpm android:ci debug                            # devDebug, APK с командным debug-ключом, текущая ветка
+pnpm android:ci debug --branch <ветка>
+pnpm android:ci release --version-code <номер>   # prodRelease: APK с релизным ключом
+```
+
+- Codemagic собирает ветку с GitHub, не рабочий каталог: сначала закоммить и запушь. Если локальная ветка
+  расходится с GitHub, `debug` предупреждает, а `release` не запускается. Первый шаг сборки сверяет коммит
+  (`EXPECTED_SHA`), чтобы не собрать то, что запушили между проверкой и клоном.
+- Ключи подписи лежат в секретных группах переменных приложения в Codemagic: `android_debug_signing`
+  (`ANDROID_DEBUG_KEYSTORE`) и `android_release_signing` (`ANDROID_RELEASE_*`). Это копии записей из
+  `ryadom-app-secrets` в Lockbox, в журнале сборки они замаскированы. Сменился ключ в Lockbox — обнови и группу.
+  Через запрос на запуск секреты не передавай: такие переменные Codemagic печатает в журнал открытым текстом.
+- Скрипт берёт из Lockbox только токен API Codemagic (`ryadom-cluster-access`, запись `codemagic-api-token`),
+  а в запросе передаёт коммит и номер сборки. Нужны yc CLI и право читать секрет, профиль задаётся `YC_PROFILE`.
+- `--version-code` строго больше номера последней выпущенной сборки, `versionName` берётся из
+  `app/apps/mobile/package.json`.
+- Скрипт ждёт окончания сборки (ссылка на её страницу с журналом — в выводе) и скачивает результат в
+  `android/ci-artifacts/<id сборки>/` (в git не попадает).
+
 ## Релизный ключ
 
 На компьютерах разработчиков его нет. Релиз подписывается, только когда заданы `RYADOM_KEYSTORE_PATH`,
 `RYADOM_KEYSTORE_PASSWORD`, `RYADOM_KEY_ALIAS` и `RYADOM_KEY_PASSWORD` (спека `native-app-build`); без них релиз
-собирается неподписанным. Ключ хранится у администратора.
+собирается неподписанным. В Codemagic их выставляет `android-release` из переменных запуска.
