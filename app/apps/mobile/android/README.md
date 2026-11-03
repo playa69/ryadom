@@ -50,7 +50,7 @@ macOS M2: бесплатные минуты есть только там). Ре�
 ```bash
 pnpm android:ci debug                            # devDebug, APK с командным debug-ключом, текущая ветка
 pnpm android:ci debug --branch <ветка>
-pnpm android:ci release --version-code <номер>   # prodRelease: AAB и APK с релизным ключом
+pnpm android:ci release --version-code <номер>   # prodRelease: APK с релизным ключом
 ```
 
 - Codemagic собирает ветку с GitHub, не рабочий каталог: сначала закоммить и запушь. Если локальная ветка
