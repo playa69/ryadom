@@ -18,7 +18,8 @@
     "cap:sync": "cap sync",
     "android:dev": "node scripts/android.mjs dev",
     "android:live": "node scripts/android.mjs live",
-    "android:debug-key": "node scripts/android-debug-key.mjs"
+    "android:debug-key": "node scripts/android-debug-key.mjs",
+    "android:ci": "node scripts/android-ci.mjs"
   },
   "dependencies": {
     "@aparajita/capacitor-secure-storage": "^8.0.1",
