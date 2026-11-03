@@ -13,6 +13,14 @@
 # workflow.
 
 definitions:
+  # Между сборками сохраняются хранилище pnpm и кэши Gradle (зависимости, обёртка, кэш сборки):
+  # без них каждая сборка заново скачивает всё.
+  cache: &cache
+    cache_paths:
+      - $HOME/.pnpm-store
+      - $HOME/.gradle/caches
+      - $HOME/.gradle/wrapper
+
   scripts:
     # Скрипт запуска передаёт коммит, который он проверил на GitHub. Если между проверкой и клоном
     # кто-то запушил, сборка падает здесь. При запуске из интерфейса переменной нет — шаг пропускается.
@@ -25,11 +33,12 @@ definitions:
         fi
         git log -1 --oneline
 
+    # Только мобильное приложение и его пакеты: Next-приложения, api и e2e для сборки не нужны.
     - &install
       name: Зависимости
       script: |
         corepack enable
-        cd app && pnpm install --frozen-lockfile
+        cd app && pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store" --filter "@ryadom/mobile..."
 
 workflows:
   android-debug:
@@ -37,6 +46,7 @@ workflows:
     # Бесплатные минуты личного аккаунта есть только на macOS M2.
     instance_type: mac_mini_m2
     max_build_duration: 30
+    cache: *cache
     environment:
       node: 24
       java: 21
@@ -45,6 +55,8 @@ workflows:
       vars:
         VITE_PROD_API_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
         VITE_PROD_WEB_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
+        # Кэш сборки и параллельные задачи; памяти больше, чем в gradle.properties (там под ноутбук).
+        GRADLE_FLAGS: --build-cache --parallel --console=plain -Dorg.gradle.jvmargs=-Xmx4g
     scripts:
       - *verify_commit
       - *install
@@ -63,7 +75,7 @@ workflows:
           mkdir -p app/apps/mobile/android/keystores
           printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 --decode > app/apps/mobile/android/keystores/debug.keystore
       - name: assembleDevDebug
-        script: cd app/apps/mobile/android && ./gradlew assembleDevDebug --console=plain
+        script: cd app/apps/mobile/android && ./gradlew assembleDevDebug $GRADLE_FLAGS
     artifacts:
       - app/apps/mobile/android/app/build/outputs/apk/dev/debug/*.apk
 
@@ -71,6 +83,7 @@ workflows:
     name: Android release (prodRelease, AAB и APK)
     instance_type: mac_mini_m2
     max_build_duration: 40
+    cache: *cache
     environment:
       node: 24
       java: 21
@@ -79,6 +92,8 @@ workflows:
       vars:
         VITE_PROD_API_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
         VITE_PROD_WEB_URL: https://xn----htbtgjker8b3a2c.xn--p1ai
+        # Кэш сборки и параллельные задачи; памяти больше, чем в gradle.properties (там под ноутбук).
+        GRADLE_FLAGS: --build-cache --parallel --console=plain -Dorg.gradle.jvmargs=-Xmx4g
     scripts:
       - *verify_commit
       - name: Ключ и номер сборки на месте
@@ -104,7 +119,7 @@ workflows:
           export RYADOM_KEY_PASSWORD="$ANDROID_RELEASE_KEYSTORE_PASSWORD"
           export RYADOM_KEY_ALIAS="$ANDROID_RELEASE_KEY_ALIAS"
           export RYADOM_VERSION_NAME="$(node -p "require('./app/apps/mobile/package.json').version")"
-          cd app/apps/mobile/android && ./gradlew bundleProdRelease assembleProdRelease --console=plain
+          cd app/apps/mobile/android && ./gradlew bundleProdRelease assembleProdRelease $GRADLE_FLAGS
     artifacts:
       - app/apps/mobile/android/app/build/outputs/bundle/prodRelease/*.aab
       - app/apps/mobile/android/app/build/outputs/apk/prod/release/*.apk
