@@ -24,6 +24,7 @@ apps/mobile/android/local.properties
 apps/mobile/android/keystore.properties
 apps/mobile/android/*.keystore
 apps/mobile/android/*.jks
+apps/mobile/android/keystores/
 
 # ios
 apps/mobile/ios/App/Pods/
