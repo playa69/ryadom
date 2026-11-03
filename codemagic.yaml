@@ -80,7 +80,7 @@ workflows:
       - app/apps/mobile/android/app/build/outputs/apk/dev/debug/*.apk
 
   android-release:
-    name: Android release (prodRelease, AAB и APK)
+    name: Android release (prodRelease, APK)
     instance_type: mac_mini_m2
     max_build_duration: 40
     cache: *cache
@@ -111,7 +111,9 @@ workflows:
           cd app/apps/mobile
           VITE_FLAVOR=prod pnpm exec vite build --mode prod
           pnpm exec cap sync android
-      - name: bundleProdRelease и assembleProdRelease
+      # Только APK: его загружают в RuStore. AAB нужен Google Play — тогда вернуть bundleProdRelease
+      # и путь outputs/bundle/prodRelease/*.aab в artifacts.
+      - name: assembleProdRelease
         script: |
           printf '%s' "$ANDROID_RELEASE_KEYSTORE" | base64 --decode > "$CM_BUILD_DIR/release.keystore"
           export RYADOM_KEYSTORE_PATH="$CM_BUILD_DIR/release.keystore"
@@ -119,7 +121,6 @@ workflows:
           export RYADOM_KEY_PASSWORD="$ANDROID_RELEASE_KEYSTORE_PASSWORD"
           export RYADOM_KEY_ALIAS="$ANDROID_RELEASE_KEY_ALIAS"
           export RYADOM_VERSION_NAME="$(node -p "require('./app/apps/mobile/package.json').version")"
-          cd app/apps/mobile/android && ./gradlew bundleProdRelease assembleProdRelease $GRADLE_FLAGS
+          cd app/apps/mobile/android && ./gradlew assembleProdRelease $GRADLE_FLAGS
     artifacts:
-      - app/apps/mobile/android/app/build/outputs/bundle/prodRelease/*.aab
       - app/apps/mobile/android/app/build/outputs/apk/prod/release/*.apk
