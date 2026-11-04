@@ -30,6 +30,10 @@ export const PWA_URL = process.env.E2E_PWA_URL ?? at.pwa
 export const MAIL_URL = process.env.E2E_MAIL_URL ?? at.mail
 /** The agent mock: the tests feed it speech and memory through its dev endpoints. */
 export const AGENT_URL = process.env.E2E_AGENT_URL ?? at.mock
+/** The admin console (apps/admin), signed in with a code from Mailpit. */
+export const ADMIN_URL = process.env.E2E_ADMIN_URL ?? at.admin
+/** The RuStore Push stub (dev/push-mock): what the server sent to "the phones". */
+export const PUSH_URL = process.env.E2E_PUSH_URL ?? at.push
 /** The stack's database, for tests that write rows the API has no way to create. */
 export const DATABASE_URL = process.env.E2E_DATABASE_URL ?? STAND.databases.e2e
 

@@ -15,6 +15,7 @@ import {
 import { diary } from './diary'
 import { journal } from './journal'
 import { resetMemoryState } from './memory'
+import { disablePush, forgetPush } from './push'
 import { markTelegramSignedOut } from './telegram'
 
 /**
@@ -108,6 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * sign-in is where they land (an anonymous one is signed back in before that screen shows).
    */
   const endSession = useCallback(async () => {
+    forgetPush()
     await clearSession()
     journal.reset()
     diary.reset()
@@ -121,6 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    */
   const logout = useCallback(async (options: { entry?: Entry } = {}) => {
     markTelegramSignedOut(true)
+    // While the session is still there: removing this phone's subscription needs it.
+    await disablePush()
     await signOut()
     journal.reset()
     diary.reset()
@@ -130,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const leaveAnonymousAccount = useCallback(async () => {
     markTelegramSignedOut(true)
+    await disablePush()
     await signOut()
     await forgetDevice()
     journal.reset()

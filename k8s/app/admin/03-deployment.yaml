@@ -110,6 +110,14 @@ spec:
                   name: app-smtp
                   key: SMTP_PASSWORD
                   optional: true
+            # Сервисные токены пуш-проектов RuStore («<ID проекта>:<токен>» через запятую, add-push-notifications).
+            # Необязательны: без ключа в app-secrets уведомления не отправляются, админка показывает «push-сервис не принял»
+            - name: RUSTORE_PUSH_SERVICE_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: RUSTORE_PUSH_SERVICE_TOKENS
+                  optional: true
           startupProbe:
             httpGet:
               path: /admin/api/health

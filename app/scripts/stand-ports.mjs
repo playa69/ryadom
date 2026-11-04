@@ -31,6 +31,7 @@ const PORT_NAMES = [
   'redis', // 9
   'agent', // 10 the Python agent
   'studio', // 11 drizzle studio
+  'push', // 12 RuStore Push stub (dev/push-mock), e2e only
 ]
 
 const SLOT_BASE = 20000
@@ -39,7 +40,7 @@ const E2E_SHIFT = 50
 /** Highest slot whose last port stays below 49152, where the OS hands out ephemeral ports. */
 export const MAX_SLOT = 290
 
-/** Slot 0: the addresses the repository always used. E2E has no admin, redis, agent or studio; the numbers are placeholders. */
+/** Slot 0: the addresses the repository always used. E2E has no redis, agent or studio, development no push stub; those numbers are placeholders. */
 const LEGACY = {
   dev: {
     landing: 3000,
@@ -54,6 +55,7 @@ const LEGACY = {
     redis: 56379,
     agent: 8001,
     studio: 4983,
+    push: 8090,
   },
   e2e: {
     landing: 3100,
@@ -68,6 +70,7 @@ const LEGACY = {
     redis: 56380,
     agent: 8002,
     studio: 4984,
+    push: 8091,
   },
 }
 
@@ -166,6 +169,7 @@ const urlsOf = (ports, host) => {
     mock: http('mock'),
     mail: http('mailUi'),
     agent: http('agent'),
+    push: http('push'),
   }
 }
 
@@ -288,6 +292,8 @@ export function standEnv(stand) {
     E2E_PWA_URL: u.e2e.pwa,
     E2E_MAIL_URL: u.e2e.mail,
     E2E_AGENT_URL: u.e2e.mock,
+    E2E_ADMIN_URL: u.e2e.admin,
+    E2E_PUSH_URL: u.e2e.push,
   }
 }
 

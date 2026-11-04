@@ -17,6 +17,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditLogAction, string> = {
   USER_EMAIL_CONFIRMED: 'Почта подтверждена вручную',
   USER_ACCOUNT_DELETED: 'Аккаунт удалён',
   USER_SESSIONS_REVOKED: 'Сессии завершены',
+  USER_NOTIFICATION_SENT: 'Уведомление отправлено',
   VOICE_PIPELINE_CHANGED: 'Голосовой путь изменён',
 }
 
@@ -26,6 +27,7 @@ export const AUDIT_ACTION_TONES: Record<AuditLogAction, Tone> = {
   USER_EMAIL_CONFIRMED: 'info',
   USER_ACCOUNT_DELETED: 'dark',
   USER_SESSIONS_REVOKED: 'warning',
+  USER_NOTIFICATION_SENT: 'info',
   VOICE_PIPELINE_CHANGED: 'info',
 }
 
@@ -55,20 +57,37 @@ export function formatMoscow(value: Date): string {
   return dateFormat.format(value)
 }
 
-const PAYLOAD_KEYS: Record<string, string> = { reason: 'причина', from: 'было', to: 'стало' }
+const PAYLOAD_KEYS: Record<string, string> = {
+  reason: 'причина',
+  from: 'было',
+  to: 'стало',
+  title: 'заголовок',
+  body: 'текст',
+  sent: 'отправлено',
+}
 /** jsonb keeps keys in its own order (shorter first), so «было» would follow «стало» without this. */
 const PAYLOAD_ORDER = Object.keys(PAYLOAD_KEYS)
 
 /** A voice pipeline (`from`/`to` of a pipeline change) reads by its name, everything else as it is. */
 function describeValue(value: unknown): string {
   if (typeof value !== 'string') return JSON.stringify(value)
-  return Object.hasOwn(PIPELINE_LABELS, value) ? PIPELINE_LABELS[value as keyof typeof PIPELINE_LABELS] : value
+  return Object.hasOwn(PIPELINE_LABELS, value)
+    ? PIPELINE_LABELS[value as keyof typeof PIPELINE_LABELS]
+    : value
+}
+
+/** A notification's «sent of total devices» reads as one figure: «отправлено: 1 из 2». */
+function joinSentOfTotal(payload: Record<string, unknown>): Record<string, unknown> {
+  const { sent, total, ...rest } = payload
+  if (typeof sent !== 'number' || typeof total !== 'number') return payload
+  return { ...rest, sent: `${sent} из ${total}` }
 }
 
 /** Audit details as a short phrase; an empty payload is a dash, not `{}`. */
 export function describePayload(payload: Record<string, unknown> | null): string {
-  const rank = (key: string) => (PAYLOAD_ORDER.includes(key) ? PAYLOAD_ORDER.indexOf(key) : PAYLOAD_ORDER.length)
-  const entries = Object.entries(payload ?? {}).sort(([a], [b]) => rank(a) - rank(b))
+  const rank = (key: string) =>
+    PAYLOAD_ORDER.includes(key) ? PAYLOAD_ORDER.indexOf(key) : PAYLOAD_ORDER.length
+  const entries = Object.entries(joinSentOfTotal(payload ?? {})).sort(([a], [b]) => rank(a) - rank(b))
   if (entries.length === 0) return '—'
   return entries.map(([key, value]) => `${PAYLOAD_KEYS[key] ?? key}: ${describeValue(value)}`).join(', ')
 }

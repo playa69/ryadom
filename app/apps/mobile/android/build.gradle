@@ -21,6 +21,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // RuStore Push SDK (ru.rustore.sdk:pushclient) is published only here.
+        maven { url = uri("https://nexus-external.rustore.ru/repository/maven-rustore-exposed/") }
     }
 }
 

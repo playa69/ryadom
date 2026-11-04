@@ -1,6 +1,6 @@
 /**
  * Application API paths. Parameters travel in the query string or the body; the only
- * path parameters are the dialog id, the session id and the memory fact id.
+ * path parameters are the dialog id, the session id, the memory fact id and the push subscription id.
  */
 export enum ApiPath {
   Health = '/api/health',
@@ -70,6 +70,9 @@ export enum ApiPath {
   DiaryWidgetToday = '/api/diary/widget/today',
   DiaryWidgetCheckin = '/api/diary/widget/checkin',
 
+  /** Devices subscribed to notifications (`POST`); `/api/notifications/subscriptions/:id` unsubscribes one (`DELETE`). */
+  NotificationSubscriptions = '/api/notifications/subscriptions',
+
   /** Open: which analytics features are on and the (public) PostHog project token. */
   AnalyticsConfig = '/api/analytics/config',
   /**
@@ -77,6 +80,11 @@ export enum ApiPath {
    * and appends its own paths (`/e`, `/flags`, `/static/...`).
    */
   Ingest = '/api/ingest',
+}
+
+/** One subscription of the device to notifications: `DELETE`. */
+export function notificationSubscriptionPath(subscriptionId: string): string {
+  return `${ApiPath.NotificationSubscriptions}/${encodeURIComponent(subscriptionId)}`
 }
 
 /** `/api/dialogs/:id` and `/api/dialogs/:id/end` are built from the dialog id. */
@@ -122,4 +130,3 @@ export function sessionPath(sessionId: string): string {
 export function otaBundlePath(file: string): string {
   return `${ApiPath.OtaBundle}/${encodeURIComponent(file)}`
 }
-

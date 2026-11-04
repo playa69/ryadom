@@ -3,4 +3,8 @@
     <string name="title_activity_main">Рядом</string>
     <string name="package_name">ru.ryadom.companion</string>
     <string name="custom_url_scheme">ru.ryadom.companion</string>
+    <!-- Канал уведомлений: так он называется в настройках Android. -->
+    <string name="notification_channel_id">general</string>
+    <string name="notification_channel_name">Уведомления</string>
+    <string name="notification_channel_description">Сообщения от Рядом</string>
 </resources>

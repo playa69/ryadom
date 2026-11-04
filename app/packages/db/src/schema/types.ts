@@ -33,7 +33,8 @@ export type VoicePipeline = (typeof VOICE_PIPELINES)[number]
 
 /**
  * Admin actions written to `audit_log.action`. `VOICE_PIPELINE_CHANGED` concerns no account: its target is empty and
- * the payload holds `from` and `to`.
+ * the payload holds `from` and `to`. `USER_NOTIFICATION_SENT` holds what was sent (`title`, `body`) and how many
+ * devices took it (`sent` of `total`).
  */
 export const AUDIT_LOG_ACTIONS = [
   'USER_BLOCKED',
@@ -41,6 +42,7 @@ export const AUDIT_LOG_ACTIONS = [
   'USER_EMAIL_CONFIRMED',
   'USER_ACCOUNT_DELETED',
   'USER_SESSIONS_REVOKED',
+  'USER_NOTIFICATION_SENT',
   'VOICE_PIPELINE_CHANGED',
 ] as const
 export type AuditLogAction = (typeof AUDIT_LOG_ACTIONS)[number]
@@ -103,3 +105,12 @@ export type UserConsentKind = RequiredUserConsentKind | OptionalUserConsentKind
  */
 export const MEMORY_CONSENT_ACTIONS = ['granted', 'revoked', 'paused', 'resumed'] as const
 export type MemoryConsentAction = (typeof MEMORY_CONSENT_ACTIONS)[number]
+
+/**
+ * Push services a device can subscribe through (`push_subscriptions.channel`). Only RuStore Push for now: the Android
+ * app is distributed through RuStore. Web Push, the Telegram bot and APNs are to be added as values, not as tables.
+ *
+ * These values are stored in the column and sent by the clients, so they must not be changed.
+ */
+export const PUSH_CHANNELS = ['rustore'] as const
+export type PushChannel = (typeof PUSH_CHANNELS)[number]

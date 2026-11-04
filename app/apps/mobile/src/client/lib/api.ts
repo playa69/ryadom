@@ -30,6 +30,8 @@ export const {
   listSessions,
   revokeSession,
   signOutEverywhere,
+  subscribePush,
+  unsubscribePush,
   startDialog,
   listDialogs,
   getDialog,

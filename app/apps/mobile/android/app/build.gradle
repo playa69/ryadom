@@ -23,6 +23,10 @@ def keystorePath = envOr('RYADOM_KEYSTORE_PATH', '')
 // One debug key for the whole team: a RuStore push project accepts a single SHA-256, so builds signed with
 // personal ~/.android keys never get test pushes. Fetched by `pnpm android:debug-key`, see android/README.md.
 def teamDebugKeystore = rootProject.file('keystores/debug.keystore')
+// A RuStore push project is bound to one package and one signature, so each flavor has its own: "Тест" for
+// ru.ryadom.companion.dev with the team debug key, "Production" for ru.ryadom.companion with the release key. The ids
+// are not secrets: the service tokens that send are on the server only.
+def rustorePushProjects = [dev: '2FNQq2fB-JZapsB7soi5H3RHhT4NX0-W', prod: '83ddAYvI5vjo137Zw0bnLR6-N9srB04G']
 
 android {
     namespace = "ru.ryadom.app"
@@ -69,15 +73,20 @@ android {
     flavorDimensions += "environment"
 
     productFlavors {
+        // The SDK reads its project from the manifest; the plugin reports the same one to the server.
         dev {
             dimension "environment"
             applicationIdSuffix ".dev"
             versionNameSuffix "-dev"
             resValue "string", "app_name", "Рядом dev"
+            manifestPlaceholders = [rustorePushProjectId: rustorePushProjects.dev]
+            resValue "string", "rustore_push_project_id", rustorePushProjects.dev
         }
         prod {
             dimension "environment"
             resValue "string", "app_name", "Рядом"
+            manifestPlaceholders = [rustorePushProjectId: rustorePushProjects.prod]
+            resValue "string", "rustore_push_project_id", rustorePushProjects.prod
         }
     }
 
@@ -104,6 +113,7 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    implementation "ru.rustore.sdk:pushclient:7.5.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

@@ -1,4 +1,5 @@
 import ProfileSelfCheck from './ProfileSelfCheck'
+import PushSetting from './PushSetting'
 import { setAnalyticsOptOut, track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { useAnalyticsOptOut } from '@ryadom/analytics/react'
@@ -360,6 +361,7 @@ export default function ProfilePage({ f7router }: { f7router: Router.Router }) {
               относится ко всему аккаунту, на всех твоих устройствах.
             </p>
           </Block>
+          <PushSetting />
         </section>
 
         <section className="rd-profile-group">

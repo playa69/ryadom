@@ -14,6 +14,7 @@ import {
   diarySummaries,
   memoryConsentEvents,
   moodCheckins,
+  pushSubscriptions,
   selfCheckConsentEvents,
   selfCheckResults,
   userDevices,
@@ -149,6 +150,15 @@ async function fill(account: Account): Promise<void> {
     .insert(diarySummaries)
     .values({ userId, kind: 'week', periodStart: '2026-10-19', text: 'Итог недели.', status: 'ready' })
   await db.insert(widgetTokens).values({ userId, tokenHash: randomBytes(32) })
+  await db.insert(pushSubscriptions).values({
+    id: randomUUID(),
+    userId,
+    sessionId: randomUUID(),
+    channel: 'rustore',
+    token: randomBytes(16).toString('hex'),
+    projectId: 'test-project',
+    appId: 'ru.ryadom.companion',
+  })
   await db.insert(selfCheckResults).values({
     userId,
     testId: 'swls',
@@ -170,13 +180,14 @@ async function fill(account: Account): Promise<void> {
 async function rowsOf(account: Account) {
   const db = getDb()
   const userId = account.id
-  const [shares, marks, summaries, tokens, results, devices] = await Promise.all([
+  const [shares, marks, summaries, tokens, results, devices, subscriptions] = await Promise.all([
     db.select().from(dialogShares).where(eq(dialogShares.userId, userId)),
     db.select().from(moodCheckins).where(eq(moodCheckins.userId, userId)),
     db.select().from(diarySummaries).where(eq(diarySummaries.userId, userId)),
     db.select().from(widgetTokens).where(eq(widgetTokens.userId, userId)),
     db.select().from(selfCheckResults).where(eq(selfCheckResults.userId, userId)),
     db.select().from(userDevices).where(eq(userDevices.userId, userId)),
+    db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId)),
   ])
   return {
     shares: shares.length,
@@ -185,6 +196,7 @@ async function rowsOf(account: Account) {
     tokens: tokens.length,
     results: results.length,
     devices: devices.length,
+    subscriptions: subscriptions.length,
   }
 }
 
@@ -209,11 +221,18 @@ const selfCheckJournal = async (userId: string) =>
 afterEach(() => vi.restoreAllMocks())
 
 describe.each(PATHS)('стирание аккаунта $name', (path) => {
-  it('стирает ссылки на разговоры, дневник, итоги недели, токены виджета, результаты самопроверок и устройства', async () => {
+  it('стирает ссылки на разговоры, дневник, итоги недели, токены виджета, результаты самопроверок, устройства и подписки на уведомления', async () => {
     mockAgent()
     const account = await path.make()
     await fill(account)
-    expect(await rowsOf(account)).toMatchObject({ shares: 1, marks: 1, summaries: 1, tokens: 1, results: 1 })
+    expect(await rowsOf(account)).toMatchObject({
+      shares: 1,
+      marks: 1,
+      summaries: 1,
+      tokens: 1,
+      results: 1,
+      subscriptions: 1,
+    })
 
     await path.erase(account)
 
@@ -224,6 +243,7 @@ describe.each(PATHS)('стирание аккаунта $name', (path) => {
       tokens: 0,
       results: 0,
       devices: 0,
+      subscriptions: 0,
     })
     const row = await getUserRow(account.id)
     expect(row?.isDeleted).toBe(true)
