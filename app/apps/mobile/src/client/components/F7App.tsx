@@ -2,10 +2,18 @@ import { App, Icon, Link, Toolbar, View, Views, f7ready } from 'framework7-react
 import { useEffect, useState } from 'react'
 import { RefreshApiErrorCode } from '@ryadom/contracts/api/auth/refresh'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
-import { ACCOUNT_UNAVAILABLE_EVENT, deviceLogin, getCurrentUser, hasDevice, linkTelegram, telegramLogin } from '../lib/api'
+import {
+  ACCOUNT_UNAVAILABLE_EVENT,
+  deviceLogin,
+  getCurrentUser,
+  hasDevice,
+  linkTelegram,
+  telegramLogin,
+} from '../lib/api'
 import { initAppUpdates } from '../lib/app-update'
 import { initBackButton, initBackTrap, initTelegramBackButton } from '../lib/native'
 import { initLaunchRouting } from '../lib/launch'
+import { initPush } from '../lib/push'
 import { TAB_IDS } from '../lib/nav'
 import { isWebBuild } from '../lib/platform'
 import { syncTimezone } from '../lib/timezone'
@@ -55,7 +63,13 @@ const f7params = {
 const TABS = [
   { id: TAB_IDS.home, url: '/home/', label: 'Главная', icon: 'house', iconActive: 'house_fill' },
   // The mood diary (`REQ-WELL-01`), on for everyone.
-  { id: TAB_IDS.diary, url: '/diary/', label: 'Дневник', icon: 'face_smiling', iconActive: 'face_smiling_fill' },
+  {
+    id: TAB_IDS.diary,
+    url: '/diary/',
+    label: 'Дневник',
+    icon: 'face_smiling',
+    iconActive: 'face_smiling_fill',
+  },
   {
     id: TAB_IDS.profile,
     url: '/profile/',
@@ -82,6 +96,9 @@ function SignedInViews() {
   // The PWA shortcut opens the diary.
   useEffect(() => initLaunchRouting(), [])
 
+  // Notifications on this phone: subscribe again for this session, and open what a tapped one links to.
+  useEffect(() => (userId ? initPush() : undefined), [userId])
+
   return (
     <Views tabs className="safe-areas">
       <Toolbar tabbar icons bottom id="rd-tabbar">
@@ -91,7 +108,12 @@ function SignedInViews() {
         <div slot="before-inner" className="rd-rail-brand" aria-hidden="true">
           <BrandMark size={40} />
         </div>
-        <button slot="after-inner" type="button" className="rd-rail-sos ph-no-capture" onClick={() => openSos({ source: 'menu' })}>
+        <button
+          slot="after-inner"
+          type="button"
+          className="rd-rail-sos ph-no-capture"
+          onClick={() => openSos({ source: 'menu' })}
+        >
           <Icon f7="phone_fill" size={20} />
           SOS
         </button>

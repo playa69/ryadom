@@ -23,6 +23,7 @@ import { dialogsRoutes } from './dialogs'
 import { healthRoutes } from './health'
 import { memoryRoutes } from './memory'
 import { metricsRoutes } from './metrics'
+import { notificationsRoutes } from './notifications'
 import { otaBundleRoutes } from './ota-bundle'
 import { selfCheckRoutes } from './self-check'
 
@@ -55,4 +56,5 @@ export function registerAllRoutes(app: Hono<AppEnv>, deps: RouteDeps): void {
   memoryRoutes(app, deps)
   diaryRoutes(app, deps)
   selfCheckRoutes(app, deps)
+  notificationsRoutes(app, deps)
 }

@@ -76,6 +76,11 @@ export const RATE_LIMITS = {
   ingest: { perIp: { limit: 1200, windowMs: 60_000 } },
   /** Making a link to a conversation (`REQ-DATA-05`): a person does it a few times a day at most. */
   dialogShareCreate: { perUser: { limit: 10, windowMs: 60 * 60_000 } },
+  /**
+   * A device subscribes on every start and sign-in and when its push token changes, so a person with a few phones
+   * stays far below this; it is there so that one account cannot fill the table with made-up tokens.
+   */
+  pushSubscribe: { perUser: { limit: 30, windowMs: 60 * 60_000 } },
   /** Opening a link without signing in: per address, a household or a carrier NAT included, and still no use for guessing tokens. */
   sharedView: { perIp: { limit: 60, windowMs: 60_000 } },
   /** Deleting a conversation and saving a recap: taps in the journal. */
@@ -119,7 +124,11 @@ export function clientIp(c: Context<AppEnv>): string {
  * Per-IP limit for a route. The key includes the route name, so guessing a code must not consume
  * the login limit, and vice versa.
  */
-export function limitByIp(limiter: RateLimiter, name: string, rule: RateLimitRule): MiddlewareHandler<AppEnv> {
+export function limitByIp(
+  limiter: RateLimiter,
+  name: string,
+  rule: RateLimitRule,
+): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     if (!(await limiter.hit(`ip:${name}:${clientIp(c)}`, rule))) {
       return apiError(c, 429, 'Too many requests: try again later')

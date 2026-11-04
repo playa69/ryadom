@@ -46,4 +46,12 @@ export const PROCESSES_CONFIG = {
     /** Markers the scheduler works through in one pass. */
     RECOMPUTE_PASS_MAX: 200,
   },
+  NOTIFICATIONS: {
+    /**
+     * What a notification may carry (`push-notifications`, «Ничего лишнего в уведомлении»): the shade of Android shows
+     * about 40 characters of a title and a few lines of text, and a RuStore message holds 4096 bytes at most.
+     */
+    TITLE_MAX_LENGTH: 60,
+    BODY_MAX_LENGTH: 500,
+  },
 } as const

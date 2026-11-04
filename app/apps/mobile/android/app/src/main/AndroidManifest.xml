@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
+        android:name=".RyadomApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
@@ -35,6 +37,27 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- RuStore Push: SDK сам инициализируется по ID пуш-проекта варианта сборки (build.gradle). -->
+        <meta-data
+            android:name="ru.rustore.sdk.pushclient.project_id"
+            android:value="${rustorePushProjectId}" />
+        <meta-data
+            android:name="ru.rustore.sdk.pushclient.default_notification_channel_id"
+            android:value="@string/notification_channel_id" />
+        <meta-data
+            android:name="ru.rustore.sdk.pushclient.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+
+        <!-- Новый токен приходит сюда, уведомление с заголовком и текстом SDK показывает сам. -->
+        <service
+            android:name=".RuStorePushService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="ru.rustore.sdk.pushclient.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
     </application>
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -42,6 +65,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Кнопка SOS набирает номер, но не звонит сама: CALL_PHONE не нужен. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Уведомления (Android 13+): спрашиваем, только когда человек включил их в профиле. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Приложение работает и без микрофона: разговор можно вести текстом. -->
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

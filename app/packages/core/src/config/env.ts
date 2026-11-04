@@ -83,6 +83,33 @@ const adminEmails = z.preprocess(
     ),
 )
 
+/**
+ * RUSTORE_PUSH_SERVICE_TOKENS: `<project id>:<service token>` pairs, comma-separated, into a map by project id. A
+ * device reports the push project its build was made for, and the server sends with that project's token: one server
+ * takes subscriptions of both the release builds and the dev builds that were switched to it.
+ */
+const PUSH_PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
+const rustorePushServiceTokens = z
+  .preprocess(emptyToUndefined, z.string().optional())
+  .transform((value, ctx) => {
+    const tokens: Record<string, string> = {}
+    for (const pair of (value ?? '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)) {
+      const at = pair.indexOf(':')
+      const projectId = at > 0 ? pair.slice(0, at).trim() : ''
+      const token = at > 0 ? pair.slice(at + 1).trim() : ''
+      // The message names the position only: the value is a secret and must not reach the startup log.
+      if (!PUSH_PROJECT_ID.test(projectId) || token === '') {
+        ctx.addIssue({ code: 'custom', message: 'every item must be <project id>:<service token>' })
+        return z.NEVER
+      }
+      tokens[projectId] = token
+    }
+    return tokens
+  })
+
 const baseShape = {
   APP_ENV: z.enum(['local', 'prod']),
   LOG_LEVEL: z.preprocess(emptyToUndefined, z.enum(LOG_LEVELS).default('info')),
@@ -134,6 +161,14 @@ const baseShape = {
    * when there is no session; the limit is what a copy that leaked is good for.
    */
   TELEGRAM_INIT_DATA_MAX_AGE_SEC: optionalInt(60).transform((value) => value ?? 86_400),
+  /** RuStore Push API. The end-to-end stand points it at a stub (`dev/push-mock`). */
+  RUSTORE_PUSH_API_URL: z.preprocess(emptyToUndefined, publicUrl.default('https://vkpns.rustore.ru')),
+  /**
+   * Service tokens of the RuStore push projects (see `rustorePushServiceTokens`). A SECRET: whoever holds one can send
+   * any notification to every device of that project, so it lives in a Secret. In the base schema because the admin
+   * panel sends too. A project without a token here is not sent to.
+   */
+  RUSTORE_PUSH_SERVICE_TOKENS: rustorePushServiceTokens,
 }
 
 const appShape = {

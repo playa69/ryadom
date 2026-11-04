@@ -589,7 +589,7 @@ ConfigMap'ах (в git).** Значения секретов хранятся л
 |---|---|---|
 | Статика, несекретное | ConfigMap `app-config` ([00-app-config.yaml](app/00-app-config.yaml)) | `DB_HOST/PORT/NAME/USER`, публичные URL, `TRUSTED_PROXY_HOPS`, `REDIS_*` адреса, флаги |
 | Статика только админки | ConfigMap `app-admin-config` ([admin/00-config.yaml](app/admin/00-config.yaml)) | `ADMIN_EMAILS` (в API он попадать не должен) |
-| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`, `TELEGRAM_BOT_TOKEN` (токен бота Telegram Mini App, необязательный: без него вход через Telegram выключен); `SMTP_PASSWORD` |
+| Секреты | Secret'ы кластера: `app-secrets` (ns `prod`), `app-db-credentials` (ns `ryadom-db`), `app-smtp` (ns `prod`) | `DB_PASSWORD`, `AUTH_SECRET`, `MOBILE_JWT_SECRET`, `REDIS_PASSWORD`, `AGENT_INTERNAL_TOKEN`, `TELEGRAM_BOT_TOKEN` (токен бота Telegram Mini App, необязательный: без него вход через Telegram выключен), `RUSTORE_PUSH_SERVICE_TOKENS` (сервисные токены пуш-проектов RuStore для api и админки, необязательный: без него уведомления не отправляются); `SMTP_PASSWORD` |
 
 `DATABASE_URL` нигде не хранится: Deployment'ы собирают его из `DB_*`
 (ConfigMap) и `DB_PASSWORD` (Secret). `REDIS_PASSWORD` в `app-secrets` — копия

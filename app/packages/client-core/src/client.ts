@@ -122,9 +122,15 @@ import {
   dialogRecapPath,
   dialogSharePath,
   memoryFactPath,
+  notificationSubscriptionPath,
   sessionPath,
   sharedDialogPath,
 } from '@ryadom/contracts/api/paths'
+import type {
+  CreatePushSubscriptionApiRequest,
+  PushSubscriptionApiErrorCode,
+  PushSubscriptionApiResponse,
+} from '@ryadom/contracts/api/notifications'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { newDeviceCredentials } from './device'
 import { DialogSocket, type DialogMessageView, type DialogSocketHandlers } from './dialog-socket'
@@ -689,6 +695,33 @@ export function createClient(config: ClientConfig) {
       await apiFetch<null>(ApiPath.LogoutAll, { method: 'POST', body })
     },
 
+    // ─── notifications ────────────────────────────────────────────────────────
+
+    /**
+     * This device with notifications switched on gives its push token. Sent on every start and sign-in as well: the
+     * same token is one subscription, and it moves to this session and account.
+     */
+    subscribePush: (
+      body: CreatePushSubscriptionApiRequest,
+    ): Promise<ApiOutcome<PushSubscriptionApiResponse, PushSubscriptionApiErrorCode>> =>
+      apiOutcome<PushSubscriptionApiResponse, PushSubscriptionApiErrorCode>(
+        ApiPath.NotificationSubscriptions,
+        {
+          method: 'POST',
+          body,
+        },
+      ),
+
+    /** Notifications off on this device, or signing out of it. `SUBSCRIPTION_NOT_FOUND`: it is gone already. */
+    unsubscribePush: async (
+      subscriptionId: string,
+    ): Promise<ApiOutcome<void, PushSubscriptionApiErrorCode>> =>
+      voidOutcome(
+        await apiOutcome<null, PushSubscriptionApiErrorCode>(notificationSubscriptionPath(subscriptionId), {
+          method: 'DELETE',
+        }),
+      ),
+
     // ─── dialogs ──────────────────────────────────────────────────────────────
 
     /**
@@ -720,17 +753,22 @@ export function createClient(config: ClientConfig) {
     getDialog,
 
     /** The person's active link to a dialog; null when there is none. */
-    getDialogShare: (dialogId: string): Promise<ApiOutcome<DialogShareApiResponse | null, DialogApiErrorCode>> =>
+    getDialogShare: (
+      dialogId: string,
+    ): Promise<ApiOutcome<DialogShareApiResponse | null, DialogApiErrorCode>> =>
       apiOutcome<DialogShareApiResponse | null, DialogApiErrorCode>(dialogSharePath(dialogId)),
 
     createDialogShare: (
       dialogId: string,
       data: CreateDialogShareApiRequest,
     ): Promise<ApiOutcome<DialogShareApiResponse, DialogApiErrorCode | DialogShareApiErrorCode>> =>
-      apiOutcome<DialogShareApiResponse, DialogApiErrorCode | DialogShareApiErrorCode>(dialogSharePath(dialogId), {
-        method: 'POST',
-        body: data,
-      }),
+      apiOutcome<DialogShareApiResponse, DialogApiErrorCode | DialogShareApiErrorCode>(
+        dialogSharePath(dialogId),
+        {
+          method: 'POST',
+          body: data,
+        },
+      ),
 
     revokeDialogShare: async (dialogId: string): Promise<ApiOutcome<void, DialogApiErrorCode>> =>
       voidOutcome(
@@ -853,7 +891,10 @@ export function createClient(config: ClientConfig) {
     createWeekSummary: (
       data: CreateWeekSummaryApiRequest,
     ): Promise<ApiOutcome<DiarySummaryApi, DiaryApiErrorCode>> =>
-      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, { method: 'POST', body: data }),
+      apiOutcome<DiarySummaryApi, DiaryApiErrorCode>(ApiPath.DiaryWeekSummary, {
+        method: 'POST',
+        body: data,
+      }),
 
     /** The token of the Android widget; shown once. */
     createWidgetToken: (): Promise<WidgetTokenApiResponse> =>
@@ -876,7 +917,10 @@ export function createClient(config: ClientConfig) {
     saveSelfCheckResult: (
       data: SaveSelfCheckApiRequest,
     ): Promise<ApiOutcome<SelfCheckResultApi, SelfCheckApiErrorCode>> =>
-      apiOutcome<SelfCheckResultApi, SelfCheckApiErrorCode>(ApiPath.SelfCheckResults, { method: 'POST', body: data }),
+      apiOutcome<SelfCheckResultApi, SelfCheckApiErrorCode>(ApiPath.SelfCheckResults, {
+        method: 'POST',
+        body: data,
+      }),
 
     /**
      * A crisis answer was given: the server's counter grows by one. No sign-in, no session headers and no tracing ids go
@@ -909,7 +953,9 @@ export function createClient(config: ClientConfig) {
     /** All results of one test, or of every test without `testId`. */
     deleteSelfCheckResults: (testId?: string): Promise<DeleteSelfCheckApiResponse> =>
       apiFetch<DeleteSelfCheckApiResponse>(
-        testId ? `${ApiPath.SelfCheckResults}?testId=${encodeURIComponent(testId)}` : ApiPath.SelfCheckResults,
+        testId
+          ? `${ApiPath.SelfCheckResults}?testId=${encodeURIComponent(testId)}`
+          : ApiPath.SelfCheckResults,
         { method: 'DELETE' },
       ),
 
@@ -993,8 +1039,6 @@ export function createClient(config: ClientConfig) {
 
 /** The answer to opening a link. */
 export type SharedDialogResult =
-  | { status: 'ok'; dialog: SharedDialogApiResponse }
-  | { status: 'gone' }
-  | { status: 'unavailable' }
+  { status: 'ok'; dialog: SharedDialogApiResponse } | { status: 'gone' } | { status: 'unavailable' }
 
 export type RyadomClient = ReturnType<typeof createClient>

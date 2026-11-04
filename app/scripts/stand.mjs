@@ -971,8 +971,8 @@ function e2eTeardown(stand) {
 }
 
 const e2ePorts = (stand) => {
-  const { landing, api, web, pwa, mock, mailUi, mailSmtp, postgres } = stand.ports.e2e
-  return [landing, api, web, pwa, mock, mailUi, mailSmtp, postgres]
+  const { landing, admin, api, web, pwa, mock, mailUi, mailSmtp, postgres, push } = stand.ports.e2e
+  return [landing, admin, api, web, pwa, mock, mailUi, mailSmtp, postgres, push]
 }
 
 /**

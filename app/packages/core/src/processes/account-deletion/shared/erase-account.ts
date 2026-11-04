@@ -22,6 +22,10 @@ import {
   refreshTokensManager,
 } from '../../../managers/refresh-tokens-manager'
 import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
+import {
+  DeleteUserPushSubscriptionsCommand,
+  pushSubscriptionsManager,
+} from '../../../managers/push-subscriptions-manager'
 import { DeleteUserDialogSharesCommand, dialogSharesManager } from '../../../managers/dialog-shares-manager'
 import { DeleteUserDiaryCommand, diaryManager } from '../../../managers/diary-manager'
 import {
@@ -52,7 +56,8 @@ import { buildDeletionArchive } from './deletion-archive'
  *
  * The order: the agent erases its own copy first (conversations, memory, profile), outside the transaction and before
  * the identifier is lost; if it does not answer, `AgentUnavailableError` is thrown and the account stays whole. Then,
- * in one transaction, the archive of the personal data, the credentials, devices, links to conversations, the diary
+ * in one transaction, the archive of the personal data, the credentials, devices and their subscriptions to
+ * notifications, links to conversations, the diary
  * (marks, week texts, widget tokens), the saved results of the self-check tests and the codes of the address are erased;
  * the row is anonymized; the consents in force are marked as withdrawn in their journals; the sessions end; and the
  * erasure of the person in product analytics is queued as the last step, so that the deletion and the job stand or
@@ -113,6 +118,8 @@ export async function eraseAccount(
     await userCredentialsManager.execute(new DeleteUserCredentialsCommand({ userId }))
     // The account is only anonymized, so its devices must be forgotten here: otherwise they would keep signing in to it.
     await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId }))
+    // Likewise its subscriptions to notifications: the tokens are addresses of the person's phones.
+    await pushSubscriptionsManager.execute(new DeleteUserPushSubscriptionsCommand({ userId }))
     // Links to the person's conversations die with the account (`REQ-DATA-05`).
     await dialogSharesManager.execute(new DeleteUserDialogSharesCommand({ userId }))
     // Marks, summaries and widget tokens of the diary: before the row is anonymized.

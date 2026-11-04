@@ -23,7 +23,17 @@ import { spawn } from 'node:child_process'
 import { cp } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { busyPorts, compose, ensureMockImage, forgetProcess, isOurs, killTree, readState, recordProcess, spawnCommandSync } from '../../scripts/stand.mjs'
+import {
+  busyPorts,
+  compose,
+  ensureMockImage,
+  forgetProcess,
+  isOurs,
+  killTree,
+  readState,
+  recordProcess,
+  spawnCommandSync,
+} from '../../scripts/stand.mjs'
 import { resolveStand } from '../../scripts/stand-ports.mjs'
 
 const e2eRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -42,6 +52,12 @@ const WEB_PORT = port('landing')
 const APP_PORT = port('api')
 const WEBAPP_PORT = port('web')
 const PWA_PORT = port('pwa')
+const ADMIN_PORT = port('admin')
+const PUSH_PORT = port('push')
+/** The admin the tests sign in as (with a code from Mailpit) and the push project the stub stands in for. */
+const E2E_ADMIN_EMAIL = 'admin@ryadom.local'
+const PUSH_PROJECT = 'e2eProject'
+const PUSH_SERVICE_TOKEN = 'e2e-only-push-service-token'
 
 const children = []
 let shuttingDown = false
@@ -127,20 +143,44 @@ async function waitFor(url, what, timeoutMs = 120_000) {
 // from under it, so it is refused before anything is touched.
 const alive = readState(stand).processes['e2e-stack']
 if (alive && alive.pid !== process.pid && isOurs(alive)) {
-  log(`стек стенда "${stand.id}" уже запущен (pid ${alive.pid}). Остановить: pnpm stand:down; использовать готовый: E2E_REUSE=1`)
+  log(
+    `стек стенда "${stand.id}" уже запущен (pid ${alive.pid}). Остановить: pnpm stand:down; использовать готовый: E2E_REUSE=1`,
+  )
   process.exit(1)
 }
-recordProcess(stand, 'e2e-stack', { pid: process.pid, startedAt: Date.now() - process.uptime() * 1000, port: ports.landing, command: 'e2e-stack' })
+recordProcess(stand, 'e2e-stack', {
+  pid: process.pid,
+  startedAt: Date.now() - process.uptime() * 1000,
+  port: ports.landing,
+  command: 'e2e-stack',
+})
 log(`стенд "${stand.id}", слот ${stand.slot}: порты ${ports.landing}..${ports.postgres}`)
 
 // A stack of this stand that a crashed run left behind would hold the ports and the database of the previous run.
 composeDown()
 
-const busy = await busyPorts([ports.landing, ports.api, ports.web, ports.pwa, ports.mock, ports.mailUi, ports.mailSmtp, ports.postgres])
+const busy = await busyPorts([
+  ports.landing,
+  ports.admin,
+  ports.api,
+  ports.web,
+  ports.pwa,
+  ports.mock,
+  ports.mailUi,
+  ports.mailSmtp,
+  ports.postgres,
+  ports.push,
+])
 if (busy.length) {
-  const list = busy.map(({ port: p, code }) => `${p}${code === 'EACCES' ? ' (зарезервирован системой)' : ''}`).join(', ')
-  log(`заняты порты стенда: ${list}. Чужой процесс? Тесты на чужом стенде ничего не доказывают, поэтому стек не стартует.`)
-  log('Свои остатки снимает `pnpm stand:down`; работа в новом worktree: `pnpm e2e` сам берёт слот с другими портами.')
+  const list = busy
+    .map(({ port: p, code }) => `${p}${code === 'EACCES' ? ' (зарезервирован системой)' : ''}`)
+    .join(', ')
+  log(
+    `заняты порты стенда: ${list}. Чужой процесс? Тесты на чужом стенде ничего не доказывают, поэтому стек не стартует.`,
+  )
+  log(
+    'Свои остатки снимает `pnpm stand:down`; работа в новом worktree: `pnpm e2e` сам берёт слот с другими портами.',
+  )
   shutdown(1)
 }
 
@@ -156,12 +196,21 @@ if (up.status !== 0) {
 log('применяю миграции')
 runSync('pnpm', ['--filter', '@ryadom/db', 'migrate'], { env: { ...process.env, DATABASE_URL: DB_URL } })
 
-log('собираю клиент, api, сайт и веб-приложение')
+log('собираю клиент, api, сайт, веб-приложение и админку')
 // apps/mobile's "build" is build:pwa: the web build into dist/pwa, which `vite preview` serves below.
 // Two at a time: four Next.js and Vite builds at once would need several gigabytes of memory.
 runSync('pnpm', [
-  'exec', 'turbo', 'run', 'build', '--concurrency=2', '--output-logs=new-only',
-  '--filter=@ryadom/mobile', '--filter=@ryadom/api', '--filter=@ryadom/landing', '--filter=@ryadom/web',
+  'exec',
+  'turbo',
+  'run',
+  'build',
+  '--concurrency=2',
+  '--output-logs=new-only',
+  '--filter=@ryadom/mobile',
+  '--filter=@ryadom/api',
+  '--filter=@ryadom/landing',
+  '--filter=@ryadom/web',
+  '--filter=@ryadom/admin',
 ])
 
 const apiEnv = {
@@ -195,7 +244,16 @@ const apiEnv = {
   YANDEX_METRIKA_CLICKMAP: 'true',
   // A made-up bot: support/telegram.ts signs the Mini App launches with the same value.
   TELEGRAM_BOT_TOKEN: '100000001:e2e-only-telegram-bot-token-0123456789',
+  // Notifications go to the stub; its project is the one support/push.ts subscribes devices to.
+  RUSTORE_PUSH_API_URL: `http://127.0.0.1:${PUSH_PORT}`,
+  RUSTORE_PUSH_SERVICE_TOKENS: `${PUSH_PROJECT}:${PUSH_SERVICE_TOKEN}`,
 }
+
+log('запускаю заглушку RuStore Push')
+start('push-mock', [join(repoRoot, 'dev', 'push-mock', 'server.mjs')], {
+  env: { ...process.env, PORT: PUSH_PORT },
+})
+await waitFor(`http://127.0.0.1:${PUSH_PORT}/health`, 'заглушка RuStore Push')
 
 log('запускаю api')
 // cwd is services/api: from there the server finds the native argon2.
@@ -208,8 +266,21 @@ log('запускаю PWA')
 // environment) are not there, which is fine: the client falls back to relative legal links.
 start(
   'pwa',
-  [join(repoRoot, 'apps', 'mobile', 'node_modules', 'vite', 'bin', 'vite.js'), 'preview', '--mode', 'web', '--host', '127.0.0.1', '--port', PWA_PORT, '--strictPort'],
-  { env: { ...process.env, API_PROXY_TARGET: `http://127.0.0.1:${APP_PORT}` }, cwd: join(repoRoot, 'apps', 'mobile') },
+  [
+    join(repoRoot, 'apps', 'mobile', 'node_modules', 'vite', 'bin', 'vite.js'),
+    'preview',
+    '--mode',
+    'web',
+    '--host',
+    '127.0.0.1',
+    '--port',
+    PWA_PORT,
+    '--strictPort',
+  ],
+  {
+    env: { ...process.env, API_PROXY_TARGET: `http://127.0.0.1:${APP_PORT}` },
+    cwd: join(repoRoot, 'apps', 'mobile'),
+  },
 )
 await waitFor(`http://127.0.0.1:${PWA_PORT}/`, 'PWA')
 
@@ -237,6 +308,26 @@ start('web', ['server.js'], {
   },
 })
 await waitFor(`http://127.0.0.1:${WEBAPP_PORT}/api/health`, 'веб-приложение')
+
+const adminStandalone = join(repoRoot, 'apps', 'admin', '.next', 'standalone', 'apps', 'admin')
+await cp(join(repoRoot, 'apps', 'admin', '.next', 'static'), join(adminStandalone, '.next', 'static'), {
+  recursive: true,
+})
+await cp(join(repoRoot, 'apps', 'admin', 'public'), join(adminStandalone, 'public'), { recursive: true })
+
+log('запускаю админку')
+// The same environment as the API where they share it: one database, one mail server, one push stub. Its own
+// address is the only one it lists as an admin.
+start('admin', ['server.js'], {
+  cwd: adminStandalone,
+  env: {
+    ...apiEnv,
+    PORT: ADMIN_PORT,
+    HOSTNAME: '127.0.0.1',
+    ADMIN_EMAILS: E2E_ADMIN_EMAIL,
+  },
+})
+await waitFor(`http://127.0.0.1:${ADMIN_PORT}/api/health`, 'админка')
 
 const landingStandalone = join(repoRoot, 'apps', 'landing', '.next', 'standalone', 'apps', 'landing')
 await cp(join(repoRoot, 'apps', 'landing', '.next', 'static'), join(landingStandalone, '.next', 'static'), {

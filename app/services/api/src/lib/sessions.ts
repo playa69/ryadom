@@ -17,6 +17,10 @@ import {
   type RefreshTokenDTO,
   type SessionDTO,
 } from '@ryadom/core/managers/refresh-tokens-manager'
+import {
+  DeleteStalePushSubscriptionsCommand,
+  pushSubscriptionsManager,
+} from '@ryadom/core/managers/push-subscriptions-manager'
 import { createLogger } from '@ryadom/core/shared'
 import assertNever from 'assert-never'
 import type { ClientDevice } from './client-device'
@@ -187,6 +191,8 @@ export function createSessions(jwt: Jwt): Sessions {
       await refreshTokensManager.execute(
         new DeleteExpiredRefreshTokensCommand({ before: new Date(Date.now() - PURGE_AFTER_MS) }),
       )
+      // Notifications are never sent to a session that ended; its subscriptions are only tokens of phones by now.
+      await pushSubscriptionsManager.execute(new DeleteStalePushSubscriptionsCommand({ now: new Date() }))
     },
   }
 }

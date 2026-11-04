@@ -1,4 +1,10 @@
+import {
+  ListActivePushSubscriptionsQuery,
+  pushSubscriptionsManager,
+  type PushSubscriptionDTO,
+} from '@ryadom/core/managers/push-subscriptions-manager'
 import { ListUserSessionsQuery, refreshTokensManager } from '@ryadom/core/managers/refresh-tokens-manager'
+import { NOTIFICATION_LIMITS } from '@ryadom/core/processes/notifications'
 import { GetUserByIdQuery, usersManager } from '@ryadom/core/managers/users-manager'
 import { isUuid } from '@ryadom/core/shared'
 import { ArrowLeft } from 'lucide-react'
@@ -10,10 +16,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { requireAdmin } from '@/lib/session'
 import { formatMoscow, sessionDevice, userStatus } from '../../_lib/labels'
 import DeleteAccount from './_components/delete-account'
+import SendNotification from './_components/send-notification'
 import UserActions from './_components/user-actions'
+import type { NotificationDeviceView } from './shared'
 
 export const metadata: Metadata = { title: 'Пользователь — админка «Рядом»' }
 export const dynamic = 'force-dynamic'
+
+const CHANNEL_LABELS: Record<PushSubscriptionDTO['channel'], string> = { rustore: 'RuStore' }
+
+/** The package tells a release build from a dev one; the token never leaves the server. */
+function toDeviceView(subscription: PushSubscriptionDTO): NotificationDeviceView {
+  return {
+    id: subscription.id,
+    label: `${CHANNEL_LABELS[subscription.channel]} · ${subscription.appId}`,
+    updatedAt: formatMoscow(subscription.updatedAt),
+  }
+}
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -40,6 +59,11 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
   const { sessions } = user.isDeleted
     ? { sessions: [] }
     : await refreshTokensManager.execute(new ListUserSessionsQuery({ userId: user.id, now: new Date() }))
+  const { subscriptions } = user.isDeleted
+    ? { subscriptions: [] }
+    : await pushSubscriptionsManager.execute(
+        new ListActivePushSubscriptionsQuery({ userId: user.id, now: new Date() }),
+      )
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -102,7 +126,11 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
               ) : (
                 <ul className="divide-y divide-gray-200">
                   {sessions.map((session) => (
-                    <li key={session.sessionId} className="py-3 first:pt-0 last:pb-0" data-testid="user-session">
+                    <li
+                      key={session.sessionId}
+                      className="py-3 first:pt-0 last:pb-0"
+                      data-testid="user-session"
+                    >
                       <p className="text-sm font-medium text-gray-900">{sessionDevice(session)}</p>
                       <p className="mt-0.5 text-xs text-gray-600">
                         Вход: {formatMoscow(session.startedAt)} · последняя активность:{' '}
@@ -136,8 +164,8 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
             </CardHeader>
             <CardContent>
               <p className="text-gray-600">
-                Содержание разговоров в админке не показывается: доступ к ним есть только у самого
-                человека. Здесь видно только сам факт существования аккаунта.
+                Содержание разговоров в админке не показывается: доступ к ним есть только у самого человека.
+                Здесь видно только сам факт существования аккаунта.
               </p>
             </CardContent>
           </Card>
@@ -158,6 +186,25 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
               />
             </CardContent>
           </Card>
+
+          {!user.isDeleted && (
+            <Card size="sm" className="order-2" data-testid="user-notifications">
+              <CardHeader>
+                <CardTitle className="font-semibold text-gray-900">Уведомления</CardTitle>
+                <CardDescription className="text-gray-600">
+                  Сообщение на телефоны человека, где включены уведомления, во входах, которые ещё открыты.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <SendNotification
+                  userId={user.id}
+                  devices={subscriptions.map(toDeviceView)}
+                  titleMaxLength={NOTIFICATION_LIMITS.titleMaxLength}
+                  bodyMaxLength={NOTIFICATION_LIMITS.bodyMaxLength}
+                />
+              </CardContent>
+            </Card>
+          )}
 
           {!user.isDeleted && (
             <Card size="sm" className="order-4 border-red-200">
