@@ -21,19 +21,12 @@ export default function AuthFrame({ webUrl, children }: { webUrl: string; childr
   // No sidebar on these screens, so toasts center on the window.
   useNoticePlacement('bare')
 
-  // The first screen is also where a signed-in person lands when the terms need agreeing to again;
-  // it decides for itself when to move on. On every other screen a session means "go home".
-  const keepsSignedIn = pathname === '/welcome'
-
   // Every sign-in path ends here: the screens do not navigate after a successful sign-in themselves.
   useEffect(() => {
-    if (status === 'authenticated' && !keepsSignedIn) router.replace('/home')
-  }, [status, keepsSignedIn, router])
+    if (status === 'authenticated') router.replace('/home')
+  }, [status, router])
 
-  if (status === 'authenticated' && !keepsSignedIn) return <BootSplash />
-
-  // The first screen is home itself, not a card: someone new starts talking from it.
-  if (keepsSignedIn) return <AuthFlowProvider webUrl={webUrl}>{children}</AuthFlowProvider>
+  if (status === 'authenticated') return <BootSplash />
 
   // Phone, secondary screens: the brand shrinks to a single line so the form gets the height. The
   // first screen of a visit to an account (the sign-in) leads with the brand and the sphere.

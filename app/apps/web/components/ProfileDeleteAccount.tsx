@@ -14,6 +14,7 @@ import { Item, ItemContent } from '@ryadom/ui/components/item'
 import { cn } from '@ryadom/ui/lib/utils'
 import { useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
+import { startOver } from './AppShell'
 import { FOCUS_RING } from './controls'
 import Modal from './Modal'
 import { Page } from './Page'
@@ -110,8 +111,9 @@ export default function ProfileDeleteAccount() {
     // An account with no confirmed address was opened by this device alone: with it gone, the person
     // is back at the start, not at a sign-in screen for an account they never had.
     const backToStart = user?.email === null || user?.isEmailConfirmed === false
+    if (backToStart) startOver()
     await logout()
-    router.replace(backToStart ? '/welcome' : '/login')
+    router.replace(backToStart ? '/home' : '/login')
   }
 
   return (

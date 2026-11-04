@@ -40,8 +40,8 @@ test('Метрика в вебе: запуск без записи экрана,
 test('Метрика в вебе: переход между экранами — новый хит с прежним адресом как источником', async ({
   page,
 }) => {
-  await openWebApp(page, '/welcome')
-  await expect.poll(() => hitUrls(page)).toEqual([`${ORIGIN}/welcome`])
+  await openWebApp(page, '/home')
+  await expect.poll(() => hitUrls(page)).toEqual([`${ORIGIN}/home`])
   await startAnonymously(page)
   await expect(homeInput(page)).toBeVisible()
   const hits = await ymCalls(page, 'hit')
@@ -53,7 +53,7 @@ test('Метрика в вебе: переход между экранами —
 
 test('Метрика в вебе: отказ от аналитики на устройстве — тег не загружается', async ({ page }) => {
   await page.addInitScript(() => window.localStorage.setItem('ryadom.analytics.optout', '1'))
-  await openWebApp(page, '/welcome')
+  await openWebApp(page, '/home')
   await page.waitForTimeout(1500)
   expect(await page.evaluate(() => typeof (window as unknown as { ym?: unknown }).ym)).toBe('undefined')
   expect(await ymCalls(page)).toEqual([])
@@ -61,7 +61,7 @@ test('Метрика в вебе: отказ от аналитики на уст
 
 test('Метрика в вебе: Do Not Track — тег не загружается', async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(navigator, 'doNotTrack', { get: () => '1' }))
-  await openWebApp(page, '/welcome')
+  await openWebApp(page, '/home')
   await page.waitForTimeout(1500)
   expect(await page.evaluate(() => typeof (window as unknown as { ym?: unknown }).ym)).toBe('undefined')
   expect(await ymCalls(page)).toEqual([])

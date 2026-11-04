@@ -63,14 +63,21 @@ export function startTalk(): void {
  * the tabs when the session starts, so the first screen cannot open the conversation itself. Home takes
  * the request once, when it appears, and starts the conversation as its own button does.
  */
-let talkRequested = false
-
-export function requestTalkOnHome(): void {
-  talkRequested = true
+export interface TalkRequest {
+  /** "Не сохранять этот разговор" was not ticked. */
+  saved: boolean
+  /** "Запоминать важное" was turned on (the consent sheet accepted): memory is turned on before the start. */
+  rememberMemory: boolean
 }
 
-export function takeTalkRequest(): boolean {
+let talkRequested: TalkRequest | null = null
+
+export function requestTalkOnHome(request: TalkRequest): void {
+  talkRequested = request
+}
+
+export function takeTalkRequest(): TalkRequest | null {
   const requested = talkRequested
-  talkRequested = false
+  talkRequested = null
   return requested
 }

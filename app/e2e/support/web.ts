@@ -77,7 +77,7 @@ export async function dismissMemoryInvite(page: Page): Promise<void> {
  * `guestDevice`) and the app signs in by itself; the first screen is covered by its own scenarios.
  */
 export async function startAnonymously(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
-  await expect(page).toHaveURL(/\/welcome$/)
+  await expect(page).toHaveURL(/\/home$/)
   // The sheet "Рядом теперь запоминает важное" would cover home for a new account: unless a test is about it,
   // it is already answered ("Не сейчас"), like for a person who has seen it. Same origin, read when home opens.
   if (!options.keepMemoryInvite) await dismissMemoryInvite(page)
@@ -253,15 +253,25 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
   await expect(talkButton(page)).toBeVisible({ timeout: 20_000 })
 }
 
+/**
+ * The way into an account from home without a session: «Войти» at the foot of the menu, which is a drawer on
+ * a phone (`openspec/changes/merge-first-screen-into-home`).
+ */
+export async function openSignIn(page: Page): Promise<void> {
+  await openSidebar(page)
+  await page.getByTestId('have-account').click()
+  await expect(page).toHaveURL(/\/login$/)
+}
+
 /** Sign-up with email confirmation: afterwards the person is already inside, on the home screen. */
 export async function registerAndConfirm(page: Page, email: string, name = 'Тест'): Promise<void> {
   await dismissMemoryInvite(page)
   // A new visitor meets the first screen and opens the sign-in from it; from the sign-in screen the
   // way to the sign-up is one link away.
-  const haveAccount = page.getByTestId('have-account')
+  const guestHome = page.getByTestId('guest-note')
   const createAccount = page.getByRole('link', { name: 'Создать аккаунт', exact: true })
-  await expect(haveAccount.or(createAccount)).toBeVisible({ timeout: 30_000 })
-  if (await haveAccount.isVisible()) await haveAccount.click()
+  await expect(guestHome.or(createAccount)).toBeVisible({ timeout: 30_000 })
+  if (await guestHome.isVisible()) await openSignIn(page)
   await createAccount.click()
   await expect(page.getByRole('heading', { name: 'Давай знакомиться' })).toBeVisible()
 
