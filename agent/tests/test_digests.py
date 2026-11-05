@@ -117,15 +117,6 @@ def test_model_failure_is_a_502_without_the_body(user_id):
     assert "секрет" not in response.text
 
 
-def test_prompt_forbids_quoting():
-    from app.services import digests
-
-    system = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[0]["content"]
-    task = digests.build_messages("week", "2026-10-19", marks(3, 3, 4))[1]["content"]
-    assert "Никаких цитат" in system and "не привязывай" in system
-    assert "без цитат" in task.lower()
-
-
 def test_quotation_marks_with_more_than_two_words_are_a_quotation():
     from app.services import digests
 
@@ -186,3 +177,45 @@ def test_clean_digest_rejects_a_tie_to_a_day_or_a_dialog():
 
     assert digests.clean_digest("week", "Неделя шла непросто. В понедельник ты много думал о работе. Рядом бывают люди.", marks(3, 3, 4)) is None
     assert digests.clean_digest("week", "Неделя шла непросто. Ты много думал о работе. Рядом бывают люди.", marks(3, 3, 4)) is not None
+
+
+def test_weekly_digest_links_all_prompt_versions_without_instruction_text(user_id, monkeypatch):
+    """`openspec/changes/add-langfuse-prompt-management`, «Видимость использованной версии»."""
+    from tests.conftest import FakePromptProvider, RecordingTracer
+
+    provider = FakePromptProvider(
+        versions={
+            "agent.digest.weekly.system": 4,
+            "agent.digest.weekly.task": 5,
+            "agent.digest.weekly.hard-week-suffix": 6,
+        }
+    )
+    tracer = RecordingTracer()
+    monkeypatch.setattr("app.main.build_tracer", lambda settings: tracer)
+    chat = ScriptedChat("Неделя была разной. Ты заглядывал в себя. К концу стало спокойнее. Я рядом.")
+    with make_client(None, background=chat, prompt_provider=provider) as client:
+        response = post(client, user_id, {**WEEK, "marks": marks(1, 1, 1, 3)})
+    assert response.status_code == 200
+    turn = next(item for item in tracer.turns if item["name"] == "weekly_digest")
+    assert turn["prompt"] == {"name": "agent.digest.weekly.system", "version": 4}
+    assert turn["metadata"]["prompt_version"] == 4
+    components = turn["prompt_components"]
+    assert [(item["name"], item["version"], item["source"]) for item in components] == [
+        ("agent.digest.weekly.system", 4, "langfuse"),
+        ("agent.digest.weekly.hard-week-suffix", 6, "langfuse"),
+        ("agent.digest.weekly.task", 5, "langfuse"),
+    ]
+    assert "Синтетическая инструкция" not in str(turn["metadata"])
+
+
+def test_unavailable_weekly_prompt_does_not_call_the_model(user_id):
+    """`openspec/changes/add-langfuse-prompt-management`, «Работа только с инструкциями Langfuse»."""
+    from tests.conftest import FakePromptProvider
+
+    chat = ScriptedChat("Неделя была разной. Ты заглядывал в себя. К концу стало спокойнее. Я рядом.")
+    provider = FakePromptProvider(unavailable={"agent.digest.weekly.system"})
+    with make_client(None, background=chat, prompt_provider=provider) as client:
+        response = post(client, user_id, {**WEEK, "marks": marks(3, 3, 4)})
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "DIGEST_UNAVAILABLE"
+    assert chat.seen == []

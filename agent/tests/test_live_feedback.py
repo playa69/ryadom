@@ -271,11 +271,22 @@ def test_strip_foreign_script_keeps_russian_and_latin() -> None:
     assert strip_foreign_script("안녕 привет مرحبا")[1] == 2
 
 
-@pytest.mark.parametrize("voice, rule, wrong", [("male", "«я понял»", "«я поняла»"), ("female", "«я поняла»", "«я понял»")])
+@pytest.mark.parametrize(
+    "voice, rule, wrong",
+    [("male", "Мужской синтетический род", "Женский синтетический род"), ("female", "Женский синтетический род", "Мужской синтетический род")],
+)
 def test_the_agent_speaks_of_itself_in_the_gender_of_its_voice(user_id: str, voice: str, rule: str, wrong: str) -> None:
-    """При мужском голосе модель говорила о себе «не расслышала»: правило рода берётся из голоса диалога."""
+    """Правило рода выбирается по голосу диалога, а его текст приходит от поддельного provider."""
+    from tests.conftest import FakePromptProvider
+
+    provider = FakePromptProvider(
+        {
+            "agent.dialog.self-gender.male": "Мужской синтетический род",
+            "agent.dialog.self-gender.female": "Женский синтетический род",
+        }
+    )
     connector = LinkConnector()
-    with make_client(connector, FakeTts()) as client:
+    with TestClient(make_app(connector, FakeTts(), prompt_provider=provider)) as client:
         started = client.post(f"/v1/users/{user_id}/dialogs", headers=AUTH, json={"voice": voice}).json()
         with client.websocket_connect(ws_url(user_id, started["dialogId"]), headers=AUTH) as ws:
             send_user_message(ws, "c-1", "Ты меня понял?")
@@ -284,13 +295,56 @@ def test_the_agent_speaks_of_itself_in_the_gender_of_its_voice(user_id: str, voi
     assert rule in instructions and wrong not in instructions
 
 
-def test_the_system_prompt_carries_the_gender_rule_of_the_voice() -> None:
-    from app.services.replies import SELF_GENDER, SYSTEM_PROMPT, system_prompt
+def test_production_change_applies_to_a_new_session_not_the_current_one(
+    user_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Управляемое применение версии в runtime» и «Видимость использованной версии»."""
+    from tests.conftest import FakePromptProvider, RecordingTracer, make_app
+    from tests.fake_live import FakeConnector
 
-    assert system_prompt("female").startswith(SYSTEM_PROMPT + "\n" + SELF_GENDER["female"])
-    assert system_prompt("male").startswith(SYSTEM_PROMPT + "\n" + SELF_GENDER["male"])
-    assert system_prompt() == SYSTEM_PROMPT  # без голоса — без правила
-    assert REPEAT_REQUEST not in system_prompt("male")  # модель не копирует дословно фразу из примера
+    provider = FakePromptProvider({"agent.dialog.system": "Система v1"})
+    tracer = RecordingTracer()
+    monkeypatch.setattr("app.main.build_tracer", lambda settings: tracer)
+    connector = FakeConnector()
+    with TestClient(make_app(connector=connector, prompt_provider=provider)) as client:
+        started = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, started["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda frames: has(frames, "ready"))
+            first = connector.links[-1]
+            assert "Система v1" in first.instructions
+            provider.texts["agent.dialog.system"] = "Система v2"
+            provider.versions["agent.dialog.system"] = 2
+            send_user_message(ws, "c-1", "Продолжим")
+            read_frames(ws, lambda frames: has(frames, "assistant_end"))
+            assert len(connector.links) == 1
+            assert "Система v1" in first.instructions and "Система v2" not in first.instructions
+        with client.websocket_connect(ws_url(user_id, started["dialogId"]), headers=AUTH) as ws:
+            read_frames(ws, lambda frames: has(frames, "ready"))
+            second = connector.links[-1]
+    assert second is not first and "Система v2" in second.instructions
+    assert provider.calls.count("agent.dialog.system") == 2
+    current_turn = next(item for item in tracer.turns if item["name"] == "live_turn_text")
+    assert current_turn["prompt"] == {"name": "agent.dialog.system", "version": 1}
+    assert all(item["source"] == "langfuse" for item in current_turn["prompt_components"])
+    assert "Система v1" not in str(current_turn["metadata"])
+    reopened = [item for item in tracer.turns if item["name"] == "gemini_session_open"][-1]
+    assert reopened["prompt"] == {"name": "agent.dialog.system", "version": 2}
+
+
+def test_unavailable_dialog_prompt_does_not_open_the_model(user_id: str) -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Работа только с инструкциями Langfuse»."""
+    from tests.conftest import FakePromptProvider, make_app
+    from tests.fake_live import FakeConnector
+
+    provider = FakePromptProvider(unavailable={"agent.dialog.system"})
+    connector = FakeConnector()
+    with TestClient(make_app(connector=connector, prompt_provider=provider)) as client:
+        started = start_dialog(client, user_id)
+        with client.websocket_connect(ws_url(user_id, started["dialogId"]), headers=AUTH) as ws:
+            send_user_message(ws, "c-1", "Привет")
+            frames = read_frames(ws, lambda current: has(current, "error"))
+    assert has(frames, "error", code="VOICE_UNAVAILABLE")
+    assert connector.open_calls == []
 
 
 # ─── Подсказка языка расшифровки ──────────────────────────────────────────────────────────────────────────────────

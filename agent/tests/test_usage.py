@@ -19,12 +19,11 @@ from prometheus_client import REGISTRY
 from app.api.dialog_session import DialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveTts
 from app.services import usage as model_usage
-from app.services.dialog_db import DialogDbError
 from tests.fake_db import FakeDialogDatabase as DialogDatabase
 from app.services.dialog_store import GREETING_NEW, DialogStore
 from app.services.replies import CRISIS_REPLY, split_sentences
 from app.services.usage import Usage
-from tests.conftest import AUTH, FakeTts, make_app, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, FakePromptProvider, FakeTts, make_app, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_live import FakeConnector, reply_done, speak_turn
 from tests.test_background_model import chat, completion
 
@@ -73,7 +72,7 @@ async def test_chat_answer_records_its_tokens_and_without_usage_nothing() -> Non
 
 async def test_gemini_phrase_session_logs_its_voice_without_the_text(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger="agent.gemini")
-    tts = GeminiLiveTts(FakeConnector(reply="Я рядом."))
+    tts = GeminiLiveTts(FakeConnector(reply="Я рядом."), prompt_provider=FakePromptProvider())
     assert await tts.synthesize("Тайная фраза", "female")
     await asyncio.gather(*tts._drains)
     [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("gemini live opened")]
@@ -83,7 +82,7 @@ async def test_gemini_phrase_session_logs_its_voice_without_the_text(caplog: pyt
 
 async def test_gemini_phrase_usage_arrives_after_the_sound_and_is_read_in_the_background() -> None:
     connector = FakeConnector(reply="Я рядом.", usage={"input_text": 40, "output_audio": 25}, turn_complete=True)
-    tts = GeminiLiveTts(connector)
+    tts = GeminiLiveTts(connector, prompt_provider=FakePromptProvider())
     with model_usage.collect() as spent:
         assert await tts.synthesize("Я рядом.", "male")  # звук отдан по generation_complete, не дожидаясь usage
         await asyncio.gather(*tts._drains)

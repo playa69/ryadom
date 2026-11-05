@@ -64,11 +64,11 @@ def gemini_tone(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Есть ключ Gemini, его классификатор тона поддельный; в списке — всё, что он получил, включая прогрев."""
     heard: list[str] = []
 
-    async def classify(self: object, text: str) -> dict:
+    async def classify(self: object, text: str, **kwargs: Any) -> dict:
         heard.append(text)
         return {"tone": "afraid", "intensity": 0.7}
 
-    monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings: None)
+    monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings, *args: None)
     monkeypatch.setattr(mood_classifier.MoodClassifier, "classify", classify)
     monkeypatch.setattr(APP_CONFIG.gemini, "api_key", SecretStr("x"))
     monkeypatch.setattr("app.api.dialog_session.MOOD_DEBOUNCE_SECONDS", 0)

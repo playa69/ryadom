@@ -17,11 +17,10 @@ from app.clients.sber_voice import (
     GigaChatMoodClassifier,
     SberVoiceLink,
     Upsampler,
-    own_gender,
     realtime_url,
 )
 from app.clients.speech import TtsError
-from app.services.replies import system_prompt
+from tests.conftest import FakePromptProvider
 
 
 def tone(seconds: float, rate: int = 16_000) -> bytes:
@@ -50,11 +49,6 @@ def test_upsampling_gives_24_khz() -> None:
     assert abs(len(out) - 24_000) <= 2
 
 
-def test_agent_speaks_of_itself_in_the_gender_of_the_voice_that_sounds() -> None:
-    assert own_gender(system_prompt("male")) == system_prompt("female")  # голос SaluteSpeech женский
-    assert own_gender(system_prompt("female")) == system_prompt("female")
-
-
 def test_realtime_url_from_the_proxy_base() -> None:
     assert realtime_url("https://proxy.example:4000/v1/", "gigaasr") == "wss://proxy.example:4000/v1/realtime?model=gigaasr"
 
@@ -72,6 +66,7 @@ class _Connector:
 
     def __init__(self, handler) -> None:  # noqa: ANN001
         self.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        self.prompt_provider = FakePromptProvider()
 
 
 async def chunks_of(pieces: list[str], usage: dict | None = None) -> tuple[list[str], dict[str, int], dict]:
@@ -239,3 +234,50 @@ async def test_gigachat_tone_classifier_gives_up_after_one_retry() -> None:
 
     assert await GigaChatMoodClassifier(_Connector(handler)).classify("мне страшно") is None  # type: ignore[arg-type]
     assert len(calls) == 2
+
+
+async def test_gigachat_tone_classifier_links_both_prompt_versions() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Видимость использованной версии»."""
+    from tests.conftest import RecordingTracer
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"tone": "sad", "intensity": 0.6}'}}]})
+
+    connector = _Connector(handler)
+    connector.prompt_provider = FakePromptProvider(
+        versions={"agent.mood.instructions": 3, "agent.mood.sber-json-suffix": 4}
+    )
+    tracer = RecordingTracer()
+    connector.tracer = tracer
+    result = await GigaChatMoodClassifier(connector).classify("мне грустно", user_id="user-1", dialog_id="dialog-1")  # type: ignore[arg-type]
+    assert result == {"tone": "sad", "intensity": 0.6}
+    turn = tracer.turns[0]
+    assert turn["name"] == "mood_classify_sber" and turn["session_id"] == "dialog-1"
+    assert turn["prompt"] == {"name": "agent.mood.instructions", "version": 3}
+    assert [(item["name"], item["version"]) for item in turn["prompt_components"]] == [
+        ("agent.mood.instructions", 3),
+        ("agent.mood.sber-json-suffix", 4),
+    ]
+
+
+async def test_unavailable_sber_prompts_do_not_call_models() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Работа только с инструкциями Langfuse»."""
+    from app.clients.sber_voice import SberVoiceConnector
+
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(500)
+
+    provider = FakePromptProvider(
+        unavailable={"agent.mood.instructions", "agent.dialog.self-gender.female"}
+    )
+    connector = _Connector(handler)
+    connector.prompt_provider = provider
+    assert await GigaChatMoodClassifier(connector).classify("мне страшно") is None  # type: ignore[arg-type]
+    voice_connector = SberVoiceConnector.__new__(SberVoiceConnector)
+    voice_connector.prompt_provider = provider
+    with pytest.raises(LiveError):
+        await voice_connector.open("female", "Синтетическая основа")
+    assert calls == []

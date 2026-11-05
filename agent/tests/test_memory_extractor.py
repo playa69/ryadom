@@ -6,11 +6,9 @@ import json
 import uuid
 from typing import Any
 
-import pytest
-
-from app.core.config import MemorySettings
 from app.memory.extractor import NotesExtractor, is_explicit_request
 from app.memory.notes import NotesService
+from tests.conftest import FakePromptProvider
 from tests.fake_db import FakeDialogDatabase
 
 
@@ -32,7 +30,7 @@ def setup(answer: Any = None, fail: bool = False, max_notes: int = 50) -> tuple[
     db.open()
     notes = NotesService(lambda: db, max_notes)
     model = FakeModel(answer, fail)
-    return NotesExtractor(model, notes), notes, model
+    return NotesExtractor(model, notes, FakePromptProvider()), notes, model
 
 
 def user() -> str:
@@ -148,3 +146,39 @@ async def test_added_note_remembers_the_fingerprint_of_its_source_reply() -> Non
     note = (await notes.list(u))[0]
     await notes.delete(u, note["id"])
     assert notes._db().suppressed_hashes(u) == {fingerprint(reply)}
+
+
+async def test_memory_operations_link_prompt_versions_without_note_metadata() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Видимость использованной версии»."""
+    from tests.conftest import RecordingTracer
+
+    provider = FakePromptProvider(
+        versions={"agent.memory.extract.system": 8, "agent.memory.instruction.system": 9}
+    )
+    tracer = RecordingTracer()
+    _, notes, model = setup({"ops": []})
+    extractor = NotesExtractor(model, notes, provider, tracer)
+    user_id = user()
+    await extractor.extract(user_id, ["Синтетическая реплика"], [], "dialog-1")
+    await extractor.instruct(user_id, "Синтетическая просьба")
+    extract, instruct = tracer.turns
+    assert extract["name"] == "memory_extract" and extract["session_id"] == "dialog-1"
+    assert extract["prompt"] == {"name": "agent.memory.extract.system", "version": 8}
+    assert instruct["name"] == "memory_instruct" and instruct["session_id"] == "memory"
+    assert instruct["prompt"] == {"name": "agent.memory.instruction.system", "version": 9}
+    assert all(turn["user_id"] == user_id for turn in tracer.turns)
+    assert "Синтетическая" not in str(extract["metadata"]) + str(instruct["metadata"])
+
+
+async def test_unavailable_memory_prompt_does_not_call_the_model() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Работа только с инструкциями Langfuse»."""
+    provider = FakePromptProvider(
+        unavailable={"agent.memory.extract.system", "agent.memory.instruction.system"}
+    )
+    _, notes, model = setup({"ops": []})
+    extractor = NotesExtractor(model, notes, provider)
+    user_id = user()
+    extracted = await extractor.extract(user_id, ["Работаю"], [])
+    instructed = await extractor.instruct(user_id, "Убери заметку")
+    assert extracted.failed and instructed.failed
+    assert model.seen == []

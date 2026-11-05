@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from starlette.testclient import WebSocketTestSession  # noqa: E402
 
 from app.main import create_app  # noqa: E402
+from app.prompts.provider import ResolvedPrompt  # noqa: E402
 from tests.fake_db import FakeDialogDatabase  # noqa: E402
 
 
@@ -131,6 +132,58 @@ class FakeBackgroundModel:
         return None
 
 
+class FakePromptProvider:
+    """Короткие синтетические инструкции вместо Langfuse, без копий промптов агента."""
+
+    def __init__(
+        self,
+        texts: dict[str, str] | None = None,
+        versions: dict[str, int] | None = None,
+        unavailable: set[str] | None = None,
+    ) -> None:
+        self.texts = texts or {}
+        self.versions = versions or {}
+        self.unavailable = unavailable or set()
+        self.calls: list[str] = []
+
+    def resolve(self, name: str, **variables: Any) -> ResolvedPrompt:
+        self.calls.append(name)
+        if name in self.unavailable:
+            from app.prompts.provider import PromptUnavailable
+
+            raise PromptUnavailable(f"{name}: production-промпт недоступен")
+        text = self.texts.get(name, f"Синтетическая инструкция {name}")
+        if name == "agent.digest.weekly.task" and name not in self.texts:
+            text = "{{period_start}}\n{{marks}}{{recap_block}}{{hard_week_instruction}}"
+        for key, value in variables.items():
+            text = text.replace("{{" + key + "}}", str(value))
+        version = self.versions.get(name, 1)
+        prompt = {"name": name, "version": version}
+        return ResolvedPrompt(name, text, version, prompt)
+
+    def preload(self) -> None:
+        return None
+
+
+class RecordingTracer:
+    """Сохраняет параметры generation без сети и текстовых наблюдений."""
+
+    name = "recording"
+
+    def __init__(self) -> None:
+        self.turns: list[dict[str, Any]] = []
+
+    def start_turn(self, **kwargs: Any) -> Any:
+        """Запоминает начало generation и возвращает пустое наблюдение."""
+        from app.core.tracing import NULL_OBSERVATION
+
+        self.turns.append(kwargs)
+        return NULL_OBSERVATION
+
+    async def aclose(self) -> None:
+        return None
+
+
 def make_app(
     connector: Any = None, tts: Any = None, background: Any = None, real_tts: bool = False, **create_kwargs: Any
 ) -> FastAPI:
@@ -143,6 +196,7 @@ def make_app(
     from tests.fake_live import FakeConnector
 
     live = connector or FakeConnector()
+    create_kwargs.setdefault("prompt_provider", FakePromptProvider())
     return create_app(
         live_factory=lambda: live,
         tts_factory=None if real_tts else (lambda: tts),

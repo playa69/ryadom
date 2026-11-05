@@ -12,6 +12,8 @@ import logging
 from typing import Protocol
 
 from app.core.config import GeminiSettings
+from app.core.tracing import NullTracer, Tracer
+from app.prompts.provider import PromptProvider, prompt_metadata
 from app.services import usage as model_usage
 
 logger = logging.getLogger("agent.gemini")
@@ -33,10 +35,6 @@ def parse_mood(args: dict | None) -> dict | None:
         intensity = 0.0
     return {"tone": args["tone"], "intensity": intensity}
 
-INSTRUCTIONS = (
-    "Ты определяешь эмоцию человека по его реплике. tone: neutral, sleepy (хочет спать, устал), angry (злость, оскорбления), "
-    "afraid (страх, тревога), sad, calm. intensity 0..1."
-)
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -52,17 +50,30 @@ class ToneClassifier(Protocol):
 
     async def warm(self) -> None: ...
 
-    async def classify(self, text: str) -> dict | None: ...
+    async def classify(
+        self, text: str, *, user_id: str | None = None, dialog_id: str | None = None
+    ) -> dict | None: ...
 
 
 class MoodClassifier:
-    def __init__(self, settings: GeminiSettings) -> None:
+    """Классификатор Gemini с production-инструкцией на каждый вызов."""
+
+    prompt_management = True
+
+    def __init__(
+        self,
+        settings: GeminiSettings,
+        prompt_provider: PromptProvider | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
         from google import genai
         from google.genai import types
 
         self._types = types
         self._model = MOOD_MODEL
         self._timeout = MOOD_TIMEOUT_SECONDS
+        self._prompt_provider = prompt_provider
+        self._tracer = tracer or NullTracer()
         options = None
         if settings.base_url:
             headers = {"X-Relay-Token": settings.relay_token.get_secret_value()} if settings.relay_token else None
@@ -73,25 +84,53 @@ class MoodClassifier:
         """Соединение открывается до первой реплики: холодный первый запрос через релей не укладывался в срок."""
         await self.classify("привет")
 
-    async def classify(self, text: str) -> dict | None:
+    async def classify(
+        self, text: str, *, user_id: str | None = None, dialog_id: str | None = None
+    ) -> dict | None:
+        if self._prompt_provider is None:
+            return None
+        try:
+            prompt = self._prompt_provider.resolve("agent.mood.instructions")
+        except Exception as error:
+            logger.warning("промпт классификатора недоступен: %s", type(error).__name__)
+            return None
+        trace = self._tracer.start_turn(
+            name="mood_classify_gemini",
+            session_id=dialog_id or "mood",
+            user_id=user_id,
+            model=self._model,
+            input=text,
+            metadata={"operation": "mood", **prompt_metadata(prompt)},
+            prompt=prompt.prompt,
+        )
         t = self._types
         config = t.GenerateContentConfig(
-            system_instruction=INSTRUCTIONS,
+            system_instruction=prompt.text,
             response_mime_type="application/json",
             response_json_schema=SCHEMA,
             temperature=0,
             max_output_tokens=60,
         )
-        for attempt in (1, 2):  # один повтор: редкий холодный или потерянный запрос
-            try:
-                response = await asyncio.wait_for(
-                    self._client.aio.models.generate_content(model=self._model, contents=text, config=config), self._timeout
-                )
-                meta = response.usage_metadata
-                if meta is not None:  # расход считается там же, где и у остальных моделей (agent_model_usage_total)
-                    model_usage.record(self._model, "mood", "input", "text", "tokens", meta.prompt_token_count or 0)
-                    model_usage.record(self._model, "mood", "output", "text", "tokens", meta.candidates_token_count or 0)
-                return parse_mood(json.loads(response.text))
-            except Exception as error:  # noqa: BLE001
-                logger.warning("классификатор тона (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
-        return None
+        try:
+            for attempt in (1, 2):  # один повтор: редкий холодный или потерянный запрос
+                try:
+                    response = await asyncio.wait_for(
+                        self._client.aio.models.generate_content(model=self._model, contents=text, config=config), self._timeout
+                    )
+                    meta = response.usage_metadata
+                    if meta is not None:  # расход считается там же, где и у остальных моделей (agent_model_usage_total)
+                        model_usage.record(self._model, "mood", "input", "text", "tokens", meta.prompt_token_count or 0)
+                        model_usage.record(self._model, "mood", "output", "text", "tokens", meta.candidates_token_count or 0)
+                        trace.update(
+                            usage={
+                                "input_text": meta.prompt_token_count or 0,
+                                "output_text": meta.candidates_token_count or 0,
+                            }
+                        )
+                    return parse_mood(json.loads(response.text))
+                except Exception as error:  # noqa: BLE001
+                    logger.warning("классификатор тона (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
+            trace.update(level="WARNING", status="классификатор не ответил")
+            return None
+        finally:
+            trace.end()

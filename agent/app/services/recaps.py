@@ -14,6 +14,8 @@ import re
 from typing import TYPE_CHECKING, Any, Literal
 
 from app.clients.background_model import BackgroundModel, ModelError
+from app.core.tracing import NullTracer, Tracer
+from app.prompts.provider import PromptProvider, PromptUnavailable, ResolvedPrompt, prompt_metadata
 
 if TYPE_CHECKING:
     from app.services.dialog_store import Dialog
@@ -31,15 +33,6 @@ RecapStatus = Literal["pending", "ready", "none"]
 
 _FORBIDDEN = re.compile(r"\b(надо|должен|должна)\b", re.IGNORECASE)
 
-SYSTEM_PROMPT = (
-    "Ты — Рядом, тёплый голосовой спутник для эмоциональной поддержки. Подведи итог разговора для самого человека: "
-    "2–4 предложения связным текстом в свободной форме, без списков и заголовков. Что было в разговоре, что для человека стало главным, "
-    "и, если о чём-то договорились, это тоже. Пиши от второго лица, на «ты», спокойно и бережно, без оценок и диагнозов, "
-    "без советов со словом «надо» и «должен», без восклицательных знаков и эмодзи. Не цитируй реплики дословно, только своими словами. "
-    f"Не длиннее {RECAP_MAX} знаков. Ответь только текстом итога."
-)
-
-
 def user_chars(dialog: "Dialog") -> int:
     """Сколько знаков сказал человек за весь разговор."""
     return sum(len(m.text.strip()) for m in dialog.messages if m.role == "user")
@@ -51,7 +44,7 @@ def eligible(dialog: "Dialog") -> bool:
     return dialog.saved and not dialog.crisis_seen and user_chars(dialog) >= MIN_USER_CHARS
 
 
-def build_messages(dialog: "Dialog") -> list[dict[str, str]]:
+def build_messages(dialog: "Dialog", prompt: ResolvedPrompt) -> list[dict[str, str]]:
     lines: list[str] = []
     size = 0
     for message in reversed(dialog.messages[-PROMPT_MESSAGES:]):
@@ -61,7 +54,7 @@ def build_messages(dialog: "Dialog") -> list[dict[str, str]]:
             break
         lines.append(line)
     body = "Разговор:\n" + "\n".join(reversed(lines))
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": body}]
+    return [{"role": "system", "content": prompt.text}, {"role": "user", "content": body}]
 
 
 def clean_recap(value: Any) -> str | None:
@@ -86,17 +79,44 @@ def parse_model_reply(reply: str) -> str | None:
     return clean_model_recap(reply.strip().strip('"«»').strip())
 
 
-async def make_recap(model: BackgroundModel | None, dialog: "Dialog", timeout: float) -> str | None:
-    """Итог разговора от модели. None, если модели нет или она не ответила, или ответ не годится: тогда итог можно завести
-    вручную."""
-    if model is None:
+async def make_recap(
+    model: BackgroundModel | None,
+    dialog: "Dialog",
+    timeout: float,
+    prompt_provider: PromptProvider | None = None,
+    tracer: Tracer | None = None,
+) -> str | None:
+    """Итог разговора от модели с версией инструкции в отдельной трассе."""
+    if model is None or prompt_provider is None:
         return None
     try:
-        reply = await asyncio.wait_for(model.complete(build_messages(dialog)), timeout)
-    except (ModelError, TimeoutError):
-        logger.warning("recap model failed dialog=%s", dialog.id)
+        prompt = prompt_provider.resolve("agent.recap.system")
+    except PromptUnavailable:
+        logger.warning("recap prompt unavailable dialog=%s", dialog.id)
         return None
-    recap = parse_model_reply(reply)
-    if recap is None:
-        logger.info("recap rejected by the validator dialog=%s", dialog.id)
-    return recap
+    messages = build_messages(dialog, prompt)
+    trace = (tracer or NullTracer()).start_turn(
+        name="dialog_recap",
+        session_id=dialog.id,
+        user_id=dialog.user_id,
+        model=model.name,
+        input=messages,
+        metadata={"operation": "recap", **prompt_metadata(prompt)},
+        prompt=prompt.prompt,
+        tags=["background", "recap"],
+    )
+    try:
+        try:
+            reply = await asyncio.wait_for(model.complete(messages), timeout)
+        except (ModelError, TimeoutError):
+            logger.warning("recap model failed dialog=%s", dialog.id)
+            trace.update(level="WARNING", status="модель не ответила")
+            return None
+        trace.update(output=reply)
+        recap = parse_model_reply(reply)
+        if recap is None:
+            logger.info("recap rejected by the validator dialog=%s", dialog.id)
+            trace.update(level="WARNING", status="ответ не прошёл проверку")
+        return recap
+    finally:
+        trace.end()

@@ -26,7 +26,7 @@
 
 | Secret | Namespace | Ключи |
 |---|---|---|
-| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси для фоновой модели), необязательно `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (ключи проекта в Langfuse: заданы оба — трейсинг включён, нет ни одного — выключен, один — агент не стартует) |
+| `agent-secrets` | `agent` | `AGENT_INTERNAL_TOKEN`, `AGENT_API_TOKEN` (ключ прокси для фоновой модели), `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (оба обязательны: production-промпты и трейсинг; задан один — агент не стартует) |
 | `agent-gemini` | `agent` | **обязателен**: `GEMINI_API_KEY`, `GEMINI_BASE_URL` (адрес релея), `GEMINI_RELAY_TOKEN`. Без Secret'а или любого из трёх ключей под не запускается (`CreateContainerConfigError`), а без `GEMINI_API_KEY` агент не стартует |
 | `agent-db` | `agent` | `DIALOG_DATABASE_URL` — DSN PostgreSQL диалогов (пароль роли `agent` из `agent-db-credentials`, ns ryadom-db); создание — «Хранилище диалогов (PostgreSQL…)» |
 | `agent-db-credentials` | `ryadom-db` | `password` роли `agent` |
@@ -72,7 +72,7 @@ cd ..
 
 # 2. Секреты агента (значения у администратора) и внутренний токен в app-secrets (см. выше). Без agent-gemini и agent-db под не
 #    запустится: agent-gemini обязателен (три ключа, «Gemini Live: релей и Secret»), agent-db — «Хранилище диалогов»
-kubectl -n agent create secret generic agent-secrets --from-env-file=<файл: AGENT_INTERNAL_TOKEN, AGENT_API_TOKEN (ключ прокси фоновой модели), при трейсинге LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY>
+kubectl -n agent create secret generic agent-secrets --from-env-file=<файл: AGENT_INTERNAL_TOKEN, AGENT_API_TOKEN (ключ прокси фоновой модели), LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY>
 
 # 3. Сеть: без неё api не достучится до агента, а агент — до прокси фоновой модели (релей Gemini идёт по :443, он в 05-network-policy-agent.yaml)
 kubectl apply -f k8s/namespaces/manifests/08-network-policy-agent-service.yaml
@@ -132,10 +132,10 @@ kubectl -n agent logs deploy/agent | grep -E "прогрев|dialog started|tts 
 4. **Образ без espeak-ng.** Слой с `espeak-ng` из Dockerfile убран, образ меньше. Озвучка фиксированных фраз идёт через Gemini:
    после выката в `/health/ready` поле `tts` должно быть `gemini-live:…`, а в журнале `прогрев озвучки закончен: озвучено N,
    не удалось 0`.
-5. **Трейсинг Langfuse включается самими ключами.** Флага `LANGFUSE_ENABLED` нет: заданы оба ключа
-   (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) в `agent-secrets` — трейсинг включён, нет ни одного — выключен, один — агент не
-   стартует. До выката убедиться, что оба ключа в `agent-secrets` на месте, иначе трейсинг тихо выключится. Тексты реплик в
-   Langfuse не уходят никогда, отдельного приёмника расхода (`LANGFUSE_USAGE_SINK`) нет.
+5. **Langfuse нужен и промптам, и трейсингу.** Флага `LANGFUSE_ENABLED` нет: оба ключа
+   (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) в `agent-secrets` обязательны, один без второго — агент не стартует. Без ключей
+   production-инструкции недоступны, локального резерва нет. Тексты реплик в трассы не уходят, отдельного приёмника расхода
+   (`LANGFUSE_USAGE_SINK`) нет.
 6. **Новая метка `purpose=privacy`** в метрике `agent_gemini_opens_total` и в журнале (`gemini live opened … purpose=privacy`):
    то, что человек убрал из памяти (заметку, всю память, паузу, переключатели «Запоминать чувствительное» и «Опираться на прошлые
    разговоры», удаление разговора), переоткрывает сессию Gemini к следующему ходу, чтобы убранное не оставалось в её контексте.
@@ -351,14 +351,12 @@ helm upgrade prometheus prometheus-community/kube-prometheus-stack -n monitoring
 `agent_model_usage_total` отдаёт ряды после первого диалога. Хватает ли диска на 14 дней: `prometheus_tsdb_storage_blocks_bytes`
 через пару дней, умноженный на 14/дни, должен быть меньше `retentionSize` (3GB), иначе старые блоки уйдут раньше срока.
 
-## Трейсинг Langfuse
+## Langfuse: промпты и трейсинг
 
-Трейсинг LLM-ходов идёт в self-hosted Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, адрес в коде `LANGFUSE_HOST`): трасса
-на ход диалога (расшифровка, ответ, токены Gemini, задержки этапов), сессия Langfuse = диалог. Включается ключами проекта в Secret
-`agent-secrets` (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`): заданы оба — трейсинг включён, нет ни одного — выключен, один без
-второго — агент не стартует. Отдельных флагов нет. **Тексты реплик в Langfuse не уходят никогда**: вместо них число символов и
-слов, длительность речи, токены и задержки. Расход ходов лежит в самих трассах; отдельного приёмника расхода в Langfuse нет, расход
-моделей по-прежнему считается в базе и в Prometheus (раздел выше). В журнале агента при старте `tracing=` в строке `agent started`.
+Langfuse (`http://langfuse-web.infra.svc.cluster.local:3000`, адрес в коде `LANGFUSE_HOST`) — обязательный источник всех
+статических инструкций моделей и приёмник их трасс. Оба ключа проекта (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) обязательны
+в Secret `agent-secrets`; один без второго — агент не стартует. Локальных резервных текстов у агента нет. Без доступной
+production-версии и действующего SDK-кэша соответствующий модельный вызов завершается ошибкой, а не подстановкой строки из кода.
 
 Сеть — отдельным решением администратора:
 
@@ -367,8 +365,30 @@ kubectl apply -f k8s/namespaces/manifests/05-network-policy-agent.yaml   # egres
 kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingress infra:3000 от ns agent
 ```
 
-Ключи в Secret кладёт администратор (в git их нет), затем `kubectl -n agent rollout restart deploy/agent`. **Откат:** убрать оба
-ключа из Secret и перезапустить агента.
+Перед первым выкатом агента с prompt management администратор отдельно проверяет и заполняет каталог. Seed хранится локально у
+администратора вне репозитория и содержит ровно 15 имён из `agent/app/prompts/catalog.py`; в git его не копируют. Команды
+выполняются из `agent/` в окружении с ключами и доступом к Langfuse:
+
+```bash
+uv run python scripts/sync_prompts.py --check                         # до загрузки: посмотреть missing/present
+uv run python scripts/sync_prompts.py --seed /absolute/path/outside/repository/prompts.json
+uv run python scripts/sync_prompts.py --check                         # после: у всех 15 present и номер версии
+```
+
+Скрипт создаёт только отсутствующие production-промпты. Совпадающие пропускает как `same`, отличающиеся — как
+`changed — skipped`; административные версии не перезаписываются. Старый агент созданные объекты игнорирует, поэтому загрузка и
+выкат кода — отдельные операции.
+
+Изменение без выката выполняется в Langfuse UI: создать новую версию, проверить её и перевести на неё label `production`.
+Черновик без label не действует. Новые сессии и вызовы применяют версию в течение 60 секунд (SDK-кэш), уже открытая сессия не
+меняет инструкцию посреди хода. **Откат промпта:** вернуть `production` на прежнюю версию; перезапуск агента и удаление ключей
+не требуются. Удалять ключи Langfuse нельзя: это отключит не только трейсинг, но и источник инструкций.
+
+В generation диалога, TTS, рекапов, дайджестов, классификаторов и памяти проверять prompt link и версии; у составных инструкций
+дополнительно `metadata.prompt_components` со значениями `name`, `version`, `source=langfuse`. **Тексты реплик и инструкций в
+метаданные не попадают**: вместо реплик остаются число символов и слов, длительность речи, токены и задержки. Расход моделей
+по-прежнему считается в базе и Prometheus. После выката дополнительно смотреть очередь Langfuse worker и отсутствие новых
+`OOMKilled`: собственные generation фоновых операций увеличивают нагрузку.
 
 ## Память агента (`MEMORY_*`)
 

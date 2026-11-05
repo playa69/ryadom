@@ -26,6 +26,7 @@ from app.core.tracing import build_tracer
 from app.memory.backend import MemoryBackend
 from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.extractor import NotesExtractor
+from app.prompts.provider import PromptProvider, build_prompt_provider
 from app.services.dialog_db import DialogDatabase
 from app.services.dialog_purge import purge_loop
 from app.services.dialog_store import GREETINGS, DialogStore
@@ -116,6 +117,7 @@ def create_app(
     database_factory: Callable[[], DialogDatabase | None] | None = None,
     memory_settings: MemorySettings | None = None,
     sber_factory: Callable[[], "LiveConnector | None"] | None = None,
+    prompt_provider: PromptProvider | None = None,
 ) -> FastAPI:
     """Собирает FastAPI-приложение. Фабрики подменяют тесты; по умолчанию всё берётся из конфига.
 
@@ -145,6 +147,7 @@ def create_app(
     make_live = live_factory or _build_live
     make_sber = sber_factory or (_build_sber if live_factory is None else (lambda: None))
     make_background = background_factory or (lambda: build_background_model(APP_CONFIG.background_model))
+    prompts = prompt_provider or build_prompt_provider(APP_CONFIG.langfuse)
 
     def make_configured_database() -> DialogDatabase | None:
         # DIALOG_DATABASE_URL задан — диалоги в PostgreSQL; пусто — только в памяти процесса (разработка).
@@ -164,6 +167,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store: DialogStore = app.state.store
+        prompts.preload()
+        tracer = build_tracer(APP_CONFIG.langfuse)
+        app.state.tracer = tracer
         # Хранилище диалогов (PostgreSQL) и память (Cognee) независимы. Без хранилища диалоги живут в памяти процесса
         # и пропадают при перезапуске (разработка).
         database = make_database()
@@ -190,22 +196,20 @@ def create_app(
             memory_service.start_outbox()  # очередь индекса прошлых разговоров в Cognee
         notes_model = _build_notes_model(memory_cfg)
         if notes_model is not None and isinstance(memory_service, CogneeMemoryBackend):
-            memory_service.set_extractor(NotesExtractor(notes_model, memory_service.notes))
+            memory_service.set_extractor(NotesExtractor(notes_model, memory_service.notes, prompts, tracer))
         if memory_service.status() == "unavailable":
             logger.error("memory is NOT available: no COGNEE_BASE_URL/COGNEE_SERVICE_EMAIL/COGNEE_SERVICE_PASSWORD")
         live = make_live()
         app.state.live = live
         budget = TokenBudget(APP_CONFIG.gemini)
         app.state.budget = budget
-        tracer = build_tracer(APP_CONFIG.langfuse)
-        app.state.tracer = tracer
         if tts_factory is not None:
             app.state.tts = tts_factory()
             warm_up_parallel = 1  # по одной фразе за раз
         else:
             from app.clients.gemini_live import GeminiLiveTts
 
-            voice_tts = GeminiLiveTts(live, budget=budget)
+            voice_tts = GeminiLiveTts(live, budget=budget, prompt_provider=prompts, tracer=tracer)
             items = APP_CONFIG.speech.tts_cache_items
             app.state.tts = CachedTts(voice_tts, items) if items else voice_tts
             warm_up_parallel = WARM_UP_GEMINI_SESSIONS
@@ -215,6 +219,9 @@ def create_app(
         app.state.pipelines = {"gemini": (live, lambda: app.state.tts)}
         app.state.moods = {}
         sber = make_sber()
+        if sber is not None:
+            sber.prompt_provider = prompts
+            sber.tracer = tracer
         salute: CachedTts | None = None
         if sber is not None:
             from app.clients.gemini_live import is_quota_error
@@ -246,6 +253,8 @@ def create_app(
         app.state.background = background
         store.recap_model = background
         store.recap_timeout_seconds = APP_CONFIG.dialog.recap_timeout_seconds
+        store.prompt_provider = prompts
+        store.tracer = tracer
         store.retention_days = APP_CONFIG.dialog.retention_days
         logger.info(
             "agent started: voice=%s default=%s tts=%s background=%s dialogs=%s memory=%s tracing=%s gemini budget limit=%d (measure only)",
@@ -319,6 +328,7 @@ def create_app(
     app.state.memory = None
     app.state.budget = None  # учёт токенов Gemini (в lifespan)
     app.state.tracer = None  # подменяется в lifespan (build_tracer); None до старта приложения
+    app.state.prompt_provider = prompts
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(dialogs.router)

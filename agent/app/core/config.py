@@ -237,11 +237,11 @@ class MemoryReclaimSettings(BaseAppSettings):
 
 
 class LangfuseSettings(BaseAppSettings):
-    """Langfuse (self-hosted, ns `infra`, тот же RU-кластер, что и БД диалогов): трейсинг LLM-ходов.
+    """Langfuse (self-hosted, ns `infra`): production-инструкции моделей и трейсинг их вызовов.
 
-    Трейсинг включается, когда заданы оба ключа проекта (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`: pk-lf/sk-lf, лежат в Secret
-    `agent-secrets`, в ConfigMap их быть не должно); без ключей трассы не пишутся. Задан только один ключ — сервис не стартует
-    (fail-fast).
+    Оба ключа проекта (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`: pk-lf/sk-lf) лежат в Secret `agent-secrets`; задан только
+    один — сервис не стартует (fail-fast). Без ключей трассы не пишутся, а production-инструкции недоступны: локального резерва
+    у модельных вызовов нет.
 
     Трасса на каждый ход (`app/core/tracing.py`): число символов и слов, длительность речи, токены и задержки этапов. Тексты
     реплик людей и агента в Langfuse не уходят: они маскируются всегда.

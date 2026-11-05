@@ -107,6 +107,8 @@ class Tracer(Protocol):
         input: Any = None,
         metadata: dict[str, Any] | None = None,
         tags: list[str] | None = None,
+        prompt: Any = None,
+        prompt_components: list[dict[str, Any]] | None = None,
     ) -> Observation: ...
 
     def start_span(
@@ -225,12 +227,27 @@ class LangfuseTracer:
         input: Any = None,
         metadata: dict[str, Any] | None = None,
         tags: list[str] | None = None,
+        prompt: Any = None,
+        prompt_components: list[dict[str, Any]] | None = None,
     ) -> Observation:
         """Корень трассы хода: generation с привязкой к сессии диалога и человеку."""
+        if prompt_components is not None:
+            metadata = {
+                **(metadata or {}),
+                "prompt_components": [
+                    {key: component[key] for key in ("name", "version", "source")} for component in prompt_components
+                ],
+            }
+        kwargs: dict[str, Any] = {
+            "name": name,
+            "model": model,
+            "input": _mask(input),
+            "metadata": _mask_metadata(metadata),
+        }
+        if prompt is not None:
+            kwargs["prompt"] = prompt
         try:
-            generation = self._client.start_generation(
-                name=name, model=model, input=_mask(input), metadata=_mask_metadata(metadata)
-            )
+            generation = self._client.start_generation(**kwargs)
             generation.update_trace(session_id=session_id, user_id=user_id, tags=tags)
             return LangfuseObservation(generation)
         except Exception as error:  # noqa: BLE001
