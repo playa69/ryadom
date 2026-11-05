@@ -232,6 +232,8 @@ def test_changes_are_pending_during_the_final_pass_and_then_list_the_notes_of_th
         NotesExtractor(
             GateModel({"ops": [{"op": "add", "kind": "situation", "text": "Работает в продажах", "quote": "работаю в продажах"}]}),
             memory.notes,
+            client.app.state.prompt_provider,
+            client.app.state.tracer,
         )
     )
     add(client, user, "Любит море")  # заметка без этого разговора в блок не попадает

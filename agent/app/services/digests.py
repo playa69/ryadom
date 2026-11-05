@@ -19,16 +19,7 @@ FACTORS = {"work": "работа", "people": "близкие", "health": "здо
 WEEK_SENTENCES = (3, 6)
 HARD_WEEK_DAYS = 3
 
-SYSTEM_PROMPT = (
-    "Ты — Рядом, тёплый голосовой спутник для эмоциональной поддержки. Напиши человеку итоги недели: общий обзорный текст в "
-    "свободной форме. Это взгляд на неделю в целом, а не пересказ отдельных разговоров: не привязывай мысли к конкретному "
-    "разговору или дню, не говори «в понедельник» и «в одном из разговоров», не цитируй и не пересказывай реплики и итоги. "
-    "Из разговоров и итогов бери общие темы и то, что на этой неделе было для человека важным, и как в целом менялось "
-    "настроение. Не перечисляй статистику: ни числа дней, ни число разговоров, ни «чаще всего». Обращайся на «ты». "
-    "Не оценивай человека, не ставь диагнозов, не давай советов со словом «надо» и «должен», не считай дни подряд, не называй "
-    "средний балл числом. Никаких цитат: ни в кавычках, ни дословно, только своими словами. Пиши спокойно и бережно, без "
-    "восклицательных знаков и без эмодзи. Уровни: 1 — тяжело, 2 — так себе, 3 — нормально, 4 — хорошо, 5 — отлично."
-)
+from app.prompts.provider import ResolvedPrompt
 
 _FORBIDDEN = re.compile(r"\b(надо|должен|должна|нужно)\b", re.IGNORECASE)
 _AVERAGE = re.compile(r"средн\w*\s+(балл|оценк|значени|уровен)|\d+[.,]\d+\s*(из|/)\s*5|\b\d+\s*/\s*5\b", re.IGNORECASE)
@@ -58,20 +49,17 @@ def sentence_count(text: str) -> int:
 
 
 def build_messages(
-    kind: Literal["week"], period_start: str, marks: list[dict[str, Any]], recaps: list[dict[str, Any]] | None = None
+    kind: Literal["week"],
+    period_start: str,
+    marks: list[dict[str, Any]],
+    recaps: list[dict[str, Any]] | None = None,
+    *,
+    system: ResolvedPrompt,
+    task: ResolvedPrompt,
 ) -> list[dict[str, str]]:
-    lines = [f"{m['date']}: {m['mood']}" + (f", фактор: {FACTORS[m['factor']]}" if m.get("factor") else "") for m in marks]
-    task = (
-        f"Итоги недели с {period_start}. Напиши {WEEK_SENTENCES[0]}–{WEEK_SENTENCES[1]} предложений свободным текстом: "
-        "что происходило в его жизни и разговорах на этой неделе и как менялось настроение. Опирайся на общие темы итогов разговоров, "
-        "отметки нужны для динамики. Без цифр, без среднего балла, без цитат: только своими словами."
-    )
-    if stats_of(marks)["hardDays"] >= HARD_WEEK_DAYS:
-        task += " Закончи мягкой строкой про людей рядом."
-    body = task + "\nОтметки по дням:\n" + "\n".join(lines)
-    if recaps:
-        body += "\nИтоги разговоров недели, без привязки к дням (написаны для самого человека):\n" + "\n".join(f"- {r['text']}" for r in recaps)
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": body}]
+    """Собирает сообщения из уже скомпилированных инструкций Langfuse."""
+    del kind, period_start, marks
+    return [{"role": "system", "content": system.text}, {"role": "user", "content": task.text}]
 
 
 def has_quotation(text: str, source_texts: list[str] | None = None) -> bool:

@@ -34,7 +34,9 @@ from prometheus_client import REGISTRY
 from starlette.testclient import WebSocketDenialResponse
 
 from app.api.dialog_session import MAX_AUDIO_BYTES, PRE_ROLL_BYTES
-from app.clients.gemini_live import VERBATIM_INSTRUCTIONS, LiveError, LiveEvent, LiveHistory
+from app.clients.gemini_live import LiveError, LiveEvent, LiveHistory
+
+TTS_INSTRUCTIONS = "Синтетическая инструкция agent.dialog.gemini-tts-verbatim"
 from app.core.config import APP_CONFIG
 from app.services.dialog_store import GREETING_NEW, GREETING_RESUMED
 from app.services.replies import CRISIS_REPLY, CRISIS_SAFETY_TEXT, split_sentences
@@ -141,7 +143,7 @@ class ScriptedLink(FakeLink):
             if self.cfg.audio:
                 events += [LiveEvent("audio", data=FAKE_PCM), LiveEvent("audio", data=FAKE_PCM)]
         events += [LiveEvent("generation_complete")]
-        if self.instructions == VERBATIM_INSTRUCTIONS:
+        if self.instructions == TTS_INSTRUCTIONS:
             # Сессия озвучки фразы: Google присылает turn_complete после звука, и прогрев закрывает её, прежде чем открыть
             # следующую (иначе каждая фраза ждала бы дочитывания расхода до таймаута).
             events.append(LiveEvent("turn_complete"))

@@ -290,6 +290,8 @@ class DialogStore:
         # итог сам, а черновика «Предзаполнить» нет).
         self.recap_model: Any = None
         self.recap_timeout_seconds = 20.0
+        self.prompt_provider: Any = None
+        self.tracer: Any = None
         # Настройка «Подводить итог автоматически» (`dialog_settings`): человек → включено; нет записи — включено.
         self._recap_enabled: dict[str, bool] = {}
         self._persisted_settings: dict[str, bool] = {}
@@ -546,7 +548,9 @@ class DialogStore:
 
     async def _auto_recap(self, dialog: Dialog) -> None:
         """Автоматический итог в фоне: не заменяет ручной и не пишет текст итога в журнал."""
-        recap = await recaps.make_recap(self.recap_model, dialog, self.recap_timeout_seconds)
+        recap = await recaps.make_recap(
+            self.recap_model, dialog, self.recap_timeout_seconds, self.prompt_provider, self.tracer
+        )
         summary = dialog.summary
         if summary is None or summary.get("recapStatus") != "pending":
             return  # пока считалось, человек написал итог сам или разговор удалили
@@ -568,7 +572,9 @@ class DialogStore:
 
     async def draft_recap(self, dialog: Dialog) -> str | None:
         """Черновик итога для «Предзаполнить»: ничего не сохраняется. None — модель не ответила."""
-        return await recaps.make_recap(self.recap_model, dialog, self.recap_timeout_seconds)
+        return await recaps.make_recap(
+            self.recap_model, dialog, self.recap_timeout_seconds, self.prompt_provider, self.tracer
+        )
 
     def can_recap(self, dialog: Dialog) -> bool:
         return recaps.eligible(dialog)

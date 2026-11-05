@@ -133,6 +133,36 @@ def test_the_model_recap_is_the_free_text(user_id):
         assert ready["recap"] == "Ты говорил о работе, и стало легче." and ready["recapSource"] == "auto"
 
 
+def test_recap_links_its_prompt_version_without_dialog_text(user_id, monkeypatch):
+    """`openspec/changes/add-langfuse-prompt-management`, «Видимость использованной версии»."""
+    from tests.conftest import FakePromptProvider, RecordingTracer
+
+    provider = FakePromptProvider(versions={"agent.recap.system": 12})
+    tracer = RecordingTracer()
+    monkeypatch.setattr("app.main.build_tracer", lambda settings: tracer)
+    with make_client(background=SlowChat("Ты говорил о работе, и стало легче."), prompt_provider=provider) as client:
+        dialog_id = talk(client, user_id)
+        end(client, user_id, dialog_id)
+        wait_status(client, user_id, dialog_id, "ready")
+    turn = next(item for item in tracer.turns if item["name"] == "dialog_recap")
+    assert turn["prompt"] == {"name": "agent.recap.system", "version": 12}
+    assert turn["session_id"] == dialog_id and turn["user_id"] == user_id
+    assert turn["metadata"]["prompt_version"] == 12
+    assert LONG not in str(turn["metadata"])
+
+
+def test_unavailable_recap_prompt_leaves_no_recap(user_id):
+    """`openspec/changes/add-langfuse-prompt-management`, «Работа только с инструкциями Langfuse»."""
+    from tests.conftest import FakePromptProvider
+
+    provider = FakePromptProvider(unavailable={"agent.recap.system"})
+    with make_client(background=SlowChat("Ты говорил о работе, и стало легче."), prompt_provider=provider) as client:
+        dialog_id = talk(client, user_id)
+        end(client, user_id, dialog_id)
+        summary = wait_status(client, user_id, dialog_id, "none")
+    assert summary["recap"] is None
+
+
 # ─── когда итога нет ──────────────────────────────────────────────────────────
 
 

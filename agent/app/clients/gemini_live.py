@@ -29,6 +29,8 @@ from app.services.gemini_budget import estimate_turn
 if TYPE_CHECKING:
     from app.services.gemini_budget import TokenBudget
 from app.core.reclaim import forget_cancellation
+from app.core.tracing import NullTracer, Tracer
+from app.prompts.provider import PromptProvider, PromptUnavailable, prompt_metadata
 
 logger = logging.getLogger("agent.gemini")
 
@@ -380,12 +382,6 @@ class GeminiLiveConnector:
 
 # ─── Озвучка готового текста ──────────────────────────────────────────────────
 
-VERBATIM_INSTRUCTIONS = (
-    "Ты — голос приложения «Слышу Рядом». Тебе дают фразу, и ты произносишь её дословно, по-русски, спокойным тёплым "
-    "голосом, без своих слов, без вступлений и без добавлений."
-)
-
-
 class GeminiLiveTts:
     """Фиксированные фразы агента (приветствие, кризисный ответ) тем же голосом, каким модель отвечает в диалоге.
 
@@ -397,10 +393,19 @@ class GeminiLiveTts:
     фразы идут в окно, как у разговора.
     """
 
-    def __init__(self, connector: LiveConnector, timeout_seconds: int = 30, budget: "TokenBudget | None" = None) -> None:
+    def __init__(
+        self,
+        connector: LiveConnector,
+        timeout_seconds: int = 30,
+        budget: "TokenBudget | None" = None,
+        prompt_provider: PromptProvider | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
         self._connector = connector
         self._timeout = timeout_seconds
         self._budget = budget
+        self._prompt_provider = prompt_provider
+        self._tracer = tracer or NullTracer()
         self.name = connector.name
         self._model = connector.model
         self._drains: set[asyncio.Task[None]] = set()
@@ -410,13 +415,40 @@ class GeminiLiveTts:
             self._budget.on_quota_error("tts")
 
     async def synthesize(self, text: str, voice: Voice) -> bytes:
+        if self._prompt_provider is None:
+            raise TtsError("Langfuse: production-промпт озвучки недоступен")
+        try:
+            prompt = self._prompt_provider.resolve("agent.dialog.gemini-tts-verbatim")
+        except PromptUnavailable as error:
+            raise TtsError(str(error)) from error
+        trace = self._tracer.start_turn(
+            name="gemini_tts_phrase",
+            session_id="tts",
+            user_id=None,
+            model=self._model,
+            input=text,
+            metadata={"operation": "tts", "voice": voice, **prompt_metadata(prompt)},
+            prompt=prompt.prompt,
+            tags=["gemini_live", "tts"],
+        )
+        try:
+            audio = await self._synthesize(text, voice, prompt.text)
+            trace.update(metadata={"audio_bytes": len(audio)})
+            return audio
+        except Exception as error:
+            trace.update(level="ERROR", status=type(error).__name__)
+            raise
+        finally:
+            trace.end()
+
+    async def _synthesize(self, text: str, voice: Voice, instructions: str) -> bytes:
         budget = self._budget
         if budget is not None and budget.cooling():
             raise TtsError("Gemini Live: пауза после превышения квоты, фраза не озвучена")
-        opening = budget.opening(budget.open_estimate([VERBATIM_INSTRUCTIONS])) if budget is not None else None
+        opening = budget.opening(budget.open_estimate([instructions])) if budget is not None else None
         began = time.monotonic()
         try:
-            link = await self._connector.open(voice, VERBATIM_INSTRUCTIONS)
+            link = await self._connector.open(voice, instructions)
         except BaseException as error:
             if budget is not None:
                 budget.cancel(opening)

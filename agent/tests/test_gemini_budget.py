@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY, generate_latest
 
 from app.clients.gemini_live import (
-    VERBATIM_INSTRUCTIONS,
     GeminiLiveTts,
     LiveError,
     LiveEvent,
@@ -29,8 +28,21 @@ from app.core.config import APP_CONFIG, GeminiSettings
 from app.main import SPOKEN_PHRASES
 from app.services.gemini_budget import TokenBudget, estimate_open, estimate_turn, text_tokens
 from app.services.replies import split_sentences
-from tests.conftest import AUTH, FakeTts, audio_in_frame, has, make_app, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import (
+    AUTH,
+    FakePromptProvider,
+    FakeTts,
+    audio_in_frame,
+    has,
+    make_app,
+    read_frames,
+    send_user_message,
+    start_dialog,
+    ws_url,
+)
 from tests.fake_live import FakeConnector, FakeLink, reply_done
+
+TTS_INSTRUCTIONS = "Синтетическая инструкция agent.dialog.gemini-tts-verbatim"
 from tests.test_live_context import refreshed, say, wait_until
 
 FIRST, SECOND, THIRD = "Первая реплика", "Вторая реплика", "Третья реплика"
@@ -317,11 +329,21 @@ def test_quota_error_does_not_lower_the_limit() -> None:
 # ─── Озвучка фраз ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+async def test_tts_does_not_connect_when_its_prompt_is_unavailable() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Работа только с инструкциями Langfuse»."""
+    connector = FakeConnector()
+    provider = FakePromptProvider(unavailable={"agent.dialog.gemini-tts-verbatim"})
+    tts = GeminiLiveTts(connector, budget=make_budget(Clock()), prompt_provider=provider)
+    with pytest.raises(TtsError):
+        await tts.synthesize("Привет", "male")
+    assert connector.open_calls == []
+
+
 async def test_tts_fails_fast_during_the_cooldown_without_connecting() -> None:
     connector = FakeConnector()
     budget = make_budget(Clock())
     budget.on_quota_error("open")
-    tts = GeminiLiveTts(connector, budget=budget)
+    tts = GeminiLiveTts(connector, budget=budget, prompt_provider=FakePromptProvider())
     with pytest.raises(TtsError):
         await tts.synthesize("Привет", "male")
     assert connector.open_calls == []
@@ -331,7 +353,7 @@ async def test_tts_quota_error_starts_the_cooldown() -> None:
     connector = FakeConnector()
     connector.quota_from = 1
     budget = make_budget(Clock())
-    tts = GeminiLiveTts(connector, budget=budget)
+    tts = GeminiLiveTts(connector, budget=budget, prompt_provider=FakePromptProvider())
     errors, opened = sample("agent_gemini_quota_errors_total", where="tts"), sample("agent_gemini_opens_total", purpose="tts", result="quota")
     with pytest.raises(TtsError):
         await tts.synthesize("Привет", "male")
@@ -346,7 +368,7 @@ async def test_tts_quota_error_starts_the_cooldown() -> None:
 async def test_tts_internal_error_1011_does_not_start_the_cooldown() -> None:
     connector = RefusingConnector({1: INTERNAL_1011}, turn_complete=True)
     budget = make_budget(Clock())
-    tts = GeminiLiveTts(connector, budget=budget)
+    tts = GeminiLiveTts(connector, budget=budget, prompt_provider=FakePromptProvider())
     errors = sample("agent_gemini_quota_errors_total", where="tts")
     with pytest.raises(TtsError):
         await tts.synthesize("Привет", "male")
@@ -360,10 +382,10 @@ async def test_tts_internal_error_1011_does_not_start_the_cooldown() -> None:
 async def test_tts_open_and_phrase_are_counted_in_the_window() -> None:
     connector = FakeConnector()
     budget = make_budget(Clock(), GEMINI_TPM_LIMIT=100_000)
-    tts = GeminiLiveTts(connector, budget=budget)
+    tts = GeminiLiveTts(connector, budget=budget, prompt_provider=FakePromptProvider())
     await tts.synthesize("Привет", "male")
     await tts.drained()  # расход фразы дочитывается в фоне, после чего резерв закрывается
-    assert budget.window_tokens() == estimate_open([VERBATIM_INSTRUCTIONS]) + estimate_turn("Произнеси дословно, без добавлений: «Привет»")
+    assert budget.window_tokens() == estimate_open([TTS_INSTRUCTIONS]) + estimate_turn("Произнеси дословно, без добавлений: «Привет»")
     assert budget.reserved_tokens() == 0
     assert connector.links[0].closed
 
@@ -397,7 +419,7 @@ def test_usage_of_the_turn_replenishes_the_window(user_id: str, tune: Callable[.
 
 def test_a_small_usage_does_not_count_the_open_twice(user_id: str, tune: Callable[..., None]) -> None:
     tune(tpm_limit=400_000)
-    connector = FakeConnector(usage={"input_text": 344, "input_audio": 156, "output_audio": 100})
+    connector = FakeConnector(usage={"input_text": 1, "input_audio": 156, "output_audio": 100})
     with talk(connector, user_id) as (_, ws, budget):
         say(ws, "c-1", FIRST)
         link = connector.links[0]

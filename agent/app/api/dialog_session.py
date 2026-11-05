@@ -67,6 +67,13 @@ from app.core.metrics import (
 )
 from app.core.reclaim import forget_cancellation
 from app.core.tracing import NullTracer, Observation, Tracer
+from app.prompts.provider import (
+    PromptProvider,
+    PromptUnavailable,
+    ResolvedPrompt,
+    components_metadata,
+    prompt_metadata,
+)
 from app.services import usage as model_usage
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.gemini_budget import DEFAULT_TURN_TOKENS, PCM_BYTES_PER_SECOND, TokenBudget, estimate_turn
@@ -79,10 +86,8 @@ from app.services.replies import (
     is_echo,
     is_foreign_noise,
     is_language_lecture,
-    memory_block,
     split_sentences,
     strip_foreign_script,
-    system_prompt,
 )
 
 logger = logging.getLogger("agent.live")
@@ -116,12 +121,6 @@ MEMORY_WAIT_SECONDS = 1.5
 COOLDOWN_WAIT_SECONDS = 1.5
 # Пауза без новых слов расшифровки, после которой реплика уходит на классификатор тона (цвет шарика).
 MOOD_DEBOUNCE_SECONDS = 0.3
-
-LIVE_ADDENDUM = (
-    "\n- Ты говоришь вслух живым голосом, как в разговоре: сказанное человеком не пересказывай."
-    "\n- Если тебя просят произнести фразу дословно, произноси ровно её."
-)
-
 
 def is_silence(pcm: bytes) -> bool:
     """Нет ли в записи речи: меряем каждый 16-й сэмпл, этого хватает и не держит цикл событий."""
@@ -306,10 +305,14 @@ class DialogSession:
         budget: TokenBudget | None = None,
         tracer: Tracer | None = None,
         mood: "ToneClassifier | Literal['gemini'] | None" = "gemini",
+        prompt_provider: PromptProvider | None = None,
     ) -> None:
         self._ws = websocket
         self._store = store
         self._dialog = dialog
+        self._prompt_provider = prompt_provider
+        self._prompt_components: list[ResolvedPrompt] = []
+        self._instructions_without_gender = ""
         # Озвучка фиксированных фраз берётся при каждой фразе; None — фразы не звучат, а читаются (приложение прочтёт сам).
         self._tts_source = tts_source
         # Трейсинг LLM-ходов (app/core/tracing.py); по умолчанию выключен (NullTracer).
@@ -906,13 +909,30 @@ class DialogSession:
         return history
 
     def _instructions(self) -> str:
-        """Промпт агента, правила памяти и сводка. Прошлые реплики в промпт не входят: они загружаются в сессию настоящими
-        репликами при открытии (`_history`)."""
-        # Память — из кэша процесса, без диска и сети (I3); пустая сводка — ни правил, ни блока. Число удалений читается раньше
-        # сводки: убранное между этими двумя чтениями увидит следующий ход.
+        """Инструкция и версии фиксируются на всё время одного открытия модели."""
+        if self._prompt_provider is None:
+            raise PromptUnavailable("provider не передан в DialogSession")
         self._removals_seen = self._store.memory_removals(self._dialog.user_id)
         self._brief_used = self._store.memory_brief(self._dialog)
-        return system_prompt(self._dialog.voice) + LIVE_ADDENDUM + memory_block(self._brief_used)
+        primary = self._prompt_provider.resolve("agent.dialog.system")
+        live = self._prompt_provider.resolve("agent.dialog.live-addendum")
+        components = [primary]
+        instructions = primary.text
+        if self._dialog.voice in ("male", "female"):
+            gender = self._prompt_provider.resolve(f"agent.dialog.self-gender.{self._dialog.voice}")
+            components.append(gender)
+            instructions += "\n" + gender.text
+        instructions += live.text
+        components.append(live)
+        self._instructions_without_gender = primary.text + live.text
+        if self._brief_used:
+            memory = self._prompt_provider.resolve("agent.dialog.memory-rules")
+            components.append(memory)
+            block = f"\n\n{memory.text}\n\n{self._brief_used}"
+            instructions += block
+            self._instructions_without_gender += block
+        self._prompt_components = components
+        return instructions
 
     # ─── соединение ───────────────────────────────────────────────────────────
 
@@ -1022,7 +1042,11 @@ class DialogSession:
         budget = self._budget
         history: LiveHistory = self._history()
         memory_wait = await self._await_memory()
-        instructions = self._instructions()
+        try:
+            instructions = self._instructions()
+        except PromptUnavailable as error:
+            logger.warning("dialog prompt unavailable dialog=%s error=%s", self._dialog.id, type(error).__name__)
+            return None
         cost = budget.open_estimate([instructions, *(text for _, text in history)])
         # Нужное открытие (старт, переподключение, восстановление, смена голоса) может уйти на запасной путь; плановая смена
         # сессии и переоткрытие ради приватности остаются на Gemini и в паузе откладываются.
@@ -1046,8 +1070,11 @@ class DialogSession:
                 "history_messages": len(history),
                 "voice": voice,
                 "purpose": purpose,
+                **prompt_metadata(self._prompt_components[0]),
             },
             tags=[PIPELINE_TAG],
+            prompt=self._prompt_components[0].prompt,
+            prompt_components=[component.metadata for component in self._prompt_components],
         )
         rid = budget.opening(cost)  # Google считает открытие сразу, по размеру контекста
         began = time.monotonic()
@@ -1062,7 +1089,12 @@ class DialogSession:
                 memory_wait * 1000,
             )
         try:
-            link = await self._connector.open(voice, instructions, history or None)
+            if getattr(self._connector, "supports_sber_prompt", False):
+                link = await self._connector.open(
+                    voice, instructions, history or None, sber_instructions=self._instructions_without_gender
+                )
+            else:
+                link = await self._connector.open(voice, instructions, history or None)
         except BaseException as error:
             budget.cancel(rid)
             if not isinstance(error, Exception):
@@ -1085,6 +1117,14 @@ class DialogSession:
             if quota:
                 budget.on_quota_error("open", self._dialog.id)
             return None
+        sber_components = getattr(link, "prompt_components", None)
+        if sber_components:
+            self._prompt_components = [
+                component
+                for component in self._prompt_components
+                if not component.name.startswith("agent.dialog.self-gender.")
+            ] + list(sber_components)
+            trace.update(metadata=components_metadata(self._prompt_components))
         trace.end()
         if getattr(link, "counts_tokens", True):
             budget.opened(link, rid)
@@ -1485,14 +1525,22 @@ class DialogSession:
         awaiting = self._awaiting_usage
         if awaiting is not None and awaiting is not turn:
             self._end_turn_trace(awaiting)  # расход токенов так и не пришёл: закрываем без него
+        primary_prompt = self._prompt_components[0] if self._prompt_components else None
         turn.trace = self._tracer.start_turn(
             name=f"live_turn_{'recovery' if turn.recovery else turn.kind}",
             session_id=self._dialog.id,
             user_id=self._dialog.user_id,
             model=self._cfg.live_model,
             input=turn.input_text or None,
-            metadata={"kind": turn.kind, "interrupts": turn.interrupts, "recovery": turn.recovery},
+            metadata={
+                "kind": turn.kind,
+                "interrupts": turn.interrupts,
+                "recovery": turn.recovery,
+                **prompt_metadata(primary_prompt),
+            },
             tags=[PIPELINE_TAG, f"v{APP_CONFIG.app.version}"],
+            prompt=primary_prompt.prompt if primary_prompt else None,
+            prompt_components=[component.metadata for component in self._prompt_components],
         )
         self._turn = turn
         self._touch(turn)
@@ -1630,7 +1678,7 @@ class DialogSession:
 
     def _mood(self) -> ToneClassifier:
         if self._mood_classifier is None:
-            self._mood_classifier = MoodClassifier(self._cfg)
+            self._mood_classifier = MoodClassifier(self._cfg, self._prompt_provider, self._tracer)
         return self._mood_classifier
 
     async def _warm_mood_classifier(self) -> None:
@@ -1639,7 +1687,11 @@ class DialogSession:
 
     async def _classify_mood(self, turn: LiveTurn, heard: str) -> None:
         await asyncio.sleep(MOOD_DEBOUNCE_SECONDS)
-        mood = await self._mood().classify(heard)
+        classifier = self._mood()
+        if getattr(classifier, "prompt_management", False):
+            mood = await classifier.classify(heard, user_id=self._dialog.user_id, dialog_id=self._dialog.id)
+        else:
+            mood = await classifier.classify(heard)
         if mood is not None and not self._closed:
             await self._on_mood(mood, turn)
 

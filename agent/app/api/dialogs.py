@@ -323,7 +323,15 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
         # Тон реплики: у пути Сбера свой классификатор (GigaChat), у Gemini Live — Gemini.
         mood = app.state.moods.get(pipeline, "gemini")
         session = DialogSession(
-            websocket, store, dialog, tts_source, connector, budget=budget, tracer=app.state.tracer, mood=mood
+            websocket,
+            store,
+            dialog,
+            tts_source,
+            connector,
+            budget=budget,
+            tracer=app.state.tracer,
+            mood=mood,
+            prompt_provider=app.state.prompt_provider,
         )
         session.bind_component_calls()
         await session.run()

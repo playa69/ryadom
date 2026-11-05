@@ -34,11 +34,11 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.protocol import State
 
 from app.clients.gemini_live import LiveConnector, LiveError, LiveEvent, LiveHistory, LiveLink
-from app.clients.mood_classifier import INSTRUCTIONS as MOOD_INSTRUCTIONS
 from app.clients.mood_classifier import MOOD_TIMEOUT_SECONDS, parse_mood
 from app.clients.speech import TextToSpeech, TtsError, Voice, pcm_stream
+from app.core.tracing import NullTracer, Tracer
+from app.prompts.provider import PromptProvider, PromptUnavailable, ResolvedPrompt, prompt_metadata
 from app.services import usage as model_usage
-from app.services.replies import SELF_GENDER
 
 logger = logging.getLogger("agent.sber")
 
@@ -72,25 +72,6 @@ FIRST_CLAUSE_MIN_CHARS = 25
 _MARKUP = re.compile(r"[*#_`]+")
 _LIST_BREAK = re.compile(r"\s*\n\s*(?:[-•–]|\d+[.)])?\s*")
 _LIST_START = re.compile(r"^(?:[-•–]|\d+[.)])\s+")
-# Gemini Live сам держит голосовой формат, GigaChat без напоминания в конце промпта отвечает списком советов на полминуты речи
-# (проверено 28.10.2026: с ним 140–200 знаков против 220–740, списков нет).
-VOICE_RULES = (
-    "\n\nНапоминание о формате: ответ звучит голосом в живом разговоре. Одна–четыре короткие фразы обычной речью; никаких "
-    "списков, пунктов, тире в начале строк и перечислений через переносы."
-)
-# Классификатор тона в пути Сбера отвечает JSON по просьбе в инструкции: так GigaChat 3.5 ответил разбираемо 24 раза из 24.
-MOOD_SYSTEM = MOOD_INSTRUCTIONS + ' Ответь только JSON без пояснений: {"tone": "...", "intensity": 0.0}.'
-
-
-def own_gender(instructions: str) -> str:
-    """О себе агент говорит в роде голоса, который звучит, а не рода, выбранного для Gemini: Bab-Freespeech — женский голос (высота
-    около 235 Гц), а «я не расслышал» женским голосом режет слух."""
-    own = SELF_GENDER[TTS_VOICE_GENDER]
-    for rule in SELF_GENDER.values():
-        instructions = instructions.replace(rule, own)
-    return instructions
-
-
 def speakable(text: str) -> str:
     """Кусок ответа для синтеза и ленты: без маркеров списка и переносов строк."""
     return _LIST_START.sub("", _LIST_BREAK.sub(" ", text).strip())
@@ -220,6 +201,7 @@ class SberVoiceLink:
         voice: Voice,
         instructions: str,
         history: LiveHistory | None,
+        prompt_components: list[ResolvedPrompt] | None = None,
     ) -> None:
         self.voice: Voice = voice
         self.voice_name = TTS_VOICE
@@ -229,7 +211,8 @@ class SberVoiceLink:
         self._asr = asr
         self._speaker = speaker
         self._events: asyncio.Queue[LiveEvent] = asyncio.Queue()
-        self._messages: list[dict[str, str]] = [{"role": "system", "content": own_gender(instructions) + VOICE_RULES}]
+        self.prompt_components = prompt_components or []
+        self._messages: list[dict[str, str]] = [{"role": "system", "content": instructions}]
         for role, text in history or ():
             self._add("user" if role == "user" else "assistant", text)
         self._transcripts: asyncio.Queue[str] = asyncio.Queue()
@@ -445,10 +428,19 @@ class SberVoiceLink:
 class SberVoiceConnector:
     name = f"sber-voice:{CHAT_MODEL}"
     model = CHAT_MODEL
+    supports_sber_prompt = True
 
-    def __init__(self, base_url: str, api_key: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        prompt_provider: PromptProvider | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self.prompt_provider = prompt_provider
+        self.tracer = tracer or NullTracer()
         self.chat_url = f"{self._base_url}/chat/completions"
         # Проверка живости прокси без ключа и почти без ответа: ей прогревается соединение до запроса к GigaChat.
         self._ping_url = re.sub(r"/v1$", "", self._base_url) + "/health/liveliness"
@@ -501,7 +493,23 @@ class SberVoiceConnector:
             raise LiveError(f"GigaASR не принял настройки: {str(reply.get('error'))[:200]}")
         return ws
 
-    async def open(self, voice: Voice, instructions: str, history: LiveHistory | None = None) -> SberVoiceLink:
+    async def open(
+        self,
+        voice: Voice,
+        instructions: str,
+        history: LiveHistory | None = None,
+        sber_instructions: str | None = None,
+    ) -> SberVoiceLink:
+        if self.prompt_provider is None:
+            raise LiveError("Langfuse: production-промпты Сбера недоступны")
+        try:
+            gender = self.prompt_provider.resolve(f"agent.dialog.self-gender.{TTS_VOICE_GENDER}")
+            voice_rules = self.prompt_provider.resolve("agent.dialog.sber-voice-rules")
+        except PromptUnavailable as error:
+            raise LiveError(str(error)) from error
+        components = [gender, voice_rules]
+        base = sber_instructions if sber_instructions is not None else instructions
+        instructions = base + "\n" + gender.text + voice_rules.text
         asr, speaker = await asyncio.gather(self._open_asr(), self.speaker(), return_exceptions=True)
         if isinstance(asr, BaseException) or isinstance(speaker, BaseException):
             if not isinstance(asr, BaseException):
@@ -512,7 +520,7 @@ class SberVoiceConnector:
             if not isinstance(error, Exception):
                 raise error  # отмена
             raise error if isinstance(error, LiveError) else LiveError(str(error)[:200])
-        return SberVoiceLink(self, asr, speaker, voice, instructions, history)
+        return SberVoiceLink(self, asr, speaker, voice, instructions, history, components)
 
     def mood_classifier(self) -> "GigaChatMoodClassifier":
         """Тон реплики в пути Сбера определяет GigaChat на том же прокси, а не Gemini."""
@@ -529,33 +537,64 @@ class GigaChatMoodClassifier:
     gemini-3.1-flash-lite через тот же прокси — 21 раз, медиана 0,9 с; gigachat3-10b быстрее (0,2 с), но 22 из 24 и выдумывал тон.
     """
 
+    prompt_management = True
+
     def __init__(self, connector: SberVoiceConnector) -> None:
         self._connector = connector
 
     async def warm(self) -> None:
         self._connector.prewarm()
 
-    async def classify(self, text: str) -> dict | None:
+    async def classify(
+        self, text: str, *, user_id: str | None = None, dialog_id: str | None = None
+    ) -> dict | None:
+        provider = getattr(self._connector, "prompt_provider", None)
+        if provider is None:
+            return None
+        tracer = getattr(self._connector, "tracer", None) or NullTracer()
+        try:
+            primary = provider.resolve("agent.mood.instructions")
+            suffix = provider.resolve("agent.mood.sber-json-suffix")
+        except PromptUnavailable:
+            return None
+        components = [primary, suffix]
+        trace = tracer.start_turn(
+            name="mood_classify_sber",
+            session_id=dialog_id or "mood",
+            user_id=user_id,
+            model=CHAT_MODEL,
+            input=text,
+            metadata={"operation": "mood", **prompt_metadata(primary)},
+            prompt=primary.prompt,
+            prompt_components=[component.metadata for component in components],
+        )
         body = {
             "model": CHAT_MODEL,
-            "messages": [{"role": "system", "content": MOOD_SYSTEM}, {"role": "user", "content": text}],
+            "messages": [{"role": "system", "content": primary.text + suffix.text}, {"role": "user", "content": text}],
             "temperature": 0,
             "max_tokens": 60,
         }
-        for attempt in (1, 2):  # один повтор, как у классификатора Gemini
-            try:
-                response = await asyncio.wait_for(
-                    self._connector.http.post(self._connector.chat_url, json=body), MOOD_TIMEOUT_SECONDS
-                )
-                response.raise_for_status()
-                data = response.json()
-                usage = data.get("usage") or {}
-                model_usage.record(CHAT_MODEL, "mood", "input", "text", "tokens", int(usage.get("prompt_tokens") or 0))
-                model_usage.record(CHAT_MODEL, "mood", "output", "text", "tokens", int(usage.get("completion_tokens") or 0))
-                return parse_mood(_json_object(data["choices"][0]["message"]["content"]))
-            except Exception as error:  # noqa: BLE001
-                logger.warning("классификатор тона GigaChat (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
-        return None
+        try:
+            for attempt in (1, 2):  # один повтор, как у классификатора Gemini
+                try:
+                    response = await asyncio.wait_for(
+                        self._connector.http.post(self._connector.chat_url, json=body), MOOD_TIMEOUT_SECONDS
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    usage = data.get("usage") or {}
+                    model_usage.record(CHAT_MODEL, "mood", "input", "text", "tokens", int(usage.get("prompt_tokens") or 0))
+                    model_usage.record(CHAT_MODEL, "mood", "output", "text", "tokens", int(usage.get("completion_tokens") or 0))
+                    trace.update(
+                        usage={"input_text": int(usage.get("prompt_tokens") or 0), "output_text": int(usage.get("completion_tokens") or 0)}
+                    )
+                    return parse_mood(_json_object(data["choices"][0]["message"]["content"]))
+                except Exception as error:  # noqa: BLE001
+                    logger.warning("классификатор тона GigaChat (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
+            trace.update(level="WARNING", status="классификатор не ответил")
+            return None
+        finally:
+            trace.end()
 
 
 def _json_object(text: str) -> dict | None:
@@ -642,6 +681,7 @@ class FallbackConnector:
 
     # Сессия разговора видит: у соединителя есть куда отступить, поэтому пауза основного пути не должна задерживать открытие.
     has_fallback = True
+    supports_sber_prompt = True
 
     def __init__(
         self,
@@ -660,17 +700,28 @@ class FallbackConnector:
         # Сбера своя модель, у ссылки Gemini её нет. По умолчанию это модель запасного пути (путь Сбера с запасным Gemini).
         self.model = model or fallback.model
 
-    async def open(self, voice: Voice, instructions: str, history: LiveHistory | None = None) -> LiveLink:
+    async def open(
+        self,
+        voice: Voice,
+        instructions: str,
+        history: LiveHistory | None = None,
+        sber_instructions: str | None = None,
+    ) -> LiveLink:
+        async def open_connector(connector: LiveConnector) -> LiveLink:
+            if getattr(connector, "supports_sber_prompt", False):
+                return await connector.open(voice, instructions, history, sber_instructions=sber_instructions)
+            return await connector.open(voice, instructions, history)
+
         if self._skip_primary is not None and self._skip_primary():
             logger.info("голосовой путь %s на паузе, разговор идёт на %s", self._primary.name, self._fallback.name)
-            return await self._fallback.open(voice, instructions, history)
+            return await open_connector(self._fallback)
         try:
-            return await self._primary.open(voice, instructions, history)
+            return await open_connector(self._primary)
         except LiveError as error:
             logger.warning("голосовой путь %s не открылся, разговор идёт на %s: %s", self._primary.name, self._fallback.name, error)
             if self._on_primary_error is not None:
                 self._on_primary_error(error)
-            return await self._fallback.open(voice, instructions, history)
+            return await open_connector(self._fallback)
 
     async def aclose(self) -> None:
         await self._primary.aclose()  # запасной закрывает его владелец

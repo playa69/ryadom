@@ -13,10 +13,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Protocol
 
 from app.core.metrics import MEMORY_BLOCKED_TOTAL, MEMORY_EXTRACTION_FAILURES_TOTAL, MEMORY_EXTRACTION_TOTAL
+from app.core.tracing import NullTracer, Tracer
+from app.prompts.provider import PromptProvider, PromptUnavailable, prompt_metadata
 from app.memory.errors import MemoryFull, MemoryServiceError, NoteNotFound, NoteRejected
 from app.memory.masking import mask
 from app.memory.notes import NotesService
@@ -24,7 +25,6 @@ from app.memory.suppress import fingerprint
 
 logger = logging.getLogger("agent.memory")
 
-PROMPT_DIR = Path(__file__).parent / "prompts"
 _EXPLICIT = re.compile(
     r"забуд(?:ь|ьте)|убер(?:и|ите)|удал(?:и|ите)|не запоминай|не надо запоминать|стер(?:и|еть)|поправ(?:ь|ьте)|исправ(?:ь|ьте)|не (?:кот|кошка|так)",
     re.IGNORECASE,
@@ -89,11 +89,19 @@ def _source_hash(quote: Any, human_texts: list[str]) -> str | None:
 class NotesExtractor:
     """Один проход извлечения для одного человека."""
 
-    def __init__(self, model: Completer, notes: NotesService) -> None:
+    def __init__(
+        self,
+        model: Completer,
+        notes: NotesService,
+        prompt_provider: PromptProvider | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
         self._model = model
         self._notes = notes
-        self._extract_prompt = (PROMPT_DIR / "extract.md").read_text(encoding="utf-8")
-        self._instruction_prompt = (PROMPT_DIR / "instruction.md").read_text(encoding="utf-8")
+        self._prompt_provider = prompt_provider
+        self._tracer = tracer or NullTracer()
+        self._extract_prompt = "agent.memory.extract.system"
+        self._instruction_prompt = "agent.memory.instruction.system"
 
     async def extract(
         self,
@@ -110,7 +118,7 @@ class NotesExtractor:
         live = await self._notes.list(user_id)
         explicit = is_explicit_request(texts)
         payload = self._payload(texts, [mask(t) for t in agent_context[-2:]], live)
-        ops = await self._ask(self._extract_prompt, payload)
+        ops = await self._ask(self._extract_prompt, payload, user_id, dialog_id, "memory_extract")
         if ops is None:
             outcome.failed = True
             return outcome
@@ -125,7 +133,7 @@ class NotesExtractor:
             return outcome
         live = await self._notes.list(user_id)
         payload = self._payload([text], [], live)
-        ops = await self._ask(self._instruction_prompt, payload)
+        ops = await self._ask(self._instruction_prompt, payload, user_id, None, "memory_instruct")
         if ops is None:
             outcome.failed = True
             return outcome
@@ -139,18 +147,43 @@ class NotesExtractor:
         context = "\n".join(f"- {text}" for text in agent_context) or "(нет)"
         return f"Текущие заметки:\n{notes}\n\nПоследние реплики помощника (контекст):\n{context}\n\nНовые реплики человека:\n{human}"
 
-    async def _ask(self, system: str, user: str) -> list[dict[str, Any]] | None:
-        try:
-            raw = await self._model.complete([{"role": "system", "content": system}, {"role": "user", "content": user}])
-            ops = _parse_ops(raw)
-        except Exception as error:  # noqa: BLE001 - модель недоступна или ответила не тем: разговор не трогаем
-            reason = "parse" if isinstance(error, ValueError) else "model"
-            MEMORY_EXTRACTION_FAILURES_TOTAL.labels(reason).inc()
-            MEMORY_EXTRACTION_TOTAL.labels("failed", reason).inc()
-            logger.warning("memory extraction failed: %s", type(error).__name__)
+    async def _ask(
+        self, prompt_name: str, user: str, user_id: str, dialog_id: str | None, operation: str
+    ) -> list[dict[str, Any]] | None:
+        if self._prompt_provider is None:
             return None
-        MEMORY_EXTRACTION_TOTAL.labels("done", "ok").inc()
-        return ops
+        try:
+            prompt = self._prompt_provider.resolve(prompt_name)
+        except PromptUnavailable:
+            logger.warning("memory prompt unavailable operation=%s", operation)
+            return None
+        messages = [{"role": "system", "content": prompt.text}, {"role": "user", "content": user}]
+        trace = self._tracer.start_turn(
+            name=operation,
+            session_id=dialog_id or "memory",
+            user_id=user_id,
+            model=getattr(self._model, "name", None),
+            input=messages,
+            metadata={"operation": operation, **prompt_metadata(prompt)},
+            prompt=prompt.prompt,
+            tags=["background", "memory"],
+        )
+        try:
+            try:
+                raw = await self._model.complete(messages)
+                trace.update(output=raw)
+                ops = _parse_ops(raw)
+            except Exception as error:  # noqa: BLE001 - модель недоступна или ответила не тем: разговор не трогаем
+                reason = "parse" if isinstance(error, ValueError) else "model"
+                MEMORY_EXTRACTION_FAILURES_TOTAL.labels(reason).inc()
+                MEMORY_EXTRACTION_TOTAL.labels("failed", reason).inc()
+                logger.warning("memory extraction failed: %s", type(error).__name__)
+                trace.update(level="WARNING", status=reason)
+                return None
+            MEMORY_EXTRACTION_TOTAL.labels("done", "ok").inc()
+            return ops
+        finally:
+            trace.end()
 
     async def _apply(
         self,

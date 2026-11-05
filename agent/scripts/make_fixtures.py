@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.clients.gemini_live import GeminiLiveConnector, GeminiLiveTts  # noqa: E402
 from app.core.config import APP_CONFIG  # noqa: E402
+from app.prompts.provider import build_prompt_provider  # noqa: E402
 
 TTS_RATE, OUT_RATE = 24_000, 16_000
 
@@ -68,7 +69,8 @@ def pad(samples: array, seconds: float = 0.2) -> array:
 
 async def main(out: Path, force: bool) -> int:
     out.mkdir(parents=True, exist_ok=True)
-    tts = GeminiLiveTts(GeminiLiveConnector(APP_CONFIG.gemini))
+    prompt_provider = build_prompt_provider(APP_CONFIG.langfuse)
+    tts = GeminiLiveTts(GeminiLiveConnector(APP_CONFIG.gemini), prompt_provider=prompt_provider)
 
     async def say(text: str, voice: str = "female") -> array:
         return resample(await tts.synthesize(text, voice))  # type: ignore[arg-type]
@@ -105,24 +107,14 @@ async def main(out: Path, force: bool) -> int:
     part1 = clean["unfinished_part1"]
     fixtures["unfinished_part1_cut"] = silence(0.2) + level(part1[: int(len(part1) * 0.93)], 2500)
 
-    # Настоящая английская речь: дословная озвучка агента говорит по-русски, поэтому для неё своя инструкция.
-    import app.clients.gemini_live as gemini_live
-
-    russian = gemini_live.VERBATIM_INSTRUCTIONS
-    gemini_live.VERBATIM_INSTRUCTIONS = (
-        "You are a voice actor. You are given an English sentence; say it exactly, in natural American English, "
-        "with nothing added and nothing translated."
-    )
-    try:
-        english = GeminiLiveTts(GeminiLiveConnector(APP_CONFIG.gemini))
-        for name, text in (
-            ("en_real", "I want to talk about my day today and how it went."),
-            ("en_real_short", "I'm so tired today."),
-        ):
-            fixtures[name] = pad(level(resample(await english.synthesize(text, "female")), 2500))  # type: ignore[arg-type]
-            print(f"синтез: {name}")
-    finally:
-        gemini_live.VERBATIM_INSTRUCTIONS = russian
+    # Английские фразы озвучиваются той же production-инструкцией, локальной подмены нет.
+    english = GeminiLiveTts(GeminiLiveConnector(APP_CONFIG.gemini), prompt_provider=prompt_provider)
+    for name, text in (
+        ("en_real", "I want to talk about my day today and how it went."),
+        ("en_real_short", "I'm so tired today."),
+    ):
+        fixtures[name] = pad(level(resample(await english.synthesize(text, "female")), 2500))  # type: ignore[arg-type]
+        print(f"синтез: {name}")
 
     for name, samples in fixtures.items():
         path = out / f"{name}_16k.pcm"

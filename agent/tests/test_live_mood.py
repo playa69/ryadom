@@ -25,11 +25,11 @@ def classifier(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     seen: list[str] = []
     answer = {"tone": "afraid", "intensity": 0.7}
 
-    async def fake(self: object, text: str) -> dict:
+    async def fake(self: object, text: str, **kwargs: Any) -> dict:
         seen.append(text)
         return dict(answer)
 
-    monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings: None)
+    monkeypatch.setattr(mood_classifier.MoodClassifier, "__init__", lambda self, settings, *args: None)
     monkeypatch.setattr(mood_classifier.MoodClassifier, "classify", fake)
     monkeypatch.setattr(APP_CONFIG.gemini, "api_key", SecretStr("x"))
     monkeypatch.setattr("app.api.dialog_session.MOOD_DEBOUNCE_SECONDS", 0)
@@ -74,3 +74,40 @@ def test_parse_mood_distrusts_the_model() -> None:
     assert parse_mood(None) is None
     assert parse_mood({"tone": "afraid", "intensity": 7, "risk": "bomb"}) == {"tone": "afraid", "intensity": 1.0}
     assert parse_mood({"tone": "sleepy", "intensity": "много"}) == {"tone": "sleepy", "intensity": 0.0}
+
+
+async def test_gemini_mood_classifier_links_its_prompt_version() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Видимость использованной версии»."""
+    from types import SimpleNamespace
+
+    from tests.conftest import FakePromptProvider, RecordingTracer
+
+    classifier = mood_classifier.MoodClassifier.__new__(mood_classifier.MoodClassifier)
+    classifier._prompt_provider = FakePromptProvider(versions={"agent.mood.instructions": 5})
+    classifier._tracer = RecordingTracer()
+    classifier._model = "gemini-test"
+    classifier._timeout = 1
+    classifier._types = SimpleNamespace(GenerateContentConfig=lambda **kwargs: kwargs)
+    response = SimpleNamespace(text='{"tone": "sad", "intensity": 0.4}', usage_metadata=None)
+
+    async def generate_content(**kwargs: Any) -> Any:
+        return response
+
+    classifier._client = SimpleNamespace(
+        aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    )
+    result = await classifier.classify("мне грустно", user_id="user-1", dialog_id="dialog-1")
+    assert result == {"tone": "sad", "intensity": 0.4}
+    turn = classifier._tracer.turns[0]
+    assert turn["name"] == "mood_classify_gemini" and turn["session_id"] == "dialog-1"
+    assert turn["prompt"] == {"name": "agent.mood.instructions", "version": 5}
+    assert turn["metadata"]["prompt_version"] == 5
+
+
+async def test_unavailable_gemini_mood_prompt_returns_none() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Работа только с инструкциями Langfuse»."""
+    from tests.conftest import FakePromptProvider
+
+    classifier = mood_classifier.MoodClassifier.__new__(mood_classifier.MoodClassifier)
+    classifier._prompt_provider = FakePromptProvider(unavailable={"agent.mood.instructions"})
+    assert await classifier.classify("мне грустно") is None

@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.clients.background_model import ModelError, build_background_model  # noqa: E402
 from app.core.config import APP_CONFIG  # noqa: E402
+from app.core.tracing import Tracer, build_tracer  # noqa: E402
+from app.prompts.provider import PromptProvider, PromptUnavailable, build_prompt_provider  # noqa: E402
 from app.services import digests, recaps  # noqa: E402
 from app.services.dialog_store import Dialog, Message  # noqa: E402
 
@@ -192,7 +194,44 @@ def checks(text: str, recap_texts: list[str], marks: list[dict[str, Any]]) -> di
     }
 
 
-async def run_scenario(name: str, spec: dict[str, Any], chat: Any, show_prompts: bool) -> dict[str, Any]:
+def weekly_messages(
+    prompt_provider: PromptProvider, marks: list[dict[str, Any]], week_recaps: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    """Собирает недельный запрос из актуальных production-инструкций."""
+    system = prompt_provider.resolve("agent.digest.weekly.system")
+    hard_suffix = ""
+    if digests.stats_of(marks)["hardDays"] >= digests.HARD_WEEK_DAYS:
+        hard_suffix = prompt_provider.resolve("agent.digest.weekly.hard-week-suffix").text
+    marks_text = "\n".join(
+        f"{m['date']}: {m['mood']}" + (f", фактор: {digests.FACTORS[m['factor']]}" if m.get("factor") else "")
+        for m in marks
+    )
+    recap_block = ""
+    if week_recaps:
+        recap_block = "\nИтоги разговоров недели, без привязки к дням (написаны для самого человека):\n" + "\n".join(
+            f"- {r['text']}" for r in week_recaps
+        )
+    task = prompt_provider.resolve(
+        "agent.digest.weekly.task",
+        period_start=WEEK_START,
+        sentence_min=digests.WEEK_SENTENCES[0],
+        sentence_max=digests.WEEK_SENTENCES[1],
+        hard_week_instruction=hard_suffix,
+        marks=marks_text,
+        recap_block=recap_block,
+    )
+    return digests.build_messages("week", WEEK_START, marks, week_recaps, system=system, task=task)
+
+
+async def run_scenario(
+    name: str,
+    spec: dict[str, Any],
+    chat: Any,
+    prompt_provider: PromptProvider,
+    tracer: Tracer,
+    show_prompts: bool,
+) -> dict[str, Any]:
+    """Прогоняет один синтетический сценарий через production-промпты."""
     marks = [
         {"date": date_of(day), "mood": mood, "factor": factor} for day, (mood, factor) in sorted(spec["marks"].items())
     ]
@@ -213,12 +252,17 @@ async def run_scenario(name: str, spec: dict[str, Any], chat: Any, show_prompts:
             else:
                 if show_prompts:
                     print(f"\n--- промпт итога разговора {index + 1} ---")
-                    for m in recaps.build_messages(dialog):
-                        print(f"[{m['role']}]\n{m['content']}")
-                text = await recaps.make_recap(chat, dialog, 60.0)
+                    try:
+                        recap_prompt = prompt_provider.resolve("agent.recap.system")
+                    except PromptUnavailable:
+                        print("production-промпт недоступен")
+                    else:
+                        for m in recaps.build_messages(dialog, recap_prompt):
+                            print(f"[{m['role']}]\n{m['content']}")
+                text = await recaps.make_recap(chat, dialog, 60.0, prompt_provider, tracer)
                 source = "auto" if text else None
                 if text is None:
-                    verdict = "итога нет: модель не ответила или ответ не прошёл проверку"
+                    verdict = "итога нет: модель или промпт не ответили либо ответ не прошёл проверку"
         print(f"\nразговор {index + 1} ({_DAYS[d['day']]}): ", end="")
         for who, line in d["turns"]:
             print(f"\n    {'человек' if who == 'u' else 'Рядом  '}: {line}", end="")
@@ -227,12 +271,17 @@ async def run_scenario(name: str, spec: dict[str, Any], chat: Any, show_prompts:
         if text:
             week_recaps.append({"date": date_of(d["day"]), "text": text})
 
-    prompt = digests.build_messages("week", WEEK_START, marks, week_recaps)
+    raw: str | None = None
+    try:
+        prompt = weekly_messages(prompt_provider, marks, week_recaps)
+    except PromptUnavailable:
+        verdict = "production-промпт недоступен"
+        print(f"\nИТОГОВ НЕДЕЛИ НЕТ ({verdict}). Запасного текста нет.")
+        return {"scenario": name, "dialogs": out_dialogs, "raw": raw, "verdict": verdict, "text": None, "checks": {"text_present": False}}
     if show_prompts:
         print("\n--- промпт итогов недели ---")
         for m in prompt:
             print(f"[{m['role']}]\n{m['content']}")
-    raw: str | None = None
     final: str | None = None
     verdict = ""
     for attempt in (1, 2):  # как в агенте: отклонённый ответ просим повторить один раз
@@ -298,6 +347,8 @@ async def main() -> int:
         return 2
     print("режим:", "готовые ответы из " + args.replies if replies is not None and chat is None else "модель " + APP_CONFIG.background_model.chat_model)
     names = args.scenario or list(SCENARIOS)
+    prompt_provider = build_prompt_provider(APP_CONFIG.langfuse)
+    tracer = build_tracer(APP_CONFIG.langfuse)
     results = []
     for name in names:
         for _ in range(args.runs):
@@ -305,7 +356,9 @@ async def main() -> int:
             if scenario_chat is None:
                 entry = replies[name]  # type: ignore[index]
                 scenario_chat = ReplayChat([*entry["recaps"], entry["week"]])
-            results.append(await run_scenario(name, SCENARIOS[name], scenario_chat, args.show_prompts))
+            results.append(
+                await run_scenario(name, SCENARIOS[name], scenario_chat, prompt_provider, tracer, args.show_prompts)
+            )
     failed = [(r["scenario"], k) for r in results for k, v in r["checks"].items() if not v]
     print(f"\n{'=' * 78}\nсценариев: {len(results)}, провалов автопроверок: {len(failed)}", failed or "")
     if args.out:

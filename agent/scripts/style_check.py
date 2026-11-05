@@ -4,8 +4,8 @@
         uv run python scripts/style_check.py --runs 3 --out style.json [--prompt-module old_prompt.py]
 
 Каждый сценарий — несколько набранных реплик подряд в одной сессии (ответы модели на реплики не влияют: так прогоны
-сравнимы). Промпт по умолчанию — тот, что уходит в Gemini сейчас (`system_prompt(voice)` + `LIVE_ADDENDUM`); с
-`--prompt-module` — функция `prompt(voice)` из указанного файла (например, промпт прежней версии для сравнения).
+сравнимы). По умолчанию применяются актуальные production-промпты диалога из Langfuse; с `--prompt-module` — функция
+`prompt(voice)` из указанного внешнего файла для явно запрошенного сравнения.
 
 Метрики считаются по тексту ответов (расшифровке голоса модели):
   question     доля ответов, которые кончаются вопросом
@@ -33,10 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.api.dialog_session import LIVE_ADDENDUM  # noqa: E402
 from app.clients.gemini_live import build_live  # noqa: E402
 from app.core.config import APP_CONFIG  # noqa: E402
-from app.services.replies import system_prompt  # noqa: E402
+from app.prompts.provider import build_prompt_provider  # noqa: E402
 
 # (имя, род человека: "f", "m" или None — неизвестен, просит ли совета, реплики)
 SCENARIOS: list[tuple[str, str | None, bool, list[str]]] = [
@@ -123,8 +122,18 @@ TO_FEM = re.compile(r"\bты\s+(?:\w+\s+)?(права|устала|смогла|
 
 
 def load_prompt(path: str | None):  # noqa: ANN201
+    """Возвращает production-инструкцию или явно переданный экспериментальный модуль."""
     if not path:
-        return lambda voice: system_prompt(voice) + LIVE_ADDENDUM
+        provider = build_prompt_provider(APP_CONFIG.langfuse)
+
+        def production_prompt(voice: str) -> str:
+            """Собирает диалоговую инструкцию из актуальных production-частей."""
+            primary = provider.resolve("agent.dialog.system")
+            gender = provider.resolve(f"agent.dialog.self-gender.{voice}")
+            live = provider.resolve("agent.dialog.live-addendum")
+            return primary.text + "\n" + gender.text + live.text
+
+        return production_prompt
     spec = importlib.util.spec_from_file_location("prompt_module", path)
     module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     spec.loader.exec_module(module)  # type: ignore[union-attr]

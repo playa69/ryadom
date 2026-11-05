@@ -16,7 +16,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.clients.background_model import ProxyBackgroundModel  # noqa: E402
+from app.core.config import APP_CONFIG  # noqa: E402
+from app.core.tracing import build_tracer  # noqa: E402
 from app.memory.extractor import NotesExtractor  # noqa: E402
+from app.prompts.provider import build_prompt_provider  # noqa: E402
 from app.memory.notes import NotesService  # noqa: E402
 from scripts.memory_golden_data import CASES  # noqa: E402
 from tests.fake_db import FakeDialogDatabase  # noqa: E402
@@ -40,7 +43,12 @@ async def run() -> int:
     db = FakeDialogDatabase("golden")
     db.open()
     notes = NotesService(lambda: db, 200)
-    extractor = NotesExtractor(chat, notes)  # type: ignore[arg-type]
+    extractor = NotesExtractor(  # type: ignore[arg-type]
+        chat,
+        notes,
+        build_prompt_provider(APP_CONFIG.langfuse),
+        build_tracer(APP_CONFIG.langfuse),
+    )
 
     expected = found = produced = correct = leaks = 0
     latencies: list[float] = []

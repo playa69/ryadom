@@ -12,10 +12,15 @@ from fastapi.testclient import TestClient
 from app.memory.cognee_backend import CogneeMemoryBackend
 from app.memory.extractor import NotesExtractor
 from app.services.dialog_store import now_iso
-from tests.conftest import AUTH, make_app
+from tests.conftest import AUTH, FakePromptProvider, make_app
 from tests.fake_db import FakeDialogDatabase
 from tests.test_memory_cognee_backend import CONSENT, FakeCognee, dialog, memory_settings, uid
 from tests.test_memory_extractor import FakeModel
+
+
+def _extractor(model: Any, notes: Any) -> NotesExtractor:
+    """Создаёт извлекатель с синтетическими инструкциями."""
+    return NotesExtractor(model, notes, FakePromptProvider())
 
 
 def build(answer: Any = None, fail: bool = False) -> tuple[CogneeMemoryBackend, FakeModel, FakeDialogDatabase]:
@@ -24,7 +29,7 @@ def build(answer: Any = None, fail: bool = False) -> tuple[CogneeMemoryBackend, 
     db.open()
     service = CogneeMemoryBackend(FakeCognee(), memory_settings(), lambda: db)  # type: ignore[arg-type]
     model = FakeModel(answer, fail)
-    service.set_extractor(NotesExtractor(model, service.notes))
+    service.set_extractor(_extractor(model, service.notes))
     return service, model, db
 
 
@@ -125,7 +130,7 @@ def test_instruction_route(monkeypatch: pytest.MonkeyPatch) -> None:
 
         memory = app.state.memory
         note = asyncio.run(memory.notes.add(user, "boundary", "Не хочет обсуждать отца"))
-        memory.set_extractor(NotesExtractor(FakeModel({"ops": [{"op": "delete", "id": note["id"], "quote": "убери тему про отца"}]}), memory.notes))
+        memory.set_extractor(_extractor(FakeModel({"ops": [{"op": "delete", "id": note["id"], "quote": "убери тему про отца"}]}), memory.notes))
         done = client.post(f"{base}/notes/instruction", json={"text": "Убери тему про отца"}, headers=AUTH)
         assert done.status_code == 200 and done.json()["changes"]["deleted"] == [note["id"]]
         assert client.get(f"{base}/notes", headers=AUTH).json()["notes"] == []
@@ -151,7 +156,7 @@ async def test_unprocessed_messages_survive_an_agent_restart() -> None:
     # «перезапуск»: новый бэкенд, та же база и тот же диалог с сохранёнными репликами
     restarted = CogneeMemoryBackend(FakeCognee(), memory_settings(), lambda: db)  # type: ignore[arg-type]
     model2 = FakeModel(ADD_WORK)
-    restarted.set_extractor(NotesExtractor(model2, restarted.notes))
+    restarted.set_extractor(_extractor(model2, restarted.notes))
     await restarted.update_settings(user, True, CONSENT)
     current.messages.append(Message(id="2", role="user", text="вот ещё", created_at=now_iso()))
     restarted.user_message(current, "вот ещё")
@@ -176,7 +181,7 @@ async def test_end_during_a_running_pass_does_not_extract_the_same_replies_twice
 
     service, _, db = build(ADD_WORK)
     model = SlowModel(ADD_WORK)
-    service.set_extractor(NotesExtractor(model, service.notes))
+    service.set_extractor(_extractor(model, service.notes))
     user = uid()
     await service.update_settings(user, True, CONSENT)
     current = dialog(user, 0)
@@ -209,7 +214,7 @@ async def test_changes_wait_for_the_final_pass_and_then_list_this_dialogs_notes(
     """Блок «Я запомнил» (PROTEUS-242, D16): `pending`, пока финальный проход идёт, потом `ready` с заметками этого разговора."""
     gate = asyncio.Event()
     service, _, db = build()
-    service.set_extractor(NotesExtractor(_GateModel(ADD_WORK, gate), service.notes))
+    service.set_extractor(_extractor(_GateModel(ADD_WORK, gate), service.notes))
     user = uid()
     await service.update_settings(user, True, CONSENT)
     await service.notes.add(user, "interest", "Любит море", "earlier-dialog")  # заметка из прежнего разговора в блок не идёт
@@ -280,11 +285,3 @@ async def test_a_note_differing_only_in_punctuation_and_yo_is_the_same_note() ->
     await service.notes.add(user, "situation", "Работает менеджером, последнее время очень устаёт.")
     again = await service.notes.add(user, "situation", "Работает менеджером последнее время очень устает")
     assert len(db.list_notes(user)) == 1 and again["text"].startswith("Работает")
-
-
-def test_memory_rules_forbid_inventing_the_person() -> None:
-    """Живой прогон (scripts/memory_rules_check.py) показал: по памяти модель выдумывала вкусы и характер человека."""
-    from app.services.replies import MEMORY_RULES
-
-    assert "Ничего не додумывай" in MEMORY_RULES and "Оценок и черт характера не давай" in MEMORY_RULES
-    assert "Если заметок нет" in MEMORY_RULES

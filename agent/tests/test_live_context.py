@@ -23,7 +23,7 @@ from app.api.dialog_session import DialogSession, LiveTurn
 from app.clients.gemini_live import GeminiLiveConnector, LiveError, LiveEvent, _translate, live_config
 from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.dialog_store import DialogStore
-from tests.conftest import AUTH, FakeTts, audio_in_frame, has, read_frames, send_user_message, start_dialog, ws_url
+from tests.conftest import AUTH, FakePromptProvider, FakeTts, audio_in_frame, has, read_frames, send_user_message, start_dialog, ws_url
 from tests.fake_live import FakeConnector, FakeLink, reply_done, speak_turn
 from tests.test_live import make_live_client
 
@@ -104,18 +104,30 @@ def start_speaking(ws: Any, link: FakeLink) -> None:
     wait_until(lambda: ("start",) in link.commands, "начало речи дошло до модели")
 
 
-def make_session(connector: FakeConnector, *messages: tuple[str, str]) -> DialogSession:
+def make_session(
+    connector: FakeConnector, *messages: tuple[str, str], prompt_provider: Any = None
+) -> DialogSession:
     """Сессия без сокета: для проверки внутренних шагов (`_history`, `_ensure_link`, `_read`). Роли: "u" и "a"."""
     store = DialogStore()
     dialog, _, _ = store.start(str(uuid.uuid4()))
     for role, text in messages:
         store.add_message(dialog, "user" if role == "u" else "assistant", text)
-    return DialogSession(None, store, dialog, lambda: None, connector)  # type: ignore[arg-type]
+    return DialogSession(  # type: ignore[arg-type]
+        None,
+        store,
+        dialog,
+        lambda: None,
+        connector,
+        prompt_provider=prompt_provider or FakePromptProvider(),
+    )
 
 
 def test_live_instructions_carry_the_russian_only_rule() -> None:
-    """Агент говорит только по-русски и на просьбу переключиться отвечает, что поддерживает только русский."""
-    session = make_session(FakeConnector())
+    """Составная инструкция содержит языковое правило из production-промпта."""
+    provider = FakePromptProvider(
+        {"agent.dialog.system": "Говори только по-русски. Поддерживаешь только русский язык."}
+    )
+    session = make_session(FakeConnector(), prompt_provider=provider)
     for instructions in (session._instructions(),):
         lower = instructions.lower()
         assert "говори только по-русски" in lower and "поддерживаешь только русский" in lower

@@ -12,7 +12,6 @@ import pytest
 from app.core.config import LangfuseSettings
 from app.core.tracing import (
     NULL_OBSERVATION,
-    LangfuseObservation,
     LangfuseTracer,
     NullTracer,
     _mask,
@@ -152,6 +151,30 @@ async def test_turn_trace_maps_fields_to_sdk() -> None:
     assert root.updates[0]["output"] == "[скрыто: 6 симв., 1 сл.]"
     assert root.updates[0]["usage_details"] == {"prompt_audio": 100}  # не-числа отброшены
     assert root.ended
+
+
+async def test_prompt_object_and_components_are_linked_without_text() -> None:
+    """`openspec/changes/add-langfuse-prompt-management`, «Видимость использованной версии»."""
+    tracer, client = make_tracer()
+    prompt = object()
+    turn = tracer.start_turn(
+        name="live_turn_voice",
+        session_id="dialog-1",
+        user_id="user-1",
+        prompt=prompt,
+        prompt_components=[
+            {"name": "agent.dialog.system", "version": 3, "source": "langfuse", "text": "не отправлять"},
+            {"name": "agent.dialog.live-addendum", "version": 0, "source": "fallback"},
+        ],
+    )
+    turn.end()
+    root = client.traces[0]
+    assert root.kwargs["prompt"] is prompt
+    assert root.kwargs["metadata"]["prompt_components"] == [
+        {"name": "agent.dialog.system", "version": 3, "source": "langfuse"},
+        {"name": "agent.dialog.live-addendum", "version": 0, "source": "fallback"},
+    ]
+    assert "не отправлять" not in str(root.kwargs)
 
 
 async def test_input_and_output_are_masked() -> None:

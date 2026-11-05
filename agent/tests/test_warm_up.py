@@ -11,7 +11,7 @@ from app.core.config import GeminiSettings
 from app.main import SPOKEN_PHRASES, WARM_UP_GEMINI_SESSIONS
 from app.services.gemini_budget import TokenBudget
 from app.services.replies import split_sentences
-from tests.conftest import FakeTts, make_app
+from tests.conftest import FakePromptProvider, FakeTts, make_app
 from tests.fake_live import FakeConnector, FakeLink
 
 SENTENCES = [part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)]
@@ -94,7 +94,7 @@ async def test_a_failed_phrase_does_not_stop_the_warm_up() -> None:
     """Одна фраза не озвучилась (внутренняя ошибка Google): остальные прогреваются, паузы как после квоты нет."""
     connector = CountingConnector(refuse={2})
     budget = TokenBudget(GeminiSettings.model_validate({"GEMINI_TPM_LIMIT": 400_000}), metrics=False)
-    tts = CachedTts(GeminiLiveTts(connector, budget=budget), max_items=64)
+    tts = CachedTts(GeminiLiveTts(connector, budget=budget, prompt_provider=FakePromptProvider()), max_items=64)
     await tts.warm_up(SENTENCES, parallel=WARM_UP_GEMINI_SESSIONS)
     assert not budget.cooling()
     assert len(connector.open_calls) == len(WANTED)

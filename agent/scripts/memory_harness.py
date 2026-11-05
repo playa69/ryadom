@@ -26,14 +26,15 @@ os.environ.setdefault("AGENT_INTERNAL_TOKEN", "harness")
 
 from app.clients.cognee import CogneeClient  # noqa: E402
 from app.clients.background_model import ProxyBackgroundModel  # noqa: E402
-from app.core.config import MemorySettings  # noqa: E402
+from app.core.config import APP_CONFIG, MemorySettings  # noqa: E402
+from app.core.tracing import build_tracer  # noqa: E402
 from app.memory.cognee_backend import CogneeMemoryBackend, _dialog_chunks  # noqa: E402
 from app.memory.extractor import NotesExtractor  # noqa: E402
 from app.memory.indexer import dataset_name  # noqa: E402
 from app.memory.notes import build_notes_block  # noqa: E402
+from app.prompts.provider import PromptProvider, build_prompt_provider  # noqa: E402
 from app.services.dialog_db import DialogDatabase  # noqa: E402
 from app.services.dialog_store import DialogStore  # noqa: E402
-from app.services.replies import memory_block, system_prompt  # noqa: E402
 from scripts.memory_harness_scenarios import SCENARIOS  # noqa: E402
 
 CONSENT = "2026-10-21"
@@ -94,7 +95,28 @@ async def show_notes(memory: CogneeMemoryBackend, user: str, report: Report, tit
     report.add()
 
 
-async def run_scenario(scn: dict, memory: CogneeMemoryBackend, store: DialogStore, client: CogneeClient, chat: ProxyBackgroundModel, answers: bool, report: Report) -> str:
+def dialog_instructions(prompt_provider: PromptProvider, brief: str) -> str:
+    """Собирает инструкцию проверки из production-промптов и блока памяти."""
+    primary = prompt_provider.resolve("agent.dialog.system")
+    gender = prompt_provider.resolve("agent.dialog.self-gender.male")
+    instructions = primary.text + "\n" + gender.text
+    if brief:
+        memory = prompt_provider.resolve("agent.dialog.memory-rules")
+        instructions += f"\n\n{memory.text}\n\n{brief}"
+    return instructions
+
+
+async def run_scenario(
+    scn: dict,
+    memory: CogneeMemoryBackend,
+    store: DialogStore,
+    client: CogneeClient,
+    chat: ProxyBackgroundModel,
+    prompt_provider: PromptProvider,
+    answers: bool,
+    report: Report,
+) -> str:
+    """Прогоняет сценарий памяти с актуальными production-инструкциями."""
     user = str(uuid.uuid4())
     await store.ensure_user(user)
     await memory.update_settings(user, True, CONSENT)
@@ -145,7 +167,7 @@ async def run_scenario(scn: dict, memory: CogneeMemoryBackend, store: DialogStor
                 both_reply = ""
                 for label, block in variants:
                     messages = [
-                        {"role": "system", "content": system_prompt("male") + memory_block(block)},
+                        {"role": "system", "content": dialog_instructions(prompt_provider, block)},
                         {"role": "user", "content": probe},
                     ]
                     try:
@@ -181,6 +203,8 @@ async def main() -> int:
     chat_model = os.environ.get("HARNESS_CHAT_MODEL", model)
     notes_chat = ProxyBackgroundModel(base, token(), model, max_tokens=600, temperature=0.0, timeout_seconds=60)
     answer_chat = ProxyBackgroundModel(base, token(), chat_model, max_tokens=400, temperature=0.3, timeout_seconds=60)
+    prompt_provider = build_prompt_provider(APP_CONFIG.langfuse)
+    tracer = build_tracer(APP_CONFIG.langfuse)
 
     db = DialogDatabase(os.environ["DIALOG_DATABASE_URL"])
     db.open()
@@ -191,7 +215,7 @@ async def main() -> int:
     settings = MemorySettings()
     memory = CogneeMemoryBackend(client, settings, lambda: store.database)
     store.memory = memory
-    memory.set_extractor(NotesExtractor(notes_chat, memory.notes))
+    memory.set_extractor(NotesExtractor(notes_chat, memory.notes, prompt_provider, tracer))
     import app.memory.cognee_backend as backend_module
 
     backend_module.INDEX_DELAY_SECONDS = 0  # документ в индекс сразу, а не через паузу «разговор успевает записаться»
@@ -205,7 +229,9 @@ async def main() -> int:
         for scn in SCENARIOS:
             if args.only and args.only.lower() not in scn["name"].lower():
                 continue
-            users.append(await run_scenario(scn, memory, store, client, answer_chat, not args.no_answers, report))
+            users.append(
+                await run_scenario(scn, memory, store, client, answer_chat, prompt_provider, not args.no_answers, report)
+            )
     finally:
         if not args.keep:
             for user in users:
