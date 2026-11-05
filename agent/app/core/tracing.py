@@ -72,6 +72,8 @@ class Observation(Protocol):
         output: Any = None,
         usage: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        tags: list[str] | None = None,
         level: str | None = None,
         status: str | None = None,
     ) -> None: ...
@@ -162,6 +164,8 @@ class LangfuseObservation:
         output: Any = None,
         usage: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        tags: list[str] | None = None,
         level: str | None = None,
         status: str | None = None,
     ) -> None:
@@ -177,14 +181,19 @@ class LangfuseObservation:
             kwargs["usage_details"] = details
         if metadata is not None:
             kwargs["metadata"] = _mask_metadata(metadata)
+        if model is not None:
+            kwargs["model"] = model
         if level is not None:
             kwargs["level"] = level
         if status is not None:
             kwargs["status_message"] = _mask_status(status)
-        if not kwargs:
+        if not kwargs and tags is None:
             return
         try:
-            self._span_update(kwargs)
+            if kwargs:
+                self._span_update(kwargs)
+            if tags is not None:
+                self.raw.update_trace(tags=tags)
         except Exception as error:  # noqa: BLE001
             logger.warning("langfuse update failed: %s", error)
 

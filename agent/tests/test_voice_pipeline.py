@@ -13,7 +13,7 @@ from app.clients import mood_classifier
 from app.clients.gemini_live import LiveError
 from app.core.config import APP_CONFIG, GeminiSettings
 from app.services.gemini_budget import TokenBudget
-from tests.conftest import AUTH, FakeTts, has, make_app, read_frames, send_user_message, ws_url
+from tests.conftest import AUTH, FakeTts, RecordingTracer, has, make_app, read_frames, send_user_message, ws_url
 from tests.fake_live import FakeConnector, reply_done, speak_turn
 
 
@@ -21,6 +21,7 @@ class FakeSber(FakeConnector):
     """Путь Сбера без сети: ходы как у поддельного Gemini; синтеза фраз нет, их озвучивает запасная озвучка Gemini."""
 
     name = "fake-sber"
+    provider = "sber"
     model = "fake-gigachat"
 
     async def open(self, voice: str, instructions: str, history: Any = None) -> Any:
@@ -245,3 +246,72 @@ def test_sber_tokens_do_not_enter_the_gemini_window_when_sber_is_the_fallback(mo
         one_turn(client, user_id, dialog)
         assert sber.open_calls
         assert client.app.state.budget.window_tokens() == 0
+
+
+def trace_identity(turn: dict[str, Any]) -> tuple[str | None, str | None, list[str]]:
+    """Итоговая идентичность после поздних обновлений открытия соединения."""
+    provider = turn["metadata"].get("provider")
+    model = turn.get("model")
+    tags = turn.get("tags") or []
+    for update in turn["updates"]:
+        provider = update.get("metadata", {}).get("provider", provider)
+        model = update.get("model", model)
+        tags = update.get("tags", tags)
+    return provider, model, tags[:2]
+
+
+def test_traces_report_sber_and_gemini_from_the_actual_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`openspec/changes/report-voice-provider`, «Наблюдаемость фактического голосового пути»."""
+    tracer = RecordingTracer()
+    monkeypatch.setattr("app.main.build_tracer", lambda settings: tracer)
+    gemini, sber = FakeConnector(), FakeSber()
+    with sber_client(gemini, sber) as client:
+        user_id = str(uuid.uuid4())
+        dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
+        one_turn(client, user_id, dialog)
+        start(client, user_id, pipeline="gemini")
+        one_turn(client, user_id, dialog)
+
+    expected = [("sber", "fake-gigachat", ["voice", "sber"]), ("gemini", "fake-live-model", ["voice", "gemini"])]
+    openings = [turn for turn in tracer.turns if turn["name"] == "voice_session_open"]
+    turns = [turn for turn in tracer.turns if turn["name"] == "live_turn_text"]
+    assert [trace_identity(turn) for turn in openings] == expected
+    assert [trace_identity(turn) for turn in turns] == expected
+    assert all(turn["prompt"] for turn in openings + turns)
+
+
+def test_fallback_traces_report_the_link_that_accepted_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`openspec/changes/report-voice-provider`, «Наблюдаемость фактического голосового пути»."""
+    tracer = RecordingTracer()
+    monkeypatch.setattr("app.main.build_tracer", lambda settings: tracer)
+    with sber_client(FakeConnector(), FakeSber(fail=True)) as client:
+        user_id = str(uuid.uuid4())
+        dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
+        one_turn(client, user_id, dialog)
+    with sber_client(FakeConnector(fail=True), FakeSber()) as client:
+        user_id = str(uuid.uuid4())
+        dialog = start(client, user_id, pipeline="gemini").json()["dialogId"]
+        one_turn(client, user_id, dialog)
+
+    expected = [("gemini", "fake-live-model", ["voice", "gemini"]), ("sber", "fake-gigachat", ["voice", "sber"])]
+    openings = [turn for turn in tracer.turns if turn["name"] == "voice_session_open"]
+    turns = [turn for turn in tracer.turns if turn["name"] == "live_turn_text"]
+    assert [trace_identity(turn) for turn in openings] == expected
+    assert [trace_identity(turn) for turn in turns] == expected
+
+
+def test_failed_open_does_not_assign_a_provider_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`openspec/changes/report-voice-provider`, «Наблюдаемость фактического голосового пути»."""
+    tracer = RecordingTracer()
+    monkeypatch.setattr("app.main.build_tracer", lambda settings: tracer)
+    with sber_client(FakeConnector(fail=True), FakeSber(fail=True)) as client:
+        user_id = str(uuid.uuid4())
+        dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
+        with client.websocket_connect(ws_url(user_id, dialog), headers=AUTH) as ws:
+            send_user_message(ws, "c-failed-open", "Проверка недоступного открытия")
+            read_frames(ws, lambda frames: has(frames, "error"))
+
+    opening = next(turn for turn in tracer.turns if turn["name"] == "voice_session_open")
+    assert opening.get("model") is None
+    assert all("model" not in update for update in opening["updates"])
+    assert opening["ended"] is True

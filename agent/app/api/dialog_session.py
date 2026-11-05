@@ -92,8 +92,8 @@ from app.services.replies import (
 
 logger = logging.getLogger("agent.live")
 
-# Тег трасс Langfuse: тот же, что у трасс до удаления каскада, чтобы их можно было искать одним фильтром.
-PIPELINE_TAG = "gemini_live"
+# Общий тег трасс голосового диалога; фактический sber/gemini добавляется по открытой ссылке.
+VOICE_TAG = "voice"
 FRAME_KIND_AUDIO_IN = 0x01
 # Набранный текст шлюз приложения ограничивает 4000 символов сам; запас здесь — для голоса:
 # пять минут речи (VOICE_TURN_MAX_SECONDS) — это 4-5 тысяч символов расшифровки.
@@ -1062,17 +1062,16 @@ class DialogSession:
             )
             return None
         trace = self._tracer.start_turn(
-            name="gemini_session_open",
+            name="voice_session_open",
             session_id=self._dialog.id,
             user_id=self._dialog.user_id,
-            model=self._cfg.live_model,
             metadata={
                 "history_messages": len(history),
                 "voice": voice,
                 "purpose": purpose,
                 **prompt_metadata(self._prompt_components[0]),
             },
-            tags=[PIPELINE_TAG],
+            tags=[VOICE_TAG],
             prompt=self._prompt_components[0].prompt,
             prompt_components=[component.metadata for component in self._prompt_components],
         )
@@ -1117,6 +1116,8 @@ class DialogSession:
             if quota:
                 budget.on_quota_error("open", self._dialog.id)
             return None
+        provider = link.provider
+        metadata: dict[str, Any] = {"provider": provider}
         sber_components = getattr(link, "prompt_components", None)
         if sber_components:
             self._prompt_components = [
@@ -1124,7 +1125,8 @@ class DialogSession:
                 for component in self._prompt_components
                 if not component.name.startswith("agent.dialog.self-gender.")
             ] + list(sber_components)
-            trace.update(metadata=components_metadata(self._prompt_components))
+            metadata.update(components_metadata(self._prompt_components))
+        trace.update(model=link.model, tags=[VOICE_TAG, provider], metadata=metadata)
         trace.end()
         if getattr(link, "counts_tokens", True):
             budget.opened(link, rid)
@@ -1493,7 +1495,7 @@ class DialogSession:
                 user_id=self._dialog.user_id,
                 input=text,
                 metadata={"crisis": True},
-                tags=[PIPELINE_TAG],
+                tags=[VOICE_TAG],
             )
             self._jobs.put_nowait(lambda: self._say(CRISIS_REPLY, turn, crisis=True))
             return
@@ -1526,19 +1528,22 @@ class DialogSession:
         if awaiting is not None and awaiting is not turn:
             self._end_turn_trace(awaiting)  # расход токенов так и не пришёл: закрываем без него
         primary_prompt = self._prompt_components[0] if self._prompt_components else None
+        link = self._link
+        provider = link.provider if link is not None else "unknown"
         turn.trace = self._tracer.start_turn(
             name=f"live_turn_{'recovery' if turn.recovery else turn.kind}",
             session_id=self._dialog.id,
             user_id=self._dialog.user_id,
-            model=self._cfg.live_model,
+            model=link.model if link is not None else None,
             input=turn.input_text or None,
             metadata={
                 "kind": turn.kind,
                 "interrupts": turn.interrupts,
                 "recovery": turn.recovery,
+                "provider": provider,
                 **prompt_metadata(primary_prompt),
             },
-            tags=[PIPELINE_TAG, f"v{APP_CONFIG.app.version}"],
+            tags=[VOICE_TAG, provider, f"v{APP_CONFIG.app.version}"],
             prompt=primary_prompt.prompt if primary_prompt else None,
             prompt_components=[component.metadata for component in self._prompt_components],
         )
