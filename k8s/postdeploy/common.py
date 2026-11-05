@@ -136,13 +136,19 @@ class DialogSocket:
             return json.loads(frame)
 
     def run_turn(self, text: str = TURN_TEXT) -> TurnResult:
-        """Реплика человека и ответ целиком: текст и озвучка до tts_end (или до тишины, если озвучки нет)."""
+        """Реплика человека и ответ целиком: текст и озвучка до tts_end (или до тишины, если озвучки нет).
+
+        Повторный старт диалога ставит перед ответом приветствие: у него своя нумерация кадров и свой messageId.
+        """
         result = TurnResult()
+        audio_message_ids: list[str | None] = []
+        assistant_message_id: str | None = None
+        tts_message_id: str | None = None
+        tts_ended_ids: set[str] = set()
         client_id = uuid.uuid4().hex
         started = time.monotonic()
         self.ws.send(json.dumps({"type": "message", "clientId": client_id, "text": text}, ensure_ascii=False))
         text_done_at: float | None = None
-        tts_done = False
         deadline = started + TURN_TIMEOUT
         while time.monotonic() < deadline:
             wait = AFTER_TEXT_TTS_WAIT if text_done_at is not None else TURN_TIMEOUT
@@ -157,6 +163,7 @@ class DialogSocket:
                 if len(frame) >= FRAME_HEADER_BYTES and frame[0] == AUDIO_TTS_KIND:
                     result.audio_seq.append(int.from_bytes(frame[1:5], "big"))
                     result.audio_frames.append(frame[FRAME_HEADER_BYTES:])
+                    audio_message_ids.append(tts_message_id)
                 continue
             if not frame.strip():
                 continue
@@ -171,14 +178,26 @@ class DialogSocket:
                 result.seconds_to_first_text = time.monotonic() - started
             if kind == "assistant_end":
                 result.assistant_text = data.get("text", "")
+                assistant_message_id = data.get("messageId")
                 text_done_at = text_done_at or time.monotonic()
             elif kind == "tts_start":
+                tts_message_id = data.get("messageId")
                 result.tts_codec = data.get("codec")
                 result.tts_sample_rate = data.get("sampleRate")
             elif kind == "tts_end":
-                tts_done = True
-            if text_done_at is not None and tts_done:
+                message_id = data.get("messageId")
+                if isinstance(message_id, str):
+                    tts_ended_ids.add(message_id)
+            if assistant_message_id is not None and assistant_message_id in tts_ended_ids:
                 break
+        if assistant_message_id is not None:
+            own_audio = [
+                (sequence, body)
+                for message_id, sequence, body in zip(audio_message_ids, result.audio_seq, result.audio_frames, strict=True)
+                if message_id == assistant_message_id
+            ]
+            result.audio_seq = [sequence for sequence, _ in own_audio]
+            result.audio_frames = [body for _, body in own_audio]
         result.seconds_total = time.monotonic() - started
         return result
 
