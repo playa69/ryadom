@@ -153,6 +153,19 @@ async def test_turn_trace_maps_fields_to_sdk() -> None:
     assert root.ended
 
 
+async def test_update_changes_model_and_trace_tags() -> None:
+    """`openspec/changes/report-voice-provider`, «Наблюдаемость фактического голосового пути»."""
+    tracer, client = make_tracer()
+    turn = tracer.start_turn(name="voice_session_open", session_id="d", user_id="u", tags=["voice"])
+    turn.update(model="gigachat3.5-432b-a28b", tags=["voice", "sber"], metadata={"provider": "sber"})
+    turn.end()
+
+    root = client.traces[0]
+    assert root.updates == [{"model": "gigachat3.5-432b-a28b", "metadata": {"provider": "sber"}}]
+    assert root.trace["tags"] == ["voice", "sber"]
+    assert root.ended
+
+
 async def test_prompt_object_and_components_are_linked_without_text() -> None:
     """`openspec/changes/add-langfuse-prompt-management`, «Видимость использованной версии»."""
     tracer, client = make_tracer()

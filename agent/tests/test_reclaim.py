@@ -181,7 +181,8 @@ async def test_a_closed_gemini_connection_leaves_no_keepalive_cycle() -> None:
         stack = AsyncExitStack()
         ws = await stack.enter_async_context(connect(f"ws://127.0.0.1:{port}"))
         assert ws.keepalive_task is not None  # иначе проверять нечего
-        link = GeminiLiveLink(stack, AsyncSession(api_client=None, websocket=ws), "male")  # type: ignore[arg-type]
+        link = GeminiLiveLink(stack, AsyncSession(api_client=None, websocket=ws), "male", "fake-live-model")  # type: ignore[arg-type]
+        assert (link.provider, link.model) == ("gemini", "fake-live-model")
         await link.aclose()
         del link, ws, stack
         await asyncio.sleep(0.05)  # отмена keepalive доходит до задачи на следующих итерациях цикла

@@ -205,6 +205,7 @@ class SberVoiceLink:
     ) -> None:
         self.voice: Voice = voice
         self.voice_name = TTS_VOICE
+        self.provider = "sber"
         self.model = CHAT_MODEL
         self.closed = False
         self._connector = connector

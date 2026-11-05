@@ -239,7 +239,8 @@ def test_every_session_open_is_logged_with_its_voice(
     opened = [r.getMessage() for r in caplog.records if r.getMessage().startswith("gemini live opened")]
     assert opened[0].startswith(f"gemini live opened dialog={dialog['dialogId']} purpose=start voice=male voice_name=fake-male ")
     assert any("purpose=voice voice=female voice_name=fake-female" in line for line in opened)
-    assert all(f"model={APP_CONFIG.gemini.live_model} " in line and " ms=" in line for line in opened)
+    assert all("model=fake-live-model " in line and " ms=" in line for line in opened)
+    assert all((link.provider, link.model) == ("gemini", "fake-live-model") for link in connector.links)
     assert not any("Первая реплика" in line or "Вторая реплика" in line for line in opened)  # тексты реплик в журнал не идут
 
 

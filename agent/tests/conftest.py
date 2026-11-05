@@ -165,6 +165,19 @@ class FakePromptProvider:
         return None
 
 
+class RecordingObservation:
+    """Сохраняет поздние обновления generation: model/tags известны только после open."""
+
+    def __init__(self, values: dict[str, Any]) -> None:
+        self._values = values
+
+    def update(self, **kwargs: Any) -> None:
+        self._values["updates"].append(kwargs)
+
+    def end(self) -> None:
+        self._values["ended"] = True
+
+
 class RecordingTracer:
     """Сохраняет параметры generation без сети и текстовых наблюдений."""
 
@@ -173,12 +186,11 @@ class RecordingTracer:
     def __init__(self) -> None:
         self.turns: list[dict[str, Any]] = []
 
-    def start_turn(self, **kwargs: Any) -> Any:
-        """Запоминает начало generation и возвращает пустое наблюдение."""
-        from app.core.tracing import NULL_OBSERVATION
-
-        self.turns.append(kwargs)
-        return NULL_OBSERVATION
+    def start_turn(self, **kwargs: Any) -> RecordingObservation:
+        """Запоминает начало generation и его последующие обновления."""
+        values = {**kwargs, "updates": []}
+        self.turns.append(values)
+        return RecordingObservation(values)
 
     async def aclose(self) -> None:
         return None

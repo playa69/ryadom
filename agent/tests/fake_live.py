@@ -29,6 +29,8 @@ class FakeLink:
     ) -> None:
         self.voice = voice
         self.voice_name = f"fake-{voice}"  # как у настоящего соединения: имя голоса Google, с которым открыта сессия
+        self.provider = "gemini"
+        self.model = "fake-live-model"
         self.closed = False
         self.instructions = instructions
         self.history = history  # прошлые реплики, загруженные в сессию при открытии
@@ -105,6 +107,7 @@ def re_split(text: str) -> list[str]:
 
 class FakeConnector:
     name = "fake-live"
+    provider = "gemini"
     model = "fake-live-model"
 
     def __init__(
@@ -157,6 +160,8 @@ class FakeConnector:
         if self.fail_from is not None and len(self.open_calls) >= self.fail_from:
             raise LiveError("Gemini Live не открылся в тесте")
         link = FakeLink(voice, self.next_reply if self.replies else self.reply, self.heard, instructions, history)
+        link.provider = self.provider
+        link.model = self.model
         link.turn_complete = self.turn_complete
         link.usage = self.usage
         link.quota_close = number in self.quota_close_links

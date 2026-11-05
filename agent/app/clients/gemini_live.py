@@ -99,6 +99,8 @@ class LiveLink(Protocol):
 
     voice: Voice
     voice_name: str  # имя голоса Google, с которым открыта сессия (Charon, Kore…): для журнала, чтобы смену голоса можно было разобрать
+    provider: str  # фактический путь соединения для Langfuse: sber или gemini
+    model: str  # модель этой ссылки, а не первичного пути: после fallback они различаются
     closed: bool
 
     async def activity_start(self) -> None: ...
@@ -138,7 +140,7 @@ class LiveConnector(Protocol):
 
 
 class GeminiLiveLink:
-    def __init__(self, stack: AsyncExitStack, session, voice: Voice, voice_name: str = "") -> None:  # noqa: ANN001
+    def __init__(self, stack: AsyncExitStack, session, voice: Voice, model: str, voice_name: str = "") -> None:  # noqa: ANN001
         from google.genai import types
 
         self._types = types
@@ -146,6 +148,8 @@ class GeminiLiveLink:
         self._session = session
         self.voice: Voice = voice
         self.voice_name = voice_name
+        self.provider = "gemini"
+        self.model = model
         self.closed = False
         # Цикл в websockets (16.x): закрывая соединение, библиотека отменяет свою задачу keepalive и не забирает её
         # CancelledError. Задача держит исключение, его traceback — кадр keepalive() с self (соединением), а соединение —
@@ -374,7 +378,7 @@ class GeminiLiveConnector:
         except Exception as error:
             await stack.aclose()
             raise LiveError(f"Gemini Live не открылся: {type(error).__name__}: {str(error)[:200]}") from error
-        return GeminiLiveLink(stack, session, voice, voice_name)
+        return GeminiLiveLink(stack, session, voice, self._model, voice_name)
 
     async def aclose(self) -> None:
         return None

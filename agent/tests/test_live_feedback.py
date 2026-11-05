@@ -327,7 +327,7 @@ def test_production_change_applies_to_a_new_session_not_the_current_one(
     assert current_turn["prompt"] == {"name": "agent.dialog.system", "version": 1}
     assert all(item["source"] == "langfuse" for item in current_turn["prompt_components"])
     assert "Система v1" not in str(current_turn["metadata"])
-    reopened = [item for item in tracer.turns if item["name"] == "gemini_session_open"][-1]
+    reopened = [item for item in tracer.turns if item["name"] == "voice_session_open"][-1]
     assert reopened["prompt"] == {"name": "agent.dialog.system", "version": 2}
 
 
