@@ -291,6 +291,10 @@ def test_traces_report_sber_and_gemini_from_the_actual_links(monkeypatch: pytest
     assert not any(turn["name"] == "voice_session_open" for turn in tracer.turns)
     assert [trace_identity(turn) for turn in turns] == expected
     assert all(turn["prompt"] for turn in turns)
+    late_updates = [next(update for update in turn["updates"] if "model" in update) for turn in turns]
+    assert all(update["metadata"]["prompt_name"] == "agent.dialog.system" for update in late_updates)
+    assert all(update["metadata"]["prompt_version"] == 1 for update in late_updates)
+    assert all(update["metadata"]["prompt_source"] == "langfuse" for update in late_updates)
     components = [trace_prompt_components(turn) for turn in turns]
     assert all("agent.dialog.system" in names for names in components)
     assert "agent.dialog.sber-voice-rules" in components[0]

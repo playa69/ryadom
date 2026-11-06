@@ -1009,7 +1009,11 @@ class DialogSession:
                 turn.trace.update(
                     model=new.model,
                     tags=[VOICE_TAG, new.provider, f"v{APP_CONFIG.app.version}"],
-                    metadata={"provider": new.provider, **components_metadata(self._prompt_components)},
+                    metadata={
+                        "provider": new.provider,
+                        **prompt_metadata(self._prompt_components[0]),
+                        **components_metadata(self._prompt_components),
+                    },
                 )
             self._reader = asyncio.create_task(self._read(new))
             return new
