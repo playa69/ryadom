@@ -321,14 +321,17 @@ def test_production_change_applies_to_a_new_session_not_the_current_one(
         with client.websocket_connect(ws_url(user_id, started["dialogId"]), headers=AUTH) as ws:
             read_frames(ws, lambda frames: has(frames, "ready"))
             second = connector.links[-1]
+            send_user_message(ws, "c-2", "Продолжим")
+            read_frames(ws, lambda frames: has(frames, "assistant_end"))
     assert second is not first and "Система v2" in second.instructions
     assert provider.calls.count("agent.dialog.system") == 2
-    current_turn = next(item for item in tracer.turns if item["name"] == "live_turn_text")
+    turns = [item for item in tracer.turns if item["name"] == "live_turn_text"]
+    current_turn, reopened = turns
     assert current_turn["prompt"] == {"name": "agent.dialog.system", "version": 1}
     assert all(item["source"] == "langfuse" for item in current_turn["prompt_components"])
     assert "Система v1" not in str(current_turn["metadata"])
-    reopened = [item for item in tracer.turns if item["name"] == "voice_session_open"][-1]
     assert reopened["prompt"] == {"name": "agent.dialog.system", "version": 2}
+    assert not any(item["name"] == "voice_session_open" for item in tracer.turns)
 
 
 def test_unavailable_dialog_prompt_does_not_open_the_model(user_id: str) -> None:

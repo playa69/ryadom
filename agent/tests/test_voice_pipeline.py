@@ -12,6 +12,7 @@ from pydantic import SecretStr
 from app.clients import mood_classifier
 from app.clients.gemini_live import LiveError
 from app.core.config import APP_CONFIG, GeminiSettings
+from app.prompts.provider import ResolvedPrompt
 from app.services.gemini_budget import TokenBudget
 from tests.conftest import AUTH, FakeTts, RecordingTracer, has, make_app, read_frames, send_user_message, ws_url
 from tests.fake_live import FakeConnector, reply_done, speak_turn
@@ -27,6 +28,10 @@ class FakeSber(FakeConnector):
     async def open(self, voice: str, instructions: str, history: Any = None) -> Any:
         link = await super().open(voice, instructions, history)
         link.counts_tokens = False  # как у настоящей ссылки пути Сбера: токены GigaChat окно Gemini не считает
+        link.prompt_components = [
+            ResolvedPrompt("agent.dialog.self-gender.female", "", 1, {}),
+            ResolvedPrompt("agent.dialog.sber-voice-rules", "", 1, {}),
+        ]
         return link
 
     async def speaker(self) -> Any:
@@ -260,11 +265,20 @@ def trace_identity(turn: dict[str, Any]) -> tuple[str | None, str | None, list[s
     return provider, model, tags[:2]
 
 
+def trace_prompt_components(turn: dict[str, Any]) -> list[str]:
+    """Итоговый набор связанных промптов после уточнения фактической ссылки."""
+    components = turn.get("prompt_components") or []
+    for update in turn["updates"]:
+        components = update.get("metadata", {}).get("prompt_components", components)
+    return [component["name"] for component in components]
+
+
 def test_traces_report_sber_and_gemini_from_the_actual_links(monkeypatch: pytest.MonkeyPatch) -> None:
     """`openspec/changes/report-voice-provider`, «Наблюдаемость фактического голосового пути»."""
     tracer = RecordingTracer()
     monkeypatch.setattr("app.main.build_tracer", lambda settings: tracer)
     gemini, sber = FakeConnector(), FakeSber()
+    gemini.open_delay = sber.open_delay = 0.05  # live_turn создаётся до завершения open: идентичность обновляется по готовой ссылке
     with sber_client(gemini, sber) as client:
         user_id = str(uuid.uuid4())
         dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
@@ -273,11 +287,17 @@ def test_traces_report_sber_and_gemini_from_the_actual_links(monkeypatch: pytest
         one_turn(client, user_id, dialog)
 
     expected = [("sber", "fake-gigachat", ["voice", "sber"]), ("gemini", "fake-live-model", ["voice", "gemini"])]
-    openings = [turn for turn in tracer.turns if turn["name"] == "voice_session_open"]
     turns = [turn for turn in tracer.turns if turn["name"] == "live_turn_text"]
-    assert [trace_identity(turn) for turn in openings] == expected
+    assert not any(turn["name"] == "voice_session_open" for turn in tracer.turns)
     assert [trace_identity(turn) for turn in turns] == expected
-    assert all(turn["prompt"] for turn in openings + turns)
+    assert all(turn["prompt"] for turn in turns)
+    components = [trace_prompt_components(turn) for turn in turns]
+    assert all("agent.dialog.system" in names for names in components)
+    assert "agent.dialog.sber-voice-rules" in components[0]
+    assert components[0].count("agent.dialog.self-gender.female") == 1
+    assert "agent.dialog.self-gender.male" not in components[0]
+    assert "agent.dialog.sber-voice-rules" not in components[1]
+    assert any(name.startswith("agent.dialog.self-gender.") for name in components[1])
 
 
 def test_fallback_traces_report_the_link_that_accepted_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -294,9 +314,8 @@ def test_fallback_traces_report_the_link_that_accepted_the_session(monkeypatch: 
         one_turn(client, user_id, dialog)
 
     expected = [("gemini", "fake-live-model", ["voice", "gemini"]), ("sber", "fake-gigachat", ["voice", "sber"])]
-    openings = [turn for turn in tracer.turns if turn["name"] == "voice_session_open"]
     turns = [turn for turn in tracer.turns if turn["name"] == "live_turn_text"]
-    assert [trace_identity(turn) for turn in openings] == expected
+    assert not any(turn["name"] == "voice_session_open" for turn in tracer.turns)
     assert [trace_identity(turn) for turn in turns] == expected
 
 
@@ -311,7 +330,8 @@ def test_failed_open_does_not_assign_a_provider_model(monkeypatch: pytest.Monkey
             send_user_message(ws, "c-failed-open", "Проверка недоступного открытия")
             read_frames(ws, lambda frames: has(frames, "error"))
 
-    opening = next(turn for turn in tracer.turns if turn["name"] == "voice_session_open")
-    assert opening.get("model") is None
-    assert all("model" not in update for update in opening["updates"])
-    assert opening["ended"] is True
+    assert not any(turn["name"] == "voice_session_open" for turn in tracer.turns)
+    turns = [turn for turn in tracer.turns if turn["name"].startswith("live_turn_")]
+    assert turns
+    assert all(turn.get("model") is None for turn in turns)
+    assert all("model" not in update for turn in turns for update in turn["updates"])

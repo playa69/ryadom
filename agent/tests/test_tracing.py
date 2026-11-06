@@ -156,7 +156,7 @@ async def test_turn_trace_maps_fields_to_sdk() -> None:
 async def test_update_changes_model_and_trace_tags() -> None:
     """`openspec/changes/report-voice-provider`, «Наблюдаемость фактического голосового пути»."""
     tracer, client = make_tracer()
-    turn = tracer.start_turn(name="voice_session_open", session_id="d", user_id="u", tags=["voice"])
+    turn = tracer.start_turn(name="live_turn_text", session_id="d", user_id="u", tags=["voice"])
     turn.update(model="gigachat3.5-432b-a28b", tags=["voice", "sber"], metadata={"provider": "sber"})
     turn.end()
 

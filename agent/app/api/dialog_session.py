@@ -1004,6 +1004,13 @@ class DialogSession:
             self._link_used = False
             self._link_turns = 0
             self._session_audio = 0
+            turn = self._turn
+            if turn is not None and turn.trace is not None and not turn.trace_ended:
+                turn.trace.update(
+                    model=new.model,
+                    tags=[VOICE_TAG, new.provider, f"v{APP_CONFIG.app.version}"],
+                    metadata={"provider": new.provider, **components_metadata(self._prompt_components)},
+                )
             self._reader = asyncio.create_task(self._read(new))
             return new
 
@@ -1061,20 +1068,6 @@ class DialogSession:
                 budget.cooldown_left() * 1000,
             )
             return None
-        trace = self._tracer.start_turn(
-            name="voice_session_open",
-            session_id=self._dialog.id,
-            user_id=self._dialog.user_id,
-            metadata={
-                "history_messages": len(history),
-                "voice": voice,
-                "purpose": purpose,
-                **prompt_metadata(self._prompt_components[0]),
-            },
-            tags=[VOICE_TAG],
-            prompt=self._prompt_components[0].prompt,
-            prompt_components=[component.metadata for component in self._prompt_components],
-        )
         rid = budget.opening(cost)  # Google считает открытие сразу, по размеру контекста
         began = time.monotonic()
         if not self._open_logged:
@@ -1097,15 +1090,11 @@ class DialogSession:
         except BaseException as error:
             budget.cancel(rid)
             if not isinstance(error, Exception):
-                trace.update(level="WARNING", status="открытие отменено")
-                trace.end()
                 raise  # отмена (сокет закрылся посреди смены сессии)
             text = str(error)
             quota = is_quota_error(text)
             GEMINI_OPENS_TOTAL.labels(purpose, "quota" if quota else "failed").inc()
             self._open_failures += 1
-            trace.update(level="ERROR", status=text[:200])
-            trace.end()
             logger.warning(
                 "gemini live not available dialog=%s purpose=%s voice=%s: %s",
                 self._dialog.id,
@@ -1116,8 +1105,6 @@ class DialogSession:
             if quota:
                 budget.on_quota_error("open", self._dialog.id)
             return None
-        provider = link.provider
-        metadata: dict[str, Any] = {"provider": provider}
         sber_components = getattr(link, "prompt_components", None)
         if sber_components:
             self._prompt_components = [
@@ -1125,9 +1112,6 @@ class DialogSession:
                 for component in self._prompt_components
                 if not component.name.startswith("agent.dialog.self-gender.")
             ] + list(sber_components)
-            metadata.update(components_metadata(self._prompt_components))
-        trace.update(model=link.model, tags=[VOICE_TAG, provider], metadata=metadata)
-        trace.end()
         if getattr(link, "counts_tokens", True):
             budget.opened(link, rid)
         else:
