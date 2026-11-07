@@ -97,12 +97,17 @@ langfuse:
     replicas: 1
     image:
       repository: cr.yandex/crpsqeamqpuvrkm5tpr9/langfuse/langfuse-worker
+    # При лимите 768Mi worker регулярно умирал с OOMKilled: heap 1Gi и запас под native-память и очереди.
+    pod:
+      additionalEnv:
+        - name: NODE_OPTIONS
+          value: "--max-old-space-size=1024"
     resources:
       requests:
-        memory: "256Mi"
+        memory: "512Mi"
         cpu: "75m"
       limits:
-        memory: "768Mi"
+        memory: "1536Mi"
         cpu: "600m"
 
   additionalEnv: []
