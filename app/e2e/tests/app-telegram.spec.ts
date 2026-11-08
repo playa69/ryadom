@@ -24,23 +24,31 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   const session = trackSession(page)
   const launch = telegramLaunchUrl(PWA_URL, { id: uniqueTelegramId(), first_name: 'Аня' })
 
-  // ── first launch: the first screen, with the name from Telegram offered ─
+  // ── first launch: the consent gate, then the name from Telegram on the active home ─
   // The sheet "Рядом теперь запоминает важное" is already answered, like for a person who has seen it (not this test's subject).
   await page.addInitScript(() => window.localStorage.setItem('ryadom.memory-invite-dismissed', '1'))
   await page.goto(launch)
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await expect(field(page, 'name')).toHaveValue('Аня')
+  await expect(button(page, 'Продолжить')).toBeVisible({ timeout: 30_000 })
+  await expect(field(page, 'name')).toHaveCount(0)
   await expect(page.locator('.page-current').getByTestId('consent-notice')).toBeVisible()
-  await step(page, 'tg-welcome', 'Первый экран в Telegram: имя из профиля, «Поговорить», строка о согласии')
+  await step(page, 'tg-welcome', 'Первый вход в Telegram: отдельный экран согласия')
   await expect(page.getByText(/Аккаунт привязан к твоему Telegram/)).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Скрыть' }), 'баннера установки в Telegram нет').toHaveCount(0)
-  expect(await page.evaluate(() => Boolean((window as { Telegram?: unknown }).Telegram)), 'скрипт Telegram загружен').toBe(
-    true,
+  await expect(page.getByRole('button', { name: 'Скрыть' }), 'баннера установки в Telegram нет').toHaveCount(
+    0,
   )
+  expect(
+    await page.evaluate(() => Boolean((window as { Telegram?: unknown }).Telegram)),
+    'скрипт Telegram загружен',
+  ).toBe(true)
   await shot(page, 'app-telegram-welcome')
 
+  // `openspec/changes/add-explicit-data-consent`, «Первый экран: разговор с первого действия».
+  await expect(button(page, 'Продолжить')).toBeDisabled()
+  await page.locator('.page-current').getByTestId('data-consent-toggle').check()
+  await button(page, 'Продолжить').click()
+  await expect(field(page, 'name')).toHaveValue('Аня')
+  await expect(button(page, 'Поговорить')).toBeEnabled()
   await field(page, 'name').fill('Аня Т')
-  // `openspec/changes/simplify-first-screen`, «Первый экран в Mini App: разговор с первого нажатия».
   await button(page, 'Поговорить').click()
   await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
   await step(page, 'tg-voice', '«Поговорить» в Telegram: аккаунт создан, разговор открыт, агент здоровается')
@@ -76,7 +84,9 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await page.locator('.dialog.modal-in').getByText('ОК').click()
   await expect(button(page, 'Войти через Telegram')).toBeVisible({ timeout: 20_000 })
   await page.reload()
-  await expect(button(page, 'Войти через Telegram'), 'после перезагрузки не входит сам').toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Войти через Telegram'), 'после перезагрузки не входит сам').toBeVisible({
+    timeout: 30_000,
+  })
   await button(page, 'Войти через Telegram').click()
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
   expect(session.userId(), 'вход через Telegram — в тот же аккаунт').toBe(accountId)
@@ -84,6 +94,6 @@ test('Mini App: аккаунт пользователя Telegram, повторн
 
 test('обычная вкладка: скрипт Telegram не загружается', async ({ page }) => {
   await page.goto(`${PWA_URL}/`)
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Продолжить')).toBeVisible({ timeout: 30_000 })
   expect(await page.evaluate(() => 'Telegram' in window)).toBe(false)
 })

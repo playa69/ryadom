@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { WEB_URL } from '../playwright.config'
 import {
   dismissMemoryInvite,
@@ -26,6 +27,7 @@ import { clearMailbox, waitForCode } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
 import { setVoicePipeline } from '../support/voice'
+import { deviceLogin } from '../support/session'
 
 /**
  * The whole account path in the web app, the counterpart of app-account.spec.ts: sign-up with the
@@ -54,7 +56,7 @@ test('путь аккаунта в вебе: регистрация, профи�
   // The root has no screen of its own: a visitor with no account lands on home, which is the first screen
   // for them, and the sign-in is a door they open themselves.
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('guest-note')).toBeVisible()
+  await expect(page.getByTestId('terms-gate')).toBeVisible()
   await expectNoHorizontalOverflow(page)
   await shot(page, 'web-welcome')
   await openSignIn(page)
@@ -355,6 +357,7 @@ test('неподтверждённую почту можно зарегистр�
     await field(page, 'name').fill(name)
     await field(page, 'email').fill(email)
     await field(page, 'password').fill(password)
+    await page.getByTestId('data-consent-toggle').check()
     await button(page, 'Создать аккаунт').click()
     await expect(page.getByRole('heading', { name: 'Подтверди почту' })).toBeVisible({ timeout: 20_000 })
   }
@@ -376,4 +379,31 @@ test('неподтверждённую почту можно зарегистр�
   // The account carries the owner's name and password, not the first registration's.
   await expect(page.getByTestId('home-greeting')).toContainText('Тест')
   await expect(page.getByTestId('home-greeting')).not.toContainText('Чужой')
+})
+
+test('новая запись согласий: «Продолжить» закрыто до явной отметки', async ({ page, request }) => {
+  const device = {
+    deviceId: randomBytes(16).toString('base64url'),
+    deviceKey: randomBytes(32).toString('base64url'),
+  }
+  await deviceLogin(request, device)
+  await openWebApp(page)
+  await dismissMemoryInvite(page)
+  await page.evaluate(
+    (value) => window.localStorage.setItem('ryadom.web.device', JSON.stringify(value)),
+    device,
+  )
+  await openWebApp(page)
+
+  // `openspec/changes/add-explicit-data-consent`, «Новая версия условий».
+  await expect(page.getByTestId('terms-gate')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('data-consent-toggle')).not.toBeChecked()
+  await expect(page.getByTestId('welcome-continue')).toBeDisabled()
+  await step(page, 'terms-gate-required', 'Новая запись согласий: кнопка неактивна до отметки')
+  await page.getByTestId('data-consent-toggle').check()
+  await expect(page.getByTestId('welcome-continue')).toBeEnabled()
+  await step(page, 'terms-gate-consented', 'После явной отметки кнопка «Продолжить» доступна')
+  await page.getByTestId('welcome-continue').click()
+  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('data-consent')).toHaveCount(0)
 })

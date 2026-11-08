@@ -34,6 +34,7 @@ export interface AuthFlow {
   ready: boolean
   termsUrl: string
   privacyUrl: string
+  consentUrl: string
   /** The address of the running flow, or null when that flow was never started in this tab. */
   emailFor(kind: FlowKind): string | null
   begin(kind: FlowKind, email: string, password?: string, consented?: boolean): void
@@ -122,6 +123,7 @@ export function AuthFlowProvider({ webUrl, children }: { webUrl: string; childre
       ready,
       termsUrl: `${webUrl}/terms`,
       privacyUrl: `${webUrl}/privacy`,
+      consentUrl: `${webUrl}/consent`,
       emailFor: (kind) => (pending?.kind === kind ? pending.email : null),
       begin,
       takePassword,

@@ -1,5 +1,6 @@
 import { PWA_URL, WEBAPP_URL } from '../playwright.config'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 import { E2E_COUNTER_ID, hitUrls, refusedMetrikaRequests, ymCalls } from '../support/metrika'
 
 /** The landing site: it has to work without the database, without the core and without the app. */
@@ -44,6 +45,21 @@ test('правовые страницы и страница удаления о�
   // This is the exact statement the app stores check.
   await expect(page.getByText('Аудиозаписи не создаются и не хранятся')).toBeVisible()
 
+  // `openspec/changes/add-explicit-data-consent`, «Публичный текст согласия на обработку персональных данных».
+  await page.goto('/consent')
+  await expect(
+    page.getByRole('heading', { name: 'Согласие на обработку персональных данных', exact: true }),
+  ).toBeVisible()
+  await expect(page.locator('ol').getByRole('listitem')).toHaveCount(6)
+  await expect(page.getByText('Редакция согласия: 1.0 от 05/11/2026', { exact: false })).toBeVisible()
+  await expect(page.getByText('100488024', { exact: false })).toBeVisible()
+  await shot(page, 'consent', { fullPage: true })
+  await step(page, 'consent-document', 'Публичный текст согласия: шесть пунктов, редакция и номер реестра')
+  await page.getByRole('link', { name: 'Политикой обработки персональных данных', exact: true }).click()
+  await expect(page).toHaveURL(/\/privacy$/)
+  await expect(page.getByRole('heading', { name: 'Политика конфиденциальности' })).toBeVisible()
+  await step(page, 'consent-privacy', 'Из согласия открывается отдельная политика конфиденциальности')
+
   await page.goto('/terms')
   await expect(page.getByRole('heading', { name: 'Пользовательское соглашение' })).toBeVisible()
 
@@ -62,7 +78,9 @@ test('несуществующая страница отвечает 404, а н�
   await expect(page.getByRole('heading', { name: 'Такой страницы нет' })).toBeVisible()
 })
 
-test('robots.txt закрывает страницы ссылок на разговоры и оставляет остальной сайт открытым', async ({ page }) => {
+test('robots.txt закрывает страницы ссылок на разговоры и оставляет остальной сайт открытым', async ({
+  page,
+}) => {
   const response = await page.request.get('/robots.txt')
   expect(response.ok()).toBe(true)
   const body = await response.text()
@@ -70,7 +88,9 @@ test('robots.txt закрывает страницы ссылок на разг�
   expect(body).toMatch(/^Allow: \/$/m)
 })
 
-test('Метрика на лендинге: запись экрана и карта кликов — только здесь, адрес без лишнего', async ({ page }) => {
+test('Метрика на лендинге: запись экрана и карта кликов — только здесь, адрес без лишнего', async ({
+  page,
+}) => {
   // The query carries a campaign label and something that must not leave; the fragment must not either.
   await page.goto('/?utm_source=e2e&secret=SECRET-E2E-QUERY#SECRET-E2E-FRAGMENT')
   await expect.poll(() => hitUrls(page)).not.toHaveLength(0)
@@ -94,14 +114,19 @@ test('Метрика на лендинге: телефоны помощи зак
   const emergency = page.getByRole('link', { name: '112', exact: true })
   await expect(emergency).toBeVisible()
   // The link and its row carry the classes the Metrika tag itself looks for (and PostHog's).
-  for (const target of [emergency, emergency.locator('xpath=ancestor::*[contains(@class, "ph-no-capture")][1]')]) {
+  for (const target of [
+    emergency,
+    emergency.locator('xpath=ancestor::*[contains(@class, "ph-no-capture")][1]'),
+  ]) {
     await expect(target).toHaveClass(/ym-disable-clickmap/)
     await expect(target).toHaveClass(/ym-hide-content/)
     await expect(target).toHaveClass(/ph-no-capture/)
   }
 })
 
-test('политика конфиденциальности называет Яндекс Метрику, её cookie и прямую передачу адреса', async ({ page }) => {
+test('политика конфиденциальности называет Яндекс Метрику, её cookie и прямую передачу адреса', async ({
+  page,
+}) => {
   await page.goto('/privacy')
   const paragraph = page.locator('p', { hasText: 'Яндекс Метрика.' })
   await expect(paragraph).toBeVisible()
