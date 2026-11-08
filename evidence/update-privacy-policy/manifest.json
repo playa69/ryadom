@@ -1,0 +1,303 @@
+{
+  "task": "update-privacy-policy",
+  "branch": "app/update-privacy-policy",
+  "commit": "73a936f0",
+  "stand": {
+    "id": "privacy-policy",
+    "slot": 2,
+    "web": "http://127.0.0.1:20253",
+    "pwa": "http://127.0.0.1:20254"
+  },
+  "generatedAt": "2026-11-08T22:12:22.266Z",
+  "steps": [
+    {
+      "n": 1,
+      "project": "desktop",
+      "slug": "app-welcome",
+      "caption": "Первый экран приложения: шар, «Поговорить», строка о согласии и 112, флажков нет",
+      "file": "desktop/01-app-welcome.png",
+      "viewport": "1280×900",
+      "spec": "app-anonymous.spec.ts",
+      "test": "первый запуск, привязка почты, выход: аккаунт без почты живёт сам, с почтой — по паролю",
+      "glitches": []
+    },
+    {
+      "n": 2,
+      "project": "desktop",
+      "slug": "app-welcome-voice",
+      "caption": "«Поговорить»: разговор открыт голосом, агент здоровается, окна про память нет",
+      "file": "desktop/02-app-welcome-voice.png",
+      "viewport": "1280×900",
+      "spec": "app-anonymous.spec.ts",
+      "test": "первый запуск, привязка почты, выход: аккаунт без почты живёт сам, с почтой — по паролю",
+      "glitches": []
+    },
+    {
+      "n": 3,
+      "project": "desktop",
+      "slug": "privacy-document",
+      "caption": "Политика: предоставленный заголовок и шесть разделов",
+      "file": "desktop/03-privacy-document.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 4,
+      "project": "desktop",
+      "slug": "privacy-retention",
+      "caption": "Разговор хранится 30 дней, неактивный аккаунт — 90 дней",
+      "file": "desktop/04-privacy-retention.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 5,
+      "project": "desktop",
+      "slug": "privacy-self-check",
+      "caption": "Самопроверка: ответы и результаты только на устройстве",
+      "file": "desktop/05-privacy-self-check.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 6,
+      "project": "desktop",
+      "slug": "privacy-protection",
+      "caption": "Обработчики, шифрование, маскирование, копии и журналы",
+      "file": "desktop/06-privacy-protection.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 7,
+      "project": "desktop",
+      "slug": "privacy-tables",
+      "caption": "Таблица данных читается без горизонтальной прокрутки",
+      "file": "desktop/07-privacy-tables.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "политика: адаптивные таблицы и отказ от аналитики",
+      "glitches": []
+    },
+    {
+      "n": 8,
+      "project": "desktop",
+      "slug": "privacy-opt-out",
+      "caption": "Отказ от аналитики сохраняется после перезагрузки",
+      "file": "desktop/08-privacy-opt-out.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "политика: адаптивные таблицы и отказ от аналитики",
+      "glitches": []
+    },
+    {
+      "n": 9,
+      "project": "desktop",
+      "slug": "operator-email",
+      "caption": "Блок «Связь» ведёт на playasn@yandex.ru",
+      "file": "desktop/09-operator-email.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "политика описывает согласие на Метрику, а связь ведёт на почту Оператора",
+      "glitches": []
+    },
+    {
+      "n": 10,
+      "project": "desktop",
+      "slug": "welcome",
+      "caption": "Первый экран: шар, поле «Напиши или скажи», строка о согласии и 112, флажков нет",
+      "file": "desktop/10-welcome.png",
+      "viewport": "1280×900",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск: строка о согласии, «Поговорить» — и сразу разговор; потом без экранов",
+      "glitches": []
+    },
+    {
+      "n": 11,
+      "project": "desktop",
+      "slug": "welcome-voice",
+      "caption": "«Поговорить»: разговор открыт голосом, агент здоровается «Я рядом. С чего начнём?»",
+      "file": "desktop/11-welcome-voice.png",
+      "viewport": "1280×900",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск: строка о согласии, «Поговорить» — и сразу разговор; потом без экранов",
+      "glitches": []
+    },
+    {
+      "n": 12,
+      "project": "desktop",
+      "slug": "welcome-typed",
+      "caption": "Человек набрал первую фразу на первом экране",
+      "file": "desktop/12-welcome-typed.png",
+      "viewport": "1280×900",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск текстом: набранное уходит первым сообщением после приветствия",
+      "glitches": []
+    },
+    {
+      "n": 13,
+      "project": "desktop",
+      "slug": "welcome-text",
+      "caption": "Разговор открыт текстом: приветствие, затем набранная фраза первым сообщением",
+      "file": "desktop/13-welcome-text.png",
+      "viewport": "1280×900",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск текстом: набранное уходит первым сообщением после приветствия",
+      "glitches": []
+    },
+    {
+      "n": 1,
+      "project": "mobile",
+      "slug": "app-welcome",
+      "caption": "Первый экран приложения: шар, «Поговорить», строка о согласии и 112, флажков нет",
+      "file": "mobile/01-app-welcome.png",
+      "viewport": "412×839",
+      "spec": "app-anonymous.spec.ts",
+      "test": "первый запуск, привязка почты, выход: аккаунт без почты живёт сам, с почтой — по паролю",
+      "glitches": []
+    },
+    {
+      "n": 2,
+      "project": "mobile",
+      "slug": "app-welcome-voice",
+      "caption": "«Поговорить»: разговор открыт голосом, агент здоровается, окна про память нет",
+      "file": "mobile/02-app-welcome-voice.png",
+      "viewport": "412×839",
+      "spec": "app-anonymous.spec.ts",
+      "test": "первый запуск, привязка почты, выход: аккаунт без почты живёт сам, с почтой — по паролю",
+      "glitches": [
+        "text-overlap: p.rd-fineprint.rd-welcome-sos \"В опасной ситуации звони 112\" is printed over div.rd-voice-caption \"Я рядом. С чего начнём?\"",
+        "text-overlap: button.rd-inline-link.rd-home-people-link \"Люди рядом — линии помощи\" is printed over p.rd-voice-hint \"Нажми на шар и говори\""
+      ]
+    },
+    {
+      "n": 3,
+      "project": "mobile",
+      "slug": "privacy-document",
+      "caption": "Политика: предоставленный заголовок и шесть разделов",
+      "file": "mobile/03-privacy-document.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 4,
+      "project": "mobile",
+      "slug": "privacy-retention",
+      "caption": "Разговор хранится 30 дней, неактивный аккаунт — 90 дней",
+      "file": "mobile/04-privacy-retention.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 5,
+      "project": "mobile",
+      "slug": "privacy-self-check",
+      "caption": "Самопроверка: ответы и результаты только на устройстве",
+      "file": "mobile/05-privacy-self-check.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 6,
+      "project": "mobile",
+      "slug": "privacy-protection",
+      "caption": "Обработчики, шифрование, маскирование, копии и журналы",
+      "file": "mobile/06-privacy-protection.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "правовые страницы и страница удаления открываются",
+      "glitches": []
+    },
+    {
+      "n": 7,
+      "project": "mobile",
+      "slug": "privacy-tables",
+      "caption": "Таблица данных читается без горизонтальной прокрутки",
+      "file": "mobile/07-privacy-tables.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "политика: адаптивные таблицы и отказ от аналитики",
+      "glitches": []
+    },
+    {
+      "n": 8,
+      "project": "mobile",
+      "slug": "privacy-opt-out",
+      "caption": "Отказ от аналитики сохраняется после перезагрузки",
+      "file": "mobile/08-privacy-opt-out.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "политика: адаптивные таблицы и отказ от аналитики",
+      "glitches": []
+    },
+    {
+      "n": 9,
+      "project": "mobile",
+      "slug": "operator-email",
+      "caption": "Блок «Связь» ведёт на playasn@yandex.ru",
+      "file": "mobile/09-operator-email.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "политика описывает согласие на Метрику, а связь ведёт на почту Оператора",
+      "glitches": []
+    },
+    {
+      "n": 10,
+      "project": "mobile",
+      "slug": "welcome",
+      "caption": "Первый экран: шар, поле «Напиши или скажи», строка о согласии и 112, флажков нет",
+      "file": "mobile/10-welcome.png",
+      "viewport": "412×839",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск: строка о согласии, «Поговорить» — и сразу разговор; потом без экранов",
+      "glitches": []
+    },
+    {
+      "n": 11,
+      "project": "mobile",
+      "slug": "welcome-voice",
+      "caption": "«Поговорить»: разговор открыт голосом, агент здоровается «Я рядом. С чего начнём?»",
+      "file": "mobile/11-welcome-voice.png",
+      "viewport": "412×839",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск: строка о согласии, «Поговорить» — и сразу разговор; потом без экранов",
+      "glitches": []
+    },
+    {
+      "n": 12,
+      "project": "mobile",
+      "slug": "welcome-typed",
+      "caption": "Человек набрал первую фразу на первом экране",
+      "file": "mobile/12-welcome-typed.png",
+      "viewport": "412×839",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск текстом: набранное уходит первым сообщением после приветствия",
+      "glitches": []
+    },
+    {
+      "n": 13,
+      "project": "mobile",
+      "slug": "welcome-text",
+      "caption": "Разговор открыт текстом: приветствие, затем набранная фраза первым сообщением",
+      "file": "mobile/13-welcome-text.png",
+      "viewport": "412×839",
+      "spec": "web-anonymous.spec.ts",
+      "test": "первый запуск текстом: набранное уходит первым сообщением после приветствия",
+      "glitches": []
+    }
+  ]
+}
