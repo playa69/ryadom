@@ -350,7 +350,7 @@ start('landing', ['server.js'], {
     // Where the site's analytics read their settings (in production the site's own host): without it the
     // landing asks a default port, and nothing about analytics on the landing could be tested.
     PUBLIC_APP_URL: `http://127.0.0.1:${APP_PORT}`,
-    PUBLIC_SUPPORT_EMAIL: 'support@ryadom.local',
+    PUBLIC_SUPPORT_EMAIL: 'playasn@yandex.ru',
   },
 })
 await waitFor(`http://127.0.0.1:${WEB_PORT}/api/health`, 'сайт')

@@ -66,6 +66,13 @@ test('первый запуск: строка о согласии, «Погов�
   await openWebApp(page)
   await expect(page).toHaveURL(/\/home$/)
   await expect(page.getByTestId('guest-note')).toBeVisible()
+  // `openspec/changes/update-privacy-policy`, «Человек знает о сроке хранения разговоров».
+  await expect(page.getByTestId('guest-note')).toContainText(
+    'Разговоры хранятся 30 дней после последнего сообщения.',
+  )
+  await expect(page.getByTestId('guest-note')).toContainText(
+    'Без почты аккаунт удаляется через 90 дней без визитов.',
+  )
   // The same frame as for an account: SOS in the header, the menu with «Войти» at its foot.
   await expect(page.getByRole('button', { name: 'SOS' })).toBeVisible()
   await openSidebar(page)
