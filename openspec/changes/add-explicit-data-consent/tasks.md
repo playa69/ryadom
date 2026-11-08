@@ -20,4 +20,4 @@
 
 ## 7. Архив
 
-- [ ] 7.1 После выката закрыть задачи, выполнить `openspec archive add-explicit-data-consent --yes`, удалить архивную папку из рабочего дерева и прогнать `openspec validate --specs --strict`. Приёмка: дельты полностью перенесены в `account-auth`, `app-shell` и `landing-site`, change удалён из активных, строгая проверка спек зелёная.
+- [ ] 7.1 После выката закрыть задачи, выполнить `openspec archive add-explicit-data-consent --yes`, удалить архивную папку из рабочего дерева и прогнать `openspec validate --specs --strict`. При архивации после `update-privacy-policy` сначала перенести дельту на обновлённую спеку, сохранив явное согласие и 30 дней в подписи разговоров. Приёмка: дельты полностью перенесены в `account-auth`, `app-shell` и `landing-site`, change удалён из активных, строгая проверка спек зелёная.
