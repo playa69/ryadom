@@ -1,5 +1,6 @@
 import { PWA_URL, WEBAPP_URL } from '../playwright.config'
 import { expect, test } from '../support/fixtures'
+import { step } from '../support/evidence'
 import { E2E_COUNTER_ID, hitUrls, refusedMetrikaRequests, ymCalls } from '../support/metrika'
 
 /** The landing site: it has to work without the database, without the core and without the app. */
@@ -56,13 +57,123 @@ test('правовые страницы и страница удаления о�
   await shot(page, 'download', { fullPage: true })
 })
 
+// openspec/changes/update-terms, «Политика конфиденциальности и пользовательское соглашение».
+test('соглашение: редакция, выделенные границы и все 14 разделов', async ({ page }) => {
+  await page.goto('/terms')
+  const document = page.locator('main')
+
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    'Пользовательское соглашение сервиса «Рядом»',
+  )
+  await expect(document).toContainText('Редакция от 05.11.2026.')
+  await expect(document).toContainText('Публикуется по адресу слышу-рядом.рф/terms.')
+  await expect(document).toContainText('Собеседник — искусственный интеллект.')
+  await expect(document).toContainText('Если есть угроза жизни — звоните 112.')
+  await step(page, 'terms-intro', 'Новая редакция и выделенные границы сервиса', { keepDates: true })
+
+  const rules = document.getByRole('heading', { name: '7. Как нельзя пользоваться сервисом' })
+  await rules.scrollIntoViewIfNeeded()
+  await expect(rules).toBeVisible()
+  await step(page, 'terms-rules', 'Правила использования читаются в общей типографике документа')
+
+  await expect(document.getByRole('heading', { level: 2 })).toHaveText([
+    '1. Стороны и принятие условий',
+    '2. Что такое сервис',
+    '3. Возраст',
+    '4. Безопасность и границы сервиса',
+    '5. Аккаунт без регистрации',
+    '6. Уведомления',
+    '7. Как нельзя пользоваться сервисом',
+    '8. Стоимость',
+    '9. Интеллектуальная собственность',
+    '10. Ответственность',
+    '11. Изменения и прекращение',
+    '12. Приложения из магазинов и Telegram',
+    '13. Применимое право и споры',
+    '14. Связь',
+  ])
+  await step(page, 'terms-sections', 'В документе присутствуют все 14 разделов', { fullPage: true })
+})
+
+test('соглашение: оферта, отдельное согласие и аккаунт без регистрации', async ({ page }) => {
+  await page.goto('/terms')
+  const document = page.locator('main')
+
+  await expect(document).toContainText('Соглашение — публичная оферта (ст. 437 ГК РФ).')
+  await expect(document).toContainText('отдельным согласием на обработку персональных данных')
+  await expect(
+    document.getByRole('link', { name: 'Политикой обработки персональных данных', exact: true }),
+  ).toHaveAttribute('href', '/privacy')
+  await step(page, 'terms-offer', 'Оферта и отдельное согласие на обработку данных')
+
+  await expect(document).toContainText('Регистрация не нужна.')
+  await document.getByRole('heading', { name: '5. Аккаунт без регистрации' }).scrollIntoViewIfNeeded()
+  await step(page, 'terms-anonymous', 'Аккаунт создаётся на устройстве без обязательной регистрации')
+
+  await expect(document).toContainText('одноразовым кодом или QR-кодом из настроек')
+  await expect(document).toContainText('Аккаунт без активности удаляется автоматически через 90 дней.')
+  await expect(document.getByRole('link', { name: '«Стереть всё»', exact: true })).toHaveCount(2)
+  const erase = document.getByRole('link', { name: '«Стереть всё»', exact: true }).first()
+  await expect(erase).toHaveAttribute('href', '/delete-account')
+  await erase.scrollIntoViewIfNeeded()
+  await step(page, 'terms-account', 'Перенос, 90 дней без активности и необратимое удаление')
+})
+
+test('соглашение: технологии, возраст и кризисные границы', async ({ page }) => {
+  await page.goto('/terms')
+  const document = page.locator('main')
+
+  await expect(document).toContainText('Речь распознаётся и озвучивается сервисом SaluteSpeech')
+  await expect(document).toContainText('ответы формирует модель GigaChat')
+  await expect(document).toContainText('Ответы ИИ могут быть неточными')
+  await document.getByRole('heading', { name: '2. Что такое сервис' }).scrollIntoViewIfNeeded()
+  await step(page, 'terms-ai', 'Технологии и ограничения ответов искусственного интеллекта')
+
+  await expect(document).toContainText('Сервисом могут пользоваться лица, достигшие 18 лет.')
+  await document.getByRole('heading', { name: '3. Возраст' }).scrollIntoViewIfNeeded()
+  await step(page, 'terms-age', 'Сервис предназначен для людей старше 18 лет')
+
+  await expect(document).toContainText('не ждите реакции сервиса и звоните 112')
+  await expect(document).toContainText('Мы не вызываем за вас службы, не связываемся с вашими близкими')
+  await document.getByRole('heading', { name: '4. Безопасность и границы сервиса' }).scrollIntoViewIfNeeded()
+  await step(page, 'terms-safety', 'Кризисные границы: звонок 112 остаётся за человеком')
+})
+
+test('соглашение: площадки, споры и связь с правообладателем', async ({ page }) => {
+  await page.goto('/terms')
+  const document = page.locator('main')
+
+  await expect(document).toContainText('Соглашение заключено между вами и нами, а не с Apple Inc.')
+  await expect(document).toContainText('через Google Play, RuStore или Telegram')
+  await document
+    .getByRole('heading', { name: '12. Приложения из магазинов и Telegram' })
+    .scrollIntoViewIfNeeded()
+  await step(page, 'terms-stores', 'Дополнительные условия App Store и других площадок')
+
+  await expect(document).toContainText('К Соглашению применяется право Российской Федерации.')
+  await expect(document).toContainText('Как потребитель вы можете подать иск и по месту своего жительства.')
+  await document.getByRole('heading', { name: '13. Применимое право и споры' }).scrollIntoViewIfNeeded()
+  await step(page, 'terms-law', 'Применимое право и порядок рассмотрения споров')
+
+  await expect(document).toContainText('Правообладатель: физическое лицо Валясин Александр Микаэлович.')
+  const email = document.getByRole('link', { name: 'playasn@yandex.ru', exact: true })
+  await expect(email).toHaveCount(2)
+  for (const link of await email.all()) {
+    await expect(link).toHaveAttribute('href', 'mailto:playasn@yandex.ru')
+  }
+  await document.getByRole('heading', { name: '14. Связь' }).scrollIntoViewIfNeeded()
+  await step(page, 'terms-contact', 'Почта и имя правообладателя в разделе связи')
+})
+
 test('несуществующая страница отвечает 404, а не падает', async ({ page }) => {
   const response = await page.goto('/no-such-page')
   expect(response?.status()).toBe(404)
   await expect(page.getByRole('heading', { name: 'Такой страницы нет' })).toBeVisible()
 })
 
-test('robots.txt закрывает страницы ссылок на разговоры и оставляет остальной сайт открытым', async ({ page }) => {
+test('robots.txt закрывает страницы ссылок на разговоры и оставляет остальной сайт открытым', async ({
+  page,
+}) => {
   const response = await page.request.get('/robots.txt')
   expect(response.ok()).toBe(true)
   const body = await response.text()
@@ -70,7 +181,9 @@ test('robots.txt закрывает страницы ссылок на разг�
   expect(body).toMatch(/^Allow: \/$/m)
 })
 
-test('Метрика на лендинге: запись экрана и карта кликов — только здесь, адрес без лишнего', async ({ page }) => {
+test('Метрика на лендинге: запись экрана и карта кликов — только здесь, адрес без лишнего', async ({
+  page,
+}) => {
   // The query carries a campaign label and something that must not leave; the fragment must not either.
   await page.goto('/?utm_source=e2e&secret=SECRET-E2E-QUERY#SECRET-E2E-FRAGMENT')
   await expect.poll(() => hitUrls(page)).not.toHaveLength(0)
@@ -94,14 +207,19 @@ test('Метрика на лендинге: телефоны помощи зак
   const emergency = page.getByRole('link', { name: '112', exact: true })
   await expect(emergency).toBeVisible()
   // The link and its row carry the classes the Metrika tag itself looks for (and PostHog's).
-  for (const target of [emergency, emergency.locator('xpath=ancestor::*[contains(@class, "ph-no-capture")][1]')]) {
+  for (const target of [
+    emergency,
+    emergency.locator('xpath=ancestor::*[contains(@class, "ph-no-capture")][1]'),
+  ]) {
     await expect(target).toHaveClass(/ym-disable-clickmap/)
     await expect(target).toHaveClass(/ym-hide-content/)
     await expect(target).toHaveClass(/ph-no-capture/)
   }
 })
 
-test('политика конфиденциальности называет Яндекс Метрику, её cookie и прямую передачу адреса', async ({ page }) => {
+test('политика конфиденциальности называет Яндекс Метрику, её cookie и прямую передачу адреса', async ({
+  page,
+}) => {
   await page.goto('/privacy')
   const paragraph = page.locator('p', { hasText: 'Яндекс Метрика.' })
   await expect(paragraph).toBeVisible()
