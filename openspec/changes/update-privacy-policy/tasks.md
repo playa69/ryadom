@@ -8,7 +8,7 @@
 ## 5. Проверка
 
 - [x] 5.1 Снять evidence по skill `screenshots` на 390 и 1280: открытие документа, сроки и самопроверка, обработчики и защита, адаптивные таблицы, отказ от аналитики, 30 дней на `/home`, 90 дней аккаунта и новая почта. Приёмка: каждый изменённый THEN имеет кадр в двух проектах, длинный текст и таблицы не обрезаны, горизонтальной прокрутки нет.
-- [ ] 5.2 Прогнать `pnpm typecheck`, `pnpm test`, профильные `pnpm e2e landing web-anonymous app-anonymous`, затем полный `pnpm e2e` из `app/`; Prettier по изменённым файлам и `git diff --check`. Приёмка: все стандартные проверки зелёные; чужие падения воспроизведены и названы отдельно, не исправлены в этом change.
+- [x] 5.2 Прогнать `pnpm typecheck`, `pnpm test`, профильные `pnpm e2e landing web-anonymous app-anonymous`, затем полный `pnpm e2e` из `app/`; Prettier по изменённым файлам и `git diff --check`. Приёмка: все стандартные проверки зелёные; чужие падения воспроизведены и названы отдельно, не исправлены в этом change.
 - [x] 5.3 Прогнать `npx -y @fission-ai/openspec@1.9.0 validate update-privacy-policy --strict` и `node .agents/skills/release-check/scripts/release-check.mjs --base origin/main`. Приёмка: OpenSpec strict зелёный, release-check не сообщает нарушений; к выкату landing, web, pwa и api (OTA), нативная сборка не требуется.
 
 ## 6. Выкат
