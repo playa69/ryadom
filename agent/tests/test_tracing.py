@@ -1,8 +1,8 @@
 """Трейсинг LLM-ходов в Langfuse (app/core/tracing.py).
 
 Без ключей Langfuse трейсинг выключен (NullTracer), и приложение ведёт себя как без него. Здесь проверяются:
-маскирование текстов (тексты в Langfuse не уходят никогда), маппинг полей на SDK, устойчивость к сбоям SDK
-и настройки (ключи включают трейсинг, один ключ без второго — сервис не стартует).
+маскирование по умолчанию, исходные входы и выходы в диагностическом режиме, маппинг полей на SDK,
+устойчивость к сбоям SDK и настройки (ключи включают трейсинг, один ключ без второго — сервис не стартует).
 """
 
 import os
@@ -41,12 +41,21 @@ def test_mask_hides_values_of_unexpected_types() -> None:
 
 
 def test_status_loses_the_provider_body() -> None:
-    assert _mask_status("Фоновая модель ответила 500: {мне плохо, я не знаю что делать}") == "Фоновая модель ответила 500"
+    assert (
+        _mask_status("Фоновая модель ответила 500: {мне плохо, я не знаю что делать}") == "Фоновая модель ответила 500"
+    )
     assert _mask_status(None) is None
 
 
 def test_metadata_keeps_numbers_and_short_names_but_not_long_strings() -> None:
-    metadata = {"model": "gemini-3.8-live", "chars": 12, "audio_seconds": 1.5, "flag": True, "note": "мне плохо", "long": "а" * 80}
+    metadata = {
+        "model": "gemini-3.8-live",
+        "chars": 12,
+        "audio_seconds": 1.5,
+        "flag": True,
+        "note": "мне плохо",
+        "long": "а" * 80,
+    }
     masked = _mask_metadata(metadata)
     assert masked == {**metadata, "note": "[скрыто]", "long": "[скрыто]"}
     assert _mask_metadata(None) is None
@@ -121,10 +130,11 @@ class FakeLangfuseClient:
         self.flushed = True
 
 
-def make_tracer() -> tuple[LangfuseTracer, FakeLangfuseClient]:
+def make_tracer(*, capture_content: bool = False) -> tuple[LangfuseTracer, FakeLangfuseClient]:
     client = FakeLangfuseClient()
     tracer = LangfuseTracer.__new__(LangfuseTracer)
     tracer._client = client
+    tracer._capture_content = capture_content
     tracer.name = "langfuse:fake"
     return tracer, client
 
@@ -191,6 +201,7 @@ async def test_prompt_object_and_components_are_linked_without_text() -> None:
 
 
 async def test_input_and_output_are_masked() -> None:
+    """`openspec/changes/allow-langfuse-content-diagnostics`, «Сквозная трассировка»: маскирование по умолчанию."""
     tracer, client = make_tracer()
     turn = tracer.start_turn(name="t", session_id="d", user_id="u", input="мне плохо")
     turn.update(output="я рядом")
@@ -199,6 +210,59 @@ async def test_input_and_output_are_masked() -> None:
     assert root.kwargs["input"] == "[скрыто: 9 симв., 2 сл.]"
     assert root.updates[0]["output"] == "[скрыто: 7 симв., 2 сл.]"
     assert "плохо" not in str(root.kwargs) and "рядом" not in str(root.updates)
+
+
+async def test_capture_content_preserves_input_output_only() -> None:
+    """`openspec/changes/allow-langfuse-content-diagnostics`, «Сквозная трассировка»: диагностика и защищённые поля."""
+    tracer, client = make_tracer(capture_content=True)
+    turn = tracer.start_turn(
+        name="t",
+        session_id="d",
+        user_id="u",
+        input=MESSAGES,
+        metadata={"note": "личный комментарий"},
+        prompt_components=[
+            {"name": "agent.dialog.system", "version": 1, "source": "langfuse", "text": "секрет инструкции"}
+        ],
+    )
+    child = tracer.start_span(turn, name="tts", input="синтетическая расшифровка", metadata={"text": "личный текст"})
+    empty = tracer.start_span(turn, name="empty", input="")
+    turn.update(
+        input="уточнённый вход",
+        output="синтетический ответ",
+        status="Модель ответила 500: исходный текст ошибки",
+        metadata={"note": "личный текст в обновлении"},
+    )
+    child.update(output={"text": "синтетический ответ", "items": []})
+    empty.update(output="")
+    for observation in (child, empty, turn):
+        observation.end()
+
+    root = client.traces[0]
+    assert root.kwargs["input"] is MESSAGES
+    assert root.updates[0]["input"] == "уточнённый вход"
+    assert root.updates[0]["output"] == "синтетический ответ"
+    assert root.children[0].kwargs["input"] == "синтетическая расшифровка"
+    assert root.children[0].updates[0]["output"] == {"text": "синтетический ответ", "items": []}
+    assert root.children[1].kwargs["input"] == ""
+    assert root.children[1].updates[0]["output"] == ""
+    assert root.kwargs["metadata"]["note"] == "[скрыто]"
+    assert root.updates[0]["metadata"]["note"] == "[скрыто]"
+    assert root.children[0].kwargs["metadata"]["text"] == "[скрыто]"
+    assert root.updates[0]["status_message"] == "Модель ответила 500"
+    assert "секрет инструкции" not in str(root.kwargs)
+    assert "личный текст" not in str(root.kwargs) + str(root.updates) + str(root.children[0].kwargs)
+
+
+async def test_capture_content_false_masks_new_traces_after_diagnostic_mode() -> None:
+    """`openspec/changes/allow-langfuse-content-diagnostics`, «Сквозная трассировка»: повторное маскирование."""
+    raw_tracer, raw_client = make_tracer(capture_content=True)
+    raw_tracer.start_turn(name="raw", session_id="d", user_id="u", input="синтетическая реплика")
+    masked_tracer, masked_client = make_tracer(capture_content=False)
+    masked_tracer.start_turn(name="masked", session_id="d", user_id="u", input="синтетическая реплика")
+
+    assert raw_client.traces[0].kwargs["input"] == "синтетическая реплика"
+    assert masked_client.traces[0].kwargs["input"] == _mask("синтетическая реплика")
 
 
 async def test_traces_keep_sizes_and_no_text_anywhere() -> None:
@@ -258,8 +322,10 @@ async def test_update_after_end_is_ignored() -> None:
     assert client.traces[0].updates == []
 
 
-async def test_sdk_failure_falls_back_to_null_and_never_raises() -> None:
-    tracer, _ = make_tracer()
+@pytest.mark.parametrize("capture_content", [False, True])
+async def test_sdk_failure_falls_back_to_null_and_never_raises(capture_content: bool) -> None:
+    """`openspec/changes/allow-langfuse-content-diagnostics`, «Сквозная трассировка»: сбой SDK в обоих режимах."""
+    tracer, _ = make_tracer(capture_content=capture_content)
 
     class BrokenSpan(FakeSpan):
         def update(self, **kwargs: object) -> "BrokenSpan":
@@ -285,20 +351,39 @@ async def test_aclose_flushes() -> None:
     assert client.flushed
 
 
+async def test_aclose_failure_never_raises() -> None:
+    """`openspec/changes/allow-langfuse-content-diagnostics`, «Сквозная трассировка»: сбой flush не прерывает работу."""
+    tracer, _ = make_tracer(capture_content=True)
+
+    def broken_flush() -> None:
+        raise RuntimeError("sdk down")
+
+    tracer._client.flush = broken_flush  # type: ignore[method-assign]
+    await tracer.aclose()
+
+
 # ─── настройки: fail-fast ─────────────────────────────────────────────────────
 
 
 def keys(**env: str) -> LangfuseSettings:
     """Настройки Langfuse из заданного окружения: ключи из .env разработчика и контейнера в тест не попадают."""
-    saved = {name: os.environ.pop(name, None) for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")}
+    names = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_CAPTURE_CONTENT")
+    saved = {name: os.environ.pop(name, None) for name in names}
     os.environ.update(env)
     try:
         return LangfuseSettings()
     finally:
-        for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        for name in names:
             os.environ.pop(name, None)
             if saved[name] is not None:
                 os.environ[name] = saved[name]  # type: ignore[assignment]
+
+
+def test_capture_content_setting_defaults_and_reads_bool() -> None:
+    """`openspec/changes/allow-langfuse-content-diagnostics`, «Сквозная трассировка»: настройка диагностического режима."""
+    assert keys().capture_content is False
+    assert keys(LANGFUSE_CAPTURE_CONTENT="false").capture_content is False
+    assert keys(LANGFUSE_CAPTURE_CONTENT="true").capture_content is True
 
 
 def test_one_key_without_the_other_fails_fast() -> None:
@@ -334,7 +419,11 @@ def test_keys_switch_the_tracing_on(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = keys(LANGFUSE_PUBLIC_KEY="pk-lf-test", LANGFUSE_SECRET_KEY="sk-lf-test")
     assert settings.tracing_active is True
     tracer = build_tracer(settings)
-    assert isinstance(tracer, LangfuseTracer) and started["public_key"] == "pk-lf-test" and started["secret_key"] == "sk-lf-test"
+    assert (
+        isinstance(tracer, LangfuseTracer)
+        and started["public_key"] == "pk-lf-test"
+        and started["secret_key"] == "sk-lf-test"
+    )
 
 
 def test_native_fastapi_telemetry_is_off() -> None:

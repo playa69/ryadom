@@ -22,8 +22,9 @@
 - Стандартный `logging`: `logger = logging.getLogger("agent.<область>")` в модуле; формат и уровень задаёт
   `main.py` (`logging.basicConfig`, уровень из `APP_CONFIG`). Вывод — stdout, в кластере его собирает Loki.
 - Тексты реплик, почта, имена и другие личные данные в лог не пишутся: только идентификаторы (`user_id`,
-  `dialog_id`), длительности, размеры и счётчики. То же в Langfuse: тексты туда не уходят никогда, маскируются в
-  `app/core/tracing.py`.
+  `dialog_id`), длительности, размеры и счётчики. В Langfuse тексты по умолчанию маскируются в `app/core/tracing.py`;
+  `LANGFUSE_CAPTURE_CONTENT=true` разрешает исходные `input` и `output` для диагностики, а metadata, ошибки и метрики
+  остаются защищёнными.
 - Метрики — Prometheus, `app/core/metrics.py`; имена `agent_*`.
 
 ## Заголовки трассировки

@@ -7,8 +7,8 @@
 
 Трейсинг включается, когда заданы ключи проекта `LANGFUSE_PUBLIC_KEY` и `LANGFUSE_SECRET_KEY`; без них — `NullTracer`, и агент
 работает как без трейсинга. Трейсинг никогда не влияет на диалог: сбой записи — warning в журнал, а не исключение наружу.
-Тексты реплик людей и агента в Langfuse НЕ уходят никогда: вместо них число символов и слов, длительность речи, токены и
-задержки этапов.
+По умолчанию вместо текстов реплик записываются число символов и слов. `LANGFUSE_CAPTURE_CONTENT=true` разрешает исходные
+`input` и `output` для диагностики; metadata, ошибки, обычные логи и метрики остаются защищёнными.
 """
 
 import asyncio
@@ -28,10 +28,19 @@ def _mask(value: Any) -> Any:
         return f"[скрыто: {len(value)} симв., {len(value.split())} сл.]"
     if isinstance(value, list):  # сообщения чата: [{"role": ..., "content": ...}]
         return [
-            {"role": m.get("role"), "content": _mask(str(m.get("content") or ""))} if isinstance(m, dict) else "[скрыто]"
+            {"role": m.get("role"), "content": _mask(str(m.get("content") or ""))}
+            if isinstance(m, dict)
+            else "[скрыто]"
             for m in value
         ]
     return "[скрыто]"
+
+
+def _trace_content(value: Any, capture_content: bool) -> Any:
+    """Выбирает содержимое трассы."""
+    if capture_content:
+        return value
+    return _mask(value)
 
 
 MAX_PLAIN_METADATA_CHARS = 64
@@ -50,7 +59,9 @@ def _mask_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
     if metadata is None:
         return metadata
     return {
-        key: "[скрыто]" if isinstance(value, str) and (len(value) > MAX_PLAIN_METADATA_CHARS or len(value.split()) > 1) else value
+        key: "[скрыто]"
+        if isinstance(value, str) and (len(value) > MAX_PLAIN_METADATA_CHARS or len(value.split()) > 1)
+        else value
         for key, value in metadata.items()
     }
 
@@ -143,14 +154,17 @@ class NullTracer:
 
 
 class LangfuseObservation:
-    """Наблюдение Langfuse с ручным жизненным циклом и маскированием текстов.
+    """Наблюдение Langfuse с ручным жизненным циклом и настраиваемым содержимым.
 
     `update` после `end` молча игнорируется: события хода могут прийти позже его закрытия
     (расход токенов, хвост прерванного ответа), и это не повод для ошибки.
     """
 
-    def __init__(self, span: Any) -> None:  # noqa: ANN401 — span: LangfuseSpan | LangfuseGeneration
+    def __init__(  # noqa: ANN401 — span: LangfuseSpan | LangfuseGeneration
+        self, span: Any, *, capture_content: bool = False
+    ) -> None:
         self.raw = span
+        self._capture_content = capture_content
         self._ended = False
 
     @property
@@ -173,9 +187,9 @@ class LangfuseObservation:
             return
         kwargs: dict[str, Any] = {}
         if input is not None:
-            kwargs["input"] = _mask(input)
+            kwargs["input"] = _trace_content(input, self._capture_content)
         if output is not None:
-            kwargs["output"] = _mask(output)
+            kwargs["output"] = _trace_content(output, self._capture_content)
         details = _usage_details(usage)
         if details:
             kwargs["usage_details"] = details
@@ -219,6 +233,7 @@ class LangfuseTracer:
         if settings.public_key is None or settings.secret_key is None:
             # До этого не дойдёт: `build_tracer` создаёт трассировщик, только когда ключи заданы.
             raise RuntimeError("не заданы LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY")
+        self._capture_content = settings.capture_content
         self._client = Langfuse(
             public_key=settings.public_key.get_secret_value(),
             secret_key=settings.secret_key.get_secret_value(),
@@ -250,7 +265,7 @@ class LangfuseTracer:
         kwargs: dict[str, Any] = {
             "name": name,
             "model": model,
-            "input": _mask(input),
+            "input": _trace_content(input, self._capture_content),
             "metadata": _mask_metadata(metadata),
         }
         if prompt is not None:
@@ -258,7 +273,7 @@ class LangfuseTracer:
         try:
             generation = self._client.start_generation(**kwargs)
             generation.update_trace(session_id=session_id, user_id=user_id, tags=tags)
-            return LangfuseObservation(generation)
+            return LangfuseObservation(generation, capture_content=self._capture_content)
         except Exception as error:  # noqa: BLE001
             logger.warning("langfuse trace start failed: %s", error)
             return NULL_OBSERVATION
@@ -278,9 +293,11 @@ class LangfuseTracer:
             return NULL_OBSERVATION
         try:
             span = parent.raw.start_span(
-                name=name, input=_mask(input), metadata=_mask_metadata(metadata)
+                name=name,
+                input=_trace_content(input, self._capture_content),
+                metadata=_mask_metadata(metadata),
             )
-            return LangfuseObservation(span)
+            return LangfuseObservation(span, capture_content=self._capture_content)
         except Exception as error:  # noqa: BLE001
             logger.warning("langfuse span start failed: %s", error)
             return NULL_OBSERVATION
