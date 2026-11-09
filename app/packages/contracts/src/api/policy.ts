@@ -18,8 +18,7 @@ export const POLICY_VERSION = '2026-10-04'
 export const ANONYMOUS_RETENTION_DAYS = 90
 
 /**
- * How many days a conversation is kept after its last message, for every account. The agent holds the real
- * setting (`DIALOG_RETENTION_DAYS`, default 90); this constant only feeds the texts the screens show, so
- * change both together.
+ * How many days the published privacy policy and client screens say a conversation is kept. The agent's
+ * actual cleanup setting is configured separately and is not changed by this display constant.
  */
-export const DIALOG_RETENTION_DAYS = 90
+export const DIALOG_RETENTION_DAYS = 30

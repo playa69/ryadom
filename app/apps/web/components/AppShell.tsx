@@ -36,9 +36,9 @@ export function startOver(): void {
  * content. Below 768px the sidebar is a drawer; from there up it is a column that can collapse.
  *
  * Home and «Люди рядом» are open to everyone. Without a session, a device with an anonymous identity
- * signs back in without a screen; anyone else gets the same frame and the same home, as a guest: the
- * first message there makes the account and starts the conversation. Every other page without a
- * session goes to the sign-in.
+ * signs back in without a screen; anyone else first passes a separate consent gate, then gets the same
+ * frame and home as a guest: the first message there makes the account and starts the conversation.
+ * Every other page without a session goes to the sign-in.
  *
  * It also holds the door for the terms: until the account has agreed to the current version, the
  * gate stands in place of the page. The answer is cached in the stored user, so an account that has
@@ -139,7 +139,7 @@ export default function AppShell({ webUrl, children }: { webUrl: string; childre
   }, [status, userId, client])
 
   if (status === 'authenticated' && gate && !agreed) {
-    return <TermsGate termsUrl={`${webUrl}/terms`} privacyUrl={`${webUrl}/privacy`} />
+    return <TermsGate termsUrl={`${webUrl}/terms`} consentUrl={`${webUrl}/consent`} />
   }
   // The same frame for a guest as for an account: the first message on home makes the account, and the
   // page stays where it is.

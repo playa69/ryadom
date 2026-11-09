@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import {
   button,
   checkConsent,
@@ -14,6 +15,7 @@ import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
 import { setVoicePipeline } from '../support/voice'
+import { deviceLogin } from '../support/session'
 
 /**
  * The whole account path: sign-up, the code from the email, SOS, password change, deletion.
@@ -120,4 +122,32 @@ test('путь аккаунта: регистрация, вход, смена п
   await field(page, 'password').fill(nextPassword)
   await button(page, 'Войти').click()
   await expect(page.getByTestId('form-error')).toBeVisible({ timeout: 20_000 })
+})
+
+test('новая запись согласий: «Продолжить» закрыто до явной отметки', async ({ page, request }) => {
+  const device = {
+    deviceId: randomBytes(16).toString('base64url'),
+    deviceKey: randomBytes(32).toString('base64url'),
+  }
+  await deviceLogin(request, device)
+  await openApp(page)
+  await page.evaluate((value) => {
+    window.localStorage.setItem('ryadom_device', JSON.stringify(JSON.stringify(value)))
+    window.localStorage.setItem('ryadom.memory-invite-dismissed', '1')
+  }, device)
+  await page.reload()
+
+  const first = page.locator('.page-current')
+  // `openspec/changes/add-explicit-data-consent`, «Новая версия условий».
+  await expect(first.getByTestId('welcome-talk')).toBeVisible({ timeout: 30_000 })
+  await expect(first.getByTestId('welcome-talk')).toHaveText('Продолжить')
+  await expect(first.getByTestId('data-consent-toggle')).not.toBeChecked()
+  await expect(first.getByTestId('welcome-talk')).toBeDisabled()
+  await step(page, 'app-terms-gate-required', 'В приложении новая запись согласий требует отметки')
+  await first.getByTestId('data-consent-toggle').check()
+  await expect(first.getByTestId('welcome-talk')).toBeEnabled()
+  await step(page, 'app-terms-gate-consented', 'После отметки кнопка «Продолжить» доступна')
+  await first.getByTestId('welcome-talk').click()
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.page-current').getByTestId('data-consent')).toHaveCount(0)
 })

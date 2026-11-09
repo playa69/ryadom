@@ -143,13 +143,12 @@ test('адаптивность: на входе, регистрации и пе�
       await expectNoHorizontalOverflow(page)
       // The form stays inside the window at every width, whichever way the card is laid out. The first
       // screen has no address field: its edge to hold is the line about the agreement.
-      const edge =
-        path === '/home' ? page.getByTestId('consent-notice') : field(page, 'email')
+      const edge = path === '/home' ? page.getByTestId('consent-notice') : field(page, 'email')
       const box = await edge.boundingBox()
       expect(box!.x, `${path}@${width}: форма слева`).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width, `${path}@${width}: форма справа`).toBeLessThanOrEqual(width)
       await expect(
-        button(page, path === '/home' ? 'Поговорить' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
+        button(page, path === '/home' ? 'Продолжить' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
       ).toBeVisible()
     }
   }
@@ -251,7 +250,9 @@ test('каркас: сайдбар слева на широком окне, шт
       await expect(nav(page), `${at}: сайдбар спрятан, пока шторка закрыта`).toBeHidden()
       await expect(menuButton(page)).toBeVisible()
       expect(composer.x, `${at}: поле ввода с отступом слева`).toBeGreaterThanOrEqual(8)
-      expect(composer.x + composer.width, `${at}: поле ввода с отступом справа`).toBeLessThanOrEqual(width - 8)
+      expect(composer.x + composer.width, `${at}: поле ввода с отступом справа`).toBeLessThanOrEqual(
+        width - 8,
+      )
       // Gutters are 16px, 24px from 700px.
       expect(composer.width, `${at}: поле ввода на всю ширину`).toBeGreaterThanOrEqual(width - 56)
 
@@ -287,7 +288,9 @@ test('каркас: сайдбар слева на широком окне, шт
       // The menu button folds the column to an icon rail and back.
       await menuButton(page).click()
       await expect
-        .poll(async () => (await nav(page).boundingBox())?.width ?? 0, { message: `${at}: сайдбар свернулся` })
+        .poll(async () => (await nav(page).boundingBox())?.width ?? 0, {
+          message: `${at}: сайдбар свернулся`,
+        })
         .toBeLessThan(80)
       await expect(newChat, `${at}: «Новый разговор» остался в рейке`).toBeVisible()
       await expect(accountMenu(page)).toBeVisible()
@@ -297,7 +300,9 @@ test('каркас: сайдбар слева на широком окне, шт
       await shot(page, `web-shell-collapsed-${width}`)
       await menuButton(page).click()
       await expect
-        .poll(async () => (await nav(page).boundingBox())?.width ?? 0, { message: `${at}: сайдбар развернулся` })
+        .poll(async () => (await nav(page).boundingBox())?.width ?? 0, {
+          message: `${at}: сайдбар развернулся`,
+        })
         .toBeGreaterThanOrEqual(240)
     }
 
@@ -310,7 +315,10 @@ test('каркас: сайдбар слева на широком окне, шт
       await expectSingleSos(page)
       await expectNoHorizontalOverflow(page)
       await openSidebar(page)
-      await expect(people, `${at}: открытая страница отмечена в сайдбаре`).toHaveAttribute('aria-current', 'page')
+      await expect(people, `${at}: открытая страница отмечена в сайдбаре`).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
       await closeSidebar(page)
 
       await openProfile(page)
@@ -356,7 +364,7 @@ test('меню аккаунта: профиль и выход', async ({ page })
 
   // Signed out means signed out: home without a session is the first screen, not the account ...
   await openWebApp(page, '/home')
-  await expect(page.getByTestId('guest-note')).toBeVisible()
+  await expect(page.getByTestId('terms-gate')).toBeVisible()
   await openSignIn(page)
   await expect(button(page, 'Войти')).toBeVisible()
   // ... and the account is still there for the next sign-in.

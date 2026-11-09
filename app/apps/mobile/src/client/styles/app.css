@@ -122,7 +122,9 @@ button:where(:not(.button)) {
 /* ── Framework7 in dark mode ─────────────────────────────────────────────── */
 
 .list.inset.list-strong > ul {
-  box-shadow: var(--ryadom-highlight), inset 0 0 0 1px var(--ryadom-line);
+  box-shadow:
+    var(--ryadom-highlight),
+    inset 0 0 0 1px var(--ryadom-line);
 }
 
 /* Glass blurs what is behind it: without this the stars show through as sharp dots under the text. */
@@ -165,7 +167,9 @@ button:where(:not(.button)) {
   height: 48px;
   border-radius: var(--ryadom-r-pill);
   background-image: var(--ryadom-cta);
-  box-shadow: var(--ryadom-cta-glow), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  box-shadow:
+    var(--ryadom-cta-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
   color: var(--ryadom-cta-ink);
   font-weight: 600;
 }
@@ -190,7 +194,9 @@ input:-webkit-autofill:focus {
 /* The main action is a clear blue with a lit top edge and its own glow on the dark. */
 .button.button-fill.button-large {
   background-image: var(--ryadom-cta);
-  box-shadow: var(--ryadom-cta-glow), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  box-shadow:
+    var(--ryadom-cta-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .button.rd-button-danger.button-fill {
@@ -814,7 +820,8 @@ input:-webkit-autofill:focus {
   display: flex;
   align-items: center;
   gap: var(--ryadom-s-3);
-  padding: calc(var(--ryadom-s-3) + var(--f7-safe-area-top, 0px)) calc(var(--ryadom-s-5) + var(--f7-safe-area-right, 0px)) 0
+  padding: calc(var(--ryadom-s-3) + var(--f7-safe-area-top, 0px))
+    calc(var(--ryadom-s-5) + var(--f7-safe-area-right, 0px)) 0
     calc(var(--ryadom-s-5) + var(--f7-safe-area-left, 0px));
 }
 
@@ -1259,8 +1266,7 @@ input:-webkit-autofill:focus {
   border-radius: 999px;
   /* Content scrolls under this pill: a tint over a dark glass keeps it from showing through as text. */
   background:
-    linear-gradient(var(--ryadom-danger-50), var(--ryadom-danger-50)),
-    rgba(var(--ryadom-paper-rgb), 0.6);
+    linear-gradient(var(--ryadom-danger-50), var(--ryadom-danger-50)), rgba(var(--ryadom-paper-rgb), 0.6);
   -webkit-backdrop-filter: var(--ryadom-blur);
   backdrop-filter: var(--ryadom-blur);
   font: inherit;
@@ -1284,7 +1290,9 @@ input:-webkit-autofill:focus {
 .sheet-modal {
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
-  box-shadow: var(--ryadom-highlight), 0 -12px 40px rgba(0, 0, 0, 0.4);
+  box-shadow:
+    var(--ryadom-highlight),
+    0 -12px 40px rgba(0, 0, 0, 0.4);
 }
 
 .rd-sheet-body {
@@ -2552,7 +2560,9 @@ input:-webkit-autofill:focus {
   font: inherit;
   color: var(--ryadom-text-dim);
   cursor: pointer;
-  transition: opacity 0.15s, transform 0.15s;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
 }
 
 .rd-mood-face svg {
@@ -3231,6 +3241,16 @@ p.rd-recap-text {
   height: 22px;
   margin: 0;
   accent-color: var(--ryadom-brand-400);
+}
+
+.rd-data-consent {
+  align-items: flex-start;
+}
+
+.rd-data-consent-text {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ryadom-text-dim);
 }
 
 .rd-dialog-gone {
