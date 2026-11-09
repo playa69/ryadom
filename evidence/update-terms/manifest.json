@@ -1,0 +1,278 @@
+{
+  "task": "update-terms",
+  "branch": "app/update-terms",
+  "commit": "73a936f0",
+  "stand": {
+    "id": "terms",
+    "slot": 3,
+    "web": "http://127.0.0.1:20353",
+    "pwa": "http://127.0.0.1:20354"
+  },
+  "generatedAt": "2026-11-08T23:01:36.348Z",
+  "steps": [
+    {
+      "n": 1,
+      "project": "desktop",
+      "slug": "terms-intro",
+      "caption": "Новая редакция и выделенные границы сервиса",
+      "file": "desktop/01-terms-intro.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: редакция, выделенные границы и все 14 разделов",
+      "glitches": []
+    },
+    {
+      "n": 2,
+      "project": "desktop",
+      "slug": "terms-rules",
+      "caption": "Правила использования читаются в общей типографике документа",
+      "file": "desktop/02-terms-rules.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: редакция, выделенные границы и все 14 разделов",
+      "glitches": []
+    },
+    {
+      "n": 3,
+      "project": "desktop",
+      "slug": "terms-sections",
+      "caption": "В документе присутствуют все 14 разделов",
+      "file": "desktop/03-terms-sections.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: редакция, выделенные границы и все 14 разделов",
+      "glitches": []
+    },
+    {
+      "n": 4,
+      "project": "desktop",
+      "slug": "terms-offer",
+      "caption": "Оферта и отдельное согласие на обработку данных",
+      "file": "desktop/04-terms-offer.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: оферта, отдельное согласие и аккаунт без регистрации",
+      "glitches": []
+    },
+    {
+      "n": 5,
+      "project": "desktop",
+      "slug": "terms-anonymous",
+      "caption": "Аккаунт создаётся на устройстве без обязательной регистрации",
+      "file": "desktop/05-terms-anonymous.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: оферта, отдельное согласие и аккаунт без регистрации",
+      "glitches": []
+    },
+    {
+      "n": 6,
+      "project": "desktop",
+      "slug": "terms-account",
+      "caption": "Перенос, 90 дней без активности и необратимое удаление",
+      "file": "desktop/06-terms-account.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: оферта, отдельное согласие и аккаунт без регистрации",
+      "glitches": []
+    },
+    {
+      "n": 7,
+      "project": "desktop",
+      "slug": "terms-ai",
+      "caption": "Технологии и ограничения ответов искусственного интеллекта",
+      "file": "desktop/07-terms-ai.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: технологии, возраст и кризисные границы",
+      "glitches": []
+    },
+    {
+      "n": 8,
+      "project": "desktop",
+      "slug": "terms-age",
+      "caption": "Сервис предназначен для людей старше 18 лет",
+      "file": "desktop/08-terms-age.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: технологии, возраст и кризисные границы",
+      "glitches": []
+    },
+    {
+      "n": 9,
+      "project": "desktop",
+      "slug": "terms-safety",
+      "caption": "Кризисные границы: звонок 112 остаётся за человеком",
+      "file": "desktop/09-terms-safety.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: технологии, возраст и кризисные границы",
+      "glitches": []
+    },
+    {
+      "n": 10,
+      "project": "desktop",
+      "slug": "terms-stores",
+      "caption": "Дополнительные условия App Store и других площадок",
+      "file": "desktop/10-terms-stores.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: площадки, споры и связь с правообладателем",
+      "glitches": []
+    },
+    {
+      "n": 11,
+      "project": "desktop",
+      "slug": "terms-law",
+      "caption": "Применимое право и порядок рассмотрения споров",
+      "file": "desktop/11-terms-law.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: площадки, споры и связь с правообладателем",
+      "glitches": []
+    },
+    {
+      "n": 12,
+      "project": "desktop",
+      "slug": "terms-contact",
+      "caption": "Почта и имя правообладателя в разделе связи",
+      "file": "desktop/12-terms-contact.png",
+      "viewport": "1280×900",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: площадки, споры и связь с правообладателем",
+      "glitches": []
+    },
+    {
+      "n": 1,
+      "project": "mobile",
+      "slug": "terms-intro",
+      "caption": "Новая редакция и выделенные границы сервиса",
+      "file": "mobile/01-terms-intro.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: редакция, выделенные границы и все 14 разделов",
+      "glitches": []
+    },
+    {
+      "n": 2,
+      "project": "mobile",
+      "slug": "terms-rules",
+      "caption": "Правила использования читаются в общей типографике документа",
+      "file": "mobile/02-terms-rules.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: редакция, выделенные границы и все 14 разделов",
+      "glitches": []
+    },
+    {
+      "n": 3,
+      "project": "mobile",
+      "slug": "terms-sections",
+      "caption": "В документе присутствуют все 14 разделов",
+      "file": "mobile/03-terms-sections.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: редакция, выделенные границы и все 14 разделов",
+      "glitches": []
+    },
+    {
+      "n": 4,
+      "project": "mobile",
+      "slug": "terms-offer",
+      "caption": "Оферта и отдельное согласие на обработку данных",
+      "file": "mobile/04-terms-offer.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: оферта, отдельное согласие и аккаунт без регистрации",
+      "glitches": []
+    },
+    {
+      "n": 5,
+      "project": "mobile",
+      "slug": "terms-anonymous",
+      "caption": "Аккаунт создаётся на устройстве без обязательной регистрации",
+      "file": "mobile/05-terms-anonymous.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: оферта, отдельное согласие и аккаунт без регистрации",
+      "glitches": []
+    },
+    {
+      "n": 6,
+      "project": "mobile",
+      "slug": "terms-account",
+      "caption": "Перенос, 90 дней без активности и необратимое удаление",
+      "file": "mobile/06-terms-account.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: оферта, отдельное согласие и аккаунт без регистрации",
+      "glitches": []
+    },
+    {
+      "n": 7,
+      "project": "mobile",
+      "slug": "terms-ai",
+      "caption": "Технологии и ограничения ответов искусственного интеллекта",
+      "file": "mobile/07-terms-ai.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: технологии, возраст и кризисные границы",
+      "glitches": []
+    },
+    {
+      "n": 8,
+      "project": "mobile",
+      "slug": "terms-age",
+      "caption": "Сервис предназначен для людей старше 18 лет",
+      "file": "mobile/08-terms-age.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: технологии, возраст и кризисные границы",
+      "glitches": []
+    },
+    {
+      "n": 9,
+      "project": "mobile",
+      "slug": "terms-safety",
+      "caption": "Кризисные границы: звонок 112 остаётся за человеком",
+      "file": "mobile/09-terms-safety.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: технологии, возраст и кризисные границы",
+      "glitches": []
+    },
+    {
+      "n": 10,
+      "project": "mobile",
+      "slug": "terms-stores",
+      "caption": "Дополнительные условия App Store и других площадок",
+      "file": "mobile/10-terms-stores.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: площадки, споры и связь с правообладателем",
+      "glitches": []
+    },
+    {
+      "n": 11,
+      "project": "mobile",
+      "slug": "terms-law",
+      "caption": "Применимое право и порядок рассмотрения споров",
+      "file": "mobile/11-terms-law.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: площадки, споры и связь с правообладателем",
+      "glitches": []
+    },
+    {
+      "n": 12,
+      "project": "mobile",
+      "slug": "terms-contact",
+      "caption": "Почта и имя правообладателя в разделе связи",
+      "file": "mobile/12-terms-contact.png",
+      "viewport": "412×839",
+      "spec": "landing.spec.ts",
+      "test": "соглашение: площадки, споры и связь с правообладателем",
+      "glitches": []
+    }
+  ]
+}
