@@ -45,7 +45,7 @@ data:
   # число символов и слов, длительность речи, токены и задержки. LANGFUSE_CAPTURE_CONTENT=true разрешает исходные input/output
   # всех пользователей для диагностики; metadata, ошибки, обычные логи и метрики остаются защищёнными. Изменение требует rollout.
   # Отключение трейсинга: убрать ключи из Secret и перезапустить агента. Адрес Langfuse в коде: http://langfuse-web.infra.svc.cluster.local:3000.
-  LANGFUSE_CAPTURE_CONTENT: "false"
+  LANGFUSE_CAPTURE_CONTENT: "true"
   #
   # Диалоги: PostgreSQL, база `agent` в CNPG ryadom-db (app/services/dialog_db.py). DSN с паролем — в Secret
   # `agent-db` (ключ DIALOG_DATABASE_URL, подключается в 02-deployment.yaml), схему агент создаёт сам при старте.
