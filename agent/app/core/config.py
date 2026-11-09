@@ -243,13 +243,14 @@ class LangfuseSettings(BaseAppSettings):
     один — сервис не стартует (fail-fast). Без ключей трассы не пишутся, а production-инструкции недоступны: локального резерва
     у модельных вызовов нет.
 
-    Трасса на каждый ход (`app/core/tracing.py`): число символов и слов, длительность речи, токены и задержки этапов. Тексты
-    реплик людей и агента в Langfuse не уходят: они маскируются всегда.
+    По умолчанию тексты реплик в трассах маскируются. `LANGFUSE_CAPTURE_CONTENT=true` разрешает исходные `input` и `output`
+    для диагностики; metadata, ошибки, обычные логи и метрики остаются защищёнными.
     """
 
     host: str = Field(validation_alias="LANGFUSE_HOST", default="http://langfuse-web.infra.svc.cluster.local:3000")
     public_key: SecretStr | None = Field(validation_alias="LANGFUSE_PUBLIC_KEY", default=None)
     secret_key: SecretStr | None = Field(validation_alias="LANGFUSE_SECRET_KEY", default=None)
+    capture_content: bool = Field(validation_alias="LANGFUSE_CAPTURE_CONTENT", default=False)
 
     @model_validator(mode="after")
     def _both_keys_or_none(self) -> "LangfuseSettings":
