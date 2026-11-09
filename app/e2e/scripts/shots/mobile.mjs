@@ -65,14 +65,26 @@ export function mobileSpec(args, repoRoot) {
     for (let attempt = 0; attempt < 10; attempt++) {
       await composer.fill(text)
       const ready = await page
-        .waitForFunction(() => { const b = document.querySelector('.page-current .rd-icon-button--primary'); return b && !b.disabled }, null, { timeout: 3000 })
-        .then(() => true, () => false)
+        .waitForFunction(
+          () => {
+            const b = document.querySelector('.page-current .rd-icon-button--primary')
+            return b && !b.disabled
+          },
+          null,
+          { timeout: 3000 },
+        )
+        .then(
+          () => true,
+          () => false,
+        )
       if (ready) break
     }
     await page.locator('.page-current .rd-icon-button--primary').click({ timeout: 30_000 })
   }
   const received = (page, count) =>
-    page.waitForFunction((n) => document.querySelectorAll('.message-received').length >= n, count, { timeout: 30_000 })
+    page.waitForFunction((n) => document.querySelectorAll('.message-received').length >= n, count, {
+      timeout: 30_000,
+    })
   // The conversation opens on the voice screen and starts listening (the fake microphone of the runner).
   const startVoice = async (page) => {
     await home(page)
@@ -85,7 +97,8 @@ export function mobileSpec(args, repoRoot) {
   // screens come in without a microphone and the voice screen falls back to the text by itself.
   const startChat = async (page) => {
     await page.addInitScript(() => {
-      navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('denied', 'NotAllowedError'))
+      navigator.mediaDevices.getUserMedia = () =>
+        Promise.reject(new DOMException('denied', 'NotAllowedError'))
     })
     await home(page)
     await page.locator('.page-current').getByText('Поговорить').first().click()
@@ -102,7 +115,9 @@ export function mobileSpec(args, repoRoot) {
     // does not come in time, the picture shows the voice screen as it is.
     await page
       .waitForFunction(
-        (before) => (document.querySelector('.page-current [data-testid="voice-caption"]')?.textContent ?? '') !== before,
+        (before) =>
+          (document.querySelector('.page-current [data-testid="voice-caption"]')?.textContent ?? '') !==
+          before,
         greeting,
         { timeout: 20_000 },
       )
@@ -140,10 +155,7 @@ export function mobileSpec(args, repoRoot) {
       anon: true,
       open: async (page) => {
         await registerForm(page, `shot-${Date.now()}-${randomBytes(2).toString('hex')}@example.com`)
-        // Three separate agreements (18+, not therapy, terms and personal data): all of them are needed.
-        const boxes = page.locator('.page-current .rd-consents .icon-checkbox')
-        const count = await boxes.count()
-        for (let i = 0; i < count; i++) await boxes.nth(i).click()
+        await page.locator('.page-current [data-testid="data-consent-toggle"]').check()
         await page.locator('.page-current').getByText('Создать аккаунт', { exact: true }).click()
         await page.waitForSelector('text=Подтверди почту', { timeout: 30_000 })
       },
@@ -167,11 +179,21 @@ export function mobileSpec(args, repoRoot) {
       open: async (page) => {
         await journalList(page)
         // A finished conversation of the demo journal. On a wide screen the entry opens in the pane beside the list.
-        await page.locator('.page-current').getByTestId('journal-item').filter({ hasText: 'Поговорю с мамой после работы' }).first().click()
+        await page
+          .locator('.page-current')
+          .getByTestId('journal-item')
+          .filter({ hasText: 'Поговорю с мамой после работы' })
+          .first()
+          .click()
         await page.locator('.page-current .rd-entry .message').first().waitFor({ timeout: 30_000 })
       },
     },
-    profile: { open: async (page) => { await home(page); await tab(page, 'Профиль') } },
+    profile: {
+      open: async (page) => {
+        await home(page)
+        await tab(page, 'Профиль')
+      },
+    },
     delete: {
       open: async (page) => {
         await home(page)
@@ -186,15 +208,29 @@ export function mobileSpec(args, repoRoot) {
     'dialog-voice-reply': { reset: true, open: voiceReply },
     'dialog-empty': { reset: true, open: startChat },
     dialog: { reset: true, open: chat },
-    'dialog-end': { reset: true, open: async (page) => { await chat(page); await openEnd(page) } },
+    'dialog-end': {
+      reset: true,
+      open: async (page) => {
+        await chat(page)
+        await openEnd(page)
+      },
+    },
     'dialog-end-filled': {
       reset: true,
       only: (width) => width === 390,
-      open: async (page) => { await chat(page); await openEnd(page); await endSheet(page, { submit: false }) },
+      open: async (page) => {
+        await chat(page)
+        await openEnd(page)
+        await endSheet(page, { submit: false })
+      },
     },
     'dialog-summary': {
       reset: true,
-      open: async (page) => { await chat(page); await openEnd(page); await endSheet(page, { submit: true }) },
+      open: async (page) => {
+        await chat(page)
+        await openEnd(page)
+        await endSheet(page, { submit: true })
+      },
     },
     'home-after-dialog': {
       reset: true,
@@ -214,11 +250,15 @@ export function mobileSpec(args, repoRoot) {
     state,
     screens,
     ctx: {},
-    heights: (width) => ({ 390: 844, 820: 1180, 1280: 800, 1920: 1080 }[width] ?? 900),
+    heights: (width) => ({ 390: 844, 820: 1180, 1280: 800, 1920: 1080 })[width] ?? 900,
     reset,
     // Framework7 slides pages; a picture taken mid-slide shows two screens at once.
     async settle(page) {
-      await page.waitForFunction(() => !document.querySelector('.page-transitioning, .router-transition'), null, { timeout: 5000 }).catch(() => {})
+      await page
+        .waitForFunction(() => !document.querySelector('.page-transitioning, .router-transition'), null, {
+          timeout: 5000,
+        })
+        .catch(() => {})
       await page.waitForLoadState('networkidle').catch(() => {})
       await page.evaluate(() => document.fonts.ready)
       await page.waitForTimeout(900)
@@ -226,7 +266,10 @@ export function mobileSpec(args, repoRoot) {
     // Sign-in and code requests are limited per address: every context gets an address of its own.
     async prepareContext(context) {
       const ip = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`
-      await context.route((url) => url.pathname.startsWith('/api/'), (route) => route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': ip } }))
+      await context.route(
+        (url) => url.pathname.startsWith('/api/'),
+        (route) => route.continue({ headers: { ...route.request().headers(), 'x-forwarded-for': ip } }),
+      )
     },
     // Every signed-in shot signs in on its own: the refresh token rotates, so one saved session cannot serve many contexts.
     async signIn(page) {

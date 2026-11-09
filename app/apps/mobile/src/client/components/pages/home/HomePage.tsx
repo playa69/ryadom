@@ -5,7 +5,11 @@ import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { chosenStart, nextStartStep } from '@ryadom/client-core/dialog-start'
 import { rememberUnsaved, UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
-import { DialogMode, StartDialogApiErrorCode, type StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
+import {
+  DialogMode,
+  StartDialogApiErrorCode,
+  type StartDialogApiResponse,
+} from '@ryadom/contracts/api/dialogs'
 import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import { memoryInUse, needsMemoryConsent } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText, getMemory, startDialog } from '../../../lib/api'
@@ -319,9 +323,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                 <span className="rd-incognito-text">
                   <span className="rd-incognito-title">Без памяти</span>
                   <span className="rd-caption">
-                    {withoutMemory
-                      ? 'Этот разговор я не запомню'
-                      : 'Следующий разговор не попадёт в память'}
+                    {withoutMemory ? 'Этот разговор я не запомню' : 'Следующий разговор не попадёт в память'}
                   </span>
                 </span>
                 <Switch
@@ -355,7 +357,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             </p>
           )}
 
-          {/* The foot of home, as on the first screen: what starting a conversation agrees to, with the terms and the policy. */}
+          {/* Keep the documents visible even while the consent gate is closed. */}
           <div className="rd-welcome-foot" data-testid="home-foot">
             <ConsentNote />
             <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>

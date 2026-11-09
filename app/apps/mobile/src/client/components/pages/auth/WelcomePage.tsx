@@ -17,7 +17,7 @@ import { SHORT_QUERY, useMediaQuery, WIDE_QUERY } from '../../../lib/viewport'
 import { unlockSpeech } from '../../../lib/voice/speech'
 import { BrandMark } from '../../Brand'
 import Breathing from '../../Breathing'
-import ConsentNote from '../../ConsentNote'
+import ConsentNote, { DataConsentCheckbox } from '../../ConsentNote'
 import { SosButton } from '../../SosSheet'
 import Switch from '../../Switch'
 import MemoryConsentSheet from '../profile/MemoryConsentSheet'
@@ -29,11 +29,11 @@ function partOfDay(): string {
 }
 
 /**
- * The first screen. Someone new meets home itself: SOS, the breathing circle, «Поговорить» with the same
- * optional choices as home («Запоминать важное», «Не сохранять этот разговор»), and at the foot what
- * starting means, in view without scrolling (the lines of help are behind SOS). The press is the agreement: it makes an account for this phone behind the
- * scenes, records the consents and asks home for a conversation with these choices, which home starts as
- * soon as the tabs appear; the companion greets the person there. Nothing is sent before that press.
+ * The first screen. Someone new passes a separate consent gate before the active home with «Поговорить»
+ * and the same optional choices as an account («Запоминать важное», «Не сохранять этот разговор»).
+ * Continuing the gate only opens home: nothing is sent. The start then makes an account for this phone,
+ * records the consents and asks home for a conversation with these choices, which home starts as soon
+ * as the tabs appear; the companion greets the person there.
  *
  * The same screen is also the gate for someone who is already signed in but has not agreed to the
  * current version of the terms (an account from before this screen existed, or a newer version of the
@@ -56,15 +56,18 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   const telegram = isTelegramMiniApp()
   const [name, setName] = useState(() => (telegram ? telegramFirstName().slice(0, InputLimit.NameMax) : ''))
   const startForm = telegram ? 'telegram_start' : 'device_start'
+  const [dataConsented, setDataConsented] = useState(false)
+  const [entryPassed, setEntryPassed] = useState(false)
   /** "Не сохранять этот разговор", as on home: off at every visit, optional. */
   const [unsaved, setUnsaved] = useState(false)
   /** "Запоминать важное" with the consent sheet accepted: home turns memory on before the conversation. */
   const [rememberMemory, setRememberMemory] = useState(false)
   const [memoryConsentOpen, setMemoryConsentOpen] = useState(false)
   const talkRequest = () => ({ saved: !unsaved, rememberMemory })
+  const entryGate = !signedIn && !entryPassed
 
   async function handleTalk() {
-    if (loading) return
+    if (loading || !dataConsented) return
     // The conversation opens on the voice and the sphere speaks first: speech is let through by this tap.
     unlockSpeech()
     track(AnalyticsEvent.CtaClicked, {
@@ -121,7 +124,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   }
 
   async function handleAgree() {
-    if (loading) return
+    if (loading || !dataConsented) return
     setError('')
     setLoading(true)
     // The app's gate sees the recorded version and moves on by itself.
@@ -162,12 +165,12 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
         <div className="rd-home-main">
           <p className="rd-home-greeting">{hello}</p>
           <p className="rd-muted rd-home-lead">
-            {signedIn
+            {signedIn || entryGate
               ? 'Один раз подтверди, что согласен(на), — и можно говорить.'
               : 'Я здесь и никуда не спешу. О чём хочется сказать?'}
           </p>
 
-          {telegram && !signedIn && (
+          {telegram && !signedIn && !entryGate && (
             <List form className="rd-form rd-welcome-name" onSubmit={(event) => event.preventDefault()}>
               <ListInput
                 label="Как к тебе обращаться"
@@ -190,6 +193,9 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
           )}
 
           <div className="rd-talk">
+            {(signedIn || entryGate) && (
+              <DataConsentCheckbox checked={dataConsented} onChange={setDataConsented} />
+            )}
             {error && (
               <p className="rd-form-error" data-testid="form-error">
                 {error}
@@ -200,15 +206,20 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
               large
               preloader
               loading={loading}
-              disabled={loading}
-              onClick={() => void (signedIn ? handleAgree() : handleTalk())}
+              disabled={loading || !dataConsented}
+              aria-disabled={loading || !dataConsented}
+              onClick={() => {
+                if (signedIn) void handleAgree()
+                else if (entryGate) setEntryPassed(true)
+                else void handleTalk()
+              }}
               data-testid="welcome-talk"
             >
-              {signedIn ? 'Продолжить' : 'Поговорить'}
+              {signedIn || entryGate ? 'Продолжить' : 'Поговорить'}
             </Button>
-            {signedIn && <ConsentNote action="Продолжить" />}
+            {signedIn && <ConsentNote />}
             {/* The same optional choices as on home; neither is needed to start. */}
-            {!signedIn && (
+            {!signedIn && !entryGate && (
               <>
                 <div className="rd-incognito" data-testid="memory-switch">
                   <span className="rd-incognito-text">
@@ -243,7 +254,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
             )}
           </div>
 
-          {/* The foot of the screen: what the first press agrees to, then how long things are kept. */}
+          {/* Keep the documents and retention terms visible even while the consent gate is closed. */}
           <div className="rd-welcome-foot" data-testid="welcome-foot">
             {!signedIn && <ConsentNote />}
             <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>

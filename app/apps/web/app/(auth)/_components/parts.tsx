@@ -83,12 +83,21 @@ export function AuthActions({ children }: { children: ReactNode }) {
  * The form's main button. While `loading` the label stays, so the button does not change width, and
  * a spinner goes in front of it; the press is ignored by pointer-events, not by `disabled`, so focus stays.
  */
-export function SubmitButton({ loading, children }: { loading: boolean; children: ReactNode }) {
+export function SubmitButton({
+  loading,
+  disabled = false,
+  children,
+}: {
+  loading: boolean
+  disabled?: boolean
+  children: ReactNode
+}) {
   return (
     <Button
       type="submit"
       className={cn(PRIMARY_BUTTON, 'aria-busy:pointer-events-none')}
       aria-busy={loading ? 'true' : undefined}
+      disabled={disabled}
     >
       {loading && (
         <Spinner

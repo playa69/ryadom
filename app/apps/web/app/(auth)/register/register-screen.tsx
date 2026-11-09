@@ -10,7 +10,7 @@ import { nameProblem, passwordProblem } from '@ryadom/client-core/validation'
 import { codeOutcome, formOutcome, trackForm } from '@/lib/analytics'
 import { useClient } from '@/lib/auth'
 import { useAuthFlow } from '../auth-flow'
-import { ConsentNotice } from '../_components/consent-group'
+import { ConsentCheckbox, ConsentNotice } from '../_components/consent-group'
 import { PasswordField, TextField } from '../_components/fields'
 import {
   AuthActions,
@@ -46,6 +46,7 @@ export default function RegisterScreen() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [consented, setConsented] = useState(false)
   const [loading, setLoading] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
 
@@ -60,7 +61,7 @@ export default function RegisterScreen() {
   }
 
   async function submit() {
-    if (loading) return
+    if (loading || !consented) return
     const address = email.trim().toLowerCase()
     const nameError = nameProblem(name)
     if (nameError) return refuse(nameError, 'name')
@@ -152,10 +153,17 @@ export default function RegisterScreen() {
         />
 
         <AuthActions>
+          <ConsentCheckbox
+            checked={consented}
+            onCheckedChange={setConsented}
+            termsUrl={flow.termsUrl}
+            consentUrl={flow.consentUrl}
+          />
           <FormError problem={problem} />
-          <SubmitButton loading={loading}>Создать аккаунт</SubmitButton>
-          {/* The press is the agreement: the line says what it agrees to, the account records it on the first session. */}
-          <ConsentNotice action="Создать аккаунт" termsUrl={flow.termsUrl} privacyUrl={flow.privacyUrl} />
+          <SubmitButton loading={loading} disabled={!consented}>
+            Создать аккаунт
+          </SubmitButton>
+          <ConsentNotice termsUrl={flow.termsUrl} consentUrl={flow.consentUrl} />
         </AuthActions>
       </AuthForm>
     </>

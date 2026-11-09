@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Button } from '@ryadom/ui/components/button'
-import { ConsentNotice } from '@/app/(auth)/_components/consent-group'
+import { ConsentCheckbox, ConsentNotice } from '@/app/(auth)/_components/consent-group'
 import { PRIMARY_BUTTON } from '@/app/(auth)/_components/parts'
 import { useAuth } from '@/lib/auth'
 import Breathing from './Breathing'
@@ -13,12 +13,20 @@ function partOfDay(): string {
 }
 
 /**
- * The door for the terms: someone signed in whose account has not agreed to the current version (an
- * account from before the agreement existed, or a newer version of the terms) sees this in place of the
- * page. "Продолжить" records the agreement, and the page opens.
+ * The consent door before the chat. A signed-in account records the current terms through the API;
+ * a newcomer only opens the active home, where the first conversation will create the account.
  */
-export default function TermsGate({ termsUrl, privacyUrl }: { termsUrl: string; privacyUrl: string }) {
+export default function TermsGate({
+  termsUrl,
+  consentUrl,
+  onContinue,
+}: {
+  termsUrl: string
+  consentUrl: string
+  onContinue?: () => void
+}) {
   const { acceptConsents } = useAuth()
+  const [consented, setConsented] = useState(false)
   const [loading, setLoading] = useState(false)
   const [problem, setProblem] = useState('')
   // Computed in the browser only: the server's clock and time zone are not the person's.
@@ -26,7 +34,11 @@ export default function TermsGate({ termsUrl, privacyUrl }: { termsUrl: string; 
   useEffect(() => setHello(partOfDay()), [])
 
   async function agree() {
-    if (loading) return
+    if (loading || !consented) return
+    if (onContinue) {
+      onContinue()
+      return
+    }
     setProblem('')
     setLoading(true)
     // On success the shell sees the recorded version and opens the page.
@@ -48,11 +60,19 @@ export default function TermsGate({ termsUrl, privacyUrl }: { termsUrl: string; 
       <p className="max-w-xl text-base leading-[1.55] text-dim text-balance tab:text-lg">
         Один раз подтверди, что согласен(на), — и можно говорить.
       </p>
+      <ConsentCheckbox
+        checked={consented}
+        onCheckedChange={setConsented}
+        termsUrl={termsUrl}
+        consentUrl={consentUrl}
+        className="w-full max-w-md"
+      />
       <div className="w-full max-w-md">
         <Button
           type="button"
           className={PRIMARY_BUTTON}
           aria-busy={loading || undefined}
+          disabled={loading || !consented}
           onClick={() => void agree()}
           data-testid="welcome-continue"
         >
@@ -64,7 +84,7 @@ export default function TermsGate({ termsUrl, privacyUrl }: { termsUrl: string; 
           {problem}
         </p>
       )}
-      <ConsentNotice action="Продолжить" termsUrl={termsUrl} privacyUrl={privacyUrl} className="max-w-2xl" />
+      <ConsentNotice termsUrl={termsUrl} consentUrl={consentUrl} className="max-w-2xl" />
       <p className="text-xs leading-normal text-dim">В опасной ситуации звони 112.</p>
     </main>
   )

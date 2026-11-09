@@ -42,7 +42,7 @@ export function getWebEnv(): WebEnv {
     rustoreUrl: optional(process.env.PUBLIC_RUSTORE_URL),
     googlePlayUrl: optional(process.env.PUBLIC_GOOGLE_PLAY_URL),
     appStoreUrl: optional(process.env.PUBLIC_APP_STORE_URL),
-    supportEmail: process.env.PUBLIC_SUPPORT_EMAIL?.trim() || 'support@ryadom.app',
+    supportEmail: process.env.PUBLIC_SUPPORT_EMAIL?.trim() || 'playasn@yandex.ru',
     // Only analytics uses it; no link on the site leads there. It is the API's origin, so a path in
     // the value would double in the request addresses.
     apiUrl: optional(process.env.PUBLIC_APP_URL) ?? 'http://localhost:3002',

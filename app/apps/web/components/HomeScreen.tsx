@@ -27,6 +27,7 @@ import { AppHeader } from './AppHeader'
 import { useSiteUrl } from './AppShell'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
+import TermsGate from './TermsGate'
 import { BUTTON, FOCUS_RING } from './controls'
 import { rememberDialogStart } from './dialog-start'
 import MemoryConsent from './MemoryConsent'
@@ -41,9 +42,9 @@ import { unlockSpeech } from '@ryadom/client-core/voice/speech'
  * something said in it), the start waits for their answer: continue it, end it and begin a new one,
  * or close the question and stay here with the draft untouched.
  *
- * Someone new sees the same home, as a guest: the first message (or the microphone) is the agreement
- * the line at the foot of the page speaks of, and it makes the account for this device before the
- * conversation starts.
+ * Someone new first passes a separate consent gate. Home then opens with active controls and no
+ * repeated tick; the first action makes the account for this device and records the consents before
+ * the conversation starts.
  *
  * Memory is a choice made here, not a sheet that interrupts: with memory off, "Запоминать важное" turns it
  * on (with the consent sheet the profile uses; for a guest, once the account exists); with memory on, a
@@ -71,8 +72,9 @@ function greeting(name: string | null): string {
 export default function HomeScreen() {
   const { status, user, updateUser, startAnonymously } = useAuth()
   const siteUrl = useSiteUrl()
-  /** Nobody signed in yet: the first message makes the account. */
+  /** Nobody signed in yet: the first message makes the account after an explicit consent. */
   const guest = status !== 'authenticated'
+  const [dataConsented, setDataConsented] = useState(false)
   // Computed in the browser only: the server's clock and time zone are not the person's.
   const [hello, setHello] = useState('')
   useEffect(() => setHello(greeting(user?.name ?? null)), [user?.name])
@@ -218,7 +220,7 @@ export default function HomeScreen() {
   }
 
   async function start(draft: string, listen: boolean) {
-    if (starting.current) return
+    if (starting.current || (guest && !dataConsented)) return
     // A conversation that opens on the voice has the sphere speak first: this press lets speech through.
     unlockSpeech()
     starting.current = true
@@ -229,8 +231,8 @@ export default function HomeScreen() {
     let { memory: wanted, saved } = choice
     try {
       if (guest) {
-        // The press is the agreement the line at the foot of the page speaks of: the account for this device,
-        // with the consents recorded, then memory if the person asked for it.
+        // The entry gate has enabled this action: make the account and record its consents, then memory
+        // if the person asked for it.
         track(AnalyticsEvent.CtaClicked, { cta: 'start_anonymous', placement: 'welcome' })
         try {
           await startAnonymously({ consent: true })
@@ -330,6 +332,19 @@ export default function HomeScreen() {
     if (starting.current) return
     track(AnalyticsEvent.DialogResumeChoice, { choice: 'dismissed' })
     setPending(null)
+  }
+
+  if (guest && !dataConsented) {
+    return (
+      <>
+        <AppHeader title="Новый разговор" titleIsHeading={false} />
+        <TermsGate
+          termsUrl={`${siteUrl}/terms`}
+          consentUrl={`${siteUrl}/consent`}
+          onContinue={() => setDataConsented(true)}
+        />
+      </>
+    )
   }
 
   return (
@@ -480,15 +495,14 @@ export default function HomeScreen() {
           </div>
         </div>
 
-        {/* The foot of the page, always in the same place and for everyone: what starting a conversation agrees
-            to, with the terms and the policy one tap away; the terms of keeping for someone new. */}
+        {/* Keep the documents and retention terms visible even while the consent gate is closed. */}
         <div
           className="mx-auto flex max-w-2xl flex-col items-center gap-1 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] text-center"
           data-testid="home-foot"
         >
           <ConsentNotice
             termsUrl={`${siteUrl}/terms`}
-            privacyUrl={`${siteUrl}/privacy`}
+            consentUrl={`${siteUrl}/consent`}
             className="text-xs"
           />
           <p className="text-xs leading-normal text-dim">В опасной ситуации звони&nbsp;112.</p>

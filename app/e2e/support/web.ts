@@ -3,6 +3,7 @@ import { WEBAPP_URL } from '../playwright.config'
 import { PASSWORD } from './app'
 import { waitForCode } from './mail'
 import { guestDevice } from './session'
+import { step } from './evidence'
 
 /**
  * Steps that repeat across the scenarios of the web app (apps/web), the counterpart of app.ts for
@@ -66,6 +67,13 @@ export async function checkConsent(page: Page): Promise<void> {
   }
 }
 
+/** The explicit agreement required before a first conversation or registration. */
+export async function acceptDataConsent(page: Page): Promise<void> {
+  const consent = page.getByTestId('data-consent-toggle')
+  await consent.check()
+  await expect(consent).toBeChecked()
+}
+
 /** The sheet is answered ("Не сейчас") in this browser, as for a person who has seen it. Same origin, read when home opens. */
 export async function dismissMemoryInvite(page: Page): Promise<void> {
   await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.web.memory-invite-dismissed')
@@ -76,16 +84,24 @@ export async function dismissMemoryInvite(page: Page): Promise<void> {
  * the first conversation, so for scenarios about anything else this browser becomes a known device (see
  * `guestDevice`) and the app signs in by itself; the first screen is covered by its own scenarios.
  */
-export async function startAnonymously(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
+export async function startAnonymously(
+  page: Page,
+  options: { keepMemoryInvite?: boolean } = {},
+): Promise<void> {
   await expect(page).toHaveURL(/\/home$/)
   // The sheet "Рядом теперь запоминает важное" would cover home for a new account: unless a test is about it,
   // it is already answered ("Не сейчас"), like for a person who has seen it. Same origin, read when home opens.
   if (!options.keepMemoryInvite) await dismissMemoryInvite(page)
   const device = await guestDevice(page.request)
-  await page.evaluate((value) => window.localStorage.setItem('ryadom.web.device', value), JSON.stringify(device))
+  await page.evaluate(
+    (value) => window.localStorage.setItem('ryadom.web.device', value),
+    JSON.stringify(device),
+  )
   await openWebApp(page)
   // An open sheet makes the page behind it inert, so the button is not seen by role then.
-  const ready = options.keepMemoryInvite ? talkButton(page).or(page.getByTestId('memory-invite')) : talkButton(page)
+  const ready = options.keepMemoryInvite
+    ? talkButton(page).or(page.getByTestId('memory-invite'))
+    : talkButton(page)
   await expect(ready).toBeVisible({ timeout: 30_000 })
 }
 
@@ -268,17 +284,22 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await dismissMemoryInvite(page)
   // A new visitor meets the first screen and opens the sign-in from it; from the sign-in screen the
   // way to the sign-up is one link away.
-  const guestHome = page.getByTestId('guest-note')
+  const guestGate = page.getByTestId('terms-gate')
   const createAccount = page.getByRole('link', { name: 'Создать аккаунт', exact: true })
-  await expect(guestHome.or(createAccount)).toBeVisible({ timeout: 30_000 })
-  if (await guestHome.isVisible()) await openSignIn(page)
+  await expect(guestGate.or(createAccount)).toBeVisible({ timeout: 30_000 })
+  if (await guestGate.isVisible()) await openSignIn(page)
   await createAccount.click()
   await expect(page.getByRole('heading', { name: 'Давай знакомиться' })).toBeVisible()
 
   await field(page, 'name').fill(name)
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(PASSWORD)
-  // No boxes: the press is the agreement, recorded once the code is entered.
+  // `openspec/changes/add-explicit-data-consent`, «Форма регистрации».
+  await expect(button(page, 'Создать аккаунт')).toBeDisabled()
+  await step(page, 'register-consent-required', 'Регистрация: без отметки согласия кнопка неактивна')
+  await acceptDataConsent(page)
+  await expect(button(page, 'Создать аккаунт')).toBeEnabled()
+  await step(page, 'register-consented', 'Регистрация: после явной отметки кнопка доступна')
   await button(page, 'Создать аккаунт').click()
 
   await expect(page.getByRole('heading', { name: 'Подтверди почту' })).toBeVisible({ timeout: 20_000 })
@@ -287,6 +308,7 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(code)
 
   await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('data-consent')).toHaveCount(0)
 }
 
 /** The page must not scroll sideways at any width: that is the first thing a narrow screen breaks. */

@@ -92,9 +92,8 @@ data:
   PUBLIC_WEBAPP_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai/app/"
   # landing: ссылка со страницы /download на PWA (под префиксом /pwa) и инструкции установки
   PUBLIC_PWA_URL: "https://xn----htbtgjker8b3a2c.xn--p1ai/pwa/"
-  # landing: адрес поддержки (временно — личная почта владельца; заменить на
-  # support@... перед публикацией)
-  PUBLIC_SUPPORT_EMAIL: "totsamiynixon@yandex.ru"
+  # landing: адрес Оператора для вопросов и претензий
+  PUBLIC_SUPPORT_EMAIL: "playasn@yandex.ru"
   # Один доверенный прокси перед сервисами (см. шапку)
   TRUSTED_PROXY_HOPS: "1"
   # --- Почта: Unisender Go (см. шапку и README, «Почта: Unisender Go») ---
