@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// The «Сводка Рядом» report: a Markdown summary plus an inline ```html detail block for a Multica comment.
-//   node report.mjs [--to YYYY-MM-DD] [--days 7] [--out DIR]   query PostHog and write DIR/{comment.md,detail.html,report.json}
-//   node report.mjs --queries [--to …] [--days …]               print the filled queries as JSON (no key needed)
+// The «Сводка Рядом» report for a Multica issue: the summary goes into the issue description (Markdown: an issue
+// description is an editor, so no html blocks or title tooltips there) and the detail into its first comment as an
+// inline ```html block, which Multica renders in place.
+//   node report.mjs [--to YYYY-MM-DD] [--days 7] [--out DIR]   query the sources and write DIR/{title.txt,
+//                                                              description.md,detail-comment.md,detail.html,report.json}
+//   node report.mjs --queries [--to …] [--days …]               print the filled PostHog queries as JSON (no key needed)
 //   node report.mjs --data results.json [--to …] [--days …]     render from saved results {name: {columns, results}}
 // The period is --days full Moscow days ending before --to (default: today in Moscow), so a 09:00 run covers the
 // last week up to yesterday. Every number is computed here; the agent only replaces the <!-- ГЛАВНОЕ --> line of
-// comment.md with its reading of report.json, so the figures never pass through a model.
+// description.md with its reading of report.json, so the figures never pass through a model.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -372,8 +375,7 @@ const report = {
   reconcileNote,
 };
 
-// ---------- summary (Markdown) ----------
-const titled = (title, text) => `<span title="${title.replace(/"/g, '&quot;')}">${text}</span>`;
+// ---------- issue description (Markdown) ----------
 const k = report.kpi;
 const dev = (label, v) => (v == null ? null : `${label} ${ru(v)}`);
 const medianNote = [dev('телефон', medians.mobile), dev('компьютер', medians.desktop)].filter(Boolean).join(', ') || '—';
@@ -385,41 +387,41 @@ const errorLine = Object.entries(sourceErrors)
 const millions = (n) => `${ru(n / 1e6)} млн`;
 const topModel = models?.rows[0];
 const tokensRow = models
-  ? `| ${titled('Токены всех моделей агента за период (Prometheus) ÷ сумма DAU по дням', 'Токенов на активного в день')} | **${int(Math.round(models.perActiveDay ?? 0))}** | всего ${millions(models.total)} за ${models.days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |\n`
+  ? `| Токенов на активного в день | **${int(Math.round(models.perActiveDay ?? 0))}** | всего ${millions(models.total)} за ${models.days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |\n`
   : '';
 
-const summary = `## Сводка Рядом · ${periodLabel}
+const title = `Сводка Рядом · ${periodLabel}`;
+const description = `Автоматический отчёт за ${days} полных дней по Москве (${periodLabel}). Детализация с графиком и таблицами — в первом комментарии. Прочитали — закройте задачу.
 
-${days} полных дней по Москве. Новые — люди и устройства, впервые появившиеся в эти дни. Фильтр настоящих людей из скилла \`analytics\`.
 ${sourcesLine}${errorLine ? `\n${errorLine}.` : ''}
 
 | Показатель | Значение | Контекст |
 |---|---:|---|
-| ${titled('Первая реплика человека вообще (dialog_turn) пришлась на эти дни', 'Заговорили впервые')} | **${int(newSpeakers)}** | из них разговор от 3 реплик — ${int(newD3)}; вчера — ${int(yesterday.new)} |
-| ${titled('Заговорившие ÷ устройства, впервые появившиеся в эти дни', 'Посетитель → заговорил')} | **${pct(k.conversion)}** | ${int(k.cohortSpoke)} из ${int(k.cohortVisitors)} новых устройств |
-| ${titled('Людей с репликой за московские сутки, среднее за дни периода', 'DAU в среднем')} | **${ru1(dauAvg)}** | вчера ${int(yesterday.dau)}, пик ${int(peak.dau)} (${peak.day}); WAU ${int(k.wau)}, неделей раньше ${int(k.wauPrev)} |
-| ${titled('Медиана числа реплик в самом раннем разговоре новых заговоривших', 'Первый разговор, медиана')} | **${medians.all == null ? '—' : `${ru(medians.all)} реплик`}** | ${medianNote} |
-| ${titled('Новые заговорившие, у которых реплики минимум в двух разных днях по Москве', 'Вернулись в другой день')} | **${int(cohortTotal.returned)} из ${int(cohortTotal.spoke)}** | новые этих дней, число ещё вырастет |
-| ${titled('Доля говоривших в эти дни, у которых был component_called live с outcome = error', 'Поймали ошибку live')} | **${pct(liveShare)}** | ${int(k.liveErrorPeople)} из ${int(speakers)} говоривших |
-| ${titled('Хотя бы одна голосовая реплика (input = voice) среди говоривших в эти дни', 'Говорили голосом')} | **${pct(k.voiceShare)}** | ${int(k.usedVoice)} из ${int(speakers)}; отказ в микрофоне у ${people(micDenied)} |
+| Заговорили впервые | **${int(newSpeakers)}** | из них разговор от 3 реплик — ${int(newD3)}; вчера — ${int(yesterday.new)} |
+| Посетитель → заговорил | **${pct(k.conversion)}** | ${int(k.cohortSpoke)} из ${int(k.cohortVisitors)} новых устройств |
+| DAU в среднем | **${ru1(dauAvg)}** | вчера ${int(yesterday.dau)}, пик ${int(peak.dau)} (${peak.day}); WAU ${int(k.wau)}, неделей раньше ${int(k.wauPrev)} |
+| Первый разговор, медиана | **${medians.all == null ? '—' : `${ru(medians.all)} реплик`}** | ${medianNote} |
+| Вернулись в другой день | **${int(cohortTotal.returned)} из ${int(cohortTotal.spoke)}** | новые этих дней, число ещё вырастет |
+| Поймали ошибку live | **${pct(liveShare)}** | ${int(k.liveErrorPeople)} из ${int(speakers)} говоривших |
+| Говорили голосом | **${pct(k.voiceShare)}** | ${int(k.usedVoice)} из ${int(speakers)}; отказ в микрофоне у ${people(micDenied)} |
 ${tokensRow}
 ### Главное
 
 <!-- ГЛАВНОЕ -->
 
-<details>
-<summary>Как считаются цифры</summary>
+### Как считаются цифры
 
-- **Период** — ${days} полных дней по Москве, ${periodLabel}.
-- **Посетитель** — устройство: до входа события анонимны.
-- **Заговорил** — сервер принял хотя бы одну реплику (\`dialog_turn\`).
+- **Новые** — люди и устройства, впервые появившиеся в эти дни; учитываются только настоящие люди (без тестов и команды).
+- **Посетитель** — устройство: до входа события анонимны. **Посетитель → заговорил** — заговорившие ÷ новые устройства.
+- **Заговорил** — сервер принял хотя бы одну реплику (\`dialog_turn\`), набранную или сказанную.
+- **DAU** — люди с репликой за московские сутки, среднее за дни периода; **WAU** — за все дни периода.
 - **Разговор от 3 реплик** — три реплики под одним \`dialog_id\`; реплики разных разговоров не складываются.
+- **Первый разговор** — число реплик в самом раннем разговоре человека.
 - **Вернулся** — реплики в двух разных днях по Москве.
+- **Поймали ошибку live** — у говорившего был вызов модели разговора с ошибкой. **Говорили голосом** — хотя бы одна голосовая реплика.
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
 - **Токены** — \`agent_model_usage_total\` в Prometheus за те же дни, все модели агента.
-
-</details>
 `;
 
 // ---------- detail (inline html block) ----------
@@ -430,7 +432,8 @@ const detail = template.replace('/*__DATA__*/null', json);
 if (detail === template) fail('report-detail.html: the /*__DATA__*/null placeholder is missing');
 if (detail.includes('```')) fail('detail.html contains a Markdown fence');
 
-const comment = `${summary}
+const detailComment = `Детализация к сводке за ${periodLabel}: по дням, каналы, воронка, что связано с возвратом, сверка источников. У подчёркнутых заголовков колонок — подсказка, что это и как считается.
+
 \`\`\`html title="Сводка Рядом, детализация ${periodLabel}"
 ${detail.trim()}
 \`\`\`
@@ -439,7 +442,9 @@ ${detail.trim()}
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'report.json'), JSON.stringify(report, null, 1));
 writeFileSync(join(outDir, 'detail.html'), detail);
-writeFileSync(join(outDir, 'comment.md'), comment);
+writeFileSync(join(outDir, 'title.txt'), title);
+writeFileSync(join(outDir, 'description.md'), description);
+writeFileSync(join(outDir, 'detail-comment.md'), detailComment);
 console.log(`period ${periodLabel} (${values.from} … ${values.to} UTC)`);
-console.log(`wrote ${join(outDir, 'comment.md')}, detail.html, report.json`);
-console.log('next: replace the <!-- ГЛАВНОЕ --> line of comment.md with 3–5 numbered points read from report.json');
+console.log(`wrote ${outDir}: title.txt, description.md, detail-comment.md, detail.html, report.json`);
+console.log('next: replace the <!-- ГЛАВНОЕ --> line of description.md with 3–5 numbered points read from report.json');
