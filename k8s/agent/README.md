@@ -368,13 +368,13 @@ kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # ingre
 ```
 
 Перед первым выкатом агента с prompt management администратор отдельно проверяет и заполняет каталог. Seed хранится локально у
-администратора вне репозитория и содержит ровно 16 имён из `agent/app/prompts/catalog.py`; в git его не копируют. Команды
+администратора вне репозитория и содержит ровно 15 имён из `agent/app/prompts/catalog.py`; в git его не копируют. Команды
 выполняются из `agent/` в окружении с ключами и доступом к Langfuse:
 
 ```bash
 uv run python scripts/sync_prompts.py --check                         # до загрузки: посмотреть missing/present
 uv run python scripts/sync_prompts.py --seed /absolute/path/outside/repository/prompts.json
-uv run python scripts/sync_prompts.py --check                         # после: у всех 16 present и номер версии
+uv run python scripts/sync_prompts.py --check                         # после: у всех 15 present и номер версии
 ```
 
 Скрипт создаёт только отсутствующие production-промпты. Совпадающие пропускает как `same`, отличающиеся — как

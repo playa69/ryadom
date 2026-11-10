@@ -14,7 +14,7 @@ from app.services.replies import split_sentences
 from tests.conftest import FakePromptProvider, FakeTts, make_app
 from tests.fake_live import FakeConnector, FakeLink
 
-SENTENCES = list(dict.fromkeys(part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)))  # повторы озвучиваются один раз
+SENTENCES = list(dict.fromkeys(part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)))  # без повторов: «Я рядом.»
 WANTED = [(voice, part) for part in SENTENCES for voice in ("male", "female")]
 # Внутренняя ошибка Google: тот же код 1011, что у отказа по квоте, но без слова «quota».
 INTERNAL_1011 = "received 1011 (internal error) Internal error encountered."

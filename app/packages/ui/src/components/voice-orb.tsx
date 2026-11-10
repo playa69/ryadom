@@ -28,7 +28,6 @@ function VoiceOrb({
   state,
   level,
   mood,
-  calm,
   className,
 }: {
   state: OrbState
@@ -36,16 +35,14 @@ function VoiceOrb({
   level: () => number
   /** Mood to show over the state's colours; none for the plain look. */
   mood?: OrbMood | null
-  /** Steady light with no pulsing: shown while a crisis session is on. */
-  calm?: boolean
   className?: string
 }) {
   const swell = useRef<HTMLDivElement>(null)
   // The loop must outlive re-renders: restarting it on a new state or a new closure would drop the
   // sphere's current size and angle and make it jump.
-  const latest = useRef({ state, level })
+  const latest = useRef({ state, level, mood })
   useEffect(() => {
-    latest.current = { state, level }
+    latest.current = { state, level, mood }
   })
 
   useEffect(() => {
@@ -54,11 +51,12 @@ function VoiceOrb({
     return startOrbMotion(element, {
       state: () => latest.current.state,
       level: () => latest.current.level(),
+      steady: () => latest.current.mood === 'crisis',
     })
   }, [])
 
   return (
-    <div data-slot="voice-orb" data-orb={state} data-mood={mood ?? undefined} data-calm={calm ? '' : undefined} aria-hidden="true" className={cn('voice-orb', className)}>
+    <div data-slot="voice-orb" data-orb={state} data-mood={mood ?? undefined} aria-hidden="true" className={cn('voice-orb', className)}>
       <div ref={swell} className="voice-orb-swell">
         <span className="voice-orb-layer voice-orb-glow" />
         <span className="voice-orb-layer voice-orb-core" />

@@ -10,10 +10,16 @@ import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
 export const HOTLINES: HotlineApiResponse[] = [
   { name: 'Экстренные службы', phone: '112' },
   { name: 'Психологическая помощь МЧС России', phone: '8 (495) 989-50-50' },
-  { name: 'Московская служба психологической помощи', phone: '8 (495) 051' },
+  { name: 'Московская служба психологической помощи', phone: '8 (495) 575-03-16' },
 ]
 
 /** The number is stored the way it is read aloud; `tel:` keeps only digits and the plus. */
 export function telHref(phone: string): string {
   return `tel:${phone.replace(/[^+\d]/g, '')}`
 }
+
+/** The line behind the "Call now" button of the crisis branch (the MChS psychological help line). */
+export const CRISIS_CALL: HotlineApiResponse = HOTLINES[1]!
+
+/** The heading of the help sheet in the crisis script. */
+export const CRISIS_SHEET_TITLE = 'Сейчас важно поговорить с живым человеком'

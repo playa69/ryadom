@@ -729,4 +729,33 @@ describe('реплики человека, принятые сервером (ц
     expect(() => ws.receive({ type: DialogServerFrame.Ack, clientId, messageId: 'srv-1' })).not.toThrow()
     expect(h.feed()[0]?.pending).toBe(false)
   })
+
+  it('кризисный сценарий: кадры состояния доходят до обработчика, кнопки уходят серверу', async () => {
+    const h = harness()
+    const states: unknown[] = []
+    ;(h.socket as unknown as { handlers: DialogSocketHandlers }).handlers.onSafetyState = (state) => states.push(state)
+    const ws = await connect(h)
+    ws.receive({ type: DialogServerFrame.Safety, level: 'crisis', text: 'Сейчас важно', hotlines: [], step: 'call', pinned: true })
+    ws.receive({ type: DialogServerFrame.SafetyState, step: 'check', pinned: true, banner: false, ask: 'safe' })
+    expect(h.safety[0]).toEqual(['crisis', 'Сейчас важно', [], 'call'])
+    expect(states).toEqual([
+      { step: 'call', pinned: true, banner: false, ask: null },
+      { step: 'check', pinned: true, banner: false, ask: 'safe' },
+    ])
+    h.socket.safetyCall()
+    h.socket.safetyAnswer('unknown')
+    h.socket.safetyReturn()
+    expect(ws.framesOf(DialogClientFrame.SafetyCall)).toHaveLength(1)
+    expect(ws.framesOf(DialogClientFrame.SafetyAnswer)[0]).toMatchObject({ answer: 'unknown' })
+    expect(ws.framesOf(DialogClientFrame.SafetyReturn)).toHaveLength(1)
+  })
+
+  it('кадр safety старого агента без step не включает состояние сценария', async () => {
+    const h = harness()
+    const states: unknown[] = []
+    ;(h.socket as unknown as { handlers: DialogSocketHandlers }).handlers.onSafetyState = (state) => states.push(state)
+    const ws = await connect(h)
+    ws.receive({ type: DialogServerFrame.Safety, level: 'crisis', text: null, hotlines: [] })
+    expect(states).toEqual([])
+  })
 })

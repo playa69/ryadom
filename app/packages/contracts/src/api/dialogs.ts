@@ -20,19 +20,28 @@ export enum DialogMode {
 /** Tone of the person's last turn, as the voice model reports it (PROTEUS-168). */
 export type MoodTone = 'neutral' | 'sleepy' | 'angry' | 'afraid' | 'sad' | 'calm'
 
+/** The step of the crisis script (PROTEUS-279) that a safety frame belongs to. */
+export type SafetyStep =
+  | 'call'
+  | 'ask_thoughts'
+  | 'check'
+  | 'emergency'
+  | 'pinned'
+  | 'reminder'
+  | 'banner'
+  | 'return'
+
+/** Where the crisis branch fired from: the word list, the model stage, or the person's answer to a direct question. */
+export type SafetySource = 'words' | 'model' | 'answer'
+
+export type SafetyAnswer = 'yes' | 'no' | 'unknown'
+
 export enum SafetyLevel {
   /** The classifier grew wary: a careful question, and the screen does not switch. */
   Concern = 'concern',
   /** Crisis: de-escalation and the hotlines on top of everything. */
   Crisis = 'crisis',
 }
-
-/**
- * The step of the crisis script a `safety` frame belongs to (openspec/changes/extend-crisis-branch).
- * Optional on the wire: an agent from before the script sends none and the client opens the default sheet.
- */
-export const SAFETY_STAGES = ['help', 'ask_safe', 'call112', 'stay', 'check', 'ask_hopeless', 'calm'] as const
-export type SafetyStage = (typeof SAFETY_STAGES)[number]
 
 // ─── REST ─────────────────────────────────────────────────────────────────────
 
@@ -228,9 +237,13 @@ export enum DialogClientFrame {
   AudioStart = 'audio_start',
   AudioEnd = 'audio_end',
   TtsCancel = 'tts_cancel',
+  /** The person pressed the call button in the crisis branch (counted anonymously; cancels the "are you safe" timer). */
+  SafetyCall = 'safety_call',
+  /** The "Yes / No / I don't know" buttons under a crisis question. */
+  SafetyAnswer = 'safety_answer',
+  /** The person came back to the app after the call. */
+  SafetyReturn = 'safety_return',
   Ping = 'ping',
-  /** The person came back to the app after tapping a hotline; only while a crisis session is on. */
-  HelpReturned = 'help_returned',
 }
 
 /** Frames from the server. */
@@ -244,6 +257,7 @@ export enum DialogServerFrame {
   TtsStart = 'tts_start',
   TtsEnd = 'tts_end',
   Safety = 'safety',
+  SafetyState = 'safety_state',
   Mood = 'mood',
   Ended = 'ended',
   Error = 'error',
@@ -323,8 +337,10 @@ export type DialogClientMessage =
   | AudioStartFrame
   | { type: DialogClientFrame.AudioEnd }
   | { type: DialogClientFrame.TtsCancel; messageId: string }
+  | { type: DialogClientFrame.SafetyCall }
+  | { type: DialogClientFrame.SafetyAnswer; answer: SafetyAnswer }
+  | { type: DialogClientFrame.SafetyReturn }
   | { type: DialogClientFrame.Ping }
-  | { type: DialogClientFrame.HelpReturned }
 
 export interface HotlineApiResponse {
   name: string
@@ -346,11 +362,12 @@ export type DialogServerMessage =
       level: SafetyLevel
       text: string | null
       hotlines: HotlineApiResponse[]
-      /** Absent from an agent that predates the script. */
-      stage?: SafetyStage
-      /** Whether the pinned "call now" button belongs on screen. */
-      showCall?: boolean
+      /** Absent from an agent older than the crisis script: then it is the plain sheet. */
+      step?: SafetyStep
+      pinned?: boolean
     }
+  /** The screen state of the crisis script outside the sheet: the pinned call button, the banner, the quick answers. */
+  | { type: DialogServerFrame.SafetyState; step: SafetyStep; pinned: boolean; banner: boolean; ask: 'thoughts' | 'safe' | null }
   /** After each turn of the person: how they sound. Only the colour of the sphere follows it; the SOS path is separate. */
   | { type: DialogServerFrame.Mood; tone: MoodTone; intensity: number; at: number }
   | { type: DialogServerFrame.Ended; summary: DialogSummaryApiResponse | null }

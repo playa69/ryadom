@@ -35,7 +35,6 @@ from websockets.protocol import State
 
 from app.clients.gemini_live import LiveConnector, LiveError, LiveEvent, LiveHistory, LiveLink
 from app.clients.mood_classifier import MOOD_TIMEOUT_SECONDS, parse_mood
-from app.clients.risk_classifier import RISK_TIMEOUT_SECONDS, parse_level
 from app.clients.speech import TextToSpeech, TtsError, Voice, pcm_stream
 from app.core.failure import GEMINI_TTS, GIGAASR, GIGACHAT, SALUTESPEECH, failure_fields, record_failure
 from app.core.metrics import PIPELINE_FALLBACKS_TOTAL
@@ -537,10 +536,6 @@ class SberVoiceConnector:
         """Тон реплики в пути Сбера определяет GigaChat на том же прокси, а не Gemini."""
         return GigaChatMoodClassifier(self)
 
-    def risk_classifier(self) -> "GigaChatRiskClassifier":
-        """Вторая ступень детектора кризиса в пути Сбера: GigaChat, слова человека не уходят в Google."""
-        return GigaChatRiskClassifier(self)
-
     async def aclose(self) -> None:
         await self.http.aclose()
 
@@ -608,55 +603,6 @@ class GigaChatMoodClassifier:
                     record_failure(logger, f"mood classifier attempt={attempt}", GIGACHAT, "sber", error)
             trace.update(level="WARNING", status="классификатор не ответил")
             return None
-        finally:
-            trace.end()
-
-
-class GigaChatRiskClassifier:
-    """Оценка риска реплики (`agent.safety.risk`) GigaChat на модельном прокси. Любая ошибка — исключение: вызывающий
-    считает её «нет» (app/api/dialog_session.py, `_assess`)."""
-
-    def __init__(self, connector: SberVoiceConnector) -> None:
-        self._connector = connector
-
-    async def classify(self, context: list[str], *, user_id: str | None = None, dialog_id: str | None = None) -> str:
-        provider = getattr(self._connector, "prompt_provider", None)
-        if provider is None or not context:
-            return "none"
-        tracer = getattr(self._connector, "tracer", None) or NullTracer()
-        try:
-            prompt = provider.resolve("agent.safety.risk")
-        except PromptUnavailable:
-            return "none"
-        text = "\n".join(context)
-        trace = tracer.start_turn(
-            name="risk_classify_sber",
-            session_id=dialog_id or "risk",
-            user_id=user_id,
-            model=CHAT_MODEL,
-            input=text,
-            metadata={"operation": "risk", **prompt_metadata(prompt)},
-            prompt=prompt.prompt,
-        )
-        body = {
-            "model": CHAT_MODEL,
-            "messages": [{"role": "system", "content": prompt.text}, {"role": "user", "content": text}],
-            "temperature": 0,
-            "max_tokens": 30,
-        }
-        try:
-            response = await asyncio.wait_for(
-                self._connector.http.post(self._connector.chat_url, json=body), RISK_TIMEOUT_SECONDS
-            )
-            response.raise_for_status()
-            data = response.json()
-            usage = data.get("usage") or {}
-            model_usage.record(CHAT_MODEL, "risk", "input", "text", "tokens", int(usage.get("prompt_tokens") or 0))
-            model_usage.record(CHAT_MODEL, "risk", "output", "text", "tokens", int(usage.get("completion_tokens") or 0))
-            return parse_level(_json_object(data["choices"][0]["message"]["content"]))
-        except Exception:
-            trace.update(level="WARNING", status="оценка риска не ответила")
-            raise
         finally:
             trace.end()
 

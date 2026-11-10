@@ -101,7 +101,7 @@ test('итог разговора: три способа, разговоры б�
   await openEnd(page)
   expect(await submitAndLeave(page)).not.toContain('Итог')
   await talk(page, CRISIS)
-  await expect(modal(page).getByRole('heading', { name: 'Если сейчас тяжело' })).toBeVisible({ timeout: 30_000 })
+  await expect(modal(page).getByRole('heading', { name: 'Сейчас важно поговорить с живым человеком' })).toBeVisible({ timeout: 30_000 })
   await modalButton(page, 'Закрыть').click()
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
   await openEnd(page)

@@ -21,22 +21,19 @@ export default function VoiceOrb({
   state,
   level,
   mood,
-  calm,
 }: {
   state: OrbState
   /** Loudness 0..1 of whoever is making sound now, read on every animation frame. */
   level: () => number
   /** Mood to show over the state's colours; none for the plain look. */
   mood?: OrbMood | null
-  /** Steady light with no pulsing: shown while a crisis session is on. */
-  calm?: boolean
 }) {
   const swell = useRef<HTMLDivElement>(null)
   // The loop must outlive re-renders: restarting it on a new state or a new closure would drop the
   // sphere's current size and angle and make it jump.
-  const latest = useRef({ state, level })
+  const latest = useRef({ state, level, mood })
   useEffect(() => {
-    latest.current = { state, level }
+    latest.current = { state, level, mood }
   })
 
   useEffect(() => {
@@ -45,11 +42,12 @@ export default function VoiceOrb({
     return startOrbMotion(element, {
       state: () => latest.current.state,
       level: () => latest.current.level(),
+      steady: () => latest.current.mood === 'crisis',
     })
   }, [])
 
   return (
-    <div className="rd-orb" data-orb={state} data-mood={mood ?? undefined} data-calm={calm ? '' : undefined} aria-hidden="true">
+    <div className="rd-orb" data-orb={state} data-mood={mood ?? undefined} aria-hidden="true">
       <div ref={swell} className="rd-orb-swell">
         <div className="rd-breathing">
           <span className="rd-breathing-core" />

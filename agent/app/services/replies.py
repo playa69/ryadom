@@ -8,20 +8,20 @@
 import re
 from difflib import SequenceMatcher
 
-from app.services.crisis_script import SCREEN_TEXT, STEP1, detect
+from app.services import crisis_script
+from app.services.crisis import classify_words
 
 # Расшифровка голоса оказалась обрывком чужого языка («usted»): агент не отвечает по ней, а просит повторить.
 REPEAT_REQUEST = "Прости, плохо слышно. Повтори, пожалуйста?"
 
-# Кризис детерминирован: словари и тексты шагов — в crisis_script (specs/crisis-safety). Здесь остались прежние имена, на которые
-# опираются память, кеш озвучки и тесты: CRISIS_REPLY — фраза шага 1 красного уровня.
-CRISIS_SAFETY_TEXT = SCREEN_TEXT
-CRISIS_REPLY = STEP1
+# Кризисная ветка целиком — app/services/crisis.py, тексты — app/services/crisis_script.py.
+CRISIS_REPLY = crisis_script.RED_FIRST
+CRISIS_SAFETY_TEXT = crisis_script.SHEET_TITLE
 
 
 def is_crisis(text: str) -> bool:
-    """Красный уровень по словарю."""
-    return detect(text) == "red"
+    """Красные слова в реплике (первая ступень детектора)."""
+    return classify_words(text) == "red"
 
 
 NOISE_MAX_WORDS = 5  # «gustala gustala ya gustala» из живого разговора — четыре слова

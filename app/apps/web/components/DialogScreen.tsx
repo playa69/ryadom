@@ -13,7 +13,6 @@ import {
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
-import { CALL_NOW_HOTLINE, CRISIS_TEXT, crisisStore, watchHelpReturn } from '@ryadom/client-core/crisis'
 import { RECAP_ERROR_TEXT } from '@ryadom/client-core/recaps'
 import {
   createMemoryRecap,
@@ -81,7 +80,10 @@ import MemoryRecap from './MemoryRecap'
 import DialogVoice from './DialogVoice'
 import { BUTTON, COLUMN } from './controls'
 import { useNotice, useNoticePlacement } from './Notice'
-import { CallButton, SafeAnswers, useSos } from './Sos'
+import CrisisBar from './CrisisBar'
+import { useSos } from './Sos'
+import { CRISIS_IDLE, reduceCrisisUi, type CrisisUi } from '@ryadom/client-core/safety-state'
+import type { SafetyAnswer } from '@ryadom/contracts/api/dialogs'
 import { claimFreshStart, readDialogStart, takeDialogHandoff } from './dialog-start'
 import { initialDialogView, rememberDialogView, type DialogView } from './dialog-view'
 import { useStickToEnd } from './dialog-scroll'
@@ -139,22 +141,14 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const notify = useNotice()
   // The input box sits where the default toast stack would, so toasts go under the header.
   useNoticePlacement('top')
-  const { openSos, applySheet } = useSos()
-  const { ui: crisis, sheetOpen } = useSyncExternalStore(
-    crisisStore.subscribe,
-    crisisStore.getSnapshot,
-    crisisStore.getSnapshot,
-  )
-  const crisisRef = useRef(crisis)
-  crisisRef.current = crisis
+  const { openSos } = useSos()
 
   const start = readDialogStart(dialogId)
   // A dialog started from home says whether the server resumed one; any other way in (a reload, the
   // history, a link) is a return to a conversation that already exists.
   // A conversation held unsaved reports nothing, not even that its screen opened.
   useOnceFor(dialogId, () => {
-    if (!isUnsaved(start) && !wasUnsaved(dialogId))
-      track(AnalyticsEvent.DialogScreenOpened, { resumed: start?.resumed ?? true })
+    if (!isUnsaved(start) && !wasUnsaved(dialogId)) track(AnalyticsEvent.DialogScreenOpened, { resumed: start?.resumed ?? true })
   })
   const [messages, setMessages] = useState<DialogMessageView[]>(() => greetingMessages(start?.greeting))
   const [state, setState] = useState<DialogSocketState>('connecting')
@@ -164,6 +158,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // PROTEUS-168: the tone the agent reports for the person's last turn; fades back after a while.
   const [mood, setMood] = useState<OrbMood | null>(null)
   const moodHold = useMemo(() => createMoodHold(setMood), [])
+  // PROTEUS-279: the crisis script on the screen (pinned call button, quick answers, banner, still sphere).
+  const [crisisUi, setCrisisUi] = useState<CrisisUi>(CRISIS_IDLE)
+  // The call button was pressed: when the person comes back to the app, the agent asks how it went.
+  const calledRef = useRef(false)
   useEffect(() => () => moodHold.clear(), [moodHold])
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
   const [handsFree] = useState(() => readHandsFree(WEB_HANDS_FREE_KEY) && isTurnDetectionSupported())
@@ -204,9 +202,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const recapState = useSyncExternalStore(recap.subscribe, recap.getSnapshot, () => null)
   useEffect(() => () => recap.reset(), [recap])
   // Only the block counts as shown; the line "Ещё записываю" (`late`) is not the block, and nothing about it is reported.
-  useOnceFor(recapState?.kind === 'notes' ? recapState.dialogId : null, () =>
-    track(AnalyticsEvent.MemoryRecapShown),
-  )
+  useOnceFor(recapState?.kind === 'notes' ? recapState.dialogId : null, () => track(AnalyticsEvent.MemoryRecapShown))
   /** What `finish` needs to know about memory: it is memoized, and these change while the conversation goes on. */
   const memoryNow = useRef({ mode: memoryMode, enabled: user?.memoryEnabled })
   memoryNow.current = { mode: memoryMode, enabled: user?.memoryEnabled }
@@ -384,33 +380,22 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setEnding(false)
       void stopRecording()
       voice.current?.cancel()
-      // After a crisis there is no recap card: the summary line and the memory block stay out of that goodbye.
-      const afterCrisis = crisisRef.current.active
       // The window does not wait for the notes: the block comes up in it, if there are any, within half a minute.
-      if (
-        !afterCrisis &&
-        shouldWatchMemoryChanges({
-          memoryMode: memoryNow.current.mode,
-          memoryEnabled: memoryNow.current.enabled,
-          unsaved: unsavedRef.current,
-        })
-      ) {
+      if (shouldWatchMemoryChanges({ memoryMode: memoryNow.current.mode, memoryEnabled: memoryNow.current.enabled, unsaved: unsavedRef.current })) {
         void recap.watch(dialogId, (id) => client.getMemoryChanges(id))
       }
       setAlert({
         title: 'Спасибо, что поговорил(а)',
         text: unsavedRef.current
           ? UNSAVED_DONE_TEXT
-          : (summary?.title && !afterCrisis
-              ? `Забираешь с собой: ${summary.title}`
-              : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
-            (afterCrisis
-              ? ''
-              : summary?.recapStatus === 'pending'
-                ? ' Итог разговора появится в журнале через минуту.'
-                : summary?.recapStatus === 'ready'
-                  ? ' Итог разговора сохранён в журнале.'
-                  : ''),
+          : (summary?.title
+            ? `Забираешь с собой: ${summary.title}`
+            : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
+          (summary?.recapStatus === 'pending'
+            ? ' Итог разговора появится в журнале через минуту.'
+            : summary?.recapStatus === 'ready'
+              ? ' Итог разговора сохранён в журнале.'
+              : ''),
         leaves: true,
       })
     },
@@ -420,10 +405,25 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // The socket handlers outlive renders; they read the latest helpers through here.
   const greeting = start?.greeting ?? null
   const gone = () => setMissing(true)
-  const latest = useRef({ notify, openSos, applySheet, startListening, openMic, onTurn, greeting, gone })
+  const latest = useRef({ notify, openSos, startListening, openMic, onTurn, greeting, gone })
   useEffect(() => {
-    latest.current = { notify, openSos, applySheet, startListening, openMic, onTurn, greeting, gone }
+    latest.current = { notify, openSos, startListening, openMic, onTurn, greeting, gone }
   })
+
+  const pressCall = useCallback(() => {
+    calledRef.current = true
+    socket.current?.safetyCall()
+  }, [])
+  const answerSafety = useCallback((answer: SafetyAnswer) => socket.current?.safetyAnswer(answer), [])
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !calledRef.current) return
+      calledRef.current = false
+      socket.current?.safetyReturn()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -499,8 +499,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       onAudio: (speech) => voicePlayer.enqueue(speech),
       // Not reported from here on purpose: the server already counts this signal (safety_signal), with no
       // person attached; a second count from a signed-in screen would only risk pointing at who was in crisis.
-      onSafety: (level, text, hotlines, script) =>
-        latest.current.applySheet(crisisStore.onSafety({ level, ...script }), { text, hotlines }),
+      onSafety: (_level, text, hotlines, step) =>
+        latest.current.openSos(step ? { text, hotlines, crisis: { onCall: pressCall } } : { text, hotlines }),
+      onSafetyState: (next) => setCrisisUi((prev) => reduceCrisisUi(prev, next)),
       onMood: (tone, intensity) => moodHold.report(tone, intensity),
       onEnded: (result) => finish(result),
       onError: (code, message) => {
@@ -559,20 +560,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     }
     void open()
 
-    // A tap on a hotline and the way back from the dialler: the agent asks how it went.
-    const stopHelpWatch = watchHelpReturn(() => {
-      if (crisisRef.current.active) socket.current?.helpReturned()
-    })
-    crisisStore.setAnswerHandler((text) => {
-      trackDialog(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(text.length) })
-      socket.current?.sendMessage(text)
-      setAwaitingReply(true)
-    })
-
     return () => {
-      stopHelpWatch()
-      crisisStore.setAnswerHandler(null)
-      crisisStore.reset()
       cancelled = true
       clearTimeout(endTimer.current)
       opened?.close()
@@ -862,19 +850,13 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   async function draftRecap(): Promise<{ recap: string } | { error: string }> {
     try {
       const result = await client.draftDialogRecap(dialogId)
-      return result.ok
-        ? { recap: result.data.recap }
-        : { error: RECAP_ERROR_TEXT[result.code] ?? RECAP_ERROR_TEXT.RECAP_UNAVAILABLE }
+      return result.ok ? { recap: result.data.recap } : { error: RECAP_ERROR_TEXT[result.code] ?? RECAP_ERROR_TEXT.RECAP_UNAVAILABLE }
     } catch (error) {
       return { error: apiErrorText(error, {}, RECAP_ERROR_TEXT.RECAP_UNAVAILABLE) }
     }
   }
 
-  async function submitEnd(
-    takeaway: string | null,
-    tensionAfter: number | null,
-    recapSource: EndRecapSource,
-  ) {
+  async function submitEnd(takeaway: string | null, tensionAfter: number | null, recapSource: EndRecapSource) {
     // Whether there is a takeaway and whether the scale was answered, never what either says;
     // "skipped" is the sheet closed with nothing filled in.
     trackDialog(AnalyticsEvent.DialogEndSubmitted, {
@@ -926,10 +908,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           <h1 className="text-2xl leading-tight font-bold tracking-display-tight text-balance text-foreground">
             {unsaved ? UNSAVED_GONE.title : 'Разговор не найден'}
           </h1>
-          <p
-            className="text-base leading-[1.55] text-dim"
-            data-testid={unsaved ? 'dialog-unsaved-gone' : undefined}
-          >
+          <p className="text-base leading-[1.55] text-dim" data-testid={unsaved ? 'dialog-unsaved-gone' : undefined}>
             {unsaved ? UNSAVED_GONE.text : 'Возможно, ссылка устарела. Начни новый разговор с главной.'}
           </p>
           <Button asChild className={cn(BUTTON, 'bg-clip-border px-6 focus-visible:border-transparent')}>
@@ -1015,33 +994,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           </>
         }
       />
-      {(crisis.banner || crisis.pinCall || (view === 'voice' && crisis.askSafe && !sheetOpen)) && (
-        <div
-          // Pinned under the sticky header: the page itself scrolls, so a plain block would leave with the first messages.
-          className={cn(
-            COLUMN,
-            'sticky top-[calc(3.5rem+env(safe-area-inset-top,0px))] z-20 flex flex-col gap-2 bg-paper pt-3 pb-2',
-          )}
-          data-testid="crisis-bar"
-        >
-          {crisis.banner && (
-            <Button
-              type="button"
-              variant="outline"
-              className={cn(BUTTON, 'min-h-11 w-full border-input!')}
-              data-testid="crisis-banner"
-              onClick={() => openSos()}
-            >
-              {CRISIS_TEXT.banner}
-            </Button>
-          )}
-          {crisis.pinCall && (
-            <CallButton hotline={CALL_NOW_HOTLINE} label={CRISIS_TEXT.callNow} testId="crisis-pinned-call" />
-          )}
-          {view === 'voice' && crisis.askSafe && !sheetOpen && <SafeAnswers onAnswer={crisisStore.answer} />}
-        </div>
-      )}
       <ShareDialogModal dialogId={dialogId} open={sharing} onClose={() => setSharing(false)} />
+
+      <CrisisBar ui={crisisUi} onCall={pressCall} onAnswer={answerSafety} onOpenSos={() => openSos()} />
 
       {unsaved && (
         <div className={cn(COLUMN, 'pt-3')}>
@@ -1087,8 +1042,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       {view === 'voice' ? (
         <DialogVoice
           orb={orb}
-          mood={mood}
-          calm={crisis.active}
+          mood={crisisUi.active ? 'crisis' : mood}
           level={level}
           caption={caption}
           hint={hint}
@@ -1141,7 +1095,6 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
                   Новые сообщения
                 </Button>
               )}
-              {crisis.askSafe && !sheetOpen && <SafeAnswers className="pb-2" onAnswer={crisisStore.answer} />}
               {/* Always present: a region inserted together with its text is often not announced. Dim, not faint: it is the only explanation when the conversation stops answering. */}
               <div
                 className="text-center text-sm leading-snug text-dim not-empty:pb-2"

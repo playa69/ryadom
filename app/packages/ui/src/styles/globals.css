@@ -457,18 +457,15 @@
   --orb-ring: rgb(110 220 150);
 }
 
-/*
- * Crisis branch (openspec/changes/extend-crisis-branch): steady light, no pulsing and no swelling with the
- * voice. Overrides the values the motion loop drives, so the loop itself needs no special case.
- */
-.voice-orb[data-calm] .voice-orb-swell {
-  scale: 1;
-  rotate: 0deg;
-}
 
-.voice-orb[data-calm] .voice-orb-layer {
-  scale: 1;
-  opacity: 0.85;
+/* The crisis script (PROTEUS-279): a calm, even light. The motion is held still in orb-motion (`steady`). */
+.voice-orb[data-mood='crisis'] {
+  --orb-hi: rgb(236 240 247);
+  --orb-warm: rgb(196 206 224);
+  --orb-mid: rgb(120 138 176);
+  --orb-deep: rgb(58 70 104);
+  --orb-halo: rgb(110 128 168);
+  --orb-ring: rgb(170 184 212);
 }
 
 /* A small lit sphere as the face of a button: the way back to the voice. */

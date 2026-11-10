@@ -1,21 +1,14 @@
 'use client'
 
 import { Phone } from 'lucide-react'
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
-import {
-  CALL_NOW_HOTLINE,
-  CRISIS_TEXT,
-  OTHER_HOTLINES,
-  crisisStore,
-  type SheetRequest,
-} from '@ryadom/client-core/crisis'
-import { HOTLINES, telHref } from '@ryadom/client-core/hotlines'
+import { CRISIS_CALL, CRISIS_SHEET_TITLE, HOTLINES, telHref } from '@ryadom/client-core/hotlines'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
-import { BUTTON } from './controls'
+import { BUTTON, FOCUS_RING } from './controls'
 import Hotline from './Hotline'
 import Modal from './Modal'
 
@@ -27,15 +20,13 @@ import Modal from './Modal'
 export interface SosPayload {
   text?: string | null
   hotlines?: HotlineApiResponse[]
-  /** The crisis script's sheet (`help`, `call112`); without it the default sheet. */
-  variant?: 'help' | 'call112'
+  /** The crisis script (PROTEUS-279): the sheet gets the heading, the "Call now" button and the way back to the conversation. */
+  crisis?: { onCall(): void }
 }
 
 interface SosApi {
   openSos(payload?: SosPayload): void
   closeSos(): void
-  /** Applies what a `safety` frame asked of the sheet. */
-  applySheet(request: SheetRequest, payload?: SosPayload): void
 }
 
 const SosContext = createContext<SosApi | null>(null)
@@ -65,79 +56,52 @@ export function SosProvider({ children }: { children: ReactNode }) {
     setOpen(true)
   }, [])
   const closeSos = useCallback(() => setOpen(false), [])
-  const applySheet = useCallback(
-    (request: SheetRequest, next: SosPayload = {}) => {
-      if (request === 'close') setOpen(false)
-      else if (request) openSos({ ...next, variant: request === 'default' ? undefined : request })
-    },
-    [openSos],
-  )
-  const api = useMemo(() => ({ openSos, closeSos, applySheet }), [openSos, closeSos, applySheet])
-  useEffect(() => crisisStore.setSheetOpen(open), [open])
-  const { ui } = useSyncExternalStore(crisisStore.subscribe, crisisStore.getSnapshot, crisisStore.getSnapshot)
+  const api = useMemo(() => ({ openSos, closeSos }), [openSos, closeSos])
 
-  const hotlines = payload.hotlines?.length ? payload.hotlines : HOTLINES
-  const variant = payload.variant
-  const answerSafe = (text: string) => {
-    crisisStore.answer(text)
-  }
+  const listed = payload.hotlines?.length ? payload.hotlines : HOTLINES
+  // In the crisis script 112 has its own line under "Call now"; the list keeps the rest.
+  const hotlines = payload.crisis ? listed.filter((hotline) => hotline.phone !== '112') : listed
 
   return (
     <SosContext.Provider value={api}>
       {children}
-      <Modal
-        open={open}
-        onClose={closeSos}
-        title={variant === 'help' ? CRISIS_TEXT.helpTitle : 'Если сейчас тяжело'}
-        className={SHEET}
-      >
-        {variant === 'help' && (
-          <>
-            <CallButton hotline={CALL_NOW_HOTLINE} label={CRISIS_TEXT.callNow} testId="sos-call-now" />
+      <Modal open={open} onClose={closeSos} title={payload.crisis ? CRISIS_SHEET_TITLE : 'Если сейчас тяжело'} className={SHEET}>
+        {payload.crisis ? (
+          <div className="grid gap-2.5" data-testid="sos-crisis">
+            <Button asChild size="lg" variant="destructive" className={cn(BUTTON, 'w-full gap-2 font-bold')}>
+              <a
+                href={telHref(CRISIS_CALL.phone)}
+                data-testid="sos-call-now"
+                onClick={() => {
+                  trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: CRISIS_CALL.name })
+                  payload.crisis?.onCall()
+                }}
+              >
+                <Phone className="size-4" aria-hidden="true" />
+                Позвонить сейчас
+              </a>
+            </Button>
             <a
               href={telHref('112')}
-              data-testid="sos-call-112"
-              className={cn(BUTTON, 'ph-no-capture flex min-h-12 items-center justify-center rounded-xl border border-danger-line px-4 text-center font-semibold text-sos')}
+              className={cn(TEXT, 'text-center underline underline-offset-4')}
+              data-testid="sos-112"
               onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: 'Экстренные службы' })}
             >
-              {CRISIS_TEXT.call112}
+              112 — если есть опасность для жизни
             </a>
-            <button
-              type="button"
-              data-testid="sos-safe-link"
-              className="min-h-11 text-sm text-dim underline"
-              onClick={() => {
-                answerSafe(CRISIS_TEXT.safeAnswer)
-                closeSos()
-              }}
-            >
-              {CRISIS_TEXT.safeLink}
-            </button>
-          </>
+          </div>
+        ) : (
+          <p className={TEXT}>{payload.text ?? DEFAULT_TEXT}</p>
         )}
-        {variant === 'call112' && (
-          <a
-            href={telHref('112')}
-            data-testid="sos-call-112-big"
-            className={cn(BUTTON, 'ph-no-capture flex min-h-24 items-center justify-center rounded-xl bg-danger-soft text-center text-5xl font-bold text-sos')}
-            onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: 'Экстренные службы' })}
-          >
-            112
-          </a>
-        )}
-        {ui.askSafe && variant !== 'call112' && <SafeAnswers onAnswer={answerSafe} />}
-        {!variant && <p className={TEXT}>{payload.text ?? DEFAULT_TEXT}</p>}
         <div className="grid gap-2.5 short-wide:col-start-2 short-wide:row-span-3 short-wide:row-start-1 short-wide:gap-2">
-          {(variant ? OTHER_HOTLINES.filter((line) => variant === 'call112' || line !== CALL_NOW_HOTLINE) : hotlines).map(
-            (hotline) => (
-              <Hotline
-                key={hotline.phone}
-                hotline={hotline}
-                // Snugger rows on a phone held upright (360x640 needs ~600px), snuggest in the two-column sheet.
-                className="max-tab:py-3 short-wide:py-1 short-wide:leading-[1.3] short-wide:[&>[data-slot=item-content]]:gap-0"
-              />
-            ),
-          )}
+          {hotlines.map((hotline) => (
+            <Hotline
+              key={hotline.phone}
+              hotline={hotline}
+              // Snugger rows on a phone held upright (360x640 needs ~600px), snuggest in the two-column sheet.
+              className="max-tab:py-3 short-wide:py-1 short-wide:leading-[1.3] short-wide:[&>[data-slot=item-content]]:gap-0"
+            />
+          ))}
         </div>
         {/* The single most consequential sentence in the app: readable tone, not the faint caption one. */}
         <p className={cn(TEXT, 'short-wide:col-start-1 short-wide:row-span-2 short-wide:row-start-3')}>
@@ -156,50 +120,18 @@ export function SosProvider({ children }: { children: ReactNode }) {
         >
           Закрыть
         </Button>
+        {payload.crisis && (
+          <button
+            type="button"
+            className={cn(TEXT, 'text-xs underline underline-offset-4 short-wide:col-start-1', FOCUS_RING)}
+            onClick={closeSos}
+            data-testid="sos-safe"
+          >
+            Я в безопасности, давай продолжим
+          </button>
+        )}
       </Modal>
     </SosContext.Provider>
-  )
-}
-
-/** The main button of the crisis sheet and of the pinned bar: a call to one line. */
-export function CallButton({
-  hotline,
-  label,
-  testId,
-  className,
-}: {
-  hotline: HotlineApiResponse
-  label: string
-  testId: string
-  className?: string
-}) {
-  return (
-    <a
-      href={telHref(hotline.phone)}
-      data-testid={testId}
-      className={cn(
-        BUTTON,
-        'ph-no-capture flex min-h-12 items-center justify-center gap-2 rounded-xl bg-danger-soft px-4 text-center text-lg font-bold text-sos',
-        className,
-      )}
-      onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })}
-    >
-      <Phone className="size-5" aria-hidden="true" />
-      {label}
-    </a>
-  )
-}
-
-/** «Да» · «Нет» · «Не знаю»: ordinary messages with exactly these words. */
-export function SafeAnswers({ onAnswer, className }: { onAnswer(text: string): void; className?: string }) {
-  return (
-    <div className={cn('grid grid-cols-3 gap-2', className)} data-testid="safe-answers">
-      {CRISIS_TEXT.askSafe.map((word) => (
-        <Button key={word} type="button" variant="outline" className={cn(BUTTON, 'border-input!')} onClick={() => onAnswer(word)}>
-          {word}
-        </Button>
-      ))}
-    </div>
   )
 }
 

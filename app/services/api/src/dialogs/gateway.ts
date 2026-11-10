@@ -27,7 +27,6 @@ import {
   DialogCloseCode,
   DialogServerFrame,
   DialogWsErrorCode,
-  SAFETY_STAGES,
   SafetyLevel,
   type DialogServerMessage,
   type DialogSummaryApiResponse,
@@ -109,6 +108,7 @@ interface AgentTextFrame {
   [key: string]: unknown
 }
 
+const SAFETY_STEPS = ['call', 'ask_thoughts', 'check', 'emergency', 'pinned', 'reminder', 'banner', 'return'] as const
 const MOOD_TONES = ['neutral', 'sleepy', 'angry', 'afraid', 'sad', 'calm'] as const
 
 class DialogSession {
@@ -123,6 +123,9 @@ class DialogSession {
   private userMessages = 0
   private assistantMessages = 0
   private hasTakeaway = false
+  // Where the crisis branch fired from, remembered to count the call button (no text, no person).
+  private crisisTrigger: 'red' | 'yellow' | null = null
+  private crisisSource: 'words' | 'model' | 'answer' | null = null
   /**
    * The agent said (`ready`) that this conversation is held unsaved ("Не сохранять этот разговор"): nothing about it goes to the
    * product analytics, not even counts.
@@ -194,6 +197,11 @@ class DialogSession {
         this.alive = true
       }),
     )
+  }
+
+  private rememberCrisisSource(frame: AgentTextFrame): void {
+    if (frame.trigger === 'red' || frame.trigger === 'yellow') this.crisisTrigger = frame.trigger
+    if (frame.source === 'words' || frame.source === 'model' || frame.source === 'answer') this.crisisSource = frame.source
   }
 
   private toClient(frame: DialogServerMessage): void {
@@ -346,8 +354,20 @@ class DialogSession {
       case DialogClientFrame.TtsCancel:
         this.agent?.send({ type: 'tts_cancel', messageId: frame.messageId })
         return
-      case DialogClientFrame.HelpReturned:
-        this.agent?.send({ type: 'help_returned' })
+      case DialogClientFrame.SafetyCall:
+        this.agent?.send({ type: 'safety_call' })
+        this.deps.analytics.captureAnonymous(AnalyticsEvent.CrisisCallPressed, {
+          level: this.crisisTrigger ?? 'red',
+          source: this.crisisSource ?? 'unknown',
+        })
+        return
+      case DialogClientFrame.SafetyAnswer:
+        if (frame.answer === 'yes' || frame.answer === 'no' || frame.answer === 'unknown') {
+          this.agent?.send({ type: 'safety_answer', answer: frame.answer })
+        }
+        return
+      case DialogClientFrame.SafetyReturn:
+        this.agent?.send({ type: 'safety_return' })
         return
       case DialogClientFrame.Ping:
         this.toClient({ type: DialogServerFrame.Pong })
@@ -695,26 +715,31 @@ class DialogSession {
         // ours. The SOS screen must never open empty.
         // The agent raises this frame when help is needed now, so a frame without a level is a crisis.
         const level = frame.level === SafetyLevel.Concern ? SafetyLevel.Concern : SafetyLevel.Crisis
-        // Counted with no person attached: how often the hotlines were shown, not who needed them. Later steps of the
-        // script (`ask_safe`, `call112`, `stay`, `check`, `calm`) belong to a signal already counted.
-        const stage = SAFETY_STAGES.find((name) => name === frame.stage)
-        if (!stage || stage === 'help' || stage === 'ask_hopeless') {
-          this.deps.analytics.captureAnonymous(AnalyticsEvent.SafetySignal, {
-            level: level === SafetyLevel.Concern ? 'yellow' : 'red',
-            ...(frame.source === 'dictionary' || frame.source === 'model' ? { source: frame.source } : {}),
-          })
-        }
+        // Counted with no person attached: how often the hotlines were shown, not who needed them.
+        this.deps.analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level })
         const hotlines = Array.isArray(frame.hotlines) && frame.hotlines.length > 0
           ? (frame.hotlines as { name: string; phone: string }[])
           : HOTLINES
-        // Unknown stages are dropped, not forwarded: a client must never get a value its enum lacks.
+        this.rememberCrisisSource(frame)
+        const step = SAFETY_STEPS.find((name) => name === frame.step)
         return this.toClient({
           type: DialogServerFrame.Safety,
           level,
           text: str('text'),
           hotlines,
-          ...(stage ? { stage } : {}),
-          ...(typeof frame.showCall === 'boolean' ? { showCall: frame.showCall } : {}),
+          ...(step ? { step, pinned: frame.pinned === true } : {}),
+        })
+      }
+      case 'safety_state': {
+        const step = SAFETY_STEPS.find((name) => name === frame.step)
+        if (!step) return
+        this.rememberCrisisSource(frame)
+        return this.toClient({
+          type: DialogServerFrame.SafetyState,
+          step,
+          pinned: frame.pinned === true,
+          banner: frame.banner === true,
+          ask: frame.ask === 'thoughts' || frame.ask === 'safe' ? frame.ask : null,
         })
       }
       case 'ended': {

@@ -5,9 +5,9 @@ import { Block, Button, Icon, Message, Messages, Navbar, Page, Preloader, f7 } f
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { CALL_NOW_HOTLINE, CRISIS_TEXT, crisisStore, watchHelpReturn } from '@ryadom/client-core/crisis'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
-import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
+import { DialogWsErrorCode, type DialogSummaryApiResponse, type SafetyAnswer } from '@ryadom/contracts/api/dialogs'
+import { CRISIS_IDLE, reduceCrisisUi, type CrisisUi } from '@ryadom/client-core/safety-state'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { trackUnlessUnsaved } from '../../../lib/dialog-analytics'
@@ -53,7 +53,8 @@ import {
   watchTurns,
   type TurnEvent,
 } from '../../../lib/voice/turn-detector'
-import { CallButton, SafeAnswers, applySheet, openSos } from '../../SosSheet'
+import CrisisBar from '../../CrisisBar'
+import { openSos } from '../../SosSheet'
 import Breathing from '../../Breathing'
 import VoiceOrb, { type OrbState } from '../../VoiceOrb'
 import DialogEndSheet from './DialogEndSheet'
@@ -252,11 +253,11 @@ export default function DialogPage({
   // The tone the agent reports for the person's last turn tints the sphere for a while (REQ-VOICE-10).
   const [mood, setMood] = useState<OrbMood | null>(null)
   const moodHold = useMemo(() => createMoodHold(setMood), [])
+  // PROTEUS-279: the crisis script on the screen (pinned call button, quick answers, banner, still sphere).
+  const [crisisUi, setCrisisUi] = useState<CrisisUi>(CRISIS_IDLE)
+  // The call button was pressed: when the person comes back to the app, the agent asks how it went.
+  const calledRef = useRef(false)
   useEffect(() => () => moodHold.clear(), [moodHold])
-  const { ui: crisis, sheetOpen } = useSyncExternalStore(crisisStore.subscribe, crisisStore.getSnapshot, crisisStore.getSnapshot)
-  // Read by the summary effect, which runs after `reset` has not yet happened: the session was a crisis one.
-  const crisisSeen = useRef(false)
-  if (crisis.active) crisisSeen.current = true
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
   const [draft, setDraft] = useState('')
@@ -278,6 +279,20 @@ export default function DialogPage({
   const [summary, setSummary] = useState<DialogSummaryApiResponse | null | undefined>(undefined)
 
   const socket = useRef<DialogSocket | null>(null)
+  const pressCall = useCallback(() => {
+    calledRef.current = true
+    socket.current?.safetyCall()
+  }, [])
+  const answerSafety = useCallback((answer: SafetyAnswer) => socket.current?.safetyAnswer(answer), [])
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !calledRef.current) return
+      calledRef.current = false
+      socket.current?.safetyReturn()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
   const player = useRef<VoicePlayer | null>(null)
   /** The sphere's own voice for what the agent does not speak itself: the greeting, a reply without speech. */
   const voice = useRef<ReplyVoice | null>(null)
@@ -399,8 +414,14 @@ export default function DialogPage({
           if (final && !text) setAwaitingReply(false)
         },
         onAudio: (speech) => voicePlayer.enqueue(speech),
-        onSafety: (level, text, hotlines, script) =>
-          applySheet(crisisStore.onSafety({ level, ...script }), { text, hotlines, source: 'safety_frame' }),
+        onSafety: (_level, text, hotlines, step) =>
+          openSos({
+            text,
+            hotlines,
+            source: 'safety_frame',
+            ...(step ? { crisis: { onCall: pressCall } } : {}),
+          }),
+        onSafetyState: (next) => setCrisisUi((prev) => reduceCrisisUi(prev, next)),
         onMood: (tone, intensity) => moodHold.report(tone, intensity),
         onEnded: (result) => setSummary(result),
         onError: (code, message) => {
@@ -435,20 +456,7 @@ export default function DialogPage({
     socket.current = dialog
     dialog.connect()
 
-    // A tap on a hotline and the way back from the dialler: the agent asks how it went.
-    const stopHelpWatch = watchHelpReturn(() => {
-      if (crisisStore.getSnapshot().ui.active) dialog.helpReturned()
-    })
-    crisisStore.setAnswerHandler((text) => {
-      trackDialog(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(text.length) })
-      dialog.sendMessage(text)
-      setAwaitingReply(true)
-    })
-
     return () => {
-      stopHelpWatch()
-      crisisStore.setAnswerHandler(null)
-      crisisStore.reset()
       dialog.close()
       stopWatching.current?.()
       stopWatching.current = null
@@ -746,14 +754,10 @@ export default function DialogPage({
     setEndOpened(false)
     // The journal lives on another tab; on a wide screen its list is visible right away.
     void journal.refresh()
-    // After a crisis there is no recap card: the summary line and the memory block stay out of that goodbye.
-    const afterCrisis = crisisSeen.current
     const text = unsavedRef.current
       ? UNSAVED_DONE_TEXT
-      : (summary?.title && !afterCrisis ? `Забираешь с собой: ${summary.title}` : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
-        (afterCrisis
-          ? ''
-          : summary?.recapStatus === 'pending'
+      : (summary?.title ? `Забираешь с собой: ${summary.title}` : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
+        (summary?.recapStatus === 'pending'
           ? ' Итог разговора появится в журнале через минуту.'
           : summary?.recapStatus === 'ready'
             ? ' Итог разговора сохранён в журнале.'
@@ -787,7 +791,7 @@ export default function DialogPage({
     closing.open()
     setRecapHost(closing.el.querySelector<HTMLElement>('.rd-remembered-slot'))
     closing.on('closed', () => setRecapHost(null))
-    if (!afterCrisis && shouldWatchMemoryChanges({ memoryMode, memoryEnabled: user?.memoryEnabled, unsaved: unsavedRef.current })) {
+    if (shouldWatchMemoryChanges({ memoryMode, memoryEnabled: user?.memoryEnabled, unsaved: unsavedRef.current })) {
       void recap.watch(dialogId, (id) => getMemoryChanges(id))
     }
     // summary is the only dependency: this must fire exactly on the transition out of undefined.
@@ -882,17 +886,7 @@ export default function DialogPage({
         </button>
       </Navbar>
 
-      {(crisis.banner || crisis.pinCall || (mode === 'voice' && crisis.askSafe && !sheetOpen)) && (
-        <div className="rd-crisis-bar" data-testid="crisis-bar">
-          {crisis.banner && (
-            <button type="button" className="rd-crisis-banner" data-testid="crisis-banner" onClick={() => openSos({ source: 'dialog' })}>
-              {CRISIS_TEXT.banner}
-            </button>
-          )}
-          {crisis.pinCall && <CallButton hotline={CALL_NOW_HOTLINE} label={CRISIS_TEXT.callNow} testId="crisis-pinned-call" />}
-          {mode === 'voice' && crisis.askSafe && !sheetOpen && <SafeAnswers onAnswer={crisisStore.answer} />}
-        </div>
-      )}
+      <CrisisBar ui={crisisUi} onCall={pressCall} onAnswer={answerSafety} onOpenSos={() => openSos({ source: 'dialog' })} />
 
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
       <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />
@@ -926,7 +920,7 @@ export default function DialogPage({
           {/* The whole stage is the target: the sphere is large, and the person need not aim. The
               microphone button below is the same action for those who look for a button. */}
           <div className="rd-voice-stage" role="presentation" onClick={toggleListening}>
-            <VoiceOrb state={orb} level={level} mood={mood} calm={crisis.active} />
+            <VoiceOrb state={orb} level={level} mood={crisisUi.active ? 'crisis' : mood} />
           </div>
 
           <div ref={caption} className="rd-voice-caption" data-testid="voice-caption">
@@ -1016,7 +1010,6 @@ export default function DialogPage({
           </Messages>
 
           {statusText && <div className="rd-dialog-status">{statusText}</div>}
-          {crisis.askSafe && !sheetOpen && <SafeAnswers onAnswer={crisisStore.answer} />}
 
           <div className="rd-dialog-bar">
             <textarea

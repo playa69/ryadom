@@ -65,6 +65,11 @@ export enum AnalyticsEvent {
    * hotlines were shown, and must not become a record of who was in crisis.
    */
   SafetySignal = 'safety_signal',
+  /**
+   * The person pressed the call button of the crisis branch. Reported with NO person attached; carries the level
+   * and where the branch fired from, never any text of the dialog.
+   */
+  CrisisCallPressed = 'crisis_call_pressed',
 
   // ── Client: the whole app ───────────────────────────────────────────────────────────────────
   /** A launch of the app or a new page load, once per start. */
@@ -291,7 +296,7 @@ export type AppUpdateKind = 'service_worker' | 'ota' | 'store'
 export type AppUpdateAction = 'available' | 'applied' | 'dismissed' | 'forced'
 export type InstallPromptAction = 'shown' | 'accepted' | 'dismissed' | 'ios_instructions'
 
-export type SafetyLevelName = 'yellow' | 'red'
+export type SafetyLevelName = 'concern' | 'crisis'
 
 export type DeleteAccountStepName = 'opened' | 'confirmed' | 'cancelled'
 
@@ -378,8 +383,8 @@ export interface AnalyticsEventProperties {
     /** Only on `outcome: error`. */
     reason?: ComponentReason
   }
-  /** `source`: which detector stage fired; absent from an agent that does not report it. */
-  [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName; source?: 'dictionary' | 'model' }
+  [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
+  [AnalyticsEvent.CrisisCallPressed]: { level: 'red' | 'yellow'; source: 'words' | 'model' | 'answer' | 'unknown' }
 
   [AnalyticsEvent.AppOpened]: {
     standalone: boolean

@@ -812,6 +812,35 @@ describe('WebSocket-шлюз', () => {
     client.close()
   })
 
+  it('кризисный сценарий: safety_state доходит до клиента, нажатие звонка считается без человека и уходит агенту', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-crisis' }))
+    const agentSide = await agent.waitFor('d-crisis')
+
+    agentSide.socket.send(
+      JSON.stringify({ type: 'safety', level: 'crisis', text: 'Сейчас важно', step: 'call', pinned: true, trigger: 'red', source: 'model' }),
+    )
+    const safety = await nextFrame(client, DialogServerFrame.Safety)
+    expect(safety).toMatchObject({ step: 'call', pinned: true })
+    agentSide.socket.send(JSON.stringify({ type: 'safety_state', step: 'check', pinned: true, banner: false, ask: 'safe' }))
+    const state = await nextFrame(client, DialogServerFrame.SafetyState)
+    expect(state).toMatchObject({ step: 'check', pinned: true, banner: false, ask: 'safe' })
+
+    const before = gateway.analytics.events.length
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyCall }))
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyAnswer, answer: 'unknown' }))
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyAnswer, answer: 'nonsense' }))
+    await vi.waitFor(() => expect(agentSide.received.filter((f) => f.type === 'safety_answer')).toHaveLength(1))
+    expect(agentSide.received.filter((f) => f.type === 'safety_call')).toHaveLength(1)
+    expect(agentSide.received.filter((f) => f.type === 'safety_answer')).toEqual([{ type: 'safety_answer', answer: 'unknown' }])
+    const pressed = gateway.analytics.events.slice(before).filter((entry) => entry.event === 'crisis_call_pressed')
+    expect(pressed).toEqual([{ userId: null, event: 'crisis_call_pressed', properties: { level: 'red', source: 'model' } }])
+
+    client.close()
+  })
+
   it('кадр safety без линий помощи дополняется нашими', async () => {
     const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
@@ -825,33 +854,6 @@ describe('WebSocket-шлюз', () => {
     // The SOS screen must not open empty even when the agent supplied no hotlines.
     expect((safety.hotlines as unknown[]).length).toBeGreaterThan(0)
 
-    client.close()
-  })
-
-  it('кадр safety: stage и showCall проходят, чужая стадия отбрасывается; help_returned уходит агенту (openspec/changes/extend-crisis-branch)', async () => {
-    const { accessToken } = await gateway.signIn()
-    const client = new WebSocket(gateway.wsUrl)
-    await waitOpen(client)
-    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-stage-1' }))
-    const agentSide = await agent.waitFor('d-stage-1')
-
-    agentSide.socket.send(JSON.stringify({ type: 'safety', level: 'concern', stage: 'calm', showCall: 'yes', text: null }))
-    const calm = await nextFrame(client, DialogServerFrame.Safety)
-    expect(calm.level).toBe(SafetyLevel.Concern)
-    expect(calm.stage).toBe('calm')
-    expect(calm).not.toHaveProperty('showCall')
-
-    agentSide.socket.send(JSON.stringify({ type: 'safety', level: 'crisis', stage: 'stay', showCall: true, text: null }))
-    const stay = await nextFrame(client, DialogServerFrame.Safety)
-    expect(stay.stage).toBe('stay')
-    expect(stay.showCall).toBe(true)
-
-    agentSide.socket.send(JSON.stringify({ type: 'safety', level: 'crisis', stage: 'unknown', text: null }))
-    const unknown = await nextFrame(client, DialogServerFrame.Safety)
-    expect(unknown).not.toHaveProperty('stage')
-
-    client.send(JSON.stringify({ type: DialogClientFrame.HelpReturned }))
-    await vi.waitFor(() => expect(agentSide.received).toContainEqual(expect.objectContaining({ type: 'help_returned' })))
     client.close()
   })
 
@@ -1127,15 +1129,7 @@ describe('WebSocket-шлюз', () => {
     await nextFrame(client, DialogServerFrame.Safety)
 
     const signals = gateway.analytics.events.slice(before).filter((entry) => entry.event === 'safety_signal')
-    expect(signals).toEqual([{ userId: null, event: 'safety_signal', properties: { level: 'red' } }])
-
-    // Follow-up steps of the script are not new signals; the first step carries the level and the source.
-    agentSide.socket.send(JSON.stringify({ type: 'safety', level: 'crisis', stage: 'ask_safe', source: 'model' }))
-    agentSide.socket.send(JSON.stringify({ type: 'safety', level: 'concern', stage: 'ask_hopeless', source: 'model' }))
-    agentSide.socket.send(JSON.stringify({ type: 'safety', level: 'crisis', stage: 'help', source: 'bogus' }))
-    const counted = () => gateway.analytics.events.slice(before).filter((entry) => entry.event === 'safety_signal')
-    await vi.waitFor(() => expect(counted()).toHaveLength(3))
-    expect(counted().slice(1).map((entry) => entry.properties)).toEqual([{ level: 'yellow', source: 'model' }, { level: 'red' }])
+    expect(signals).toEqual([{ userId: null, event: 'safety_signal', properties: { level: 'crisis' } }])
     client.close()
   })
 
