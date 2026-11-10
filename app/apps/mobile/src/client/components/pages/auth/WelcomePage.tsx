@@ -214,7 +214,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
               {signedIn || entryGate ? 'Продолжить' : 'Поговорить'}
             </Button>
             {signedIn && <ConsentNote />}
-            {/* The same optional choices as on home; neither is needed to start. */}
+            {/* The optional memory choice is not needed to start. */}
             {!signedIn && !entryGate && (
               <>
                 <div className="rd-incognito" data-testid="memory-switch">

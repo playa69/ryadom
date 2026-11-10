@@ -54,8 +54,9 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await field(page, 'name').fill('Аня Т')
   const started = page.waitForRequest((r) => r.url().endsWith('/api/dialogs') && r.method() === 'POST')
   await button(page, 'Поговорить').click()
-  expect((await started).postDataJSON()).toMatchObject({ saved: true })
+  expect((await started).postDataJSON()).not.toHaveProperty('saved', false)
   await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.page-current').getByTestId('dialog-unsaved')).toHaveCount(0)
   await step(page, 'tg-voice', '«Поговорить» в Telegram: аккаунт создан, разговор открыт, агент здоровается')
   const accountId = session.userId()
   expect(await profileOf(request, session.accessToken())).toMatchObject({
