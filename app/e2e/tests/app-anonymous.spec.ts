@@ -42,28 +42,49 @@ test('первый запуск, привязка почты, выход: акк
   const email = uniqueEmail('app-anonymous')
   await clearMailbox()
 
-  // ── a new visitor: home itself, with what starting means under «Поговорить» ─
-  // `openspec/changes/simplify-first-screen`, «Первый экран: разговор с первого действия».
+  // ── a new visitor: a separate consent gate before the active home ─
+  // `openspec/changes/add-explicit-data-consent`, «Первый экран: разговор с первого действия».
   // The memory sheet is not answered beforehand: the start must not be covered by it.
   await openApp(page, { keepMemoryInvite: true })
   const first = page.locator('.page-current')
-  await expect(first.getByTestId('consent-notice')).toContainText(
-    'Начиная разговор, ты подтверждаешь, что тебе есть 18',
-  )
+  await expect(first.getByTestId('consent-notice')).toContainText('ИИ для самоподдержки')
+  await expect(first.getByTestId('data-consent')).toContainText('Мне есть 18 лет')
   await expect(first.getByText('В опасной ситуации звони 112.')).toBeVisible()
-  // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»»: PWA has no optional saving checkbox.
+  await expect(first.getByTestId('data-consent-toggle')).toHaveCount(1)
+  await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(0)
+  await expect(first.getByTestId('data-consent-toggle')).not.toBeChecked()
+  await expect(first.getByTestId('welcome-talk')).toHaveText('Продолжить')
+  await expect(first.getByTestId('welcome-talk')).toBeDisabled()
+  await expect(first.getByTestId('memory-switch')).toHaveCount(0)
+  // `openspec/changes/update-privacy-policy`, «Человек знает о сроке хранения разговоров».
+  await expect(first).toContainText('Разговоры хранятся 30 дней после последнего сообщения.')
+  await expect(first).toContainText('Без почты аккаунт удаляется через 90 дней без визитов.')
+  await shot(page, 'app-welcome')
+  await step(page, 'app-welcome', 'Первый вход приложения: отдельное согласие, «Продолжить» неактивно')
+  expect(await storedDevice(page), 'до согласия удостоверения нет').toBeNull()
+
+  const consentPagePromise = page.waitForEvent('popup')
+  await first.getByRole('link', { name: 'согласие на обработку персональных данных', exact: true }).click()
+  const consentPage = await consentPagePromise
+  await consentPage.waitForLoadState('domcontentloaded')
+  await expect(consentPage).toHaveURL(/\/consent$/)
+  await consentPage.close()
+  await expect(first.getByTestId('data-consent-toggle')).not.toBeChecked()
+  expect(await storedDevice(page), 'открытие документа не создаёт аккаунт').toBeNull()
+
+  // ── the gate opens the active home; only «Поговорить» makes the account and opens the conversation ─
+  await first.getByTestId('data-consent-toggle').check()
+  await expect(first.getByTestId('welcome-talk')).toBeEnabled()
+  await first.getByTestId('welcome-talk').click()
+  await expect(first.getByTestId('welcome-talk')).toHaveText('Поговорить')
+  await expect(first.getByTestId('data-consent')).toHaveCount(0)
+  await expect(first.getByTestId('memory-switch')).toBeVisible()
+  // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»».
   await expect(first.getByTestId('unsaved')).toHaveCount(0)
   await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(0)
-  await expect(first.getByTestId('memory-switch')).toBeVisible()
-  await shot(page, 'app-welcome')
-  await step(
-    page,
-    'app-welcome',
-    'Первый экран приложения: шар, «Поговорить», строка о согласии и 112, флажков нет',
-  )
-  expect(await storedDevice(page), 'до нажатия удостоверения нет').toBeNull()
-
-  // ── «Поговорить»: the account, the consents and the conversation, where the companion greets ─
+  expect(await storedDevice(page), 'продолжение пока не создаёт аккаунт').toBeNull()
+  await shot(page, 'app-welcome-consented')
+  await step(page, 'app-welcome-home', 'После согласия открыт активный первый экран без повторной отметки')
   await first.getByTestId('welcome-talk').click()
   await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
   // A closed sheet stays in the page: what must not be there is an open one.

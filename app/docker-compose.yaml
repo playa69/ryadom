@@ -152,7 +152,7 @@ services:
       # "Open the app" leads to the web app; the download page also links the PWA.
       PUBLIC_WEBAPP_URL: http://localhost:${FULL_WEB_PORT:-3003}
       PUBLIC_PWA_URL: http://localhost:${FULL_PWA_PORT:-3004}/pwa/
-      PUBLIC_SUPPORT_EMAIL: support@ryadom.local
+      PUBLIC_SUPPORT_EMAIL: playasn@yandex.ru
     ports:
       - '${FULL_LANDING_PORT:-3000}:3000'
 

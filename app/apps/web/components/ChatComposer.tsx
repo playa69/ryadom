@@ -104,7 +104,8 @@ export default function ChatComposer({
   }, [autoFocus])
 
   const text = draft.trim()
-  const canSend = ready && !busy && (text.length > 0 || emptyLabel !== undefined)
+  const actionsDisabled = !ready || busy
+  const canSend = !actionsDisabled && (text.length > 0 || emptyLabel !== undefined)
   const sendLabel = text ? 'Отправить' : (emptyLabel ?? 'Отправить')
 
   function submit() {
@@ -167,9 +168,12 @@ export default function ChatComposer({
           type="button"
           variant="ghost"
           size="icon"
-          className={cn(BUTTON, 'orb-chip border-transparent text-white outline-none hover:text-white focus-visible:text-white')}
+          className={cn(
+            BUTTON,
+            'orb-chip border-transparent text-white outline-none hover:text-white focus-visible:text-white',
+          )}
           aria-label="Говорить голосом"
-          disabled={!ready || busy}
+          disabled={actionsDisabled}
           onClick={() => onMic(text)}
           data-testid={`${testIdPrefix}-mic`}
         >
@@ -182,9 +186,12 @@ export default function ChatComposer({
               type="button"
               variant="ghost"
               size="icon"
-              className={cn(BUTTON, 'outline-none text-dim hover:text-foreground focus-visible:text-foreground')}
+              className={cn(
+                BUTTON,
+                'outline-none text-dim hover:text-foreground focus-visible:text-foreground',
+              )}
               aria-label="Говорить"
-              disabled={!ready || busy}
+              disabled={actionsDisabled}
               onClick={() => onMic(text)}
               data-testid={`${testIdPrefix}-mic`}
             >

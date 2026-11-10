@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test'
 import { PWA_URL } from '../playwright.config'
 import { waitForCode } from './mail'
 import { guestDevice } from './session'
+import { step } from './evidence'
 
 /**
  * Steps that repeat across scenarios.
@@ -53,6 +54,13 @@ export async function checkConsent(page: Page): Promise<void> {
   }
 }
 
+/** The explicit agreement required before a first conversation or registration. */
+export async function acceptDataConsent(page: Page): Promise<void> {
+  const consent = screen(page).getByTestId('data-consent-toggle')
+  await consent.check()
+  await expect(consent).toBeChecked()
+}
+
 /** Closes the open sheet with the sheet's own button. */
 export async function closeSheet(page: Page): Promise<void> {
   await sheetButton(page, 'Закрыть').click()
@@ -72,8 +80,8 @@ export async function openApp(page: Page, options: { keepMemoryInvite?: boolean 
   if (!options.keepMemoryInvite) {
     await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.memory-invite-dismissed')
   }
-  // A new visitor lands on the first screen, someone with a session on home: «Поговорить» on both.
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  // A new visitor lands on the consent gate, someone with a session on the active home.
+  await expect(button(page, 'Поговорить').or(button(page, 'Продолжить'))).toBeVisible({ timeout: 30_000 })
   // The PWA install banner covers the bottom of the screen and is not needed in the test browser.
   const dismiss = page.getByRole('button', { name: 'Скрыть' })
   if (await dismiss.isVisible().catch(() => false)) await dismiss.click()
@@ -117,7 +125,12 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await field(page, 'name').fill(name)
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(PASSWORD)
-  // No boxes: the press is the agreement, recorded once the code is entered.
+  // `openspec/changes/add-explicit-data-consent`, «Форма регистрации».
+  await expect(button(page, 'Создать аккаунт')).toBeDisabled()
+  await step(page, 'app-register-consent-required', 'В приложении регистрация закрыта без отметки')
+  await acceptDataConsent(page)
+  await expect(button(page, 'Создать аккаунт')).toBeEnabled()
+  await step(page, 'app-register-consented', 'После отметки регистрация доступна')
   await button(page, 'Создать аккаунт').click()
 
   await expect(page.getByText('Подтверди почту')).toBeVisible({ timeout: 20_000 })
@@ -126,6 +139,7 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(code)
 
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(screen(page).getByTestId('data-consent')).toHaveCount(0)
 }
 
 export async function openTab(page: Page, label: 'Главная' | 'Дневник' | 'Профиль'): Promise<void> {

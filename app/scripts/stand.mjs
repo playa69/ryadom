@@ -569,7 +569,7 @@ function serverEnv(stand, name) {
         PUBLIC_WEBAPP_URL: url.web,
         PUBLIC_PWA_URL: `${url.pwa}/`,
         PUBLIC_APP_URL: url.api,
-        PUBLIC_SUPPORT_EMAIL: 'support@ryadom.local',
+        PUBLIC_SUPPORT_EMAIL: 'playasn@yandex.ru',
       }
     case 'pwa':
       return { ...base, API_PROXY_TARGET: url.api }

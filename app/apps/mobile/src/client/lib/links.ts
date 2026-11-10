@@ -9,6 +9,7 @@ import { isNative } from './platform'
  */
 export const termsUrl = (): string => `${getWebUrl()}/terms`
 export const privacyUrl = (): string => `${getWebUrl()}/privacy`
+export const consentUrl = (): string => `${getWebUrl()}/consent`
 
 /** Outbound link: Custom Tabs on a phone, a new tab in a browser. */
 export async function openExternal(url: string): Promise<void> {

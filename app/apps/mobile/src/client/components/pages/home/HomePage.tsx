@@ -340,7 +340,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             </p>
           )}
 
-          {/* The foot of home, as on the first screen: what starting a conversation agrees to, with the terms and the policy. */}
+          {/* Keep the documents visible even while the consent gate is closed. */}
           <div className="rd-welcome-foot" data-testid="home-foot">
             <ConsentNote />
             <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>
