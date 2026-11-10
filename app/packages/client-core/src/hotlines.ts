@@ -17,3 +17,9 @@ export const HOTLINES: HotlineApiResponse[] = [
 export function telHref(phone: string): string {
   return `tel:${phone.replace(/[^+\d]/g, '')}`
 }
+
+/** The line behind the "Call now" button of the crisis branch (the MChS psychological help line). */
+export const CRISIS_CALL: HotlineApiResponse = HOTLINES[1]!
+
+/** The heading of the help sheet in the crisis script. */
+export const CRISIS_SHEET_TITLE = 'Сейчас важно поговорить с живым человеком'

@@ -48,6 +48,8 @@ from app.clients.mood_classifier import MoodClassifier, ToneClassifier
 from app.clients.speech import FRAME_BYTES, TTS_RATE, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
+    CRISIS_CALL_PRESSED_TOTAL,
+    CRISIS_TRIGGERS_TOTAL,
     GEMINI_CONTEXT_REFRESH_SECONDS,
     GEMINI_CONTEXT_REFRESH_TOTAL,
     GEMINI_MOOD_DELAY_SECONDS,
@@ -74,15 +76,14 @@ from app.prompts.provider import (
     components_metadata,
     prompt_metadata,
 )
+from app.services import crisis_script
 from app.services import usage as model_usage
+from app.services.crisis import CrisisFlow, Decision, Level, classify_words, classify_with_model
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.gemini_budget import DEFAULT_TURN_TOKENS, PCM_BYTES_PER_SECOND, TokenBudget, estimate_turn
 from app.services.replies import (
-    CRISIS_REPLY,
-    CRISIS_SAFETY_TEXT,
     NOISE_CHECK_CHARS,
     REPEAT_REQUEST,
-    is_crisis,
     is_echo,
     is_foreign_noise,
     is_language_lecture,
@@ -335,6 +336,10 @@ class DialogSession:
         self._speech_lock = asyncio.Lock()
         self._jobs: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue()  # фиксированные фразы: кризис, повтор
         self._speech_tasks: set[asyncio.Task[None]] = set()
+        self._flow = CrisisFlow()
+        self._flow_level: Level | None = None  # уровень, на котором сработала кризисная ветка (для счёта нажатий)
+        self._flow_source: str | None = None  # слова, модель или ответ на вопрос
+        self._check_timer: asyncio.TimerHandle | None = None
         # Озвучка, которая идёт или ждёт своей очереди, по сообщению: её можно оборвать, не дожидаясь провайдера.
         self._speeches: dict[str, asyncio.Task[None]] = {}
         self._cancelled: set[str] = set()
@@ -480,6 +485,7 @@ class DialogSession:
                     break
         finally:
             self._closed = True
+            self._cancel_check_timer()
             dialog.on_replaced = None
             worker.cancel()
             for task in self._speech_tasks:
@@ -533,6 +539,14 @@ class DialogSession:
                         self._turn_interrupts = True
                     else:
                         self._interrupted = True
+            case "safety_call":
+                self._on_safety_call(frame)
+            case "safety_answer":
+                answer = frame.get("answer")
+                if answer in ("yes", "no", "unknown"):
+                    await self._on_safety_answer(answer)
+            case "safety_return":
+                await self._on_safety_return()
             case "end":
                 return await self._on_end(frame)
         return False
@@ -553,13 +567,14 @@ class DialogSession:
         if client_id:
             dialog.client_ids[client_id] = message.id
         await self._send({"type": "ack", "id": client_id or message.id, "messageId": message.id})
-        crisis = is_crisis(text)
         model_usage.call("safety")
-        if crisis:
-            self._store.mark_crisis(dialog)  # извлечение памяти из такого разговора пропускается (I13)
-            await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
+        decision = await self._crisis_decide(text)
         turn = Turn(started=time.monotonic())
-        self._dispatch_text_turn(text, crisis, turn)
+        if decision is not None:
+            await self._apply_decision(decision)
+            self._dispatch_text_turn(text, decision, turn)
+            return
+        self._dispatch_text_turn(text, None, turn)
 
     def _count_false_interruption(self, interrupts: bool) -> None:
         """Перебили, а сказать нечего: детектор принял за речь эхо голоса агента или шум. Текст не пишется."""
@@ -931,6 +946,7 @@ class DialogSession:
             block = f"\n\n{memory.text}\n\n{self._brief_used}"
             instructions += block
             self._instructions_without_gender += block
+        instructions += self._flow.addendum()  # в кризисе — спокойный тон и только слушать
         self._prompt_components = components
         return instructions
 
@@ -1473,9 +1489,9 @@ class DialogSession:
         self._events.put_nowait(("ended", turn))
         self._out.put_nowait(("end", turn))
 
-    def _dispatch_text_turn(self, text: str, crisis: bool, turn: Turn) -> None:
+    def _dispatch_text_turn(self, text: str, decision: Decision | None, turn: Turn) -> None:
         """Ответ на набранное сообщение: кризис — фиксированный текст, иначе реплика уходит модели."""
-        if crisis:  # кризис говорит фиксированный текст, модель в этот путь не входит
+        if decision is not None and decision.text is not None:  # кризис говорит фиксированный текст, модель в этот путь не входит
             self._refresh_after_crisis()
             turn.trace = self._tracer.start_turn(
                 name="text_turn",
@@ -1485,7 +1501,8 @@ class DialogSession:
                 metadata={"crisis": True},
                 tags=[VOICE_TAG],
             )
-            self._jobs.put_nowait(lambda: self._say(CRISIS_REPLY, turn, crisis=True))
+            phrase = decision.text
+            self._jobs.put_nowait(lambda: self._say(phrase, turn, crisis=True))
             return
         self._repeat_pending = False  # человек написал сам: просьба повторить больше не в силе
         live_turn = LiveTurn(kind="text", opened=True, started=turn.started)
@@ -1632,8 +1649,8 @@ class DialogSession:
             if not turn.discarded:
                 self._count_safety(turn)
                 self._classify_mood_soon(turn)
-            if not turn.discarded and is_crisis(turn.heard):
-                await self._crisis(turn)
+            if not turn.discarded and self._flow.screen(turn.heard) == "red":
+                await self._crisis(turn, self._flow.decide(turn.heard, "red", "words"))
             elif turn.held and not turn.opened and turn.heard.strip():
                 await self._open_gate(turn)
             return
@@ -1734,8 +1751,9 @@ class DialogSession:
                 await self._send({"type": "transcript", "text": "", "final": True})
                 return
             self._count_safety(turn)
-            if is_crisis(heard):
-                await self._crisis(turn)
+            decision = await self._crisis_decide(heard)
+            if decision is not None:
+                await self._crisis(turn, decision)
                 return
             self._supersede_speech()
             await self._save_voice(turn, heard)
@@ -1770,12 +1788,16 @@ class DialogSession:
         истории лежит то, что человек услышал на самом деле, то есть кризисный ответ агента, а не ответ модели."""
         self._refresh = True
 
-    async def _crisis(self, turn: LiveTurn) -> None:
-        """Кризис: ответ модели не звучит и не показывается, вместо него фиксированный текст."""
-        if turn.discarded:
+    async def _crisis(self, turn: LiveTurn, decision: Decision | None) -> None:
+        """Голосовая реплика попала в кризисную ветку: ответ модели не звучит и не показывается. Фраза скрипта — вместо него;
+        решение без фразы (плашка после «нет») оставляет ответ модели."""
+        if turn.discarded or decision is None:
+            return
+        if decision.text is None:
+            await self._apply_decision(decision)
+            await self._open_gate_after_flow(turn)
             return
         self._refresh_after_crisis()
-        self._store.mark_crisis(self._dialog)  # извлечение памяти из такого разговора пропускается (I13)
         turn.discarded = True
         turn.opened = True
         turn.held.clear()
@@ -1783,11 +1805,122 @@ class DialogSession:
         if turn.assistant_started:
             self._cancel_speech(turn.message_id)  # ответ уже пошёл: обрываем звук, текст дописан не будет
         if turn.kind == "voice" and not turn.user_saved and turn.heard.strip():
-            await self._save_voice(turn, turn.heard.strip())
-        await self._send({"type": "safety", "text": CRISIS_SAFETY_TEXT})
+            await self._save_voice(turn, turn.heard.strip())  # расшифровка раньше кадра safety
+        await self._apply_decision(decision)
         self._supersede_speech()
         reply_turn = self._reply_turn(turn.started)
-        self._jobs.put_nowait(lambda: self._say(CRISIS_REPLY, reply_turn, crisis=True))
+        phrase = decision.text
+        self._jobs.put_nowait(lambda: self._say(phrase, reply_turn, crisis=True))
+
+    async def _open_gate_after_flow(self, turn: LiveTurn) -> None:
+        """Решение автомата — отвечает модель: реплика идёт обычным путём, но сессия получит спокойную добавку."""
+        self._refresh_after_crisis()
+        self._supersede_speech()
+        await self._save_voice(turn, turn.heard.strip())
+        held, turn.held = turn.held, []
+        for event in held:
+            await self._emit(turn, event)
+
+    # ─── кризисная ветка: решение, кадры, кнопки ──────────────────────────────
+
+    async def _crisis_decide(self, text: str) -> Decision | None:
+        """Детектор (словарь, затем модель) и автомат. None — ответит модель."""
+        level: Level | None = classify_words(text)
+        source: Literal["words", "model"] | None = "words" if level else None
+        if level is None and self._flow.state.value in ("none", "calm"):
+            level = await classify_with_model(getattr(self._store, "recap_model", None), text)
+            source = "model" if level else None
+        before = self._flow.active
+        decision = self._flow.decide(text, level, source)
+        if before != self._flow.active:
+            self._refresh = True  # сессия модели откроется заново с добавкой спокойного тона
+        return decision
+
+    async def _apply_decision(self, decision: Decision) -> None:
+        """Кадры экрана и метка разговора; сама фраза уходит отдельно (`_say`)."""
+        if decision.escalated is not None:
+            self._flow_level = decision.escalated
+            self._flow_source = decision.source
+            CRISIS_TRIGGERS_TOTAL.labels(decision.escalated, decision.source or "words").inc()
+        if decision.step == "call":
+            self._store.mark_crisis(self._dialog)  # извлечение памяти из такого разговора пропускается (I13)
+        if decision.sheet:
+            await self._send(
+                {
+                    "type": "safety",
+                    "level": "crisis",
+                    "text": crisis_script.SHEET_TITLE,
+                    "step": decision.step,
+                    "pinned": True,
+                    "trigger": self._flow_level,
+                    "source": self._flow_source,
+                }
+            )
+        else:
+            await self._send(
+                {
+                    "type": "safety_state",
+                    "step": decision.step,
+                    "pinned": decision.pinned,
+                    "banner": decision.banner,
+                    "ask": decision.ask,
+                    "trigger": self._flow_level,
+                    "source": self._flow_source,
+                }
+            )
+        if decision.step == "call":
+            self._arm_check_timer()
+
+    def _arm_check_timer(self) -> None:
+        """Шаг 2 по таймеру: за ~10 с кнопку не нажали и человек не заговорил."""
+        self._cancel_check_timer()
+        loop = asyncio.get_running_loop()
+        self._check_timer = loop.call_later(crisis_script.SAFETY_CHECK_DELAY_SECONDS, self._on_check_timer)
+
+    def _cancel_check_timer(self) -> None:
+        if self._check_timer is not None:
+            self._check_timer.cancel()
+            self._check_timer = None
+
+    def _on_check_timer(self) -> None:
+        self._check_timer = None
+        if self._closed or self._flow.state.value != "red_call":
+            return
+        decision = self._flow.check_safety()
+        self._jobs.put_nowait(lambda: self._speak_decision(decision))
+
+    async def _speak_decision(self, decision: Decision) -> None:
+        """Фраза автомата вне реплики человека (по таймеру, по кнопке): кадры и озвучка."""
+        await self._apply_decision(decision)
+        if decision.text is not None:
+            await self._say(decision.text, self._reply_turn(time.monotonic()), crisis=True)
+
+    def _on_safety_call(self, frame: dict[str, Any]) -> None:
+        """Нажата кнопка звонка: таймер шага 2 не нужен, нажатие считается по уровню (без человека и без текста)."""
+        self._cancel_check_timer()
+        self._flow.call_pressed()
+        CRISIS_CALL_PRESSED_TOTAL.labels(self._flow_level or "red").inc()
+
+    async def _on_safety_answer(self, answer: Literal["yes", "no", "unknown"]) -> None:
+        """Кнопки «Да / Нет / Не знаю» после вопроса о безопасности (или жёлтого вопроса)."""
+        self._cancel_check_timer()
+        if self._flow.state.value == "yellow_asked":
+            decision = self._flow.decide("да" if answer != "no" else "нет", None)
+        elif self._flow.state.value == "safety_asked":
+            decision = self._flow.answer_safety(answer)
+        else:
+            return
+        if decision is None:
+            return
+        self._refresh_after_crisis()
+        self._jobs.put_nowait(lambda: self._speak_decision(decision))
+
+    async def _on_safety_return(self) -> None:
+        """Человек вернулся в приложение после звонка."""
+        decision = self._flow.after_call()
+        if decision is not None:
+            self._cancel_check_timer()
+            self._jobs.put_nowait(lambda: self._speak_decision(decision))
 
     # ─── выход: ответ модели человеку ─────────────────────────────────────────
 

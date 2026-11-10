@@ -3,7 +3,7 @@ import { AnalyticsEvent, type AnalyticsEventProperties } from '@ryadom/analytics
 import { Button, Icon, Sheet } from 'framework7-react'
 import { useEffect, useState } from 'react'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
-import { HOTLINES, telHref } from '../lib/hotlines'
+import { CRISIS_CALL, CRISIS_SHEET_TITLE, HOTLINES, telHref } from '../lib/hotlines'
 
 /**
  * Help lines (SOS is reachable from any screen, and the lines are one tap away).
@@ -21,6 +21,8 @@ export interface SosPayload {
   hotlines?: HotlineApiResponse[]
   /** Where it was opened from, for analytics (counted without the person: see trackAnonymous). */
   source?: SosSource
+  /** The crisis script (PROTEUS-279): heading, "Call now" and the way back to the conversation. */
+  crisis?: { onCall(): void }
 }
 
 /** Open the help sheet from anywhere: the SOS button or a safety frame. */
@@ -62,7 +64,9 @@ export default function SosSheet() {
     return () => window.removeEventListener(SOS_EVENT, handler)
   }, [])
 
-  const hotlines = payload.hotlines?.length ? payload.hotlines : HOTLINES
+  const listed = payload.hotlines?.length ? payload.hotlines : HOTLINES
+  // In the crisis script 112 has its own line under "Call now"; the list keeps the rest.
+  const hotlines = payload.crisis ? listed.filter((hotline) => hotline.phone !== '112') : listed
 
   return (
     <Sheet
@@ -75,11 +79,36 @@ export default function SosSheet() {
       style={{ height: 'auto' }}
     >
       <div className="rd-sheet-body">
-        <h2 className="rd-sheet-title">Если сейчас тяжело</h2>
-        <p className="rd-muted">
-          {payload.text ??
-            'Позвони по одному из номеров — там ответит человек. Это бесплатно и круглосуточно.'}
-        </p>
+        <h2 className="rd-sheet-title">{payload.crisis ? CRISIS_SHEET_TITLE : 'Если сейчас тяжело'}</h2>
+        {payload.crisis ? (
+          <>
+            <a
+              className="rd-crisis-call ph-no-capture"
+              data-testid="sos-call-now"
+              href={telHref(CRISIS_CALL.phone)}
+              onClick={() => {
+                trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: CRISIS_CALL.name })
+                payload.crisis?.onCall()
+              }}
+            >
+              <Icon f7="phone_fill" size={16} />
+              Позвонить сейчас
+            </a>
+            <a
+              className="rd-muted rd-crisis-112 ph-no-capture"
+              data-testid="sos-112"
+              href={telHref('112')}
+              onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: 'Экстренные службы' })}
+            >
+              112 — если есть опасность для жизни
+            </a>
+          </>
+        ) : (
+          <p className="rd-muted">
+            {payload.text ??
+              'Позвони по одному из номеров — там ответит человек. Это бесплатно и круглосуточно.'}
+          </p>
+        )}
         {hotlines.map((hotline) => (
           <a
             key={hotline.phone}
@@ -102,6 +131,11 @@ export default function SosSheet() {
         <Button large outline onClick={() => setOpened(false)}>
           Закрыть
         </Button>
+        {payload.crisis && (
+          <button type="button" className="rd-inline-link rd-crisis-safe" data-testid="sos-safe" onClick={() => setOpened(false)}>
+            Я в безопасности, давай продолжим
+          </button>
+        )}
       </div>
     </Sheet>
   )

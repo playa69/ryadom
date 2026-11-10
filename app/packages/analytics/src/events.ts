@@ -65,6 +65,11 @@ export enum AnalyticsEvent {
    * hotlines were shown, and must not become a record of who was in crisis.
    */
   SafetySignal = 'safety_signal',
+  /**
+   * The person pressed the call button of the crisis branch. Reported with NO person attached; carries the level
+   * and where the branch fired from, never any text of the dialog.
+   */
+  CrisisCallPressed = 'crisis_call_pressed',
 
   // ── Client: the whole app ───────────────────────────────────────────────────────────────────
   /** A launch of the app or a new page load, once per start. */
@@ -358,6 +363,7 @@ export interface AnalyticsEventProperties {
     cached: boolean
   }
   [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
+  [AnalyticsEvent.CrisisCallPressed]: { level: 'red' | 'yellow'; source: 'words' | 'model' | 'answer' | 'unknown' }
 
   [AnalyticsEvent.AppOpened]: {
     standalone: boolean
