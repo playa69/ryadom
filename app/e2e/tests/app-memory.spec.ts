@@ -216,6 +216,18 @@ test('«Запоминать важное» на главной: окно сам
   await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
   await expect(home.getByTestId('incognito')).toBeVisible({ timeout: 20_000 })
   await expect(row).toHaveCount(0)
+  // `openspec/changes/remove-unsaved-dialog-option`, «Подписи без срока».
+  await expect(home.getByTestId('incognito')).toContainText(
+    'Я буду запоминать разговор, чтобы лучше узнать тебя',
+  )
+  await step(page, 'memory-caption-on', 'Память включена: подпись прямо обещает запомнить разговор')
+  await home.getByTestId('incognito').locator('.toggle').click()
+  await expect(home.getByTestId('incognito')).toContainText('Я не запомню этот разговор')
+  await step(page, 'memory-caption-off', 'Без памяти: подпись прямо говорит, что разговор не запомнят')
+  await home.getByTestId('incognito').locator('.toggle').click()
+  await expect(home.getByTestId('incognito')).toContainText(
+    'Я буду запоминать разговор, чтобы лучше узнать тебя',
+  )
 
   await openTab(page, 'Профиль')
   await page.locator('.page-current').getByTestId('row-memory').click()

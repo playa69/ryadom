@@ -4,6 +4,7 @@
 - [x] 4.2 В `app/apps/mobile/src/client/components/pages/home/HomePage.tsx`, `auth/WelcomePage.tsx` и `lib/nav.ts` скрыть галочку и исключить `saved: false` в PWA. Приёмка: в PWA галочки нет и разговор сохраняемый.
 - [x] 4.3 В `docs/spec.md` обновить `REQ-MEM-13` и при необходимости глоссарий: выбор убран из всех актуальных клиентов, API сохраняет совместимость; устранить противоречие глоссария с итогом разговора «Без памяти». Приёмка: документ соответствует дельтам `dialog` и `memory-notes`.
 - [x] 4.4 Убрать платформенное различие из `app/apps/mobile/src/client/components/pages/home/HomePage.tsx`, `auth/WelcomePage.tsx` и `lib/nav.ts`: удалить `offersUnsavedChoice`, состояние и разметку `unsaved`, поле `saved` из внутреннего `TalkRequest`; все новые разговоры вызывают `chosenStart` без несохранения. `DialogPage.tsx`, лист завершения, журнал, API, агент и нативные файлы не меняются. Приёмка: web, PWA, Android, iOS и Telegram используют один сохраняемый старт, «Без памяти» управляет только `memory`, серверный `saved: false` по-прежнему обрабатывается.
+- [x] 4.5 В `app/apps/web/components/HomeScreen.tsx` и `app/apps/mobile/src/client/components/pages/home/HomePage.tsx` сделать подпись «Без памяти» двусторонней: выключено — «Я буду запоминать разговор, чтобы лучше узнать тебя», включено — «Я не запомню этот разговор». Подпись экрана разговора не меняется. Приёмка: оба состояния явно объясняют результат выбора на всех клиентах.
 
 ## 5. Проверка
 
@@ -13,6 +14,7 @@
 - [x] 5.4 Снять `pnpm evidence REMOVE-UNSAVED` на 390 и 1280 по макету `mockups/home.md`: первый и главный экран web и PWA с памятью и без неё, переход из дневника, экран существующего несохраняемого разговора. Приёмка: по снимку на каждый применимый THEN дельт, галочки нет, «Без памяти» и соседние элементы не съехали; видео нет, данные синтетические.
 - [ ] 5.5 Прогнать полный набор `pnpm test`, typecheck и e2e затронутой функции, затем `node .agents/skills/release-check/scripts/release-check.mjs`. Приёмка: полный набор зелёный; release-check не имеет кода 1, находки `REVIEW` и `BREAKING` разобраны в PR.
 - [x] 5.6 Обновить `app/apps/mobile/test/nav.test.ts`, `app/e2e/tests/app-telegram.spec.ts` и связанные app-спеки: сценарии «Выбор перед стартом», «Независима от «Без памяти»», «(Telegram) Активный экран после согласия» и «Старый клиент» проверяют единое поведение и совместимость. Прогнать `pnpm e2e app-anonymous app-memory app-telegram app-unsaved web-anonymous web-memory web-unsaved` на desktop и mobile, затем снять Telegram и обновлённые экраны через `pnpm evidence REMOVE-UNSAVED`. Приёмка: галочки нет во всех актуальных клиентах, запрос сохраняемый, legacy-разговор работает как прежде; реальные Android, iOS и клиент Telegram прямо перечислены как непроверенные, если устройства не предоставлены.
+- [ ] 5.7 В `app/e2e/tests/web-memory.spec.ts` и `app-memory.spec.ts` проверить сценарий «Подписи без срока» в обоих положениях переключателя, прогнать `pnpm evidence REMOVE-UNSAVED app-memory web-memory` на desktop и mobile. Приёмка: положительная и отрицательная подписи видны и не ломают вёрстку, поведение `memory` не изменилось.
 
 ## 6. Выкат
 

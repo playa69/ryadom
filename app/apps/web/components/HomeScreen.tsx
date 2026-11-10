@@ -464,8 +464,8 @@ export default function HomeScreen() {
               </Button>
               <p className="text-xs leading-normal text-faint" aria-live="polite">
                 {withoutMemory
-                  ? 'Этот разговор я не запомню'
-                  : 'Можно провести следующий разговор так, чтобы я его не запомнил'}
+                  ? 'Я не запомню этот разговор'
+                  : 'Я буду запоминать разговор, чтобы лучше узнать тебя'}
               </p>
             </div>
           )}

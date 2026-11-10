@@ -320,7 +320,9 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
                 <span className="rd-incognito-text">
                   <span className="rd-incognito-title">Без памяти</span>
                   <span className="rd-caption">
-                    {withoutMemory ? 'Этот разговор я не запомню' : 'Следующий разговор не попадёт в память'}
+                    {withoutMemory
+                      ? 'Я не запомню этот разговор'
+                      : 'Я буду запоминать разговор, чтобы лучше узнать тебя'}
                   </span>
                 </span>
                 <Switch
