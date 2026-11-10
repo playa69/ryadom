@@ -16,6 +16,7 @@ EXPECTED_NAMES = {
     "agent.dialog.gemini-tts-verbatim",
     "agent.mood.instructions",
     "agent.mood.sber-json-suffix",
+    "agent.safety.risk",
     "agent.recap.system",
     "agent.digest.weekly.system",
     "agent.digest.weekly.task",

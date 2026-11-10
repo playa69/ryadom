@@ -123,7 +123,7 @@ def test_phrase_speech_usage_goes_on_the_message_it_voices(tmp_path: Path) -> No
         ("dialog", "tts-model", "tts", "input", "text", "chars", float(chars(GREETING_NEW))),  # приветствие — не сообщение
     ]
     spoken = [(role, seconds) for role, _, seconds in speech_by_message(path)]
-    assert spoken == [("user", None), ("assistant", 1.5)]  # FakeTts: 0,5 с на предложение, в кризисном ответе их три
+    assert spoken == [("user", None), ("assistant", 0.5 * len(split_sentences(CRISIS_REPLY)))]  # FakeTts: 0,5 с на предложение
     assert metric("agent_dialogs_total") == dialogs + 1
 
 
