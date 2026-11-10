@@ -342,7 +342,7 @@ const audience = mk && (mk.gender.length || mk.age.length)
 let reconcileNote = mk
   ? 'Расхождение до 10 % — обычное: PostHog считает новые устройства, Метрика — посетителей по своей cookie.'
   : 'Сверка с Метрикой появится, когда у агента будет к ней доступ.';
-if (sourceErrors.metrika) reconcileNote = `Метрика не ответила: ${sourceErrors.metrika}`;
+if (sourceErrors.metrika) reconcileNote = `Метрика: ${sourceErrors.metrika.replace(/^Metrika:?\s*/, '')}`;
 
 // Token use from Prometheus.
 const pr = extra.prometheus;
@@ -380,7 +380,7 @@ const medianNote = [dev('телефон', medians.mobile), dev('компьюте
 const sourceMark = (ok, error) => (ok ? '✅' : error ? '⚠️' : '❌');
 const sourcesLine = `Источники: PostHog ✅ · Метрика ${sourceMark(mk, sourceErrors.metrika)} · Prometheus ${sourceMark(pr, sourceErrors.prometheus)} · база ❌`;
 const errorLine = Object.entries(sourceErrors)
-  .map(([name, message]) => `${name === 'metrika' ? 'Метрика не ответила' : 'Prometheus не ответил'}: ${message.replace(/^(Metrika|Prometheus):\s*/, '').replace(/\|/g, '/')}`)
+  .map(([name, message]) => `${name === 'metrika' ? 'Метрика' : 'Prometheus'}: ${message.replace(/^(Metrika|Prometheus):?\s*/, '').replace(/\|/g, '/')}`)
   .join('. ');
 const millions = (n) => `${ru(n / 1e6)} млн`;
 const topModel = models?.rows[0];

@@ -49,11 +49,11 @@ export function collectPrometheus({ toMs, days }) {
   const rows = [...models.values()].filter((r) => r.input + r.output > 0).sort((a, b) => b.input + b.output - (a.input + a.output));
   if (!rows.length) {
     // An empty answer is not «zero tokens»: say what Prometheus has instead, so the next run shows the cause.
-    const names = prom('count by (__name__) ({__name__=~"agent_model.*"})').map((s) => s.metric.__name__);
-    const units = prom('count by (unit) (agent_model_usage_total)').map((s) => s.metric.unit ?? '∅');
+    const names = prom('count by (__name__) ({__name__=~"agent_.*(token|usage|model).*"})').map((s) => s.metric.__name__);
+    const agentSeries = Number(prom('count({__name__=~"agent_.+"})')[0]?.value?.[1]) || 0;
     throw new Error(
-      `no token rows for the period; agent_model* series now: ${names.join(', ') || 'none'}` +
-        (units.length ? `; unit values: ${units.join(', ')}` : ''),
+      `нет данных о токенах за период: рядов agent_model_usage_total нет` +
+        `; метрики агента про токены: ${names.join(', ') || 'нет'}; всего рядов agent_*: ${agentSeries}`,
     );
   }
   return { models: rows, total: rows.reduce((a, r) => a + r.input + r.output, 0), days: Math.min(days, 14) };
