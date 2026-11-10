@@ -30,7 +30,7 @@ export async function collectMetrika({ from, to }) {
     d3: goalBy(goals, 'first_dialog_3_replies'),
   };
   const found = Object.entries(goal).filter(([, g]) => g);
-  const base = { ids: COUNTER, date1: from, date2: to, accuracy: 'full' };
+  const base = { ids: COUNTER, date1: from, date2: to, accuracy: 'full', lang: 'ru' };
 
   const metrics = ['ym:s:visits', 'ym:s:users', ...found.map(([, g]) => `ym:s:goal${g.id}users`)];
   const summary = await get('/stat/v1/data', { ...base, metrics: metrics.join(',') });
@@ -43,14 +43,16 @@ export async function collectMetrika({ from, to }) {
       ...base,
       dimensions: dimension,
       metrics: `ym:s:users,ym:s:goal${goal.d3.id}users`,
-      sort: dimension,
       limit: 20,
     });
-    return (body.data ?? []).map((row) => ({
+    const rows = (body.data ?? []).map((row) => ({
       label: row.dimensions?.[0]?.name ?? '—',
       users: Number(row.metrics?.[0]) || 0,
       d3: Number(row.metrics?.[1]) || 0,
     }));
+    // Age groups in their natural order: «младше 18» first, then by the first number in the name.
+    const order = (label) => (/^(младше|younger)/i.test(label) ? -1 : Number(label.match(/\d+/)?.[0] ?? 999));
+    return dimension === 'ym:s:ageInterval' ? rows.sort((a, b) => order(a.label) - order(b.label)) : rows;
   };
 
   return {
