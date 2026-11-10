@@ -51,10 +51,10 @@ describe('createServerAnalytics', () => {
   it('анонимное событие не привязано к человеку и не создаёт профиль', () => {
     const client = fakeClient()
     const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
-    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
-    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
+    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'red' })
+    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'red' })
     const [first, second] = client.capture.mock.calls.map((call) => call[0])
-    expect(first!.properties).toMatchObject({ level: 'crisis', $process_person_profile: false })
+    expect(first!.properties).toMatchObject({ level: 'red', $process_person_profile: false })
     expect(first!.distinctId).not.toBe(second!.distinctId)
     expect(first!.distinctId).toMatch(/^[0-9a-f-]{36}$/)
   })
@@ -62,7 +62,7 @@ describe('createServerAnalytics', () => {
   it('анонимное событие датируется началом часа, событие о человеке своим временем', () => {
     const client = fakeClient()
     const analytics = createServerAnalytics({ ...base, key: 'phc_test', client })
-    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
+    analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'red' })
     analytics.capture('user-1', AnalyticsEvent.EmailConfirmed)
     const [anonymous, person] = client.capture.mock.calls.map((call) => call[0])
     expect(anonymous!.timestamp).toBeInstanceOf(Date)
@@ -299,7 +299,7 @@ describe('createServerAnalytics', () => {
         client,
         accountState: async () => ({ optOut: true, trafficType: 'real' }),
       })
-      analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'crisis' })
+      analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level: 'red' })
       expect(client.capture).toHaveBeenCalledTimes(1)
     })
   })

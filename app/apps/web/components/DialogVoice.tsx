@@ -16,6 +16,7 @@ import { BUTTON, COLUMN, FOCUS_RING } from './controls'
 export default function DialogVoice({
   orb,
   mood,
+  calm,
   level,
   caption,
   hint,
@@ -29,6 +30,7 @@ export default function DialogVoice({
 }: {
   orb: OrbState
   mood?: OrbMood | null
+  calm?: boolean
   level: () => number
   caption: string
   hint: string
@@ -73,6 +75,7 @@ export default function DialogVoice({
         <VoiceOrb
           state={orb}
           mood={mood}
+          calm={calm}
           level={level}
           className="w-[min(88vw,46dvh,380px)] short:w-[min(60vw,40dvh,380px)]"
         />

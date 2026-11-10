@@ -273,7 +273,7 @@ export type AppUpdateKind = 'service_worker' | 'ota' | 'store'
 export type AppUpdateAction = 'available' | 'applied' | 'dismissed' | 'forced'
 export type InstallPromptAction = 'shown' | 'accepted' | 'dismissed' | 'ios_instructions'
 
-export type SafetyLevelName = 'concern' | 'crisis'
+export type SafetyLevelName = 'yellow' | 'red'
 
 export type DeleteAccountStepName = 'opened' | 'confirmed' | 'cancelled'
 
@@ -357,7 +357,8 @@ export interface AnalyticsEventProperties {
     outcome: ComponentOutcome
     cached: boolean
   }
-  [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
+  /** `source`: which detector stage fired; absent from an agent that does not report it. */
+  [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName; source?: 'dictionary' | 'model' }
 
   [AnalyticsEvent.AppOpened]: {
     standalone: boolean

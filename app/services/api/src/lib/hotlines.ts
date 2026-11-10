@@ -12,5 +12,5 @@ import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
 export const HOTLINES: HotlineApiResponse[] = [
   { name: 'Экстренные службы', phone: '112' },
   { name: 'Психологическая помощь МЧС России', phone: '8 (495) 989-50-50' },
-  { name: 'Московская служба психологической помощи', phone: '8 (495) 575-03-16' },
+  { name: 'Московская служба психологической помощи', phone: '8 (495) 051' },
 ]
