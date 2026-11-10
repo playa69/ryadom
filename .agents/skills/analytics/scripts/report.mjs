@@ -358,11 +358,11 @@ const accountsPosthog = num(data.accounts[0]?.accounts);
 if (db) {
   reconcile.push(
     { label: 'Говорили', source: 'База', tip: 'PostHog — люди с репликой в эти дни; база — авторы сообщений человека за те же дни. В PostHog нет тех, кто отказался от аналитики.', posthog: speakers, metrika: act.speakers },
-    { label: 'Реплики', source: 'База', tip: 'PostHog — события dialog_turn; база — сообщения человека за те же дни.', posthog: num(sp.turns), metrika: act.user_messages },
+    { label: 'Реплики', source: 'База', tip: 'PostHog — события dialog_turn; база — сообщения человека за те же дни. В базе меньше, если люди стёрли разговоры; в PostHog меньше, если кто-то отказался от аналитики.', posthog: num(sp.turns), metrika: act.user_messages },
     { label: 'Разговоры с репликой', source: 'База', tip: 'Разговоры, в которых человек сказал хоть что-то в эти дни.', posthog: num(sp.dialogs), metrika: act.dialogs },
     { label: 'Новые аккаунты', source: 'База', tip: 'PostHog — события account_created; база — аккаунты, созданные в эти дни (без тестовых и командных).', posthog: accountsPosthog, metrika: db.app.accounts_new },
   );
-  if (!mk) reconcileNote = 'PostHog не видит тех, кто отказался от аналитики, поэтому в базе людей и реплик обычно больше.';
+  if (!mk) reconcileNote = 'С базой: PostHog не видит отказавшихся от аналитики, а в базе нет стёртых разговоров.';
 }
 const activeDays = act?.person_days || daily.reduce((a, d) => a + d.dau, 0);
 const models = db && db.usage.models.length
@@ -422,7 +422,10 @@ const millions = (x) => `${ru(x / 1e6)} млн`;
 const topModel = models?.rows[0];
 const dbRows = db
   ? [
-      `| Видно в PostHog | **${pct(share(num(sp.turns), act.user_messages))}** | ${int(sp.turns)} из ${int(act.user_messages)} реплик; от аналитики отказались ${people(db.app.optout_total)} |`,
+      // Only meaningful when someone opted out: otherwise the gap is erased conversations, shown in the reconciliation.
+      db.app.optout_total
+        ? `| Видно в PostHog | **${pct(share(num(sp.turns), act.user_messages))}** | ${int(sp.turns)} из ${int(act.user_messages)} реплик; от аналитики отказались ${people(db.app.optout_total)} |`
+        : null,
       models
         ? `| Токенов на разговор | **${int(Math.round(models.perDialog ?? 0))}** | на активного в день — ${int(Math.round(models.perActiveDay ?? 0))}; всего ${millions(models.total)} за ${days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |`
         : null,
@@ -459,7 +462,7 @@ ${dbRows}
 - **Говорили голосом** — хотя бы одна голосовая реплика.
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
-- **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** — реплики в PostHog ÷ сообщения человека в базе: PostHog не видит тех, кто отказался от аналитики.
+- **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
 - **Токены** — расход всех моделей агента за те же дни из его базы; на разговор — ÷ разговоры с расходом, на активного в день — ÷ дни, в которые человек говорил.
 `;
 
