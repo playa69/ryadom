@@ -291,7 +291,7 @@ kubectl -n agent exec -i deploy/agent -- python - < live_probe.py       # в к�
 cd agent && GEMINI_API_KEY=… GEMINI_BASE_URL=… GEMINI_RELAY_TOKEN=… uv run python live_probe.py   # локально
 ```
 
-Итог проверки: на сайте голосовой диалог → в логах агента нет `gemini live not available` и `gemini live closed`, ответ
+Итог проверки: на сайте голосовой диалог → в логах агента нет `gemini live not available` и `voice link closed` (раньше `gemini live closed`), ответ
 звучит голосом Gemini (`GET /health/ready` и метрика `agent_voice_latency_seconds{stage="first_sound"}` показывают задержку).
 
 ## Эксплуатация

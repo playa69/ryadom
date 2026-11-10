@@ -269,6 +269,23 @@ export type ComponentName = (typeof COMPONENT_NAMES)[number]
 /** `ok` is an answer, `error` is a call that failed. A repeat served from the cache is `ok` with `cached: true`. */
 export type ComponentOutcome = 'ok' | 'error'
 
+/**
+ * Why a call failed, as a short code from the agent (agent/app/services/failure.py). A closed list: the gateway lets
+ * nothing else through, so a vendor's error text cannot reach a report.
+ */
+export const COMPONENT_FAIL_REASONS = [
+  'quota',
+  'upstream_error',
+  'keepalive_timeout',
+  'timeout',
+  'service_restart',
+  'connection_closed',
+  'session_closed',
+  'auth',
+  'other',
+] as const
+export type ComponentFailReason = (typeof COMPONENT_FAIL_REASONS)[number]
+
 export type AppUpdateKind = 'service_worker' | 'ota' | 'store'
 export type AppUpdateAction = 'available' | 'applied' | 'dismissed' | 'forced'
 export type InstallPromptAction = 'shown' | 'accepted' | 'dismissed' | 'ios_instructions'
@@ -356,6 +373,8 @@ export interface AnalyticsEventProperties {
     component: ComponentName
     outcome: ComponentOutcome
     cached: boolean
+    /** Only on `outcome: 'error'`, when the agent knew the cause. */
+    reason?: ComponentFailReason
   }
   [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
 

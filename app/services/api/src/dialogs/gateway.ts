@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http'
 import assertNever from 'assert-never'
 import type { WebSocket } from 'ws'
-import { AnalyticsEvent, COMPONENT_NAMES, type ComponentName, type DialogInterruptReason } from '@ryadom/analytics/events'
+import { AnalyticsEvent, COMPONENT_FAIL_REASONS, COMPONENT_NAMES, type ComponentName, type DialogInterruptReason } from '@ryadom/analytics/events'
 import type { ServerAnalytics } from '@ryadom/analytics/server'
 import {
   bindRequestContext,
@@ -651,11 +651,15 @@ class DialogSession {
         // Nothing else of the frame is read, so a prompt or a vendor's error text cannot reach a report.
         const component = COMPONENT_NAMES.find((name) => name === frame.component) as ComponentName | undefined
         if (!component || !this.userId || this.unsaved) return
+        const outcome = frame.outcome === 'error' ? 'error' : 'ok'
+        // The cause, only from the closed list and only for a failed call.
+        const reason = outcome === 'error' ? COMPONENT_FAIL_REASONS.find((code) => code === frame.reason) : undefined
         this.deps.analytics.capture(this.userId, AnalyticsEvent.ComponentCalled, {
           ...dialogIdProperty(this.dialogId),
           component,
-          outcome: frame.outcome === 'error' ? 'error' : 'ok',
+          outcome,
           cached: frame.cached === true,
+          ...(reason ? { reason } : {}),
         })
         return
       }

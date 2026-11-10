@@ -32,7 +32,7 @@ class Calls:
 
     def __init__(self) -> None:
         self.items: list[tuple[str, str, bool]] = []
-        model_usage.bind_calls(lambda component, outcome, cached: self.items.append((component, outcome, cached)))
+        model_usage.bind_calls(lambda component, outcome, cached, reason: self.items.append((component, outcome, cached)))
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ async def test_a_call_outside_any_dialog_is_only_counted() -> None:
 
 
 async def test_a_broken_sink_never_breaks_the_call_it_reports() -> None:
-    def broken(component: str, outcome: str, cached: bool) -> None:
+    def broken(component: str, outcome: str, cached: bool, reason: str | None) -> None:
         raise RuntimeError("шлюз упал")
 
     model_usage.bind_calls(broken)
