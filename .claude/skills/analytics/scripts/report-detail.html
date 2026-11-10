@@ -41,6 +41,7 @@ tr.sum td { font-weight: 700; }
 tr.dim td { color: var(--mut); }
 .flag { font-size: 10.5px; color: var(--mut); border: 1px solid var(--bd); border-radius: 4px; padding: 0 4px; margin-left: 4px; white-space: nowrap; }
 .hl { font-weight: 700; color: var(--bad); }
+[hidden] { display: none !important; }
 [data-tip] { cursor: help; text-decoration: underline dotted var(--mut); text-underline-offset: 3px; }
 [data-tip]:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; border-radius: 3px; }
 .bar[data-tip], svg [data-tip] { text-decoration: none; }
@@ -117,7 +118,44 @@ svg .val { fill: var(--fg); font-weight: 600; }
 
 <div class="sec">
   <div class="head"><h2>4. Сверка источников</h2></div>
-  <p class="note" id="reconcile"></p>
+  <p class="note" id="reconcile-note"></p>
+  <div class="scroll" id="reconcile-wrap" hidden><table>
+    <thead><tr>
+      <th>Что</th>
+      <th data-tip="Новые устройства периода, как в воронке.|PostHog">PostHog</th>
+      <th data-tip="Уникальные посетители периода по cookie Метрики; у целей — посетители, достигшие цели.|Метрика">Метрика</th>
+      <th data-tip="Разница по модулю ÷ Метрика. До 10 % — обычное расхождение двух счётчиков; больше выделено красным.|Расхождение">Расхождение</th>
+    </tr></thead>
+    <tbody id="reconcile"></tbody>
+  </table></div>
+</div>
+
+<div class="sec" id="audience-sec" hidden>
+  <div class="head"><h2>5. Кто приходит</h2><p class="note">Метрика, все посетители периода</p></div>
+  <div class="scroll"><table>
+    <thead><tr>
+      <th data-tip="Пол и возраст по данным Яндекса о посетителе. Определены не у всех, поэтому сумма меньше числа посетителей.|Группа">Группа</th>
+      <th data-tip="Уникальные посетители периода в группе.|Посетители">Посетители</th>
+      <th data-tip="Посетители группы, достигшие цели «первый разговор от 3 реплик» (first_dialog_3_replies).|Дошли до 3 реплик">Дошли до 3 реплик</th>
+      <th data-tip="Дошли до 3 реплик ÷ Посетители.|Доля">Доля</th>
+      <th style="text-align:left">Доля дошедших</th>
+    </tr></thead>
+    <tbody id="audience"></tbody>
+  </table></div>
+</div>
+
+<div class="sec" id="models-sec" hidden>
+  <div class="head"><h2 id="models-title">6. Расход моделей</h2><p class="note" id="models-note"></p></div>
+  <div class="scroll"><table>
+    <thead><tr>
+      <th data-tip="Модель и задача агента: live — разговор речь в речь, mood — цвет шарика, chat — итоги и заметки памяти.|Модель · задача">Модель · задача</th>
+      <th data-tip="Входные токены за период: increase(agent_model_usage_total{direction=&quot;input&quot;}) в Prometheus.|Вход">Вход</th>
+      <th data-tip="Выходные токены, включая размышление модели.|Выход">Выход</th>
+      <th data-tip="Вход + выход.|Всего">Всего</th>
+      <th data-tip="Доля модели во всех токенах периода.|Доля">Доля</th>
+    </tr></thead>
+    <tbody id="models"></tbody>
+  </table></div>
 </div>
 
 <div id="tip" hidden></div>
@@ -190,7 +228,44 @@ const DATA = /*__DATA__*/null;
       `<td class="barcell"><div class="bar"${tipAttr(`вернулись ${r.returned} из ${r.people} (${pct(p)}); в среднем ${pct(base)}`, r.label)}><span style="width:${p / scale * 100}%"></span><i style="left:${base / scale * 100}%"></i></div></td></tr>`;
   }).join('');
 
-  document.getElementById('reconcile').textContent = DATA.reconcileNote;
+  // Reconciliation with Metrika.
+  const rec = DATA.reconcile || [];
+  document.getElementById('reconcile-note').textContent = DATA.reconcileNote;
+  if (rec.length) {
+    document.getElementById('reconcile-wrap').hidden = false;
+    document.getElementById('reconcile').innerHTML = rec.map((r) => {
+      const diff = r.metrika ? Math.abs(r.posthog - r.metrika) / r.metrika * 100 : NaN;
+      const label = r.tip ? `<span${tipAttr(r.tip, r.label)}>${esc(r.label)}</span>` : esc(r.label);
+      return `<tr><td>${label}</td><td>${nf(r.posthog)}</td><td>${nf(r.metrika)}</td><td class="${diff > 10 ? 'hl' : ''}">${pct(diff)}</td></tr>`;
+    }).join('');
+  }
+
+  // Who comes (Metrika): age and gender with the share that reaches a 3+ reply dialog.
+  const aud = DATA.audience || [];
+  if (aud.length) {
+    document.getElementById('audience-sec').hidden = false;
+    const shares = aud.filter((r) => !r.group && r.users).map((r) => r.d3 / r.users * 100);
+    const ascale = Math.max(10, Math.ceil(Math.max(0, ...shares) / 10) * 10);
+    document.getElementById('audience').innerHTML = aud.map((r) => {
+      if (r.group) return `<tr class="dim"><td colspan="5"><b>${esc(r.group)}</b></td></tr>`;
+      const p = r.users ? r.d3 / r.users * 100 : 0;
+      return `<tr><td>${esc(r.label)}${flag(r.users < 20)}</td><td>${nf(r.users)}</td><td>${nf(r.d3)}</td><td>${r.users ? pct(p) : '—'}</td>` +
+        `<td class="barcell"><div class="bar"${tipAttr(`дошли ${r.d3} из ${r.users} (${pct(p)}); шкала 0–${ascale} %`, r.label)}><span style="width:${p / ascale * 100}%"></span></div></td></tr>`;
+    }).join('');
+  }
+
+  // Token use of the agent's models (Prometheus).
+  const models = DATA.models;
+  if (models && models.rows.length) {
+    document.getElementById('models-sec').hidden = false;
+    document.getElementById('models-title').textContent = `${aud.length ? 6 : 5}. Расход моделей`;
+    const mt = (n) => (n >= 1e6 ? (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн' : n >= 1e3 ? Math.round(n / 1e3).toLocaleString('ru-RU') + ' тыс.' : nf(n));
+    document.getElementById('models-note').textContent = `Prometheus, ${models.days} дн.; на активного человека в день — ${mt(Math.round(models.perActiveDay || 0))} токенов`;
+    const sum = (key) => models.rows.reduce((a, r) => a + r[key], 0);
+    document.getElementById('models').innerHTML = models.rows.map((r) =>
+      `<tr><td>${esc(r.model)}${r.task ? ' · ' + esc(r.task) : ''}</td><td>${mt(r.input)}</td><td>${mt(r.output)}</td><td>${mt(r.input + r.output)}</td><td>${pct((r.input + r.output) / models.total * 100)}</td></tr>`).join('') +
+      `<tr class="sum"><td>Всего</td><td>${mt(sum('input'))}</td><td>${mt(sum('output'))}</td><td>${mt(models.total)}</td><td>100 %</td></tr>`;
+  }
 
   // One tooltip for every [data-tip]: hover, keyboard focus, or tap.
   const tip = document.getElementById('tip');
