@@ -812,6 +812,35 @@ describe('WebSocket-шлюз', () => {
     client.close()
   })
 
+  it('кризисный сценарий: safety_state доходит до клиента, нажатие звонка считается без человека и уходит агенту', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-crisis' }))
+    const agentSide = await agent.waitFor('d-crisis')
+
+    agentSide.socket.send(
+      JSON.stringify({ type: 'safety', level: 'crisis', text: 'Сейчас важно', step: 'call', pinned: true, trigger: 'red', source: 'model' }),
+    )
+    const safety = await nextFrame(client, DialogServerFrame.Safety)
+    expect(safety).toMatchObject({ step: 'call', pinned: true })
+    agentSide.socket.send(JSON.stringify({ type: 'safety_state', step: 'check', pinned: true, banner: false, ask: 'safe' }))
+    const state = await nextFrame(client, DialogServerFrame.SafetyState)
+    expect(state).toMatchObject({ step: 'check', pinned: true, banner: false, ask: 'safe' })
+
+    const before = gateway.analytics.events.length
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyCall }))
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyAnswer, answer: 'unknown' }))
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyAnswer, answer: 'nonsense' }))
+    await vi.waitFor(() => expect(agentSide.received.filter((f) => f.type === 'safety_answer')).toHaveLength(1))
+    expect(agentSide.received.filter((f) => f.type === 'safety_call')).toHaveLength(1)
+    expect(agentSide.received.filter((f) => f.type === 'safety_answer')).toEqual([{ type: 'safety_answer', answer: 'unknown' }])
+    const pressed = gateway.analytics.events.slice(before).filter((entry) => entry.event === 'crisis_call_pressed')
+    expect(pressed).toEqual([{ userId: null, event: 'crisis_call_pressed', properties: { level: 'red', source: 'model' } }])
+
+    client.close()
+  })
+
   it('кадр safety без линий помощи дополняется нашими', async () => {
     const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)

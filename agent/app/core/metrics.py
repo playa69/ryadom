@@ -333,3 +333,16 @@ PROCESS_MEMORY_RECLAIMED_BYTES_TOTAL = Counter(
     "agent_process_memory_reclaimed_bytes_total",
     "На сколько опустилась резидентная память процесса (RSS) за проходы возврата памяти, сумма. Только Linux.",
 )
+
+# Кризисная ветка без привязки к человеку и без текста. level: red | yellow; source: words | model | answer
+CRISIS_TRIGGERS_TOTAL = Counter(
+    "agent_crisis_triggers_total",
+    "Срабатывания кризисной ветки по уровню и источнику (словарь, модель, ответ на вопрос).",
+    ["level", "source"],
+)
+# source: sheet | check | emergency
+CRISIS_CALL_PRESSED_TOTAL = Counter(
+    "agent_crisis_call_pressed_total",
+    "Нажатия кнопки звонка в кризисной ветке по уровню.",
+    ["level"],
+)

@@ -5,7 +5,8 @@
  */
 import type { MoodTone } from '@ryadom/contracts/api/dialogs'
 
-export type OrbMood = 'sleepy' | 'angry' | 'afraid'
+/** `crisis` is not a reported tone: the client sets it while the crisis script runs (calm light, no pulsing, no smile). */
+export type OrbMood = 'sleepy' | 'angry' | 'afraid' | 'crisis'
 
 const ORB_MOODS: Partial<Record<MoodTone, OrbMood>> = { sleepy: 'sleepy', angry: 'angry', afraid: 'afraid' }
 

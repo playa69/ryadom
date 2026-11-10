@@ -40,9 +40,9 @@ function VoiceOrb({
   const swell = useRef<HTMLDivElement>(null)
   // The loop must outlive re-renders: restarting it on a new state or a new closure would drop the
   // sphere's current size and angle and make it jump.
-  const latest = useRef({ state, level })
+  const latest = useRef({ state, level, mood })
   useEffect(() => {
-    latest.current = { state, level }
+    latest.current = { state, level, mood }
   })
 
   useEffect(() => {
@@ -51,6 +51,7 @@ function VoiceOrb({
     return startOrbMotion(element, {
       state: () => latest.current.state,
       level: () => latest.current.level(),
+      steady: () => latest.current.mood === 'crisis',
     })
   }, [])
 

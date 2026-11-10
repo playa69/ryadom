@@ -149,7 +149,7 @@ test('разговор в вебе: приветствие, ответ, криз
   await input.fill('не хочу жить')
   await input.press('Enter')
   // The help lines appear on their own instead of waiting for the person to press SOS.
-  await expect(modal(page).getByRole('heading', { name: 'Если сейчас тяжело' })).toBeVisible({
+  await expect(modal(page).getByRole('heading', { name: 'Сейчас важно поговорить с живым человеком' })).toBeVisible({
     timeout: 30_000,
   })
   await expect(modal(page).getByRole('link', { name: /112/ })).toBeVisible()

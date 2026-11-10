@@ -31,7 +31,8 @@ from app.services.dialog_db import DialogDatabase
 from app.services.dialog_purge import purge_loop
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.gemini_budget import TokenBudget
-from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, split_sentences
+from app.services import crisis_script
+from app.services.replies import REPEAT_REQUEST, split_sentences
 
 if TYPE_CHECKING:
     from app.clients.gemini_live import LiveConnector
@@ -40,7 +41,7 @@ logger = logging.getLogger("agent")
 
 # Готовые фразы агента: приветствия, кризисный ответ (он важнее) и просьба повторить. Их озвучивает голос Gemini и запоминает
 # память фраз: клиент ждёт приветствие не дольше 0,9 с, а новая сессия Gemini открывается около секунды.
-SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, REPEAT_REQUEST)
+SPOKEN_PHRASES = (*GREETINGS, *crisis_script.PHRASES, REPEAT_REQUEST)
 # Сколько сессий Gemini прогрев держит открытыми одновременно (фраза — сессия): 16 открытий разом на старте Google встречал
 # отказами, и после них половина фраз оставалась не прогретой.
 WARM_UP_GEMINI_SESSIONS = 3
