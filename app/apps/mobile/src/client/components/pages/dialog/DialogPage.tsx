@@ -5,6 +5,7 @@ import { Block, Button, Icon, Message, Messages, Navbar, Page, Preloader, f7 } f
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { micDeniedText } from '@ryadom/client-core/voice/mic-hint'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
 import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
 import { InputLimit } from '@ryadom/contracts/api/limits'
@@ -91,7 +92,6 @@ const STATE_TEXT: Partial<Record<DialogSocketState, string>> = {
 }
 
 const MIC_UNSUPPORTED_TEXT = 'Здесь микрофон недоступен. Можно писать текстом.'
-const MIC_DENIED_TEXT = 'Микрофон не разрешён. Разреши его в настройках — или пиши текстом.'
 const MIC_FAILED_TEXT = 'Не получилось включить микрофон. Можно писать текстом.'
 
 /**
@@ -521,7 +521,7 @@ export default function DialogPage({
         setAwaitingReply(false)
       } catch (error) {
         void reportMicFailure(error)
-        const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
+        const text = error instanceof MicrophoneDeniedError ? micDeniedText(navigator.userAgent) : MIC_FAILED_TEXT
         if (automatic) fallBack(text)
         else f7.dialog.alert(text, 'Голос')
       } finally {
@@ -619,7 +619,7 @@ export default function DialogPage({
         setPaused(null)
       } catch (error) {
         void reportMicFailure(error)
-        const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
+        const text = error instanceof MicrophoneDeniedError ? micDeniedText(navigator.userAgent) : MIC_FAILED_TEXT
         if (automatic) {
           setMode('text')
           f7.toast.create({ text, closeTimeout: 4000 }).open()

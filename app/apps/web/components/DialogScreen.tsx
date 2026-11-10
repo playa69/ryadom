@@ -46,6 +46,7 @@ import {
   startCapture,
   type VoiceCapture,
 } from '@ryadom/client-core/voice/capture'
+import { micDeniedText } from '@ryadom/client-core/voice/mic-hint'
 import {
   HANDS_FREE_HINT,
   pausedHint,
@@ -109,7 +110,6 @@ const STATE_TEXT: Partial<Record<DialogSocketState, string>> = {
 const END_FALLBACK_MS = 2000
 
 const MIC_UNSUPPORTED_TEXT = 'Здесь микрофон недоступен. Можно писать текстом.'
-const MIC_DENIED_TEXT = 'Микрофон не разрешён. Разреши его в настройках — или пиши текстом.'
 const MIC_FAILED_TEXT = 'Не получилось включить микрофон. Можно писать текстом.'
 const MIC_OFF_TEXT = 'Связь прервалась — микрофон выключен'
 const END_FAILED_TEXT = 'Не получилось завершить разговор. Попробуй ещё раз'
@@ -666,7 +666,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setAwaitingReply(false)
     } catch (error) {
       trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      refuse(error instanceof MicrophoneDeniedError ? micDeniedText(navigator.userAgent) : MIC_FAILED_TEXT)
     } finally {
       micStarting.current = false
     }
@@ -727,7 +727,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setPaused(null)
     } catch (error) {
       trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      refuse(error instanceof MicrophoneDeniedError ? micDeniedText(navigator.userAgent) : MIC_FAILED_TEXT)
     } finally {
       micStarting.current = false
     }
