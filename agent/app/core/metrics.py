@@ -181,6 +181,25 @@ COMPONENT_CALLS_TOTAL = Counter(
     ["component", "outcome", "cached"],
 )
 
+# Ошибки компонентов по вендору, пути и причине (PROTEUS-282). Без id и текстов: кто и в каком диалоге, видно в журнале и в
+# событии `component_called`.
+#   component  gigaasr | gigachat | salutespeech | gemini_live | gemini_tts (вендор, а не роль из `agent_component_calls_total`)
+#   pipeline   sber | gemini: путь разговора, на котором упал компонент
+#   reason     код из app/core/reasons.py: quota | auth | timeout | connect | closed | empty | bad_response | unavailable | unknown
+COMPONENT_ERRORS_TOTAL = Counter(
+    "agent_component_errors_total",
+    "Ошибки компонентов агента по вендору, пути разговора и причине.",
+    ["component", "pipeline", "reason"],
+)
+
+# Переход на запасной путь: `from` — путь, который отказал, `to` — на котором работа идёт дальше.
+#   scope  connect (соединение не открылось) | tts (фраза озвучена голосом запасного пути)
+PIPELINE_FALLBACKS_TOTAL = Counter(
+    "agent_pipeline_fallbacks_total",
+    "Переходы на запасной путь: путь, который отказал, путь, на котором работа идёт дальше, область и причина.",
+    ["from", "to", "scope", "reason"],
+)
+
 DIALOGS_TOTAL = Counter(
     "agent_dialogs_total",
     "Диалоги, в которых человек сказал или написал хоть что-то (считаются по его первой реплике).",
