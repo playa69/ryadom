@@ -1,7 +1,6 @@
 // Генерирует макеты mockups/*.html (статичные, без зависимостей): node build.mjs
 import { writeFileSync } from 'node:fs'
 const states = {
-  'pre-request': { kind: 'hint', title: 'Включим микрофон?', body: 'Микрофон нужен, чтобы я слышала тебя. Сейчас браузер спросит разрешение — нажми «Разрешить».', primary: 'Продолжить', secondary: 'Писать текстом' },
   'denied-chrome-android': { title: 'Микрофон выключен', body: 'Браузер больше не спрашивает сам. Включи микрофон для Рядом:', steps: ['Нажми на значок замка слева от адреса', 'Выбери «Разрешения»', 'Включи «Микрофон»'], primary: 'Попробовать снова', secondary: 'Писать текстом' },
   'denied-safari-ios': { title: 'Микрофон выключен', body: 'Включи его для сайта в Safari:', steps: ['Нажми «Аа» в адресной строке', 'Выбери «Настройки веб-сайта»', 'Поставь «Микрофон» → «Разрешить»'], primary: 'Попробовать снова', secondary: 'Писать текстом' },
   'denied-embedded': { title: 'Здесь микрофон не включить', body: 'В окне другого приложения микрофон часто заблокирован. Открой Рядом в Chrome или Safari:', steps: ['Скопируй адрес — кнопка ниже', 'Открой Chrome или Safari и вставь его в адресную строку'], copy: 'Скопировать адрес', primary: 'Попробовать снова', secondary: 'Писать текстом' },
@@ -16,7 +15,7 @@ const css = `*{box-sizing:border-box}body{margin:0;height:100vh;font:16px/1.45 s
 .sheet{width:100%;max-width:440px;background:#1c1d2b;border-radius:20px 20px 0 0;padding:24px 20px 28px;box-shadow:0 -8px 40px #0008}
 @media(min-width:700px){.scrim{align-items:center}.sheet{border-radius:20px;padding:28px}}
 h2{margin:0 0 8px;font-size:20px}p{margin:0 0 14px;color:#c4c6dc}
-ol{margin:0 0 16px;padding:0;list-style:none;counter-increment:s}
+ol{margin:0 0 16px;padding:0;list-style:none;counter-reset:s}
 li{counter-increment:s;display:flex;gap:12px;margin:0 0 10px;color:#eef}
 li:before{content:counter(s);flex:none;width:26px;height:26px;border-radius:50%;background:#34355a;text-align:center;line-height:26px;font-size:14px}
 button{font:inherit;width:100%;border:0;border-radius:14px;padding:13px;margin-top:8px}
