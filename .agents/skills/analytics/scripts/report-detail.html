@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сводка Рядом, детализация</title>
+<style>
+/* Multica passes its theme tokens into an inline html block; the fallbacks cover a browser and the attachment viewer. */
+:root {
+  --c-bg: #ffffff; --c-fg: #18201f; --c-mut: #5d6967; --c-bd: #dde3e2; --c-track: #eef2f1;
+  --c-1: #2a7f78; --c-2: #c27c0e; --c-ok: #067647; --c-warn: #a15c07; --c-bad: #b42318;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --c-bg: #151b1a; --c-fg: #e3ebea; --c-mut: #97a8a5; --c-bd: #2c3836; --c-track: #212b2a;
+    --c-1: #5cbdb3; --c-2: #e8a33a; --c-ok: #5fd39a; --c-warn: #f5b84f; --c-bad: #ff8a7a; }
+}
+:root {
+  --fg: var(--foreground, var(--c-fg));
+  --mut: var(--muted-foreground, var(--c-mut));
+  --bd: var(--border, var(--c-bd));
+  --track: var(--muted, var(--c-track));
+  --s1: var(--chart-1, var(--c-1));
+  --s2: var(--chart-2, var(--c-2));
+  --ok: var(--success, var(--c-ok));
+  --warn: var(--warning, var(--c-warn));
+  --bad: var(--destructive, var(--c-bad));
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--background, var(--c-bg)); color: var(--fg); font: 14px/1.5 var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif); padding: 12px 16px 16px; }
+h2 { font-size: 15px; margin: 0; }
+.sec { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; border-top: 1px solid var(--bd); }
+.sec:first-of-type { border-top: 0; padding-top: 4px; }
+.head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; }
+.note { color: var(--mut); font-size: 12.5px; margin: 0; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--bd); white-space: nowrap; }
+th { color: var(--mut); font-weight: 600; font-size: 12px; vertical-align: bottom; }
+th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 140px; }
+tbody tr:last-child td { border-bottom: 0; }
+tr.sum td { font-weight: 700; }
+tr.dim td { color: var(--mut); }
+.na { color: var(--mut); }
+.flag { font-size: 10.5px; color: var(--mut); border: 1px solid var(--bd); border-radius: 4px; padding: 0 4px; margin-left: 4px; white-space: nowrap; }
+.hl { font-weight: 700; color: var(--bad); }
+[data-tip] { cursor: help; text-decoration: underline dotted var(--mut); text-underline-offset: 3px; }
+[data-tip]:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; border-radius: 3px; }
+.bar[data-tip], svg [data-tip] { text-decoration: none; }
+#tip { position: absolute; z-index: 10; max-width: min(320px, calc(100vw - 16px)); padding: 8px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; font-weight: 400; text-align: left; white-space: normal;
+  background: var(--fg); color: var(--background, var(--c-bg)); box-shadow: 0 4px 16px rgb(0 0 0 / 0.18); pointer-events: none; }
+#tip b { display: block; margin-bottom: 2px; }
+td.barcell { width: 38%; min-width: 120px; }
+.bar { position: relative; height: 12px; background: var(--track); border-radius: 0 4px 4px 0; }
+.bar span { position: absolute; inset: 0 auto 0 0; background: var(--s1); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar i { position: absolute; top: -3px; bottom: -3px; border-left: 2px dashed var(--mut); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--mut); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend b { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+#daily { max-width: 760px; }
+svg text { fill: var(--mut); font-size: 11px; font-family: inherit; }
+svg .val { fill: var(--fg); font-weight: 600; }
+.status { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; }
+.st-crit { color: var(--bad); } .st-warn { color: var(--warn); } .st-ok { color: var(--ok); }
+</style>
+</head>
+<body>
+
+<div class="sec">
+  <div class="head"><h2>По дням</h2><p class="note" id="daily-note"></p></div>
+  <div class="legend"><span><b style="background:var(--s1)"></b>DAU: сказали хоть одну реплику</span><span><b style="background:var(--s2)"></b>Заговорили впервые</span></div>
+  <div class="scroll"><svg id="daily" viewBox="0 0 640 190" width="100%" role="img" aria-label="DAU и новые заговорившие по дням"></svg></div>
+</div>
+
+<div class="sec">
+  <div class="head"><h2>1. Каналы: от клика до возврата</h2><p class="note">устройства с первым посещением в эти дни</p></div>
+  <div class="scroll"><table>
+    <thead><tr>
+      <th data-tip="Первое касание: UTM первой сессии, в которой был просмотр страницы ($session_entry_utm_*). Без UTM — «без метки», без просмотров страниц — «канал неизвестен».|Канал · кампания">Канал · кампания</th>
+      <th data-tip="Устройства, чьё первое событие в PostHog попало в эти дни. До входа события анонимны, поэтому это устройства, а не люди.|Посетители">Посетители</th>
+      <th data-tip="Открыли веб-приложение, PWA или Mini App: событие app_opened или просмотр экрана не на лендинге.|В продукт">В продукт</th>
+      <th data-tip="Создан аккаунт: событие account_created (анонимный, по почте или через Telegram).|Аккаунт">Аккаунт</th>
+      <th data-tip="Сервер принял хотя бы одну реплику человека: событие dialog_turn, набранная или сказанная.|Заговорили">Заговорили</th>
+      <th data-tip="Есть разговор с тремя и больше репликами под одним dialog_id. Реплики разных разговоров не складываются.|3+ реплики">3+ реплики</th>
+      <th data-tip="Реплики минимум в два разных дня по Москве. У новых этой недели число ещё вырастет.|Вернулись">Вернулись</th>
+      <th data-tip="Заговорили ÷ Посетители.|Конверсия">Конверсия</th>
+      <th data-tip="Все реплики (dialog_turn) людей канала до конца периода ÷ число заговоривших.|Реплик на человека">Реплик на чел.</th>
+      <th data-tip="Расход из кабинета Директа или Telegram Ads за те же даты. Пока не подключён.|Расход">Расход, ₽</th>
+      <th data-tip="Расход ÷ Заговорили. Появится вместе с расходом.|Цена заговорившего">₽ за заговорившего</th>
+    </tr></thead>
+    <tbody id="channels"></tbody>
+  </table></div>
+  <p class="note">«мало» — меньше 20 заговоривших, долю не сравнивать.</p>
+</div>
+
+<div class="sec">
+  <div class="head"><h2>2. Воронка по шагам</h2><p class="note">полоса — доля от всех посетителей</p></div>
+  <div class="scroll"><table>
+    <thead><tr>
+      <th>Шаг</th>
+      <th data-tip="Сколько устройств из новых в эти дни дошло до шага.|Всего">Всего</th>
+      <th data-tip="Доля от предыдущего шага. Красным — самая большая потеря.|От предыдущего">От пред.</th>
+      <th data-tip="Тип устройства при первом просмотре страницы ($device_type = Mobile).|Телефон">Телефон</th>
+      <th data-tip="Тип устройства при первом просмотре страницы ($device_type = Desktop). Планшеты и устройства без просмотров входят только во «Всего».|Компьютер">Компьютер</th>
+      <th style="text-align:left">Доля от посетителей</th>
+    </tr></thead>
+    <tbody id="funnel"></tbody>
+  </table></div>
+</div>
+
+<div class="sec">
+  <div class="head"><h2>3. Что связано с возвратом</h2><p class="note" id="ret-note"></p></div>
+  <div class="scroll"><table>
+    <thead><tr>
+      <th data-tip="Признак человека. Длина первого разговора — реплик в самом раннем его разговоре. Голос или текст — по полю input всех его реплик.|Признак">Признак</th>
+      <th data-tip="Сколько людей с этим признаком в базе.|Людей">Людей</th>
+      <th data-tip="Реплики минимум в два разных дня по Москве.|Вернулись">Вернулись</th>
+      <th data-tip="Вернулись ÷ Людей. Это связь, а не причина: память и дневник человек находит чаще, если уже вернулся.|Доля">Доля</th>
+      <th style="text-align:left"><span id="ret-scale" data-tip="">Доля вернувшихся</span></th>
+    </tr></thead>
+    <tbody id="ret"></tbody>
+  </table></div>
+</div>
+
+<div class="sec">
+  <div class="head"><h2>4. Качество и надёжность</h2><p class="note" id="quality-note"></p></div>
+  <div class="scroll"><table>
+    <thead><tr>
+      <th>Что</th>
+      <th data-tip="Число событий за период.|Событий">Событий</th>
+      <th data-tip="Сколько разных людей столкнулось хотя бы раз.|Людей">Людей</th>
+      <th data-tip="Критично — выше порога, Внимание — близко к порогу или порог предварительный. Пороги лежат в скрипте отчёта.|Статус">Статус</th>
+    </tr></thead>
+    <tbody id="quality"></tbody>
+  </table></div>
+</div>
+
+<div class="sec">
+  <div class="head"><h2>5. Сверка источников</h2><p class="note">расхождение больше 10 % — тревога</p></div>
+  <p class="note" id="reconcile"></p>
+</div>
+
+<div id="tip" hidden></div>
+
+<script>
+const DATA = /*__DATA__*/null;
+(() => {
+  const nf = (n) => Number(n).toLocaleString('ru-RU');
+  const pct = (x) => (Number.isFinite(x) ? x.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' %' : '—');
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const tipAttr = (text, title) => ` data-tip="${esc(text)}${title ? '|' + esc(title) : ''}"`;
+  const flag = (few) => (few ? '<span class="flag">мало</span>' : '');
+
+  // Daily chart: DAU and first-time speakers, one scale (people).
+  document.getElementById('daily-note').textContent = DATA.period.label + ', день по Москве';
+  const days = DATA.daily;
+  const svg = document.getElementById('daily');
+  const W = 640, H = 190, L = 30, B = 24, T = 16;
+  const top = Math.max(10, ...days.map((d) => Math.max(d.dau, d.new)));
+  const step = top <= 20 ? 5 : top <= 50 ? 10 : top <= 100 ? 25 : top <= 250 ? 50 : 100;
+  const max = Math.ceil(top / step) * step;
+  const y = (v) => H - B - (v / max) * (H - B - T);
+  let s = '';
+  let tick = step;
+  while (max / tick > 4) tick *= 2;
+  const ticks = [];
+  for (let t = 0; t <= max; t += tick) ticks.push(t);
+  for (const t of ticks) s +=`<line x1="${L}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--bd)" stroke-width="1"/><text x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${t}</text>`;
+  const gw = (W - L) / Math.max(days.length, 1), bw = Math.min(26, gw / 3.2);
+  days.forEach((d, i) => {
+    const cx = L + gw * i + gw / 2;
+    [[d.dau, 'var(--s1)', -bw / 2 - 1, 'DAU'], [d.new, 'var(--s2)', bw / 2 + 1, 'Заговорили впервые']].forEach(([v, c, dx, lbl]) => {
+      const x = cx + dx - bw / 2, h = H - B - y(v);
+      const shape = h >= 4 ? `<path d="M${x},${H - B} v${-(h - 4)} q0,-4 4,-4 h${bw - 8} q4,0 4,4 v${h - 4} z" fill="${c}"${tipAttr(`${d.day}: ${v}`, lbl)}/>` : '';
+      s += `<g>${shape}<text class="val" x="${x + bw / 2}" y="${y(v) - 4}" text-anchor="middle">${v}</text></g>`;
+    });
+    s += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${d.day}</text>`;
+  });
+  svg.innerHTML = s;
+
+  // Channels.
+  document.getElementById('channels').innerHTML = DATA.channels.map((r) => {
+    const cls = r.kind === 'total' ? 'sum' : r.kind === 'unknown' ? 'dim' : '';
+    const conv = r.kind === 'unknown' ? '—' : pct(r.conv) + flag(r.kind === 'row' && r.spoke < 20);
+    const money = r.paid ? '<td class="na">нет</td><td class="na">нет</td>' : '<td class="na">—</td><td class="na">—</td>';
+    return `<tr class="${cls}"><td>${esc(r.label)}</td><td>${nf(r.visitors)}</td><td>${nf(r.product)}</td><td>${nf(r.account)}</td><td>${nf(r.spoke)}</td><td>${nf(r.d3)}</td><td>${nf(r.returned)}</td><td>${conv}</td><td>${r.turnsPerSpeaker == null ? '—' : r.turnsPerSpeaker.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>${money}</tr>`;
+  }).join('');
+
+  // Funnel.
+  const steps = DATA.funnel;
+  const visitors = steps[0]?.total || 1;
+  let worst = 1, wi = -1;
+  steps.forEach((r, i) => { if (i > 0 && i < steps.length - 1 && steps[i - 1].total > 0 && r.total / steps[i - 1].total < worst) { worst = r.total / steps[i - 1].total; wi = i; } });
+  document.getElementById('funnel').innerHTML = steps.map((r, i) => {
+    const prev = i && steps[i - 1].total ? r.total / steps[i - 1].total * 100 : null;
+    const share = r.total / visitors * 100;
+    return `<tr><td>${esc(r.label)}</td><td>${nf(r.total)}</td><td class="${i === wi ? 'hl' : ''}">${prev == null ? '—' : pct(prev)}</td><td>${nf(r.mobile)}</td><td>${nf(r.desktop)}</td>` +
+      `<td class="barcell"><div class="bar"${tipAttr(`${nf(r.total)}, ${pct(share)} от посетителей`, r.label)}><span style="width:${share}%"></span></div></td></tr>`;
+  }).join('');
+
+  // Return correlates.
+  const ret = DATA.returnRows;
+  const base = DATA.returnBase.people ? DATA.returnBase.returned / DATA.returnBase.people * 100 : 0;
+  const scale = Math.max(20, Math.ceil(Math.max(base, ...ret.map((r) => (r.people ? r.returned / r.people * 100 : 0))) / 10) * 10);
+  document.getElementById('ret-note').textContent = `${DATA.returnBase.label}: ${nf(DATA.returnBase.people)} человек, вернулись ${nf(DATA.returnBase.returned)}`;
+  const scaleEl = document.getElementById('ret-scale');
+  scaleEl.setAttribute('data-tip', `Шкала 0–${scale} %. Пунктир — среднее по всей базе: ${pct(base)}.|Полоса`);
+  document.getElementById('ret').innerHTML = ret.map((r) => {
+    const p = r.people ? r.returned / r.people * 100 : 0;
+    return `<tr><td>${esc(r.label)}${flag(r.people < 20)}</td><td>${nf(r.people)}</td><td>${nf(r.returned)}</td><td>${r.people ? pct(p) : '—'}</td>` +
+      `<td class="barcell"><div class="bar"${tipAttr(`вернулись ${r.returned} из ${r.people} (${pct(p)}); в среднем ${pct(base)}`, r.label)}><span style="width:${p / scale * 100}%"></span><i style="left:${base / scale * 100}%"></i></div></td></tr>`;
+  }).join('');
+
+  // Quality.
+  document.getElementById('quality-note').textContent = DATA.period.label;
+  const statusText = { crit: 'Критично', warn: 'Внимание', ok: 'Норма' };
+  document.getElementById('quality').innerHTML = DATA.quality.map((r) => {
+    const label = r.tip ? `<span${tipAttr(r.tip, r.label)}>${esc(r.label)}</span>` : esc(r.label);
+    const status = r.status ? `<span class="status st-${r.status}">${statusText[r.status]}</span>` : `<span class="na">${esc(r.source || '—')}</span>`;
+    return `<tr><td>${label}</td><td${r.events == null ? ' class="na"' : ''}>${r.events == null ? 'нет' : esc(r.events)}</td><td${r.people == null ? ' class="na"' : ''}>${r.people == null ? esc(r.peopleNote || '—') : nf(r.people)}</td><td>${status}</td></tr>`;
+  }).join('');
+
+  document.getElementById('reconcile').textContent = DATA.reconcileNote;
+
+  // One tooltip for every [data-tip]: hover, keyboard focus, or tap.
+  const tip = document.getElementById('tip');
+  let pinned = null;
+  const show = (el) => {
+    const [text, title] = el.getAttribute('data-tip').split('|');
+    tip.innerHTML = '';
+    if (title) { const b = document.createElement('b'); b.textContent = title; tip.appendChild(b); }
+    tip.appendChild(document.createTextNode(text));
+    tip.hidden = false;
+    const r = el.getBoundingClientRect(), tw = tip.offsetWidth;
+    const left = Math.max(8, Math.min(r.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - tw - 8));
+    tip.style.left = left + 'px';
+    tip.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  };
+  const hide = () => { tip.hidden = true; pinned = null; };
+  document.querySelectorAll('[data-tip]').forEach((el) => {
+    if (!el.getAttribute('data-tip')) return;
+    if (!(el instanceof SVGElement) && !el.classList.contains('bar')) el.tabIndex = 0;
+    el.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') show(el); });
+    el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && pinned !== el) tip.hidden = true; });
+    el.addEventListener('focus', () => show(el));
+    el.addEventListener('blur', () => { if (pinned !== el) tip.hidden = true; });
+    el.addEventListener('click', (e) => { e.stopPropagation(); if (pinned === el) hide(); else { pinned = el; show(el); } });
+  });
+  document.addEventListener('click', hide);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+})();
+</script>
+</body>
+</html>
