@@ -976,14 +976,32 @@ describe('WebSocket-шлюз', () => {
     )
     // A name outside the set is not reported: the report cannot be made to carry an arbitrary string.
     agentSide.socket.send(JSON.stringify({ type: 'component', component: 'секретный компонент', outcome: 'ok' }))
+    // The path and the reason are kept only from their closed sets (PROTEUS-282).
+    agentSide.socket.send(
+      JSON.stringify({ type: 'component', component: 'live', outcome: 'error', cached: false, pipeline: 'sber', reason: 'timeout' }),
+    )
+    agentSide.socket.send(
+      JSON.stringify({
+        type: 'component',
+        component: 'live',
+        outcome: 'error',
+        pipeline: 'секретный путь',
+        reason: 'секретная причина вендора',
+      }),
+    )
     await vi.waitFor(() =>
-      expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toHaveLength(2),
+      expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toHaveLength( 4),
     )
 
     const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
     expect(mine.map((entry) => [entry.event, entry.properties])).toEqual([
       ['component_called', { dialog_id: dialogId, component: 'tts', outcome: 'ok', cached: true }],
-      ['component_called', { dialog_id: dialogId, component: 'llm', outcome: 'error', cached: false }],
+      ['component_called', { dialog_id: dialogId, component: 'llm', outcome: 'error', cached: false, reason: 'unknown' }],
+      [
+        'component_called',
+        { dialog_id: dialogId, component: 'live', outcome: 'error', cached: false, pipeline: 'sber', reason: 'timeout' },
+      ],
+      ['component_called', { dialog_id: dialogId, component: 'live', outcome: 'error', cached: false, reason: 'unknown' }],
     ])
     expect(JSON.stringify(mine)).not.toMatch(/секретн/)
     client.close()

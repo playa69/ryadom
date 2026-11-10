@@ -58,8 +58,8 @@ spec:
 # :8001 — /metrics самого агента (ServiceMonitor k8s/agent/04-servicemonitor.yaml:
 # расход моделей, задержки голоса, база диалогов).
 # Обратная сторона — egress-правило prometheus в
-# monitoring/manifests/01-network-policy.yaml (для :8001 добавлено, для
-# :15090 агента — нет).
+# monitoring/manifests/01-network-policy.yaml (:8001 и :15090 агента
+# разрешены оба; для :15090 правило добавлено в PROTEUS-282).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

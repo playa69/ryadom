@@ -36,6 +36,9 @@ from websockets.protocol import State
 from app.clients.gemini_live import LiveConnector, LiveError, LiveEvent, LiveHistory, LiveLink
 from app.clients.mood_classifier import MOOD_TIMEOUT_SECONDS, parse_mood
 from app.clients.speech import TextToSpeech, TtsError, Voice, pcm_stream
+from app.core.failure import GEMINI_TTS, GIGAASR, GIGACHAT, SALUTESPEECH, failure_fields, record_failure
+from app.core.metrics import PIPELINE_FALLBACKS_TOTAL
+from app.core.reasons import classify
 from app.core.tracing import NullTracer, Tracer
 from app.prompts.provider import PromptProvider, PromptUnavailable, ResolvedPrompt, prompt_metadata
 from app.services import usage as model_usage
@@ -260,7 +263,7 @@ class SberVoiceLink:
         try:
             await self._asr.send(json.dumps(event))
         except Exception as error:
-            self._fail(f"GigaASR: {type(error).__name__}: {str(error)[:160]}")
+            self._fail(f"GigaASR: {type(error).__name__}: {str(error)[:160]}", GIGAASR)
             raise LiveError("сессия GigaASR закрыта") from error
 
     async def _read_asr(self) -> None:
@@ -272,19 +275,19 @@ class SberVoiceLink:
                 if kind == "conversation.item.input_audio_transcription.completed":
                     self._transcripts.put_nowait(event.get("transcript") or "")
                 elif kind == "conversation.item.input_audio_transcription.failed":
-                    logger.warning("gigaasr transcription failed: %s", str(event.get("error"))[:200])
+                    record_failure(logger, "transcription failed", GIGAASR, "sber", str(event.get("error"))[:200])
                     self._transcripts.put_nowait("")
                 elif kind == "error":
                     error = event.get("error") or {}
                     if error.get("code") == "input_audio_buffer_commit_empty":
                         self._transcripts.put_nowait("")
                     else:
-                        logger.warning("gigaasr error: %s", str(error)[:200])
+                        record_failure(logger, "asr error", GIGAASR, "sber", str(error)[:200])
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001
             reason = f"GigaASR: {type(error).__name__}: {str(error)[:160]}"
-        self._fail(reason)
+        self._fail(reason, GIGAASR)
 
     # ─── ответ ────────────────────────────────────────────────────────────────
 
@@ -292,7 +295,7 @@ class SberVoiceLink:
         try:
             heard = await asyncio.wait_for(self._transcripts.get(), TRANSCRIPT_TIMEOUT_SECONDS)
         except TimeoutError:
-            self._fail("GigaASR не прислал расшифровку")
+            self._fail("GigaASR не прислал расшифровку: таймаут", GIGAASR)
             return
         model_usage.record(ASR_MODEL, "live", "input", "audio", "seconds", seconds)
         heard = heard.strip()
@@ -324,7 +327,7 @@ class SberVoiceLink:
             raise
         except Exception as error:  # noqa: BLE001
             writer.cancel()
-            self._fail(f"{type(error).__name__}: {str(error)[:180]}")
+            self._fail(f"{type(error).__name__}: {str(error)[:180]}", SALUTESPEECH if isinstance(error, TtsError) else GIGACHAT)
             return
         finally:
             if said:
@@ -403,12 +406,14 @@ class SberVoiceLink:
 
     # ─── события и закрытие ───────────────────────────────────────────────────
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, component: str) -> None:
+        """Соединение пути Сбера закрыто: `component` — вендор, на котором оно оборвалось. Счётчик ошибок ведёт сессия по событию
+        `closed` (она знает, шёл ли ход), здесь — строка журнала с теми же полями."""
         if self.closed:
             return
         self.closed = True
-        logger.warning("sber voice link closed: %s", reason)
-        self._events.put_nowait(LiveEvent("closed", text=reason[:200]))
+        logger.warning("sber link closed %s", failure_fields(component, "sber", classify(reason)))
+        self._events.put_nowait(LiveEvent("closed", text=reason[:200], component=component))
 
     async def events(self) -> AsyncIterator[LiveEvent]:
         while True:
@@ -428,6 +433,7 @@ class SberVoiceLink:
 
 class SberVoiceConnector:
     name = f"sber-voice:{CHAT_MODEL}"
+    pipeline = "sber"
     model = CHAT_MODEL
     supports_sber_prompt = True
 
@@ -517,6 +523,9 @@ class SberVoiceConnector:
                 await asr.close()
             if not isinstance(speaker, BaseException):
                 await speaker.aclose()
+            for vendor, outcome in ((GIGAASR, asr), (SALUTESPEECH, speaker)):
+                if isinstance(outcome, Exception):
+                    record_failure(logger, "sber link not opened", vendor, "sber", outcome)
             error = asr if isinstance(asr, BaseException) else speaker
             if not isinstance(error, Exception):
                 raise error  # отмена
@@ -591,7 +600,7 @@ class GigaChatMoodClassifier:
                     )
                     return parse_mood(_json_object(data["choices"][0]["message"]["content"]))
                 except Exception as error:  # noqa: BLE001
-                    logger.warning("классификатор тона GigaChat (попытка %d): %s: %s", attempt, type(error).__name__, str(error)[:120])
+                    record_failure(logger, f"mood classifier attempt={attempt}", GIGACHAT, "sber", error)
             trace.update(level="WARNING", status="классификатор не ответил")
             return None
         finally:
@@ -641,9 +650,11 @@ class FallbackTts:
     """Фраза голосом основного провайдера, а если он не дал ни кусочка звука, — запасного: у пути Сбера это Gemini Live, у пути
     Gemini Live — SaluteSpeech."""
 
-    def __init__(self, primary: TextToSpeech, fallback: TextToSpeech) -> None:
+    def __init__(self, primary: TextToSpeech, fallback: TextToSpeech, primary_pipeline: str = "unknown", fallback_pipeline: str = "unknown") -> None:
         self._primary = primary
         self._fallback = fallback
+        self._primary_pipeline = primary_pipeline
+        self._fallback_pipeline = fallback_pipeline
         self.name = f"{primary.name}>{fallback.name}"
 
     async def stream(self, text: str, voice: Voice) -> AsyncIterator[bytes]:
@@ -656,7 +667,7 @@ class FallbackTts:
         except Exception as error:
             if seen:
                 raise
-            logger.warning("основная озвучка не ответила, фраза идёт голосом %s: %s", self._fallback.name, error)
+            self._on_primary_failed(error)
         async for piece in pcm_stream(self._fallback, text, voice):
             yield piece
 
@@ -664,8 +675,13 @@ class FallbackTts:
         try:
             return await self._primary.synthesize(text, voice)
         except Exception as error:  # noqa: BLE001
-            logger.warning("основная озвучка не ответила, фраза идёт голосом %s: %s", self._fallback.name, error)
+            self._on_primary_failed(error)
             return await self._fallback.synthesize(text, voice)
+
+    def _on_primary_failed(self, error: Exception) -> None:
+        vendor = SALUTESPEECH if self._primary_pipeline == "sber" else GEMINI_TTS
+        reason = record_failure(logger, f"tts primary failed fallback={self._fallback.name}", vendor, self._primary_pipeline, error)
+        PIPELINE_FALLBACKS_TOTAL.labels(self._primary_pipeline, self._fallback_pipeline, "tts", reason).inc()
 
     async def aclose(self) -> None:
         await self._primary.aclose()  # запасную закрывает её владелец
@@ -695,6 +711,8 @@ class FallbackConnector:
         self._primary = primary
         self._fallback = fallback
         self._skip_primary = skip_primary
+        self._primary_pipeline = getattr(primary, "pipeline", "unknown")
+        self._fallback_pipeline = getattr(fallback, "pipeline", "unknown")
         self._on_primary_error = on_primary_error
         self.name = f"{primary.name}>{fallback.name}"
         # Расход пишется по модели соединения (`LiveLink.model`); у соединения без неё — по модели Gemini Live: у ссылки пути
@@ -715,11 +733,18 @@ class FallbackConnector:
 
         if self._skip_primary is not None and self._skip_primary():
             logger.info("голосовой путь %s на паузе, разговор идёт на %s", self._primary.name, self._fallback.name)
+            PIPELINE_FALLBACKS_TOTAL.labels(self._primary_pipeline, self._fallback_pipeline, "connect", "quota").inc()
             return await open_connector(self._fallback)
         try:
             return await open_connector(self._primary)
         except LiveError as error:
-            logger.warning("голосовой путь %s не открылся, разговор идёт на %s: %s", self._primary.name, self._fallback.name, error)
+            logger.warning(
+                "voice pipeline fallback from=%s to=%s %s",
+                self._primary_pipeline,
+                self._fallback_pipeline,
+                failure_fields("-", self._primary_pipeline, classify(error)),
+            )
+            PIPELINE_FALLBACKS_TOTAL.labels(self._primary_pipeline, self._fallback_pipeline, "connect", classify(error)).inc()
             if self._on_primary_error is not None:
                 self._on_primary_error(error)
             return await open_connector(self._fallback)
