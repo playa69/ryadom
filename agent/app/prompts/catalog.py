@@ -46,6 +46,9 @@ _DEFINITIONS = (
         "agent.mood.sber-json-suffix", ("agent", "mood", "sber", "classify")
     ),
     PromptDefinition(
+        "agent.safety.risk", ("agent", "safety", "gemini-live", "classify")
+    ),
+    PromptDefinition(
         "agent.recap.system", ("agent", "recap", "background", "dialog-recap")
     ),
     PromptDefinition(

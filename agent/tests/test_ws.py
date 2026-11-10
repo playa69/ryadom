@@ -329,10 +329,10 @@ class OverlapTts(FakeTts):
 
 
 def test_next_sentence_is_synthesized_while_the_previous_one_is_sent(user_id):
-    """Фиксированная фраза (кризисный ответ из трёх предложений): пока звучит предложение, следующее уже синтезируется (но не
+    """Фиксированная фраза (фраза шага 1 кризисной ветки из нескольких предложений): пока звучит предложение, следующее уже синтезируется (но не
     все сразу), а кадры идут по порядку."""
     sentences = split_sentences(CRISIS_REPLY)
-    assert len(sentences) == 3
+    assert len(sentences) >= 3
     tts = OverlapTts(delay=0.05)
     with make_client(tts) as client:
         dialog = start_dialog(client, user_id)
@@ -346,7 +346,7 @@ def test_next_sentence_is_synthesized_while_the_previous_one_is_sent(user_id):
     assert tts.calls == sentences
     assert tts.most_running == 2  # звучащее и следующее, не все три сразу
     sequences = [struct.unpack(">BI", frame[:5])[1] for frame in binary_frames(frames)]
-    assert sequences == list(range(len(sequences))) and len(sequences) == 9  # 3 предложения по 3 кадра
+    assert sequences == list(range(len(sequences))) and len(sequences) == 3 * len(sentences)  # по 3 кадра на предложение
     order = types(frames)
     assert order.count("tts_start") == 1 and order.index("tts_start") < order.index("tts_end")
 

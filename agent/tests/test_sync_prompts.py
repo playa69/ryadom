@@ -63,14 +63,14 @@ def test_seed_must_be_complete_and_outside_repository(tmp_path: Path) -> None:
 
 
 def test_empty_project_creates_exactly_catalog_once() -> None:
-    """Первичная загрузка создаёт 15 production-версий, повторная ничего не меняет."""
+    """Первичная загрузка создаёт 16 production-версий, повторная ничего не меняет."""
     client = SyncClient()
-    assert len(sync_prompts(client, seed())) == 15
-    assert len(client.created) == 15
+    assert len(sync_prompts(client, seed())) == 16
+    assert len(client.created) == 16
     assert all(call["labels"] == ["production"] for call in client.created)
     assert all(call["tags"] for call in client.created)
     assert sync_prompts(client, seed()) == [f"same {name}" for name in PROMPT_CATALOG]
-    assert len(client.created) == 15
+    assert len(client.created) == 16
 
 
 def test_administrative_change_is_never_overwritten() -> None:

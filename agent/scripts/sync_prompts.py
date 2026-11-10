@@ -26,7 +26,7 @@ def load_seed(path: Path) -> dict[str, str]:
     except (OSError, json.JSONDecodeError) as error:
         raise SeedError(f"seed не прочитан: {type(error).__name__}") from None
     if not isinstance(data, dict) or set(data) != set(PROMPT_CATALOG):
-        raise SeedError("seed должен содержать ровно 15 имён из каталога")
+        raise SeedError("seed должен содержать ровно 16 имён из каталога")
     if any(not isinstance(text, str) or not text.strip() for text in data.values()):
         raise SeedError("все тексты seed должны быть непустыми строками")
     return data

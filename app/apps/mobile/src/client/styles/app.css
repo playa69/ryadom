@@ -776,6 +776,19 @@ input:-webkit-autofill:focus {
   --orb-ring: rgb(110 220 150);
 }
 
+/* Crisis branch (openspec/changes/extend-crisis-branch): steady light, no pulsing and no swelling with the voice. */
+.rd-orb[data-calm] .rd-orb-swell {
+  scale: 1;
+  rotate: 0deg;
+}
+
+.rd-orb[data-calm] .rd-breathing::before,
+.rd-orb[data-calm] .rd-breathing::after,
+.rd-orb[data-calm] .rd-breathing-core {
+  scale: 1;
+  opacity: 0.85;
+}
+
 /* ── Home ────────────────────────────────────────────────────────────────── */
 
 .rd-home {
@@ -1461,6 +1474,69 @@ input:-webkit-autofill:focus {
   font-size: 15px;
   font-weight: 700;
   color: var(--ryadom-sos);
+}
+
+/* Crisis branch (openspec/changes/extend-crisis-branch): the call buttons, the safety answers, the banner. */
+.rd-call-button {
+  display: flex;
+  gap: var(--ryadom-s-2);
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: var(--ryadom-s-3) var(--ryadom-s-4);
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ryadom-sos);
+  text-align: center;
+  text-decoration: none;
+}
+
+.rd-call-button--outline {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.rd-call-button--big {
+  min-height: 96px;
+  font-size: 48px;
+}
+
+.rd-safe-link {
+  min-height: 44px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ryadom-text-dim, var(--ryadom-text));
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.rd-safe-answers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--ryadom-s-2);
+  padding: var(--ryadom-s-2) var(--ryadom-s-4);
+}
+
+.rd-crisis-bar {
+  display: grid;
+  gap: var(--ryadom-s-2);
+  padding: var(--ryadom-s-2) var(--ryadom-s-4);
+}
+
+.rd-crisis-banner {
+  min-height: 44px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  font: inherit;
+  font-weight: 600;
+  color: var(--ryadom-text);
+  cursor: pointer;
 }
 
 /* ── Journal and cards ───────────────────────────────────────────────────── */
