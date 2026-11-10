@@ -600,6 +600,9 @@ def contract(frames: list[Frame], closed_ends: bool = True) -> list[str]:
         elif name == "safety":
             if "text" in body and not isinstance(body["text"], str):
                 bad.append(f"safety.text не строка (#{i})")
+        elif name == "safety_state":
+            if not isinstance(body.get("step"), str):
+                bad.append(f"safety_state без step (#{i})")
         elif name == "error":
             if not isinstance(body.get("code"), str):
                 bad.append(f"error без code (#{i})")
@@ -837,8 +840,9 @@ def test_typed_crisis() -> None:
     assert run.bodies("safety")[0]["text"] == CRISIS_SAFETY_TEXT and run.replies == [CRISIS_REPLY]
     assert run.history[1]["text"] == CRISIS_REPLY
     turns = run.rig.model_turns()
-    assert turns == 1, f"модель просили ответить на кризис (запросов {turns}, ждали один: барьер)"
-    assert [t for link in run.rig.connector.links for t in link.typed] == ["барьер"]  # кризисный текст в Gemini не уходил
+    # Барьер после кризиса — реплика шага 2: на неё отвечает скрипт («ты в безопасности?»), модель молчит.
+    assert turns == 0, f"модель просили ответить на кризис (запросов {turns}, ждали ноль)"
+    assert [t for link in run.rig.connector.links for t in link.typed] == []  # кризисный текст в Gemini не уходил
 
 
 def test_crisis_in_speech_replaces_the_model_answer() -> None:
@@ -1262,21 +1266,17 @@ def test_a_reply_without_sound_is_reported_like_a_failed_voice() -> None:
 
 
 def sc_crisis_then_followup(r: Rig, voice: bool) -> Run:
+    """Кризис, ответ «да» на вопрос о безопасности (оба раза говорит скрипт), и только третья реплика уходит модели."""
     dialog = r.start()
     with r.socket(dialog) as c:
         c.wait_greeting()
-        m = c.mark()
-        if voice:
-            c.speak(4)
-        else:
-            c.say("я больше не хочу жить", "c-1")
-        c.wait_reply(m)
-        m = c.mark()
-        if voice:
-            c.speak(4)
-        else:
-            c.say("не знаю, мне просто плохо", "c-2")
-        c.wait_reply(m)
+        for n, text in enumerate(("я больше не хочу жить", "да", "мне просто плохо"), 1):
+            m = c.mark()
+            if voice:
+                c.speak(4)
+            else:
+                c.say(text, f"c-{n}")
+            c.wait_reply(m)
         context = r.model_context()
         return r.done(c, dialog, barrier=False, context=context)
 
@@ -1286,20 +1286,20 @@ def test_the_model_knows_about_a_typed_crisis_in_the_next_answer() -> None:
     run = play(lambda r: sc_crisis_then_followup(r, voice=False), replies=["Я рядом. Расскажи, что случилось."])
     sound(run, closed_ends=True)
     assert "не хочу жить" in run.extra["context"], "модель не видела кризисной реплики человека"
-    assert "Я слышу, что тебе очень тяжело" in run.extra["context"], "модель не знает, что агент ответил кризисным текстом"
+    assert "Мне правда важно, что с тобой происходит" in run.extra["context"], "модель не знает, что агент ответил кризисным текстом"
 
 
 # P8 закрыт: новая сессия не помнит выброшенного ответа модели, в её истории то, что человек услышал на самом деле.
 def test_the_model_knows_what_the_agent_said_after_a_voice_crisis() -> None:
     run = play(
         lambda r: sc_crisis_then_followup(r, voice=True),
-        heard=["я больше не хочу жить", "не знаю, мне просто плохо"],
+        heard=["я больше не хочу жить", "да", "мне просто плохо"],
         replies=["МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ.", "Я рядом."],
     )
     sound(run, closed_ends=True)
     context = run.extra["context"]
     assert "не хочу жить" in context  # слова человека модель слышала сама
-    assert "Я слышу, что тебе очень тяжело" in context, "в контексте модели нет кризисного ответа агента"
+    assert "Мне правда важно, что с тобой происходит" in context, "в контексте модели нет кризисного ответа агента"
     assert "МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ" not in context, "в контексте модели лежит ответ, которого человек не слышал"
 
 
@@ -1578,7 +1578,328 @@ def test_a_crisis_transcription_that_arrives_a_moment_after_the_first_sound_is_s
 # ─── Настоящая обвязка live: приветствие и кризис через GeminiLiveTts + CachedTts ─────────────────────────────────
 
 
-def wait_warm(r: Rig, items: int = 12) -> None:
+def wait_warm(r: Rig, items: int = 60) -> None:
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and len(r.client.app.state.tts._items) < items:
+        time.sleep(0.02)
+
+
+def sc_real_wiring(r: Rig) -> Run:
+    wait_warm(r)
+    opened = len(r.connector.open_calls)
+    dialog = r.start()
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        m = c.mark()
+        c.say("я больше не хочу жить", "c-1")
+        c.wait_reply(m)
+        return r.done(c, dialog, opened=len(r.connector.open_calls) - opened)
+
+
+def test_greeting_and_crisis_reply_through_the_real_live_voice_are_served_from_the_cache() -> None:
+    run = play(sc_real_wiring, real_tts=True)
+    sound(run)
+    assert run.text == ["ready", "ack", "safety", *ANSWER_TEXT]
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
+    # на диалог открыто ровно одно новое соединение Gemini (для самих реплик): фразы взяты из прогретой памяти
+    assert run.extra["opened"] == 1, f"приветствие или кризисный ответ открыли лишние соединения Gemini: {run.extra['opened']}"
+def test_the_model_knows_about_a_typed_crisis_in_the_next_answer() -> None:
+    run = play(lambda r: sc_crisis_then_followup(r, voice=False), replies=["Я рядом. Расскажи, что случилось."])
+    sound(run, closed_ends=True)
+    assert "не хочу жить" in run.extra["context"], "модель не видела кризисной реплики человека"
+    assert "Мне правда важно, что с тобой происходит" in run.extra["context"], "модель не знает, что агент ответил кризисным текстом"
+
+
+# P8 закрыт: новая сессия не помнит выброшенного ответа модели, в её истории то, что человек услышал на самом деле.
+def test_the_model_knows_what_the_agent_said_after_a_voice_crisis() -> None:
+    run = play(
+        lambda r: sc_crisis_then_followup(r, voice=True),
+        heard=["я больше не хочу жить", "да", "мне просто плохо"],
+        replies=["МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ.", "Я рядом."],
+    )
+    sound(run, closed_ends=True)
+    context = run.extra["context"]
+    assert "не хочу жить" in context  # слова человека модель слышала сама
+    assert "Мне правда важно, что с тобой происходит" in context, "в контексте модели нет кризисного ответа агента"
+    assert "МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ" not in context, "в контексте модели лежит ответ, которого человек не слышал"
+
+
+# ─── Разбиение расшифровки ответа на куски ────────────────────────────────────────────────────────────────────────
+
+
+def chunked_plan(chunker: Callable[[str], list[str]]) -> Plan:
+    def plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
+        events: list[LiveEvent | float] = [LiveEvent("input_text", text=heard)] if heard else []
+        events += [LiveEvent("output_text", text=piece) for piece in chunker(reply)]
+        events += [LiveEvent("audio", data=FAKE_PCM), LiveEvent("generation_complete")]
+        return events
+
+    return plan
+
+
+def _space_then_word(text: str) -> list[str]:
+    return [(" " if n else "") + word for n, word in enumerate(text.split(" "))]
+
+
+def _spaces_alone(text: str) -> list[str]:
+    return [piece for word in text.split(" ") for piece in (word, " ")][:-1]
+
+
+def _newline_chunk(text: str) -> list[str]:
+    first, *rest = text.split(" ")
+    return [first, "\n", *_space_then_word(" ".join(rest))]
+
+
+CHUNKINGS: dict[str, Callable[[str], list[str]]] = {
+    "word-then-space": re_split,
+    "space-then-word": _space_then_word,
+    "per-char": list,
+    "spaces-alone": _spaces_alone,
+    "newline-chunk": _newline_chunk,
+}
+
+
+@pytest.mark.parametrize("chunking", list(CHUNKINGS))
+def test_deltas_add_up_to_the_final_text_whatever_the_chunking(chunking: str) -> None:
+    """Gemini режет расшифровку как угодно: сумма дельт всё равно равна assistant_end.text, пробелы не теряются и не двоятся."""
+    run = play(sc_text, plan=chunked_plan(CHUNKINGS[chunking]))
+    sound(run)
+    # перенос строки внутри куска сохраняется как есть (клиенту это один абзац текста), остальное совпадает дословно
+    expected = REPLY.replace("Понимаю, ", "Понимаю,\n", 1) if chunking == "newline-chunk" else REPLY
+    assert run.replies == [expected], f"{chunking}: {run.replies!r}"
+    assert run.history[1]["text"] == expected  # в истории ровно то, что показано
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
+
+
+# ─── Обрыв реплики, завершение посреди ответа, голос при старте ───────────────────────────────────────────────────
+
+
+def sc_dropped_turn(r: Rig) -> Run:
+    dialog = r.start()
+    with r.socket(dialog) as first:
+        first.wait_greeting()
+        first.send(type="audio_start")
+        for n in range(5):
+            first.ws.send_bytes(audio_in_frame(n, loud=True))
+        # экран закрыт: сокет рвётся без audio_end
+    after_drop = r.history(dialog)
+    deadline = time.monotonic() + 2
+    while not all(link.closed for link in r.connector.links) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    leaked = [link for link in r.connector.links if not link.closed]
+    with r.socket(dialog) as c:
+        c.wait_type("ready", 0)
+        m = c.mark()
+        c.say("я тут", "c-1")
+        c.wait_reply(m)
+        return r.done(c, dialog, after_drop=after_drop, leaked=len(leaked))
+
+
+def test_a_voice_turn_without_audio_end_is_dropped_and_leaves_nothing_open() -> None:
+    run = play(sc_dropped_turn)
+    sound(run)
+    assert run.extra["after_drop"] == [], "недоговорённая реплика попала в историю"
+    assert run.roles()[:2] == ["user", "assistant"] and run.history[0]["text"] == "я тут"
+    assert run.extra["leaked"] == 0, "после обрыва остались открытые соединения Gemini"
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
+
+
+def sc_drop_midreply(r: Rig) -> Run:
+    dialog = r.start()
+    with r.socket(dialog) as first:
+        first.wait_greeting()
+        m = first.mark()
+        first.say("Мне тревожно", "c-1")
+        first.wait_type("assistant_delta", m)
+        # сокет рвётся посреди ответа
+    after_drop = r.history(dialog)
+    with r.socket(dialog) as c:
+        c.wait_type("ready", 0)
+        m = c.mark()
+        c.say("я тут", "c-2")
+        c.wait_reply(m)
+        return r.done(c, dialog, after_drop=after_drop)
+
+
+def test_a_socket_dropped_mid_reply_leaves_the_shown_part_in_the_history() -> None:
+    """specs/agent-api «Обрыв посреди ответа»: клиент перечитывает историю и находит там то, что успело показаться."""
+    full = "Первое предложение ответа. Второе предложение ответа. Третье предложение ответа."
+    run = play(sc_drop_midreply, replies=[full, "Я рядом."], piece_delay=0.08)
+    sound(run)
+    dropped = run.extra["after_drop"]
+    assert [m["role"] for m in dropped] == ["user", "assistant"], dropped
+    assert dropped[1]["text"] and full.startswith(dropped[1]["text"]), f"{dropped[1]['text']!r}"
+    assert run.replies == ["Я рядом."]  # после обрыва агент ничего не досылает на новый сокет
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
+
+
+def sc_end_midreply(r: Rig) -> Run:
+    dialog = r.start()
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        m = c.mark()
+        c.say("поговорим", "c-1")
+        c.send(type="end")
+        c.wait("ended и закрытие", lambda fs: has(fs, "ended") and fs[-1][0] == "close", m)
+        return r.done(c, dialog, barrier=False)
+
+
+def test_end_during_a_reply_closes_cleanly() -> None:
+    run = play(sc_end_midreply)
+    sound(run, closed_ends=False)
+    assert run.text[-2:] == ["ended", "close:1000"] and run.text.count("ended") == 1
+
+
+def sc_voice_at_start(r: Rig) -> Run:
+    dialog = r.start(voice="female")
+    assert dialog["voice"] == "female"
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        m = c.mark()
+        c.say("Привет", "c-1")
+        c.wait_reply(m)
+        voices = set(r.tts.voices) | {link.voice for link in r.connector.links}
+        return r.done(c, dialog, voices=voices)
+
+
+def test_voice_chosen_at_start_is_used_for_the_greeting_and_the_reply() -> None:
+    run = play(sc_voice_at_start)
+    sound(run)
+    assert run.extra["voices"] == {"female"}
+    assert run.voice == GREETING_VOICE + REPLY_VOICE
+
+
+# ─── Тишина перед речью, второй сокет, молчащая модель, ответ без текста ───────────────────────────────────────────
+
+
+def sc_leading_silence(r: Rig) -> Run:
+    dialog = r.start()
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        m = c.mark()
+        c.send(type="audio_start")
+        for n in range(8):  # секунда тишины до речи
+            c.ws.send_bytes(audio_in_frame(n, loud=False))
+        for n in range(8, 12):
+            c.ws.send_bytes(audio_in_frame(n, loud=True))
+        for n in range(12, 15):
+            c.ws.send_bytes(audio_in_frame(n, loud=False))
+        c.send(type="audio_end")
+        c.wait_type("transcript", m)
+        c.wait_reply(m)
+        return r.done(c, dialog, audio=r.audio_bytes_to_model())
+
+
+def test_silence_before_speech_does_not_change_what_the_person_sees() -> None:
+    run = play(sc_leading_silence)
+    sound(run)
+    assert run.text == ["ready", "transcript:final", *ANSWER_TEXT]
+    assert run.bodies("transcript")[0]["text"] == "мне сегодня тяжело"
+    frame = 3200
+    # тишину перед речью Gemini не получает, кроме запаса в 500 мс; хвост после речи уходит как есть
+    assert run.extra["audio"] == PRE_ROLL_BYTES + (4 + 3) * frame
+
+
+def sc_second_socket(r: Rig) -> Run:
+    dialog = r.start()
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        opened = len(r.connector.open_calls)
+        status = None
+        try:
+            with r.client.websocket_connect(ws_url(r.user_id, dialog["dialogId"]), headers=AUTH):
+                pass
+        except WebSocketDenialResponse as denied:
+            status = denied.status_code
+        m = c.mark()
+        c.say("я тут", "c-1")
+        c.wait_reply(m)
+        return r.done(c, dialog, status=status, opened=len(r.connector.open_calls) - opened)
+
+
+def test_a_second_socket_is_refused_and_the_first_keeps_working() -> None:
+    run = play(sc_second_socket)
+    sound(run)
+    assert run.extra["status"] == 409
+    assert run.extra["opened"] == 0  # отказ не трогает Gemini: ни нового соединения, ни закрытия живого
+    assert run.text == ["ready", "ack", *ANSWER_TEXT]
+
+
+def hang_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
+    return []  # модель молчит: ни расшифровки, ни ответа, ни generation_complete
+
+
+def test_a_hung_model_gets_one_error_for_a_typed_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Модель зависла (ни одного события): по GEMINI_IDLE_TIMEOUT_SECONDS агент просит модель ответить ещё раз в свежей
+    сессии, та тоже висит — один error. Шаблона нет."""
+    monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)  # в бою 15 с
+    run = play(sc_text_down, plan=hang_plan)
+    sound(run)
+    assert run.text == ["ready", "ack", "error:VOICE_UNAVAILABLE"], run.text
+    assert len(run.rig.connector.links) == 2  # повторная просьба ушла в свежую сессию
+    assert run.replies == []
+
+
+def test_a_hung_model_does_not_leave_a_voice_turn_unreported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P15 закрыт: модель промолчала после голосовой реплики (ни расшифровки, ни ответа). Раньше через
+    GEMINI_IDLE_TIMEOUT_SECONDS приходил пустой transcript и больше ничего; теперь зависание — отказ: error VOICE_UNAVAILABLE.
+    Шаблона нет."""
+    monkeypatch.setattr(APP_CONFIG.gemini, "idle_timeout_seconds", 1)
+
+    def voice_down(r: Rig) -> Run:
+        dialog = r.start()
+        with r.socket(dialog) as c:
+            c.wait_greeting()
+            m = c.mark()
+            c.speak(4)
+            c.wait("error", lambda fs: has(fs, "error"), m)
+            return r.done(c, dialog, barrier=False)
+
+    run = play(voice_down, plan=hang_plan)
+    assert run.errors == ["VOICE_UNAVAILABLE"], run.text
+    assert run.replies == []
+
+
+def audio_only_plan(link: ScriptedLink, heard: str | None, reply: str) -> list[LiveEvent | float]:
+    events: list[LiveEvent | float] = [LiveEvent("input_text", text=heard)] if heard else []
+    return [*events, LiveEvent("audio", data=FAKE_PCM), LiveEvent("audio", data=FAKE_PCM), LiveEvent("generation_complete")]
+
+
+def sc_text_wait(r: Rig, wait: float) -> Run:
+    dialog = r.start()
+    with r.socket(dialog) as c:
+        c.wait_greeting()
+        m = c.mark()
+        c.say("Мне сегодня тревожно", "c-1")
+        c.wait_reply(m, timeout=wait)
+        return r.done(c, dialog, wait=wait)
+
+
+@known_gap(
+    "P16 Gemini прислал звук без расшифровки ответа: assistant_start уходит с первым звуком, а assistant_end не придёт "
+    "никогда (нет текста), клиент остаётся в состоянии streaming, ответа нет в истории (premise: у настоящего Gemini "
+    "расшифровка ответа бывает пустой)"
+)
+def test_a_reply_with_sound_but_no_transcription_is_closed() -> None:
+    run = play(lambda r: sc_text_wait(r, 2.0), plan=audio_only_plan)
+    problems = contract(run.conn.frames)
+    gap(not problems, f"контракт нарушен: {problems}; кадры: {run.conn.dump()}")
+
+
+def test_a_crisis_transcription_that_arrives_a_moment_after_the_first_sound_is_still_caught() -> None:
+    """Расшифровка приходит позже первого звука ответа, но в пределах GEMINI_TRANSCRIPT_WAIT_MS: ответ ждёт, кризис ловится."""
+    said = "я больше не хочу жить"
+    run = play(sc_voice, heard=[said], replies=["ОТВЕТ-МОДЕЛИ, который человек слышать не должен."], plan=late_transcript_plan(0.3))
+    sound(run)
+    assert run.text == ["ready", "transcript:final", "safety", *ANSWER_TEXT]
+    assert run.replies == [CRISIS_REPLY] and run.bodies("transcript")[0]["text"] == said
+    assert "ОТВЕТ-МОДЕЛИ" not in json.dumps([b for k, b in run.frames if k == "json"], ensure_ascii=False)
+
+
+# ─── Настоящая обвязка live: приветствие и кризис через GeminiLiveTts + CachedTts ─────────────────────────────────
+
+
+def wait_warm(r: Rig, items: int = 60) -> None:
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline and len(r.client.app.state.tts._items) < items:
         time.sleep(0.02)
