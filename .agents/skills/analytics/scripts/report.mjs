@@ -127,27 +127,14 @@ FROM (
   GROUP BY person_id
   HAVING t > 0)`,
 
+  // People denied the microphone, for the voice tile. It keeps the name and the rows of the former quality query
+  // (kind, people), so responses saved for that query still render with --data.
   quality: `
-SELECT multiIf(
-    event = 'component_called', concat('component:', coalesce(toString(properties.component), ''), ':', coalesce(toString(properties.outcome), '')),
-    event = 'dialog_interrupted', concat('interrupted:', coalesce(toString(properties.reason), '')),
-    event = 'voice_problem', concat('voice:', coalesce(toString(properties.reason), '')),
-    event) AS kind,
-  count() AS events, uniq(person_id) AS people
+SELECT concat('voice:', coalesce(toString(properties.reason), '')) AS kind, uniq(person_id) AS people
 FROM events
-WHERE {{people}} AND event IN ('component_called', 'dialog_interrupted', 'voice_problem', '$exception') AND ${WINDOW}
+WHERE {{people}} AND event = 'voice_problem' AND properties.reason = 'permission_denied' AND ${WINDOW}
 GROUP BY kind
-ORDER BY events DESC
-LIMIT 100`,
-
-  // Events without a person (a random id each): count events, never people.
-  crisis: `
-SELECT event, coalesce(toString(properties.level), '') AS level, count() AS events
-FROM events
-WHERE event IN ('safety_signal', 'sos_opened', 'hotline_called')
-  AND coalesce(properties.app_env, '') NOT IN ('local', 'staging', 'development') AND ${WINDOW}
-GROUP BY event, level
-LIMIT 20`,
+LIMIT 10`,
 
   // Everyone who first spoke since dialog_turn exists and at least a day before the end: what goes with coming back.
   retention: `
@@ -228,12 +215,11 @@ const sumRows = (rows) => {
 
 // Channels: first touch by UTM source and campaign.
 const channelOf = (source, campaign) => {
-  if (source === '?') return { key: '?', label: 'Канал неизвестен', kind: 'unknown', paid: false };
-  if (!source) return { key: '', label: 'Без метки', kind: 'row', paid: false };
+  if (source === '?') return { key: '?', label: 'Канал неизвестен', kind: 'unknown' };
+  if (!source) return { key: '', label: 'Без метки', kind: 'row' };
   const s = source.toLowerCase();
   const name = s === 'yandex' || s === 'ya' ? 'Яндекс Директ' : s === 'tgads' ? 'Telegram Ads' : source;
-  const paid = name === 'Яндекс Директ' || name === 'Telegram Ads';
-  return { key: `${name}|${campaign}`, label: campaign ? `${name} · ${campaign}` : name, kind: 'row', paid };
+  return { key: `${name}|${campaign}`, label: campaign ? `${name} · ${campaign}` : name, kind: 'row' };
 };
 const groups = new Map();
 for (const r of data.cohort) {
@@ -244,7 +230,7 @@ for (const r of data.cohort) {
 const channelRow = (g) => {
   const t = sumRows(g.rows);
   return {
-    label: g.label, kind: g.kind, paid: g.paid, visitors: t.visitors, product: t.product, account: t.account,
+    label: g.label, kind: g.kind, visitors: t.visitors, product: t.product, account: t.account,
     spoke: t.spoke, d3: t.d3, returned: t.returned, conv: share(t.spoke, t.visitors),
     turnsPerSpeaker: t.spoke ? t.turns / t.spoke : null,
   };
@@ -253,14 +239,14 @@ let known = [...groups.values()].filter((g) => g.kind !== 'unknown').sort((a, b)
 const MAX_CHANNELS = 8;
 if (known.length > MAX_CHANNELS) {
   const rest = known.slice(MAX_CHANNELS - 1);
-  known = [...known.slice(0, MAX_CHANNELS - 1), { label: 'Прочие', kind: 'row', paid: false, rows: rest.flatMap((g) => g.rows) }];
+  known = [...known.slice(0, MAX_CHANNELS - 1), { label: 'Прочие', kind: 'row', rows: rest.flatMap((g) => g.rows) }];
 }
 const unknown = [...groups.values()].filter((g) => g.kind === 'unknown');
 const cohortTotal = sumRows(data.cohort);
 const channels = [
   ...known.map(channelRow),
   ...unknown.map(channelRow),
-  { ...channelRow({ label: 'Всего', kind: 'total', paid: known.some((g) => g.paid), rows: data.cohort }) },
+  channelRow({ label: 'Всего', kind: 'total', rows: data.cohort }),
 ];
 
 // Funnel with the device split.
@@ -284,36 +270,9 @@ const yesterday = daily[daily.length - 1];
 
 const sp = data.speakers[0] ?? {};
 const speakers = num(sp.speakers);
-const quality = new Map(data.quality.map((r) => [r.kind, { events: num(r.events), people: num(r.people) }]));
-const q = (kind) => quality.get(kind) ?? { events: 0, people: 0 };
-const crisisCount = (event, level) =>
-  data.crisis.filter((r) => r.event === event && (level == null || r.level === level)).reduce((a, r) => a + num(r.events), 0);
-
-const liveErr = q('component:live:error');
-const liveCalls = liveErr.events + q('component:live:ok').events;
 const liveShare = share(num(sp.hit_live_error), speakers);
-const mic = q('voice:permission_denied');
-const unavailable = q('interrupted:agent_unavailable');
-const exceptions = q('$exception');
+const micDenied = num(data.quality.find((r) => r.kind === 'voice:permission_denied')?.people);
 const landingToProduct = share(cohortTotal.product, cohortTotal.landing);
-
-// Thresholds. Landing → product is provisional until there are a few weeks of paid traffic.
-const status = {
-  live: liveShare >= 10 ? 'crit' : liveShare >= 5 ? 'warn' : 'ok',
-  mic: share(mic.people, speakers) >= 10 ? 'warn' : 'ok',
-  unavailable: unavailable.people >= 3 ? 'warn' : 'ok',
-  exceptions: exceptions.people >= 10 ? 'warn' : 'ok',
-  landing: cohortTotal.landing >= 100 && landingToProduct < 20 ? 'warn' : 'ok',
-};
-
-const qualityRows = [
-  { label: 'Ошибки live', tip: 'component_called с component = live и outcome = error. Порог: больше 10 % говоривших поймали ошибку.', events: `${int(liveErr.events)} из ${int(liveCalls)}`, people: liveErr.people, status: status.live },
-  { label: 'Отказ в микрофоне', tip: 'voice_problem с reason = permission_denied: браузер или человек не дал доступ к микрофону. Порог: 10 % говоривших.', events: int(mic.events), people: mic.people, status: status.mic },
-  { label: 'Обрыв: агент недоступен', tip: 'dialog_interrupted с reason = agent_unavailable: сокет к агенту не открылся или оборвался. Порог: 3 человека.', events: int(unavailable.events), people: unavailable.people, status: status.unavailable },
-  { label: 'Исключения в клиенте', tip: 'Событие $exception из веба и приложений. Порог: 10 человек.', events: int(exceptions.events), people: exceptions.people, status: status.exceptions },
-  { label: 'Кризис · SOS · звонки', tip: 'safety_signal, sos_opened, hotline_called уходят без человека и со случайным id: людей по ним посчитать нельзя, только события.', events: `${crisisCount('safety_signal', 'crisis')} · ${crisisCount('sos_opened')} · ${crisisCount('hotline_called')}`, people: null, peopleNote: 'не считаются', status: null, source: '—' },
-  { label: 'Задержка первого звука, p50 / p90', events: null, people: null, status: null, source: 'Prometheus' },
-];
 
 // What goes with coming back.
 const ret = data.retention.map((r) => ({ ...r, people: num(r.people), returned: num(r.returned), memory: num(r.memory) === 1 || r.memory === true, wellbeing: num(r.wellbeing) === 1 || r.wellbeing === true }));
@@ -344,7 +303,7 @@ const medians = {
 
 const report = {
   period: { from: fromDate, to: lastDate, days, label: periodLabel, generatedAt: new Date().toISOString() },
-  sources: { posthog: true, metrika: false, adSpend: false, prometheus: false, database: false },
+  sources: { posthog: true, metrika: false, prometheus: false, database: false },
   kpi: {
     newSpeakers, newD3, newYesterday: yesterday.new,
     cohortVisitors: cohortTotal.visitors, cohortSpoke: cohortTotal.spoke, conversion: share(cohortTotal.spoke, cohortTotal.visitors),
@@ -354,32 +313,22 @@ const report = {
     speakers, liveErrorPeople: num(sp.hit_live_error), liveErrorShare: liveShare,
     usedVoice: num(sp.used_voice), voiceShare: share(num(sp.used_voice), speakers),
     turns: num(sp.turns), voiceTurns: num(sp.voice_turns), textTurnShare: share(num(sp.turns) - num(sp.voice_turns), num(sp.turns)),
-    micDeniedPeople: mic.people, landingToProduct,
+    micDeniedPeople: micDenied, landingToProduct,
   },
-  daily, channels, funnel, returnBase, returnRows, quality: qualityRows, status,
+  daily, channels, funnel, returnBase, returnRows,
   reconcileNote: 'Сверка с Метрикой и базой появится, когда у агента будет к ним доступ: сейчас отчёт собран только из PostHog.',
 };
 
 // ---------- summary (Markdown) ----------
-const mark = (s) => (s === 'crit' ? '🔴 ' : s === 'warn' ? '🟡 ' : '');
 const titled = (title, text) => `<span title="${title.replace(/"/g, '&quot;')}">${text}</span>`;
 const k = report.kpi;
 const dev = (label, v) => (v == null ? null : `${label} ${ru(v)}`);
 const medianNote = [dev('телефон', medians.mobile), dev('компьютер', medians.desktop)].filter(Boolean).join(', ') || '—';
 
-const alarms = [];
-if (status.live !== 'ok') alarms.push(`- ${mark(status.live)}**${status.live === 'crit' ? 'Критично' : 'Внимание'}.** Ошибка live у ${pct(liveShare)} говоривших (${int(k.liveErrorPeople)} из ${int(speakers)}) при пороге 10 %.`);
-if (status.landing !== 'ok') alarms.push(`- 🟡 **Внимание.** Переход лендинг → продукт ${pct(landingToProduct)} (${int(cohortTotal.product)} из ${int(cohortTotal.landing)}). Порог предварительный.`);
-if (status.mic !== 'ok') alarms.push(`- 🟡 **Внимание.** Отказ в микрофоне у ${people(mic.people)} (${pct(share(mic.people, speakers))} говоривших).`);
-if (status.unavailable !== 'ok') alarms.push(`- 🟡 **Внимание.** Агент недоступен: ${int(unavailable.events)} обрывов у ${people(unavailable.people)}.`);
-if (status.exceptions !== 'ok') alarms.push(`- 🟡 **Внимание.** Исключения в клиенте у ${people(exceptions.people)} (${int(exceptions.events)} событий).`);
-if (!alarms.length) alarms.push('- ✅ Пороги не превышены.');
-alarms.push('- ⚪ **Нет данных.** Метрика, расход рекламы, задержка первого звука, запас квоты Gemini, стоимость разговора.');
-
 const summary = `## Сводка Рядом · ${periodLabel}
 
 ${days} полных дней по Москве. Новые — люди и устройства, впервые появившиеся в эти дни. Фильтр настоящих людей из скилла \`analytics\`.
-Источники: PostHog ✅ · Метрика ❌ · расход рекламы ❌ · Prometheus ❌ · база ❌
+Источники: PostHog ✅ · Метрика ❌ · Prometheus ❌ · база ❌
 
 | Показатель | Значение | Контекст |
 |---|---:|---|
@@ -388,17 +337,12 @@ ${days} полных дней по Москве. Новые — люди и ус
 | ${titled('Людей с репликой за московские сутки, среднее за дни периода', 'DAU в среднем')} | **${ru1(dauAvg)}** | вчера ${int(yesterday.dau)}, пик ${int(peak.dau)} (${peak.day}); WAU ${int(k.wau)}, неделей раньше ${int(k.wauPrev)} |
 | ${titled('Медиана числа реплик в самом раннем разговоре новых заговоривших', 'Первый разговор, медиана')} | **${medians.all == null ? '—' : `${ru(medians.all)} реплик`}** | ${medianNote} |
 | ${titled('Новые заговорившие, у которых реплики минимум в двух разных днях по Москве', 'Вернулись в другой день')} | **${int(cohortTotal.returned)} из ${int(cohortTotal.spoke)}** | новые этих дней, число ещё вырастет |
-| ${titled('Доля говоривших в эти дни, у которых был component_called live с outcome = error. Порог 10 %', `${mark(status.live)}Поймали ошибку live`)} | **${pct(liveShare)}** | ${int(k.liveErrorPeople)} из ${int(speakers)} говоривших; порог 10 % |
-| ${titled('Хотя бы одна голосовая реплика (input = voice) среди говоривших в эти дни', 'Говорили голосом')} | **${pct(k.voiceShare)}** | ${int(k.usedVoice)} из ${int(speakers)}; отказ в микрофоне у ${people(mic.people)} |
-| ${titled('Расход кабинетов ÷ заговорившие. Нужен расход Директа и Telegram Ads', 'Цена заговорившего')} | нет данных | расход не подключён |
+| ${titled('Доля говоривших в эти дни, у которых был component_called live с outcome = error', 'Поймали ошибку live')} | **${pct(liveShare)}** | ${int(k.liveErrorPeople)} из ${int(speakers)} говоривших |
+| ${titled('Хотя бы одна голосовая реплика (input = voice) среди говоривших в эти дни', 'Говорили голосом')} | **${pct(k.voiceShare)}** | ${int(k.usedVoice)} из ${int(speakers)}; отказ в микрофоне у ${people(micDenied)} |
 
 ### Главное
 
 <!-- ГЛАВНОЕ -->
-
-### Тревоги
-
-${alarms.join('\n')}
 
 <details>
 <summary>Как считаются цифры</summary>

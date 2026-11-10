@@ -8,11 +8,11 @@
 /* Multica passes its theme tokens into an inline html block; the fallbacks cover a browser and the attachment viewer. */
 :root {
   --c-bg: #ffffff; --c-fg: #18201f; --c-mut: #5d6967; --c-bd: #dde3e2; --c-track: #eef2f1;
-  --c-1: #2a7f78; --c-2: #c27c0e; --c-ok: #067647; --c-warn: #a15c07; --c-bad: #b42318;
+  --c-1: #2a7f78; --c-2: #c27c0e; --c-bad: #b42318;
 }
 @media (prefers-color-scheme: dark) {
   :root { --c-bg: #151b1a; --c-fg: #e3ebea; --c-mut: #97a8a5; --c-bd: #2c3836; --c-track: #212b2a;
-    --c-1: #5cbdb3; --c-2: #e8a33a; --c-ok: #5fd39a; --c-warn: #f5b84f; --c-bad: #ff8a7a; }
+    --c-1: #5cbdb3; --c-2: #e8a33a; --c-bad: #ff8a7a; }
 }
 :root {
   --fg: var(--foreground, var(--c-fg));
@@ -21,8 +21,6 @@
   --track: var(--muted, var(--c-track));
   --s1: var(--chart-1, var(--c-1));
   --s2: var(--chart-2, var(--c-2));
-  --ok: var(--success, var(--c-ok));
-  --warn: var(--warning, var(--c-warn));
   --bad: var(--destructive, var(--c-bad));
 }
 * { box-sizing: border-box; }
@@ -41,7 +39,6 @@ th:first-child, td:first-child { text-align: left; white-space: normal; min-widt
 tbody tr:last-child td { border-bottom: 0; }
 tr.sum td { font-weight: 700; }
 tr.dim td { color: var(--mut); }
-.na { color: var(--mut); }
 .flag { font-size: 10.5px; color: var(--mut); border: 1px solid var(--bd); border-radius: 4px; padding: 0 4px; margin-left: 4px; white-space: nowrap; }
 .hl { font-weight: 700; color: var(--bad); }
 [data-tip] { cursor: help; text-decoration: underline dotted var(--mut); text-underline-offset: 3px; }
@@ -60,8 +57,6 @@ td.barcell { width: 38%; min-width: 120px; }
 #daily { max-width: 760px; }
 svg text { fill: var(--mut); font-size: 11px; font-family: inherit; }
 svg .val { fill: var(--fg); font-weight: 600; }
-.status { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; }
-.st-crit { color: var(--bad); } .st-warn { color: var(--warn); } .st-ok { color: var(--ok); }
 </style>
 </head>
 <body>
@@ -85,8 +80,6 @@ svg .val { fill: var(--fg); font-weight: 600; }
       <th data-tip="Реплики минимум в два разных дня по Москве. У новых этой недели число ещё вырастет.|Вернулись">Вернулись</th>
       <th data-tip="Заговорили ÷ Посетители.|Конверсия">Конверсия</th>
       <th data-tip="Все реплики (dialog_turn) людей канала до конца периода ÷ число заговоривших.|Реплик на человека">Реплик на чел.</th>
-      <th data-tip="Расход из кабинета Директа или Telegram Ads за те же даты. Пока не подключён.|Расход">Расход, ₽</th>
-      <th data-tip="Расход ÷ Заговорили. Появится вместе с расходом.|Цена заговорившего">₽ за заговорившего</th>
     </tr></thead>
     <tbody id="channels"></tbody>
   </table></div>
@@ -123,20 +116,7 @@ svg .val { fill: var(--fg); font-weight: 600; }
 </div>
 
 <div class="sec">
-  <div class="head"><h2>4. Качество и надёжность</h2><p class="note" id="quality-note"></p></div>
-  <div class="scroll"><table>
-    <thead><tr>
-      <th>Что</th>
-      <th data-tip="Число событий за период.|Событий">Событий</th>
-      <th data-tip="Сколько разных людей столкнулось хотя бы раз.|Людей">Людей</th>
-      <th data-tip="Критично — выше порога, Внимание — близко к порогу или порог предварительный. Пороги лежат в скрипте отчёта.|Статус">Статус</th>
-    </tr></thead>
-    <tbody id="quality"></tbody>
-  </table></div>
-</div>
-
-<div class="sec">
-  <div class="head"><h2>5. Сверка источников</h2><p class="note">расхождение больше 10 % — тревога</p></div>
+  <div class="head"><h2>4. Сверка источников</h2></div>
   <p class="note" id="reconcile"></p>
 </div>
 
@@ -182,8 +162,7 @@ const DATA = /*__DATA__*/null;
   document.getElementById('channels').innerHTML = DATA.channels.map((r) => {
     const cls = r.kind === 'total' ? 'sum' : r.kind === 'unknown' ? 'dim' : '';
     const conv = r.kind === 'unknown' ? '—' : pct(r.conv) + flag(r.kind === 'row' && r.spoke < 20);
-    const money = r.paid ? '<td class="na">нет</td><td class="na">нет</td>' : '<td class="na">—</td><td class="na">—</td>';
-    return `<tr class="${cls}"><td>${esc(r.label)}</td><td>${nf(r.visitors)}</td><td>${nf(r.product)}</td><td>${nf(r.account)}</td><td>${nf(r.spoke)}</td><td>${nf(r.d3)}</td><td>${nf(r.returned)}</td><td>${conv}</td><td>${r.turnsPerSpeaker == null ? '—' : r.turnsPerSpeaker.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>${money}</tr>`;
+    return `<tr class="${cls}"><td>${esc(r.label)}</td><td>${nf(r.visitors)}</td><td>${nf(r.product)}</td><td>${nf(r.account)}</td><td>${nf(r.spoke)}</td><td>${nf(r.d3)}</td><td>${nf(r.returned)}</td><td>${conv}</td><td>${r.turnsPerSpeaker == null ? '—' : r.turnsPerSpeaker.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td></tr>`;
   }).join('');
 
   // Funnel.
@@ -209,15 +188,6 @@ const DATA = /*__DATA__*/null;
     const p = r.people ? r.returned / r.people * 100 : 0;
     return `<tr><td>${esc(r.label)}${flag(r.people < 20)}</td><td>${nf(r.people)}</td><td>${nf(r.returned)}</td><td>${r.people ? pct(p) : '—'}</td>` +
       `<td class="barcell"><div class="bar"${tipAttr(`вернулись ${r.returned} из ${r.people} (${pct(p)}); в среднем ${pct(base)}`, r.label)}><span style="width:${p / scale * 100}%"></span><i style="left:${base / scale * 100}%"></i></div></td></tr>`;
-  }).join('');
-
-  // Quality.
-  document.getElementById('quality-note').textContent = DATA.period.label;
-  const statusText = { crit: 'Критично', warn: 'Внимание', ok: 'Норма' };
-  document.getElementById('quality').innerHTML = DATA.quality.map((r) => {
-    const label = r.tip ? `<span${tipAttr(r.tip, r.label)}>${esc(r.label)}</span>` : esc(r.label);
-    const status = r.status ? `<span class="status st-${r.status}">${statusText[r.status]}</span>` : `<span class="na">${esc(r.source || '—')}</span>`;
-    return `<tr><td>${label}</td><td${r.events == null ? ' class="na"' : ''}>${r.events == null ? 'нет' : esc(r.events)}</td><td${r.people == null ? ' class="na"' : ''}>${r.people == null ? esc(r.peopleNote || '—') : nf(r.people)}</td><td>${status}</td></tr>`;
   }).join('');
 
   document.getElementById('reconcile').textContent = DATA.reconcileNote;
