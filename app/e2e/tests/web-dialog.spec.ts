@@ -122,7 +122,10 @@ test('разговор в вебе: приветствие, ответ, криз
   const dock = (await input.boundingBox())!
   expect(dock.y + dock.height, 'поле ввода внизу окна').toBeGreaterThanOrEqual(viewport.height - 80)
   expect(dock.y + dock.height, 'поле ввода в окне').toBeLessThanOrEqual(viewport.height)
-  expect((await page.getByTestId('dialog-feed').boundingBox())!.width, 'колонка чтения не шире 768px').toBeLessThanOrEqual(770)
+  expect(
+    (await page.getByTestId('dialog-feed').boundingBox())!.width,
+    'колонка чтения не шире 768px',
+  ).toBeLessThanOrEqual(770)
   await shot(page, 'web-dialog-start')
 
   await input.fill(FIRST_MESSAGE)
@@ -205,7 +208,10 @@ test('разговор в вебе: приветствие, ответ, криз
   // The header holds the h1: the conversation's title, with the way back beside it.
   await expect(pageTitle(page)).toHaveText(TAKEAWAY, { timeout: 20_000 })
   await expect(page.getByTestId('journal-summary')).toBeVisible({ timeout: 20_000 })
-  const said = page.getByTestId('journal-messages').getByTestId('dialog-message').filter({ hasText: FIRST_MESSAGE })
+  const said = page
+    .getByTestId('journal-messages')
+    .getByTestId('dialog-message')
+    .filter({ hasText: FIRST_MESSAGE })
   await expect(said).toHaveCount(1)
   await expect(said).toHaveAttribute('data-role', 'user')
   await expectSingleSos(page)
@@ -424,7 +430,6 @@ test('агент без озвучки: шар в вебе читает прив
   }
 })
 
-
 /**
  * The red and yellow levels of the crisis branch, driven by the mock's script («кризис-красный»,
  * «кризис-жёлтый»). Specs: openspec/changes/extend-crisis-branch, «Скрипт красного уровня» and «Жёлтый уровень».
@@ -447,17 +452,27 @@ async function openTextDialog(page: Page, name: string) {
   return input
 }
 
-test('красный уровень в вебе: лист, вопрос о безопасности, 112, возврат из звонка, закреплённая кнопка', async ({ page, shot }) => {
+test('красный уровень в вебе: лист, вопрос о безопасности, 112, возврат из звонка, закреплённая кнопка', async ({
+  page,
+  shot,
+}) => {
   test.setTimeout(150_000)
   const input = await openTextDialog(page, 'web-crisis-red')
   // A tel: link has nowhere to go in a headless browser; the app still sees the tap.
-  await page.evaluate(() => document.addEventListener('click', (event) => (event.target as Element).closest('a[href^="tel:"]') && event.preventDefault()))
+  await page.evaluate(() =>
+    document.addEventListener(
+      'click',
+      (event) => (event.target as Element).closest('a[href^="tel:"]') && event.preventDefault(),
+    ),
+  )
 
   await input.fill('кризис-красный')
   await input.press('Enter')
   // Step 1: the sheet of the script, with the way out always in view.
   const sheet = modal(page)
-  await expect(sheet.getByRole('heading', { name: 'Сейчас важно поговорить с живым человеком' })).toBeVisible({ timeout: 30_000 })
+  await expect(sheet.getByRole('heading', { name: 'Сейчас важно поговорить с живым человеком' })).toBeVisible(
+    { timeout: 30_000 },
+  )
   await expect(sheet.getByTestId('sos-call-now')).toHaveAttribute('href', 'tel:84959895050')
   await expect(sheet.getByTestId('sos-call-now')).toContainText('Позвонить сейчас')
   await expect(sheet.getByTestId('sos-call-112')).toContainText('112 — если есть опасность для жизни')
@@ -485,7 +500,9 @@ test('красный уровень в вебе: лист, вопрос о бе�
     window.dispatchEvent(new Event('focus'))
   })
   await modalButton(page, 'Закрыть').click()
-  await expect(messages(page, 'assistant').last()).toContainText('Получилось поговорить?', { timeout: 30_000 })
+  await expect(messages(page, 'assistant').last()).toContainText('Получилось поговорить?', {
+    timeout: 30_000,
+  })
 
   // Step 2b: the link on step 1 is the answer «Да»; the sheet closes and the call button stays above the conversation.
   await input.fill('кризис-красный')
@@ -497,6 +514,9 @@ test('красный уровень в вебе: лист, вопрос о бе�
   const pinned = page.getByTestId('crisis-pinned-call')
   await expect(pinned).toBeVisible({ timeout: 30_000 })
   await expect(pinned).toHaveAttribute('href', 'tel:84959895050')
+  // Pinned means it stays on screen when the conversation is long and the page is scrolled to the end.
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+  await expect(pinned).toBeInViewport()
   await shot(page, 'web-crisis-pinned')
 
   // The sphere is calm for the whole session: steady light, no pulsing.
@@ -505,7 +525,10 @@ test('красный уровень в вебе: лист, вопрос о бе�
   await expect(pinned).toBeVisible()
 })
 
-test('жёлтый уровень в вебе: вопрос без листа, ответ «Нет» даёт плашку «Нужна помощь?»', async ({ page, shot }) => {
+test('жёлтый уровень в вебе: вопрос без листа, ответ «Нет» даёт плашку «Нужна помощь?»', async ({
+  page,
+  shot,
+}) => {
   test.setTimeout(150_000)
   const input = await openTextDialog(page, 'web-crisis-yellow')
 

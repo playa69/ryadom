@@ -140,7 +140,11 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // The input box sits where the default toast stack would, so toasts go under the header.
   useNoticePlacement('top')
   const { openSos, applySheet } = useSos()
-  const { ui: crisis, sheetOpen } = useSyncExternalStore(crisisStore.subscribe, crisisStore.getSnapshot, crisisStore.getSnapshot)
+  const { ui: crisis, sheetOpen } = useSyncExternalStore(
+    crisisStore.subscribe,
+    crisisStore.getSnapshot,
+    crisisStore.getSnapshot,
+  )
   const crisisRef = useRef(crisis)
   crisisRef.current = crisis
 
@@ -149,7 +153,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // history, a link) is a return to a conversation that already exists.
   // A conversation held unsaved reports nothing, not even that its screen opened.
   useOnceFor(dialogId, () => {
-    if (!isUnsaved(start) && !wasUnsaved(dialogId)) track(AnalyticsEvent.DialogScreenOpened, { resumed: start?.resumed ?? true })
+    if (!isUnsaved(start) && !wasUnsaved(dialogId))
+      track(AnalyticsEvent.DialogScreenOpened, { resumed: start?.resumed ?? true })
   })
   const [messages, setMessages] = useState<DialogMessageView[]>(() => greetingMessages(start?.greeting))
   const [state, setState] = useState<DialogSocketState>('connecting')
@@ -199,7 +204,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const recapState = useSyncExternalStore(recap.subscribe, recap.getSnapshot, () => null)
   useEffect(() => () => recap.reset(), [recap])
   // Only the block counts as shown; the line "Ещё записываю" (`late`) is not the block, and nothing about it is reported.
-  useOnceFor(recapState?.kind === 'notes' ? recapState.dialogId : null, () => track(AnalyticsEvent.MemoryRecapShown))
+  useOnceFor(recapState?.kind === 'notes' ? recapState.dialogId : null, () =>
+    track(AnalyticsEvent.MemoryRecapShown),
+  )
   /** What `finish` needs to know about memory: it is memoized, and these change while the conversation goes on. */
   const memoryNow = useRef({ mode: memoryMode, enabled: user?.memoryEnabled })
   memoryNow.current = { mode: memoryMode, enabled: user?.memoryEnabled }
@@ -380,7 +387,14 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       // After a crisis there is no recap card: the summary line and the memory block stay out of that goodbye.
       const afterCrisis = crisisRef.current.active
       // The window does not wait for the notes: the block comes up in it, if there are any, within half a minute.
-      if (!afterCrisis && shouldWatchMemoryChanges({ memoryMode: memoryNow.current.mode, memoryEnabled: memoryNow.current.enabled, unsaved: unsavedRef.current })) {
+      if (
+        !afterCrisis &&
+        shouldWatchMemoryChanges({
+          memoryMode: memoryNow.current.mode,
+          memoryEnabled: memoryNow.current.enabled,
+          unsaved: unsavedRef.current,
+        })
+      ) {
         void recap.watch(dialogId, (id) => client.getMemoryChanges(id))
       }
       setAlert({
@@ -388,13 +402,15 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         text: unsavedRef.current
           ? UNSAVED_DONE_TEXT
           : (summary?.title && !afterCrisis
-            ? `Забираешь с собой: ${summary.title}`
-            : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
-          (afterCrisis ? '' : summary?.recapStatus === 'pending'
-            ? ' Итог разговора появится в журнале через минуту.'
-            : summary?.recapStatus === 'ready'
-              ? ' Итог разговора сохранён в журнале.'
-              : ''),
+              ? `Забираешь с собой: ${summary.title}`
+              : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
+            (afterCrisis
+              ? ''
+              : summary?.recapStatus === 'pending'
+                ? ' Итог разговора появится в журнале через минуту.'
+                : summary?.recapStatus === 'ready'
+                  ? ' Итог разговора сохранён в журнале.'
+                  : ''),
         leaves: true,
       })
     },
@@ -846,13 +862,19 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   async function draftRecap(): Promise<{ recap: string } | { error: string }> {
     try {
       const result = await client.draftDialogRecap(dialogId)
-      return result.ok ? { recap: result.data.recap } : { error: RECAP_ERROR_TEXT[result.code] ?? RECAP_ERROR_TEXT.RECAP_UNAVAILABLE }
+      return result.ok
+        ? { recap: result.data.recap }
+        : { error: RECAP_ERROR_TEXT[result.code] ?? RECAP_ERROR_TEXT.RECAP_UNAVAILABLE }
     } catch (error) {
       return { error: apiErrorText(error, {}, RECAP_ERROR_TEXT.RECAP_UNAVAILABLE) }
     }
   }
 
-  async function submitEnd(takeaway: string | null, tensionAfter: number | null, recapSource: EndRecapSource) {
+  async function submitEnd(
+    takeaway: string | null,
+    tensionAfter: number | null,
+    recapSource: EndRecapSource,
+  ) {
     // Whether there is a takeaway and whether the scale was answered, never what either says;
     // "skipped" is the sheet closed with nothing filled in.
     trackDialog(AnalyticsEvent.DialogEndSubmitted, {
@@ -904,7 +926,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           <h1 className="text-2xl leading-tight font-bold tracking-display-tight text-balance text-foreground">
             {unsaved ? UNSAVED_GONE.title : 'Разговор не найден'}
           </h1>
-          <p className="text-base leading-[1.55] text-dim" data-testid={unsaved ? 'dialog-unsaved-gone' : undefined}>
+          <p
+            className="text-base leading-[1.55] text-dim"
+            data-testid={unsaved ? 'dialog-unsaved-gone' : undefined}
+          >
             {unsaved ? UNSAVED_GONE.text : 'Возможно, ссылка устарела. Начни новый разговор с главной.'}
           </p>
           <Button asChild className={cn(BUTTON, 'bg-clip-border px-6 focus-visible:border-transparent')}>
@@ -991,7 +1016,14 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         }
       />
       {(crisis.banner || crisis.pinCall || (view === 'voice' && crisis.askSafe && !sheetOpen)) && (
-        <div className={cn(COLUMN, 'flex flex-col gap-2 pt-3')} data-testid="crisis-bar">
+        <div
+          // Pinned under the sticky header: the page itself scrolls, so a plain block would leave with the first messages.
+          className={cn(
+            COLUMN,
+            'sticky top-[calc(3.5rem+env(safe-area-inset-top,0px))] z-20 flex flex-col gap-2 bg-paper pt-3 pb-2',
+          )}
+          data-testid="crisis-bar"
+        >
           {crisis.banner && (
             <Button
               type="button"
