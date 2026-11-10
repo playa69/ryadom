@@ -19,7 +19,6 @@ import {
   DialogCloseCode,
   DialogServerFrame,
   DialogWsErrorCode,
-  SAFETY_STAGES,
   SafetyLevel,
   type DialogServerMessage,
   type DialogSummaryApiResponse,
@@ -335,9 +334,6 @@ class DialogSession {
         return
       case DialogClientFrame.TtsCancel:
         this.agent?.send({ type: 'tts_cancel', messageId: frame.messageId })
-        return
-      case DialogClientFrame.HelpReturned:
-        this.agent?.send({ type: 'help_returned' })
         return
       case DialogClientFrame.Ping:
         this.toClient({ type: DialogServerFrame.Pong })
@@ -680,27 +676,12 @@ class DialogSession {
         // ours. The SOS screen must never open empty.
         // The agent raises this frame when help is needed now, so a frame without a level is a crisis.
         const level = frame.level === SafetyLevel.Concern ? SafetyLevel.Concern : SafetyLevel.Crisis
-        // Counted with no person attached: how often the hotlines were shown, not who needed them. Later steps of the
-        // script (`ask_safe`, `call112`, `stay`, `check`, `calm`) belong to a signal already counted.
-        const stage = SAFETY_STAGES.find((name) => name === frame.stage)
-        if (!stage || stage === 'help' || stage === 'ask_hopeless') {
-          this.deps.analytics.captureAnonymous(AnalyticsEvent.SafetySignal, {
-            level: level === SafetyLevel.Concern ? 'yellow' : 'red',
-            ...(frame.source === 'dictionary' || frame.source === 'model' ? { source: frame.source } : {}),
-          })
-        }
+        // Counted with no person attached: how often the hotlines were shown, not who needed them.
+        this.deps.analytics.captureAnonymous(AnalyticsEvent.SafetySignal, { level })
         const hotlines = Array.isArray(frame.hotlines) && frame.hotlines.length > 0
           ? (frame.hotlines as { name: string; phone: string }[])
           : HOTLINES
-        // Unknown stages are dropped, not forwarded: a client must never get a value its enum lacks.
-        return this.toClient({
-          type: DialogServerFrame.Safety,
-          level,
-          text: str('text'),
-          hotlines,
-          ...(stage ? { stage } : {}),
-          ...(typeof frame.showCall === 'boolean' ? { showCall: frame.showCall } : {}),
-        })
+        return this.toClient({ type: DialogServerFrame.Safety, level, text: str('text'), hotlines })
       }
       case 'ended': {
         // The agent builds the summary itself; its shape is already described by the contract

@@ -836,10 +836,9 @@ def test_typed_crisis() -> None:
     assert run.voice == GREETING_VOICE + REPLY_VOICE
     assert run.bodies("safety")[0]["text"] == CRISIS_SAFETY_TEXT and run.replies == [CRISIS_REPLY]
     assert run.history[1]["text"] == CRISIS_REPLY
-    # Барьер приходит в ответ на лист помощи, то есть шаг 2 скрипта: на него отвечает агент фразой, а не модель.
     turns = run.rig.model_turns()
-    assert turns == 0, f"модель просили ответить на кризисную ветку (запросов {turns})"
-    assert [t for link in run.rig.connector.links for t in link.typed] == []  # кризисный текст в Gemini не уходил
+    assert turns == 1, f"модель просили ответить на кризис (запросов {turns}, ждали один: барьер)"
+    assert [t for link in run.rig.connector.links for t in link.typed] == ["барьер"]  # кризисный текст в Gemini не уходил
 
 
 def test_crisis_in_speech_replaces_the_model_answer() -> None:
@@ -1273,16 +1272,10 @@ def sc_crisis_then_followup(r: Rig, voice: bool) -> Run:
             c.say("я больше не хочу жить", "c-1")
         c.wait_reply(m)
         m = c.mark()
-        if voice:  # «да» на лист помощи — шаг 2б скрипта, фиксированная фраза; следующая реплика уже идёт модели
-            c.speak(4)
-        else:
-            c.say("да", "c-2")
-        c.wait_reply(m)
-        m = c.mark()
         if voice:
             c.speak(4)
         else:
-            c.say("не знаю, мне просто плохо", "c-3")
+            c.say("не знаю, мне просто плохо", "c-2")
         c.wait_reply(m)
         context = r.model_context()
         return r.done(c, dialog, barrier=False, context=context)
@@ -1293,20 +1286,20 @@ def test_the_model_knows_about_a_typed_crisis_in_the_next_answer() -> None:
     run = play(lambda r: sc_crisis_then_followup(r, voice=False), replies=["Я рядом. Расскажи, что случилось."])
     sound(run, closed_ends=True)
     assert "не хочу жить" in run.extra["context"], "модель не видела кризисной реплики человека"
-    assert "Спасибо, что рассказываешь мне об этом" in run.extra["context"], "модель не знает, что агент ответил кризисным текстом"
+    assert "Я слышу, что тебе очень тяжело" in run.extra["context"], "модель не знает, что агент ответил кризисным текстом"
 
 
 # P8 закрыт: новая сессия не помнит выброшенного ответа модели, в её истории то, что человек услышал на самом деле.
 def test_the_model_knows_what_the_agent_said_after_a_voice_crisis() -> None:
     run = play(
         lambda r: sc_crisis_then_followup(r, voice=True),
-        heard=["я больше не хочу жить", "да", "не знаю, мне просто плохо"],
+        heard=["я больше не хочу жить", "не знаю, мне просто плохо"],
         replies=["МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ.", "Я рядом."],
     )
     sound(run, closed_ends=True)
     context = run.extra["context"]
     assert "не хочу жить" in context  # слова человека модель слышала сама
-    assert "Спасибо, что рассказываешь мне об этом" in context, "в контексте модели нет кризисного ответа агента"
+    assert "Я слышу, что тебе очень тяжело" in context, "в контексте модели нет кризисного ответа агента"
     assert "МОЙ-ВЫБРОШЕННЫЙ-ОТВЕТ" not in context, "в контексте модели лежит ответ, которого человек не слышал"
 
 
@@ -1585,12 +1578,8 @@ def test_a_crisis_transcription_that_arrives_a_moment_after_the_first_sound_is_s
 # ─── Настоящая обвязка live: приветствие и кризис через GeminiLiveTts + CachedTts ─────────────────────────────────
 
 
-def wait_warm(r: Rig, items: int | None = None) -> None:
-    if items is None:  # прогрето всё: каждое предложение фраз агента двумя голосами
-        from app.main import SPOKEN_PHRASES
-
-        items = 2 * len({part for phrase in SPOKEN_PHRASES for part in split_sentences(phrase)})
-    deadline = time.monotonic() + 5
+def wait_warm(r: Rig, items: int = 12) -> None:
+    deadline = time.monotonic() + 3
     while time.monotonic() < deadline and len(r.client.app.state.tts._items) < items:
         time.sleep(0.02)
 

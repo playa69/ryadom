@@ -28,7 +28,6 @@ function VoiceOrb({
   state,
   level,
   mood,
-  calm,
   className,
 }: {
   state: OrbState
@@ -36,8 +35,6 @@ function VoiceOrb({
   level: () => number
   /** Mood to show over the state's colours; none for the plain look. */
   mood?: OrbMood | null
-  /** Steady light with no pulsing: shown while a crisis session is on. */
-  calm?: boolean
   className?: string
 }) {
   const swell = useRef<HTMLDivElement>(null)
@@ -58,7 +55,7 @@ function VoiceOrb({
   }, [])
 
   return (
-    <div data-slot="voice-orb" data-orb={state} data-mood={mood ?? undefined} data-calm={calm ? '' : undefined} aria-hidden="true" className={cn('voice-orb', className)}>
+    <div data-slot="voice-orb" data-orb={state} data-mood={mood ?? undefined} aria-hidden="true" className={cn('voice-orb', className)}>
       <div ref={swell} className="voice-orb-swell">
         <span className="voice-orb-layer voice-orb-glow" />
         <span className="voice-orb-layer voice-orb-core" />

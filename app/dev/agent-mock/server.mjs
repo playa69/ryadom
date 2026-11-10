@@ -653,61 +653,10 @@ function moodOf(text) {
   return { tone: 'neutral', intensity: 0.1 }
 }
 
-/*
- * The crisis script (openspec/changes/extend-crisis-branch, «Скрипт красного уровня»), cut down to what the
- * clients can be tested against. «кризис-красный» starts the red level, «кризис-жёлтый» the yellow one; after
- * that «Да» / «Нет» / «Не знаю» walk the steps, as the real agent's state machine does. The phrases are
- * stand-ins, not the product texts. The 10 s timer of step 2 is 1.5 s here.
- */
-const SCRIPT_ASK_DELAY_MS = 1500
-const SAFETY_TEXT = 'Если тебе сейчас опасно, позвони по одному из номеров ниже.'
-const RED_HELP = { type: 'safety', level: 'crisis', stage: 'help', showCall: false, text: SAFETY_TEXT }
-const SCRIPT_PHRASES = {
-  help: 'Спасибо, что рассказываешь мне об этом. С этим лучше всего поможет живой человек. Нажми кнопку на экране.',
-  ask_safe: 'Скажи, пожалуйста: ты сейчас в безопасности?',
-  call112: 'Пожалуйста, позвони сейчас 112. Я никуда не ухожу.',
-  stay: 'Хорошо. Я рядом. Кнопка звонка остаётся на экране.',
-  check: 'Я здесь. Как ты? Получилось поговорить?',
-  ask_hopeless: 'Звучит так, будто тебе сейчас очень тяжело. У тебя бывают мысли, что не хочется жить?',
-  calm: 'Хорошо, что ты ответил. Я рядом, давай поговорим спокойно.',
-}
-
-/** The frame and the phrase the script answers a person's line with, or null when the line is not part of it. */
-function scriptStep(dialog, text) {
-  const answer = text.trim().toLowerCase()
-  if (text.includes('кризис-красный')) {
-    dialog.script = 'red'
-    return { frame: RED_HELP, phrase: SCRIPT_PHRASES.help, then: { type: 'safety', level: 'crisis', stage: 'ask_safe', showCall: false, text: SAFETY_TEXT } }
-  }
-  if (text.includes('кризис-жёлтый')) {
-    dialog.script = 'yellow'
-    return { frame: { type: 'safety', level: 'concern', stage: 'ask_hopeless', text: null }, phrase: SCRIPT_PHRASES.ask_hopeless }
-  }
-  if (dialog.script === 'yellow') {
-    if (answer.startsWith('да')) {
-      dialog.script = 'red'
-      return { frame: RED_HELP, phrase: SCRIPT_PHRASES.help, then: { type: 'safety', level: 'crisis', stage: 'ask_safe', showCall: false, text: SAFETY_TEXT } }
-    }
-    if (answer.startsWith('нет')) {
-      dialog.script = 'calm'
-      return { frame: { type: 'safety', level: 'concern', stage: 'calm', text: null }, phrase: SCRIPT_PHRASES.calm }
-    }
-  }
-  if (dialog.script === 'red') {
-    if (answer.startsWith('да')) {
-      return { frame: { type: 'safety', level: 'crisis', stage: 'stay', showCall: true, text: null }, phrase: SCRIPT_PHRASES.stay }
-    }
-    if (answer.startsWith('нет') || answer.startsWith('не знаю')) {
-      return { frame: { type: 'safety', level: 'crisis', stage: 'call112', showCall: true, text: null }, phrase: SCRIPT_PHRASES.call112 }
-    }
-  }
-  return null
-}
-
-async function streamAssistantReply(socket, dialog, crisis = false, fixedText = null) {
-  const text = fixedText ?? (crisis
+async function streamAssistantReply(socket, dialog, crisis = false) {
+  const text = crisis
     ? 'Я слышу, что тебе очень тяжело. Ты не один на один с этим. Давай посмотрим, кому можно позвонить прямо сейчас.'
-    : nextReply(dialog))
+    : nextReply(dialog)
   const message = addMessage(dialog, 'assistant', text)
 
   send(socket, { type: 'assistant_start', messageId: message.id })
@@ -773,24 +722,12 @@ wss.on('connection', (socket, request, context) => {
           return
         }
         const text = String(frame.text ?? '')
-        const step = scriptStep(dialog, text)
-        const crisis = !step && isCrisis(text)
-        if (crisis || step) dialog.crisisSeen = true
+        const crisis = isCrisis(text)
+        if (crisis) dialog.crisisSeen = true
         const message = addMessage(dialog, 'user', text)
         if (frame.id) dialog.clientIds.set(frame.id, message.id)
         send(socket, { type: 'ack', id: frame.id ?? message.id, messageId: message.id })
         send(socket, { type: 'mood', ...moodOf(text), at: Date.now() })
-        if (step) {
-          send(socket, step.frame)
-          void streamAssistantReply(socket, dialog, true, step.phrase).then(() => {
-            if (!step.then) return
-            setTimeout(() => {
-              send(socket, step.then)
-              void streamAssistantReply(socket, dialog, true, SCRIPT_PHRASES.ask_safe)
-            }, SCRIPT_ASK_DELAY_MS)
-          })
-          return
-        }
         // Help is needed now: the app shows its own helplines under the agent's words.
         if (crisis) {
           send(socket, { type: 'safety', text: 'Если тебе сейчас опасно — позвони по одному из номеров ниже.' })
@@ -798,13 +735,6 @@ wss.on('connection', (socket, request, context) => {
         void streamAssistantReply(socket, dialog, crisis)
         return
       }
-      case 'help_returned':
-        // The person came back from a call: step 4 of the script.
-        if (dialog.script === 'red') {
-          send(socket, { type: 'safety', level: 'crisis', stage: 'check', showCall: true, text: null })
-          void streamAssistantReply(socket, dialog, true, SCRIPT_PHRASES.check)
-        }
-        return
       case 'audio_start':
         audioFrames = 0
         return

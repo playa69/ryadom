@@ -128,7 +128,7 @@
 | `dialog_ended` | агент подтвердил конец (сокет) или `POST …/end` (REST) | `dialog_id`, `via`, `counts`, `duration_s`, `user_messages`, `assistant_messages`, `has_takeaway`, `tension_delta`, `tension_improved` |
 | `dialog_interrupted` | связь пропала до конца диалога, если человек успел что-то сказать или агент недоступен | `dialog_id`, `reason`, `duration_s`, `user_messages` |
 | `component_called` | агент реально позвал свой компонент внутри диалога: один вызов — одно событие | `dialog_id`, `component`: `stt`/`safety`/`llm`/`live`/`tts`/`memory`, `outcome`: `ok`/`error`, `cached` |
-| `safety_signal` | агент показал линии помощи (**без человека**) | `level`: `yellow`/`red`, `source`: `dictionary`/`model` (если агент его прислал); считается на шаге `help`/`ask_hopeless` |
+| `safety_signal` | агент показал линии помощи (**без человека**) | `level`: `concern`/`crisis` |
 
 **Разговор с галочкой «Не сохранять этот разговор»** (`REQ-MEM-13`) не даёт ни одного из событий выше, ни `dialog_started`, ни `dialog_turn`, ни `dialog_ended`, ни `dialog_interrupted`, ни `component_called`, а клиент не шлёт по нему событий экрана разговора (отправка реплики, голос, лист завершения). Шлюз узнаёт о таком разговоре из кадра `ready` агента. Остаётся обезличенный `safety_signal` (защита от кризиса работает как всегда) и показ страницы `/dialog/:id`. Человек, у которого были только такие разговоры, не имеет `dialog_turn`: целевого действия для него нет.
 

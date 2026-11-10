@@ -215,12 +215,12 @@
 | `REQ-DLG-08` | Журнал | `dialog-history` | есть |  |
 | `REQ-DLG-09` | Таймаут реплики | `agent-api` | нет | кода `AGENT_TIMEOUT` и `AGENT_LLM_UNAVAILABLE` нет |
 | `REQ-DLG-10` | Вопрос о незавершённом разговоре | `dialog`, `app-shell` | есть |  |
-| `REQ-SAFE-01` | Классификация каждой реплики | `crisis-safety` | частично | детектор — список слов, второй ступени нет; в работе — `extend-crisis-branch` (PROTEUS-279) |
+| `REQ-SAFE-01` | Классификация каждой реплики | `crisis-safety` | частично | детектор — список слов, второй ступени нет |
 | `REQ-SAFE-02` | Реакция на `red` | `crisis-safety` | есть |  |
-| `REQ-SAFE-03` | Реакция на `yellow` | `crisis-safety` | нет | в работе — `extend-crisis-branch` (PROTEUS-279) |
+| `REQ-SAFE-03` | Реакция на `yellow` | `crisis-safety` | нет |  |
 | `REQ-SAFE-04` | Горячие линии | `crisis-safety` | есть | три копии списка (клиент, шлюз, сайт) |
 | `REQ-SAFE-05` | «Кому из твоих позвонить» | `crisis-safety` | нет |  |
-| `REQ-SAFE-06` | Качество | `crisis-safety` | нет | набора для recall нет; в работе — `extend-crisis-branch` (PROTEUS-279) |
+| `REQ-SAFE-06` | Качество | `crisis-safety` | нет | набора для recall нет |
 | `REQ-SAFE-07` | Ничего не теряется | `crisis-safety` | частично | есть счётчик `safety_signal` |
 | `REQ-GEN-01` | Целевой конвейер генерации | — | снято | из прежнего `add-agent-service`, не планируется |
 | `REQ-GEN-02` | Модель и вызов | `dialog-voice` | есть | голос ведёт путь «Сбер» или Gemini Live; фоновая модель — итоги и заметки |

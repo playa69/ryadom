@@ -457,20 +457,6 @@
   --orb-ring: rgb(110 220 150);
 }
 
-/*
- * Crisis branch (openspec/changes/extend-crisis-branch): steady light, no pulsing and no swelling with the
- * voice. Overrides the values the motion loop drives, so the loop itself needs no special case.
- */
-.voice-orb[data-calm] .voice-orb-swell {
-  scale: 1;
-  rotate: 0deg;
-}
-
-.voice-orb[data-calm] .voice-orb-layer {
-  scale: 1;
-  opacity: 0.85;
-}
-
 /* A small lit sphere as the face of a button: the way back to the voice. */
 @utility orb-chip {
   background: radial-gradient(

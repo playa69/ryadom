@@ -31,7 +31,6 @@ from app.services.dialog_db import DialogDatabase
 from app.services.dialog_purge import purge_loop
 from app.services.dialog_store import GREETINGS, DialogStore
 from app.services.gemini_budget import TokenBudget
-from app.services.crisis_script import SPOKEN_SCRIPT
 from app.services.replies import CRISIS_REPLY, REPEAT_REQUEST, split_sentences
 
 if TYPE_CHECKING:
@@ -41,7 +40,7 @@ logger = logging.getLogger("agent")
 
 # Готовые фразы агента: приветствия, кризисный ответ (он важнее) и просьба повторить. Их озвучивает голос Gemini и запоминает
 # память фраз: клиент ждёт приветствие не дольше 0,9 с, а новая сессия Gemini открывается около секунды.
-SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, *SPOKEN_SCRIPT, REPEAT_REQUEST)
+SPOKEN_PHRASES = (*GREETINGS, CRISIS_REPLY, REPEAT_REQUEST)
 # Сколько сессий Gemini прогрев держит открытыми одновременно (фраза — сессия): 16 открытий разом на старте Google встречал
 # отказами, и после них половина фраз оставалась не прогретой.
 WARM_UP_GEMINI_SESSIONS = 3
@@ -219,7 +218,6 @@ def create_app(
         # озвучка — SaluteSpeech). Пока идёт пауза после отказа Google по квоте, путь Gemini Live не пробуется.
         app.state.pipelines = {"gemini": (live, lambda: app.state.tts)}
         app.state.moods = {}
-        app.state.risks = {}
         sber = make_sber()
         if sber is not None:
             sber.prompt_provider = prompts
@@ -247,8 +245,6 @@ def create_app(
             # Тон реплики в пути Сбера — его же моделью; без своего классификатора шарик не красится, но и в Gemini слова не уходят.
             mood_classifier = getattr(sber, "mood_classifier", None)
             app.state.moods["sber"] = mood_classifier() if mood_classifier is not None else None
-            risk_classifier = getattr(sber, "risk_classifier", None)
-            app.state.risks["sber"] = risk_classifier() if risk_classifier is not None else None
         app.state.default_pipeline = "sber" if sber is not None else "gemini"
         # Фоновая модель: итоги разговоров и недели (заметки памяти берут свой экземпляр, `_build_notes_model`).
         background = make_background()
@@ -327,7 +323,6 @@ def create_app(
     app.state.background = None  # фоновая модель итогов (в lifespan)
     app.state.live = None  # Gemini Live (в lifespan)
     app.state.pipelines = {}  # голосовые пути: имя → (соединитель, озвучка фраз) (в lifespan)
-    app.state.risks = {}  # вторая ступень детектора кризиса пути: имя → классификатор (в lifespan); у Gemini — по ключу, в dialogs.py
     app.state.moods = {}  # классификатор тона пути, если он не Gemini: имя → классификатор или None (в lifespan)
     app.state.default_pipeline = "gemini"
     app.state.memory = None
