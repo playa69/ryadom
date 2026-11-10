@@ -293,12 +293,14 @@ test('память в вебе: разговор «Без памяти» нич�
 
   await goTo(page, 'Новый разговор')
   // `openspec/changes/remove-unsaved-dialog-option`, «Подписи без срока».
+  await expect(page.getByTestId('incognito-toggle')).toHaveText('Запоминать разговор')
   await expect(page.getByTestId('incognito')).toContainText(
     'Я буду запоминать разговор, чтобы лучше узнать тебя',
   )
   await step(page, 'memory-caption-on', 'Память включена: подпись прямо обещает запомнить разговор')
   await page.getByTestId('incognito-toggle').click()
   await expect(page.getByTestId('incognito-toggle')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('incognito-toggle')).toHaveText('Без памяти')
   await expect(page.getByTestId('incognito')).toContainText('Я не запомню этот разговор')
   await step(page, 'memory-caption-off', 'Без памяти: подпись прямо говорит, что разговор не запомнят')
   await homeInput(page).fill(INTRO)

@@ -460,7 +460,7 @@ export default function HomeScreen() {
                 )}
               >
                 <EyeOff aria-hidden="true" className={cn('size-4', withoutMemory && 'text-brand-400')} />
-                Без памяти
+                {withoutMemory ? 'Без памяти' : 'Запоминать разговор'}
               </Button>
               <p className="text-xs leading-normal text-faint" aria-live="polite">
                 {withoutMemory

@@ -318,7 +318,9 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             {memoryEnabled === true && (
               <div className="rd-incognito" data-testid="incognito">
                 <span className="rd-incognito-text">
-                  <span className="rd-incognito-title">Без памяти</span>
+                  <span className="rd-incognito-title">
+                    {withoutMemory ? 'Без памяти' : 'Запоминать разговор'}
+                  </span>
                   <span className="rd-caption">
                     {withoutMemory
                       ? 'Я не запомню этот разговор'
