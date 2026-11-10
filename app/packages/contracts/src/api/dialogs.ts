@@ -27,6 +27,13 @@ export enum SafetyLevel {
   Crisis = 'crisis',
 }
 
+/**
+ * The step of the crisis script a `safety` frame belongs to (openspec/changes/extend-crisis-branch).
+ * Optional on the wire: an agent from before the script sends none and the client opens the default sheet.
+ */
+export const SAFETY_STAGES = ['help', 'ask_safe', 'call112', 'stay', 'check', 'ask_hopeless', 'calm'] as const
+export type SafetyStage = (typeof SAFETY_STAGES)[number]
+
 // ─── REST ─────────────────────────────────────────────────────────────────────
 
 export enum StartDialogApiErrorCode {
@@ -222,6 +229,8 @@ export enum DialogClientFrame {
   AudioEnd = 'audio_end',
   TtsCancel = 'tts_cancel',
   Ping = 'ping',
+  /** The person came back to the app after tapping a hotline; only while a crisis session is on. */
+  HelpReturned = 'help_returned',
 }
 
 /** Frames from the server. */
@@ -315,6 +324,7 @@ export type DialogClientMessage =
   | { type: DialogClientFrame.AudioEnd }
   | { type: DialogClientFrame.TtsCancel; messageId: string }
   | { type: DialogClientFrame.Ping }
+  | { type: DialogClientFrame.HelpReturned }
 
 export interface HotlineApiResponse {
   name: string
@@ -331,7 +341,16 @@ export type DialogServerMessage =
   /** `codec` is the one picked from `hello.codecs` (`pcm16` without them); `sampleRate` is 24000. */
   | { type: DialogServerFrame.TtsStart; messageId: string; codec: TtsCodec; sampleRate: number }
   | { type: DialogServerFrame.TtsEnd; messageId: string }
-  | { type: DialogServerFrame.Safety; level: SafetyLevel; text: string | null; hotlines: HotlineApiResponse[] }
+  | {
+      type: DialogServerFrame.Safety
+      level: SafetyLevel
+      text: string | null
+      hotlines: HotlineApiResponse[]
+      /** Absent from an agent that predates the script. */
+      stage?: SafetyStage
+      /** Whether the pinned "call now" button belongs on screen. */
+      showCall?: boolean
+    }
   /** After each turn of the person: how they sound. Only the colour of the sphere follows it; the SOS path is separate. */
   | { type: DialogServerFrame.Mood; tone: MoodTone; intensity: number; at: number }
   | { type: DialogServerFrame.Ended; summary: DialogSummaryApiResponse | null }

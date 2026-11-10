@@ -1,3 +1,4 @@
+import type { Locator, Page } from '@playwright/test'
 import {
   button,
   closeSheet,
@@ -148,4 +149,111 @@ test('агент без озвучки: шар читает приветстви
   } finally {
     await setAgentSpeech('auto')
   }
+})
+
+
+/**
+ * The red and yellow levels of the crisis branch, driven by the mock's script («кризис-красный»,
+ * «кризис-жёлтый»). Specs: openspec/changes/extend-crisis-branch, «Скрипт красного уровня» and «Жёлтый уровень».
+ */
+async function openTextDialog(page: Page, name: string) {
+  await clearMailbox()
+  await openApp(page)
+  await registerAndConfirm(page, uniqueEmail(name))
+  await button(page, 'Поговорить').click()
+  const stop = page.getByRole('button', { name: 'Остановить запись' })
+  await expect(stop).toBeVisible({ timeout: 30_000 })
+  // Let the mock answer the voice turn first, or its reply lands in the middle of the script.
+  await page.waitForTimeout(1200)
+  await stop.click()
+  await page.getByRole('button', { name: 'Писать текстом' }).click()
+  const input = page.getByPlaceholder(DRAFT_PLACEHOLDER)
+  await expect(input).toBeVisible()
+  await expect(page.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
+  await expect(page.locator('.rd-typing')).toHaveCount(0, { timeout: 30_000 })
+  return input
+}
+
+async function say(page: Page, input: Locator, text: string) {
+  await input.fill(text)
+  await page.getByRole('button', { name: 'Отправить' }).click()
+}
+
+test('красный уровень: лист, вопрос о безопасности, 112, возврат из звонка, закреплённая кнопка', async ({ page, shot }) => {
+  test.setTimeout(150_000)
+  const input = await openTextDialog(page, 'crisis-red')
+  // A tel: link has nowhere to go in a headless browser; the app still sees the tap.
+  await page.evaluate(() => document.addEventListener('click', (event) => (event.target as Element).closest('a[href^="tel:"]') && event.preventDefault()))
+
+  await say(page, input, 'кризис-красный')
+  // Step 1: the sheet of the script, with the way out always in view.
+  const sheet = page.locator('.sheet-modal.modal-in')
+  await expect(sheet.getByText('Сейчас важно поговорить с живым человеком')).toBeVisible({ timeout: 30_000 })
+  await expect(sheet.getByTestId('sos-call-now')).toHaveAttribute('href', 'tel:84959895050')
+  await expect(sheet.getByTestId('sos-call-now')).toContainText('Позвонить сейчас')
+  await expect(sheet.getByTestId('sos-call-112')).toContainText('112 — если есть опасность для жизни')
+  await expect(sheet.getByTestId('sos-safe-link')).toHaveText('Я в безопасности, давай продолжим')
+  await expect(sheet.getByRole('link', { name: /Московская/ })).toHaveAttribute('href', 'tel:8495051')
+  await expect(sheetButton(page, 'Закрыть')).toBeVisible()
+  await shot(page, 'crisis-help')
+
+  // Step 2: the question, in the open sheet.
+  await expect(sheet.getByTestId('safe-answers')).toBeVisible({ timeout: 30_000 })
+  await expect(sheet.getByTestId('safe-answers').locator('.button')).toHaveText(['Да', 'Нет', 'Не знаю'])
+  await shot(page, 'crisis-ask-safe')
+
+  // Step 2a: «Не знаю» gives the large 112 with the lines below it.
+  await sheet.getByTestId('safe-answers').locator('.button', { hasText: 'Не знаю' }).click()
+  await expect(sheet.getByTestId('sos-call-112-big')).toHaveText('112')
+  await expect(sheet.getByTestId('safe-answers')).toHaveCount(0)
+  await expect(sheet.getByRole('link', { name: /Московская/ })).toBeVisible()
+  await shot(page, 'crisis-112')
+
+  // Step 4: a tap on a line and the way back to the app: the agent asks how it went.
+  await sheet.getByTestId('sos-call-112-big').click()
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+  })
+  await closeSheet(page)
+  await expect(page.locator('.message-received').last()).toContainText('Получилось поговорить?', { timeout: 30_000 })
+
+  // Step 2b: the link on step 1 is the answer «Да»; the sheet closes and the call button stays above the conversation.
+  await say(page, input, 'кризис-красный')
+  await expect(sheet.getByTestId('sos-safe-link')).toBeVisible({ timeout: 30_000 })
+  await sheet.getByTestId('sos-safe-link').click()
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await expect(page.locator('.message-sent').last()).toContainText('Да, я в безопасности')
+  const pinned = page.getByTestId('crisis-pinned-call')
+  await expect(pinned).toBeVisible({ timeout: 30_000 })
+  await expect(pinned).toHaveAttribute('href', 'tel:84959895050')
+  await shot(page, 'crisis-pinned')
+
+  // The sphere is calm for the whole session: steady light, no pulsing.
+  await page.getByRole('button', { name: 'Говорить голосом' }).click()
+  await expect(page.locator('.rd-orb[data-calm]')).toHaveCount(1)
+  await expect(pinned).toBeVisible()
+})
+
+test('жёлтый уровень: вопрос без листа, ответ «Нет» даёт плашку «Нужна помощь?»', async ({ page, shot }) => {
+  test.setTimeout(150_000)
+  const input = await openTextDialog(page, 'crisis-yellow')
+
+  await say(page, input, 'кризис-жёлтый')
+  await expect(page.locator('.message-received').last()).toContainText('мысли', { timeout: 30_000 })
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await expect(page.getByTestId('crisis-banner')).toHaveCount(0)
+
+  await say(page, input, 'Нет')
+  const banner = page.getByTestId('crisis-banner')
+  await expect(banner).toHaveText('Нужна помощь?', { timeout: 30_000 })
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await shot(page, 'crisis-banner')
+
+  // The banner opens the sheet with the default text and the bundled lines.
+  await banner.click()
+  const sheet = page.locator('.sheet-modal.modal-in')
+  await expect(sheet.getByText('Если сейчас тяжело')).toBeVisible()
+  await expect(sheet.getByRole('link', { name: /112/ })).toBeVisible()
+  await expect(sheet.getByRole('link', { name: /Московская/ })).toHaveAttribute('href', 'tel:8495051')
 })
