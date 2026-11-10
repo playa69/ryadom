@@ -12,9 +12,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectDatabase, databaseConfigured } from './database.mjs';
 import { collectMetrika, metrikaConfigured } from './metrika.mjs';
 import { fillQuery, rowsOf, runHogQL } from './posthog.mjs';
-import { collectPrometheus, prometheusConfigured } from './prometheus.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fail = (message) => {
@@ -121,14 +121,14 @@ WHERE event = 'dialog_turn' AND {{people}} AND timestamp >= toDateTime('{{prev_f
 
   // Everyone who spoke in the period: voice use and live errors.
   speakers: `
-SELECT count() AS speakers, countIf(v > 0) AS used_voice, sum(t) AS turns, sum(v) AS voice_turns, countIf(le > 0) AS hit_live_error
+SELECT count() AS speakers, countIf(v > 0) AS used_voice, sum(t) AS turns, sum(v) AS voice_turns, sum(dl) AS dialogs
 FROM (
   SELECT person_id,
     countIf(event = 'dialog_turn') AS t,
     countIf(event = 'dialog_turn' AND properties.input = 'voice') AS v,
-    countIf(event = 'component_called' AND properties.component = 'live' AND properties.outcome = 'error') AS le
+    uniqIf(properties.dialog_id, event = 'dialog_turn') AS dl
   FROM events
-  WHERE {{people}} AND event IN ('dialog_turn', 'component_called') AND ${WINDOW}
+  WHERE {{people}} AND event = 'dialog_turn' AND ${WINDOW}
   GROUP BY person_id
   HAVING t > 0)`,
 
@@ -140,6 +140,11 @@ FROM events
 WHERE {{people}} AND event = 'voice_problem' AND properties.reason = 'permission_denied' AND ${WINDOW}
 GROUP BY kind
 LIMIT 10`,
+
+  accounts: `
+SELECT count() AS accounts
+FROM events
+WHERE event = 'account_created' AND {{people}} AND ${WINDOW}`,
 
   // Everyone who first spoke since dialog_turn exists and at least a day before the end: what goes with coming back.
   retention: `
@@ -192,8 +197,8 @@ for (const name of Object.keys(QUERIES)) if (!data[name]) fail(`no results for $
 
 // ---------- other sources ----------
 // Each needs its own access and is optional: a failure is shown in the report instead of stopping it.
-// Saved results (--data) may carry them under the keys metrika and prometheus.
-const extra = { metrika: raw.metrika ?? null, prometheus: raw.prometheus ?? null };
+// Saved results (--data) may carry them under the keys metrika and database.
+const extra = { metrika: raw.metrika ?? null, database: raw.database ?? null };
 const sourceErrors = {};
 if (!extra.metrika && metrikaConfigured()) {
   try {
@@ -202,11 +207,11 @@ if (!extra.metrika && metrikaConfigured()) {
     sourceErrors.metrika = error.message;
   }
 }
-if (!extra.prometheus && prometheusConfigured()) {
+if (!extra.database && databaseConfigured()) {
   try {
-    extra.prometheus = collectPrometheus({ toMs: mskMidnight(toDate).getTime(), days });
+    extra.database = collectDatabase({ from: values.from, to: values.to });
   } catch (error) {
-    sourceErrors.prometheus = error.message;
+    sourceErrors.database = error.message;
   }
 }
 
@@ -295,7 +300,6 @@ const yesterday = daily[daily.length - 1];
 
 const sp = data.speakers[0] ?? {};
 const speakers = num(sp.speakers);
-const liveShare = share(num(sp.hit_live_error), speakers);
 const micDenied = num(data.quality.find((r) => r.kind === 'voice:permission_denied')?.people);
 const landingToProduct = share(cohortTotal.product, cohortTotal.landing);
 
@@ -330,10 +334,10 @@ const medians = {
 const mk = extra.metrika;
 const reconcile = mk
   ? [
-      { label: 'Посетители', tip: 'PostHog — новые устройства периода; Метрика — уникальные посетители периода по своей cookie.', posthog: cohortTotal.visitors, metrika: mk.users },
-      mk.goals.product && { label: 'Пришли в продукт', tip: 'Метрика: цель «Переход в продукт» (адрес содержит /app/ или /pwa/; Android и iOS не входят).', posthog: cohortTotal.product, metrika: mk.goals.product.users },
-      mk.goals.reply && { label: 'Сказали реплику', tip: 'Метрика: цель first_reply, уникальные посетители.', posthog: cohortTotal.spoke, metrika: mk.goals.reply.users },
-      mk.goals.d3 && { label: 'Разговор от 3 реплик', tip: 'Метрика: цель first_dialog_3_replies, один раз на устройстве.', posthog: cohortTotal.d3, metrika: mk.goals.d3.users },
+      { label: 'Посетители', source: 'Метрика', tip: 'PostHog — новые устройства периода; Метрика — уникальные посетители периода по своей cookie.', posthog: cohortTotal.visitors, metrika: mk.users },
+      mk.goals.product && { label: 'Пришли в продукт', source: 'Метрика', tip: 'Метрика: цель «Переход в продукт» (адрес содержит /app/ или /pwa/; Android и iOS не входят).', posthog: cohortTotal.product, metrika: mk.goals.product.users },
+      mk.goals.reply && { label: 'Сказали реплику', source: 'Метрика', tip: 'Метрика: цель first_reply, уникальные посетители.', posthog: cohortTotal.spoke, metrika: mk.goals.reply.users },
+      mk.goals.d3 && { label: 'Разговор от 3 реплик', source: 'Метрика', tip: 'Метрика: цель first_dialog_3_replies, один раз на устройстве.', posthog: cohortTotal.d3, metrika: mk.goals.d3.users },
     ].filter(Boolean)
   : [];
 const audience = mk && (mk.gender.length || mk.age.length)
@@ -347,26 +351,56 @@ let reconcileNote = mk
   : 'Сверка с Метрикой появится, когда у агента будет к ней доступ.';
 if (sourceErrors.metrika) reconcileNote = `Метрика: ${sourceErrors.metrika.replace(/^Metrika:?\s*/, '')}`;
 
-// Token use from Prometheus.
-const pr = extra.prometheus;
-const activeDays = daily.reduce((a, d) => a + d.dau, 0);
-const models = pr ? { ...pr, rows: pr.models, perActiveDay: activeDays ? pr.total / activeDays : null } : null;
+// The database: true totals, token use and the state of features.
+const db = extra.database;
+const act = db?.activity;
+const accountsPosthog = num(data.accounts[0]?.accounts);
+if (db) {
+  reconcile.push(
+    { label: 'Говорили', source: 'База', tip: 'PostHog — люди с репликой в эти дни; база — авторы сообщений человека за те же дни. В PostHog нет тех, кто отказался от аналитики.', posthog: speakers, metrika: act.speakers },
+    { label: 'Реплики', source: 'База', tip: 'PostHog — события dialog_turn; база — сообщения человека за те же дни.', posthog: num(sp.turns), metrika: act.user_messages },
+    { label: 'Разговоры с репликой', source: 'База', tip: 'Разговоры, в которых человек сказал хоть что-то в эти дни.', posthog: num(sp.dialogs), metrika: act.dialogs },
+    { label: 'Новые аккаунты', source: 'База', tip: 'PostHog — события account_created; база — аккаунты, созданные в эти дни (без тестовых и командных).', posthog: accountsPosthog, metrika: db.app.accounts_new },
+  );
+  if (!mk) reconcileNote = 'PostHog не видит тех, кто отказался от аналитики, поэтому в базе людей и реплик обычно больше.';
+}
+const activeDays = act?.person_days || daily.reduce((a, d) => a + d.dau, 0);
+const models = db && db.usage.models.length
+  ? {
+      rows: db.usage.models, total: db.usage.total, days, dialogs: db.usage.dialogs,
+      perDialog: db.usage.dialogs ? db.usage.total / db.usage.dialogs : null,
+      perActiveDay: activeDays ? db.usage.total / activeDays : null,
+    }
+  : null;
+const features = db
+  ? [
+      { label: 'Память включена', value: db.memoryOn, note: 'людей сейчас', tip: 'Люди, у которых «Запоминать» включено (настройки памяти агента).' },
+      { label: 'Отмечали настроение', value: db.app.mood_people, note: `людей, ${int(db.app.mood_checkins)} отметок`, tip: 'Люди с отметкой в дневнике настроения за эти дни.' },
+      { label: 'Сохраняли тесты', value: db.app.tests_people, note: 'людей', tip: 'Люди, у которых в эти дни сохранился результат теста.' },
+      { label: 'Подписаны на пуши', value: db.app.push_people, note: 'людей сейчас', tip: 'Люди с подпиской на уведомления (RuStore).' },
+      { label: 'Новые аккаунты', value: db.app.accounts_new, note: `почта ${int(db.app.accounts_new_email)}, Telegram ${int(db.app.accounts_new_telegram)}, анонимные ${int(db.app.accounts_new_anonymous)}`, tip: 'Аккаунты, созданные в эти дни, по способу входа.' },
+      { label: 'Отказались от аналитики', value: db.app.optout_total, note: `из ${int(db.app.accounts_total)} аккаунтов; новых в эти дни — ${int(db.app.optout_new)}`, tip: 'Переключатель «Помогать улучшать Рядом» выключен: такие люди не видны в PostHog.' },
+      { label: 'Голос, минут речи людей', value: Math.round(act.user_audio_seconds / 60), note: `агента — ${int(Math.round(act.agent_audio_seconds / 60))}`, tip: 'Сумма длительности голосовых сообщений за эти дни.' },
+    ]
+  : [];
 
 const report = {
   period: { from: fromDate, to: lastDate, days, label: periodLabel, generatedAt: new Date().toISOString() },
-  sources: { posthog: true, metrika: Boolean(mk), prometheus: Boolean(pr), database: false },
+  sources: { posthog: true, metrika: Boolean(mk), database: Boolean(db) },
   sourceErrors,
   metrika: mk,
   reconcile,
   audience,
   models,
+  features,
+  database: db,
   kpi: {
     newSpeakers, newD3, newYesterday: yesterday.new,
     cohortVisitors: cohortTotal.visitors, cohortSpoke: cohortTotal.spoke, conversion: share(cohortTotal.spoke, cohortTotal.visitors),
     dauAvg, dauYesterday: yesterday.dau, dauPeak: { day: peak.day, dau: peak.dau }, wau: num(wau.wau), wauPrev: num(wau.wau_prev),
     medianFirstDialog: medians,
     cohortReturned: cohortTotal.returned,
-    speakers, liveErrorPeople: num(sp.hit_live_error), liveErrorShare: liveShare,
+    speakers, dialogs: num(sp.dialogs), accounts: accountsPosthog,
     usedVoice: num(sp.used_voice), voiceShare: share(num(sp.used_voice), speakers),
     turns: num(sp.turns), voiceTurns: num(sp.voice_turns), textTurnShare: share(num(sp.turns) - num(sp.voice_turns), num(sp.turns)),
     micDeniedPeople: micDenied, landingToProduct,
@@ -380,14 +414,19 @@ const k = report.kpi;
 const dev = (label, v) => (v == null ? null : `${label} ${ru(v)}`);
 const medianNote = [dev('телефон', medians.mobile), dev('компьютер', medians.desktop)].filter(Boolean).join(', ') || '—';
 const sourceMark = (ok, error) => (ok ? '✅' : error ? '⚠️' : '❌');
-const sourcesLine = `Источники: PostHog ✅ · Метрика ${sourceMark(mk, sourceErrors.metrika)} · Prometheus ${sourceMark(pr, sourceErrors.prometheus)} · база ❌`;
+const sourcesLine = `Источники: PostHog ✅ · Метрика ${sourceMark(mk, sourceErrors.metrika)} · база ${sourceMark(db, sourceErrors.database)}`;
 const errorLine = Object.entries(sourceErrors)
-  .map(([name, message]) => `${name === 'metrika' ? 'Метрика' : 'Prometheus'}: ${message.replace(/^(Metrika|Prometheus):?\s*/, '').replace(/\|/g, '/')}`)
+  .map(([name, message]) => `${name === 'metrika' ? 'Метрика' : 'База'}: ${message.replace(/^(Metrika|база):?\s*/i, '').replace(/\|/g, '/')}`)
   .join('. ');
-const millions = (n) => `${ru(n / 1e6)} млн`;
+const millions = (x) => `${ru(x / 1e6)} млн`;
 const topModel = models?.rows[0];
-const tokensRow = models
-  ? `| Токенов на активного в день | **${int(Math.round(models.perActiveDay ?? 0))}** | всего ${millions(models.total)} за ${models.days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |\n`
+const dbRows = db
+  ? [
+      `| Видно в PostHog | **${pct(share(num(sp.turns), act.user_messages))}** | ${int(sp.turns)} из ${int(act.user_messages)} реплик; от аналитики отказались ${people(db.app.optout_total)} |`,
+      models
+        ? `| Токенов на разговор | **${int(Math.round(models.perDialog ?? 0))}** | на активного в день — ${int(Math.round(models.perActiveDay ?? 0))}; всего ${millions(models.total)} за ${days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |`
+        : null,
+    ].filter(Boolean).join('\n') + '\n'
   : '';
 
 const title = `Сводка Рядом · ${periodLabel}`;
@@ -402,9 +441,8 @@ ${sourcesLine}${errorLine ? `\n${errorLine}.` : ''}
 | DAU в среднем | **${ru1(dauAvg)}** | вчера ${int(yesterday.dau)}, пик ${int(peak.dau)} (${peak.day}); WAU ${int(k.wau)}, неделей раньше ${int(k.wauPrev)} |
 | Первый разговор, медиана | **${medians.all == null ? '—' : `${ru(medians.all)} реплик`}** | ${medianNote} |
 | Вернулись в другой день | **${int(cohortTotal.returned)} из ${int(cohortTotal.spoke)}** | новые этих дней, число ещё вырастет |
-| Поймали ошибку live | **${pct(liveShare)}** | ${int(k.liveErrorPeople)} из ${int(speakers)} говоривших |
 | Говорили голосом | **${pct(k.voiceShare)}** | ${int(k.usedVoice)} из ${int(speakers)}; отказ в микрофоне у ${people(micDenied)} |
-${tokensRow}
+${dbRows}
 ### Главное
 
 <!-- ГЛАВНОЕ -->
@@ -418,10 +456,11 @@ ${tokensRow}
 - **Разговор от 3 реплик** — три реплики под одним \`dialog_id\`; реплики разных разговоров не складываются.
 - **Первый разговор** — число реплик в самом раннем разговоре человека.
 - **Вернулся** — реплики в двух разных днях по Москве.
-- **Поймали ошибку live** — у говорившего был вызов модели разговора с ошибкой. **Говорили голосом** — хотя бы одна голосовая реплика.
+- **Говорили голосом** — хотя бы одна голосовая реплика.
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
-- **Токены** — \`agent_model_usage_total\` в Prometheus за те же дни, все модели агента.
+- **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** — реплики в PostHog ÷ сообщения человека в базе: PostHog не видит тех, кто отказался от аналитики.
+- **Токены** — расход всех моделей агента за те же дни из его базы; на разговор — ÷ разговоры с расходом, на активного в день — ÷ дни, в которые человек говорил.
 `;
 
 // ---------- detail (inline html block) ----------

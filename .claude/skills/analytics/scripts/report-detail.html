@@ -122,16 +122,17 @@ svg .val { fill: var(--fg); font-weight: 600; }
   <div class="scroll" id="reconcile-wrap" hidden><table>
     <thead><tr>
       <th>Что</th>
-      <th data-tip="Новые устройства периода, как в воронке.|PostHog">PostHog</th>
-      <th data-tip="Уникальные посетители периода по cookie Метрики; у целей — посетители, достигшие цели.|Метрика">Метрика</th>
-      <th data-tip="Разница по модулю ÷ Метрика. До 10 % — обычное расхождение двух счётчиков; больше выделено красным.|Расхождение">Расхождение</th>
+      <th data-tip="Значение в продуктовой аналитике за те же дни.|PostHog">PostHog</th>
+      <th data-tip="Метрика — независимый счётчик посещений и целей; база — боевые базы приложения и агента.|Сверяем с">Сверяем с</th>
+      <th data-tip="Значение во втором источнике. Что именно сравнивается — в подсказке к строке.|Значение">Значение</th>
+      <th data-tip="Разница по модулю ÷ второй источник. До 10 % — обычное расхождение; больше выделено красным. С базой PostHog всегда немного меньше: в нём нет тех, кто отказался от аналитики.|Расхождение">Расхождение</th>
     </tr></thead>
     <tbody id="reconcile"></tbody>
   </table></div>
 </div>
 
 <div class="sec" id="audience-sec" hidden>
-  <div class="head"><h2>5. Кто приходит</h2><p class="note">Метрика, все посетители периода</p></div>
+  <div class="head"><h2 id="audience-title">5. Кто приходит</h2><p class="note">Метрика, все посетители периода</p></div>
   <div class="scroll"><table>
     <thead><tr>
       <th data-tip="Пол и возраст по данным Яндекса о посетителе. Определены не у всех, поэтому сумма меньше числа посетителей.|Группа">Группа</th>
@@ -149,12 +150,24 @@ svg .val { fill: var(--fg); font-weight: 600; }
   <div class="scroll"><table>
     <thead><tr>
       <th data-tip="Модель и задача агента: live — разговор речь в речь, mood — цвет шарика, chat — итоги и заметки памяти.|Модель · задача">Модель · задача</th>
-      <th data-tip="Входные токены за период: increase(agent_model_usage_total{direction=&quot;input&quot;}) в Prometheus.|Вход">Вход</th>
+      <th data-tip="Входные токены за период из базы агента (model_usage).|Вход">Вход</th>
       <th data-tip="Выходные токены, включая размышление модели.|Выход">Выход</th>
       <th data-tip="Вход + выход.|Всего">Всего</th>
       <th data-tip="Доля модели во всех токенах периода.|Доля">Доля</th>
     </tr></thead>
     <tbody id="models"></tbody>
+  </table></div>
+</div>
+
+<div class="sec" id="features-sec" hidden>
+  <div class="head"><h2 id="features-title">7. Функции и аккаунты</h2><p class="note">база, без тестовых и командных аккаунтов</p></div>
+  <div class="scroll"><table>
+    <thead><tr>
+      <th data-tip="Что сейчас включено или что люди делали в эти дни. Определение — в подсказке к строке.|Что">Что</th>
+      <th data-tip="Число людей (или минут), если в подробностях не сказано иное.|Значение">Значение</th>
+      <th style="text-align:left">Подробности</th>
+    </tr></thead>
+    <tbody id="features"></tbody>
   </table></div>
 </div>
 
@@ -236,14 +249,16 @@ const DATA = /*__DATA__*/null;
     document.getElementById('reconcile').innerHTML = rec.map((r) => {
       const diff = r.metrika ? Math.abs(r.posthog - r.metrika) / r.metrika * 100 : NaN;
       const label = r.tip ? `<span${tipAttr(r.tip, r.label)}>${esc(r.label)}</span>` : esc(r.label);
-      return `<tr><td>${label}</td><td>${nf(r.posthog)}</td><td>${nf(r.metrika)}</td><td class="${diff > 10 ? 'hl' : ''}">${pct(diff)}</td></tr>`;
+      return `<tr><td>${label}</td><td>${nf(r.posthog)}</td><td>${esc(r.source || 'Метрика')}</td><td>${nf(r.metrika)}</td><td class="${diff > 10 ? 'hl' : ''}">${pct(diff)}</td></tr>`;
     }).join('');
   }
 
   // Who comes (Metrika): age and gender with the share that reaches a 3+ reply dialog.
+  let section = 4;
   const aud = DATA.audience || [];
   if (aud.length) {
     document.getElementById('audience-sec').hidden = false;
+    document.getElementById('audience-title').textContent = `${++section}. Кто приходит`;
     const shares = aud.filter((r) => !r.group && r.users).map((r) => r.d3 / r.users * 100);
     const ascale = Math.max(10, Math.ceil(Math.max(0, ...shares) / 10) * 10);
     document.getElementById('audience').innerHTML = aud.map((r) => {
@@ -258,13 +273,22 @@ const DATA = /*__DATA__*/null;
   const models = DATA.models;
   if (models && models.rows.length) {
     document.getElementById('models-sec').hidden = false;
-    document.getElementById('models-title').textContent = `${aud.length ? 6 : 5}. Расход моделей`;
+    document.getElementById('models-title').textContent = `${++section}. Расход моделей`;
     const mt = (n) => (n >= 1e6 ? (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн' : n >= 1e3 ? Math.round(n / 1e3).toLocaleString('ru-RU') + ' тыс.' : nf(n));
-    document.getElementById('models-note').textContent = `Prometheus, ${models.days} дн.; на активного человека в день — ${mt(Math.round(models.perActiveDay || 0))} токенов`;
+    document.getElementById('models-note').textContent = `база агента, ${models.days} дн.; на разговор — ${mt(Math.round(models.perDialog || 0))}, на активного человека в день — ${mt(Math.round(models.perActiveDay || 0))} токенов`;
     const sum = (key) => models.rows.reduce((a, r) => a + r[key], 0);
     document.getElementById('models').innerHTML = models.rows.map((r) =>
       `<tr><td>${esc(r.model)}${r.task ? ' · ' + esc(r.task) : ''}</td><td>${mt(r.input)}</td><td>${mt(r.output)}</td><td>${mt(r.input + r.output)}</td><td>${pct((r.input + r.output) / models.total * 100)}</td></tr>`).join('') +
       `<tr class="sum"><td>Всего</td><td>${mt(sum('input'))}</td><td>${mt(sum('output'))}</td><td>${mt(models.total)}</td><td>100 %</td></tr>`;
+  }
+
+  // Features and accounts (database).
+  const feats = DATA.features || [];
+  if (feats.length) {
+    document.getElementById('features-sec').hidden = false;
+    document.getElementById('features-title').textContent = `${++section}. Функции и аккаунты`;
+    document.getElementById('features').innerHTML = feats.map((r) =>
+      `<tr><td><span${tipAttr(r.tip, r.label)}>${esc(r.label)}</span></td><td>${nf(r.value)}</td><td style="text-align:left;white-space:normal">${esc(r.note)}</td></tr>`).join('');
   }
 
   // One tooltip for every [data-tip]: hover, keyboard focus, or tap.
