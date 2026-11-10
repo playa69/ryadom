@@ -943,7 +943,7 @@ describe('WebSocket-шлюз', () => {
       JSON.stringify({ type: 'component', component: 'tts', outcome: 'ok', cached: true, prompt: 'секретный промпт' }),
     )
     agentSide.socket.send(
-      JSON.stringify({ type: 'component', component: 'llm', outcome: 'error', error: 'секретная ошибка вендора' }),
+      JSON.stringify({ type: 'component', component: 'llm', outcome: 'error', reason: 'upstream_error', error: 'секретная ошибка вендора' }),
     )
     // A name outside the set is not reported: the report cannot be made to carry an arbitrary string.
     agentSide.socket.send(JSON.stringify({ type: 'component', component: 'секретный компонент', outcome: 'ok' }))
@@ -954,7 +954,7 @@ describe('WebSocket-шлюз', () => {
     const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
     expect(mine.map((entry) => [entry.event, entry.properties])).toEqual([
       ['component_called', { dialog_id: dialogId, component: 'tts', outcome: 'ok', cached: true }],
-      ['component_called', { dialog_id: dialogId, component: 'llm', outcome: 'error', cached: false }],
+      ['component_called', { dialog_id: dialogId, component: 'llm', outcome: 'error', cached: false, reason: 'upstream_error' }],
     ])
     expect(JSON.stringify(mine)).not.toMatch(/секретн/)
     client.close()

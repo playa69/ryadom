@@ -39,6 +39,7 @@ from app.clients.speech import TextToSpeech, TtsError, Voice, pcm_stream
 from app.core.tracing import NullTracer, Tracer
 from app.prompts.provider import PromptProvider, PromptUnavailable, ResolvedPrompt, prompt_metadata
 from app.services import usage as model_usage
+from app.services.failure import classify_failure
 
 logger = logging.getLogger("agent.sber")
 
@@ -407,7 +408,10 @@ class SberVoiceLink:
         if self.closed:
             return
         self.closed = True
-        logger.warning("sber voice link closed: %s", reason)
+        failure = classify_failure(reason)
+        logger.warning(
+            "sber voice link closed component=%s code=%s detail=%s", failure.component, failure.code, reason[:200]
+        )
         self._events.put_nowait(LiveEvent("closed", text=reason[:200]))
 
     async def events(self) -> AsyncIterator[LiveEvent]:

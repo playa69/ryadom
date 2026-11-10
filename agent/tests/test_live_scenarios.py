@@ -612,8 +612,8 @@ def contract(frames: list[Frame], closed_ends: bool = True) -> list[str]:
                 bad.append(f"component с неизвестным названием {body.get('component')!r} (#{i})")
             elif body.get("outcome") not in ("ok", "error") or not isinstance(body.get("cached"), bool):
                 bad.append(f"component без исхода или признака cached (#{i})")
-            elif set(body) - {"v", "type", "component", "outcome", "cached"}:
-                bad.append(f"в component лишние поля {sorted(set(body) - {'v', 'type', 'component', 'outcome', 'cached'})} (#{i})")
+            elif set(body) - {"v", "type", "component", "outcome", "cached", "reason"}:
+                bad.append(f"в component лишние поля {sorted(set(body) - {'v', 'type', 'component', 'outcome', 'cached', 'reason'})} (#{i})")
         else:
             bad.append(f"неизвестный тип кадра {name!r} (#{i})")
     if window is not None and closed_ends:

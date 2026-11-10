@@ -48,6 +48,7 @@ from app.clients.mood_classifier import MoodClassifier, ToneClassifier
 from app.clients.speech import FRAME_BYTES, TTS_RATE, VOICES, TextToSpeech, Voice, pcm_stream, tts_frame
 from app.core.config import APP_CONFIG
 from app.core.metrics import (
+    VOICE_LINK_FAILURES_TOTAL,
     GEMINI_CONTEXT_REFRESH_SECONDS,
     GEMINI_CONTEXT_REFRESH_TOTAL,
     GEMINI_MOOD_DELAY_SECONDS,
@@ -75,6 +76,7 @@ from app.prompts.provider import (
     prompt_metadata,
 )
 from app.services import usage as model_usage
+from app.services.failure import classify_failure
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.gemini_budget import DEFAULT_TURN_TOKENS, PCM_BYTES_PER_SECOND, TokenBudget, estimate_turn
 from app.services.replies import (
@@ -222,6 +224,7 @@ class LiveTurn:
     generating: bool = True
     got_output: bool = False
     failed: bool = False
+    fail_code: str | None = None  # код причины сбоя (`services/failure.py`), уходит с обращением `live`
     safety_counted: bool = False  # проверка безопасности этого хода уже засчитана как обращение
     noise_hold: bool = False  # расшифровка — обрывок чужого языка: ответ держится, пока не ясно, что он не лекция про язык
     user_saved: bool = False
@@ -412,13 +415,14 @@ class DialogSession:
         Звать в задаче сокета до `run`: контекст наследуют только задачи, созданные после."""
         model_usage.bind_calls(self._component_called)
 
-    def _component_called(self, component: str, outcome: str, cached: bool) -> None:
+    def _component_called(self, component: str, outcome: str, cached: bool, reason: str | None = None) -> None:
         if self._closed:
             return
+        frame: dict[str, Any] = {"type": "component", "component": component, "outcome": outcome, "cached": cached}
+        if reason:
+            frame["reason"] = reason
         try:
-            task = asyncio.get_running_loop().create_task(
-                self._send({"type": "component", "component": component, "outcome": outcome, "cached": cached})
-            )
+            task = asyncio.get_running_loop().create_task(self._send(frame))
         except RuntimeError:  # вне цикла событий (синхронный тест): отправлять некому
             return
         self._component_tasks.add(task)
@@ -1588,8 +1592,9 @@ class DialogSession:
         elif name == "idle":
             # Модель зависла: от неё нет событий GEMINI_IDLE_TIMEOUT_SECONDS. Это отказ, как обрыв соединения: слова человека
             # известны — сразу просим ответить в свежей сессии, иначе (или если зависла и повторная просьба) — error, а не тишина.
-            logger.warning("live turn timed out dialog=%s", self._dialog.id)
+            logger.warning("live turn timed out dialog=%s component=live code=timeout", self._dialog.id)
             turn.failed = True
+            turn.fail_code = "timeout"
             self._refresh = True  # зависшая сессия дальше не нужна
             if not self._recoverable(turn):
                 await self._voice_unavailable()
@@ -1871,7 +1876,7 @@ class DialogSession:
             return
         turn.generating = False
         # Ход ушёл модели и закончился: одно обращение (речь в речь, отдельных распознавания и озвучки здесь нет).
-        model_usage.call("live", "error" if turn.failed else "ok")
+        model_usage.call("live", "error" if turn.failed else "ok", reason=turn.fail_code if turn.failed else None)
         self._disarm_all(turn)
         if self._turn is turn:
             self._turn = None
@@ -1991,7 +1996,16 @@ class DialogSession:
             self._store.add_usage(self._dialog, turn.message_id, spent)
 
     async def _on_closed(self, reason: str) -> None:
-        logger.warning("gemini live closed dialog=%s: %s", self._dialog.id, reason)
+        failure = classify_failure(reason)
+        VOICE_LINK_FAILURES_TOTAL.labels(*failure).inc()
+        logger.warning(
+            "voice link closed dialog=%s pipeline=%s component=%s code=%s detail=%s",
+            self._dialog.id,
+            failure.pipeline,
+            failure.component,
+            failure.code,
+            reason[:200],
+        )
         link, self._link = self._link, None
         if link is not None:
             link.closed = True
@@ -2002,6 +2016,7 @@ class DialogSession:
         if turn is None or not turn.generating:
             return  # соединение закрылось между репликами (в том числе по GoAway): к следующей реплике откроем заново
         turn.failed = True
+        turn.fail_code = failure.code
         if not self._recoverable(turn):
             # Слова человека неизвестны (или это уже повторная просьба): ответить нечем. Иначе ошибку человек увидит, только
             # если не откроется и новая сессия (`_recover`): обрыв, после которого всё-таки пришёл ответ, ему незачем знать.

@@ -181,6 +181,16 @@ COMPONENT_CALLS_TOTAL = Counter(
     ["component", "outcome", "cached"],
 )
 
+# Закрытия голосового соединения по причине (`services/failure.py`): какой путь, какой компонент, какой код.
+#   pipeline   sber | gemini | unknown
+#   component  asr | llm | tts | live | unknown
+#   code       quota | upstream_error | keepalive_timeout | timeout | service_restart | connection_closed | ...
+VOICE_LINK_FAILURES_TOTAL = Counter(
+    "agent_voice_link_failures_total",
+    "Закрытия голосового соединения по пути, компоненту и коду причины.",
+    ["pipeline", "component", "code"],
+)
+
 DIALOGS_TOTAL = Counter(
     "agent_dialogs_total",
     "Диалоги, в которых человек сказал или написал хоть что-то (считаются по его первой реплике).",
