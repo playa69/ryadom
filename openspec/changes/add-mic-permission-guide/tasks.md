@@ -13,7 +13,7 @@
 - [ ] 4.1 `app/packages/client-core/src/voice/`: общий модуль `mic-permission.ts` — `queryMicPermission()` (`navigator.permissions.query`, `null` где не поддерживается, в том числе Safari) и `micGuide(userAgent, standalone)` — платформа и шаги инструкции (расширяет `mic-hint.ts` из #112). Приёмка: unit-тесты на User-Agent из PostHog за 05–10.11.
 - [ ] 4.2 Web `app/apps/web/components/DialogScreen.tsx`: фраза перед первым запросом, окно с инструкцией («Попробовать снова», «Писать текстом»), `denied` без вызова `getUserMedia`, `granted` → «Продолжить». Приёмка: сценарии дельты (кроме иного сбоя) на web.
 - [ ] 4.3 Mobile/PWA/Android/iOS/TG `app/apps/mobile/src/client/components/pages/dialog/DialogPage.tsx`: то же окно на Framework7. Приёмка: те же сценарии на mobile.
-- [ ] 4.4 Автостарт с главного экрана остаётся без окна (текстовый вид + уведомление). Приёмка: сценарий «Автоматический старт при отказе».
+- [ ] 4.4 Автостарт с главного экрана остаётся без окна (текстовый вид + уведомление). Приёмка: сценарий «Микрофон не разрешён».
 
 ## 5. Проверка
 
