@@ -73,6 +73,8 @@ import { AppHeader } from './AppHeader'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
 import DialogAlert from './DialogAlert'
+import MicGuideSheet from './MicGuideSheet'
+import { micGuide, type MicGuide } from '@ryadom/client-core/voice/mic-guide'
 import DialogEndSheet, { type EndRecapSource } from './DialogEndSheet'
 import ShareDialogModal from './ShareDialogModal'
 import DialogFeed from './DialogFeed'
@@ -174,6 +176,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // «Подводить итог автоматически»: read when the end sheet opens; null until then.
   const [recapEnabled, setRecapEnabled] = useState<boolean | null>(null)
   const [alert, setAlert] = useState<AlertState | null>(null)
+  const [guide, setGuide] = useState<MicGuide | null>(null)
   const [missing, setMissing] = useState(false)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
   const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(start?.memoryMode)
@@ -625,6 +628,13 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
    * without a microphone is useless, so instead of a dialog on arrival it says so softly and moves to
    * the text it falls back to.
    */
+  function currentMicGuide(): MicGuide {
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true
+    return micGuide(navigator.userAgent, standalone)
+  }
+
   async function startListening(automatic: boolean) {
     if (micStarting.current || capture.current) return
     unlockSpeech()
@@ -666,7 +676,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setAwaitingReply(false)
     } catch (error) {
       trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      if (error instanceof MicrophoneDeniedError && !automatic) setGuide(currentMicGuide())
+      else refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
     } finally {
       micStarting.current = false
     }
@@ -727,7 +738,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setPaused(null)
     } catch (error) {
       trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      if (error instanceof MicrophoneDeniedError && !automatic) setGuide(currentMicGuide())
+      else refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
     } finally {
       micStarting.current = false
     }
@@ -1104,6 +1116,17 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         onRecapEnabledChange={(next) => void changeRecapEnabled(next)}
         onDraft={draftRecap}
         unsaved={unsaved}
+      />
+      <MicGuideSheet
+        guide={guide}
+        onRetry={() => {
+          setGuide(null)
+          void (handsFree ? openMic(false) : startListening(false))
+        }}
+        onText={() => {
+          setGuide(null)
+          setView('text')
+        }}
       />
       <DialogAlert
         open={alert !== null}
