@@ -108,6 +108,30 @@ kill $pf
 цены моделей не заданы. Ключи проекта Langfuse есть только в окружении пода агента: из пода их не выноси, read-only
 скрипт к его API запускай в самом поде (`kubectl exec -i -n agent deploy/agent -c agent -- python - < script.py`, admin).
 
+## Отказ компонента: что сломалось и почему
+
+Каждая строка отказа голосового пути в журнале агента несёт поля `component=… reason=… pipeline=…` и, когда известны,
+`dialog_id=…`, `turn=…`, `user_id=…` (PROTEUS-282). Без текстов реплик и без ответов вендора: в `detail` только класс
+исключения.
+
+- `component`: `gigaasr`, `gigachat`, `salutespeech` (путь Сбера), `gemini_live`, `gemini_tts` (путь Gemini).
+- `reason`: `quota`, `auth`, `timeout`, `connect`, `closed`, `empty`, `bad_response`, `unavailable`, `unknown`.
+- `pipeline`: путь, на котором шёл разговор в момент отказа (`sber` | `gemini`; после перехода на запасной — запасной).
+- Строки: `voice link closed` (оборвалось посреди хода), `voice send failed`, `voice turn timed out`, `tts failed`,
+  `sber link not opened`, `voice pipeline fallback from=… to=…` (ушли на запасной путь), `voice not available`
+  (не открылись оба пути); `voice link closed between turns` — плановое закрытие между репликами, не отказ.
+
+```bash
+.agents/skills/logs/scripts/monitoring.py loki '{namespace="agent",container="agent"} | logfmt | reason!="" | pipeline="sber"' 2h
+.agents/skills/logs/scripts/monitoring.py loki 'sum by (component,reason) (count_over_time({namespace="agent",container="agent"} |= "component=" |= "reason=" [1h]))' 24h
+```
+
+Метрики (Prometheus): `agent_component_errors_total{component,pipeline,reason}` и
+`agent_pipeline_fallbacks_total{from,to,scope,reason}`, например
+`sum by (component,reason) (increase(agent_component_errors_total[1h]))`. В PostHog то же — свойства `pipeline` и
+`reason` у `component_called` с `outcome=error` (скилл `analytics`). Журнал api: в строках диалога есть `userId`,
+`dialogId` и `pipeline`.
+
 ## Ошибка → диалог → человек
 
 - В журнале api есть `userId` и `dialogId`; путь сокета агента — `/v1/users/<userId>/dialogs/<dialogId>/ws`.

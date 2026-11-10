@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from app.clients.speech import TtsError, Voice
 from app.core.config import GeminiSettings
+from app.core.failure import GEMINI_LIVE, record_failure
 from app.core.voices import GEMINI_VOICE_NAMES
 from app.core.metrics import GEMINI_OPENS_TOTAL, GEMINI_SESSIONS_OPEN
 from app.services import usage as model_usage
@@ -92,6 +93,7 @@ class LiveEvent:
     text: str = ""
     data: bytes = b""
     usage: dict[str, int] | None = None
+    component: str = ""  # у `closed`: вендор, на котором оборвалось (gigaasr | gigachat | salutespeech | gemini_live), для журнала и метрик
 
 
 class LiveLink(Protocol):
@@ -315,6 +317,7 @@ def _translate(message) -> list[LiveEvent]:  # noqa: ANN001
 
 class GeminiLiveConnector:
     name = "gemini-live"
+    pipeline = "gemini"
 
     def __init__(self, settings: GeminiSettings) -> None:
         from google import genai
@@ -377,6 +380,7 @@ class GeminiLiveConnector:
             raise
         except Exception as error:
             await stack.aclose()
+            record_failure(logger, "gemini not opened", GEMINI_LIVE, "gemini", error)
             raise LiveError(f"Gemini Live не открылся: {type(error).__name__}: {str(error)[:200]}") from error
         return GeminiLiveLink(stack, session, voice, self._model, voice_name)
 

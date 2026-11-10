@@ -228,14 +228,14 @@ def create_app(
             from app.clients.sber_voice import FallbackConnector, FallbackTts, SaluteTts
 
             salute = CachedTts(SaluteTts(sber), APP_CONFIG.speech.tts_cache_items or 1)
-            sber_tts = FallbackTts(salute, app.state.tts) if app.state.tts is not None else salute
+            sber_tts = FallbackTts(salute, app.state.tts, "sber", "gemini") if app.state.tts is not None else salute
             app.state.pipelines["sber"] = (FallbackConnector(sber, live), lambda: sber_tts)
 
             def gemini_open_failed(error: Exception) -> None:
                 if is_quota_error(str(error)):
                     budget.on_quota_error("open")  # отказ по квоте при открытии начинает паузу, как и в разговоре без запасного пути
 
-            gemini_tts = FallbackTts(app.state.tts, salute) if app.state.tts is not None else salute
+            gemini_tts = FallbackTts(app.state.tts, salute, "gemini", "sber") if app.state.tts is not None else salute
             app.state.pipelines["gemini"] = (
                 FallbackConnector(
                     live, sber, model=live.model, skip_primary=budget.cooling, on_primary_error=gemini_open_failed

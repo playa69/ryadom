@@ -1,7 +1,15 @@
 import type { IncomingMessage } from 'node:http'
 import assertNever from 'assert-never'
 import type { WebSocket } from 'ws'
-import { AnalyticsEvent, COMPONENT_NAMES, type ComponentName, type DialogInterruptReason } from '@ryadom/analytics/events'
+import {
+  AnalyticsEvent,
+  COMPONENT_NAMES,
+  COMPONENT_PIPELINES,
+  COMPONENT_REASONS,
+  type ComponentName,
+  type ComponentPipeline,
+  type DialogInterruptReason,
+} from '@ryadom/analytics/events'
 import type { ServerAnalytics } from '@ryadom/analytics/server'
 import {
   bindRequestContext,
@@ -119,6 +127,8 @@ class DialogSession {
    * product analytics, not even counts.
    */
   private unsaved = false
+  /** The voice path the agent last reported on; it goes into error log lines so a failure is tied to a path. */
+  private pipeline: ComponentPipeline | undefined
   private outcomeReported = false
   private plannedClose = false
   private closeReason: DialogInterruptReason | null = null
@@ -467,12 +477,12 @@ class DialogSession {
       },
       {
         onOpen: () => {
-          this.logger.info('Соединение с агентом открыто', { userId, dialogId, codec: this.codec })
+          this.logger.info('Соединение с агентом открыто', { userId, dialogId, pipeline: this.pipeline, codec: this.codec })
         },
         onText: (frame) => this.onAgentText(frame as AgentTextFrame),
         onBinary: (data) => this.onAgentSpeech(data),
         onClose: (code, reason) => {
-          this.logger.info('Агент закрыл соединение', { userId, dialogId, code, reason })
+          this.logger.info('Агент закрыл соединение', { userId, dialogId, pipeline: this.pipeline, code, reason })
           // The agent is gone, so there is nothing left to continue the conversation with. What it said
           // before closing (its `ended`, the last of its speech still in the encoder) goes out first.
           const closeCode = code === 1000 ? DialogCloseCode.Done : DialogCloseCode.AgentUnavailable
@@ -480,7 +490,7 @@ class DialogSession {
         },
         onRejected: (status) => {
           if (status !== 404) {
-            this.logger.warn('Агент отказал в соединении', { userId, dialogId, status })
+            this.logger.warn('Агент отказал в соединении', { userId, dialogId, pipeline: this.pipeline, status })
             return this.fail(
               DialogWsErrorCode.AGENT_UNAVAILABLE,
               'agent is unavailable',
@@ -492,7 +502,7 @@ class DialogSession {
           this.fail(DialogWsErrorCode.DIALOG_NOT_FOUND, 'dialog not found', DialogCloseCode.DialogGone)
         },
         onError: (error) => {
-          this.logger.warn('Ошибка соединения с агентом', error, { userId, dialogId })
+          this.logger.warn('Ошибка соединения с агентом', error, { userId, dialogId, pipeline: this.pipeline })
           this.fail(
             DialogWsErrorCode.AGENT_UNAVAILABLE,
             'agent is unavailable',
@@ -650,12 +660,17 @@ class DialogSession {
         // One real call of one of the agent's parts for this dialog: a name, how it went, whether it was cached.
         // Nothing else of the frame is read, so a prompt or a vendor's error text cannot reach a report.
         const component = COMPONENT_NAMES.find((name) => name === frame.component) as ComponentName | undefined
+        const outcome = frame.outcome === 'error' ? 'error' : 'ok'
+        const pipeline = COMPONENT_PIPELINES.find((name) => name === frame.pipeline)
+        if (pipeline) this.pipeline = pipeline
         if (!component || !this.userId || this.unsaved) return
         this.deps.analytics.capture(this.userId, AnalyticsEvent.ComponentCalled, {
           ...dialogIdProperty(this.dialogId),
           component,
-          outcome: frame.outcome === 'error' ? 'error' : 'ok',
+          outcome,
           cached: frame.cached === true,
+          ...(pipeline ? { pipeline } : {}),
+          ...(outcome === 'error' ? { reason: COMPONENT_REASONS.find((name) => name === frame.reason) ?? 'unknown' } : {}),
         })
         return
       }
@@ -713,6 +728,11 @@ class DialogSession {
         const code = frame.code === 'VOICE_UNAVAILABLE' ? DialogWsErrorCode.VOICE_UNAVAILABLE : null
         // Losing voice is not the end of the conversation: text keeps working.
         if (code) {
+          this.logger.warn('Агент сообщил, что голос недоступен', {
+            userId: this.userId,
+            dialogId: this.dialogId,
+            pipeline: this.pipeline,
+          })
           return this.toClient({
             type: DialogServerFrame.Error,
             code,
