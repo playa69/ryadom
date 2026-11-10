@@ -51,8 +51,9 @@ test('первый запуск, привязка почты, выход: акк
     'Начиная разговор, ты подтверждаешь, что тебе есть 18',
   )
   await expect(first.getByText('В опасной ситуации звони 112.')).toBeVisible()
-  // No boxes of agreement: the one box here is the optional «Не сохранять этот разговор».
-  await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(1)
+  // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»»: PWA has no optional saving checkbox.
+  await expect(first.getByTestId('unsaved')).toHaveCount(0)
+  await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(0)
   await expect(first.getByTestId('memory-switch')).toBeVisible()
   await shot(page, 'app-welcome')
   await step(

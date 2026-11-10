@@ -4,7 +4,6 @@ import { Button, List, ListInput, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
-import { UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, deviceLogin, telegramLogin, updateProfile } from '../../../lib/api'
 import { requestTalkOnHome, takeTalkRequest } from '../../../lib/nav'
@@ -29,9 +28,9 @@ function partOfDay(): string {
 }
 
 /**
- * The first screen. Someone new meets home itself: SOS, the breathing circle, «Поговорить» with the same
- * optional choices as home («Запоминать важное», «Не сохранять этот разговор»), and at the foot what
- * starting means, in view without scrolling (the lines of help are behind SOS). The press is the agreement: it makes an account for this phone behind the
+ * The first screen. Someone new meets home itself: SOS, the breathing circle, «Поговорить» with the
+ * optional memory choice, and at the foot what starting means, in view without scrolling (the lines of
+ * help are behind SOS). The press is the agreement: it makes an account for this phone behind the
  * scenes, records the consents and asks home for a conversation with these choices, which home starts as
  * soon as the tabs appear; the companion greets the person there. Nothing is sent before that press.
  *
@@ -56,12 +55,10 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   const telegram = isTelegramMiniApp()
   const [name, setName] = useState(() => (telegram ? telegramFirstName().slice(0, InputLimit.NameMax) : ''))
   const startForm = telegram ? 'telegram_start' : 'device_start'
-  /** "Не сохранять этот разговор", as on home: off at every visit, optional. */
-  const [unsaved, setUnsaved] = useState(false)
   /** "Запоминать важное" with the consent sheet accepted: home turns memory on before the conversation. */
   const [rememberMemory, setRememberMemory] = useState(false)
   const [memoryConsentOpen, setMemoryConsentOpen] = useState(false)
-  const talkRequest = () => ({ saved: !unsaved, rememberMemory })
+  const talkRequest = () => ({ rememberMemory })
 
   async function handleTalk() {
     if (loading) return
@@ -226,19 +223,6 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
                     onChange={(on) => (on ? setMemoryConsentOpen(true) : setRememberMemory(false))}
                   />
                 </div>
-                <label className="rd-incognito rd-unsaved" data-testid="unsaved">
-                  <span className="rd-incognito-text">
-                    <span className="rd-incognito-title">{UNSAVED_LABEL}</span>
-                    <span className="rd-caption">{UNSAVED_HINT}</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    className="rd-unsaved-check"
-                    data-testid="unsaved-toggle"
-                    checked={unsaved}
-                    onChange={(event) => setUnsaved(event.target.checked)}
-                  />
-                </label>
               </>
             )}
           </div>

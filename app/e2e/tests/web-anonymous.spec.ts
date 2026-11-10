@@ -80,8 +80,9 @@ test('первый запуск: строка о согласии, «Погов�
     'Начиная разговор, ты подтверждаешь, что тебе есть 18, принимаешь условия использования и даёшь согласие на обработку данных',
   )
   await expect(page.getByText('В опасной ситуации звони 112.')).toBeVisible()
-  // No boxes of agreement: the one box here is the optional «Не сохранять этот разговор».
-  await expect(page.getByRole('checkbox')).toHaveCount(1)
+  // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»»: the web has no optional saving checkbox.
+  await expect(page.getByRole('checkbox')).toHaveCount(0)
+  await expect(page.getByTestId('unsaved')).toHaveCount(0)
   await expect(page.getByTestId('memory-switch')).toBeVisible()
   await expectNoHorizontalOverflow(page)
   await shot(page, 'web-welcome')

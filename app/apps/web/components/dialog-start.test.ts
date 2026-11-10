@@ -40,4 +40,12 @@ describe('takeDialogHandoff', () => {
     expect(claimFreshStart('d5')).toBeNull()
     expect(takeDialogHandoff('d5')).toEqual({ draft: 'текст' })
   })
+
+  it('keeps the saved flag of an existing legacy dialog', () => {
+    // `openspec/changes/remove-unsaved-dialog-option`, «Продолжение открытого разговора».
+    const legacy = { ...START, resumed: true, saved: false }
+    rememberDialogStart('legacy-unsaved', legacy)
+    expect(claimFreshStart('legacy-unsaved')).toBeNull()
+    expect(takeDialogHandoff('legacy-unsaved')).toBeNull()
+  })
 })
