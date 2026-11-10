@@ -6,10 +6,11 @@ import {
   formOutcomeFromStatus,
   type AuthForm,
   type FormOutcome,
+  type VoiceProblemDetail,
   type VoiceProblemReason,
 } from '@ryadom/analytics/events'
 import { ApiError } from '@ryadom/client-core/errors'
-import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
+import { MicrophoneDeniedError, MicrophoneError } from '@ryadom/client-core/voice/capture'
 
 /**
  * The small pieces the screens share to report what only the screen knows. The events themselves are
@@ -36,18 +37,26 @@ export function trackForm(form: AuthForm, outcome: FormOutcome): void {
 }
 
 /**
- * Why the microphone did not start. The capture module folds every `getUserMedia` failure into
- * `MicrophoneDeniedError`, so a missing microphone cannot be told from a refused permission here.
- * Anything else failed after the microphone opened (the audio context, the worklet): the browser
- * cannot do what the voice needs.
+ * Why the microphone did not start: the refusal, the missing device, or a browser that cannot do what the
+ * voice needs. `detail` is the exact way `getUserMedia` failed.
  */
-export function micProblemReason(error: unknown, captureSupported: boolean): VoiceProblemReason {
-  if (!captureSupported) return 'unsupported'
-  return error instanceof MicrophoneDeniedError ? 'permission_denied' : 'unsupported'
+export function micProblem(
+  error: unknown,
+  captureSupported: boolean,
+): { reason: VoiceProblemReason; detail?: VoiceProblemDetail } {
+  if (!captureSupported) return { reason: 'unsupported' }
+  if (!(error instanceof MicrophoneError)) return { reason: 'unsupported' }
+  if (error instanceof MicrophoneDeniedError) return { reason: 'permission_denied', detail: error.detail }
+  return { reason: error.detail === 'not_found' ? 'no_microphone' : 'unsupported', detail: error.detail }
 }
 
-export function trackVoiceProblem(reason: VoiceProblemReason): void {
-  track(AnalyticsEvent.VoiceProblem, { reason })
+/** The reason alone, for callers that have no use for the detail. */
+export function micProblemReason(error: unknown, captureSupported: boolean): VoiceProblemReason {
+  return micProblem(error, captureSupported).reason
+}
+
+export function trackVoiceProblem(reason: VoiceProblemReason, detail?: VoiceProblemDetail): void {
+  track(AnalyticsEvent.VoiceProblem, detail ? { reason, detail } : { reason })
 }
 
 /** Whether the page runs as an installed app (the display mode, or Safari's flag on the home screen). */

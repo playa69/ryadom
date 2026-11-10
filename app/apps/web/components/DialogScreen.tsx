@@ -43,6 +43,7 @@ import type {
 import {
   isCaptureSupported,
   MicrophoneDeniedError,
+  MicrophoneError,
   startCapture,
   type VoiceCapture,
 } from '@ryadom/client-core/voice/capture'
@@ -64,7 +65,7 @@ import { Button } from '@ryadom/ui/components/button'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
 import type { OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
-import { micProblemReason, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
+import { micProblem, trackVoiceProblem, useOnceFor } from '@/lib/analytics'
 import { useAuth, useClient } from '@/lib/auth'
 import { trackUnlessUnsaved } from '@/lib/dialog-analytics'
 import { appPath } from '@/lib/base-path'
@@ -75,6 +76,11 @@ import ChatComposer from './ChatComposer'
 import DialogAlert from './DialogAlert'
 import MicGuideSheet from './MicGuideSheet'
 import { micGuide, type MicGuide } from '@ryadom/client-core/voice/mic-guide'
+import {
+  MIC_FAILURE_TEXT,
+  queryMicPermission,
+  watchMicPermission,
+} from '@ryadom/client-core/voice/mic-permission'
 import DialogEndSheet, { type EndRecapSource } from './DialogEndSheet'
 import ShareDialogModal from './ShareDialogModal'
 import DialogFeed from './DialogFeed'
@@ -176,7 +182,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // «Подводить итог автоматически»: read when the end sheet opens; null until then.
   const [recapEnabled, setRecapEnabled] = useState<boolean | null>(null)
   const [alert, setAlert] = useState<AlertState | null>(null)
-  const [guide, setGuide] = useState<MicGuide | null>(null)
+  /** After a refused microphone: the steps for this place; `again` when a retry was refused too, `granted` when the switch was flipped meanwhile. */
+  const [guide, setGuide] = useState<{ steps: MicGuide; again: boolean; granted: boolean } | null>(null)
   const [missing, setMissing] = useState(false)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
   const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(start?.memoryMode)
@@ -628,6 +635,29 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
    * without a microphone is useless, so instead of a dialog on arrival it says so softly and moves to
    * the text it falls back to.
    */
+  /**
+   * A refusal the browser remembers is found out without asking: the system prompt would not appear anyway,
+   * so the steps come at once. `null` from the browser (Safari) means the only way to know is to ask.
+   */
+  async function micBlocked(automatic: boolean, refuse: (text: string) => void): Promise<boolean> {
+    if ((await queryMicPermission()) !== 'denied') return false
+    micFailed(new MicrophoneDeniedError('blocked'), automatic, false, refuse)
+    return true
+  }
+
+  function micFailed(error: unknown, automatic: boolean, retry: boolean, refuse: (text: string) => void) {
+    const problem = micProblem(error, isCaptureSupported())
+    trackVoiceProblem(problem.reason, problem.detail)
+    if (error instanceof MicrophoneDeniedError) {
+      // Self-started listening only falls back to text; the steps come when the person taps the microphone.
+      if (automatic) refuse(MIC_DENIED_TEXT)
+      else setGuide({ steps: currentMicGuide(), again: retry, granted: false })
+      return
+    }
+    const detail = error instanceof MicrophoneError ? error.detail : 'other'
+    refuse(detail === 'not_allowed' || detail === 'blocked' ? MIC_FAILED_TEXT : MIC_FAILURE_TEXT[detail])
+  }
+
   function currentMicGuide(): MicGuide {
     const standalone =
       window.matchMedia('(display-mode: standalone)').matches ||
@@ -635,7 +665,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     return micGuide(navigator.userAgent, standalone)
   }
 
-  async function startListening(automatic: boolean) {
+  async function startListening(automatic: boolean, retry = false) {
     if (micStarting.current || capture.current) return
     unlockSpeech()
     const refuse = (text: string) => {
@@ -653,6 +683,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     }
     micStarting.current = true
     try {
+      if (!retry && (await micBlocked(automatic, refuse))) return
       // Talking over the agent cuts it off. The player is unlocked here, by the person's own tap
       // (an iOS requirement), which also means a person who only types never hears anything.
       player.current?.stop()
@@ -675,9 +706,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       markRecording(true)
       setAwaitingReply(false)
     } catch (error) {
-      trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      if (error instanceof MicrophoneDeniedError && !automatic) setGuide(currentMicGuide())
-      else refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      micFailed(error, automatic, retry, refuse)
     } finally {
       micStarting.current = false
     }
@@ -700,7 +729,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
    * `automatic` as in `startListening`. A tap while the agent speaks means the person wants the floor,
    * so it silences the agent.
    */
-  async function openMic(automatic: boolean) {
+  async function openMic(automatic: boolean, retry = false) {
     if (micStarting.current || capture.current) return
     unlockSpeech()
     const refuse = (text: string) => {
@@ -713,6 +742,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     }
     micStarting.current = true
     try {
+      if (!retry && (await micBlocked(automatic, refuse))) return
       if (!automatic) hush()
       await player.current?.unlock().catch(() => trackVoiceProblem('playback_failed'))
       const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
@@ -737,9 +767,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       setMicOpen(true)
       setPaused(null)
     } catch (error) {
-      trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      if (error instanceof MicrophoneDeniedError && !automatic) setGuide(currentMicGuide())
-      else refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      micFailed(error, automatic, retry, refuse)
     } finally {
       micStarting.current = false
     }
@@ -1118,15 +1146,18 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         unsaved={unsaved}
       />
       <MicGuideSheet
-        guide={guide}
+        guide={guide?.steps ?? null}
+        again={guide?.again ?? false}
+        granted={guide?.granted ?? false}
         onRetry={() => {
           setGuide(null)
-          void (handsFree ? openMic(false) : startListening(false))
+          void (handsFree ? openMic(false, true) : startListening(false, true))
         }}
         onText={() => {
           setGuide(null)
           setView('text')
         }}
+        onGranted={() => setGuide((current) => (current ? { ...current, granted: true } : current))}
       />
       <DialogAlert
         open={alert !== null}

@@ -8,10 +8,11 @@ import {
   type AppUpdateKind,
   type AuthForm,
   type FormOutcome,
+  type VoiceProblemDetail,
   type VoiceProblemReason,
 } from '@ryadom/analytics/events'
 import { ApiError } from '@ryadom/client-core/errors'
-import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
+import { MicrophoneDeniedError, MicrophoneError } from '@ryadom/client-core/voice/capture'
 
 /**
  * Product analytics glue for this app: the mappings from what the screens know (an error, a route, a
@@ -100,37 +101,30 @@ export function screenPath(pattern: string | undefined): string | null {
 
 // ── Voice ───────────────────────────────────────────────────────────────────────────────────
 
-/**
- * Why the microphone did not start. client-core collapses every `getUserMedia` failure into
- * `MicrophoneDeniedError`, so a missing microphone is told apart by the device list: a browser that
- * lists devices and has no input among them has no microphone. `audioInputs` is null when that is unknown.
- */
-export function micFailureReason(error: unknown, audioInputs: number | null): VoiceProblemReason {
-  if (!(error instanceof MicrophoneDeniedError)) return 'unsupported'
-  return audioInputs === 0 ? 'no_microphone' : 'permission_denied'
+/** Why the microphone did not start: the refusal, the missing device, or a browser that cannot do what the voice needs. */
+export function micProblem(error: unknown): { reason: VoiceProblemReason; detail?: VoiceProblemDetail } {
+  if (!(error instanceof MicrophoneError)) return { reason: 'unsupported' }
+  if (error instanceof MicrophoneDeniedError) return { reason: 'permission_denied', detail: error.detail }
+  return { reason: error.detail === 'not_found' ? 'no_microphone' : 'unsupported', detail: error.detail }
 }
 
-/** How many audio inputs the browser lists; null when it lists nothing at all or cannot be asked. */
-async function countAudioInputs(): Promise<number | null> {
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices()
-    return devices.length === 0 ? null : devices.filter((device) => device.kind === 'audioinput').length
-  } catch {
-    return null
-  }
+export function micFailureReason(error: unknown): VoiceProblemReason {
+  return micProblem(error).reason
 }
 
-const reportedVoiceProblems = new Set<VoiceProblemReason>()
+const reportedVoiceProblems = new Set<string>()
 
 /** Once per reason and page load: someone who taps a broken microphone ten times is one problem, not ten. */
-export function reportVoiceProblem(reason: VoiceProblemReason): void {
-  if (reportedVoiceProblems.has(reason)) return
-  reportedVoiceProblems.add(reason)
-  track(AnalyticsEvent.VoiceProblem, { reason })
+export function reportVoiceProblem(reason: VoiceProblemReason, detail?: VoiceProblemDetail): void {
+  const key = `${reason}:${detail ?? ''}`
+  if (reportedVoiceProblems.has(key)) return
+  reportedVoiceProblems.add(key)
+  track(AnalyticsEvent.VoiceProblem, detail ? { reason, detail } : { reason })
 }
 
-export async function reportMicFailure(error: unknown): Promise<void> {
-  reportVoiceProblem(micFailureReason(error, await countAudioInputs()))
+export function reportMicFailure(error: unknown): void {
+  const { reason, detail } = micProblem(error)
+  reportVoiceProblem(reason, detail)
 }
 
 // ── Updates ─────────────────────────────────────────────────────────────────────────────────

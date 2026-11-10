@@ -17,8 +17,9 @@ export interface MicGuide {
 const EMBEDDED = /YaSearchApp|YaApp_|Telegram|VKAndroidApp|VKApp|Instagram|FBAN|FBAV|; wv\)/i
 
 export function micGuideKind(userAgent: string, standalone: boolean): MicGuideKind {
-  if (EMBEDDED.test(userAgent)) return 'embedded'
+  // An installed app (a PWA or a store build, whose WebView looks like an embedded browser) has its own switch in the system settings.
   if (standalone) return 'pwa'
+  if (EMBEDDED.test(userAgent)) return 'embedded'
   if (/iPhone|iPad/.test(userAgent) && /Safari\//.test(userAgent) && !/CriOS|YaBrowser|FxiOS/.test(userAgent)) {
     return 'safari-ios'
   }

@@ -1,25 +1,86 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
 import type { MicGuide } from '@ryadom/client-core/voice/mic-guide'
+import { queryMicPermission, watchMicPermission } from '@ryadom/client-core/voice/mic-permission'
 import Modal from './Modal'
 import { BUTTON } from './controls'
 
 /** After a refused microphone: how to turn it back on for this place, then try again or write instead. */
 export default function MicGuideSheet({
   guide,
+  again,
+  granted,
   onRetry,
   onText,
+  onGranted,
 }: {
   guide: MicGuide | null
+  /** A retry was refused as well. */
+  again: boolean
+  /** The switch was flipped in the browser's settings while this window was open. */
+  granted: boolean
   onRetry(): void
   onText(): void
+  onGranted(): void
 }) {
   const [copied, setCopied] = useState(false)
+  const open = guide !== null
+
+  // The person goes to the settings and comes back: the browser says so by itself where it can, and on the
+  // way back to the page it is asked once more.
+  useEffect(() => {
+    if (!open || granted) return
+    const stop = watchMicPermission((state) => state === 'granted' && onGranted())
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void queryMicPermission().then((state) => state === 'granted' && onGranted())
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [open, granted, onGranted])
+
+  if (granted) {
+    return (
+      <Modal open onClose={onText} title="Микрофон включён">
+        <p className="text-base leading-[1.55] text-dim" data-testid="mic-guide-granted">
+          Готово — можно говорить.
+        </p>
+        <div className="flex flex-col gap-3 tab:flex-row-reverse tab:flex-wrap tab:justify-start">
+          <Button
+            type="button"
+            className={cn(BUTTON, 'w-full bg-clip-border focus-visible:border-transparent tab:w-auto tab:min-w-44 tab:flex-none')}
+            onClick={onRetry}
+            data-testid="mic-guide-continue"
+          >
+            Продолжить
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(BUTTON, 'w-full border-input! tab:w-auto')}
+            onClick={onText}
+            data-testid="mic-guide-text"
+          >
+            Писать текстом
+          </Button>
+        </div>
+      </Modal>
+    )
+  }
   return (
     <Modal open={guide !== null} onClose={onText} title={guide?.title ?? ''}>
+      {again && (
+        <p className="text-base leading-[1.55] text-destructive" data-testid="mic-guide-again" role="status">
+          Микрофон по-прежнему выключен.
+        </p>
+      )}
       <p className="text-base leading-[1.55] text-dim" data-testid="mic-guide-intro">
         {guide?.intro}
       </p>

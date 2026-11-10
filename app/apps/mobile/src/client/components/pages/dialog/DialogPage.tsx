@@ -20,6 +20,10 @@ import {
   wasUnsaved,
 } from '@ryadom/client-core/unsaved'
 import { reportMicFailure, reportVoiceProblem } from '../../../lib/analytics'
+import { micGuide, type MicGuide } from '@ryadom/client-core/voice/mic-guide'
+import { MIC_FAILURE_TEXT, queryMicPermission } from '@ryadom/client-core/voice/mic-permission'
+import { isNative, isStandalone } from '../../../lib/platform'
+import MicGuideSheet from './MicGuideSheet'
 import {
   createDialogSocket,
   type DialogSocket,
@@ -34,6 +38,7 @@ import { setTelegramClosingConfirmation } from '../../../lib/telegram'
 import {
   isCaptureSupported,
   MicrophoneDeniedError,
+  MicrophoneError,
   startCapture,
   type VoiceCapture,
 } from '../../../lib/voice/capture'
@@ -254,6 +259,8 @@ export default function DialogPage({
   useEffect(() => () => moodHold.clear(), [moodHold])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
+  /** After a refused microphone: the steps for this place; `again` when a retry was refused too, `granted` when the switch was flipped meanwhile. */
+  const [guide, setGuide] = useState<{ steps: MicGuide; again: boolean; granted: boolean } | null>(null)
   const [draft, setDraft] = useState('')
   const [recording, setRecording] = useState(false)
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
@@ -480,8 +487,43 @@ export default function DialogPage({
     socket.current?.interruptSpeech()
   }, [])
 
+  /** The microphone did not open: a refusal gets the steps for this place, anything else a short sentence. */
+  const micFailed = useCallback((error: unknown, automatic: boolean, retry: boolean) => {
+    reportMicFailure(error)
+    const refuse = (text: string) => {
+      if (automatic) {
+        setMode('text')
+        f7.toast.create({ text, closeTimeout: 4000 }).open()
+      } else f7.dialog.alert(text, 'Голос')
+    }
+    if (error instanceof MicrophoneDeniedError) {
+      // Self-started listening only falls back to text; the steps come when the person taps the microphone.
+      if (automatic) refuse(MIC_DENIED_TEXT)
+      else {
+        const steps = micGuide(navigator.userAgent, isStandalone() || isNative())
+        setGuide({ steps, again: retry, granted: false })
+      }
+      return
+    }
+    const detail = error instanceof MicrophoneError ? error.detail : 'other'
+    refuse(detail === 'not_allowed' || detail === 'blocked' ? MIC_FAILED_TEXT : MIC_FAILURE_TEXT[detail])
+  }, [])
+
+  /**
+   * A refusal the browser remembers is found out without asking: the system prompt would not appear anyway,
+   * so the steps come at once. `null` from the browser (Safari) means the only way to know is to ask.
+   */
+  const micBlocked = useCallback(
+    async (automatic: boolean): Promise<boolean> => {
+      if ((await queryMicPermission()) !== 'denied') return false
+      micFailed(new MicrophoneDeniedError('blocked'), automatic, false)
+      return true
+    },
+    [micFailed],
+  )
+
   const startListening = useCallback(
-    async (automatic: boolean) => {
+    async (automatic: boolean, retry = false) => {
       if (micStarting.current || capture.current) return
       unlockSpeech()
       // A voice screen without a microphone is useless: when nobody asked for the microphone just now,
@@ -498,6 +540,7 @@ export default function DialogPage({
       }
       micStarting.current = true
       try {
+        if (!retry && (await micBlocked(automatic))) return
         // Talking over the agent cuts it off.
         player.current?.stop()
         voice.current?.cancel()
@@ -520,15 +563,12 @@ export default function DialogPage({
         markRecording(true)
         setAwaitingReply(false)
       } catch (error) {
-        void reportMicFailure(error)
-        const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
-        if (automatic) fallBack(text)
-        else f7.dialog.alert(text, 'Голос')
+        micFailed(error, automatic, retry)
       } finally {
         micStarting.current = false
       }
     },
-    [markRecording],
+    [markRecording, micBlocked, micFailed],
   )
 
   /** The person finished a turn: the utterance goes to the agent, which should now answer. */
@@ -590,11 +630,12 @@ export default function DialogPage({
    * the person wants the floor, so it silences the agent.
    */
   const openMic = useCallback(
-    async (automatic: boolean) => {
+    async (automatic: boolean, retry = false) => {
       if (micStarting.current || capture.current) return
       unlockSpeech()
       micStarting.current = true
       try {
+        if (!retry && (await micBlocked(automatic))) return
         if (!automatic) hush()
         await player.current?.unlock().catch(onPlaybackFailed)
         const started = await startCapture((frame) => socket.current?.sendAudio(frame), {
@@ -618,19 +659,12 @@ export default function DialogPage({
         setMicOpen(true)
         setPaused(null)
       } catch (error) {
-        void reportMicFailure(error)
-        const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
-        if (automatic) {
-          setMode('text')
-          f7.toast.create({ text, closeTimeout: 4000 }).open()
-        } else {
-          f7.dialog.alert(text, 'Голос')
-        }
+        micFailed(error, automatic, retry)
       } finally {
         micStarting.current = false
       }
     },
-    [hush, onTurn],
+    [hush, onTurn, micBlocked, micFailed],
   )
 
   // Hands-free never listens in the background: a hidden tab or an app sent away closes the microphone
@@ -859,6 +893,20 @@ export default function DialogPage({
         </button>
       </Navbar>
 
+      <MicGuideSheet
+        guide={guide?.steps ?? null}
+        again={guide?.again ?? false}
+        granted={guide?.granted ?? false}
+        onRetry={() => {
+          setGuide(null)
+          void (handsFree ? openMic(false, true) : startListening(false, true))
+        }}
+        onText={() => {
+          setGuide(null)
+          setMode('text')
+        }}
+        onGranted={() => setGuide((current) => (current ? { ...current, granted: true } : current))}
+      />
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
       <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />
 

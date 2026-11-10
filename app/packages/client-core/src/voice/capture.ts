@@ -28,10 +28,48 @@ export interface VoiceCapture {
   close(): void
 }
 
-export class MicrophoneDeniedError extends Error {
-  constructor() {
-    super('microphone permission denied')
+/**
+ * Why `getUserMedia` failed, as a closed list that is safe to report: `not_allowed` is a refusal or a closed
+ * prompt, `not_found` no input device, `not_readable` a device another app holds, `security` a page the
+ * browser does not trust with the microphone, `blocked` a refusal the browser remembered (found out without
+ * asking), `other` anything else.
+ */
+export type MicDetail = 'not_allowed' | 'not_found' | 'not_readable' | 'security' | 'blocked' | 'other'
+
+/** The microphone did not open; `detail` tells why, and the screen picks the words and the way out. */
+export class MicrophoneError extends Error {
+  constructor(readonly detail: MicDetail) {
+    super(`microphone unavailable: ${detail}`)
+    this.name = 'MicrophoneError'
+  }
+}
+
+/** The person (or the browser, for good) said no: the way back is in the browser's settings. */
+export class MicrophoneDeniedError extends MicrophoneError {
+  constructor(detail: 'not_allowed' | 'blocked' = 'not_allowed') {
+    super(detail)
     this.name = 'MicrophoneDeniedError'
+  }
+}
+
+export function micDetailOf(error: unknown): MicDetail {
+  const name = (error as { name?: string } | null)?.name
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return 'not_allowed'
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+    case 'OverconstrainedError':
+      return 'not_found'
+    case 'NotReadableError':
+    case 'TrackStartError':
+    case 'AbortError':
+      return 'not_readable'
+    case 'SecurityError':
+      return 'security'
+    default:
+      return 'other'
   }
 }
 
@@ -77,8 +115,9 @@ export async function startCapture(
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     })
-  } catch {
-    throw new MicrophoneDeniedError()
+  } catch (error) {
+    const detail = micDetailOf(error)
+    throw detail === 'not_allowed' ? new MicrophoneDeniedError() : new MicrophoneError(detail)
   }
 
   // From here on the microphone is open: whatever fails below must let it go, or the browser's

@@ -241,6 +241,9 @@ export type VoiceProblemReason =
   | 'tts_unavailable'
   | 'playback_failed'
 
+/** Which way the microphone failed, from the browser's error name: a closed list, never the error's text. */
+export type VoiceProblemDetail = 'not_allowed' | 'not_found' | 'not_readable' | 'security' | 'blocked' | 'other'
+
 /**
  * Why a dialog's connection went away before the dialog ended. A rollout (`1012`) and a second
  * connection of the same person (`4009`) are planned closes after which the client comes back to the
@@ -388,7 +391,7 @@ export interface AnalyticsEventProperties {
   /** Send with `trackAnonymous`: a tap on a hotline's number, not whose. */
   [AnalyticsEvent.HotlineCalled]: { hotline: string }
   [AnalyticsEvent.BreathingStarted]: { source: 'home' | 'dialog' | 'sos' }
-  [AnalyticsEvent.VoiceProblem]: { reason: VoiceProblemReason }
+  [AnalyticsEvent.VoiceProblem]: { reason: VoiceProblemReason; detail?: VoiceProblemDetail }
 
   [AnalyticsEvent.JournalEntryOpened]: NoProperties
   [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }

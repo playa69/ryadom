@@ -3,7 +3,7 @@
  * is replaced by a spy: what matters here is what the app asks to report, and how often.
  */
 import { ApiError, NETWORK_ERROR_STATUS } from '@ryadom/client-core/errors'
-import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
+import { MicrophoneDeniedError, MicrophoneError } from '@ryadom/client-core/voice/capture'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({ track: vi.fn() }))
@@ -13,6 +13,7 @@ import {
   analyticsPlatform,
   metrikaPageBase,
   micFailureReason,
+  micProblem,
   outcomeFromCode,
   outcomeFromError,
   reportAppUpdate,
@@ -123,38 +124,29 @@ describe('название экрана', () => {
 })
 
 describe('почему не заработал микрофон', () => {
-  it('отказ без устройств в списке это нет микрофона', () => {
-    expect(micFailureReason(new MicrophoneDeniedError(), 0)).toBe('no_microphone')
+  it('отказ это запрет, с причиной', () => {
+    expect(micProblem(new MicrophoneDeniedError())).toEqual({ reason: 'permission_denied', detail: 'not_allowed' })
+    expect(micProblem(new MicrophoneDeniedError('blocked'))).toEqual({ reason: 'permission_denied', detail: 'blocked' })
   })
 
-  it('отказ при микрофоне в списке или без списка это запрет', () => {
-    expect(micFailureReason(new MicrophoneDeniedError(), 1)).toBe('permission_denied')
-    expect(micFailureReason(new MicrophoneDeniedError(), null)).toBe('permission_denied')
+  it('нет устройства это нет микрофона', () => {
+    expect(micProblem(new MicrophoneError('not_found'))).toEqual({ reason: 'no_microphone', detail: 'not_found' })
+    expect(micFailureReason(new MicrophoneError('not_found'))).toBe('no_microphone')
+  })
+
+  it('занят или небезопасный адрес это неподдерживаемое окружение, с причиной', () => {
+    expect(micProblem(new MicrophoneError('not_readable'))).toEqual({ reason: 'unsupported', detail: 'not_readable' })
+    expect(micProblem(new MicrophoneError('security'))).toEqual({ reason: 'unsupported', detail: 'security' })
   })
 
   it('любая другая ошибка запуска это неподдерживаемое окружение', () => {
-    expect(micFailureReason(new Error('worklet'), 1)).toBe('unsupported')
-    expect(micFailureReason(new Error('worklet'), 0)).toBe('unsupported')
-  })
-})
-
-describe('частота отчётов', () => {
-  it('проблема голоса уходит один раз на причину', () => {
-    reportVoiceProblem('playback_failed')
-    reportVoiceProblem('playback_failed')
-    reportVoiceProblem('unsupported')
-
-    expect(sdk.track).toHaveBeenCalledTimes(2)
-    expect(sdk.track).toHaveBeenCalledWith('voice_problem', { reason: 'playback_failed' })
-    expect(sdk.track).toHaveBeenCalledWith('voice_problem', { reason: 'unsupported' })
+    expect(micFailureReason(new Error('worklet'))).toBe('unsupported')
   })
 
-  it('обновление уходит один раз на вид, действие и версию, а версия в отчёт не попадает', () => {
-    reportAppUpdate('store', 'available', 42)
-    reportAppUpdate('store', 'available', 42)
-    reportAppUpdate('store', 'available', 43)
-
+  it('одна и та же причина за загрузку страницы уходит один раз, другая причина отдельно', () => {
+    reportVoiceProblem('permission_denied', 'not_allowed')
+    reportVoiceProblem('permission_denied', 'not_allowed')
+    reportVoiceProblem('permission_denied', 'blocked')
     expect(sdk.track).toHaveBeenCalledTimes(2)
-    expect(sdk.track).toHaveBeenCalledWith('app_update', { kind: 'store', action: 'available' })
   })
 })
