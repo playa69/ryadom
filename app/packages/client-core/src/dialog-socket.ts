@@ -9,7 +9,6 @@ import {
   type HotlineApiResponse,
   type MoodTone,
   type SafetyLevel,
-  type SafetyStage,
   type TtsCodec,
 } from '@ryadom/contracts/api/dialogs'
 import { ApiPath } from '@ryadom/contracts/api/paths'
@@ -61,13 +60,7 @@ export interface DialogSocketDeps {
 export interface DialogSocketHandlers {
   onState(state: DialogSocketState): void
   onMessages(messages: DialogMessageView[]): void
-  onSafety(
-    level: SafetyLevel,
-    text: string | null,
-    hotlines: HotlineApiResponse[],
-    /** Absent from an agent that predates the crisis script. */
-    script?: { stage?: SafetyStage; showCall?: boolean },
-  ): void
+  onSafety(level: SafetyLevel, text: string | null, hotlines: HotlineApiResponse[]): void
   /** The tone of the person's last turn; only sent with the agent's mood classifier on. */
   onMood?(tone: MoodTone, intensity: number): void
   onEnded(summary: DialogSummaryApiResponse | null): void
@@ -284,11 +277,6 @@ export class DialogSocket {
     })
   }
 
-  /** The person tapped a hotline and is back; lets the agent ask how it went. Not queued: it only makes sense live. */
-  helpReturned(): void {
-    this.send({ type: DialogClientFrame.HelpReturned })
-  }
-
   close(): void {
     this.closedByUs = true
     this.tts.cancel()
@@ -459,7 +447,7 @@ export class DialogSocket {
         this.handlers.onSpeech?.(frame.messageId, 'end')
         return
       case DialogServerFrame.Safety:
-        this.handlers.onSafety(frame.level, frame.text, frame.hotlines, { stage: frame.stage, showCall: frame.showCall })
+        this.handlers.onSafety(frame.level, frame.text, frame.hotlines)
         return
       case DialogServerFrame.Mood:
         this.handlers.onMood?.(frame.tone, frame.intensity)

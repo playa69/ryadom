@@ -212,13 +212,6 @@ GEMINI_OPENS_TOTAL = Counter(
     ["purpose", "result"],
 )
 
-# Кризисная ветка (app/services/crisis_script.py): сколько раз сработала, по уровню и источнику; без текста и id.
-#   level   red | yellow;  source  dictionary | model
-SAFETY_SIGNALS_TOTAL = Counter("agent_safety_signals_total", "Срабатывания кризисной ветки.", ["level", "source"])
-SAFETY_MODEL_STAGE_TOTAL = Counter(
-    "agent_safety_model_stage_total", "Вторая ступень детектора: исход вызова.", ["outcome"]
-)  # outcome: none | yellow | red | error
-
 # Цвет шарика (app/clients/mood_classifier.py): сколько раз определён тон и через сколько после конца реплики.
 GEMINI_MOOD_TOTAL = Counter("agent_gemini_mood_total", "Определения тона реплики классификатором.", ["tone"])
 GEMINI_MOOD_DELAY_SECONDS = Histogram(

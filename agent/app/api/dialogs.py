@@ -11,8 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import Store, canonical_user_id, require_token, token_ok
 from app.api.dialog_session import DialogSession
-from app.clients.risk_classifier import GeminiRiskClassifier
-from app.core.config import APP_CONFIG
 from app.core.voices import GEMINI_VOICE_NAMES
 from app.core.errors import AgentError, dialog_not_found, error_body, validation_error
 from app.services import recaps
@@ -324,10 +322,6 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
         budget = app.state.budget if pipeline == "gemini" else None
         # Тон реплики: у пути Сбера свой классификатор (GigaChat), у Gemini Live — Gemini.
         mood = app.state.moods.get(pipeline, "gemini")
-        # Вторая ступень детектора кризиса: у пути Сбера — GigaChat, у Gemini Live — Gemini, если есть ключ.
-        risk = app.state.risks.get(pipeline)
-        if risk is None and pipeline == "gemini" and APP_CONFIG.gemini.api_key is not None:
-            risk = app.state.risks["gemini"] = GeminiRiskClassifier(APP_CONFIG.gemini, app.state.prompt_provider, app.state.tracer)
         session = DialogSession(
             websocket,
             store,
@@ -337,7 +331,6 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             budget=budget,
             tracer=app.state.tracer,
             mood=mood,
-            risk=risk,
             prompt_provider=app.state.prompt_provider,
         )
         session.bind_component_calls()
