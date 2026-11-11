@@ -87,7 +87,7 @@ import DialogFeed from './DialogFeed'
 import MemoryRecap from './MemoryRecap'
 import DialogVoice from './DialogVoice'
 import { BUTTON, COLUMN } from './controls'
-import { useNotice, useNoticePlacement } from './Notice'
+import { useClearNotices, useNotice, useNoticePlacement } from './Notice'
 import { useSos } from './Sos'
 import { claimFreshStart, readDialogStart, takeDialogHandoff } from './dialog-start'
 import { initialDialogView, rememberDialogView, type DialogView } from './dialog-view'
@@ -144,6 +144,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const { user } = useAuth()
   const router = useRouter()
   const notify = useNotice()
+  const clearNotices = useClearNotices()
   // The input box sits where the default toast stack would, so toasts go under the header.
   useNoticePlacement('top')
   const { openSos } = useSos()
@@ -651,7 +652,11 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     if (error instanceof MicrophoneDeniedError) {
       // Self-started listening only falls back to text; the steps come when the person taps the microphone.
       if (automatic) refuse(MIC_DENIED_TEXT)
-      else setGuide({ steps: currentMicGuide(), again: retry })
+      else {
+        // The window says it better than the toast of the self-started try before it.
+        clearNotices()
+        setGuide({ steps: currentMicGuide(), again: retry })
+      }
       return
     }
     const detail = error instanceof MicrophoneError ? error.detail : 'other'
@@ -707,6 +712,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         return
       }
       capture.current = started
+      // A refusal said earlier is no longer true.
+      clearNotices()
       live.startAudio(started.sampleRate)
       markRecording(true)
       setAwaitingReply(false)
@@ -760,6 +767,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         return
       }
       capture.current = started
+      // A refusal said earlier is no longer true.
+      clearNotices()
       detector.current.reset(performance.now())
       const agentSpeaking = () => Boolean(player.current?.speaking || voice.current?.speaking)
       stopWatching.current = watchTurns(detector.current, {

@@ -488,12 +488,21 @@ export default function DialogPage({
   }, [])
 
   /** The microphone did not open: a refusal gets the steps for this place, anything else a short sentence. */
+  /** The toast of a refused self-started try: it is taken off once the microphone works or the guide explains it. */
+  const micToast = useRef<ReturnType<typeof f7.toast.create> | null>(null)
+  const clearMicToast = useCallback(() => {
+    micToast.current?.close()
+    micToast.current = null
+  }, [])
+
   const micFailed = useCallback((error: unknown, automatic: boolean, retry: boolean) => {
     reportMicFailure(error)
     const refuse = (text: string) => {
       if (automatic) {
         setMode('text')
-        f7.toast.create({ text, closeTimeout: 4000 }).open()
+        micToast.current?.close()
+        micToast.current = f7.toast.create({ text, closeTimeout: 4000 })
+        micToast.current.open()
       } else f7.dialog.alert(text, 'Голос')
     }
     if (error instanceof MicrophoneDeniedError) {
@@ -506,6 +515,7 @@ export default function DialogPage({
           native: isNative(),
           touch: navigator.maxTouchPoints > 1,
         })
+        micToast.current?.close()
         setGuide({ steps, again: retry })
       }
       return
@@ -564,6 +574,8 @@ export default function DialogPage({
           return
         }
         capture.current = started
+        // A refusal said earlier is no longer true.
+        clearMicToast()
         socket.current.startAudio(started.sampleRate)
         markRecording(true)
         setAwaitingReply(false)
@@ -573,7 +585,7 @@ export default function DialogPage({
         micStarting.current = false
       }
     },
-    [markRecording, micBlocked, micFailed],
+    [markRecording, micBlocked, micFailed, clearMicToast],
   )
 
   /** The person finished a turn: the utterance goes to the agent, which should now answer. */
@@ -652,6 +664,8 @@ export default function DialogPage({
           return
         }
         capture.current = started
+        // A refusal said earlier is no longer true.
+        clearMicToast()
         detector.current.reset(performance.now())
         const agentSpeaking = () => Boolean(player.current?.speaking || voice.current?.speaking)
         stopWatching.current = watchTurns(detector.current, {
@@ -669,7 +683,7 @@ export default function DialogPage({
         micStarting.current = false
       }
     },
-    [hush, onTurn, micBlocked, micFailed],
+    [hush, onTurn, micBlocked, micFailed, clearMicToast],
   )
 
   // Hands-free never listens in the background: a hidden tab or an app sent away closes the microphone

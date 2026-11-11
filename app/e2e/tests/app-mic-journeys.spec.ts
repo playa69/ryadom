@@ -87,6 +87,8 @@ test('путь 3 — отказ запомнен браузером: запро�
   await voiceButton(page).click()
   await expect(page.getByTestId('mic-guide-steps')).toBeVisible()
   expect(await micRequests(page)).toBe(0)
+  // The window explains it; the toast of the self-started try before it is gone, not repeated behind the window.
+  await expect(page.locator('.toast')).toHaveCount(0)
   await step(page, 'remembered-guide', 'Нажали микрофон: окно сразу, системный запрос не вызывался')
 
   // The person goes to the settings, flips the switch and comes back: straight to the conversation, nothing to confirm.
@@ -94,6 +96,8 @@ test('путь 3 — отказ запомнен браузером: запро�
   await setMicPermission(page, 'granted')
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('mic-guide-steps')).not.toBeVisible()
+  // Nothing on the screen still says the microphone is refused.
+  await expect(page.locator('.toast')).toHaveCount(0)
   await step(page, 'remembered-listening', 'Включили в настройках и вернулись: окно закрылось само, шар слушает')
 })
 
