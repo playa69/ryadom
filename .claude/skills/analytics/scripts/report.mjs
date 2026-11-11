@@ -427,7 +427,7 @@ const dbRows = db
         ? `| Видно в PostHog | **${pct(share(num(sp.turns), act.user_messages))}** | ${int(sp.turns)} из ${int(act.user_messages)} реплик; от аналитики отказались ${people(db.app.optout_total)} |`
         : null,
       models
-        ? `| Токенов на разговор | **${int(Math.round(models.perDialog ?? 0))}** | на активного в день — ${int(Math.round(models.perActiveDay ?? 0))}; всего ${millions(models.total)} за ${days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |`
+        ? `| Токенов на разговор | **${int(Math.round(models.perDialog ?? 0))}** | на активного в день — ${int(Math.round(models.perActiveDay ?? 0))}; в сохраняемых разговорах — ${millions(models.total)} за ${days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |`
         : null,
     ].filter(Boolean).join('\n') + '\n'
   : '';
@@ -463,7 +463,7 @@ ${dbRows}
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
-- **Токены** — расход всех моделей агента за те же дни из его базы; на разговор — ÷ разговоры с расходом, на активного в день — ÷ дни, в которые человек говорил.
+- **Токены** — расход моделей в сохраняемых разговорах за те же дни из базы агента; на разговор — ÷ разговоры с расходом, на активного в день — ÷ дни, в которые человек говорил. Разговоры «Не сохранять», классификатор настроения и фоновые вызовы сюда не входят: полный расход — в Langfuse.
 `;
 
 // ---------- detail (inline html block) ----------

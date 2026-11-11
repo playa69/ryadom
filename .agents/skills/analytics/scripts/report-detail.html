@@ -275,7 +275,7 @@ const DATA = /*__DATA__*/null;
     document.getElementById('models-sec').hidden = false;
     document.getElementById('models-title').textContent = `${++section}. Расход моделей`;
     const mt = (n) => (n >= 1e6 ? (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн' : n >= 1e3 ? Math.round(n / 1e3).toLocaleString('ru-RU') + ' тыс.' : nf(n));
-    document.getElementById('models-note').textContent = `база агента, ${models.days} дн.; на разговор — ${mt(Math.round(models.perDialog || 0))}, на активного человека в день — ${mt(Math.round(models.perActiveDay || 0))} токенов`;
+    document.getElementById('models-note').textContent = `база агента, сохраняемые разговоры, ${models.days} дн.; на разговор — ${mt(Math.round(models.perDialog || 0))}, на активного человека в день — ${mt(Math.round(models.perActiveDay || 0))} токенов`;
     const sum = (key) => models.rows.reduce((a, r) => a + r[key], 0);
     document.getElementById('models').innerHTML = models.rows.map((r) =>
       `<tr><td>${esc(r.model)}${r.task ? ' · ' + esc(r.task) : ''}</td><td>${mt(r.input)}</td><td>${mt(r.output)}</td><td>${mt(r.input + r.output)}</td><td>${pct((r.input + r.output) / models.total * 100)}</td></tr>`).join('') +
