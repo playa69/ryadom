@@ -97,14 +97,27 @@ GROUP BY utm_source, utm_campaign, device
 ORDER BY visitors DESC
 LIMIT 500`,
 
-  // DAU and replies per Moscow day.
+  // DAU, replies and people with more than 10 replies per Moscow day.
   daily: `
-SELECT toString(day) AS day, dau, turns FROM (
-  SELECT toDate(toTimeZone(timestamp, 'Europe/Moscow')) AS day, uniq(person_id) AS dau, count() AS turns
+SELECT toString(day) AS day, count() AS dau, sum(n) AS turns, countIf(n > 10) AS active10 FROM (
+  SELECT toDate(toTimeZone(timestamp, 'Europe/Moscow')) AS day, person_id, count() AS n
   FROM events WHERE event = 'dialog_turn' AND {{people}} AND ${WINDOW}
-  GROUP BY day)
+  GROUP BY day, person_id)
+GROUP BY day
 ORDER BY day
 LIMIT 100`,
+
+  // The day each account reached its second reply ever, for the running total of accounts with 2+ replies.
+  secondReply: `
+SELECT toString(toDate(toTimeZone(t2, 'Europe/Moscow'))) AS day, count() AS accounts
+FROM (
+  SELECT person_id, arrayElement(arraySort(groupArray(timestamp)), 2) AS t2
+  FROM events WHERE event = 'dialog_turn' AND {{people}} AND timestamp < toDateTime('{{to}}')
+  GROUP BY person_id
+  HAVING count() >= 2)
+GROUP BY day
+ORDER BY day
+LIMIT 1000`,
 
   // People whose first reply ever fell on each day, and how many of them had a dialog of 3+ replies.
   newSpeakers: `
@@ -310,7 +323,18 @@ const funnel = STEPS.map(([key, label]) => ({ key, label, total: cohortTotal[key
 const dayList = Array.from({ length: days }, (_, i) => shiftDate(fromDate, i));
 const dailyBy = new Map(data.daily.map((r) => [r.day, r]));
 const newBy = new Map(data.newSpeakers.map((r) => [r.day, r]));
-const daily = dayList.map((d) => ({ date: d, day: ddmm(d), dau: num(dailyBy.get(d)?.dau), new: num(newBy.get(d)?.new_speakers), turns: num(dailyBy.get(d)?.turns) }));
+const secondBefore = data.secondReply.filter((r) => r.day < fromDate).reduce((a, r) => a + num(r.accounts), 0);
+const secondBy = new Map(data.secondReply.map((r) => [r.day, num(r.accounts)]));
+let accounts2 = secondBefore;
+const daily = dayList.map((d) => {
+  accounts2 += secondBy.get(d) ?? 0;
+  return {
+    date: d, day: ddmm(d), dau: num(dailyBy.get(d)?.dau), new: num(newBy.get(d)?.new_speakers), turns: num(dailyBy.get(d)?.turns),
+    active10: num(dailyBy.get(d)?.active10), accounts2,
+    // Filled from Langfuse below; null when it is not available.
+    traces: null,
+  };
+});
 const peak = daily.reduce((best, d) => (d.dau > best.dau ? d : best), daily[0]);
 const yesterday = daily[daily.length - 1];
 
@@ -384,6 +408,7 @@ const activeDays = act?.person_days || daily.reduce((a, d) => a + d.dau, 0);
 // All model calls come from Langfuse (it also sees the conversations people asked not to save, so only the sum is
 // shown); per conversation and per active day come from the database, which keeps saved conversations only.
 const lf = extra.langfuse;
+if (lf?.tracesByDay) for (const d of daily) d.traces = lf.tracesByDay[d.date] ?? 0;
 const dbUsage = db && db.usage.models.length ? db.usage : null;
 const perConversation = dbUsage
   ? {
@@ -467,6 +492,8 @@ const dbRows = db
   : [];
 const extraRows = [...dbRows, ...usageRows].map((row) => `${row}\n`).join('');
 
+// Plain digits: the by-day table is meant to be pasted into a spreadsheet, where grouped digits become text.
+const plain = (x) => String(Math.round(num(x)));
 const title = `Сводка Рядом · ${periodLabel}`;
 const description = `Автоматический отчёт за ${days} полных дней по Москве (${periodLabel}). Детализация с графиком и таблицами — в первом комментарии. Прочитали — закройте задачу.
 
@@ -485,6 +512,12 @@ ${extraRows}
 
 <!-- ГЛАВНОЕ -->
 
+### По дням
+
+| Дата | Активные: больше 10 реплик | Запросы к моделям | Аккаунты с 2+ репликами, всего |
+|---|---:|---:|---:|
+${daily.map((d) => `| ${d.day} | ${plain(d.active10)} | ${d.traces == null ? '—' : plain(d.traces)} | ${plain(d.accounts2)} |`).join('\n')}
+
 ### Как считаются цифры
 
 - **Новые** — люди и устройства, впервые появившиеся в эти дни; учитываются только настоящие люди (без тестов и команды).
@@ -496,6 +529,9 @@ ${extraRows}
 - **Вернулся** — реплики в двух разных днях по Москве.
 - **Говорили голосом** — хотя бы одна голосовая реплика.
 - **Канал** — UTM первой сессии с просмотром страницы.
+- **Активные: больше 10 реплик** — люди, у которых за московские сутки больше 10 реплик.
+- **Запросы к моделям** — трассы Langfuse за московские сутки: одна трасса — один вызов модели (ход разговора, классификатор настроения, итог, память, озвучка фраз), без тестовых и командных аккаунтов; без Langfuse — «—».
+- **Аккаунты с 2+ репликами, всего** — нарастающий итог: аккаунты, у которых к концу суток набралось хотя бы две реплики за всё время (реплики в аналитике есть с 14.10.2026).
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
 - **Расход моделей** — токены всех вызовов моделей агента за те же дни по Langfuse, без тестовых и командных аккаунтов; в него входят и разговоры «Не сохранять», и стёртые — только суммой. Вызовы через прокси (итог разговора, память) и озвучка фраз приходят без токенов, так что настоящий расход немного больше.

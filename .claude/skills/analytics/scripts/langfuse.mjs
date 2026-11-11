@@ -1,7 +1,7 @@
-// Optional source: token use of all model calls from the agent's Langfuse. Goes through logs/scripts/langfuse.py,
-// which sends read-only requests from inside the agent pod with the pod's own keys (the admin kubectl command comes
-// from RYADOM_KUBECTL_ADMIN). Only sums by model and kind of call leave it: no people, sessions or call counts, since
-// Langfuse also holds the conversations people asked not to save.
+// Optional source: token use and the number of model calls from the agent's Langfuse. Goes through
+// logs/scripts/langfuse.py, which sends read-only requests from inside the agent pod with the pod's own keys (the admin
+// kubectl command comes from RYADOM_KUBECTL_ADMIN). Only sums leave it: tokens by model and kind of call, calls per
+// Moscow day; no people or sessions, since Langfuse also holds the conversations people asked not to save.
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +42,37 @@ export function langfuseQuery({ from, to, excluded = [] }) {
   };
 }
 
+// Traces (one per model call) per hour; with ids, only the traces of those accounts.
+export function tracesQuery({ from, to, only = null }) {
+  return {
+    view: 'traces',
+    dimensions: [],
+    metrics: [{ measure: 'count', aggregation: 'count' }],
+    filters: only ? [{ column: 'userId', operator: 'any of', value: only, type: 'stringOptions' }] : [],
+    timeDimension: { granularity: 'hour' },
+    fromTimestamp: iso(from),
+    toTimestamp: iso(to),
+    config: { row_limit: 1000 },
+  };
+}
+
+// Calls per Moscow day: all traces minus those of test and team accounts. Subtracting keeps the calls without a
+// person (voicing of fixed phrases), which a "none of" filter would drop.
+export function summarizeTraces(all, test) {
+  const byDay = {};
+  const add = (body, sign) => {
+    for (const r of body?.data ?? []) {
+      const at = Date.parse(String(r.time_dimension).replace(' ', 'T').replace(/(?<!Z)$/, 'Z'));
+      if (Number.isNaN(at)) continue;
+      const day = new Date(at + 3 * 3600_000).toISOString().slice(0, 10);
+      byDay[day] = (byDay[day] ?? 0) + sign * n(r.count_count);
+    }
+  };
+  add(all, 1);
+  add(test, -1);
+  return byDay;
+}
+
 export function summarizeLangfuse(body, { testsExcluded }) {
   const groups = new Map();
   for (const r of body.data ?? []) {
@@ -57,17 +88,16 @@ export function summarizeLangfuse(body, { testsExcluded }) {
   return { rows, total: rows.reduce((a, r) => a + r.input + r.output, 0), testsExcluded };
 }
 
-export function collectLangfuse({ from, to, excluded = null }) {
-  const query = JSON.stringify(langfuseQuery({ from, to, excluded: excluded ?? [] }));
+function metrics(query) {
   let lastError;
   for (const python of [process.env.PYTHON, 'python3', 'python'].filter(Boolean)) {
     try {
-      const out = execFileSync(python, [SCRIPT, 'metrics', query], {
+      const out = execFileSync(python, [SCRIPT, 'metrics', JSON.stringify(query)], {
         encoding: 'utf8',
         timeout: 180_000,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
-      return summarizeLangfuse(JSON.parse(out), { testsExcluded: excluded != null });
+      return JSON.parse(out);
     } catch (error) {
       lastError = error;
       if (error.code !== 'ENOENT') break;
@@ -75,4 +105,11 @@ export function collectLangfuse({ from, to, excluded = null }) {
   }
   const detail = String(lastError?.stderr || lastError?.message || lastError).trim().split('\n').pop();
   throw new Error(`Langfuse: ${detail.slice(0, 200)}`);
+}
+
+export function collectLangfuse({ from, to, excluded = null }) {
+  const usage = summarizeLangfuse(metrics(langfuseQuery({ from, to, excluded: excluded ?? [] })), { testsExcluded: excluded != null });
+  const all = metrics(tracesQuery({ from, to }));
+  const test = excluded?.length ? metrics(tracesQuery({ from, to, only: excluded })) : null;
+  return { ...usage, tracesByDay: summarizeTraces(all, test) };
 }
