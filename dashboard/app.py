@@ -315,7 +315,7 @@ ul {{ padding-left:18px; }} li {{ margin:4px 0; }}
 <h1>Слышу Рядом — метрики</h1>
 <div class="muted">{period}, сутки по Москве · обновлено {html.escape(report["updated_at"][11:16])} МСК {report["updated_at"][8:10]}.{report["updated_at"][5:7]}</div>
 <div class="kpi">
-<div><span class="muted">Активные в среднем за сутки</span><b>{avg_active:.1f}</b></div>
+<div><span class="muted">Активные в среднем за сутки</span><b>{f"{avg_active:.1f}".replace(".", ",")}</b></div>
 <div><span class="muted">Вызовов LLM за 7 дней</span><b>{total_llm}</b></div>
 <div><span class="muted">Пользователей на {p["to"][8:10]}.{p["to"][5:7]}</span><b>{days[-1]["users_total"]}</b></div>
 </div>
