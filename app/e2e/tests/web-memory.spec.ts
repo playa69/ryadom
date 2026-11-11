@@ -292,9 +292,17 @@ test('память в вебе: разговор «Без памяти» нич�
   await expect(memorySwitch(page)).toBeChecked()
 
   await goTo(page, 'Новый разговор')
+  // `openspec/changes/remove-unsaved-dialog-option`, «Подписи без срока».
+  await expect(page.getByTestId('incognito-toggle')).toHaveText('Запоминать разговор')
+  await expect(page.getByTestId('incognito')).toContainText(
+    'Я буду запоминать разговор, чтобы лучше узнать тебя',
+  )
+  await step(page, 'memory-caption-on', 'Память включена: подпись прямо обещает запомнить разговор')
   await page.getByTestId('incognito-toggle').click()
   await expect(page.getByTestId('incognito-toggle')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('incognito')).toContainText('Этот разговор я не запомню')
+  await expect(page.getByTestId('incognito-toggle')).toHaveText('Без памяти')
+  await expect(page.getByTestId('incognito')).toContainText('Я не запомню этот разговор')
+  await step(page, 'memory-caption-off', 'Без памяти: подпись прямо говорит, что разговор не запомнят')
   await homeInput(page).fill(INTRO)
   await homeInput(page).press('Enter')
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
@@ -520,7 +528,11 @@ test('блок «Я запомнил» в окне завершения: зам�
   await expect(sheet(page)).toContainText(RECAP_ONE_NOTE)
   await expect(sheet(page)).toContainText(WORK)
   await expect(sheet(page)).not.toContainText(NAME)
-  await step(page, 'recap-sheet-after-remove', 'В листе «Что помнит Рядом» убранной заметки нет, остальные на месте')
+  await step(
+    page,
+    'recap-sheet-after-remove',
+    'В листе «Что помнит Рядом» убранной заметки нет, остальные на месте',
+  )
   await closeSheet(page)
 
   // Many notes: all of them are in the block, about three in view, the rest by scrolling the list itself.
@@ -535,9 +547,14 @@ test('блок «Я запомнил» в окне завершения: зам�
   await expect(recapList(page)).toHaveAttribute('aria-label', 'Заметки этого разговора')
   await expect(recapList(page)).toHaveAttribute('tabindex', '0')
   // About three rows: the first three whole, the last ones cut off by the list's own edge, which is why the list scrolls.
-  for (const text of MANY_NOTES.slice(0, 3)) await expect(recapNote(page, text)).toBeInViewport({ ratio: 0.9 })
+  for (const text of MANY_NOTES.slice(0, 3))
+    await expect(recapNote(page, text)).toBeInViewport({ ratio: 0.9 })
   for (const text of MANY_NOTES.slice(4)) await expect(recapNote(page, text)).not.toBeInViewport()
-  const before = await recapList(page).evaluate((el) => ({ room: el.scrollHeight - el.clientHeight, top: el.scrollTop, height: el.clientHeight }))
+  const before = await recapList(page).evaluate((el) => ({
+    room: el.scrollHeight - el.clientHeight,
+    top: el.scrollTop,
+    height: el.clientHeight,
+  }))
   expect(before.room).toBeGreaterThan(40)
   expect(before.top).toBe(0)
   const rowHeight = (await recapNotes(page).first().boundingBox())!.height
@@ -545,18 +562,28 @@ test('блок «Я запомнил» в окне завершения: зам�
   // The window as a whole stays on the screen.
   await expectInsideViewport(page, modal(page))
   await expectNoHorizontalOverflow(page)
-  await step(page, 'recap-many-notes', 'Из разговора вышло шесть заметок: в блоке видны три, дальше список прокручивается внутри блока')
+  await step(
+    page,
+    'recap-many-notes',
+    'Из разговора вышло шесть заметок: в блоке видны три, дальше список прокручивается внутри блока',
+  )
 
   // The wheel over the list scrolls the list, and not the page under the window.
   const pageTop = await page.evaluate(() => window.scrollY)
   await recapList(page).hover()
   await page.mouse.wheel(0, 600)
-  await expect.poll(() => recapList(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(1)
+  await expect
+    .poll(() => recapList(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
+    .toBeLessThanOrEqual(1)
   await expect(recapNote(page, MANY_NOTES.at(-1)!)).toBeInViewport({ ratio: 0.9 })
   await expect(recapNote(page, MANY_NOTES[0]!)).not.toBeInViewport()
   expect(await page.evaluate(() => window.scrollY)).toBe(pageTop)
   await expectInsideViewport(page, modal(page))
-  await step(page, 'recap-many-scrolled', 'Список прокручен до конца: видна последняя заметка, окно и страница под ним на месте')
+  await step(
+    page,
+    'recap-many-scrolled',
+    'Список прокручен до конца: видна последняя заметка, окно и страница под ним на месте',
+  )
 
   // The list takes the keyboard: the arrow keys scroll it back up.
   await recapList(page).focus()
@@ -631,7 +658,11 @@ test('«Ещё записываю»: заметки не готовы за 30 с
   await expect(page.getByTestId('alert-ok')).toBeEnabled()
   await expectInsideViewport(page, modal(page))
   await expectNoHorizontalOverflow(page)
-  await step(page, 'recap-still-writing', 'Заметки не успели записаться за 30 секунд: под текстом окна строка «Ещё записываю…», кнопок нет')
+  await step(
+    page,
+    'recap-still-writing',
+    'Заметки не успели записаться за 30 секунд: под текстом окна строка «Ещё записываю…», кнопок нет',
+  )
 
   // The poll has stopped, and the line stays.
   const stopped = asked
@@ -642,7 +673,7 @@ test('«Ещё записываю»: заметки не готовы за 30 с
   await closeWindow(page)
 })
 
-test('блока «Я запомнил» нет: «Без памяти», «Не сохранять», пауза, разговор без заметок', async ({ page }) => {
+test('блока «Я запомнил» нет: «Без памяти», пауза, разговор без заметок', async ({ page }) => {
   test.setTimeout(360_000)
   await openWebApp(page)
   await startAnonymously(page)
@@ -664,14 +695,6 @@ test('блока «Я запомнил» нет: «Без памяти», «Не
   await endAndWait(page)
   await noBlock()
   await step(page, 'recap-none-incognito', 'Разговор «Без памяти»: окно завершения как прежде, блока нет')
-  await closeWindow(page)
-
-  // A conversation held unsaved: the same.
-  await goTo(page, 'Новый разговор')
-  await page.getByTestId('unsaved-toggle').check()
-  await talk(page, INTRO)
-  await endAndWait(page)
-  await noBlock()
   await closeWindow(page)
 
   // Nothing to remember in what was said: the block does not come up empty.

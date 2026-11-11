@@ -4,7 +4,6 @@ import { Button, List, ListInput, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useState, type ChangeEvent } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
-import { UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, deviceLogin, telegramLogin, updateProfile } from '../../../lib/api'
 import { requestTalkOnHome, takeTalkRequest } from '../../../lib/nav'
@@ -30,10 +29,9 @@ function partOfDay(): string {
 
 /**
  * The first screen. Someone new passes a separate consent gate before the active home with «Поговорить»
- * and the same optional choices as an account («Запоминать важное», «Не сохранять этот разговор»).
- * Continuing the gate only opens home: nothing is sent. The start then makes an account for this phone,
- * records the consents and asks home for a conversation with these choices, which home starts as soon
- * as the tabs appear; the companion greets the person there.
+ * and the optional memory choice. Continuing the gate only opens home: nothing is sent. The start then
+ * makes an account for this phone, records the consents and asks home for a conversation with this choice,
+ * which home starts as soon as the tabs appear; the companion greets the person there.
  *
  * The same screen is also the gate for someone who is already signed in but has not agreed to the
  * current version of the terms (an account from before this screen existed, or a newer version of the
@@ -58,12 +56,10 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   const startForm = telegram ? 'telegram_start' : 'device_start'
   const [dataConsented, setDataConsented] = useState(false)
   const [entryPassed, setEntryPassed] = useState(false)
-  /** "Не сохранять этот разговор", as on home: off at every visit, optional. */
-  const [unsaved, setUnsaved] = useState(false)
   /** "Запоминать важное" with the consent sheet accepted: home turns memory on before the conversation. */
   const [rememberMemory, setRememberMemory] = useState(false)
   const [memoryConsentOpen, setMemoryConsentOpen] = useState(false)
-  const talkRequest = () => ({ saved: !unsaved, rememberMemory })
+  const talkRequest = () => ({ rememberMemory })
   const entryGate = !signedIn && !entryPassed
 
   async function handleTalk() {
@@ -218,7 +214,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
               {signedIn || entryGate ? 'Продолжить' : 'Поговорить'}
             </Button>
             {signedIn && <ConsentNote />}
-            {/* The same optional choices as on home; neither is needed to start. */}
+            {/* The optional memory choice is not needed to start. */}
             {!signedIn && !entryGate && (
               <>
                 <div className="rd-incognito" data-testid="memory-switch">
@@ -237,19 +233,6 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
                     onChange={(on) => (on ? setMemoryConsentOpen(true) : setRememberMemory(false))}
                   />
                 </div>
-                <label className="rd-incognito rd-unsaved" data-testid="unsaved">
-                  <span className="rd-incognito-text">
-                    <span className="rd-incognito-title">{UNSAVED_LABEL}</span>
-                    <span className="rd-caption">{UNSAVED_HINT}</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    className="rd-unsaved-check"
-                    data-testid="unsaved-toggle"
-                    checked={unsaved}
-                    onChange={(event) => setUnsaved(event.target.checked)}
-                  />
-                </label>
               </>
             )}
           </div>

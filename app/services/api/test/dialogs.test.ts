@@ -575,7 +575,7 @@ interface AgentConnection {
   socket: WebSocket
   /** Headers of the handshake the gateway made. */
   headers: IncomingHttpHeaders
-  received: unknown[]
+  received: { type: string }[]
   binaryFrames: Buffer[]
 }
 
