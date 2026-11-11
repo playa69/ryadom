@@ -11,14 +11,14 @@
 ## 4. Клиенты по поверхностям
 
 - [x] 4.1 `app/packages/client-core/src/voice/mic-guide.ts` и `mic-permission.ts`: платформа и шаги, проверка и наблюдение за разрешением без запроса. Приёмка: `app/packages/client-core/test/mic-guide.test.ts`.
-- [x] 4.2 Web `app/apps/web/components/DialogScreen.tsx`, `MicGuideSheet.tsx`: запрос сразу, окно только после отказа, `denied` без вызова `getUserMedia`, `granted` → «Продолжить», «Попробовать снова» с пометкой «по-прежнему выключен». Приёмка: `app/e2e/tests/web-mic-journeys.spec.ts`.
+- [x] 4.2 Web `app/apps/web/components/DialogScreen.tsx`, `MicGuideSheet.tsx`: запрос сразу, окно только после отказа, `denied` без вызова `getUserMedia`, `granted` → сразу голос, «Попробовать снова» с пометкой «по-прежнему выключен». Приёмка: `app/e2e/tests/web-mic-journeys.spec.ts`.
 - [x] 4.3 PWA/Android/iOS/TG `app/apps/mobile/src/client/components/pages/dialog/DialogPage.tsx`, `MicGuideSheet.tsx`: то же на Framework7. Приёмка: `app/e2e/tests/app-mic-journeys.spec.ts`.
 - [x] 4.4 Автостарт с главного экрана остаётся без окна (текстовый вид + уведомление). Приёмка: пути 2 и 3 в обоих спеках.
 
 ## 5. Проверка
 
 - [x] 5.1 e2e web (desktop, mobile) и PWA: путь «разрешили», «отказали в запросе», «отказ запомнен → включили в настройках», «нет устройства / занят / небезопасный адрес / иной сбой», «браузер не умеет спросить о разрешении». Приёмка: `pnpm evidence` зелёный.
-- [x] 5.2 Окна по местам открытия (Chrome/Android, Safari/iPhone, Яндекс Браузер, встроенное окно, PWA). Приёмка: `app/e2e/tests/web-mic-guide.spec.ts`.
+- [x] 5.2 Окна по устройствам (10 мест открытия: Chrome, Яндекс Браузер, Samsung, Firefox на Android; Safari и Chrome на iPhone; встроенное окно; PWA; Chrome на компьютере; Safari на Mac). Приёмка: `app/e2e/tests/web-mic-guide.spec.ts` и `app-mic-guide.spec.ts`; все виды определения платформы — `app/packages/client-core/test/mic-guide.test.ts`.
 - [ ] 5.3 Скриншоты 390 и 1280 для отчёта. Приёмка: снимки в PROTEUS-284.
 - [x] 5.4 `release-check`: контракт API не меняется, свойство события необязательное. Приёмка: отчёт в PR.
 - [ ] 5.5 Вручную на реальных устройствах: Android Chrome, Safari на iPhone, приложение Яндекса. Приёмка: отметка в PROTEUS-284 (в headless не проверить).

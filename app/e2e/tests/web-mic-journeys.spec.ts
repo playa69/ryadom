@@ -75,7 +75,7 @@ test('путь 2 — отказали в запросе: текст с увед�
   await step(page, 'denied-text', '«Писать текстом»: окно закрыто, можно писать')
 })
 
-test('путь 3 — отказ запомнен браузером: запроса нет, окно сразу; включили в настройках — продолжить', async ({ page }) => {
+test('путь 3 — отказ запомнен браузером: запроса нет, окно сразу; включили в настройках — сразу голос', async ({ page }) => {
   test.setTimeout(120_000)
   await stubMic(page, { outcome: 'NotAllowedError', permission: 'denied' })
   await openVoiceFromHome(page)
@@ -90,15 +90,12 @@ test('путь 3 — отказ запомнен браузером: запро�
   expect(await micRequests(page)).toBe(0)
   await step(page, 'remembered-guide', 'Нажали микрофон: окно сразу, системный запрос не вызывался')
 
-  // The person goes to the settings, flips the switch and comes back.
+  // The person goes to the settings, flips the switch and comes back: straight to the conversation, nothing to confirm.
   await answerMic(page, 'grant')
   await setMicPermission(page, 'granted')
-  await expect(page.getByTestId('mic-guide-granted')).toBeVisible()
-  await step(page, 'remembered-granted', 'Включили в настройках: окно само предлагает продолжить')
-
-  await page.getByTestId('mic-guide-continue').click()
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
-  await step(page, 'remembered-listening', 'Продолжить: шар слушает')
+  await expect(page.getByTestId('mic-guide-steps')).not.toBeVisible()
+  await step(page, 'remembered-listening', 'Включили в настройках и вернулись: окно закрылось само, шар слушает')
 })
 
 const FAILURES = [

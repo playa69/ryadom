@@ -14,7 +14,7 @@ const PLACES = [
     userAgent:
       'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
     standalone: false,
-    steps: ['Нажми на замок слева от адреса', 'Выбери «Разрешения»', 'Включи «Микрофон»'],
+    steps: ['Нажми на значок слева от адреса (замок или «настройки»)', 'Выбери «Разрешения» и включи «Микрофон»', 'настройки телефона → «Приложения» → Chrome'],
   },
   {
     key: 'safari-ios',
@@ -22,15 +22,39 @@ const PLACES = [
     userAgent:
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
     standalone: false,
-    steps: ['Нажми «Аа» в адресной строке', 'Выбери «Настройки веб-сайта»', 'Поставь «Микрофон» → «Разрешить»'],
+    steps: ['Нажми «Аа» в левой части адресной строки', 'Выбери «Настройки веб-сайта»', 'Поставь «Микрофон» → «Разрешить»'],
   },
   {
-    key: 'yandex',
-    title: 'Яндекс Браузер',
+    key: 'chrome-ios',
+    title: 'Chrome на iPhone',
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/130.0.0.0 Mobile/15E148 Safari/604.1',
+    standalone: false,
+    steps: ['Открой «Настройки» на iPhone и найди в списке Chrome', 'Включи переключатель «Микрофон»'],
+  },
+  {
+    key: 'yandex-android',
+    title: 'Яндекс Браузер на Android',
     userAgent:
       'Mozilla/5.0 (Linux; arm_64; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 YaBrowser/24.10.0 Mobile Safari/537.36',
     standalone: false,
-    steps: ['Нажми на значок слева от адреса', 'Открой «Настройки сайта»', 'Поставь «Микрофон» → «Разрешить»'],
+    steps: ['Нажми на значок слева от адреса', 'Открой «Настройки сайта» → «Микрофон»'],
+  },
+  {
+    key: 'samsung',
+    title: 'Samsung Internet',
+    userAgent:
+      'Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36',
+    standalone: false,
+    steps: ['Нажми на значок замка слева от адреса', 'Открой «Разрешения» и включи «Микрофон»'],
+  },
+  {
+    key: 'firefox-android',
+    title: 'Firefox на Android',
+    userAgent:
+      'Mozilla/5.0 (Android 14; Mobile; rv:131.0) Gecko/131.0 Firefox/131.0',
+    standalone: false,
+    steps: ['Выбери «Изменить разрешения сайта»'],
   },
   {
     key: 'embedded',
@@ -41,16 +65,28 @@ const PLACES = [
     steps: ['Скопируй адрес — кнопка ниже', 'Открой Chrome или Safari и вставь адрес в строку'],
   },
   {
-    key: 'pwa',
-    title: 'установленное PWA',
+    key: 'pwa-android',
+    title: 'установленное PWA на Android',
     userAgent:
       'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
     standalone: true,
-    steps: [
-      'Открой настройки телефона → «Приложения» → Рядом',
-      'Выбери «Разрешения» → «Микрофон»',
-      'Вернись и нажми «Попробовать снова»',
-    ],
+    steps: ['Открой настройки телефона → «Приложения» → Рядом', 'Выбери «Разрешения» → «Микрофон»'],
+  },
+  {
+    key: 'chrome-desktop',
+    title: 'Chrome на компьютере',
+    userAgent:
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+    standalone: false,
+    steps: ['Нажми на значок слева от адреса', 'Если браузер предложит перезагрузить страницу — перезагрузи'],
+  },
+  {
+    key: 'safari-mac',
+    title: 'Safari на Mac',
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
+    standalone: false,
+    steps: ['В меню выбери Safari → «Настройки для этого веб-сайта»'],
   },
 ]
 

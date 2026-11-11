@@ -182,8 +182,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // «Подводить итог автоматически»: read when the end sheet opens; null until then.
   const [recapEnabled, setRecapEnabled] = useState<boolean | null>(null)
   const [alert, setAlert] = useState<AlertState | null>(null)
-  /** After a refused microphone: the steps for this place; `again` when a retry was refused too, `granted` when the switch was flipped meanwhile. */
-  const [guide, setGuide] = useState<{ steps: MicGuide; again: boolean; granted: boolean } | null>(null)
+  /** After a refused microphone: the steps for this place; `again` when a retry was refused too. */
+  const [guide, setGuide] = useState<{ steps: MicGuide; again: boolean } | null>(null)
   const [missing, setMissing] = useState(false)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
   const [memoryMode, setMemoryMode] = useState<DialogMemoryMode | undefined>(start?.memoryMode)
@@ -651,7 +651,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     if (error instanceof MicrophoneDeniedError) {
       // Self-started listening only falls back to text; the steps come when the person taps the microphone.
       if (automatic) refuse(MIC_DENIED_TEXT)
-      else setGuide({ steps: currentMicGuide(), again: retry, granted: false })
+      else setGuide({ steps: currentMicGuide(), again: retry })
       return
     }
     const detail = error instanceof MicrophoneError ? error.detail : 'other'
@@ -662,7 +662,12 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     const standalone =
       window.matchMedia('(display-mode: standalone)').matches ||
       (navigator as Navigator & { standalone?: boolean }).standalone === true
-    return micGuide(navigator.userAgent, standalone)
+    return micGuide({
+      userAgent: navigator.userAgent,
+      standalone,
+      native: false,
+      touch: navigator.maxTouchPoints > 1,
+    })
   }
 
   async function startListening(automatic: boolean, retry = false) {
@@ -1148,7 +1153,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       <MicGuideSheet
         guide={guide?.steps ?? null}
         again={guide?.again ?? false}
-        granted={guide?.granted ?? false}
+        // Back from the settings with the switch on: straight to the conversation, nothing to confirm.
         onRetry={() => {
           setGuide(null)
           void (handsFree ? openMic(false, true) : startListening(false, true))
@@ -1157,7 +1162,6 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           setGuide(null)
           setView('text')
         }}
-        onGranted={() => setGuide((current) => (current ? { ...current, granted: true } : current))}
       />
       <DialogAlert
         open={alert !== null}

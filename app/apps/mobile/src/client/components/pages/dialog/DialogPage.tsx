@@ -259,8 +259,8 @@ export default function DialogPage({
   useEffect(() => () => moodHold.clear(), [moodHold])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
-  /** After a refused microphone: the steps for this place; `again` when a retry was refused too, `granted` when the switch was flipped meanwhile. */
-  const [guide, setGuide] = useState<{ steps: MicGuide; again: boolean; granted: boolean } | null>(null)
+  /** After a refused microphone: the steps for this place; `again` when a retry was refused too. */
+  const [guide, setGuide] = useState<{ steps: MicGuide; again: boolean } | null>(null)
   const [draft, setDraft] = useState('')
   const [recording, setRecording] = useState(false)
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
@@ -500,8 +500,13 @@ export default function DialogPage({
       // Self-started listening only falls back to text; the steps come when the person taps the microphone.
       if (automatic) refuse(MIC_DENIED_TEXT)
       else {
-        const steps = micGuide(navigator.userAgent, isStandalone() || isNative())
-        setGuide({ steps, again: retry, granted: false })
+        const steps = micGuide({
+          userAgent: navigator.userAgent,
+          standalone: isStandalone(),
+          native: isNative(),
+          touch: navigator.maxTouchPoints > 1,
+        })
+        setGuide({ steps, again: retry })
       }
       return
     }
@@ -896,7 +901,6 @@ export default function DialogPage({
       <MicGuideSheet
         guide={guide?.steps ?? null}
         again={guide?.again ?? false}
-        granted={guide?.granted ?? false}
         onRetry={() => {
           setGuide(null)
           void (handsFree ? openMic(false, true) : startListening(false, true))
@@ -905,7 +909,6 @@ export default function DialogPage({
           setGuide(null)
           setMode('text')
         }}
-        onGranted={() => setGuide((current) => (current ? { ...current, granted: true } : current))}
       />
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
       <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />

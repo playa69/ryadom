@@ -7,19 +7,14 @@ import { queryMicPermission, watchMicPermission } from '@ryadom/client-core/voic
 export default function MicGuideSheet({
   guide,
   again,
-  granted,
   onRetry,
   onText,
-  onGranted,
 }: {
   guide: MicGuide | null
   /** A retry was refused as well. */
   again: boolean
-  /** The switch was flipped in the system settings while this sheet was open. */
-  granted: boolean
   onRetry: () => void
   onText: () => void
-  onGranted: () => void
 }) {
   const [copied, setCopied] = useState(false)
   const opened = guide !== null
@@ -30,11 +25,11 @@ export default function MicGuideSheet({
   // The person goes to the settings and comes back: the browser says so by itself where it can, and on the
   // way back to the page it is asked once more.
   useEffect(() => {
-    if (!opened || granted) return
-    const stop = watchMicPermission((state) => state === 'granted' && onGranted())
+    if (!opened) return
+    const stop = watchMicPermission((state) => state === 'granted' && onRetry())
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        void queryMicPermission().then((state) => state === 'granted' && onGranted())
+        void queryMicPermission().then((state) => state === 'granted' && onRetry())
       }
     }
     document.addEventListener('visibilitychange', onVisible)
@@ -42,53 +37,39 @@ export default function MicGuideSheet({
       stop()
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [opened, granted, onGranted])
+  }, [opened, onRetry])
 
   return (
     <Sheet opened={opened} onSheetClosed={() => stillOpen.current && onText()} swipeToClose closeOnEscape backdrop style={{ height: 'auto' }}>
       <div className="rd-sheet-body rd-sheet-body--scroll" data-testid="mic-guide">
-        {granted ? (
-          <>
-            <h2 className="rd-sheet-title">Микрофон включён</h2>
-            <p className="rd-muted" data-testid="mic-guide-granted">
-              Готово — можно говорить.
-            </p>
-            <Button fill large onClick={onRetry} data-testid="mic-guide-continue">
-              Продолжить
-            </Button>
-          </>
-        ) : (
-          <>
-            <h2 className="rd-sheet-title">{guide?.title}</h2>
-            {again && (
-              <p className="rd-form-error" role="status" data-testid="mic-guide-again">
-                Микрофон по-прежнему выключен.
-              </p>
-            )}
-            <p className="rd-muted" data-testid="mic-guide-intro">
-              {guide?.intro}
-            </p>
-            <ol className="rd-mic-steps" data-testid="mic-guide-steps">
-              {guide?.steps.map((step) => (
-                <li key={step}>{step}</li>
-              ))}
-            </ol>
-            {guide?.copyAddress && (
-              <Button
-                large
-                onClick={() => {
-                  void navigator.clipboard?.writeText(window.location.origin).then(() => setCopied(true))
-                }}
-                data-testid="mic-guide-copy"
-              >
-                {copied ? 'Адрес скопирован' : 'Скопировать адрес'}
-              </Button>
-            )}
-            <Button fill large onClick={onRetry} data-testid="mic-guide-retry">
-              Попробовать снова
-            </Button>
-          </>
+        <h2 className="rd-sheet-title">{guide?.title}</h2>
+        {again && (
+          <p className="rd-form-error" role="status" data-testid="mic-guide-again">
+            Микрофон по-прежнему выключен.
+          </p>
         )}
+        <p className="rd-muted" data-testid="mic-guide-intro">
+          {guide?.intro}
+        </p>
+        <ol className="rd-mic-steps" data-testid="mic-guide-steps">
+          {guide?.steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+        {guide?.copyAddress && (
+          <Button
+            large
+            onClick={() => {
+              void navigator.clipboard?.writeText(window.location.origin).then(() => setCopied(true))
+            }}
+            data-testid="mic-guide-copy"
+          >
+            {copied ? 'Адрес скопирован' : 'Скопировать адрес'}
+          </Button>
+        )}
+        <Button fill large onClick={onRetry} data-testid="mic-guide-retry">
+          Попробовать снова
+        </Button>
         <Button large onClick={onText} data-testid="mic-guide-text">
           Писать текстом
         </Button>

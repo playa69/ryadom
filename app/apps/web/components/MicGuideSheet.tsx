@@ -12,31 +12,26 @@ import { BUTTON } from './controls'
 export default function MicGuideSheet({
   guide,
   again,
-  granted,
   onRetry,
   onText,
-  onGranted,
 }: {
   guide: MicGuide | null
   /** A retry was refused as well. */
   again: boolean
-  /** The switch was flipped in the browser's settings while this window was open. */
-  granted: boolean
   onRetry(): void
   onText(): void
-  onGranted(): void
 }) {
   const [copied, setCopied] = useState(false)
   const open = guide !== null
 
   // The person goes to the settings and comes back: the browser says so by itself where it can, and on the
-  // way back to the page it is asked once more.
+  // way back to the page it is asked once more. A switch found on goes straight to the conversation.
   useEffect(() => {
-    if (!open || granted) return
-    const stop = watchMicPermission((state) => state === 'granted' && onGranted())
+    if (!open) return
+    const stop = watchMicPermission((state) => state === 'granted' && onRetry())
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        void queryMicPermission().then((state) => state === 'granted' && onGranted())
+        void queryMicPermission().then((state) => state === 'granted' && onRetry())
       }
     }
     document.addEventListener('visibilitychange', onVisible)
@@ -44,36 +39,8 @@ export default function MicGuideSheet({
       stop()
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [open, granted, onGranted])
+  }, [open, onRetry])
 
-  if (granted) {
-    return (
-      <Modal open onClose={onText} title="Микрофон включён">
-        <p className="text-base leading-[1.55] text-dim" data-testid="mic-guide-granted">
-          Готово — можно говорить.
-        </p>
-        <div className="flex flex-col gap-3 tab:flex-row-reverse tab:flex-wrap tab:justify-start">
-          <Button
-            type="button"
-            className={cn(BUTTON, 'w-full bg-clip-border focus-visible:border-transparent tab:w-auto tab:min-w-44 tab:flex-none')}
-            onClick={onRetry}
-            data-testid="mic-guide-continue"
-          >
-            Продолжить
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className={cn(BUTTON, 'w-full border-input! tab:w-auto')}
-            onClick={onText}
-            data-testid="mic-guide-text"
-          >
-            Писать текстом
-          </Button>
-        </div>
-      </Modal>
-    )
-  }
   return (
     <Modal open={guide !== null} onClose={onText} title={guide?.title ?? ''}>
       {again && (
