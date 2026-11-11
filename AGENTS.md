@@ -9,6 +9,7 @@
   `apps/landing`, `apps/admin` (Next.js), `apps/mobile` (PWA, Android и iOS на Framework7 + Capacitor), `packages/*`,
   `e2e` (Playwright), `dev/agent-mock` (заглушка агента).
 - `agent/` — агент разговора: Python 3.12, FastAPI, uv; PostgreSQL, Cognee, Langfuse.
+- `dashboard/` — отдельный сервис с дашбордом метрик для Sber500 (`/dashboard`), манифесты — `k8s/dashboard/`.
 - `k8s/` — манифесты единственного кластера (Timeweb `twc-sber500`, окружение одно — prod) и ранбуки.
 - `openspec/` — спеки поведения; `docs/` — продуктовая спека (`docs/spec.md`) и аналитика.
 

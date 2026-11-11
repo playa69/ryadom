@@ -1,0 +1,12 @@
+# =============================================================================
+# Дашборд метрик для Sber500 — отдельный namespace (README рядом)
+# =============================================================================
+# Без istio-сайдкара, как infra: сервис отдаёт одну страницу и JSON, mTLS ему не нужен,
+# а без сайдкара не нужны ни egress к istiod, ни пробы kubelet через :15020.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dashboard
+  labels:
+    kubernetes.io/metadata.name: dashboard
+    app.kubernetes.io/part-of: ryadom
