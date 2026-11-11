@@ -1,7 +1,15 @@
 import type { IncomingMessage } from 'node:http'
 import assertNever from 'assert-never'
 import type { WebSocket } from 'ws'
-import { AnalyticsEvent, COMPONENT_NAMES, type ComponentName, type DialogInterruptReason } from '@ryadom/analytics/events'
+import {
+  AnalyticsEvent,
+  COMPONENT_NAMES,
+  COMPONENT_PIPELINES,
+  COMPONENT_REASONS,
+  type ComponentName,
+  type ComponentPipeline,
+  type DialogInterruptReason,
+} from '@ryadom/analytics/events'
 import type { ServerAnalytics } from '@ryadom/analytics/server'
 import {
   bindRequestContext,
@@ -100,6 +108,7 @@ interface AgentTextFrame {
   [key: string]: unknown
 }
 
+const SAFETY_STEPS = ['call', 'ask_thoughts', 'check', 'emergency', 'pinned', 'reminder', 'banner', 'return'] as const
 const MOOD_TONES = ['neutral', 'sleepy', 'angry', 'afraid', 'sad', 'calm'] as const
 
 class DialogSession {
@@ -114,11 +123,16 @@ class DialogSession {
   private userMessages = 0
   private assistantMessages = 0
   private hasTakeaway = false
+  // Where the crisis branch fired from, remembered to count the call button (no text, no person).
+  private crisisTrigger: 'red' | 'yellow' | null = null
+  private crisisSource: 'words' | 'model' | 'answer' | null = null
   /**
    * The agent said (`ready`) that this conversation is held unsaved ("Не сохранять этот разговор"): nothing about it goes to the
    * product analytics, not even counts.
    */
   private unsaved = false
+  /** The voice path the agent last reported on; it goes into error log lines so a failure is tied to a path. */
+  private pipeline: ComponentPipeline | undefined
   private outcomeReported = false
   private plannedClose = false
   private closeReason: DialogInterruptReason | null = null
@@ -183,6 +197,11 @@ class DialogSession {
         this.alive = true
       }),
     )
+  }
+
+  private rememberCrisisSource(frame: AgentTextFrame): void {
+    if (frame.trigger === 'red' || frame.trigger === 'yellow') this.crisisTrigger = frame.trigger
+    if (frame.source === 'words' || frame.source === 'model' || frame.source === 'answer') this.crisisSource = frame.source
   }
 
   private toClient(frame: DialogServerMessage): void {
@@ -335,6 +354,21 @@ class DialogSession {
       case DialogClientFrame.TtsCancel:
         this.agent?.send({ type: 'tts_cancel', messageId: frame.messageId })
         return
+      case DialogClientFrame.SafetyCall:
+        this.agent?.send({ type: 'safety_call' })
+        this.deps.analytics.captureAnonymous(AnalyticsEvent.CrisisCallPressed, {
+          level: this.crisisTrigger ?? 'red',
+          source: this.crisisSource ?? 'unknown',
+        })
+        return
+      case DialogClientFrame.SafetyAnswer:
+        if (frame.answer === 'yes' || frame.answer === 'no' || frame.answer === 'unknown') {
+          this.agent?.send({ type: 'safety_answer', answer: frame.answer })
+        }
+        return
+      case DialogClientFrame.SafetyReturn:
+        this.agent?.send({ type: 'safety_return' })
+        return
       case DialogClientFrame.Ping:
         this.toClient({ type: DialogServerFrame.Pong })
         return
@@ -467,12 +501,12 @@ class DialogSession {
       },
       {
         onOpen: () => {
-          this.logger.info('Соединение с агентом открыто', { userId, dialogId, codec: this.codec })
+          this.logger.info('Соединение с агентом открыто', { userId, dialogId, pipeline: this.pipeline, codec: this.codec })
         },
         onText: (frame) => this.onAgentText(frame as AgentTextFrame),
         onBinary: (data) => this.onAgentSpeech(data),
         onClose: (code, reason) => {
-          this.logger.info('Агент закрыл соединение', { userId, dialogId, code, reason })
+          this.logger.info('Агент закрыл соединение', { userId, dialogId, pipeline: this.pipeline, code, reason })
           // The agent is gone, so there is nothing left to continue the conversation with. What it said
           // before closing (its `ended`, the last of its speech still in the encoder) goes out first.
           const closeCode = code === 1000 ? DialogCloseCode.Done : DialogCloseCode.AgentUnavailable
@@ -480,7 +514,7 @@ class DialogSession {
         },
         onRejected: (status) => {
           if (status !== 404) {
-            this.logger.warn('Агент отказал в соединении', { userId, dialogId, status })
+            this.logger.warn('Агент отказал в соединении', { userId, dialogId, pipeline: this.pipeline, status })
             return this.fail(
               DialogWsErrorCode.AGENT_UNAVAILABLE,
               'agent is unavailable',
@@ -492,7 +526,7 @@ class DialogSession {
           this.fail(DialogWsErrorCode.DIALOG_NOT_FOUND, 'dialog not found', DialogCloseCode.DialogGone)
         },
         onError: (error) => {
-          this.logger.warn('Ошибка соединения с агентом', error, { userId, dialogId })
+          this.logger.warn('Ошибка соединения с агентом', error, { userId, dialogId, pipeline: this.pipeline })
           this.fail(
             DialogWsErrorCode.AGENT_UNAVAILABLE,
             'agent is unavailable',
@@ -650,12 +684,17 @@ class DialogSession {
         // One real call of one of the agent's parts for this dialog: a name, how it went, whether it was cached.
         // Nothing else of the frame is read, so a prompt or a vendor's error text cannot reach a report.
         const component = COMPONENT_NAMES.find((name) => name === frame.component) as ComponentName | undefined
+        const outcome = frame.outcome === 'error' ? 'error' : 'ok'
+        const pipeline = COMPONENT_PIPELINES.find((name) => name === frame.pipeline)
+        if (pipeline) this.pipeline = pipeline
         if (!component || !this.userId || this.unsaved) return
         this.deps.analytics.capture(this.userId, AnalyticsEvent.ComponentCalled, {
           ...dialogIdProperty(this.dialogId),
           component,
-          outcome: frame.outcome === 'error' ? 'error' : 'ok',
+          outcome,
           cached: frame.cached === true,
+          ...(pipeline ? { pipeline } : {}),
+          ...(outcome === 'error' ? { reason: COMPONENT_REASONS.find((name) => name === frame.reason) ?? 'unknown' } : {}),
         })
         return
       }
@@ -681,7 +720,27 @@ class DialogSession {
         const hotlines = Array.isArray(frame.hotlines) && frame.hotlines.length > 0
           ? (frame.hotlines as { name: string; phone: string }[])
           : HOTLINES
-        return this.toClient({ type: DialogServerFrame.Safety, level, text: str('text'), hotlines })
+        this.rememberCrisisSource(frame)
+        const step = SAFETY_STEPS.find((name) => name === frame.step)
+        return this.toClient({
+          type: DialogServerFrame.Safety,
+          level,
+          text: str('text'),
+          hotlines,
+          ...(step ? { step, pinned: frame.pinned === true } : {}),
+        })
+      }
+      case 'safety_state': {
+        const step = SAFETY_STEPS.find((name) => name === frame.step)
+        if (!step) return
+        this.rememberCrisisSource(frame)
+        return this.toClient({
+          type: DialogServerFrame.SafetyState,
+          step,
+          pinned: frame.pinned === true,
+          banner: frame.banner === true,
+          ask: frame.ask === 'thoughts' || frame.ask === 'safe' ? frame.ask : null,
+        })
       }
       case 'ended': {
         // The agent builds the summary itself; its shape is already described by the contract
@@ -713,6 +772,11 @@ class DialogSession {
         const code = frame.code === 'VOICE_UNAVAILABLE' ? DialogWsErrorCode.VOICE_UNAVAILABLE : null
         // Losing voice is not the end of the conversation: text keeps working.
         if (code) {
+          this.logger.warn('Агент сообщил, что голос недоступен', {
+            userId: this.userId,
+            dialogId: this.dialogId,
+            pipeline: this.pipeline,
+          })
           return this.toClient({
             type: DialogServerFrame.Error,
             code,

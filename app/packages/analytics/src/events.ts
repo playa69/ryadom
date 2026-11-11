@@ -65,6 +65,11 @@ export enum AnalyticsEvent {
    * hotlines were shown, and must not become a record of who was in crisis.
    */
   SafetySignal = 'safety_signal',
+  /**
+   * The person pressed the call button of the crisis branch. Reported with NO person attached; carries the level
+   * and where the branch fired from, never any text of the dialog.
+   */
+  CrisisCallPressed = 'crisis_call_pressed',
 
   // ── Client: the whole app ───────────────────────────────────────────────────────────────────
   /** A launch of the app or a new page load, once per start. */
@@ -272,6 +277,24 @@ export type ComponentName = (typeof COMPONENT_NAMES)[number]
 /** `ok` is an answer, `error` is a call that failed. A repeat served from the cache is `ok` with `cached: true`. */
 export type ComponentOutcome = 'ok' | 'error'
 
+/** The path a conversation runs on: the agent's own Sber models or Gemini Live. Set on `live` and `tts` calls. */
+export const COMPONENT_PIPELINES = ['sber', 'gemini'] as const
+export type ComponentPipeline = (typeof COMPONENT_PIPELINES)[number]
+
+/** Short failure codes of the agent (agent/app/core/reasons.py). A closed list: a vendor's own text never becomes a property. */
+export const COMPONENT_REASONS = [
+  'quota',
+  'auth',
+  'timeout',
+  'connect',
+  'closed',
+  'empty',
+  'bad_response',
+  'unavailable',
+  'unknown',
+] as const
+export type ComponentReason = (typeof COMPONENT_REASONS)[number]
+
 export type AppUpdateKind = 'service_worker' | 'ota' | 'store'
 export type AppUpdateAction = 'available' | 'applied' | 'dismissed' | 'forced'
 export type InstallPromptAction = 'shown' | 'accepted' | 'dismissed' | 'ios_instructions'
@@ -359,8 +382,12 @@ export interface AnalyticsEventProperties {
     component: ComponentName
     outcome: ComponentOutcome
     cached: boolean
+    pipeline?: ComponentPipeline
+    /** Only on `outcome: error`. */
+    reason?: ComponentReason
   }
   [AnalyticsEvent.SafetySignal]: { level: SafetyLevelName }
+  [AnalyticsEvent.CrisisCallPressed]: { level: 'red' | 'yellow'; source: 'words' | 'model' | 'answer' | 'unknown' }
 
   [AnalyticsEvent.AppOpened]: {
     standalone: boolean

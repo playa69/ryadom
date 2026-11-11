@@ -6,7 +6,8 @@ import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
-import { DialogWsErrorCode, type DialogSummaryApiResponse } from '@ryadom/contracts/api/dialogs'
+import { DialogWsErrorCode, type DialogSummaryApiResponse, type SafetyAnswer } from '@ryadom/contracts/api/dialogs'
+import { CRISIS_IDLE, reduceCrisisUi, type CrisisUi } from '@ryadom/client-core/safety-state'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { trackUnlessUnsaved } from '../../../lib/dialog-analytics'
@@ -57,6 +58,7 @@ import {
   watchTurns,
   type TurnEvent,
 } from '../../../lib/voice/turn-detector'
+import CrisisBar from '../../CrisisBar'
 import { openSos } from '../../SosSheet'
 import Breathing from '../../Breathing'
 import VoiceOrb, { type OrbState } from '../../VoiceOrb'
@@ -256,6 +258,10 @@ export default function DialogPage({
   // The tone the agent reports for the person's last turn tints the sphere for a while (REQ-VOICE-10).
   const [mood, setMood] = useState<OrbMood | null>(null)
   const moodHold = useMemo(() => createMoodHold(setMood), [])
+  // PROTEUS-279: the crisis script on the screen (pinned call button, quick answers, banner, still sphere).
+  const [crisisUi, setCrisisUi] = useState<CrisisUi>(CRISIS_IDLE)
+  // The call button was pressed: when the person comes back to the app, the agent asks how it went.
+  const calledRef = useRef(false)
   useEffect(() => () => moodHold.clear(), [moodHold])
   const [state, setState] = useState<DialogSocketState>('connecting')
   const [mode, setMode] = useState<Mode>('voice')
@@ -280,6 +286,20 @@ export default function DialogPage({
   const [summary, setSummary] = useState<DialogSummaryApiResponse | null | undefined>(undefined)
 
   const socket = useRef<DialogSocket | null>(null)
+  const pressCall = useCallback(() => {
+    calledRef.current = true
+    socket.current?.safetyCall()
+  }, [])
+  const answerSafety = useCallback((answer: SafetyAnswer) => socket.current?.safetyAnswer(answer), [])
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !calledRef.current) return
+      calledRef.current = false
+      socket.current?.safetyReturn()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
   const player = useRef<VoicePlayer | null>(null)
   /** The sphere's own voice for what the agent does not speak itself: the greeting, a reply without speech. */
   const voice = useRef<ReplyVoice | null>(null)
@@ -401,7 +421,14 @@ export default function DialogPage({
           if (final && !text) setAwaitingReply(false)
         },
         onAudio: (speech) => voicePlayer.enqueue(speech),
-        onSafety: (_level, text, hotlines) => openSos({ text, hotlines, source: 'safety_frame' }),
+        onSafety: (_level, text, hotlines, step) =>
+          openSos({
+            text,
+            hotlines,
+            source: 'safety_frame',
+            ...(step ? { crisis: { onCall: pressCall } } : {}),
+          }),
+        onSafetyState: (next) => setCrisisUi((prev) => reduceCrisisUi(prev, next)),
         onMood: (tone, intensity) => moodHold.report(tone, intensity),
         onEnded: (result) => setSummary(result),
         onError: (code, message) => {
@@ -924,6 +951,9 @@ export default function DialogPage({
           setMode('text')
         }}
       />
+
+      <CrisisBar ui={crisisUi} onCall={pressCall} onAnswer={answerSafety} onOpenSos={() => openSos({ source: 'dialog' })} />
+
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
       <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />
 
@@ -956,7 +986,7 @@ export default function DialogPage({
           {/* The whole stage is the target: the sphere is large, and the person need not aim. The
               microphone button below is the same action for those who look for a button. */}
           <div className="rd-voice-stage" role="presentation" onClick={toggleListening}>
-            <VoiceOrb state={orb} level={level} mood={mood} />
+            <VoiceOrb state={orb} level={level} mood={crisisUi.active ? 'crisis' : mood} />
           </div>
 
           <div ref={caption} className="rd-voice-caption" data-testid="voice-caption">

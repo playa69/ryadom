@@ -88,7 +88,10 @@ import MemoryRecap from './MemoryRecap'
 import DialogVoice from './DialogVoice'
 import { BUTTON, COLUMN } from './controls'
 import { useClearNotices, useNotice, useNoticePlacement } from './Notice'
+import CrisisBar from './CrisisBar'
 import { useSos } from './Sos'
+import { CRISIS_IDLE, reduceCrisisUi, type CrisisUi } from '@ryadom/client-core/safety-state'
+import type { SafetyAnswer } from '@ryadom/contracts/api/dialogs'
 import { claimFreshStart, readDialogStart, takeDialogHandoff } from './dialog-start'
 import { initialDialogView, rememberDialogView, type DialogView } from './dialog-view'
 import { useStickToEnd } from './dialog-scroll'
@@ -164,6 +167,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // PROTEUS-168: the tone the agent reports for the person's last turn; fades back after a while.
   const [mood, setMood] = useState<OrbMood | null>(null)
   const moodHold = useMemo(() => createMoodHold(setMood), [])
+  // PROTEUS-279: the crisis script on the screen (pinned call button, quick answers, banner, still sphere).
+  const [crisisUi, setCrisisUi] = useState<CrisisUi>(CRISIS_IDLE)
+  // The call button was pressed: when the person comes back to the app, the agent asks how it went.
+  const calledRef = useRef(false)
   useEffect(() => () => moodHold.clear(), [moodHold])
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
   const [handsFree] = useState(() => readHandsFree(WEB_HANDS_FREE_KEY) && isTurnDetectionSupported())
@@ -414,6 +421,21 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
     latest.current = { notify, openSos, startListening, openMic, onTurn, greeting, gone }
   })
 
+  const pressCall = useCallback(() => {
+    calledRef.current = true
+    socket.current?.safetyCall()
+  }, [])
+  const answerSafety = useCallback((answer: SafetyAnswer) => socket.current?.safetyAnswer(answer), [])
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !calledRef.current) return
+      calledRef.current = false
+      socket.current?.safetyReturn()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     let opened: DialogSocket | null = null
@@ -488,7 +510,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       onAudio: (speech) => voicePlayer.enqueue(speech),
       // Not reported from here on purpose: the server already counts this signal (safety_signal), with no
       // person attached; a second count from a signed-in screen would only risk pointing at who was in crisis.
-      onSafety: (_level, text, hotlines) => latest.current.openSos({ text, hotlines }),
+      onSafety: (_level, text, hotlines, step) =>
+        latest.current.openSos(step ? { text, hotlines, crisis: { onCall: pressCall } } : { text, hotlines }),
+      onSafetyState: (next) => setCrisisUi((prev) => reduceCrisisUi(prev, next)),
       onMood: (tone, intensity) => moodHold.report(tone, intensity),
       onEnded: (result) => finish(result),
       onError: (code, message) => {
@@ -1026,6 +1050,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       />
       <ShareDialogModal dialogId={dialogId} open={sharing} onClose={() => setSharing(false)} />
 
+      <CrisisBar ui={crisisUi} onCall={pressCall} onAnswer={answerSafety} onOpenSos={() => openSos()} />
+
       {unsaved && (
         <div className={cn(COLUMN, 'pt-3')}>
           <p
@@ -1070,7 +1096,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       {view === 'voice' ? (
         <DialogVoice
           orb={orb}
-          mood={mood}
+          mood={crisisUi.active ? 'crisis' : mood}
           level={level}
           caption={caption}
           hint={hint}

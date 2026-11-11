@@ -86,7 +86,7 @@ test('разговор: приветствие, ответ, кризис, жур
   await input.fill('не хочу жить')
   await page.getByRole('button', { name: 'Отправить' }).click()
   // The help lines appear on their own instead of waiting for the person to press SOS.
-  await expect(page.getByText('Если сейчас тяжело')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Сейчас важно поговорить с живым человеком')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('link', { name: /112/ })).toBeVisible()
   await shot(page, 'dialog-safety')
   await closeSheet(page)

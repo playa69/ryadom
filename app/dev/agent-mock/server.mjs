@@ -64,6 +64,20 @@ const REPLIES = [
 ]
 
 const CRISIS_WORDS = ['не хочу жить', 'покончить', 'убить себя', 'умереть', 'нет смысла жить']
+const YELLOW_WORDS = ['все бессмысленно', 'всё бессмысленно', 'устал от всего', 'никому не нужен']
+
+// The crisis script of the real agent (PROTEUS-279), shortened to what the clients need to be tested against.
+const SCRIPT = {
+  sheetTitle: 'Сейчас важно поговорить с живым человеком',
+  redFirst:
+    'Спасибо, что рассказываешь мне об этом. Мне правда важно, что с тобой происходит. С тем, что ты сейчас чувствуешь, лучше всего поможет живой человек — тот, кто умеет поддержать именно в такие моменты. Поговорить с ним можно прямо сейчас, это бесплатно. Нажми кнопку на экране.',
+  check: 'Скажи, пожалуйста: ты сейчас в безопасности?',
+  unsafe: 'Пожалуйста, позвони сейчас 112. Если рядом есть кто-то, позови его. Я никуда не ухожу.',
+  safe: 'Хорошо. Я рядом. Кнопка звонка остаётся на экране — нажми её, когда будешь готов. Можем пока просто немного поговорить.',
+  returned: 'Я здесь. Как ты? Получилось поговорить?',
+  yellowAsk:
+    'Звучит так, будто тебе сейчас очень тяжело. Иногда, когда так тяжело, появляются мысли, что не хочется жить. У тебя бывают такие мысли?',
+}
 
 function userState(userId) {
   if (!users.has(userId)) users.set(userId, { dialogs: new Map(), memory: newMemory(), recapEnabled: true })
@@ -215,6 +229,11 @@ function addMessage(dialog, role, text) {
   dialog.messages.push(message)
   if (role === 'user') onUserMessage(userState(dialog.userId).memory, dialog, text)
   return message
+}
+
+function isYellow(text) {
+  const lower = text.toLowerCase()
+  return YELLOW_WORDS.some((word) => lower.includes(word))
 }
 
 function isCrisis(text) {
@@ -654,9 +673,7 @@ function moodOf(text) {
 }
 
 async function streamAssistantReply(socket, dialog, crisis = false) {
-  const text = crisis
-    ? 'Я слышу, что тебе очень тяжело. Ты не один на один с этим. Давай посмотрим, кому можно позвонить прямо сейчас.'
-    : nextReply(dialog)
+  const text = typeof crisis === 'string' ? crisis : crisis ? SCRIPT.redFirst : nextReply(dialog)
   const message = addMessage(dialog, 'assistant', text)
 
   send(socket, { type: 'assistant_start', messageId: message.id })
@@ -670,6 +687,64 @@ async function streamAssistantReply(socket, dialog, crisis = false) {
   }
   send(socket, { type: 'assistant_end', messageId: message.id, text })
   await speech
+}
+
+const openSheet = (socket, step) =>
+  send(socket, { type: 'safety', level: 'crisis', text: SCRIPT.sheetTitle, step, pinned: true, trigger: 'red', source: 'words' })
+const screenState = (socket, step, extra = {}) =>
+  send(socket, { type: 'safety_state', step, pinned: false, banner: false, ask: null, trigger: 'red', source: 'words', ...extra })
+
+/** One turn of the person through the crisis script; the mock answers like the real agent (REQ-SAFE-02, REQ-SAFE-03). */
+async function crisisTurn(socket, dialog, text) {
+  const state = (dialog.crisisState ??= 'none')
+  const lower = text.toLowerCase().trim()
+  const word = (list) => list.some((w) => new RegExp(`(^|[^а-яё])${w}([^а-яё]|$)`).test(lower))
+  const yes = word(['да', 'ага', 'бывают'])
+  const no = word(['нет'])
+  if (state === 'none' || state === 'calm') {
+    if (isCrisis(text)) {
+      dialog.crisisSeen = true
+      dialog.crisisState = 'red_call'
+      openSheet(socket, 'call')
+      return streamAssistantReply(socket, dialog, SCRIPT.redFirst)
+    }
+    if (state === 'none' && isYellow(text)) {
+      dialog.crisisState = 'yellow_asked'
+      screenState(socket, 'ask_thoughts', { ask: 'thoughts', trigger: 'yellow' })
+      return streamAssistantReply(socket, dialog, SCRIPT.yellowAsk)
+    }
+    return streamAssistantReply(socket, dialog)
+  }
+  if (state === 'yellow_asked') {
+    if (yes || isCrisis(text) || !no) {
+      dialog.crisisSeen = true
+      dialog.crisisState = 'red_call'
+      openSheet(socket, 'call')
+      return streamAssistantReply(socket, dialog, SCRIPT.redFirst)
+    }
+    dialog.crisisState = 'calm'
+    screenState(socket, 'banner', { banner: true, trigger: 'yellow' })
+    return streamAssistantReply(socket, dialog)
+  }
+  if (state === 'red_call') return crisisCheck(socket, dialog)
+  if (state === 'safety_asked') return crisisAnswer(socket, dialog, no ? 'no' : yes ? 'yes' : 'unknown')
+  return streamAssistantReply(socket, dialog)
+}
+
+function crisisCheck(socket, dialog) {
+  dialog.crisisState = 'safety_asked'
+  screenState(socket, 'check', { pinned: true, ask: 'safe' })
+  return streamAssistantReply(socket, dialog, SCRIPT.check)
+}
+
+function crisisAnswer(socket, dialog, answer) {
+  dialog.crisisState = 'listening'
+  if (answer === 'yes') {
+    screenState(socket, 'pinned', { pinned: true })
+    return streamAssistantReply(socket, dialog, SCRIPT.safe)
+  }
+  openSheet(socket, 'emergency')
+  return streamAssistantReply(socket, dialog, SCRIPT.unsafe)
 }
 
 wss.on('connection', (socket, request, context) => {
@@ -722,23 +797,34 @@ wss.on('connection', (socket, request, context) => {
           return
         }
         const text = String(frame.text ?? '')
-        const crisis = isCrisis(text)
-        if (crisis) dialog.crisisSeen = true
         const message = addMessage(dialog, 'user', text)
         if (frame.id) dialog.clientIds.set(frame.id, message.id)
         send(socket, { type: 'ack', id: frame.id ?? message.id, messageId: message.id })
         send(socket, { type: 'mood', ...moodOf(text), at: Date.now() })
-        // Help is needed now: the app shows its own helplines under the agent's words.
-        if (crisis) {
-          send(socket, { type: 'safety', text: 'Если тебе сейчас опасно — позвони по одному из номеров ниже.' })
-        }
-        void streamAssistantReply(socket, dialog, crisis)
+        void crisisTurn(socket, dialog, text)
         return
       }
       case 'audio_start':
         audioFrames = 0
         return
       case 'audio_end':
+        return
+      case 'safety_call':
+        // The real agent stops waiting for the answer to "are you safe?" once the call button is pressed.
+        if (dialog.crisisState === 'red_call') dialog.crisisState = 'listening'
+        return
+      case 'safety_answer':
+        if (dialog.crisisState === 'safety_asked' && ['yes', 'no', 'unknown'].includes(frame.answer)) {
+          void crisisAnswer(socket, dialog, frame.answer)
+        } else if (dialog.crisisState === 'yellow_asked' && ['yes', 'no', 'unknown'].includes(frame.answer)) {
+          void crisisTurn(socket, dialog, frame.answer === 'no' ? 'нет' : 'да')
+        }
+        return
+      case 'safety_return':
+        if (['red_call', 'safety_asked', 'listening'].includes(dialog.crisisState)) {
+          dialog.crisisState = 'listening'
+          void streamAssistantReply(socket, dialog, SCRIPT.returned)
+        }
         return
       case 'tts_cancel':
         if (typeof frame.messageId === 'string') socket.cancelledSpeech.add(frame.messageId)

@@ -127,7 +127,7 @@
 | **`dialog_turn`** | сервер принял реплику человека (набранную или произнесённую) и передал агенту; **целевое действие** | `dialog_id`, `input`: `text`/`voice` |
 | `dialog_ended` | агент подтвердил конец (сокет) или `POST …/end` (REST) | `dialog_id`, `via`, `counts`, `duration_s`, `user_messages`, `assistant_messages`, `has_takeaway`, `tension_delta`, `tension_improved` |
 | `dialog_interrupted` | связь пропала до конца диалога, если человек успел что-то сказать или агент недоступен | `dialog_id`, `reason`, `duration_s`, `user_messages` |
-| `component_called` | агент реально позвал свой компонент внутри диалога: один вызов — одно событие | `dialog_id`, `component`: `stt`/`safety`/`llm`/`live`/`tts`/`memory`, `outcome`: `ok`/`error`, `cached` |
+| `component_called` | агент реально позвал свой компонент внутри диалога: один вызов — одно событие | `dialog_id`, `component`: `stt`/`safety`/`llm`/`live`/`tts`/`memory`, `outcome`: `ok`/`error`, `cached`, `pipeline`: `sber`/`gemini` (у `live` и `tts`), `reason` (при `error`: `quota`/`auth`/`timeout`/`connect`/`closed`/`empty`/`bad_response`/`unavailable`/`unknown`) |
 | `safety_signal` | агент показал линии помощи (**без человека**) | `level`: `concern`/`crisis` |
 
 **Разговор с галочкой «Не сохранять этот разговор»** (`REQ-MEM-13`) не даёт ни одного из событий выше, ни `dialog_started`, ни `dialog_turn`, ни `dialog_ended`, ни `dialog_interrupted`, ни `component_called`, а клиент не шлёт по нему событий экрана разговора (отправка реплики, голос, лист завершения). Шлюз узнаёт о таком разговоре из кадра `ready` агента. Остаётся обезличенный `safety_signal` (защита от кризиса работает как всегда) и показ страницы `/dialog/:id`. Человек, у которого были только такие разговоры, не имеет `dialog_turn`: целевого действия для него нет.
@@ -289,6 +289,18 @@ ORDER BY day
 ход — один `live` и одна `safety` (плюс `memory`, когда память включена), то есть две-три обращения на реплику: порог
 обращений на DAU набирается числом реплик за день, а не глубиной конвейера. Тот же счёт без id ведёт Prometheus
 (`agent_component_calls_total{component,outcome,cached}`) — для сверки порядка величин.
+
+**Какой компонент ломается и почему** (PROTEUS-282). У `component_called` с `outcome = error` есть `pipeline` (`sber` — GigaASR, GigaChat, SaluteSpeech; `gemini` — Gemini Live) и `reason` — короткий код из закрытого списка, без текста и ответа вендора. Разбивка ошибок:
+
+```sql
+SELECT properties.pipeline AS pipeline, properties.component AS component, properties.reason AS reason, count() AS errors
+FROM events
+WHERE event = 'component_called' AND properties.outcome = 'error' AND timestamp > now() - INTERVAL 7 DAY
+GROUP BY pipeline, component, reason
+ORDER BY errors DESC
+```
+
+В Prometheus то же по вендору: `agent_component_errors_total{component,pipeline,reason}` (`component`: `gigaasr`, `gigachat`, `salutespeech`, `gemini_live`, `gemini_tts`) и `agent_pipeline_fallbacks_total{from,to,scope,reason}` — сколько раз разговор или фраза ушли на запасной путь (`scope`: `connect` — соединение не открылось, `tts` — фраза озвучена голосом запасного пути). События до PROTEUS-282 `pipeline` и `reason` не имеют.
 
 **North star («стало легче»)** — доля разговоров со снижением напряжения на 2 пункта и больше по шкале 1–10, по
 `tension_delta <= -2` (`tension_improved` — любое снижение). Пока не считается: напряжение «до» агент не собирает
