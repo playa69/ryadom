@@ -55,18 +55,21 @@ function sql(database, query) {
 
 const n = (v) => Number(v) || 0;
 
+// Test and team accounts: the agent's tables and Langfuse only know user ids, so they are left out by id.
+export function testAccountIds() {
+  return sql('app', "SELECT id FROM users WHERE properties->>'traffic_type' IN ('test', 'internal')")
+    .map((r) => r.id)
+    .filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+}
+
 // from and to: UTC timestamps 'YYYY-MM-DD HH:MM:SS' (to is exclusive).
-export function collectDatabase({ from, to }) {
+export function collectDatabase({ from, to, excluded = testAccountIds() }) {
   const since = `'${from}+00'::timestamptz`;
   const until = `'${to}+00'::timestamptz`;
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(to)) {
     throw new Error('база: bad period');
   }
 
-  // Test and team accounts, so the agent's tables can leave them out too (they only know user ids).
-  const excluded = sql('app', "SELECT id FROM users WHERE properties->>'traffic_type' IN ('test', 'internal')")
-    .map((r) => r.id)
-    .filter((id) => /^[0-9a-f-]{36}$/i.test(id));
   const notExcluded = (column) =>
     excluded.length ? `${column} NOT IN (${excluded.map((id) => `'${id}'`).join(', ')})` : 'TRUE';
 

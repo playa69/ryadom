@@ -149,8 +149,8 @@ svg .val { fill: var(--fg); font-weight: 600; }
   <div class="head"><h2 id="models-title">6. Расход моделей</h2><p class="note" id="models-note"></p></div>
   <div class="scroll"><table>
     <thead><tr>
-      <th data-tip="Модель и задача агента: live — разговор речь в речь, mood — цвет шарика, chat — итоги и заметки памяти.|Модель · задача">Модель · задача</th>
-      <th data-tip="Входные токены за период из базы агента (model_usage).|Вход">Вход</th>
+      <th data-tip="Модель и вид вызова: разговор, настроение (цвет шарика), итог разговора, память, итог недели.|Модель · вызов">Модель · вызов</th>
+      <th data-tip="Входные токены за период.|Вход">Вход</th>
       <th data-tip="Выходные токены, включая размышление модели.|Выход">Выход</th>
       <th data-tip="Вход + выход.|Всего">Всего</th>
       <th data-tip="Доля модели во всех токенах периода.|Доля">Доля</th>
@@ -269,13 +269,17 @@ const DATA = /*__DATA__*/null;
     }).join('');
   }
 
-  // Token use of the agent's models (Prometheus).
+  // Token use of the agent's models: Langfuse for all calls, the database for saved conversations.
   const models = DATA.models;
   if (models && models.rows.length) {
     document.getElementById('models-sec').hidden = false;
     document.getElementById('models-title').textContent = `${++section}. Расход моделей`;
     const mt = (n) => (n >= 1e6 ? (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн' : n >= 1e3 ? Math.round(n / 1e3).toLocaleString('ru-RU') + ' тыс.' : nf(n));
-    document.getElementById('models-note').textContent = `база агента, сохраняемые разговоры, ${models.days} дн.; на разговор — ${mt(Math.round(models.perDialog || 0))}, на активного человека в день — ${mt(Math.round(models.perActiveDay || 0))} токенов`;
+    const perConversation = models.perDialog == null ? ''
+      : `на разговор — ${mt(Math.round(models.perDialog))}, на активного человека в день — ${mt(Math.round(models.perActiveDay || 0))} токенов (сохраняемые разговоры, база)`;
+    document.getElementById('models-note').textContent = models.source === 'langfuse'
+      ? `Langfuse, все вызовы${models.withTests ? ' с тестовыми аккаунтами' : ''}, ${models.days} дн.${models.dbTotal != null ? `; в базе — ${mt(models.dbTotal)}` : ''}${perConversation ? `; ${perConversation}` : ''}`
+      : `база агента, сохраняемые разговоры, ${models.days} дн.${perConversation ? `; ${perConversation}` : ''}`;
     const sum = (key) => models.rows.reduce((a, r) => a + r[key], 0);
     document.getElementById('models').innerHTML = models.rows.map((r) =>
       `<tr><td>${esc(r.model)}${r.task ? ' · ' + esc(r.task) : ''}</td><td>${mt(r.input)}</td><td>${mt(r.output)}</td><td>${mt(r.input + r.output)}</td><td>${pct((r.input + r.output) / models.total * 100)}</td></tr>`).join('') +

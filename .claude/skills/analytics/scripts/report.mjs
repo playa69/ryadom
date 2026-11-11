@@ -12,7 +12,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectDatabase, databaseConfigured } from './database.mjs';
+import { collectDatabase, databaseConfigured, testAccountIds } from './database.mjs';
+import { collectLangfuse, langfuseConfigured } from './langfuse.mjs';
 import { collectMetrika, metrikaConfigured } from './metrika.mjs';
 import { fillQuery, rowsOf, runHogQL } from './posthog.mjs';
 
@@ -197,8 +198,8 @@ for (const name of Object.keys(QUERIES)) if (!data[name]) fail(`no results for $
 
 // ---------- other sources ----------
 // Each needs its own access and is optional: a failure is shown in the report instead of stopping it.
-// Saved results (--data) may carry them under the keys metrika and database.
-const extra = { metrika: raw.metrika ?? null, database: raw.database ?? null };
+// Saved results (--data) may carry them under the keys metrika, database and langfuse.
+const extra = { metrika: raw.metrika ?? null, database: raw.database ?? null, langfuse: raw.langfuse ?? null };
 const sourceErrors = {};
 if (!extra.metrika && metrikaConfigured()) {
   try {
@@ -207,11 +208,26 @@ if (!extra.metrika && metrikaConfigured()) {
     sourceErrors.metrika = error.message;
   }
 }
-if (!extra.database && databaseConfigured()) {
+let excluded = null;
+if (databaseConfigured() && (!extra.database || !extra.langfuse)) {
   try {
-    extra.database = collectDatabase({ from: values.from, to: values.to });
+    excluded = testAccountIds();
   } catch (error) {
     sourceErrors.database = error.message;
+  }
+}
+if (!extra.database && excluded) {
+  try {
+    extra.database = collectDatabase({ from: values.from, to: values.to, excluded });
+  } catch (error) {
+    sourceErrors.database = error.message;
+  }
+}
+if (!extra.langfuse && langfuseConfigured()) {
+  try {
+    extra.langfuse = collectLangfuse({ from: values.from, to: values.to, excluded });
+  } catch (error) {
+    sourceErrors.langfuse = error.message;
   }
 }
 
@@ -365,13 +381,22 @@ if (db) {
   if (!mk) reconcileNote = 'С базой: PostHog не видит отказавшихся от аналитики, а в базе нет стёртых разговоров.';
 }
 const activeDays = act?.person_days || daily.reduce((a, d) => a + d.dau, 0);
-const models = db && db.usage.models.length
+// All model calls come from Langfuse (it also sees the conversations people asked not to save, so only the sum is
+// shown); per conversation and per active day come from the database, which keeps saved conversations only.
+const lf = extra.langfuse;
+const dbUsage = db && db.usage.models.length ? db.usage : null;
+const perConversation = dbUsage
   ? {
-      rows: db.usage.models, total: db.usage.total, days, dialogs: db.usage.dialogs,
-      perDialog: db.usage.dialogs ? db.usage.total / db.usage.dialogs : null,
-      perActiveDay: activeDays ? db.usage.total / activeDays : null,
+      dbTotal: dbUsage.total, dialogs: dbUsage.dialogs,
+      perDialog: dbUsage.dialogs ? dbUsage.total / dbUsage.dialogs : null,
+      perActiveDay: activeDays ? dbUsage.total / activeDays : null,
     }
-  : null;
+  : { dbTotal: null, dialogs: null, perDialog: null, perActiveDay: null };
+const models = lf && lf.rows.length
+  ? { source: 'langfuse', rows: lf.rows, total: lf.total, withTests: !lf.testsExcluded, days, ...perConversation }
+  : dbUsage
+    ? { source: 'database', rows: dbUsage.models, total: dbUsage.total, withTests: false, days, ...perConversation }
+    : null;
 const features = db
   ? [
       { label: 'Память включена', value: db.memoryOn, note: 'людей сейчас', tip: 'Люди, у которых «Запоминать» включено (настройки памяти агента).' },
@@ -386,7 +411,7 @@ const features = db
 
 const report = {
   period: { from: fromDate, to: lastDate, days, label: periodLabel, generatedAt: new Date().toISOString() },
-  sources: { posthog: true, metrika: Boolean(mk), database: Boolean(db) },
+  sources: { posthog: true, metrika: Boolean(mk), database: Boolean(db), langfuse: Boolean(lf) },
   sourceErrors,
   metrika: mk,
   reconcile,
@@ -414,23 +439,33 @@ const k = report.kpi;
 const dev = (label, v) => (v == null ? null : `${label} ${ru(v)}`);
 const medianNote = [dev('телефон', medians.mobile), dev('компьютер', medians.desktop)].filter(Boolean).join(', ') || '—';
 const sourceMark = (ok, error) => (ok ? '✅' : error ? '⚠️' : '❌');
-const sourcesLine = `Источники: PostHog ✅ · Метрика ${sourceMark(mk, sourceErrors.metrika)} · база ${sourceMark(db, sourceErrors.database)}`;
+const sourcesLine = `Источники: PostHog ✅ · Метрика ${sourceMark(mk, sourceErrors.metrika)} · база ${sourceMark(db, sourceErrors.database)} · Langfuse ${sourceMark(lf, sourceErrors.langfuse)}`;
+const SOURCE_NAMES = { metrika: 'Метрика', database: 'База', langfuse: 'Langfuse' };
 const errorLine = Object.entries(sourceErrors)
-  .map(([name, message]) => `${name === 'metrika' ? 'Метрика' : 'База'}: ${message.replace(/^(Metrika|база):?\s*/i, '').replace(/\|/g, '/')}`)
+  .map(([name, message]) => `${SOURCE_NAMES[name]}: ${message.replace(/^(Metrika|база|Langfuse):?\s*/i, '').replace(/\|/g, '/')}`)
   .join('. ');
 const millions = (x) => `${ru(x / 1e6)} млн`;
 const topModel = models?.rows[0];
+const topNote = topModel
+  ? `больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})`
+  : '';
+const usageRows = [
+  models?.source === 'langfuse'
+    ? `| Расход моделей | **${millions(models.total)} токенов** | все вызовы за ${days} дн.${models.withTests ? ' (с тестовыми аккаунтами)' : ''}; ${topNote} |`
+    : null,
+  models?.perDialog != null
+    ? `| Токенов на разговор | **${int(Math.round(models.perDialog))}** | сохраняемые разговоры; на активного в день — ${int(Math.round(models.perActiveDay ?? 0))}${models.source === 'langfuse' ? '' : `; всего в них ${millions(models.total)} за ${days} дн.; ${topNote}`} |`
+    : null,
+].filter(Boolean);
 const dbRows = db
   ? [
       // Only meaningful when someone opted out: otherwise the gap is erased conversations, shown in the reconciliation.
       db.app.optout_total
         ? `| Видно в PostHog | **${pct(share(num(sp.turns), act.user_messages))}** | ${int(sp.turns)} из ${int(act.user_messages)} реплик; от аналитики отказались ${people(db.app.optout_total)} |`
         : null,
-      models
-        ? `| Токенов на разговор | **${int(Math.round(models.perDialog ?? 0))}** | на активного в день — ${int(Math.round(models.perActiveDay ?? 0))}; в сохраняемых разговорах — ${millions(models.total)} за ${days} дн.${topModel ? `; больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})` : ''} |`
-        : null,
-    ].filter(Boolean).join('\n') + '\n'
-  : '';
+    ].filter(Boolean)
+  : [];
+const extraRows = [...dbRows, ...usageRows].map((row) => `${row}\n`).join('');
 
 const title = `Сводка Рядом · ${periodLabel}`;
 const description = `Автоматический отчёт за ${days} полных дней по Москве (${periodLabel}). Детализация с графиком и таблицами — в первом комментарии. Прочитали — закройте задачу.
@@ -445,7 +480,7 @@ ${sourcesLine}${errorLine ? `\n${errorLine}.` : ''}
 | Первый разговор, медиана | **${medians.all == null ? '—' : `${ru(medians.all)} реплик`}** | ${medianNote} |
 | Вернулись в другой день | **${int(cohortTotal.returned)} из ${int(cohortTotal.spoke)}** | новые этих дней, число ещё вырастет |
 | Говорили голосом | **${pct(k.voiceShare)}** | ${int(k.usedVoice)} из ${int(speakers)}; отказ в микрофоне у ${people(micDenied)} |
-${dbRows}
+${extraRows}
 ### Главное
 
 <!-- ГЛАВНОЕ -->
@@ -463,7 +498,8 @@ ${dbRows}
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
-- **Токены** — расход моделей в сохраняемых разговорах за те же дни из базы агента; на разговор — ÷ разговоры с расходом, на активного в день — ÷ дни, в которые человек говорил. Разговоры «Не сохранять», классификатор настроения и фоновые вызовы сюда не входят: полный расход — в Langfuse.
+- **Расход моделей** — токены всех вызовов моделей агента за те же дни по Langfuse, без тестовых и командных аккаунтов; в него входят и разговоры «Не сохранять», и стёртые — только суммой. Вызовы через прокси (итог разговора, память) и озвучка фраз приходят без токенов, так что настоящий расход немного больше.
+- **Токенов на разговор** — расход в сохраняемых разговорах из базы агента ÷ разговоры с расходом; на активного в день — ÷ дни, в которые человек говорил.
 `;
 
 // ---------- detail (inline html block) ----------
