@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('framework7-react', () => ({ f7: {}, f7ready: () => undefined }))
 
-import { currentRoute, isAppRoute, TAB_IDS } from '../src/client/lib/nav'
+import { currentRoute, isAppRoute, requestTalkOnHome, TAB_IDS, takeTalkRequest } from '../src/client/lib/nav'
 
 describe('адреса приложения', () => {
   it('старый адрес журнала ведёт в «Дневник → Журнал», остальные не меняются', () => {
@@ -18,10 +18,18 @@ describe('адреса приложения', () => {
     for (const route of ['/diary/journal/', '/diary/journal/abc/', '/journal/', '/dialog/x/', '/profile/']) {
       expect(isAppRoute(route), route).toBe(true)
     }
-    for (const route of ['https://example.com/', '//evil/', '/other/', 42]) expect(isAppRoute(route), String(route)).toBe(false)
+    for (const route of ['https://example.com/', '//evil/', '/other/', 42])
+      expect(isAppRoute(route), String(route)).toBe(false)
   })
 
   it('вкладок три: журнала среди них нет', () => {
     expect(Object.keys(TAB_IDS)).toEqual(['home', 'diary', 'profile'])
+  })
+
+  it('с первого экрана на главный переносится только выбор памяти и только один раз', () => {
+    // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»».
+    requestTalkOnHome({ rememberMemory: true })
+    expect(takeTalkRequest()).toEqual({ rememberMemory: true })
+    expect(takeTalkRequest()).toBeNull()
   })
 })

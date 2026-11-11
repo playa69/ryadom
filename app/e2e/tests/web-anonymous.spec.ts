@@ -112,6 +112,8 @@ test('первый запуск: отдельное согласие, актив
   )
   await expect(page.getByTestId('data-consent')).toHaveCount(0)
   await expect(page.getByTestId('memory-switch')).toBeVisible()
+  // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»».
+  await expect(page.getByTestId('unsaved')).toHaveCount(0)
   expect(await storedDevice(page), 'продолжение пока не создаёт аккаунт').toBeNull()
   await shot(page, 'web-welcome-consented')
   await step(page, 'welcome-home', 'После согласия открыт активный чат без повторной отметки')

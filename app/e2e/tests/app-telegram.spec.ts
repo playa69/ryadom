@@ -48,9 +48,15 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await button(page, 'Продолжить').click()
   await expect(field(page, 'name')).toHaveValue('Аня')
   await expect(button(page, 'Поговорить')).toBeEnabled()
+  // `openspec/changes/remove-unsaved-dialog-option`, «(Telegram) Активный экран после согласия».
+  await expect(page.locator('.page-current').getByTestId('unsaved')).toHaveCount(0)
+  await step(page, 'tg-home-no-unsaved', 'Активный экран Telegram: галочки несохранения нет')
   await field(page, 'name').fill('Аня Т')
+  const started = page.waitForRequest((r) => r.url().endsWith('/api/dialogs') && r.method() === 'POST')
   await button(page, 'Поговорить').click()
+  expect((await started).postDataJSON()).not.toHaveProperty('saved', false)
   await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.page-current').getByTestId('dialog-unsaved')).toHaveCount(0)
   await step(page, 'tg-voice', '«Поговорить» в Telegram: аккаунт создан, разговор открыт, агент здоровается')
   const accountId = session.userId()
   expect(await profileOf(request, session.accessToken())).toMatchObject({
@@ -63,6 +69,7 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   expect(await storedDevice(page), 'удостоверение устройства не нужно').toBeNull()
   await page.locator('.page-current .navbar a.back').click()
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.page-current').getByTestId('unsaved')).toHaveCount(0)
 
   // ── the profile: not a guest, the way in is Telegram ─
   await openTab(page, 'Профиль')

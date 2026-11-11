@@ -1,13 +1,14 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 import { APP_URL, AGENT_URL } from '../playwright.config'
-import { button, openApp, openJournal, openTab, sheetButton, startAnonymously } from '../support/app'
+import { button, openApp, openJournal, sheetButton, startAnonymously } from '../support/app'
 import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 import { trackSession } from '../support/session'
 
 /**
- * «Не сохранять этот разговор» в приложении (PWA и Mini App, `add-unsaved-dialog`, PROTEUS-246): галочка на главной,
- * разговор без следа, пометка в журнале, потеря разговора при перезапуске агента. Агент — мок (`dev/agent-mock/server.mjs`).
+ * `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»».
+ * В актуальном общем клиенте галочки больше нет. Совместимость несохраняемого режима
+ * проверяется изменением стартового запроса до `saved: false`, как от старого клиента.
  */
 const SAID = 'Мне сегодня очень тяжело из-за работы. Давай так: поговорю с руководителем до пятницы'
 
@@ -21,24 +22,35 @@ const apiGet = async <T>(request: APIRequestContext, token: string, path: string
     ).json()) as { result: T }
   ).result
 
-/** The conversation opened from home with the box ticked or not, one text reply sent, the mock's answer waited for. */
-async function talkTicked(page: Page, ticked: boolean): Promise<void> {
-  await openTab(page, 'Главная')
-  if (ticked) await current(page).getByTestId('unsaved-toggle').check()
+async function legacyUnsavedStart(page: Page): Promise<void> {
+  await page.route('**/api/dialogs', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const original = route.request().postDataJSON() as Record<string, unknown>
+    const response = await route.fetch({ postData: { ...original, saved: false } })
+    expect(response.status(), 'старт несохраняемого разговора старым клиентом').toBe(200)
+    const body = (await response.json()) as { status: boolean; result: { saved?: boolean } }
+    expect(body.status).toBe(true)
+    expect(body.result.saved).toBe(false)
+    await route.fulfill({ response, json: body })
+  })
+}
+
+async function startFromHome(page: Page): Promise<void> {
   await button(page, 'Поговорить').click()
   await expect(current(page).getByRole('button', { name: 'Остановить запись' })).toBeVisible({
     timeout: 30_000,
   })
+}
+
+async function sayInDialog(page: Page): Promise<void> {
   await current(page).getByRole('button', { name: 'Писать текстом' }).click()
   await current(page).getByPlaceholder('Напиши, что происходит').fill(SAID)
   await current(page).getByRole('button', { name: 'Отправить' }).click()
-  await expect(current(page).locator('.message-sent')).toHaveCount(1, { timeout: 20_000 })
   await expect(current(page).locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
-  // Ending in the middle of a reply would only test the fallback timer.
   await page.waitForTimeout(1500)
 }
 
-test('не сохранять в приложении: галочка на главной, разговор без следа, пометка в журнале', async ({
+test('PWA: галочки нет, старый несохраняемый разговор открывается и завершается как прежде', async ({
   page,
   request,
 }) => {
@@ -47,41 +59,21 @@ test('не сохранять в приложении: галочка на гл�
   await openApp(page)
   await startAnonymously(page)
 
-  // Память у нового аккаунта выключена, а галочка на месте.
   const home = current(page)
   await expect(home.getByTestId('incognito')).toHaveCount(0)
-  await expect(home.getByTestId('unsaved')).toContainText('Не сохранять этот разговор')
-  await expect(home.getByTestId('unsaved')).toContainText('Он не попадёт в журнал, итоги и память')
-  await expect(home.getByTestId('unsaved-toggle')).not.toBeChecked()
-  await step(
-    page,
-    'home-unticked',
-    'Главная: под «Поговорить» галочка «Не сохранять этот разговор», память выключена',
-  )
-  await home.getByTestId('unsaved-toggle').check()
-  await expect(home.getByTestId('unsaved-toggle')).toBeChecked()
-  await step(page, 'home-ticked', 'Галочка поставлена')
+  await expect(home.getByTestId('unsaved')).toHaveCount(0)
+  await expect(home.getByTestId('unsaved-toggle')).toHaveCount(0)
+  await step(page, 'home-no-unsaved', 'Главная PWA: галочки «Не сохранять этот разговор» нет')
 
-  const started = page.waitForRequest((r) => r.url().endsWith('/api/dialogs') && r.method() === 'POST')
-  await button(page, 'Поговорить').click()
-  await expect(current(page).getByRole('button', { name: 'Остановить запись' })).toBeVisible({
-    timeout: 30_000,
-  })
-  expect((await started).postDataJSON()).toMatchObject({ saved: false })
-  expect((await started).postDataJSON()).not.toHaveProperty('memory')
+  await legacyUnsavedStart(page)
+  await startFromHome(page)
   await expect(current(page).getByTestId('dialog-unsaved')).toContainText('Не сохраняется')
   await expect(current(page).getByTestId('dialog-incognito')).toHaveCount(0)
-  await expect(current(page).getByTestId('unsaved-toggle')).toHaveCount(0) // после старта выбор не меняется
-  await step(page, 'dialog-note', 'Разговор идёт: плашка «Не сохраняется»')
+  await expect(current(page).getByTestId('unsaved-toggle')).toHaveCount(0)
+  await step(page, 'dialog-note', 'Старый разговор в PWA: плашка «Не сохраняется»')
+  await sayInDialog(page)
+  await expect(current(page).getByTestId('share-nav')).toHaveCount(0)
 
-  await current(page).getByRole('button', { name: 'Писать текстом' }).click()
-  await current(page).getByPlaceholder('Напиши, что происходит').fill(SAID)
-  await current(page).getByRole('button', { name: 'Отправить' }).click()
-  await expect(current(page).locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
-  await page.waitForTimeout(1500)
-  await expect(current(page).getByTestId('share-nav')).toHaveCount(0) // поделиться таким разговором нельзя
-
-  // Лист завершения ничего не спрашивает.
   await current(page).getByRole('button', { name: 'Завершить разговор' }).click()
   await expect(sheet(page).getByText('Завершить разговор?')).toBeVisible()
   await expect(sheet(page).getByTestId('unsaved-end-note')).toContainText('останется только пометка')
@@ -117,18 +109,16 @@ test('не сохранять в приложении: галочка на гл�
   })
 })
 
-test('не сохранять в приложении: перезапуск агента — «Разговор не сохранён», пометки нет', async ({
-  page,
-  request,
-}) => {
+test('PWA: старый несохраняемый разговор пропадает при перезапуске агента', async ({ page, request }) => {
   test.setTimeout(180_000)
   const session = trackSession(page)
   await openApp(page)
   await startAnonymously(page)
-  await talkTicked(page, true)
-  await expect(current(page).getByTestId('dialog-unsaved')).toBeVisible()
+  await legacyUnsavedStart(page)
+  await startFromHome(page)
+  await expect(current(page).getByTestId('dialog-unsaved')).toContainText('Не сохраняется')
+  await sayInDialog(page)
 
-  // Выкат агента: сокеты рвутся, а разговор, который жил только в памяти процесса, пропадает.
   const restarted = await request.post(`${AGENT_URL}/dev/restart`)
   expect(((await restarted.json()) as { lostUnsaved: number }).lostUnsaved).toBe(1)
 

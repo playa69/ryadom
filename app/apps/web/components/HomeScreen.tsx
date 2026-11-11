@@ -3,7 +3,7 @@
 import { Brain, EyeOff } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import {
@@ -12,12 +12,11 @@ import {
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { chosenStart, nextStartStep } from '@ryadom/client-core/dialog-start'
-import { rememberUnsaved, UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
+import { rememberUnsaved } from '@ryadom/client-core/unsaved'
 import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import { MEMORY_SETTINGS_ERRORS, memoryInUse, needsMemoryConsent } from '@ryadom/client-core/memory'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
 import { Button } from '@ryadom/ui/components/button'
-import { Checkbox } from '@ryadom/ui/components/checkbox'
 import { cn } from '@ryadom/ui/lib/utils'
 import { ConsentNotice } from '@/app/(auth)/_components/consent-group'
 import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
@@ -108,9 +107,6 @@ export default function HomeScreen() {
   const memoryEnabled = user?.memoryEnabled
   /** "Без памяти" for the next conversation; home starts without it every time. */
   const [withoutMemory, setWithoutMemory] = useState(false)
-  /** "Не сохранять этот разговор" for the next conversation; like "Без памяти", it is off at every visit and fixed once the conversation starts. */
-  const [unsaved, setUnsaved] = useState(false)
-  const unsavedId = useId()
   /** What the server said about memory; null until it arrives. */
   const [memoryState, setMemoryState] = useState<MemoryApiResponse | null>(null)
   /** A guest asked for memory: it is turned on once the account exists, before the conversation starts. */
@@ -118,7 +114,7 @@ export default function HomeScreen() {
   const [memoryConsentOpen, setMemoryConsentOpen] = useState(false)
   const [memoryBusy, setMemoryBusy] = useState(false)
   const [memoryError, setMemoryError] = useState('')
-  const choice = chosenStart(memoryEnabled, withoutMemory, unsaved)
+  const choice = chosenStart(memoryEnabled, withoutMemory, false)
   const wanted = choice.memory
 
   // Whether to offer "Без памяти" is asked each time home opens: the person's switch and whether the
@@ -242,7 +238,7 @@ export default function HomeScreen() {
           throw err
         }
         const remembered = rememberOnStart && (await enableMemory().catch(() => false))
-        ;({ memory: wanted, saved } = chosenStart(remembered, false, unsaved))
+        ;({ memory: wanted, saved } = chosenStart(remembered, false, false))
       }
       let result = await client.startDialog(mode, { memory: wanted, saved })
       // The handoff is armed only for a screen that is still here to push to the dialog: one armed for a
@@ -464,35 +460,15 @@ export default function HomeScreen() {
                 )}
               >
                 <EyeOff aria-hidden="true" className={cn('size-4', withoutMemory && 'text-brand-400')} />
-                Без памяти
+                {withoutMemory ? 'Без памяти' : 'Запоминать разговор'}
               </Button>
               <p className="text-xs leading-normal text-faint" aria-live="polite">
                 {withoutMemory
-                  ? 'Этот разговор я не запомню'
-                  : 'Можно провести следующий разговор так, чтобы я его не запомнил'}
+                  ? 'Я не запомню этот разговор'
+                  : 'Я буду запоминать разговор, чтобы лучше узнать тебя'}
               </p>
             </div>
           )}
-
-          {/* Always there, memory or no memory: this conversation is kept out of the journal, the recaps and the analytics. */}
-          <div className="flex max-w-md flex-col items-center gap-1 text-center" data-testid="unsaved">
-            <div className="flex items-center gap-2.5">
-              <Checkbox
-                id={unsavedId}
-                checked={unsaved}
-                onCheckedChange={(checked) => setUnsaved(checked === true)}
-                data-testid="unsaved-toggle"
-                className={cn(
-                  FOCUS_RING,
-                  'cursor-pointer rounded-[6px] border-2 bg-surface data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground [&_svg]:stroke-[3.75] forced-colors:data-[state=checked]:border-[Highlight] dark:forced-colors:data-[state=checked]:bg-[Highlight] forced-colors:data-[state=checked]:text-[HighlightText] forced-colors:data-[state=checked]:forced-color-adjust-none',
-                )}
-              />
-              <label htmlFor={unsavedId} className="cursor-pointer text-sm text-dim">
-                {UNSAVED_LABEL}
-              </label>
-            </div>
-            <p className="text-xs leading-normal text-faint">{UNSAVED_HINT}</p>
-          </div>
         </div>
 
         {/* Keep the documents and retention terms visible even while the consent gate is closed. */}
@@ -542,15 +518,11 @@ export default function HomeScreen() {
         onClose={dismissQuestion}
         busy={renewing}
         error={pendingError}
-        // A returned conversation keeps the choices it began with: "Без памяти" and "Не сохранять" apply only to a new one.
+        // A returned conversation keeps its memory mode: "Без памяти" applies only to a new one.
         note={
-          unsaved && pending?.data.saved === false
-            ? undefined
-            : unsaved
-              ? '«Не сохранять» будет только у нового разговора: этот продолжится как обычно.'
-              : wanted === DialogMemoryMode.Off && pending?.data.memoryMode !== DialogMemoryMode.Off
-                ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
-                : undefined
+          wanted === DialogMemoryMode.Off && pending?.data.memoryMode !== DialogMemoryMode.Off
+            ? '«Без памяти» будет только у нового разговора: этот продолжится с памятью.'
+            : undefined
         }
       />
     </>

@@ -79,7 +79,9 @@ test('первый запуск, привязка почты, выход: акк
   await expect(first.getByTestId('welcome-talk')).toHaveText('Поговорить')
   await expect(first.getByTestId('data-consent')).toHaveCount(0)
   await expect(first.getByTestId('memory-switch')).toBeVisible()
-  await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(1)
+  // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»».
+  await expect(first.getByTestId('unsaved')).toHaveCount(0)
+  await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(0)
   expect(await storedDevice(page), 'продолжение пока не создаёт аккаунт').toBeNull()
   await shot(page, 'app-welcome-consented')
   await step(page, 'app-welcome-home', 'После согласия открыт активный первый экран без повторной отметки')

@@ -54,7 +54,9 @@ test('память в приложении: согласие → разгово�
   // The sheet is empty to begin with.
   await memory.getByTestId('memory-open-notes').click()
   const sheet = page.locator('.sheet-modal.modal-in')
-  await expect(sheet.getByTestId('memory-empty')).toContainText('Пока пусто — заметки появятся по мере разговоров')
+  await expect(sheet.getByTestId('memory-empty')).toContainText(
+    'Пока пусто — заметки появятся по мере разговоров',
+  )
   await shot(page, 'memory-sheet-empty')
   await sheetButton(page, 'Закрыть').click()
   await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
@@ -76,7 +78,9 @@ test('память в приложении: согласие → разгово�
   await page.waitForTimeout(3000)
   await page.locator('.page-current').getByTestId('memory-nav').click()
   await expect(sheet.getByTestId('memory-notes')).toBeVisible()
-  await expect(sheet.getByTestId('memory-note').filter({ hasText: NAME_NOTE })).toBeVisible({ timeout: 20_000 })
+  await expect(sheet.getByTestId('memory-note').filter({ hasText: NAME_NOTE })).toBeVisible({
+    timeout: 20_000,
+  })
   await expect(sheet.getByTestId('memory-note').filter({ hasText: WORK_NOTE })).toBeVisible()
   await expect(sheet.locator('[data-group="about"]')).toContainText('Обо мне и как со мной говорить')
   await expect(sheet.locator('[data-group="work"]')).toContainText('Работа и дела')
@@ -102,11 +106,17 @@ test('память в приложении: согласие → разгово�
   await edit.locator('textarea').fill('Зовут Александр')
   await shot(page, 'memory-note-edit')
   await sheetButton(page, 'Сохранить').click()
-  await expect(sheet.getByTestId('memory-note').filter({ hasText: 'Зовут Александр' })).toBeVisible({ timeout: 15_000 })
+  await expect(sheet.getByTestId('memory-note').filter({ hasText: 'Зовут Александр' })).toBeVisible({
+    timeout: 15_000,
+  })
   await shot(page, 'memory-note-edited')
 
   // A rule refuses a text the agent must never keep.
-  await sheet.getByTestId('memory-note').filter({ hasText: 'Зовут Александр' }).getByTestId('memory-note-open').click()
+  await sheet
+    .getByTestId('memory-note')
+    .filter({ hasText: 'Зовут Александр' })
+    .getByTestId('memory-note-open')
+    .click()
   await edit.locator('textarea').fill('Принимает антидепрессанты')
   await sheetButton(page, 'Сохранить').click()
   await expect(edit.getByTestId('form-error')).toContainText('Так запомнить не получится')
@@ -121,13 +131,17 @@ test('память в приложении: согласие → разгово�
   await sheet.getByTestId('memory-undo-button').click()
   await expect(workNote).toBeVisible()
   await workNote.getByTestId('memory-note-remove').click()
-  await expect(sheet.getByTestId('memory-note').filter({ hasText: WORK_NOTE })).toHaveCount(0, { timeout: 15_000 })
+  await expect(sheet.getByTestId('memory-note').filter({ hasText: WORK_NOTE })).toHaveCount(0, {
+    timeout: 15_000,
+  })
   await expect(sheet.getByTestId('memory-undo')).toHaveCount(0, { timeout: 15_000 })
 
   // ── "Скажи, что поправить или убрать" ─────────────────────────────────────────────────────────
   await sheet.getByTestId('memory-instruction').locator('input').fill('Не Александр, а Саша')
   await sheet.getByTestId('memory-instruction-send').click()
-  await expect(sheet.getByTestId('memory-instruction-result')).toContainText('Изменено: 1', { timeout: 15_000 })
+  await expect(sheet.getByTestId('memory-instruction-result')).toContainText('Изменено: 1', {
+    timeout: 15_000,
+  })
   await expect(sheet.getByTestId('memory-note').filter({ hasText: 'Зовут Саша' })).toBeVisible()
   await shot(page, 'memory-instruction')
   await sheetButton(page, 'Закрыть').click()
@@ -146,7 +160,9 @@ test('память в приложении: согласие → разгово�
   await expect(sensitiveSwitch.locator('input[type="checkbox"]')).toBeDisabled()
   await expect(sensitiveSwitch.locator('input[type="checkbox"]')).toBeChecked()
   await memory.getByTestId('memory-open-notes').click()
-  await expect(sheet.getByTestId('memory-paused')).toContainText('Память на паузе — Рядом не использует эти заметки')
+  await expect(sheet.getByTestId('memory-paused')).toContainText(
+    'Память на паузе — Рядом не использует эти заметки',
+  )
   await expect(sheet.getByTestId('memory-note').filter({ hasText: 'Зовут Саша' })).toBeVisible()
   await shot(page, 'memory-paused')
   await sheetButton(page, 'Закрыть').click()
@@ -200,6 +216,20 @@ test('«Запоминать важное» на главной: окно сам
   await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
   await expect(home.getByTestId('incognito')).toBeVisible({ timeout: 20_000 })
   await expect(row).toHaveCount(0)
+  // `openspec/changes/remove-unsaved-dialog-option`, «Подписи без срока».
+  await expect(home.getByTestId('incognito')).toContainText('Запоминать разговор')
+  await expect(home.getByTestId('incognito')).toContainText(
+    'Я буду запоминать разговор, чтобы лучше узнать тебя',
+  )
+  await step(page, 'memory-caption-on', 'Память включена: подпись прямо обещает запомнить разговор')
+  await home.getByTestId('incognito').locator('.toggle').click()
+  await expect(home.getByTestId('incognito')).toContainText('Без памяти')
+  await expect(home.getByTestId('incognito')).toContainText('Я не запомню этот разговор')
+  await step(page, 'memory-caption-off', 'Без памяти: подпись прямо говорит, что разговор не запомнят')
+  await home.getByTestId('incognito').locator('.toggle').click()
+  await expect(home.getByTestId('incognito')).toContainText(
+    'Я буду запоминать разговор, чтобы лучше узнать тебя',
+  )
 
   await openTab(page, 'Профиль')
   await page.locator('.page-current').getByTestId('row-memory').click()
@@ -305,14 +335,16 @@ const MANY_NOTES = [
 
 /** How far the page under the window is scrolled: the window itself and every Framework7 page content. */
 const pageScroll = (page: Page) =>
-  page.evaluate(() => [window.scrollY, ...[...document.querySelectorAll('.page-content')].map((el) => el.scrollTop)])
+  page.evaluate(() => [
+    window.scrollY,
+    ...[...document.querySelectorAll('.page-content')].map((el) => el.scrollTop),
+  ])
 
 /** A conversation from home: the words typed, the reply waited for; the conversation stays open. */
-async function talk(page: Page, words: string, options: { unsaved?: boolean; withoutMemory?: boolean } = {}): Promise<void> {
+async function talk(page: Page, words: string, options: { withoutMemory?: boolean } = {}): Promise<void> {
   const here = page.locator('.page-current')
   await openTab(page, 'Главная')
   if (options.withoutMemory) await here.getByTestId('incognito').locator('.toggle').click()
-  if (options.unsaved) await here.getByTestId('unsaved-toggle').check()
   await button(page, 'Поговорить').click()
   await expect(here.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await here.getByRole('button', { name: 'Писать текстом' }).click()
@@ -320,7 +352,9 @@ async function talk(page: Page, words: string, options: { unsaved?: boolean; wit
   await here.getByRole('button', { name: 'Отправить' }).click()
   // Framework7 draws a sent line twice once the server has acknowledged it, so the count itself is not asserted.
   await expect(here.locator('.message-sent').first()).toBeVisible({ timeout: 20_000 })
-  await expect.poll(() => here.locator('.message-received').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
+  await expect
+    .poll(() => here.locator('.message-received').count(), { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(2)
   // Ending in the middle of a reply would only test the fallback timer.
   await page.waitForTimeout(1500)
 }
@@ -416,7 +450,11 @@ test('блок «Я запомнил» в окне завершения: зам�
   await expect(sheet.getByTestId('memory-note').filter({ hasText: RECAP_ONE_NOTE })).toBeVisible()
   await expect(sheet.getByTestId('memory-note').filter({ hasText: WORK_NOTE })).toBeVisible()
   await expect(sheet.getByTestId('memory-note').filter({ hasText: NAME_NOTE })).toHaveCount(0)
-  await step(page, 'recap-sheet-after-remove', 'В листе «Что помнит Рядом» убранной заметки нет, остальные на месте')
+  await step(
+    page,
+    'recap-sheet-after-remove',
+    'В листе «Что помнит Рядом» убранной заметки нет, остальные на месте',
+  )
   await sheetButton(page, 'Закрыть').click()
   await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
 
@@ -431,27 +469,42 @@ test('блок «Я запомнил» в окне завершения: зам�
   await expect(recapList(page)).toHaveAttribute('aria-label', 'Заметки этого разговора')
   await expect(recapList(page)).toHaveAttribute('tabindex', '0')
   // About three rows: the first ones whole, the last ones cut off by the list's own edge, which is why the list scrolls.
-  for (const text of MANY_NOTES.slice(0, 3)) await expect(recapNote(page, text)).toBeInViewport({ ratio: 0.9 })
+  for (const text of MANY_NOTES.slice(0, 3))
+    await expect(recapNote(page, text)).toBeInViewport({ ratio: 0.9 })
   for (const text of MANY_NOTES.slice(4)) await expect(recapNote(page, text)).not.toBeInViewport()
-  const before = await recapList(page).evaluate((el) => ({ room: el.scrollHeight - el.clientHeight, top: el.scrollTop, height: el.clientHeight }))
+  const before = await recapList(page).evaluate((el) => ({
+    room: el.scrollHeight - el.clientHeight,
+    top: el.scrollTop,
+    height: el.clientHeight,
+  }))
   expect(before.room).toBeGreaterThan(40)
   expect(before.top).toBe(0)
   const rowHeight = (await recapNotes(page).first().boundingBox())!.height
   expect(before.height).toBeLessThan(rowHeight * 5)
   // The window as a whole stays on the screen.
   await expectInsideViewport(page, closing(page))
-  await step(page, 'recap-many-notes', 'Из разговора вышло шесть заметок: в блоке видны три, дальше список прокручивается внутри блока')
+  await step(
+    page,
+    'recap-many-notes',
+    'Из разговора вышло шесть заметок: в блоке видны три, дальше список прокручивается внутри блока',
+  )
 
   // The wheel over the list scrolls the list, and not the page under the window.
   const pageBefore = await pageScroll(page)
   await recapList(page).hover()
   await page.mouse.wheel(0, 600)
-  await expect.poll(() => recapList(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(1)
+  await expect
+    .poll(() => recapList(page).evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
+    .toBeLessThanOrEqual(1)
   await expect(recapNote(page, MANY_NOTES.at(-1)!)).toBeInViewport({ ratio: 0.9 })
   await expect(recapNote(page, MANY_NOTES[0]!)).not.toBeInViewport()
   expect(await pageScroll(page)).toEqual(pageBefore)
   await expectInsideViewport(page, closing(page))
-  await step(page, 'recap-many-scrolled', 'Список прокручен до конца: видна последняя заметка, окно и страница под ним на месте')
+  await step(
+    page,
+    'recap-many-scrolled',
+    'Список прокручен до конца: видна последняя заметка, окно и страница под ним на месте',
+  )
 
   // The list takes the keyboard: Home scrolls it back up.
   await recapList(page).focus()
@@ -523,7 +576,11 @@ test('«Ещё записываю»: заметки не готовы за 30 с
   await expect(recapLate(page).getByRole('button')).toHaveCount(0)
   await expect(recap(page)).toHaveCount(0)
   await expectInsideViewport(page, closing(page))
-  await step(page, 'recap-still-writing', 'Заметки не успели записаться за 30 секунд: под текстом окна строка «Ещё записываю…», кнопок нет')
+  await step(
+    page,
+    'recap-still-writing',
+    'Заметки не успели записаться за 30 секунд: под текстом окна строка «Ещё записываю…», кнопок нет',
+  )
 
   // The poll has stopped, and the line stays.
   const stopped = asked
@@ -534,7 +591,7 @@ test('«Ещё записываю»: заметки не готовы за 30 с
   await closeWindow(page)
 })
 
-test('блока «Я запомнил» нет: «Без памяти», «Не сохранять», пауза, разговор без заметок', async ({ page }) => {
+test('блока «Я запомнил» нет: «Без памяти», пауза, разговор без заметок', async ({ page }) => {
   test.setTimeout(360_000)
   await openApp(page)
   await startAnonymously(page)
@@ -553,12 +610,6 @@ test('блока «Я запомнил» нет: «Без памяти», «Не
   await endAndWait(page)
   await noBlock()
   await step(page, 'recap-none-incognito', 'Разговор «Без памяти»: окно завершения как прежде, блока нет')
-  await closeWindow(page)
-
-  // A conversation held unsaved: the same.
-  await talk(page, SAID, { unsaved: true })
-  await endAndWait(page)
-  await noBlock()
   await closeWindow(page)
 
   // Nothing to remember in what was said: the block does not come up empty.

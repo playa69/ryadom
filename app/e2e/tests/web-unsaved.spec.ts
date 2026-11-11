@@ -4,7 +4,6 @@ import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
 import { trackSession } from '../support/session'
 import {
-  dialogInput,
   goTo,
   homeInput,
   messages,
@@ -16,9 +15,9 @@ import {
 } from '../support/web'
 
 /**
- * «Не сохранять этот разговор» в вебе (`add-unsaved-dialog`, PROTEUS-246): галочка на главной, разговор без следа,
- * пометка в журнале, потеря разговора при перезапуске агента. «Без памяти» (`memory: off`) — другой выбор: разговор записывается
- * и у него есть итог. Агент — мок (`dev/agent-mock/server.mjs`); то, что в базу ничего не пишется, проверяют тесты агента.
+ * `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»».
+ * В web галочки больше нет. Совместимость несохраняемого режима проверяется прямым вызовом API,
+ * как от старого клиента; «Без памяти» остаётся отдельным сохраняемым разговором.
  */
 const SAID = 'Мне сегодня очень тяжело из-за работы. Давай так: поговорю с руководителем до пятницы'
 
@@ -29,59 +28,58 @@ const apiGet = async <T>(request: APIRequestContext, token: string, path: string
     ).json()) as { result: T }
   ).result
 
-/** The conversation is typed on home and answered by the mock; the page stays on it. */
+async function legacyUnsavedStart(page: Page): Promise<void> {
+  await page.route('**/api/dialogs', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const original = route.request().postDataJSON() as Record<string, unknown>
+    const response = await route.fetch({ postData: { ...original, saved: false } })
+    expect(response.status(), 'старт несохраняемого разговора старым клиентом').toBe(200)
+    const body = (await response.json()) as { status: boolean; result: { saved?: boolean } }
+    expect(body.status).toBe(true)
+    expect(body.result.saved).toBe(false)
+    await route.fulfill({ response, json: body })
+  })
+}
+
+/** The legacy start is opened by the current client, typed on home and answered by the mock. */
 async function say(page: Page, text: string): Promise<void> {
   await homeInput(page).fill(text)
   await homeInput(page).press('Enter')
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
   await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
   await expect.poll(() => messages(page, 'assistant').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
-  // Ending in the middle of a reply would only test the fallback timer.
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
 }
 
-test('не сохранять: галочка на главной, разговор без следа, пометка в журнале', async ({ page, request }) => {
+test('web: галочки нет, старый несохраняемый разговор открывается и завершается как прежде', async ({
+  page,
+  request,
+}) => {
   test.setTimeout(180_000)
   const session = trackSession(page)
   await openWebApp(page)
   await startAnonymously(page)
   await expect(homeInput(page)).toBeVisible()
 
-  // Память у нового аккаунта выключена, а галочка на месте: она не зависит от памяти.
-  const tick = page.getByTestId('unsaved-toggle')
   await expect(page.getByTestId('incognito')).toHaveCount(0)
-  await expect(page.getByTestId('unsaved')).toContainText('Не сохранять этот разговор')
-  await expect(page.getByTestId('unsaved')).toContainText('Он не попадёт в журнал, итоги и память')
-  await expect(tick).not.toBeChecked()
-  await step(
-    page,
-    'home-unticked',
-    'Главная: рядом с «Поговорить» галочка «Не сохранять этот разговор», память выключена',
-  )
+  await expect(page.getByTestId('unsaved')).toHaveCount(0)
+  await expect(page.getByTestId('unsaved-toggle')).toHaveCount(0)
+  await step(page, 'home-no-unsaved', 'Главная web: галочки «Не сохранять этот разговор» нет')
 
-  await tick.click()
-  await expect(tick).toBeChecked()
-  await step(page, 'home-ticked', 'Галочка поставлена')
-
-  const started = page.waitForRequest((r) => r.url().endsWith('/api/dialogs') && r.method() === 'POST')
+  await legacyUnsavedStart(page)
   await say(page, SAID)
-  // Только saved: false, «Без памяти» не задето.
-  expect((await started).postDataJSON()).toMatchObject({ saved: false })
-  expect((await started).postDataJSON()).not.toHaveProperty('memory')
 
-  // Пометка вместо «Без памяти», ни памяти, ни ссылки «Поделиться»; сказанное при этом видно на экране.
   await expect(page.getByTestId('dialog-unsaved')).toContainText('Не сохраняется')
   await expect(page.getByTestId('dialog-incognito')).toHaveCount(0)
   await expect(page.getByTestId('dialog-share')).toHaveCount(0)
-  await expect(page.getByTestId('unsaved-toggle')).toHaveCount(0) // после старта выбор не меняется
+  await expect(page.getByTestId('unsaved-toggle')).toHaveCount(0)
   await expect(messages(page, 'user').first()).toContainText('руководителем')
   await step(
     page,
     'dialog-note',
-    'Разговор идёт: плашка «Не сохраняется», нет «Поделиться» и галочки, реплики видны',
+    'Старый разговор: плашка «Не сохраняется», нет «Поделиться» и галочки, реплики видны',
   )
 
-  // Лист завершения ничего не спрашивает: ни «что забираешь», ни шкалы.
   await page.getByTestId('dialog-end').click()
   await expect(modal(page).getByRole('heading', { name: 'Завершить разговор?' })).toBeVisible()
   await expect(modal(page).getByTestId('unsaved-end-note')).toContainText('останется только пометка')
@@ -96,10 +94,8 @@ test('не сохранять: галочка на главной, разгов�
   await step(page, 'goodbye', 'Прощальное окно: разговор завершён и не сохранён')
   await page.getByTestId('alert-ok').click()
   await expect(page).toHaveURL(/\/home$/)
-  // Галочка к следующему разговору снова снята.
-  await expect(page.getByTestId('unsaved-toggle')).not.toBeChecked()
+  await expect(page.getByTestId('unsaved')).toHaveCount(0)
 
-  // В журнале пометка без текста; итога нет ни у списка итогов, ни в записи.
   await openWebApp(page, '/diary/journal')
   const rows = page.getByTestId('journal-item')
   await expect(rows).toHaveCount(1, { timeout: 30_000 })
@@ -123,17 +119,15 @@ test('не сохранять: галочка на главной, разгов�
   })
 })
 
-test('не сохранять: перезапуск агента — «Разговор не сохранён», пометки нет', async ({ page, request }) => {
+test('web: старый несохраняемый разговор пропадает при перезапуске агента', async ({ page, request }) => {
   test.setTimeout(180_000)
   const session = trackSession(page)
   await openWebApp(page)
   await startAnonymously(page)
-  await page.getByTestId('unsaved-toggle').click()
+  await legacyUnsavedStart(page)
   await say(page, SAID)
-  await expect(dialogInput(page)).toBeVisible()
   await expect(page.getByTestId('dialog-unsaved')).toBeVisible()
 
-  // Выкат агента: сокеты рвутся, а разговор, который жил только в памяти процесса, пропадает.
   const restarted = await request.post(`${AGENT_URL}/dev/restart`)
   expect(((await restarted.json()) as { lostUnsaved: number }).lostUnsaved).toBe(1)
 
@@ -156,7 +150,6 @@ test('«Без памяти» — не «не сохранять»: разгов
   const session = trackSession(page)
   await openWebApp(page)
   await startAnonymously(page)
-  // Память включена через её лист согласия: только тогда есть переключатель «Без памяти».
   await openProfile(page)
   await page.getByTestId('row-memory').click()
   await expect(page).toHaveURL(/\/profile\/memory$/)
@@ -167,14 +160,18 @@ test('«Без памяти» — не «не сохранять»: разгов
 
   await goTo(page, 'Новый разговор')
   await page.getByTestId('incognito-toggle').click()
-  await expect(page.getByTestId('unsaved-toggle')).not.toBeChecked() // два выбора независимы
+  // `openspec/changes/remove-unsaved-dialog-option`, «Независима от «Без памяти»»: отдельной галочки нет.
+  await expect(page.getByTestId('unsaved')).toHaveCount(0)
   const started = page.waitForRequest((r) => r.url().endsWith('/api/dialogs') && r.method() === 'POST')
-  await say(page, SAID)
+  await homeInput(page).fill(SAID)
+  await homeInput(page).press('Enter')
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
   expect((await started).postDataJSON()).toMatchObject({ memory: 'off' })
-  expect((await started).postDataJSON()).not.toHaveProperty('saved')
+  expect((await started).postDataJSON()).not.toHaveProperty('saved', false)
   await expect(page.getByTestId('dialog-incognito')).toContainText('Без памяти')
   await expect(page.getByTestId('dialog-unsaved')).toHaveCount(0)
-  await expect(page.getByTestId('dialog-share')).toBeVisible() // обычный разговор: ссылкой делиться можно
+  await expect(page.getByTestId('dialog-share')).toBeVisible()
 
   await page.getByTestId('dialog-end').click()
   await expect(modal(page).getByRole('heading', { name: 'Что забираешь с собой?' })).toBeVisible()
@@ -184,7 +181,6 @@ test('«Без памяти» — не «не сохранять»: разгов
   })
   await page.getByTestId('alert-ok').click()
 
-  // Итог подводится в фоне (мок отвечает через несколько секунд), как у любого разговора.
   await expect
     .poll(
       async () =>
