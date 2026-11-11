@@ -10,17 +10,17 @@
 
 ## Secret
 
-`dashboard-secrets` в ns `dashboard`, значения хранятся у администратора. Создаётся при выкате, как остальные Secret'ы
-кластера, сначала с `--dry-run=server`:
+`dashboard-secrets` в ns `dashboard` собирается из Lockbox `ryadom-app-secrets` помощником создания Secret'ов, сначала
+с `--dry-run=server`. Значения хранятся у администратора.
 
-| Ключ | Откуда |
+| Ключ Secret'а | Ключ в Lockbox |
 |---|---|
-| `DIALOG_DATABASE_URL` | то же значение, что в Secret `agent-db` агента |
-| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | то же, что в Secret `agent-secrets` агента |
-| `DASHBOARD_PASSWORD` | пароль входа для организаторов |
+| `DIALOG_DATABASE_URL` | `AGENT_DIALOG_DATABASE_URL` (то же значение, что в Secret `agent-db` агента) |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | `AGENT_LANGFUSE_PUBLIC_KEY`, `AGENT_LANGFUSE_SECRET_KEY` (то же, что в `agent-secrets`) |
+| `DASHBOARD_PASSWORD` | `DASHBOARD_PASSWORD` |
 
-Если у агента сменились пароль базы или ключи Langfuse, Secret дашборда пересоздаётся с теми же значениями.
-`registry-pull` в ns `dashboard` — тот же, что в ns `agent`.
+Если у агента сменились пароль базы или ключи Langfuse, сначала обновляется Lockbox, затем Secret дашборда
+пересоздаётся. `registry-pull` в ns `dashboard` — копия общего секрета реестра из ns `agent` (в Lockbox его нет).
 
 ## Выкат
 
@@ -28,8 +28,10 @@
 
 ```bash
 kubectl apply -f k8s/dashboard/00-namespace.yaml -f k8s/dashboard/01-network-policy.yaml
-kubectl apply -f k8s/postgres/manifests/03-network-policy.yaml
-kubectl apply -f k8s/namespaces/manifests/02-network-policy-infra.yaml   # сначала kubectl diff
+# В живой ryadom-db-allow-ingress есть ns, которых нет в репозитории: не apply файлом, а patch одной строкой
+kubectl -n ryadom-db patch networkpolicy ryadom-db-allow-ingress --type json \
+  -p '[{"op":"add","path":"/spec/ingress/0/from/-","value":{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"dashboard"}}}}]'
+# из 02-network-policy-infra.yaml — только политика infra-allow-ingress-dashboard-langfuse
 # Secret'ы dashboard-secrets и registry-pull
 kubectl apply -f k8s/dashboard/02-deployment.yaml -f k8s/dashboard/03-service.yaml -f k8s/dashboard/04-httproute.yaml
 kubectl -n dashboard rollout status deploy/dashboard --timeout=120s

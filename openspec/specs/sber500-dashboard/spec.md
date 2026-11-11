@@ -1,8 +1,9 @@
-## Purpose
+# sber500-dashboard Specification
 
+## Purpose
 Дашборд метрик команды для организаторов Sber500: три числа по дням без доступа к разговорам и к внутренним системам.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Метрики по дням для Sber500
 
