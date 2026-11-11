@@ -56,15 +56,42 @@ export function tracesQuery({ from, to, only = null }) {
   };
 }
 
+// Tokens of all calls per hour, without test and team accounts (same filter as langfuseQuery).
+export function tokensQuery({ from, to, excluded = [] }) {
+  return {
+    view: 'observations',
+    dimensions: [],
+    metrics: [{ measure: 'totalTokens', aggregation: 'sum' }],
+    filters: excluded.length ? [{ column: 'userId', operator: 'none of', value: excluded, type: 'stringOptions' }] : [],
+    timeDimension: { granularity: 'hour' },
+    fromTimestamp: iso(from),
+    toTimestamp: iso(to),
+    config: { row_limit: 1000 },
+  };
+}
+
+const mskDay = (value) => {
+  const at = Date.parse(String(value).replace(' ', 'T').replace(/(?<!Z)$/, 'Z'));
+  return Number.isNaN(at) ? null : new Date(at + 3 * 3600_000).toISOString().slice(0, 10);
+};
+
+export function summarizeTokensByDay(body) {
+  const byDay = {};
+  for (const r of body?.data ?? []) {
+    const day = mskDay(r.time_dimension);
+    if (day) byDay[day] = (byDay[day] ?? 0) + n(r.sum_totalTokens);
+  }
+  return byDay;
+}
+
 // Calls per Moscow day: all traces minus those of test and team accounts. Subtracting keeps the calls without a
 // person (voicing of fixed phrases), which a "none of" filter would drop.
 export function summarizeTraces(all, test) {
   const byDay = {};
   const add = (body, sign) => {
     for (const r of body?.data ?? []) {
-      const at = Date.parse(String(r.time_dimension).replace(' ', 'T').replace(/(?<!Z)$/, 'Z'));
-      if (Number.isNaN(at)) continue;
-      const day = new Date(at + 3 * 3600_000).toISOString().slice(0, 10);
+      const day = mskDay(r.time_dimension);
+      if (!day) continue;
       byDay[day] = (byDay[day] ?? 0) + sign * n(r.count_count);
     }
   };
@@ -111,5 +138,6 @@ export function collectLangfuse({ from, to, excluded = null }) {
   const usage = summarizeLangfuse(metrics(langfuseQuery({ from, to, excluded: excluded ?? [] })), { testsExcluded: excluded != null });
   const all = metrics(tracesQuery({ from, to }));
   const test = excluded?.length ? metrics(tracesQuery({ from, to, only: excluded })) : null;
-  return { ...usage, tracesByDay: summarizeTraces(all, test) };
+  const tokensByDay = summarizeTokensByDay(metrics(tokensQuery({ from, to, excluded: excluded ?? [] })));
+  return { ...usage, tracesByDay: summarizeTraces(all, test), tokensByDay };
 }

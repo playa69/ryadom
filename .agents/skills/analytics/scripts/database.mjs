@@ -126,6 +126,27 @@ WHERE mu.unit = 'tokens' AND mu.dialog_id IS NOT NULL
   AND mu.created_at::timestamptz >= ${since} AND mu.created_at::timestamptz < ${until}
   AND (d.user_id IS NULL OR ${notExcluded('d.user_id')})`)[0]?.dialogs);
 
+  // Per Moscow day: messages of people, token use, conversations with token use.
+  const perDay = sql('agent', `
+WITH m AS (
+  SELECT (m.created_at::timestamptz AT TIME ZONE 'Europe/Moscow')::date AS day, count(*) AS user_messages
+  FROM messages m JOIN dialogs d ON d.id = m.dialog_id
+  WHERE m.role = 'user' AND m.created_at::timestamptz >= ${since} AND m.created_at::timestamptz < ${until}
+    AND ${notExcluded('d.user_id')}
+  GROUP BY 1
+), u AS (
+  SELECT (mu.created_at::timestamptz AT TIME ZONE 'Europe/Moscow')::date AS day, round(sum(mu.amount)) AS tokens,
+    count(DISTINCT mu.dialog_id) AS dialogs
+  FROM model_usage mu LEFT JOIN dialogs d ON d.id = mu.dialog_id
+  WHERE mu.unit = 'tokens' AND mu.created_at::timestamptz >= ${since} AND mu.created_at::timestamptz < ${until}
+    AND (d.user_id IS NULL OR ${notExcluded('d.user_id')})
+  GROUP BY 1
+)
+SELECT to_char(coalesce(m.day, u.day), 'YYYY-MM-DD') AS day, coalesce(m.user_messages, 0) AS user_messages,
+  coalesce(u.tokens, 0) AS tokens, coalesce(u.dialogs, 0) AS dialogs
+FROM m FULL JOIN u ON m.day = u.day
+ORDER BY 1`);
+
   const memory = sql('agent', `SELECT count(*) FILTER (WHERE enabled) AS memory_on FROM memory_settings WHERE ${notExcluded('user_id')}`)[0] ?? {};
 
   const models = new Map();
@@ -143,6 +164,7 @@ WHERE mu.unit = 'tokens' AND mu.dialog_id IS NOT NULL
     app: Object.fromEntries(Object.entries(app).map(([k, v]) => [k, n(v)])),
     activity: Object.fromEntries(Object.entries(activity).map(([k, v]) => [k, n(v)])),
     memoryOn: n(memory.memory_on),
+    daily: Object.fromEntries(perDay.map((r) => [r.day, { userMessages: n(r.user_messages), tokens: n(r.tokens), dialogs: n(r.dialogs) }])),
     usage: { models: rows, total: rows.reduce((a, r) => a + r.input + r.output, 0), dialogs: usageDialogs },
   };
 }

@@ -97,10 +97,11 @@ GROUP BY utm_source, utm_campaign, device
 ORDER BY visitors DESC
 LIMIT 500`,
 
-  // DAU, replies and people with more than 10 replies per Moscow day.
+  // DAU, replies, people with more than 10 replies and people who used voice, per Moscow day.
   daily: `
-SELECT toString(day) AS day, count() AS dau, sum(n) AS turns, countIf(n > 10) AS active10 FROM (
-  SELECT toDate(toTimeZone(timestamp, 'Europe/Moscow')) AS day, person_id, count() AS n
+SELECT toString(day) AS day, count() AS dau, sum(n) AS turns, countIf(n > 10) AS active10, countIf(v > 0) AS voice FROM (
+  SELECT toDate(toTimeZone(timestamp, 'Europe/Moscow')) AS day, person_id, count() AS n,
+    countIf(properties.input = 'voice') AS v
   FROM events WHERE event = 'dialog_turn' AND {{people}} AND ${WINDOW}
   GROUP BY day, person_id)
 GROUP BY day
@@ -119,11 +120,42 @@ GROUP BY day
 ORDER BY day
 LIMIT 1000`,
 
-  // People whose first reply ever fell on each day, and how many of them had a dialog of 3+ replies.
+  // People whose first reply ever fell on each day: dialogs of 3+ replies, length of the first dialog, and how many
+  // of them came back on another day before the end of the period.
   newSpeakers: `
-SELECT toString(toDate(toTimeZone(ft, 'Europe/Moscow'))) AS day, count() AS new_speakers, countIf(best >= 3) AS new_d3
-FROM (SELECT person_id, min(t0) AS ft, max(r) AS best FROM (${DIALOGS}) GROUP BY person_id)
-WHERE ft >= toDateTime('{{from}}')
+WITH f AS (
+  SELECT person_id, min(t0) AS ft, max(r) AS best, argMin(r, t0) AS fdt FROM (${DIALOGS}) GROUP BY person_id
+), n AS (
+  SELECT person_id, uniq(toDate(toTimeZone(timestamp, 'Europe/Moscow'))) AS nd
+  FROM events WHERE event = 'dialog_turn' AND {{people}} AND timestamp < toDateTime('{{to}}')
+  GROUP BY person_id
+)
+SELECT toString(toDate(toTimeZone(f.ft, 'Europe/Moscow'))) AS day, count() AS new_speakers, countIf(f.best >= 3) AS new_d3,
+  countIf(n.nd >= 2) AS returned, groupArray(f.fdt) AS first_dialogs
+FROM f LEFT JOIN n ON f.person_id = n.person_id
+WHERE f.ft >= toDateTime('{{from}}')
+GROUP BY day
+ORDER BY day
+LIMIT 100`,
+
+  // Devices first seen on each day and how many of them spoke: the cohort funnel split by day.
+  cohortDaily: `
+SELECT toString(toDate(toTimeZone(first_seen, 'Europe/Moscow'))) AS day, count() AS visitors, countIf(c_turns > 0) AS spoke
+FROM (
+  SELECT person_id, min(timestamp) AS first_seen, countIf(event = 'dialog_turn') AS c_turns
+  FROM events
+  WHERE {{people}} AND timestamp < toDateTime('{{to}}')
+  GROUP BY person_id
+  HAVING first_seen >= toDateTime('{{from}}'))
+GROUP BY day
+ORDER BY day
+LIMIT 100`,
+
+  // People denied the microphone per Moscow day.
+  micDaily: `
+SELECT toString(toDate(toTimeZone(timestamp, 'Europe/Moscow'))) AS day, uniq(person_id) AS people
+FROM events
+WHERE {{people}} AND event = 'voice_problem' AND properties.reason = 'permission_denied' AND ${WINDOW}
 GROUP BY day
 ORDER BY day
 LIMIT 100`,
@@ -326,13 +358,18 @@ const newBy = new Map(data.newSpeakers.map((r) => [r.day, r]));
 const secondBefore = data.secondReply.filter((r) => r.day < fromDate).reduce((a, r) => a + num(r.accounts), 0);
 const secondBy = new Map(data.secondReply.map((r) => [r.day, num(r.accounts)]));
 let accounts2 = secondBefore;
+const cohortBy = new Map(data.cohortDaily.map((r) => [r.day, r]));
+const micBy = new Map(data.micDaily.map((r) => [r.day, num(r.people)]));
 const daily = dayList.map((d) => {
   accounts2 += secondBy.get(d) ?? 0;
+  const nb = newBy.get(d);
   return {
-    date: d, day: ddmm(d), dau: num(dailyBy.get(d)?.dau), new: num(newBy.get(d)?.new_speakers), turns: num(dailyBy.get(d)?.turns),
-    active10: num(dailyBy.get(d)?.active10), accounts2,
-    // Filled from Langfuse below; null when it is not available.
-    traces: null,
+    date: d, day: ddmm(d), dau: num(dailyBy.get(d)?.dau), new: num(nb?.new_speakers), turns: num(dailyBy.get(d)?.turns),
+    active10: num(dailyBy.get(d)?.active10), voice: num(dailyBy.get(d)?.voice), accounts2,
+    newD3: num(nb?.new_d3), returnedNew: num(nb?.returned), firstDialogs: (nb?.first_dialogs ?? []).map(num),
+    visitors: num(cohortBy.get(d)?.visitors), cohortSpoke: num(cohortBy.get(d)?.spoke), micDenied: micBy.get(d) ?? 0,
+    // Filled from Langfuse and the database below; null when they are not available.
+    traces: null, tokens: null, tokensPerDialog: null, dbUserMessages: null,
   };
 });
 const peak = daily.reduce((best, d) => (d.dau > best.dau ? d : best), daily[0]);
@@ -409,6 +446,15 @@ const activeDays = act?.person_days || daily.reduce((a, d) => a + d.dau, 0);
 // shown); per conversation and per active day come from the database, which keeps saved conversations only.
 const lf = extra.langfuse;
 if (lf?.tracesByDay) for (const d of daily) d.traces = lf.tracesByDay[d.date] ?? 0;
+for (const d of daily) {
+  const dbDay = db?.daily?.[d.date];
+  if (lf?.tokensByDay) d.tokens = lf.tokensByDay[d.date] ?? 0;
+  else if (db?.daily) d.tokens = dbDay?.tokens ?? 0;
+  if (db?.daily) {
+    d.tokensPerDialog = dbDay?.dialogs ? dbDay.tokens / dbDay.dialogs : null;
+    d.dbUserMessages = dbDay?.userMessages ?? 0;
+  }
+}
 const dbUsage = db && db.usage.models.length ? db.usage : null;
 const perConversation = dbUsage
   ? {
@@ -454,6 +500,9 @@ const report = {
     usedVoice: num(sp.used_voice), voiceShare: share(num(sp.used_voice), speakers),
     turns: num(sp.turns), voiceTurns: num(sp.voice_turns), textTurnShare: share(num(sp.turns) - num(sp.voice_turns), num(sp.turns)),
     micDeniedPeople: micDenied, landingToProduct,
+    // By the day of the first reply: the same people as «Заговорили впервые».
+    returnedNew: daily.reduce((a, d) => a + d.returnedNew, 0),
+    firstDialogMedianNew: median(daily.flatMap((d) => d.firstDialogs)),
   },
   daily, channels, funnel, returnBase, returnRows,
   reconcileNote,
@@ -461,36 +510,46 @@ const report = {
 
 // ---------- issue description (Markdown) ----------
 const k = report.kpi;
-const dev = (label, v) => (v == null ? null : `${label} ${ru(v)}`);
-const medianNote = [dev('телефон', medians.mobile), dev('компьютер', medians.desktop)].filter(Boolean).join(', ') || '—';
 const sourceMark = (ok, error) => (ok ? '✅' : error ? '⚠️' : '❌');
 const sourcesLine = `Источники: PostHog ✅ · Метрика ${sourceMark(mk, sourceErrors.metrika)} · база ${sourceMark(db, sourceErrors.database)} · Langfuse ${sourceMark(lf, sourceErrors.langfuse)}`;
 const SOURCE_NAMES = { metrika: 'Метрика', database: 'База', langfuse: 'Langfuse' };
 const errorLine = Object.entries(sourceErrors)
   .map(([name, message]) => `${SOURCE_NAMES[name]}: ${message.replace(/^(Metrika|база|Langfuse):?\s*/i, '').replace(/\|/g, '/')}`)
   .join('. ');
-const millions = (x) => `${ru(x / 1e6)} млн`;
-const topModel = models?.rows[0];
-const topNote = topModel
-  ? `больше всего — ${topModel.model}${topModel.task ? ` · ${topModel.task}` : ''} (${pct(share(topModel.input + topModel.output, models.total))})`
-  : '';
-const usageRows = [
-  models?.source === 'langfuse'
-    ? `| Расход моделей | **${millions(models.total)} токенов** | все вызовы за ${days} дн.${models.withTests ? ' (с тестовыми аккаунтами)' : ''}; ${topNote} |`
+
+// The first table: every figure by Moscow day and for the whole period. People are counted once in the period column,
+// events and tokens add up, shares are taken over the whole period.
+const mln = (x) => (x / 1e6).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const medianCell = (xs) => {
+  const m = median(xs);
+  return m == null || !Number.isFinite(m) ? '—' : ru(m);
+};
+const mainRows = [
+  ['Новые устройства', daily.map((d) => int(d.visitors)), int(cohortTotal.visitors)],
+  ['Посетитель → заговорил', daily.map((d) => pct(share(d.cohortSpoke, d.visitors))), pct(k.conversion)],
+  ['Заговорили впервые', daily.map((d) => int(d.new)), int(newSpeakers)],
+  ['из них разговор от 3 реплик', daily.map((d) => int(d.newD3)), int(newD3)],
+  ['Первый разговор, медиана реплик', daily.map((d) => medianCell(d.firstDialogs)), medianCell(daily.flatMap((d) => d.firstDialogs))],
+  ['Вернулись в другой день', daily.map((d) => int(d.returnedNew)), int(k.returnedNew)],
+  ['Говорили (DAU, за период — WAU)', daily.map((d) => int(d.dau)), int(k.wau)],
+  ['Реплики', daily.map((d) => int(d.turns)), int(sp.turns)],
+  ['Говорили голосом', daily.map((d) => pct(share(d.voice, d.dau))), pct(k.voiceShare)],
+  ['Отказ в микрофоне, людей', daily.map((d) => int(d.micDenied)), int(micDenied)],
+  db?.app.optout_total
+    ? ['Видно в PostHog', daily.map((d) => pct(share(d.turns, d.dbUserMessages))), pct(share(num(sp.turns), act.user_messages))]
+    : null,
+  models
+    ? [`Расход моделей, млн токенов${models.withTests ? ' (с тестовыми)' : ''}`, daily.map((d) => (d.tokens == null ? '—' : mln(d.tokens))), mln(models.total)]
     : null,
   models?.perDialog != null
-    ? `| Токенов на разговор | **${int(Math.round(models.perDialog))}** | сохраняемые разговоры; на активного в день — ${int(Math.round(models.perActiveDay ?? 0))}${models.source === 'langfuse' ? '' : `; всего в них ${millions(models.total)} за ${days} дн.; ${topNote}`} |`
+    ? ['Токенов на разговор', daily.map((d) => (d.tokensPerDialog == null ? '—' : int(Math.round(d.tokensPerDialog)))), int(Math.round(models.perDialog))]
     : null,
 ].filter(Boolean);
-const dbRows = db
-  ? [
-      // Only meaningful when someone opted out: otherwise the gap is erased conversations, shown in the reconciliation.
-      db.app.optout_total
-        ? `| Видно в PostHog | **${pct(share(num(sp.turns), act.user_messages))}** | ${int(sp.turns)} из ${int(act.user_messages)} реплик; от аналитики отказались ${people(db.app.optout_total)} |`
-        : null,
-    ].filter(Boolean)
-  : [];
-const extraRows = [...dbRows, ...usageRows].map((row) => `${row}\n`).join('');
+const mainTable = [
+  `| Показатель | ${daily.map((d) => d.day).join(' | ')} | За ${days} дней |`,
+  `|---|${daily.map(() => '---:').join('|')}|---:|`,
+  ...mainRows.map(([label, cells, total]) => `| ${label} | ${cells.join(' | ')} | **${total}** |`),
+].join('\n');
 
 // Plain digits: the by-day table is meant to be pasted into a spreadsheet, where grouped digits become text.
 const plain = (x) => String(Math.round(num(x)));
@@ -499,15 +558,8 @@ const description = `Автоматический отчёт за ${days} пол
 
 ${sourcesLine}${errorLine ? `\n${errorLine}.` : ''}
 
-| Показатель | Значение | Контекст |
-|---|---:|---|
-| Заговорили впервые | **${int(newSpeakers)}** | из них разговор от 3 реплик — ${int(newD3)}; вчера — ${int(yesterday.new)} |
-| Посетитель → заговорил | **${pct(k.conversion)}** | ${int(k.cohortSpoke)} из ${int(k.cohortVisitors)} новых устройств |
-| DAU в среднем | **${ru1(dauAvg)}** | вчера ${int(yesterday.dau)}, пик ${int(peak.dau)} (${peak.day}); WAU ${int(k.wau)}, неделей раньше ${int(k.wauPrev)} |
-| Первый разговор, медиана | **${medians.all == null ? '—' : `${ru(medians.all)} реплик`}** | ${medianNote} |
-| Вернулись в другой день | **${int(cohortTotal.returned)} из ${int(cohortTotal.spoke)}** | новые этих дней, число ещё вырастет |
-| Говорили голосом | **${pct(k.voiceShare)}** | ${int(k.usedVoice)} из ${int(speakers)}; отказ в микрофоне у ${people(micDenied)} |
-${extraRows}
+${mainTable}
+
 ### Главное
 
 <!-- ГЛАВНОЕ -->
@@ -520,14 +572,14 @@ ${daily.map((d) => `| ${d.day} | ${plain(d.active10)} | ${d.traces == null ? '�
 
 ### Как считаются цифры
 
+- **По дням и за период.** День — московские сутки. В колонке «За ${days} дней» люди считаются один раз (поэтому DAU за период — это WAU), реплики, отказы и токены складываются, доли считаются по всему периоду.
 - **Новые** — люди и устройства, впервые появившиеся в эти дни; учитываются только настоящие люди (без тестов и команды).
-- **Посетитель** — устройство: до входа события анонимны. **Посетитель → заговорил** — заговорившие ÷ новые устройства.
+- **Посетитель** — устройство: до входа события анонимны. **Посетитель → заговорил** — заговорившие ÷ новые устройства, по дню первого появления устройства.
 - **Заговорил** — сервер принял хотя бы одну реплику (\`dialog_turn\`), набранную или сказанную.
-- **DAU** — люди с репликой за московские сутки, среднее за дни периода; **WAU** — за все дни периода.
+- **DAU** — люди с репликой за московские сутки; **WAU** — люди с репликой за весь период.
 - **Разговор от 3 реплик** — три реплики под одним \`dialog_id\`; реплики разных разговоров не складываются.
-- **Первый разговор** — число реплик в самом раннем разговоре человека.
-- **Вернулся** — реплики в двух разных днях по Москве.
-- **Говорили голосом** — хотя бы одна голосовая реплика.
+- **Первый разговор** — число реплик в самом раннем разговоре человека; **Вернулись в другой день** — из заговоривших впервые, у кого есть реплики ещё в каком-то дне до конца периода. Обе строки — по дню первой реплики; число вернувшихся за последние дни ещё вырастет.
+- **Говорили голосом** — хотя бы одна голосовая реплика: за день — доля от DAU, за период — от WAU.
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Активные: больше 10 реплик** — люди, у которых за московские сутки больше 10 реплик.
 - **Запросы к моделям** — трассы Langfuse за московские сутки: одна трасса — один вызов модели (ход разговора, классификатор настроения, итог, память, озвучка фраз), без тестовых и командных аккаунтов; без Langfuse — «—».
@@ -535,7 +587,7 @@ ${daily.map((d) => `| ${d.day} | ${plain(d.active10)} | ${d.traces == null ? '�
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
 - **Расход моделей** — токены всех вызовов моделей агента за те же дни по Langfuse, без тестовых и командных аккаунтов; в него входят и разговоры «Не сохранять», и стёртые — только суммой. Вызовы через прокси (итог разговора, память) и озвучка фраз приходят без токенов, так что настоящий расход немного больше.
-- **Токенов на разговор** — расход в сохраняемых разговорах из базы агента ÷ разговоры с расходом; на активного в день — ÷ дни, в которые человек говорил.
+- **Токенов на разговор** — расход в сохраняемых разговорах из базы агента ÷ разговоры с расходом в тот же день (за период — ÷ разговоры с расходом за период).
 `;
 
 // ---------- detail (inline html block) ----------
