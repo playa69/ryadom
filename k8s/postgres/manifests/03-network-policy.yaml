@@ -34,6 +34,10 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: infra
+        # Дашборд метрик для Sber500 (k8s/dashboard): база agent в сессии только на чтение
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dashboard
         # Replication между инстансами CNPG внутри namespace
         - podSelector: {}
         - namespaceSelector:

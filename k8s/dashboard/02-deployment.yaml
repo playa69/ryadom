@@ -1,0 +1,94 @@
+# =============================================================================
+# Дашборд метрик для Sber500 (dashboard/app.py)
+# =============================================================================
+# Одна реплика: кэш на час живёт в памяти процесса. Secret dashboard-secrets собирается из Lockbox
+# при выкате (README рядом): DSN базы и ключи Langfuse — те же записи, что у агента, плюс пароль дашборда.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: dashboard
+  labels:
+    app: dashboard
+    app.kubernetes.io/part-of: ryadom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      labels:
+        app: dashboard
+    spec:
+      terminationGracePeriodSeconds: 10
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        # dashboard/Dockerfile: uid и gid 10001
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dashboard
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.1.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DASHBOARD_USER
+              value: sber500
+            - name: LANGFUSE_HOST
+              value: http://langfuse-web.infra.svc.cluster.local:3000
+            - name: DASHBOARD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: DASHBOARD_PASSWORD
+            - name: DIALOG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: DIALOG_DATABASE_URL
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: LANGFUSE_SECRET_KEY
+          # exec, а не httpGet: пробы kubelet шли бы с IP узлов, а их default-deny не пускает.
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+            periodSeconds: 20
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+            initialDelaySeconds: 10
+            periodSeconds: 60
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
