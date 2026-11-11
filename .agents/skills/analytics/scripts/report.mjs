@@ -108,14 +108,15 @@ GROUP BY day
 ORDER BY day
 LIMIT 100`,
 
-  // The day each account reached its second reply ever, for the running total of accounts with 2+ replies.
-  secondReply: `
-SELECT toString(toDate(toTimeZone(t2, 'Europe/Moscow'))) AS day, count() AS accounts
+  // The day each account reached its fourth reply ever: a user is an account with more than 3 replies (the team's
+  // definition), counted as a running total.
+  usersReached: `
+SELECT toString(toDate(toTimeZone(t4, 'Europe/Moscow'))) AS day, count() AS accounts
 FROM (
-  SELECT person_id, arrayElement(arraySort(groupArray(timestamp)), 2) AS t2
+  SELECT person_id, arrayElement(arraySort(groupArray(timestamp)), 4) AS t4
   FROM events WHERE event = 'dialog_turn' AND {{people}} AND timestamp < toDateTime('{{to}}')
   GROUP BY person_id
-  HAVING count() >= 2)
+  HAVING count() > 3)
 GROUP BY day
 ORDER BY day
 LIMIT 1000`,
@@ -355,17 +356,17 @@ const funnel = STEPS.map(([key, label]) => ({ key, label, total: cohortTotal[key
 const dayList = Array.from({ length: days }, (_, i) => shiftDate(fromDate, i));
 const dailyBy = new Map(data.daily.map((r) => [r.day, r]));
 const newBy = new Map(data.newSpeakers.map((r) => [r.day, r]));
-const secondBefore = data.secondReply.filter((r) => r.day < fromDate).reduce((a, r) => a + num(r.accounts), 0);
-const secondBy = new Map(data.secondReply.map((r) => [r.day, num(r.accounts)]));
-let accounts2 = secondBefore;
+const usersBefore = data.usersReached.filter((r) => r.day < fromDate).reduce((a, r) => a + num(r.accounts), 0);
+const usersBy = new Map(data.usersReached.map((r) => [r.day, num(r.accounts)]));
+let users = usersBefore;
 const cohortBy = new Map(data.cohortDaily.map((r) => [r.day, r]));
 const micBy = new Map(data.micDaily.map((r) => [r.day, num(r.people)]));
 const daily = dayList.map((d) => {
-  accounts2 += secondBy.get(d) ?? 0;
+  users += usersBy.get(d) ?? 0;
   const nb = newBy.get(d);
   return {
     date: d, day: ddmm(d), dau: num(dailyBy.get(d)?.dau), new: num(nb?.new_speakers), turns: num(dailyBy.get(d)?.turns),
-    active10: num(dailyBy.get(d)?.active10), voice: num(dailyBy.get(d)?.voice), accounts2,
+    active10: num(dailyBy.get(d)?.active10), voice: num(dailyBy.get(d)?.voice), users,
     newD3: num(nb?.new_d3), returnedNew: num(nb?.returned), firstDialogs: (nb?.first_dialogs ?? []).map(num),
     visitors: num(cohortBy.get(d)?.visitors), cohortSpoke: num(cohortBy.get(d)?.spoke), micDenied: micBy.get(d) ?? 0,
     // Filled from Langfuse and the database below; null when they are not available.
@@ -566,9 +567,9 @@ ${mainTable}
 
 ### По дням
 
-| Дата | Активные: больше 10 реплик | Запросы к моделям | Аккаунты с 2+ репликами, всего |
+| Дата | Активные: больше 10 реплик | Запросы к моделям | Пользователи: больше 3 реплик, всего |
 |---|---:|---:|---:|
-${daily.map((d) => `| ${d.day} | ${plain(d.active10)} | ${d.traces == null ? '—' : plain(d.traces)} | ${plain(d.accounts2)} |`).join('\n')}
+${daily.map((d) => `| ${d.day} | ${plain(d.active10)} | ${d.traces == null ? '—' : plain(d.traces)} | ${plain(d.users)} |`).join('\n')}
 
 ### Как считаются цифры
 
@@ -583,7 +584,7 @@ ${daily.map((d) => `| ${d.day} | ${plain(d.active10)} | ${d.traces == null ? '�
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Активные: больше 10 реплик** — люди, у которых за московские сутки больше 10 реплик.
 - **Запросы к моделям** — трассы Langfuse за московские сутки: одна трасса — один вызов модели (ход разговора, классификатор настроения, итог, память, озвучка фраз), без тестовых и командных аккаунтов; без Langfuse — «—».
-- **Аккаунты с 2+ репликами, всего** — нарастающий итог: аккаунты, у которых к концу суток набралось хотя бы две реплики за всё время (реплики в аналитике есть с 14.10.2026).
+- **Пользователи: больше 3 реплик, всего** — нарастающий итог: аккаунты, у которых к концу суток набралось больше 3 реплик за всё время (реплики в аналитике есть с 14.10.2026).
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
 - **Расход моделей** — токены всех вызовов моделей агента за те же дни по Langfuse, без тестовых и командных аккаунтов; в него входят и разговоры «Не сохранять», и стёртые — только суммой. Вызовы через прокси (итог разговора, память) и озвучка фраз приходят без токенов, так что настоящий расход немного больше.

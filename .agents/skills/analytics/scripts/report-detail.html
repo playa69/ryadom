@@ -74,7 +74,7 @@ svg .val { fill: var(--fg); font-weight: 600; }
       <th data-tip="Реплики людей (dialog_turn) за сутки, набранные и сказанные.|Реплики">Реплики</th>
       <th data-tip="Люди, у которых за сутки больше 10 реплик. За период не складывается.|Активные: больше 10 реплик">Активные: больше 10 реплик</th>
       <th data-tip="Трассы Langfuse за сутки: одна трасса — один вызов модели, без тестовых и командных аккаунтов.|Запросы к моделям">Запросы к моделям</th>
-      <th data-tip="Нарастающий итог: аккаунты, у которых к концу суток набралось хотя бы две реплики за всё время (реплики в аналитике — с 14.10.2026).|Аккаунты с 2+ репликами, всего">Аккаунты с 2+ репликами, всего</th>
+      <th data-tip="Нарастающий итог: аккаунты, у которых к концу суток набралось больше 3 реплик за всё время (реплики в аналитике — с 14.10.2026).|Пользователи: больше 3 реплик, всего">Пользователи: больше 3 реплик, всего</th>
     </tr></thead>
     <tbody id="daily-table"></tbody>
   </table></div>
@@ -226,8 +226,8 @@ const DATA = /*__DATA__*/null;
   const hasTraces = days.some((d) => d.traces != null);
   const last = days[days.length - 1] || {};
   document.getElementById('daily-table').innerHTML = days.map((d) =>
-    `<tr><td>${esc(d.day)}</td><td>${nf(d.dau)}</td><td>${nf(d.new)}</td><td>${nf(d.turns)}</td><td>${nf(d.active10 ?? 0)}</td><td>${d.traces == null ? '—' : nf(d.traces)}</td><td>${nf(d.accounts2 ?? 0)}</td></tr>`).join('') +
-    `<tr class="sum"><td>За период</td><td>${nf(DATA.kpi.wau)}</td><td>${nf(dsum('new'))}</td><td>${nf(dsum('turns'))}</td><td>—</td><td>${hasTraces ? nf(dsum('traces')) : '—'}</td><td>${nf(last.accounts2 ?? 0)}</td></tr>`;
+    `<tr><td>${esc(d.day)}</td><td>${nf(d.dau)}</td><td>${nf(d.new)}</td><td>${nf(d.turns)}</td><td>${nf(d.active10 ?? 0)}</td><td>${d.traces == null ? '—' : nf(d.traces)}</td><td>${nf(d.users ?? 0)}</td></tr>`).join('') +
+    `<tr class="sum"><td>За период</td><td>${nf(DATA.kpi.wau)}</td><td>${nf(dsum('new'))}</td><td>${nf(dsum('turns'))}</td><td>—</td><td>${hasTraces ? nf(dsum('traces')) : '—'}</td><td>${nf(last.users ?? 0)}</td></tr>`;
 
   // Channels.
   document.getElementById('channels').innerHTML = DATA.channels.map((r) => {
