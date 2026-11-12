@@ -33,7 +33,7 @@ metadata:
 data:
   APP_PORT: "8001"
   # Версия агента: отдаёт GET /version и ставится тегом в трассы Langfuse. Держать равной тегу образа (02-deployment.yaml).
-  APP_VERSION: "0.11.3"
+  APP_VERSION: "0.11.4"
   # Фоновая модель (итоги разговоров и недели, заметки памяти): текстовая модель того же прокси программы, что раньше вела
   # ответы. Ключ — AGENT_API_TOKEN из agent-secrets. Модель (LLM_CHAT_MODEL gigachat3.5-432b-a28b) и таймаут (LLM_TIMEOUT_SECONDS 15)
   # заданы в коде. Модель недоступна — итог не подводится (его можно завести вручную), разговор идёт как обычно.
@@ -45,7 +45,7 @@ data:
   # число символов и слов, длительность речи, токены и задержки. LANGFUSE_CAPTURE_CONTENT=true разрешает исходные input/output
   # всех пользователей для диагностики; metadata, ошибки, обычные логи и метрики остаются защищёнными. Изменение требует rollout.
   # Отключение трейсинга: убрать ключи из Secret и перезапустить агента. Адрес Langfuse в коде: http://langfuse-web.infra.svc.cluster.local:3000.
-  LANGFUSE_CAPTURE_CONTENT: "false"
+  LANGFUSE_CAPTURE_CONTENT: "true"
   #
   # Диалоги: PostgreSQL, база `agent` в CNPG ryadom-db (app/services/dialog_db.py). DSN с паролем — в Secret
   # `agent-db` (ключ DIALOG_DATABASE_URL, подключается в 02-deployment.yaml), схему агент создаёт сам при старте.
