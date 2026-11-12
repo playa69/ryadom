@@ -81,7 +81,7 @@
 
 
 | `POSTHOG_PERSONAL_API_KEY` + `POSTHOG_PROJECT_ID` | — | Стирание профилей при удалении аккаунта (см. выше) |
-| `RELEASE` | из образа (`--build-arg RELEASE=<тег>`) | Тег сборки, уходит в события как `app_version` (веб, PWA, лендинг, api). Без него версия берётся из `package.json` и всегда `0.1.0` |
+| `RELEASE` | из образа (`--build-arg RELEASE=<тег>`) | Тег сборки, уходит в события как `app_version` (веб, PWA, лендинг, api). Без него версия берётся из `package.json` и всегда `0.1.0` Нативную оболочку (Android, iOS) собирают вне образов: перед `cap sync` — `RELEASE=<версия> pnpm exec vite build --mode prod`, иначе `app_version` будет версией пакета (на iOS так появились `0.1.0`, PROTEUS-280) |
 | `ANALYTICS_TEST_DEVICE_PREFIX` | `loadtest-` | Аккаунты, созданные устройством с таким началом id, помечаются `test`. Пусто: правило выключено |
 
 **Что собирают клиенты** — без переключателей, в коде (`buildSdkConfig`):

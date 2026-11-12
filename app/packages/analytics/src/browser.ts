@@ -175,6 +175,8 @@ async function defaultLoadSdk(): Promise<PostHog> {
  * person: a confirmation of deleting an account, an alert about the microphone. Giving a list replaces the
  * SDK's own defaults, so those are repeated here.
  */
+export const DEAD_CLICK_FIELDS = ['textarea', 'input:not([type="checkbox"]):not([type="radio"])']
+
 export const NEVER_CAPTURE = [
   '.ph-no-capture',
   '.ph-no-autocapture',
@@ -245,7 +247,9 @@ export function buildSdkConfig(config: AnalyticsConfigApiResponse, apiBase: stri
     mask_all_text: true,
     mask_all_element_attributes: false,
     // Legal risk, MEDIUM: the same as `autocapture` (dead clicks carry the same element data).
-    capture_dead_clicks: { css_selector_ignorelist: NEVER_CAPTURE },
+    // A click into a text field only moves the focus, the page does not change: the SDK reports it as dead, and
+    // on the home screen those were the most frequent "dead" clicks (PROTEUS-280). A field is not a dead target.
+    capture_dead_clicks: { css_selector_ignorelist: [...NEVER_CAPTURE, ...DEAD_CLICK_FIELDS] },
     // Rage clicks are part of click capture, and ignore the same elements.
     rageclick: { css_selector_ignorelist: NEVER_CAPTURE },
     // Off, and explicitly so: the project-level switch in PostHog is on, and the SDK would follow it. The SDK

@@ -4,6 +4,7 @@ import type { AnalyticsConfigApiResponse } from '@ryadom/contracts/api/analytics
 import {
   buildSdkConfig,
   captureError,
+  DEAD_CLICK_FIELDS,
   NEVER_CAPTURE,
   identify,
   isAnalyticsOptedOut,
@@ -434,7 +435,9 @@ describe('buildSdkConfig: приватность по умолчанию', () =>
       capture_copied_text: false,
       css_selector_ignorelist: NEVER_CAPTURE,
     })
-    expect(config.capture_dead_clicks).toEqual({ css_selector_ignorelist: NEVER_CAPTURE })
+    expect(config.capture_dead_clicks).toEqual({
+      css_selector_ignorelist: [...NEVER_CAPTURE, ...DEAD_CLICK_FIELDS],
+    })
     expect(config.rageclick).toEqual({ css_selector_ignorelist: NEVER_CAPTURE })
   })
 
