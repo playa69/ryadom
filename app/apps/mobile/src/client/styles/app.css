@@ -3323,6 +3323,36 @@ p.rd-recap-text {
   color: var(--ryadom-text);
 }
 
+/* Steps of the microphone guide: numbered, one per line. */
+.rd-mic-steps {
+  list-style: none;
+  counter-reset: mic-step;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rd-mic-steps li {
+  counter-increment: mic-step;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  line-height: 1.45;
+}
+.rd-mic-steps li::before {
+  content: counter(mic-step);
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.15);
+  text-align: center;
+  line-height: 24px;
+  font-size: 14px;
+}
+
 /* ── Crisis script (PROTEUS-279) ─────────────────────────────────────────── */
 
 .rd-crisis-bar {

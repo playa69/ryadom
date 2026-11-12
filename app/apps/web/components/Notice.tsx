@@ -35,6 +35,7 @@ interface NoticeItem {
 }
 
 const NoticeContext = createContext<((text: string, kind?: NoticeKind) => void) | null>(null)
+const ClearContext = createContext<() => void>(() => {})
 const PlacementContext = createContext<(placement: NoticePlacement) => void>(() => {})
 
 const LIFETIME_MS = 4000
@@ -58,9 +59,13 @@ export function NoticeProvider({ children }: { children: ReactNode }) {
     window.setTimeout(() => setItems((prev) => prev.filter((item) => item.id !== id)), LIFETIME_MS)
   }, [])
 
+  const clear = useCallback(() => setItems([]), [])
+
   return (
     <NoticeContext.Provider value={notify}>
-      <PlacementContext.Provider value={setPlacement}>{children}</PlacementContext.Provider>
+      <ClearContext.Provider value={clear}>
+        <PlacementContext.Provider value={setPlacement}>{children}</PlacementContext.Provider>
+      </ClearContext.Provider>
       {/* The live region exists from the start; a region inserted together with its text is often not announced. */}
       <div
         className={cn(
@@ -100,6 +105,14 @@ export function useNotice() {
   const notify = useContext(NoticeContext)
   if (!notify) throw new Error('useNotice must be used inside NoticeProvider')
   return useMemo(() => notify, [notify])
+}
+
+/**
+ * Takes the messages off the screen: a message about a problem that has just been solved (the microphone
+ * that was refused and now works) must not stay under the proof that it is gone.
+ */
+export function useClearNotices() {
+  return useContext(ClearContext)
 }
 
 /** Called by a layout or screen for as long as it is mounted; the stack goes back to the default after. */

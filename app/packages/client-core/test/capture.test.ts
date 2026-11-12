@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MicrophoneDeniedError, startCapture } from '../src/voice/capture'
+import { MicrophoneDeniedError, MicrophoneError, startCapture } from '../src/voice/capture'
 import { PRE_ROLL_MS } from '../src/voice/turn-detector'
 
 interface Audio {
@@ -85,11 +85,30 @@ describe('startCapture', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: async () => {
-          throw new Error('NotAllowedError')
+          throw Object.assign(new Error('denied'), { name: 'NotAllowedError' })
         },
       },
     })
     await expect(startCapture(() => undefined)).rejects.toBeInstanceOf(MicrophoneDeniedError)
+  })
+
+  it.each([
+    ['NotFoundError', 'not_found'],
+    ['NotReadableError', 'not_readable'],
+    ['SecurityError', 'security'],
+    ['TypeError', 'other'],
+  ])('%s — не отказ, причина %s', async (name, detail) => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: async () => {
+          throw Object.assign(new Error('failed'), { name })
+        },
+      },
+    })
+    const error = await startCapture(() => undefined).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(MicrophoneError)
+    expect(error).not.toBeInstanceOf(MicrophoneDeniedError)
+    expect((error as MicrophoneError).detail).toBe(detail)
   })
 
   it('stop() отпускает дорожки и закрывает контекст', async () => {

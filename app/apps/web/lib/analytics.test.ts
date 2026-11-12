@@ -3,8 +3,8 @@ import { ConfirmEmailApiErrorCode } from '@ryadom/contracts/api/auth/confirm-ema
 import { RegisterApiErrorCode } from '@ryadom/contracts/api/auth/register'
 import { ResetPasswordApiErrorCode } from '@ryadom/contracts/api/auth/reset-password'
 import { ApiError, NETWORK_ERROR_STATUS } from '@ryadom/client-core/errors'
-import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
-import { codeOutcome, formOutcome, isStandalone, micProblemReason } from './analytics'
+import { MicrophoneDeniedError, MicrophoneError } from '@ryadom/client-core/voice/capture'
+import { codeOutcome, formOutcome, isStandalone, micProblem, micProblemReason } from './analytics'
 
 describe('formOutcome', () => {
   it('a wrong password and other refusals are the server saying no', () => {
@@ -44,6 +44,19 @@ describe('codeOutcome', () => {
     expect(codeOutcome(ConfirmEmailApiErrorCode.CODE_INVALID)).toBe('rejected')
     expect(codeOutcome(RegisterApiErrorCode.USER_ALREADY_EXISTS)).toBe('rejected')
     expect(codeOutcome('A_CODE_FROM_A_NEWER_SERVER')).toBe('rejected')
+  })
+})
+
+describe('micProblem', () => {
+  it('отказ — permission_denied с причиной, запомненный отказ — blocked', () => {
+    expect(micProblem(new MicrophoneDeniedError(), true)).toEqual({ reason: 'permission_denied', detail: 'not_allowed' })
+    expect(micProblem(new MicrophoneDeniedError('blocked'), true)).toEqual({ reason: 'permission_denied', detail: 'blocked' })
+  })
+
+  it('нет устройства — no_microphone, занят или небезопасный адрес — unsupported с причиной', () => {
+    expect(micProblem(new MicrophoneError('not_found'), true)).toEqual({ reason: 'no_microphone', detail: 'not_found' })
+    expect(micProblem(new MicrophoneError('not_readable'), true)).toEqual({ reason: 'unsupported', detail: 'not_readable' })
+    expect(micProblem(new MicrophoneError('security'), true)).toEqual({ reason: 'unsupported', detail: 'security' })
   })
 })
 
