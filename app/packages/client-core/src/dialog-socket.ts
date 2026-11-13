@@ -84,6 +84,11 @@ export interface DialogSocketHandlers {
    * `delta` above one is the record loaded after a drop, not a person speaking.
    */
   onUserReplies?(count: number, delta: number): void
+  /**
+   * The server counted a reply of the person for the account: `today` replies on this day in Moscow, in all dialogs
+   * and on all devices; `first` for the account's very first reply. For Metrika's goals.
+   */
+  onReplyCount?(today: number, first: boolean): void
 }
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 8000]
@@ -477,6 +482,13 @@ export class DialogSocket {
         return
       case DialogServerFrame.Mood:
         this.handlers.onMood?.(frame.tone, frame.intensity)
+        return
+      case DialogServerFrame.ReplyCount:
+        try {
+          this.handlers.onReplyCount?.(frame.today, frame.first)
+        } catch {
+          // A counter for analytics must not break the dialog.
+        }
         return
       case DialogServerFrame.Ended:
         this.closedByUs = true

@@ -188,13 +188,19 @@ export enum AnalyticsEvent {
 export type AnalyticsPlatform = 'web' | 'pwa' | 'telegram' | 'android' | 'ios' | 'landing'
 
 /**
- * Goals of Yandex Metrika, by the identifiers they have in the counter's cabinet (JavaScript-event goals with an
- * exact match). They are not PostHog events and carry no properties. "Transition to the product" is not here: the
- * cabinet counts it by the addresses `/app/` and `/pwa/`, so the apps need no code for it.
+ * Goals of Yandex Metrika, by the identifiers they have in the counter's cabinet (JavaScript-event goals). They are
+ * not PostHog events and carry no properties. "Transition to the product" is not here: the cabinet counts it by the
+ * addresses `/app/` and `/pwa/`, so the apps need no code for it.
  */
 export enum MetrikaGoal {
-  /** The server accepted the first reply of the person in a dialog (typed or spoken). */
+  /** A button of the landing that opens the web app was pressed. */
+  OpenApp = 'open_app',
+  /** The server accepted the first reply the account ever had (typed or spoken). */
   FirstReply = 'first_reply',
+  /** The account's third accepted reply of the day (in Moscow), in any dialog and on any device. */
+  ThreeRepliesToday = 'polz_3',
+  /** The account's tenth accepted reply of the day (in Moscow). */
+  TenRepliesToday = 'dau_10',
   /** The main goal: the third accepted reply in a dialog, once per device. */
   FirstDialog3Replies = 'first_dialog_3_replies',
 }

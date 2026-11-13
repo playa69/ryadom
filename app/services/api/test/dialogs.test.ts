@@ -34,6 +34,7 @@ import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { getDb } from '@ryadom/core/shared'
 import { afterDeleteJob } from '../src/jobs/after-delete'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
+import { countReply } from '../src/lib/reply-counts'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
 import { createSessions } from '../src/lib/sessions'
@@ -669,7 +670,7 @@ async function startGatewayServer(agentUrl: string) {
       return
     }
     wss.handleUpgrade(request, socket, head, (ws) =>
-      handleDialogSocket(ws as never, { env, jwt, sessions, analytics }, request),
+      handleDialogSocket(ws as never, { env, jwt, sessions, analytics, countReply }, request),
     )
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 50))
@@ -918,6 +919,47 @@ describe('WebSocket-шлюз', () => {
     })
     expect(typeof ended.properties.duration_s).toBe('number')
     expect(JSON.stringify(mine)).not.toMatch(/секретн/)
+  })
+
+  // `openspec/changes/add-metrika-daily-goals`, «Цели Метрики»: the count is per account, across dialogs and devices.
+  it('после принятой реплики шлюз присылает счёт реплик аккаунта за сутки и признак первой', async () => {
+    const { accessToken } = await gateway.signIn()
+    const counts: Record<string, unknown>[] = []
+    const collect = (socket: WebSocket) =>
+      socket.on('message', (data: Buffer, isBinary: boolean) => {
+        if (isBinary) return
+        const frame = JSON.parse(data.toString('utf8')) as Record<string, unknown>
+        if (frame.type === DialogServerFrame.ReplyCount) counts.push(frame)
+      })
+
+    const phone = new WebSocket(gateway.wsUrl)
+    collect(phone)
+    await waitOpen(phone)
+    phone.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-count-1' }))
+    const first = await agent.waitFor('d-count-1')
+    phone.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'привет' }))
+    await vi.waitFor(() => expect(counts).toHaveLength(1))
+    // A spoken turn counts too; a final transcript with no text (silence, an echo) does not.
+    first.socket.send(JSON.stringify({ type: 'transcript', text: '', final: true }))
+    first.socket.send(JSON.stringify({ type: 'transcript', text: 'ну вот', final: true, messageId: 'm-9' }))
+    await vi.waitFor(() => expect(counts).toHaveLength(2))
+    phone.close()
+
+    // Another device, another dialog, the same account: the count goes on.
+    const laptop = new WebSocket(gateway.wsUrl)
+    collect(laptop)
+    await waitOpen(laptop)
+    laptop.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-count-2' }))
+    await agent.waitFor('d-count-2')
+    laptop.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-2', text: 'ещё' }))
+    await vi.waitFor(() => expect(counts).toHaveLength(3))
+    laptop.close()
+
+    expect(counts).toEqual([
+      { v: 1, type: 'reply_count', today: 1, first: true },
+      { v: 1, type: 'reply_count', today: 2, first: false },
+      { v: 1, type: 'reply_count', today: 3, first: false },
+    ])
   })
 
   it('аналитика: у событий диалога есть dialog_id, а счётчики берутся за весь диалог, если их знает агент', async () => {

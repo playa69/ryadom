@@ -69,6 +69,11 @@ export interface GatewayDeps {
   sessions: Pick<Sessions, 'isActive'>
   /** Product analytics: counts and outcomes of a dialog, never what was said. */
   analytics: ServerAnalytics
+  /**
+   * Counts an accepted reply for the account (the `reply_count` frame, for Metrika's goals); null when the account is
+   * gone. Absent in tests that do not look at it.
+   */
+  countReply?: (userId: string, at: Date) => Promise<{ today: number; first: boolean } | null>
 }
 
 /**
@@ -451,6 +456,21 @@ class DialogSession {
   private reportTurn(input: 'text' | 'voice'): void {
     if (!this.userId || this.unsaved) return
     this.deps.analytics.capture(this.userId, AnalyticsEvent.DialogTurn, { ...dialogIdProperty(this.dialogId), input })
+    this.countReply(this.userId)
+  }
+
+  /**
+   * The same reply counted for the account and sent back: the client reports Metrika's goals from it, so a goal
+   * belongs to the visitor of the device the reply came from. A failure costs a goal, never the dialog.
+   */
+  private countReply(userId: string): void {
+    const count = this.deps.countReply
+    if (!count) return
+    void count(userId, new Date())
+      .then((counted) => {
+        if (counted) this.toClient({ type: DialogServerFrame.ReplyCount, today: counted.today, first: counted.first })
+      })
+      .catch((error: unknown) => this.logger.warn('Не удалось посчитать реплику для целей Метрики', error, { userId }))
   }
 
   private startHeartbeat(): void {

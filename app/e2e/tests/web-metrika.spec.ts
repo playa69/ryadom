@@ -94,14 +94,15 @@ test('цели разговора: первая реплика, третья —
   await dialogInput(page).fill('Третье сообщение')
   await dialogInput(page).press('Enter')
   await settled(4)
-  await expect.poll(() => reachedGoals(page)).toEqual(['first_reply', 'first_dialog_3_replies'])
+  await expect.poll(async () => (await reachedGoals(page)).sort()).toEqual(['first_dialog_3_replies', 'first_reply', 'polz_3'])
 
   await dialogInput(page).fill('Четвёртое сообщение')
   await dialogInput(page).press('Enter')
   await settled(5)
-  expect(await reachedGoals(page), 'четвёртая реплика основную цель не повторяет').toEqual([
-    'first_reply',
+  expect((await reachedGoals(page)).sort(), 'четвёртая реплика основную цель не повторяет').toEqual([
     'first_dialog_3_replies',
+    'first_reply',
+    'polz_3',
   ])
   // Nothing of what was said went into the goals.
   expect(JSON.stringify(await ymCalls(page))).not.toMatch(/тяжело|сообщение/)

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
-import { reportDialogReplies } from '@ryadom/analytics/metrika'
+import { reportDialogReplies, reportReplyCount } from '@ryadom/analytics/metrika'
 import {
   DialogApiErrorCode,
   DialogWsErrorCode,
@@ -485,6 +485,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       onUserReplies: (count, delta) => {
         if (!unsavedRef.current) reportDialogReplies(count, delta)
       },
+      // The same reply counted by the server for the whole account: the goals by day (the server skips unsaved ones).
+      onReplyCount: reportReplyCount,
       onSpeech: (messageId, phase) =>
         phase === 'start' ? startAgentSpeech(messageId) : replyVoice.agentSpeechEnded(messageId),
       onTranscript: (text, final) => {

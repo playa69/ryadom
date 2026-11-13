@@ -730,6 +730,27 @@ describe('реплики человека, принятые сервером (ц
     expect(h.feed()[0]?.pending).toBe(false)
   })
 
+  // `openspec/changes/add-metrika-daily-goals`, «Цели Метрики».
+  it('счёт реплик аккаунта от сервера доходит до обработчика, а его исключение не ломает разговор', async () => {
+    const h = harness()
+    const counted: [number, boolean][] = []
+    const original = h.socket as unknown as { handlers: DialogSocketHandlers }
+    original.handlers.onReplyCount = (today, first) => counted.push([today, first])
+    const ws = await connect(h)
+    ws.receive({ type: DialogServerFrame.ReplyCount, today: 1, first: true })
+    ws.receive({ type: DialogServerFrame.ReplyCount, today: 2, first: false })
+    expect(counted).toEqual([
+      [1, true],
+      [2, false],
+    ])
+
+    original.handlers.onReplyCount = () => {
+      throw new Error('counter broke')
+    }
+    expect(() => ws.receive({ type: DialogServerFrame.ReplyCount, today: 3, first: false })).not.toThrow()
+    expect(h.socket.getState()).toBe('ready')
+  })
+
   it('кризисный сценарий: кадры состояния доходят до обработчика, кнопки уходят серверу', async () => {
     const h = harness()
     const states: unknown[] = []
