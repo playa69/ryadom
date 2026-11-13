@@ -193,16 +193,12 @@ export type AnalyticsPlatform = 'web' | 'pwa' | 'telegram' | 'android' | 'ios' |
  * addresses `/app/` and `/pwa/`, so the apps need no code for it.
  */
 export enum MetrikaGoal {
-  /** A button of the landing that opens the web app was pressed. */
-  OpenApp = 'open_app',
   /** The server accepted the first reply the account ever had (typed or spoken). */
   FirstReply = 'first_reply',
   /** The account's third accepted reply of the day (in Moscow), in any dialog and on any device. */
   ThreeRepliesToday = 'polz_3',
   /** The account's tenth accepted reply of the day (in Moscow). */
   TenRepliesToday = 'dau_10',
-  /** The main goal: the third accepted reply in a dialog, once per device. */
-  FirstDialog3Replies = 'first_dialog_3_replies',
 }
 
 /** How an account signs in or was made: an address wins over Telegram, Telegram over the device alone. */

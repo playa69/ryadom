@@ -7,7 +7,6 @@ import {
   metrikaGoal,
   metrikaHit,
   metrikaWillReport,
-  reportDialogReplies,
   reportReplyCount,
   resetMetrikaForTests,
   setMetrikaSuppressed,
@@ -57,7 +56,7 @@ beforeEach(() => {
 
 describe('каталог целей', () => {
   it('идентификаторы совпадают с теми, что заведены в кабинете счётчика (цель «Переход в продукт» — по адресам, её здесь нет)', () => {
-    expect(Object.values(MetrikaGoal)).toEqual(['open_app', 'first_reply', 'polz_3', 'dau_10', 'first_dialog_3_replies'])
+    expect(Object.values(MetrikaGoal)).toEqual(['first_reply', 'polz_3', 'dau_10'])
   })
 })
 
@@ -187,55 +186,6 @@ describe('отказ и Do Not Track', () => {
     setMetrikaSuppressed(true)
     begin({})
     expect(calls('init')).toHaveLength(1)
-  })
-})
-
-describe('цели разговора', () => {
-  it('первая реплика разговора цели first_reply больше не даёт: она по счёту сервера', () => {
-    begin({})
-    reportDialogReplies(1, 1)
-    expect(calls('reachGoal')).toHaveLength(0)
-  })
-
-  it('прыжок счётчика больше единицы — это загрузка записи после переподключения, а не реплика', () => {
-    begin({})
-    reportDialogReplies(5, 5)
-    reportDialogReplies(3, 3)
-    expect(calls('reachGoal')).toHaveLength(0)
-  })
-
-  it('вторая реплика целей не даёт', () => {
-    begin({})
-    reportDialogReplies(2, 1)
-    expect(calls('reachGoal')).toHaveLength(0)
-  })
-
-  it('третья реплика — основная цель, один раз на устройстве', () => {
-    begin({})
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toEqual([[COUNTER, 'reachGoal', 'first_dialog_3_replies']])
-    // The fourth reply, and the third one of the next dialog, do not repeat it.
-    reportDialogReplies(4, 1)
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toHaveLength(1)
-  })
-
-  it('отметка «цель достигнута» переживает перезагрузку страницы', () => {
-    begin({})
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toHaveLength(1)
-    // A new page load: the module state is gone, the device's storage is not.
-    resetMetrikaForTests()
-    ym.mockClear()
-    begin({})
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toHaveLength(0)
-  })
-
-  it('кто отказался от аналитики, «потратить» цель не может: отметка не ставится', () => {
-    begin({ suppressed: true })
-    reportDialogReplies(3, 1)
-    expect(globalThis.localStorage.getItem('ryadom.metrika.main-goal')).toBeNull()
   })
 })
 

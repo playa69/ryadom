@@ -43,10 +43,6 @@ export interface StartMetrikaOptions {
 
 const TAG_URL = 'https://mc.yandex.ru/metrika/tag.js'
 const MAX_QUEUE = 50
-/** The main goal fires once per device: this marks that it did. */
-const MAIN_GOAL_KEY = 'ryadom.metrika.main-goal'
-/** The reply that makes a dialog "a dialog with replies": the third one the server accepted. */
-export const MAIN_GOAL_REPLIES = 3
 
 let status: Status = 'idle'
 let launch: StartMetrikaOptions | null = null
@@ -199,20 +195,6 @@ function pathOf(url: string): string {
   }
 }
 
-/**
- * The server accepted a reply of the person. `count` is how many accepted replies the dialog has now, `delta` how
- * many it gained: a jump of more than one is the record being loaded after a reconnect, not a person speaking, and
- * counts for nothing. The main goal is the third reply, once per device (the mark is only set when the goal can be
- * reported, so a person who opted out is not "used up").
- */
-export function reportDialogReplies(count: number, delta: number): void {
-  if (delta !== 1) return
-  if (count === MAIN_GOAL_REPLIES && metrikaWillReport() && !mainGoalReached()) {
-    markMainGoalReached()
-    metrikaGoal(MetrikaGoal.FirstDialog3Replies)
-  }
-}
-
 /** The reply of the day that is the goal `polz_3`, and the one that is `dau_10`. */
 export const DAY_GOAL_REPLIES = { [MetrikaGoal.ThreeRepliesToday]: 3, [MetrikaGoal.TenRepliesToday]: 10 } as const
 
@@ -225,22 +207,6 @@ export function reportReplyCount(today: number, first: boolean): void {
   if (first) metrikaGoal(MetrikaGoal.FirstReply)
   if (today === DAY_GOAL_REPLIES[MetrikaGoal.ThreeRepliesToday]) metrikaGoal(MetrikaGoal.ThreeRepliesToday)
   if (today === DAY_GOAL_REPLIES[MetrikaGoal.TenRepliesToday]) metrikaGoal(MetrikaGoal.TenRepliesToday)
-}
-
-function mainGoalReached(): boolean {
-  try {
-    return globalThis.localStorage?.getItem(MAIN_GOAL_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-function markMainGoalReached(): void {
-  try {
-    globalThis.localStorage?.setItem(MAIN_GOAL_KEY, '1')
-  } catch {
-    // Storage may be blocked: the goal can then repeat in another dialog, which is the lesser harm.
-  }
 }
 
 /** For tests: back to a fresh page load. */

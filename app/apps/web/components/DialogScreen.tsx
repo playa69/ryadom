@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
-import { reportDialogReplies, reportReplyCount } from '@ryadom/analytics/metrika'
+import { reportReplyCount } from '@ryadom/analytics/metrika'
 import {
   DialogApiErrorCode,
   DialogWsErrorCode,
@@ -481,11 +481,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         if (next !== 'ready') setAwaitingReply(false)
       },
       onMessages: setMessages,
-      // The server accepted another reply of the person: the goals of Yandex Metrika. Not in a conversation held unsaved.
-      onUserReplies: (count, delta) => {
-        if (!unsavedRef.current) reportDialogReplies(count, delta)
-      },
-      // The same reply counted by the server for the whole account: the goals by day (the server skips unsaved ones).
+      // A reply of the person counted by the server for the whole account: the goals of Yandex Metrika (the server skips unsaved ones).
       onReplyCount: reportReplyCount,
       onSpeech: (messageId, phase) =>
         phase === 'start' ? startAgentSpeech(messageId) : replyVoice.agentSpeechEnded(messageId),
