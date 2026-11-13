@@ -193,6 +193,11 @@ export type AnalyticsPlatform = 'web' | 'pwa' | 'telegram' | 'android' | 'ios' |
  * addresses `/app/` and `/pwa/`, so the apps need no code for it.
  */
 export enum MetrikaGoal {
+  /**
+   * Goal 1: a visitor of the landing went for the product — a button that opens the web app or a link to get the app
+   * (a store, the APK, the PWA). Sent from the landing visit, so it carries the campaign that brought the visitor.
+   */
+  OpenApp = 'open_app',
   /** The server accepted the first reply the account ever had (typed or spoken). */
   FirstReply = 'first_reply',
   /** The account's third accepted reply of the day (in Moscow), in any dialog and on any device. */
