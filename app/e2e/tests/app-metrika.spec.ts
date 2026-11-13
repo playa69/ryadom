@@ -31,7 +31,7 @@ test('Метрика в PWA: запуск без записи экрана, эк
   expect(refusedMetrikaRequests(page)).toEqual([])
 })
 
-test('цели разговора в PWA: первая реплика, третья — основная цель', async ({ page }) => {
+test('цели разговора в PWA: первая реплика, третья — polz_3', async ({ page }) => {
   test.setTimeout(150_000)
   await openApp(page)
   await startAnonymously(page)
@@ -54,7 +54,7 @@ test('цели разговора в PWA: первая реплика, трет�
   await say('Второе сообщение', 2)
   expect(await reachedGoals(page)).toEqual(['first_reply'])
   await say('Третье сообщение', 3)
-  await expect.poll(async () => (await reachedGoals(page)).sort()).toEqual(['first_dialog_3_replies', 'first_reply', 'polz_3'])
+  await expect.poll(async () => (await reachedGoals(page)).sort()).toEqual(['first_reply', 'polz_3'])
   await say('Четвёртое сообщение', 4)
-  expect((await reachedGoals(page)).sort()).toEqual(['first_dialog_3_replies', 'first_reply', 'polz_3'])
+  expect((await reachedGoals(page)).sort()).toEqual(['first_reply', 'polz_3'])
 })

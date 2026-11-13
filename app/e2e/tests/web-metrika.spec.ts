@@ -67,7 +67,7 @@ test('Метрика в вебе: Do Not Track — тег не загружае�
   expect(await ymCalls(page)).toEqual([])
 })
 
-test('цели разговора: первая реплика, третья — основная цель, четвёртая её не повторяет', async ({
+test('цели разговора: первая реплика, третья — polz_3, четвёртая целей не добавляет', async ({
   page,
 }) => {
   test.setTimeout(150_000)
@@ -94,16 +94,12 @@ test('цели разговора: первая реплика, третья —
   await dialogInput(page).fill('Третье сообщение')
   await dialogInput(page).press('Enter')
   await settled(4)
-  await expect.poll(async () => (await reachedGoals(page)).sort()).toEqual(['first_dialog_3_replies', 'first_reply', 'polz_3'])
+  await expect.poll(async () => (await reachedGoals(page)).sort()).toEqual(['first_reply', 'polz_3'])
 
   await dialogInput(page).fill('Четвёртое сообщение')
   await dialogInput(page).press('Enter')
   await settled(5)
-  expect((await reachedGoals(page)).sort(), 'четвёртая реплика основную цель не повторяет').toEqual([
-    'first_dialog_3_replies',
-    'first_reply',
-    'polz_3',
-  ])
+  expect((await reachedGoals(page)).sort(), 'четвёртая реплика целей не добавляет').toEqual(['first_reply', 'polz_3'])
   // Nothing of what was said went into the goals.
   expect(JSON.stringify(await ymCalls(page))).not.toMatch(/тяжело|сообщение/)
 })
