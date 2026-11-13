@@ -56,7 +56,7 @@ beforeEach(() => {
 
 describe('каталог целей', () => {
   it('идентификаторы совпадают с теми, что заведены в кабинете счётчика (цель «Переход в продукт» — по адресам, её здесь нет)', () => {
-    expect(Object.values(MetrikaGoal)).toEqual(['first_reply', 'polz_3', 'dau_10'])
+    expect(Object.values(MetrikaGoal)).toEqual(['open_app', 'first_reply', 'polz_3', 'dau_10'])
   })
 })
 
