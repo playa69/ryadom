@@ -259,6 +259,8 @@ export enum DialogServerFrame {
   Safety = 'safety',
   SafetyState = 'safety_state',
   Mood = 'mood',
+  /** After each accepted reply of the person: how many the account has today, for the goals of Yandex Metrika. */
+  ReplyCount = 'reply_count',
   Ended = 'ended',
   Error = 'error',
   Pong = 'pong',
@@ -370,6 +372,12 @@ export type DialogServerMessage =
   | { type: DialogServerFrame.SafetyState; step: SafetyStep; pinned: boolean; banner: boolean; ask: 'thoughts' | 'safe' | null }
   /** After each turn of the person: how they sound. Only the colour of the sphere follows it; the SOS path is separate. */
   | { type: DialogServerFrame.Mood; tone: MoodTone; intensity: number; at: number }
+  /**
+   * The reply just accepted, counted for the account: `today` is its replies on this calendar day in Moscow, in all
+   * dialogs and on all devices, this one included; `first` is true for the first reply the account ever had. Only
+   * numbers: the client turns them into Metrika goals. A client older than this frame skips it.
+   */
+  | { type: DialogServerFrame.ReplyCount; today: number; first: boolean }
   | { type: DialogServerFrame.Ended; summary: DialogSummaryApiResponse | null }
   | { type: DialogServerFrame.Error; code: DialogWsErrorCode; message: string }
   | { type: DialogServerFrame.Pong }

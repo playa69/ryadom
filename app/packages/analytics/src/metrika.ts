@@ -202,16 +202,29 @@ function pathOf(url: string): string {
 /**
  * The server accepted a reply of the person. `count` is how many accepted replies the dialog has now, `delta` how
  * many it gained: a jump of more than one is the record being loaded after a reconnect, not a person speaking, and
- * counts for nothing. The first reply is a goal each time a dialog gets one; the main goal is the third reply, once
- * per device (the mark is only set when the goal can be reported, so a person who opted out is not "used up").
+ * counts for nothing. The main goal is the third reply, once per device (the mark is only set when the goal can be
+ * reported, so a person who opted out is not "used up").
  */
 export function reportDialogReplies(count: number, delta: number): void {
   if (delta !== 1) return
-  if (count === 1) metrikaGoal(MetrikaGoal.FirstReply)
   if (count === MAIN_GOAL_REPLIES && metrikaWillReport() && !mainGoalReached()) {
     markMainGoalReached()
     metrikaGoal(MetrikaGoal.FirstDialog3Replies)
   }
+}
+
+/** The reply of the day that is the goal `polz_3`, and the one that is `dau_10`. */
+export const DAY_GOAL_REPLIES = { [MetrikaGoal.ThreeRepliesToday]: 3, [MetrikaGoal.TenRepliesToday]: 10 } as const
+
+/**
+ * The server counted a reply of the person for the account (the dialog's `reply_count` frame). The count is the
+ * server's, across dialogs and devices, so each number of a day comes exactly once: a goal fires on the device whose
+ * reply reached it, once a day, and a reload or a second device cannot repeat it.
+ */
+export function reportReplyCount(today: number, first: boolean): void {
+  if (first) metrikaGoal(MetrikaGoal.FirstReply)
+  if (today === DAY_GOAL_REPLIES[MetrikaGoal.ThreeRepliesToday]) metrikaGoal(MetrikaGoal.ThreeRepliesToday)
+  if (today === DAY_GOAL_REPLIES[MetrikaGoal.TenRepliesToday]) metrikaGoal(MetrikaGoal.TenRepliesToday)
 }
 
 function mainGoalReached(): boolean {

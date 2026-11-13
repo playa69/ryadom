@@ -167,6 +167,32 @@ export function sanitizeUrl(raw: string, base?: string): string {
   return `${hasOrigin ? originOf(url) : ''}${normalizePath(url.pathname)}${query ? `?${query}` : ''}`
 }
 
+/** Yandex Direct's click id: digits only, nothing else gets through. */
+const YCLID = /^\d{1,30}$/
+
+/**
+ * The campaign part of an address as Metrika gets it: the parameters `sanitizeUrl` keeps, plus Direct's `yclid`, by
+ * which Metrika ties a visit to the ad that brought it. PostHog never gets `yclid` (see `CLICK_ID_PARAMS`). Empty, or a
+ * query starting with `?`.
+ */
+export function metrikaCampaignQuery(raw: string): string {
+  let url: URL
+  try {
+    url = new URL(raw, PLACEHOLDER_ORIGIN)
+  } catch {
+    return ''
+  }
+  const kept = new URLSearchParams()
+  for (const [key, value] of url.searchParams) {
+    const name = key.toLowerCase()
+    if ((KEPT_QUERY.has(name) && CAMPAIGN_VALUE.test(value)) || (name === 'yclid' && YCLID.test(value))) {
+      kept.set(name, value)
+    }
+  }
+  const query = kept.toString()
+  return query ? `?${query}` : ''
+}
+
 const PLACEHOLDER_ORIGIN = 'http://placeholder.invalid'
 
 /** `URL.origin` is the string "null" for schemes such as `capacitor:`, which the store builds run under. */

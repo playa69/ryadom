@@ -3,7 +3,8 @@
 import type { ComponentProps } from 'react'
 import Link from 'next/link'
 import { track, trackAnonymous } from '@ryadom/analytics/browser'
-import { AnalyticsEvent, type CtaId, type StoreLink } from '@ryadom/analytics/events'
+import { AnalyticsEvent, MetrikaGoal, type CtaId, type StoreLink } from '@ryadom/analytics/events'
+import { metrikaGoal } from '@ryadom/analytics/metrika'
 import { HOTLINE_NO_CAPTURE } from '@/lib/hotlines'
 
 /*
@@ -20,6 +21,11 @@ import { HOTLINE_NO_CAPTURE } from '@/lib/hotlines'
 type Tracking = { cta: CtaId; placement: string } | { store: StoreLink }
 
 function reportClick(tracking: Tracking): void {
+  // Every button that opens the web app is one goal of Metrika, whatever its label and place: the cabinet's own
+  // "button click" goal recognises a single button by its position and text.
+  if (('store' in tracking && tracking.store === 'web_app') || ('cta' in tracking && tracking.cta === 'open_web_app')) {
+    metrikaGoal(MetrikaGoal.OpenApp)
+  }
   if ('store' in tracking) {
     track(AnalyticsEvent.StoreLinkClicked, { store: tracking.store })
     return
