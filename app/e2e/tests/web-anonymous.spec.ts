@@ -25,6 +25,7 @@ import {
   startAnonymously,
   talkButton,
   uniqueEmail,
+  watchApiCalls,
   watchCsp,
 } from '../support/web'
 import { clearMailbox, waitForCode } from '../support/mail'
@@ -39,12 +40,22 @@ import {
 import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 
+// A headless browser has no microphone of its own: the voice start needs the fake device and its
+// permission, the same way web-dialog.spec.ts gets them (the desktop project grants nothing by itself).
+test.use({
+  permissions: ['microphone'],
+  launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
+})
+
 /**
- * Anonymous entry, the way a person meets it: a separate consent gate before home, then an active
- * conversation screen without another tick; the first start makes the account behind it and opens the
- * conversation; a profile that offers an address where it has something to give, and a server that keeps
- * to what the app promises. `openspec/changes/add-explicit-data-consent`, «Первый экран: разговор с
- * первого действия».
+ * Anonymous entry, the way a person meets it: home itself right away — the separate consent gate is
+ * gone, and the first action that would start a conversation (a sent text, «Поговорить», the
+ * microphone) opens the consent window over the page instead. «Продолжить» there runs the waiting
+ * start: the account is made behind it, the consents recorded, and the typed text goes out once or the
+ * voice begins. Later visits need no window at all. A profile that offers an address where it has
+ * something to give, and a server that keeps to what the app promises.
+ * `openspec/changes/add-fast-dialog-start`, «Первый экран: разговор с первого действия» and
+ * «Согласие при первом действии».
  *
  * Scenarios rather than one test per step, for the reason the account scenarios give: every test
  * would start its own session, and the entry points are rate limited per address.
@@ -53,7 +64,7 @@ import { expect, test } from '../support/fixtures'
 const DEVICE_ID = /^[\w-]{16,64}$/
 const DEVICE_KEY = /^[\w-]{32,128}$/
 
-test('первый запуск: отдельное согласие, активная главная и разговор; потом без экранов', async ({
+test('первый запуск: главная сразу, согласие окном при первом действии; дальше без экранов', async ({
   page,
   request,
   shot,
@@ -61,12 +72,17 @@ test('первый запуск: отдельное согласие, актив
   test.setTimeout(120_000)
   const violations = await watchCsp(page)
   const session = trackSession(page)
+  const apiCalls = watchApiCalls(page)
 
-  // ── a new visitor: a separate consent gate before the active home ──
-  // `openspec/changes/merge-first-screen-into-home`: the first screen has no address of its own.
+  // ── a new visitor: home itself, no gate before it ─────────────────────────
+  // `openspec/changes/add-fast-dialog-start`, «Первый экран: разговор с первого действия».
   await openWebApp(page)
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('terms-gate')).toBeVisible()
+  await expect(page.getByTestId('terms-gate'), 'предварительного ворота больше нет').toHaveCount(0)
+  await expect(homeInput(page)).toBeVisible()
+  await expect(page.getByTestId('home-talk')).toBeEnabled()
+  await expect(page.getByTestId('home-mic')).toBeVisible()
+  await expect(page.getByTestId('home-suggestions')).toBeVisible()
   // The same frame as for an account: SOS in the header, the menu with «Войти» at its foot.
   await expect(page.getByRole('button', { name: 'SOS' })).toBeVisible()
   await openSidebar(page)
@@ -78,31 +94,7 @@ test('первый запуск: отдельное согласие, актив
   await expect(page.getByText('Позвонить прямо сейчас')).toBeVisible()
   await openWebApp(page)
   await expect(page.getByTestId('consent-notice')).toContainText('ИИ для самоподдержки')
-  await expect(page.getByTestId('data-consent')).toContainText('Мне есть 18 лет')
-  await expect(
-    page.getByRole('link', { name: 'согласие на обработку персональных данных', exact: true }),
-  ).toHaveAttribute('href', /\/consent$/)
   await expect(page.getByText('В опасной ситуации звони 112.')).toBeVisible()
-  // `openspec/changes/add-explicit-data-consent`, «Первый экран: разговор с первого действия».
-  await expect(page.getByRole('checkbox')).toHaveCount(1)
-  await expect(page.getByTestId('data-consent-toggle')).not.toBeChecked()
-  await expect(page.getByTestId('welcome-continue')).toBeDisabled()
-  await expect(page.getByTestId('home-input')).toHaveCount(0)
-  await expect(page.getByTestId('home-talk')).toHaveCount(0)
-  await expect(page.getByTestId('home-mic')).toHaveCount(0)
-  await expect(page.getByTestId('memory-switch')).toHaveCount(0)
-  await expectNoHorizontalOverflow(page)
-  await shot(page, 'web-welcome')
-  await step(page, 'welcome', 'Первый вход: отдельное согласие без чата, «Продолжить» неактивно')
-  // Nothing is made before the explicit tick and press: no account, no key on the device.
-  expect(await storedDevice(page), 'до согласия удостоверения нет').toBeNull()
-
-  // ── the gate opens an active home without another tick; only the start makes the account ─
-  await page.getByTestId('data-consent-toggle').check()
-  await expect(page.getByTestId('welcome-continue')).toBeEnabled()
-  await page.getByTestId('welcome-continue').click()
-  await expect(page.getByTestId('home-input')).toBeVisible()
-  await expect(page.getByTestId('home-talk')).toBeEnabled()
   // `openspec/changes/update-privacy-policy`, «Человек знает о сроке хранения разговоров».
   await expect(page.getByTestId('guest-note')).toContainText(
     'Разговоры хранятся 30 дней после последнего сообщения.',
@@ -110,21 +102,91 @@ test('первый запуск: отдельное согласие, актив
   await expect(page.getByTestId('guest-note')).toContainText(
     'Без почты аккаунт удаляется через 90 дней без визитов.',
   )
-  await expect(page.getByTestId('data-consent')).toHaveCount(0)
-  await expect(page.getByTestId('memory-switch')).toBeVisible()
-  // `openspec/changes/remove-unsaved-dialog-option`, «Галочка «Не сохранять этот разговор»».
-  await expect(page.getByTestId('unsaved')).toHaveCount(0)
-  expect(await storedDevice(page), 'продолжение пока не создаёт аккаунт').toBeNull()
-  await shot(page, 'web-welcome-consented')
-  await step(page, 'welcome-home', 'После согласия открыт активный чат без повторной отметки')
+  // The memory choice waits inside the collapsed «Настроить разговор», not on the way to the start.
+  await expect(page.getByTestId('memory-switch')).toBeHidden()
+  await expectNoHorizontalOverflow(page)
+  await shot(page, 'web-welcome')
+  await step(
+    page,
+    'home-before-consent',
+    'Первый вход: главная сразу — поле, подсказки, голосовой старт; ворота нет',
+  )
+  // Nothing is made before the explicit tick and press: no account, no key on the device, no call.
+  expect(await storedDevice(page), 'до согласия удостоверения нет').toBeNull()
+  expect(apiCalls(), 'открытие главной не создаёт запросов').toEqual([])
+
+  // ── typing and a suggestion are local ──────────────────────────────────────
+  await homeInput(page).fill('Сегодня был длинный день')
+  await page.getByTestId('home-suggestion-2').click()
+  await expect(homeInput(page)).toHaveValue('Мне тревожно')
+  expect(apiCalls(), 'ввод и подсказка не создают запросов').toEqual([])
+  expect(await storedDevice(page), 'и удостоверения всё ещё нет').toBeNull()
+
+  // ── the first send opens the consent window over home ─────────────────────
+  // `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии»: «Окно согласия при
+  // отправке текста», ««Продолжить» неактивна до отметки».
+  await homeInput(page).press('Enter')
+  await expect(modal(page).getByRole('heading', { name: 'Перед началом' })).toBeVisible()
+  await expect(modal(page).getByTestId('data-consent-toggle')).not.toBeChecked()
+  await expect(modal(page).getByTestId('consent-continue')).toBeDisabled()
+  await expect(modal(page).getByRole('link', { name: 'условия использования', exact: true })).toHaveAttribute(
+    'href',
+    /\/terms$/,
+  )
+  await expect(
+    modal(page).getByRole('link', {
+      name: 'согласие на обработку персональных данных',
+      exact: true,
+    }),
+  ).toHaveAttribute('href', /\/consent$/)
+  await expect(page).toHaveURL(/\/home$/)
+  await expectNoHorizontalOverflow(page)
+  await shot(page, 'web-consent-window')
+  await step(
+    page,
+    'consent-window',
+    'Отправка текста без согласия: окно поверх главной, флажок снят, «Продолжить» неактивна',
+  )
+  expect(apiCalls(), 'окно открылось без запроса').toEqual([])
+  expect(await storedDevice(page), 'аккаунт не создан').toBeNull()
+
+  // Esc closes it: the draft and the intent stay, nothing is sent; the next action opens it again.
+  await page.keyboard.press('Escape')
+  await expect(modal(page)).toHaveCount(0)
+  await expect(homeInput(page)).toHaveValue('Мне тревожно')
+  expect(apiCalls(), 'закрытие Esc не отправляет запрос').toEqual([])
+  await step(page, 'consent-closed-esc', 'Esc закрыл окно: черновик на месте, запроса нет')
+
+  // The backdrop closes it the same way (the point is over the page, away from the header's controls).
   await page.getByTestId('home-talk').click()
+  await expect(modal(page).getByTestId('consent-modal')).toBeVisible()
+  await expect(modal(page).getByTestId('data-consent-toggle'), 'окно монтируется заново').not.toBeChecked()
+  const viewport = page.viewportSize()!
+  await page.mouse.click(viewport.width / 2, 150)
+  await expect(modal(page)).toHaveCount(0)
+  await expect(homeInput(page)).toHaveValue('Мне тревожно')
+  expect(apiCalls(), 'закрытие фоном не отправляет запрос').toEqual([])
+
+  // ── «Продолжить» after the tick runs the waiting start ─────────────────────
+  // «Подтверждение продолжает исходное действие», «(Web) Начало текстом».
+  await page.getByTestId('home-talk').click()
+  await expect(modal(page).getByTestId('consent-modal')).toBeVisible()
+  await modal(page).getByTestId('data-consent-toggle').check()
+  await expect(modal(page).getByTestId('consent-continue')).toBeEnabled()
+  await modal(page).getByTestId('consent-continue').click()
   await expect(page).toHaveURL(/\/dialog\//, { timeout: 30_000 })
   await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
+  await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
+  await expect(messages(page, 'user').first()).toContainText('Мне тревожно')
+  // The reply has arrived, and the text still went out exactly once; nobody started listening.
+  await expect(messages(page, 'assistant')).toHaveCount(2, { timeout: 30_000 })
+  await expect(messages(page, 'user'), 'первый текст не продублировался').toHaveCount(1)
+  await expect(page.getByTestId('dialog-voice'), 'текстовый вид: голос не включался').toHaveCount(0)
   await expect(page.getByTestId('memory-invite'), 'окно про память не мешает началу').toHaveCount(0)
   await step(
     page,
-    'welcome-voice',
-    '«Поговорить»: разговор открыт голосом, агент здоровается «Я рядом. С чего начнём?»',
+    'consent-continued',
+    'После «Продолжить» разговор начался сам: приветствие, затем черновик первым сообщением',
   )
   const accountId = session.userId()
   const device = await storedDevice(page)
@@ -141,7 +203,7 @@ test('первый запуск: отдельное согласие, актив
   })
   expect(await violations(), 'нарушения политики безопасности').toEqual([])
 
-  // ── the root keeps the session; the first screen does not come back ──────
+  // ── the root keeps the session; no window is asked again ───────────────────
   await dismissMemoryInvite(page)
   await openWebApp(page)
   await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
@@ -160,43 +222,51 @@ test('первый запуск: отдельное согласие, актив
   await expect(page).toHaveURL(/\/home$/)
   expect(session.userId(), 'тот же аккаунт, не новый').toBe(accountId)
 
-  // ── a browser that knows nothing about this person meets the first screen ─
+  // ── a browser that knows nothing about this person lands on home itself ────
   await page.evaluate(() => localStorage.clear())
   await openWebApp(page)
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('terms-gate')).toBeVisible()
+  await expect(homeInput(page)).toBeVisible()
+  await expect(page.getByTestId('terms-gate'), 'ворота нет и для нового браузера').toHaveCount(0)
 })
 
-test('первый запуск текстом: до ворота поля нет, после него Enter отправляет первое сообщение', async ({
+test('первый запуск голосом: «Поговорить» открывает окно согласия, подтверждение начинает голосовой разговор', async ({
   page,
 }) => {
   test.setTimeout(90_000)
-  const startRequests: string[] = []
-  page.on('request', (request) => {
-    if (/\/api\/(auth\/device|dialogs)(\/|$)/.test(new URL(request.url()).pathname))
-      startRequests.push(request.url())
-  })
+  const apiCalls = watchApiCalls(page)
   await openWebApp(page)
   await expect(page).toHaveURL(/\/home$/)
-  // `openspec/changes/add-explicit-data-consent`, «Поле ввода главного экрана веб-клиента».
-  await expect(page.getByTestId('home-input')).toHaveCount(0)
-  await expect(page.getByTestId('welcome-continue')).toBeDisabled()
-  expect(startRequests, 'до согласия нет входа и старта разговора').toEqual([])
-  expect(await storedDevice(page), 'без согласия удостоверение не создаётся').toBeNull()
+  await expect(homeInput(page)).toBeVisible()
 
-  await page.getByTestId('data-consent-toggle').check()
-  await page.getByTestId('welcome-continue').click()
-  await expect(page.getByTestId('home-input')).toBeVisible()
-  await page.getByTestId('home-input').fill('Сегодня был длинный день')
-  await step(page, 'welcome-typed', 'После входного ворота человек набрал первую фразу')
-  await page.getByTestId('home-input').press('Enter')
+  // `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии»: «Окно согласия при
+  // голосовом старте» — the microphone press only opens the window, the conversation does not begin.
+  await page.getByTestId('home-mic').click()
+  await expect(modal(page).getByRole('heading', { name: 'Перед началом' })).toBeVisible()
+  await expect(modal(page).getByTestId('consent-continue')).toBeDisabled()
+  expect(apiCalls(), 'до подтверждения запросов нет').toEqual([])
+  expect(await storedDevice(page), 'аккаунт не создан').toBeNull()
+  await step(page, 'consent-voice-window', 'Голосовой старт без согласия: то же окно, разговор не начался')
+
+  // The cross closes it without a request, and the intent waits for the next press.
+  await modal(page).getByTestId('consent-close').click()
+  await expect(modal(page)).toHaveCount(0)
+  expect(apiCalls(), 'закрытие крестиком не отправляет запрос').toEqual([])
+
+  // «Подтверждение продолжает исходное действие» with a voice intent: the voice view opens and,
+  // after the greeting, starts listening by itself.
+  await talkButton(page).click()
+  await expect(modal(page).getByTestId('consent-modal')).toBeVisible()
+  await modal(page).getByTestId('data-consent-toggle').check()
+  await expect(modal(page).getByTestId('consent-continue')).toBeEnabled()
+  await modal(page).getByTestId('consent-continue').click()
   await expect(page).toHaveURL(/\/dialog\//, { timeout: 30_000 })
-  await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
-  await expect(page.getByText('Сегодня был длинный день').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('voice-caption')).not.toBeEmpty({ timeout: 30_000 })
   await step(
     page,
-    'welcome-text',
-    'Разговор открыт текстом: приветствие, затем набранная фраза первым сообщением',
+    'consent-voice-start',
+    'После «Продолжить» открыт голосовой вид: приветствие под шаром, прослушивание началось',
   )
 })
 
@@ -341,7 +411,9 @@ test('аккаунт без почты: профиль, привязка, под
   await page.getByTestId('logout-confirm').click()
   await expect(page).toHaveURL(/\/login$/)
   await openWebApp(page)
-  await expect(page.getByTestId('terms-gate')).toBeVisible()
+  // No gate for a stranger: home itself, the sign-in stays at the foot of the menu.
+  await expect(page.getByTestId('terms-gate')).toHaveCount(0)
+  await expect(homeInput(page)).toBeVisible()
   await openSignIn(page)
   await signIn(page, email)
   await openProfile(page)
@@ -481,9 +553,10 @@ test('удаление аккаунта без регистрации: устр�
   await expect(page.getByTestId('deleted-message')).toBeVisible({ timeout: 30_000 })
   expect(await storedDevice(page), 'ключ устройства стёрт вместе с аккаунтом').toBeNull()
   await page.getByTestId('deleted-ok').click()
-  // Back at the start, not at a sign-in for an account the person never had.
+  // Back at the start — home itself, not a sign-in for an account the person never had.
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('terms-gate')).toBeVisible()
+  await expect(page.getByTestId('terms-gate')).toHaveCount(0)
+  await expect(homeInput(page)).toBeVisible()
 
   expect(await sessionAlive(request, oldSession), 'сессия удалённого аккаунта закончена').toBe(false)
 
@@ -581,7 +654,8 @@ test('вход по почте на новом устройстве даёт т�
   const otherSession = trackSession(other)
   await openWebApp(other)
   await dismissMemoryInvite(other) // a new device: the sheet "Рядом теперь запоминает важное" is not this test's subject
-  await expect(other.getByTestId('terms-gate')).toBeVisible()
+  await expect(other.getByTestId('terms-gate')).toHaveCount(0)
+  await expect(homeInput(other)).toBeVisible()
   await openSignIn(other)
   await field(other, 'email').fill(email)
   await field(other, 'password').fill(PASSWORD)

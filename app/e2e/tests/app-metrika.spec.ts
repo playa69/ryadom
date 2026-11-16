@@ -38,7 +38,7 @@ test('цели разговора в PWA: первая реплика, трет�
   await button(page, 'Поговорить').click()
   // The conversation opens on the voice; the replies of this scenario are typed.
   await page.getByRole('button', { name: 'Писать текстом' }).click({ timeout: 30_000 })
-  const input = page.getByPlaceholder(DRAFT_PLACEHOLDER)
+  const input = page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER)
   await expect(input).toBeVisible()
 
   const say = async (text: string, sent: number) => {

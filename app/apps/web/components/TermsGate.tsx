@@ -13,18 +13,11 @@ function partOfDay(): string {
 }
 
 /**
- * The consent door before the chat. A signed-in account records the current terms through the API;
- * a newcomer only opens the active home, where the first conversation will create the account.
+ * The consent door before the chat, for a signed-in account whose recorded terms are stale (a newer
+ * version is out): it stands in place of the page until the current version is recorded through the
+ * API. A newcomer never sees it: home asks for the consent in a window at the first action.
  */
-export default function TermsGate({
-  termsUrl,
-  consentUrl,
-  onContinue,
-}: {
-  termsUrl: string
-  consentUrl: string
-  onContinue?: () => void
-}) {
+export default function TermsGate({ termsUrl, consentUrl }: { termsUrl: string; consentUrl: string }) {
   const { acceptConsents } = useAuth()
   const [consented, setConsented] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -35,10 +28,6 @@ export default function TermsGate({
 
   async function agree() {
     if (loading || !consented) return
-    if (onContinue) {
-      onContinue()
-      return
-    }
     setProblem('')
     setLoading(true)
     // On success the shell sees the recorded version and opens the page.

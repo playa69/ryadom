@@ -3,10 +3,23 @@ import { AnalyticsEvent, sizeClass } from '@ryadom/analytics/events'
 import { reportReplyCount } from '@ryadom/analytics/metrika'
 import { Block, Button, Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { createMoodHold, type OrbMood } from '@ryadom/client-core/voice/orb-mood'
-import { DialogWsErrorCode, type DialogSummaryApiResponse, type SafetyAnswer } from '@ryadom/contracts/api/dialogs'
+import {
+  DialogWsErrorCode,
+  type DialogSummaryApiResponse,
+  type SafetyAnswer,
+} from '@ryadom/contracts/api/dialogs'
 import { CRISIS_IDLE, reduceCrisisUi, type CrisisUi } from '@ryadom/client-core/safety-state'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
@@ -27,9 +40,18 @@ import {
   type DialogMessageView,
   type DialogSocketState,
 } from '../../../lib/dialog-socket'
-import { apiErrorText, codeText, forgetMemoryFact, getDialog, getMemory, getMemoryChanges } from '../../../lib/api'
+import {
+  apiErrorText,
+  codeText,
+  forgetMemoryFact,
+  getDialog,
+  getMemory,
+  getMemoryChanges,
+} from '../../../lib/api'
 import { journal } from '../../../lib/journal'
 import { openRoute } from '../../../lib/nav'
+import { isNative } from '../../../lib/platform'
+import { takeDialogHandoff } from './dialog-handoff'
 import { useAuth } from '../../../lib/store'
 import { setTelegramClosingConfirmation } from '../../../lib/telegram'
 import {
@@ -79,6 +101,9 @@ import {
  * starts and ends and lets them talk over the agent, and a tap pauses the microphone. Without it (the
  * setting is off, or the WebView has no detector) the person taps to speak and taps again to finish.
  * Text is one tap away and shows the whole feed with the input field, but it is the second way.
+ * A text start from home (PWA/Telegram) opens straight in it: the typed first message is queued
+ * below the greeting before the connection is up, and neither the microphone nor the voice of the
+ * sphere comes on by itself. The native shell never gets these props and keeps the voice start.
  *
  * The screen owns the socket: it opens on entry and closes on leaving. Reconnects and the message
  * queue live inside DialogSocket.
@@ -115,6 +140,8 @@ export default function DialogPage({
   saved: startedSaved,
   memoryEnabled,
   listen,
+  initialMode,
+  initialText,
 }: {
   f7router: Router.Router
   dialogId: string
@@ -130,6 +157,10 @@ export default function DialogPage({
   memoryEnabled?: boolean
   /** Opened by the talk button on home: start listening as soon as the connection is up. */
   listen?: boolean
+  /** Home handed over a text start (PWA/Telegram): the conversation opens in the text view. */
+  initialMode?: 'text' | 'voice'
+  /** The text typed on home: shown under the greeting and sent once, when the connection is ready. */
+  initialText?: string
 }) {
   const { auth } = useAuth()
   const user = auth.user
@@ -168,7 +199,8 @@ export default function DialogPage({
     let cancelled = false
     getDialog(dialogId)
       .then((result) => {
-        if (!cancelled && result.ok) setSaidBefore(result.data.messages.some((message) => message.role === 'user'))
+        if (!cancelled && result.ok)
+          setSaidBefore(result.data.messages.some((message) => message.role === 'user'))
       })
       .catch(() => {})
     return () => {
@@ -183,7 +215,8 @@ export default function DialogPage({
   const seenNotes = useRef<Set<string> | null>(null)
   useEffect(() => {
     // Not in a conversation held without memory, and not before it is known which kind this is.
-    if (memoryMode === undefined || memoryMode === DialogMemoryMode.Off || user?.memoryEnabled === false) return
+    if (memoryMode === undefined || memoryMode === DialogMemoryMode.Off || user?.memoryEnabled === false)
+      return
     let stopped = false
     async function poll() {
       try {
@@ -259,7 +292,15 @@ export default function DialogPage({
   const calledRef = useRef(false)
   useEffect(() => () => moodHold.clear(), [moodHold])
   const [state, setState] = useState<DialogSocketState>('connecting')
-  const [mode, setMode] = useState<Mode>('voice')
+  /**
+   * The start home handed over through route props, absorbed once per dialog id: Framework7 delivers
+   * the same props again when the route mounts again, and the first text must not be sent twice.
+   * The native shell keeps the voice start even if an OTA package ever passes these props.
+   */
+  const [handoff] = useState(() =>
+    isNative() ? null : takeDialogHandoff(dialogId, initialMode, initialText),
+  )
+  const [mode, setMode] = useState<Mode>(handoff?.mode === 'text' ? 'text' : 'voice')
   const [draft, setDraft] = useState('')
   const [recording, setRecording] = useState(false)
   /** Read once: the setting lives in the profile, and a conversation keeps the mode it began in. */
@@ -309,7 +350,8 @@ export default function DialogPage({
   const turnStartedAt = useRef(0)
   const replyWait = useRef(REPLY_WAIT_MS)
   const modeRef = useRef<Mode>(mode)
-  const listenOnReady = useRef(listen === true)
+  // A text start never turns the microphone on by itself, whatever `listen` says.
+  const listenOnReady = useRef(listen === true && handoff?.mode !== 'text')
   const caption = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -379,7 +421,8 @@ export default function DialogPage({
     }
     // Home asked for the voice, so the agent's greeting is about to arrive as audio. The tap that led here
     // still counts as the person's gesture on desktop and in WebViews; the player must be awake before the frames.
-    if (listen) void voicePlayer.unlock().catch(onPlaybackFailed)
+    // A text start stays silent: nobody asked for the agent's voice.
+    if (listen && handoff?.mode !== 'text') void voicePlayer.unlock().catch(onPlaybackFailed)
 
     const dialog = createDialogSocket(
       dialogId,
@@ -452,6 +495,15 @@ export default function DialogPage({
       greeting,
     )
     socket.current = dialog
+    // The first text from home goes into the pending queue before connect(): it shows under the
+    // greeting at once, and the socket sends it when the connection is ready and resends it after
+    // a reconnect until the server acknowledges it. Each run of this effect creates a fresh socket,
+    // so the text is queued again for it; across mounts the handoff is absorbed once per dialog id.
+    if (handoff?.text) {
+      // Taken exactly once, so this is the one place the first message from home is counted.
+      trackDialog(AnalyticsEvent.DialogMessageSent, { input: 'text', size: sizeClass(handoff.text.length) })
+      dialog.sendMessage(handoff.text)
+    }
     dialog.connect()
 
     return () => {
@@ -464,6 +516,26 @@ export default function DialogPage({
       void voicePlayer.dispose()
     }
   }, [dialogId, greeting, closeMic])
+
+  // A resumed conversation opens with an empty feed: the socket does not replay what was said, and the
+  // voice view does not need it. The text view shows the whole feed, so its record is read from REST
+  // once the text view is on — on entry with a text start, or on the switch to it. The socket merges it
+  // in: the greeting and a first text still on its way to the server stay.
+  const historyLoaded = useRef(false)
+  useEffect(() => {
+    if (resumed !== true || mode !== 'text' || historyLoaded.current) return
+    historyLoaded.current = true
+    let cancelled = false
+    getDialog(dialogId)
+      .then((result) => {
+        if (cancelled || !result.ok) return
+        socket.current?.setHistory(result.data.messages.map(({ id, role, text }) => ({ id, role, text })))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [dialogId, resumed, mode])
 
   const connected = state === 'ready' || state === 'streaming'
 
@@ -754,7 +826,9 @@ export default function DialogPage({
     void journal.refresh()
     const text = unsavedRef.current
       ? UNSAVED_DONE_TEXT
-      : (summary?.title ? `Забираешь с собой: ${summary.title}` : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
+      : (summary?.title
+          ? `Забираешь с собой: ${summary.title}`
+          : 'Разговор завершён. Я рядом, когда понадоблюсь.') +
         (summary?.recapStatus === 'pending'
           ? ' Итог разговора появится в журнале через минуту.'
           : summary?.recapStatus === 'ready'
@@ -789,7 +863,13 @@ export default function DialogPage({
     closing.open()
     setRecapHost(closing.el.querySelector<HTMLElement>('.rd-remembered-slot'))
     closing.on('closed', () => setRecapHost(null))
-    if (shouldWatchMemoryChanges({ memoryMode, memoryEnabled: user?.memoryEnabled, unsaved: unsavedRef.current })) {
+    if (
+      shouldWatchMemoryChanges({
+        memoryMode,
+        memoryEnabled: user?.memoryEnabled,
+        unsaved: unsavedRef.current,
+      })
+    ) {
       void recap.watch(dialogId, (id) => getMemoryChanges(id))
     }
     // summary is the only dependency: this must fire exactly on the transition out of undefined.
@@ -860,7 +940,9 @@ export default function DialogPage({
     <Page name="dialog" className="rd-dialog-page rd-no-tabbar ph-no-capture">
       <Navbar backLink="Назад" title="Разговор">
         {/* The link shows the stored messages, and the greeting is not one of them: it needs something said. */}
-        {!unsaved && (saidBefore || messages.some((message) => message.role === 'user')) && <ShareNavButton onClick={() => setShareOpened(true)} />}
+        {!unsaved && (saidBefore || messages.some((message) => message.role === 'user')) && (
+          <ShareNavButton onClick={() => setShareOpened(true)} />
+        )}
         {/* What Ryadom remembers, one tap from the conversation. Not in a conversation held without memory. */}
         {memoryMode !== DialogMemoryMode.Off && user?.memoryEnabled !== false && (
           <button
@@ -884,7 +966,12 @@ export default function DialogPage({
         </button>
       </Navbar>
 
-      <CrisisBar ui={crisisUi} onCall={pressCall} onAnswer={answerSafety} onOpenSos={() => openSos({ source: 'dialog' })} />
+      <CrisisBar
+        ui={crisisUi}
+        onCall={pressCall}
+        onAnswer={answerSafety}
+        onOpenSos={() => openSos({ source: 'dialog' })}
+      />
 
       <ShareSheet dialogId={dialogId} opened={shareOpened} onClose={() => setShareOpened(false)} />
       <MemoryNotesSheet opened={notesOpened} onClose={() => setNotesOpened(false)} />
@@ -1052,7 +1139,10 @@ export default function DialogPage({
 
       {recapHost &&
         recapState &&
-        createPortal(<MemoryRecap state={recapState} onRemove={(id) => void removeRecapNote(id)} />, recapHost)}
+        createPortal(
+          <MemoryRecap state={recapState} onRemove={(id) => void removeRecapNote(id)} />,
+          recapHost,
+        )}
 
       <DialogEndSheet
         opened={endOpened}

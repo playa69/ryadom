@@ -9,6 +9,7 @@ import {
   messages,
   modal,
   modalButton,
+  openHomeSettings,
   openProfile,
   openWebApp,
   startAnonymously,
@@ -159,6 +160,8 @@ test('«Без памяти» — не «не сохранять»: разгов
   await expect(memorySwitch).toBeChecked()
 
   await goTo(page, 'Новый разговор')
+  // The memory choice is folded into «Настроить разговор»: open the details before the toggle.
+  await openHomeSettings(page)
   await page.getByTestId('incognito-toggle').click()
   // `openspec/changes/remove-unsaved-dialog-option`, «Независима от «Без памяти»»: отдельной галочки нет.
   await expect(page.getByTestId('unsaved')).toHaveCount(0)

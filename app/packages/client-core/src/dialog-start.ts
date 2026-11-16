@@ -2,6 +2,13 @@ import type { StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 
 /**
+ * The three conversation starters of the Web, PWA and Telegram home screens, kept in one module
+ * so the surfaces cannot drift apart in wording. A suggestion only prefills an editable draft —
+ * it is not a dialog mode and sends nothing by itself.
+ */
+export const DIALOG_START_SUGGESTIONS = ['Хочу выговориться', 'Мне тревожно', 'Просто поговорить'] as const
+
+/**
  * Whether the person is asked something after pressing "start". A plain start returns the dialog they
  * left open (`resumed`); if something was said in it, they decide whether to continue it or to end it
  * and begin a new one. An open dialog with no messages holds nothing to lose, so it is simply continued.

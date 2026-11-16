@@ -48,14 +48,20 @@ const container = cn('mx-auto w-full max-w-[1320px]', gutter)
 export function LegalDocument({ className, children, ...props }: React.ComponentProps<'main'>) {
   return (
     <main
-      className={cn(container, 'pt-14 pb-20 text-foreground max-[720.1px]:pt-8 max-[720.1px]:pb-14', bodyType)}
+      className={cn(
+        container,
+        'pt-14 pb-20 text-foreground max-[720.1px]:pt-8 max-[720.1px]:pb-14',
+        bodyType,
+      )}
       {...props}
     >
       <div
         className={cn(
-          'prose prose-invert max-w-none',
-          // The plugin's palette, replaced with the product's: links in the light blue that reads on the night sky, list marks like the list text.
-          '[--tw-prose-headings:var(--ryadom-text)] [--tw-prose-links:var(--ryadom-brand-400)] [--tw-prose-bullets:var(--ryadom-text-dim)] [--tw-prose-counters:var(--ryadom-text-dim)]',
+          'prose max-w-none',
+          // The plugin's palette, replaced with the product's, so it follows the chosen theme:
+          // links in the action blue, list marks like the list text. `prose-invert` would pin the
+          // body to a fixed light gray that is unreadable on the day sky.
+          '[--tw-prose-body:var(--ryadom-text)] [--tw-prose-headings:var(--ryadom-text)] [--tw-prose-links:var(--ryadom-brand-400)] [--tw-prose-bullets:var(--ryadom-text-dim)] [--tw-prose-counters:var(--ryadom-text-dim)]',
           // "конфиденциальности" at the page-title size is wider than a phone's content column.
           'prose-h1:mt-0 prose-h1:mb-4 prose-h1:text-[clamp(28px,7.4vw,44px)] prose-h1:leading-[1.15] prose-h1:font-[650] prose-h1:tracking-display-tight prose-h1:wrap-break-word prose-h1:hyphens-auto prose-h1:text-balance',
           'prose-h2:mt-11 prose-h2:mb-4 prose-h2:text-[24px] prose-h2:leading-[1.15] prose-h2:font-[650] prose-h2:tracking-display-tight prose-h2:text-balance max-[720.1px]:prose-h2:mt-7',
@@ -75,7 +81,9 @@ export function LegalDocument({ className, children, ...props }: React.Component
 
 /** A page of blocks (download): the shared container, full width. Block padding only: the gutter stays. */
 export function PageMain({ className, ...props }: React.ComponentProps<'main'>) {
-  return <main className={cn(container, 'py-[72px] max-[720.1px]:py-[30px]', bodyType, className)} {...props} />
+  return (
+    <main className={cn(container, 'py-[72px] max-[720.1px]:py-[30px]', bodyType, className)} {...props} />
+  )
 }
 
 /** The page-wide shell without the 720px column, for a page that centers its own block (404). */
@@ -187,10 +195,7 @@ export function TableBody({ className, ...props }: React.ComponentProps<'tbody'>
   return (
     <tbody
       data-slot="table-body"
-      className={cn(
-        '[&>tr:last-child>td]:border-b-0 max-[720.1px]:block max-[720.1px]:w-full',
-        className,
-      )}
+      className={cn('[&>tr:last-child>td]:border-b-0 max-[720.1px]:block max-[720.1px]:w-full', className)}
       {...props}
     />
   )

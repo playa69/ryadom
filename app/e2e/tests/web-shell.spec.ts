@@ -1,18 +1,22 @@
+import type { Page } from '@playwright/test'
 import { APP_URL } from '../playwright.config'
 import {
   accountMenu,
   button,
   closeSidebar,
+  currentTheme,
   drawer,
   expectNoHorizontalOverflow,
   expectSingleSos,
   field,
   goTo,
   homeInput,
+  homeSettings,
   menuButton,
   menuItem,
   nav,
   openAccountMenu,
+  openHomeSettings,
   openProfile,
   openSidebar,
   openWebApp,
@@ -21,12 +25,15 @@ import {
   SIDEBAR_BREAKPOINT,
   signIn,
   sosButton,
+  themeSwitch,
   uniqueEmail,
+  watchApiCalls,
   watchCsp,
   webUrl,
   openSignIn,
 } from '../support/web'
 import { clearMailbox } from '../support/mail'
+import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 
 /**
@@ -141,14 +148,16 @@ test('адаптивность: на входе, регистрации и пе�
     for (const width of [360, 820, 1280, 1920]) {
       await page.setViewportSize({ width, height: 800 })
       await expectNoHorizontalOverflow(page)
-      // The form stays inside the window at every width, whichever way the card is laid out. The first
-      // screen has no address field: its edge to hold is the line about the agreement.
+      // The form stays inside the window at every width, whichever way the card is laid out. Home has
+      // no address field: its edge to hold is the line about the agreement at the foot of the page.
       const edge = path === '/home' ? page.getByTestId('consent-notice') : field(page, 'email')
+      await expect(edge, `${path}@${width}: нижняя строка на месте`).toBeVisible()
       const box = await edge.boundingBox()
       expect(box!.x, `${path}@${width}: форма слева`).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width, `${path}@${width}: форма справа`).toBeLessThanOrEqual(width)
       await expect(
-        button(page, path === '/home' ? 'Продолжить' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
+        // A newcomer sees home itself: its start button reads «Поговорить» with an empty box.
+        button(page, path === '/home' ? 'Поговорить' : path === '/login' ? 'Войти' : 'Создать аккаунт'),
       ).toBeVisible()
     }
   }
@@ -186,6 +195,11 @@ test('каркас: сайдбар слева на широком окне, шт
     const at = `${width}px`
     const persistent = width >= SIDEBAR_BREAKPOINT
     await page.setViewportSize({ width, height })
+    // The relayout after a resize is a render behind: without waiting for it, the drawer's state of
+    // the previous width would be read as the new width's, and «Меню» meant for the drawer would
+    // fold the wide window's column into its rail instead.
+    if (persistent) await expect(nav(page), `${at}: колонка собралась`).toBeVisible()
+    else await expect(nav(page), `${at}: шторка собралась`).toBeHidden()
     // On a phone this is also the drawer's first check: a link to the page that is already open
     // changes no path, and the drawer still has to go.
     await goTo(page, 'Новый разговор')
@@ -362,13 +376,215 @@ test('меню аккаунта: профиль и выход', async ({ page })
   await expect(page).toHaveURL(/\/login$/)
   await expect(button(page, 'Войти')).toBeVisible({ timeout: 20_000 })
 
-  // Signed out means signed out: home without a session is the first screen, not the account ...
+  // Signed out means signed out: home without a session belongs to someone new, who gets home itself —
+  // the consent window asks at the first action (`openspec/changes/add-fast-dialog-start`, «Согласие при
+  // первом действии») ...
   await openWebApp(page, '/home')
-  await expect(page.getByTestId('terms-gate')).toBeVisible()
+  await expect(page.getByTestId('terms-gate')).toHaveCount(0)
+  await expect(homeInput(page)).toBeVisible()
   await openSignIn(page)
   await expect(button(page, 'Войти')).toBeVisible()
   // ... and the account is still there for the next sign-in.
   await signIn(page, email)
   await expect(page).toHaveURL(/\/home$/)
   await expect(page.getByTestId('home-greeting')).toContainText('Тест')
+})
+
+// `openspec/changes/add-fast-dialog-start`, «Главный экран веб-клиента» и «Согласие при первом действии».
+// The theme tests fix the local hour with the mocked clock: the palette is chosen by the boot script
+// before the first paint, from the device time (07:00–21:59 light, 22:00–06:59 dark) or the manual
+// choice stored under THEME_STORAGE_KEY of `@ryadom/client-core/theme`.
+const THEME_STORAGE_KEY = 'ryadom.theme'
+
+/** A fixed local moment for the schedule tests (the context's time zone is Europe/Moscow). */
+function at(hour: number, minute: number, second = 0): Date {
+  return new Date(2026, 10, 16, hour, minute, second)
+}
+
+/**
+ * The palette the page wears: the `data-theme` attribute the tokens key on, the `dark` class, and the
+ * two metas that must follow the theme — `color-scheme` and the browser chrome color, which the boot
+ * script sets to the palette's own paper color, whatever literal the tokens use.
+ */
+async function expectTheme(page: Page, theme: 'light' | 'dark'): Promise<void> {
+  const root = page.locator('html')
+  if (theme === 'light') {
+    await expect(root).toHaveAttribute('data-theme', 'light')
+    await expect(root).not.toHaveClass(/(^|\s)dark(\s|$)/)
+  } else {
+    await expect(root).not.toHaveAttribute('data-theme', 'light')
+    await expect(root).toHaveClass(/(^|\s)dark(\s|$)/)
+  }
+  expect(await currentTheme(page)).toBe(theme)
+  await expect(page.locator('meta[name="color-scheme"]').first()).toHaveAttribute('content', theme)
+  const paper = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--ryadom-paper').trim(),
+  )
+  expect(paper, 'у палитры есть цвет фона').not.toBe('')
+  await expect(page.locator('meta[name="theme-color"]').first()).toHaveAttribute('content', paper)
+}
+
+/**
+ * Home's start area for someone new (`openspec/changes/add-fast-dialog-start`, «Главный экран
+ * веб-клиента»: «Подсказка подставляет черновик», «Настройки не конкурируют с началом»): the three
+ * suggestions only fill an editable draft and send nothing, and the optional memory choice is folded
+ * into the collapsed «Настроить разговор», so the field and the voice start stay the main actions.
+ */
+test('главная нового человека: подсказки подставляют черновик без запроса, «Настроить разговор» свёрнуто', async ({
+  page,
+}) => {
+  const apiCalls = watchApiCalls(page)
+  await openWebApp(page)
+  await expect(page).toHaveURL(/\/home$/)
+  await expect(homeInput(page)).toBeVisible()
+  await expect(page.getByTestId('home-talk')).toBeEnabled()
+  await expect(page.getByTestId('home-mic')).toBeVisible()
+
+  // The three shared texts sit above the box.
+  await expect(page.getByTestId('home-suggestions').getByRole('button')).toHaveText([
+    'Хочу выговориться',
+    'Мне тревожно',
+    'Просто поговорить',
+  ])
+  // «Настроить разговор» is collapsed: the memory choice inside does not compete with the start.
+  const settings = homeSettings(page)
+  await expect(settings).toBeVisible()
+  await expect(settings).not.toHaveJSProperty('open', true)
+  await expect(page.getByTestId('memory-switch')).toBeHidden()
+  await expectNoHorizontalOverflow(page)
+  await step(
+    page,
+    'home-fast-start',
+    'Главная до согласия: подсказки над полем, «Настроить разговор» свёрнуто',
+  )
+
+  // A pick only fills the draft: editable, no account, no dialog, no request.
+  await page.getByTestId('home-suggestion-2').click()
+  await expect(homeInput(page)).toHaveValue('Мне тревожно')
+  await homeInput(page).fill('Мне тревожно уже неделю')
+  await expect(page.getByTestId('home-talk')).toHaveAccessibleName('Отправить')
+  expect(apiCalls(), 'подсказка и правка черновика не создают запросов').toEqual([])
+  await step(
+    page,
+    'suggestion-draft',
+    'Подсказка подставила редактируемый черновик, кнопка стала «Отправить»',
+  )
+
+  // Inside the settings is the same optional memory choice as before.
+  await openHomeSettings(page)
+  await expect(page.getByTestId('memory-switch')).toBeVisible()
+  await expect(page.getByTestId('memory-switch-toggle')).toContainText('Запоминать важное')
+  await step(page, 'settings-open', '«Настроить разговор» раскрыто: внутри прежний выбор памяти')
+  expect(apiCalls(), 'и раскрытие настроек не создаёт запросов').toEqual([])
+})
+
+/**
+ * The day/night palette by the local clock (`openspec/changes/add-fast-dialog-start`, «Русскоязычный
+ * интерфейс и оформление»: «Дневное оформление», «Ночное оформление», «Границы темы»): light inside
+ * [07:00, 22:00), dark otherwise, decided before the first paint, with `color-scheme` and the browser
+ * chrome color to match.
+ */
+test('тема главной следует местному времени: день, ночь и границы расписания', async ({ page }) => {
+  await page.clock.install({ time: at(12, 0) })
+  await openWebApp(page)
+  await expect(homeInput(page)).toBeVisible()
+  await expectTheme(page, 'light')
+  await step(page, 'theme-day', 'Днём (12:00) главная светлая: тёмный текст на светлом фоне')
+
+  await page.clock.setSystemTime(at(23, 0))
+  await page.reload({ waitUntil: 'networkidle' })
+  await expect(homeInput(page)).toBeVisible()
+  await expectTheme(page, 'dark')
+  await step(page, 'theme-night', 'Ночью (23:00) главная тёмная')
+
+  // The edges of the schedule itself: 06:59 is still night, 07:00 day; 21:59 still day, 22:00 night.
+  for (const [hour, minute, theme] of [
+    [6, 59, 'dark'],
+    [7, 0, 'light'],
+    [21, 59, 'light'],
+    [22, 0, 'dark'],
+  ] as const) {
+    await page.clock.setSystemTime(at(hour, minute))
+    await page.reload({ waitUntil: 'networkidle' })
+    await expect(homeInput(page)).toBeVisible()
+    await expectTheme(page, theme)
+  }
+})
+
+/**
+ * «Смена темы без перезагрузки»: an open client arms a timer for the next 07:00/22:00 boundary and
+ * repaints there by itself, keeping what was typed.
+ */
+test('тема меняется на границе расписания без перезагрузки и потери черновика', async ({ page }) => {
+  await page.clock.install({ time: at(21, 59, 30) })
+  await openWebApp(page)
+  await expect(homeInput(page)).toBeVisible()
+  await expectTheme(page, 'light')
+
+  await homeInput(page).fill('Черновик перед границей темы')
+  await page.clock.runFor(31_000)
+  await expectTheme(page, 'dark')
+  await expect(homeInput(page)).toHaveValue('Черновик перед границей темы')
+  await step(page, 'theme-boundary-flip', 'На границе 22:00 тема сменилась сама, черновик на месте')
+})
+
+/**
+ * The manual switch («Ручное переключение», «Ручной выбор сохраняется», «Светлая тема системы»): tap and
+ * keyboard flip the palette at once and without a request, the choice is stored on the device, wins over
+ * the schedule and is not reset at a boundary; the control is a `switch` of at least 44×44 that stands
+ * in the header right before SOS and does not cover it. The system palette is never read.
+ */
+test('переключатель темы: мышь и клавиатура, сохранение и приоритет над расписанием; SOS не перекрыт', async ({
+  page,
+}) => {
+  const apiCalls = watchApiCalls(page)
+  await page.clock.install({ time: at(23, 0) })
+  // The OS palette must not matter: a light system theme leaves the schedule's dark one.
+  await page.emulateMedia({ colorScheme: 'light' })
+  await openWebApp(page)
+  await expect(homeInput(page)).toBeVisible()
+  await expectTheme(page, 'dark')
+
+  const toggle = themeSwitch(page)
+  await expect(toggle).toHaveAttribute('role', 'switch')
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
+  // The name is the action the next press performs.
+  await expect(toggle).toHaveAccessibleName('Включить светлую тему')
+  const toggleBox = (await toggle.boundingBox())!
+  expect(toggleBox.width, 'зона нажатия, ширина').toBeGreaterThanOrEqual(44)
+  expect(toggleBox.height, 'зона нажатия, высота').toBeGreaterThanOrEqual(44)
+  // Right before SOS, without covering it.
+  const sosBox = (await sosButton(page).boundingBox())!
+  expect(toggleBox.x + toggleBox.width, 'переключатель левее SOS').toBeLessThanOrEqual(sosBox.x + 1)
+  await expectSingleSos(page)
+  await step(page, 'theme-switch-night', 'Ночью переключатель показывает полумесяц, в шапке перед SOS')
+
+  // A tap flips the palette at once, keeps the draft and stores the choice on this device only.
+  await homeInput(page).fill('Черновик при смене темы')
+  await toggle.click()
+  await expectTheme(page, 'light')
+  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  await expect(toggle).toHaveAccessibleName('Включить тёмную тему')
+  await expect(homeInput(page)).toHaveValue('Черновик при смене темы')
+  expect(await page.evaluate((key) => localStorage.getItem(key), THEME_STORAGE_KEY)).toBe('light')
+  expect(apiCalls(), 'переключение темы не отправляет запросов').toEqual([])
+  await step(page, 'theme-switch-day', 'После нажатия — светлая тема и солнце, черновик сохранён')
+
+  // The keyboard flips it back.
+  await toggle.focus()
+  await page.keyboard.press('Enter')
+  await expectTheme(page, 'dark')
+  expect(await page.evaluate((key) => localStorage.getItem(key), THEME_STORAGE_KEY)).toBe('dark')
+
+  // The schedule boundary does not reset the manual choice: past 07:00 the schedule says light,
+  // the stored dark stays.
+  await page.clock.runFor(9 * 3_600_000)
+  await expectTheme(page, 'dark')
+
+  // …and the choice survives a reload, still winning over the (now daytime) schedule.
+  await page.reload({ waitUntil: 'networkidle' })
+  await expect(homeInput(page)).toBeVisible()
+  await expectTheme(page, 'dark')
+  await step(page, 'theme-manual-kept', 'Ручной выбор пережил границу 07:00 и перезагрузку: тема не сброшена')
+  expect(apiCalls(), 'за весь сценарий ни одного запроса от имени человека').toEqual([])
 })

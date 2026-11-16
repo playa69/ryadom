@@ -1,7 +1,15 @@
-@import "@ryadom/ui/globals.css";
+@import '@ryadom/ui/globals.css';
 @plugin "@tailwindcss/typography";
 
 /* Tailwind scans the app's own sources; the shared components are declared in the ui package. */
 @source "../app/**/*.{ts,tsx}";
 @source "../components/**/*.{ts,tsx}";
 @source "../lib/**/*.{ts,tsx}";
+
+/*
+ * The day sky has no stars: the body background lists --ryadom-stars as its first layer, and
+ * `none` drops just that layer in the light palette while the aurora washes stay.
+ */
+:root[data-theme='light'] {
+  --ryadom-stars: none;
+}

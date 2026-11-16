@@ -20,6 +20,7 @@ import {
   watchCsp,
 } from '../support/web'
 import { clearMailbox } from '../support/mail'
+import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 import { expectSpoken, playedBy, setAgentSpeech, spokenBy } from '../support/speech'
 
@@ -121,7 +122,10 @@ test('разговор в вебе: приветствие, ответ, криз
   const dock = (await input.boundingBox())!
   expect(dock.y + dock.height, 'поле ввода внизу окна').toBeGreaterThanOrEqual(viewport.height - 80)
   expect(dock.y + dock.height, 'поле ввода в окне').toBeLessThanOrEqual(viewport.height)
-  expect((await page.getByTestId('dialog-feed').boundingBox())!.width, 'колонка чтения не шире 768px').toBeLessThanOrEqual(770)
+  expect(
+    (await page.getByTestId('dialog-feed').boundingBox())!.width,
+    'колонка чтения не шире 768px',
+  ).toBeLessThanOrEqual(770)
   await shot(page, 'web-dialog-start')
 
   await input.fill(FIRST_MESSAGE)
@@ -149,7 +153,9 @@ test('разговор в вебе: приветствие, ответ, криз
   await input.fill('не хочу жить')
   await input.press('Enter')
   // The help lines appear on their own instead of waiting for the person to press SOS.
-  await expect(modal(page).getByRole('heading', { name: 'Сейчас важно поговорить с живым человеком' })).toBeVisible({
+  await expect(
+    modal(page).getByRole('heading', { name: 'Сейчас важно поговорить с живым человеком' }),
+  ).toBeVisible({
     timeout: 30_000,
   })
   await expect(modal(page).getByRole('link', { name: /112/ })).toBeVisible()
@@ -204,7 +210,10 @@ test('разговор в вебе: приветствие, ответ, криз
   // The header holds the h1: the conversation's title, with the way back beside it.
   await expect(pageTitle(page)).toHaveText(TAKEAWAY, { timeout: 20_000 })
   await expect(page.getByTestId('journal-summary')).toBeVisible({ timeout: 20_000 })
-  const said = page.getByTestId('journal-messages').getByTestId('dialog-message').filter({ hasText: FIRST_MESSAGE })
+  const said = page
+    .getByTestId('journal-messages')
+    .getByTestId('dialog-message')
+    .filter({ hasText: FIRST_MESSAGE })
   await expect(said).toHaveCount(1)
   await expect(said).toHaveAttribute('data-role', 'user')
   await expectSingleSos(page)
@@ -274,6 +283,11 @@ test('с главной: набранный текст — первое сооб
   expect(roles).toEqual(['assistant', 'user', 'assistant'])
   await expectSingleSos(page)
   await expectNoHorizontalOverflow(page)
+  await step(
+    page,
+    'home-text-first',
+    'Текстовый старт: приветствие выше, набранная фраза — первое сообщение, ровно один раз',
+  )
   await shot(page, 'web-dialog-from-home')
 
   // The conversation is already in the sidebar, marked as not finished, and it is the open page.
@@ -294,6 +308,23 @@ test('с главной: набранный текст — первое сооб
   // The live region holds the latest reply as plain text (a message in the feed also carries a hidden "Рядом:").
   await expect(page.getByTestId('dialog-live')).not.toBeEmpty()
   const lastReply = ((await page.getByTestId('dialog-live').textContent()) ?? '').trim()
+
+  // Browser "back" and "forward" revisit the conversation without the spent handoff: the first text
+  // is not sent again and the microphone does not turn on by itself
+  // (`openspec/changes/add-fast-dialog-start`, «(Web) Текст с главной уходит один раз»).
+  await page.goBack()
+  await expect(page).toHaveURL(/\/home$/)
+  await page.goForward()
+  await expect(page).toHaveURL(dialogUrl)
+  await expect(user, 'после «назад» и «вперёд» дубля нет').toHaveCount(1, { timeout: 30_000 })
+  await expect(assistant).toHaveCount(2)
+  await expect(page.getByTestId('dialog-voice'), 'микрофон сам не включился').toHaveCount(0)
+  await expect(dialogInput(page)).toBeVisible()
+  await step(
+    page,
+    'dialog-back-no-resend',
+    '«Назад» и «вперёд»: первый текст не ушёл повторно, голос не включился',
+  )
 
   // "New conversation" while this one is open: the same conversation, not a second one.
   await goTo(page, 'Новый разговор')
@@ -421,4 +452,49 @@ test('агент без озвучки: шар в вебе читает прив
   } finally {
     await setAgentSpeech('auto')
   }
+})
+
+/**
+ * A failed start keeps the person on home with the draft, and a retry goes without the consent
+ * window: the answer was given this session already (`openspec/changes/add-fast-dialog-start`,
+ * «Согласие при первом действии» — «Ошибка после подтверждения», «(Web) Старт не удался»).
+ * Here the account and the consents succeed (the window did that), and only the start itself fails.
+ */
+test('старт не удался: сообщение под полем, черновик на месте, повтор без окна согласия', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await openWebApp(page)
+  await expect(page).toHaveURL(/\/home$/)
+  await expect(homeInput(page)).toBeVisible()
+
+  // A guest types and confirms the consent window; the conversation start itself then fails.
+  await homeInput(page).fill('Сегодня был длинный день')
+  await page.getByTestId('home-talk').click()
+  await expect(modal(page).getByTestId('consent-modal')).toBeVisible()
+  await modal(page).getByTestId('data-consent-toggle').check()
+  await page.route('**/api/dialogs', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+      : route.fallback(),
+  )
+  await modal(page).getByTestId('consent-continue').click()
+
+  await expect(page).toHaveURL(/\/home$/)
+  await expect(page.getByTestId('form-error')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('form-error')).not.toBeEmpty()
+  await expect(homeInput(page)).toHaveValue('Сегодня был длинный день')
+  await expect(page.getByTestId('home-talk')).toBeEnabled()
+  await step(page, 'start-failed-draft', 'Старт не удался: ошибка под полем, черновик сохранён, окна нет')
+
+  // The retry goes straight to the start: the window does not come back, the text leaves once.
+  await page.unroute('**/api/dialogs')
+  await page.getByTestId('home-talk').click()
+  await expect(modal(page), 'повторное окно согласия не открывается').toHaveCount(0)
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
+  await expect(messages(page, 'user').first()).toContainText('Сегодня был длинный день')
+  await expect(messages(page, 'assistant')).toHaveCount(2, { timeout: 30_000 })
+  await expect(messages(page, 'user'), 'текст ушёл ровно один раз').toHaveCount(1)
+  await step(page, 'start-retried', 'Повтор без окна: разговор открыт, текст ушёл первым сообщением один раз')
 })

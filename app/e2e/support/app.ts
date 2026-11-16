@@ -31,10 +31,15 @@ export function field(page: Page, name: string) {
   return screen(page).locator(`input[name="${name}"]`)
 }
 
-/** A button whether it is a `button` or a Framework7 `a`. */
+/**
+ * A button whether it is a `button` or a Framework7 `a`. A string name matches the whole accessible
+ * name: since `openspec/changes/add-fast-dialog-start` home carries the suggestion chips, and the
+ * substring default would let the chip «Просто поговорить» steal a lookup for «Поговорить».
+ */
 export function button(page: Page, name: string | RegExp) {
   const scope = screen(page)
-  return scope.getByRole('button', { name }).or(scope.getByRole('link', { name })).first()
+  const options = typeof name === 'string' ? { name, exact: true } : { name }
+  return scope.getByRole('button', options).or(scope.getByRole('link', options)).first()
 }
 
 /**
@@ -73,15 +78,42 @@ export function sheetButton(page: Page, name: string | RegExp) {
   return scope.getByRole('button', { name }).or(scope.getByRole('link', { name })).first()
 }
 
-export async function openApp(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
+/**
+ * The consent sheet of the first text or voice start (`openspec/changes/add-fast-dialog-start`,
+ * «Согласие при первом действии»), open over home. Other sheets share `.sheet-modal.modal-in`,
+ * so this one is picked by its body.
+ */
+export function consentSheet(page: Page) {
+  return page.locator('.sheet-modal.modal-in:has([data-testid="consent-sheet"])')
+}
+
+/**
+ * The «Настроить разговор» of home (PWA and Telegram), opened: a native details, collapsed by
+ * default. Renders only while there is a memory choice to fold into it, which the client learns
+ * from the server — hence the wait.
+ */
+export async function openConversationSettings(page: Page) {
+  const settings = screen(page).getByTestId('home-settings')
+  await expect(settings).toBeVisible({ timeout: 20_000 })
+  if ((await settings.getAttribute('open')) === null) await settings.locator('summary').click()
+  return settings
+}
+
+/** The page must not scroll sideways at any width: that is the first thing a narrow screen breaks. */
+export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
+  const overflow = await page.evaluate(
+    () =>
+      Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) -
+      document.documentElement.clientWidth,
+  )
+  expect(overflow, 'страница шире окна').toBeLessThanOrEqual(0)
+}
+
+export async function openApp(page: Page): Promise<void> {
   await page.goto(`${PWA_URL}/`)
-  // The sheet "Рядом теперь запоминает важное" would cover home of a new account: unless a test is about it,
-  // it is already answered, like for a person who has seen it. Read when home opens.
-  if (!options.keepMemoryInvite) {
-    await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.memory-invite-dismissed')
-  }
-  // A new visitor lands on the consent gate, someone with a session on the active home.
-  await expect(button(page, 'Поговорить').or(button(page, 'Продолжить'))).toBeVisible({ timeout: 30_000 })
+  // A new visitor and someone with a session both land on the active home now
+  // (`openspec/changes/add-fast-dialog-start`): the agreements are asked in a sheet at the first start.
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
   // The PWA install banner covers the bottom of the screen and is not needed in the test browser.
   const dismiss = page.getByRole('button', { name: 'Скрыть' })
   if (await dismiss.isVisible().catch(() => false)) await dismiss.click()
@@ -139,7 +171,7 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(code)
 
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await expect(screen(page).getByTestId('data-consent')).toHaveCount(0)
+  await expect(screen(page).getByTestId('data-consent-toggle')).not.toBeVisible()
 }
 
 export async function openTab(page: Page, label: 'Главная' | 'Дневник' | 'Профиль'): Promise<void> {

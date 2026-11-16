@@ -8,6 +8,7 @@ import {
   messages,
   modal,
   modalButton,
+  openHomeSettings,
   openProfile,
   openWebApp,
   startAnonymously,
@@ -128,6 +129,9 @@ test('память в вебе: согласие → разговор → лис
 
   // ── a conversation, and the notes it left, in groups ────────────────────────────────────────
   await goTo(page, 'Новый разговор')
+  // The memory choice is folded into the collapsed «Настроить разговор»
+  // (`openspec/changes/add-fast-dialog-start`, «Настройки не конкурируют с началом»).
+  await openHomeSettings(page)
   await expect(page.getByTestId('incognito-toggle')).toHaveAttribute('aria-pressed', 'false')
   await talkAndEnd(page, INTRO)
 
@@ -292,6 +296,8 @@ test('память в вебе: разговор «Без памяти» нич�
   await expect(memorySwitch(page)).toBeChecked()
 
   await goTo(page, 'Новый разговор')
+  // `openspec/changes/add-fast-dialog-start`: the switch waits inside the collapsed «Настроить разговор».
+  await openHomeSettings(page)
   // `openspec/changes/remove-unsaved-dialog-option`, «Подписи без срока».
   await expect(page.getByTestId('incognito-toggle')).toHaveText('Запоминать разговор')
   await expect(page.getByTestId('incognito')).toContainText(
@@ -330,11 +336,19 @@ test('«Запоминать важное» на главной: окно сам
   test.setTimeout(180_000)
   await openWebApp(page)
   await startAnonymously(page, { keepMemoryInvite: true })
+  // `openspec/changes/add-fast-dialog-start`, «Настройки не конкурируют с началом»: the choice folds
+  // into «Настроить разговор», collapsed by default, so it does not compete with the start.
+  const settings = page.getByTestId('home-settings')
+  await expect(settings).toBeVisible({ timeout: 20_000 })
+  await expect(settings).not.toHaveJSProperty('open', true)
   const toggle = page.getByTestId('memory-switch-toggle')
-  await expect(toggle).toBeVisible({ timeout: 20_000 })
+  await expect(toggle).toBeHidden()
   // Nothing interrupts: no sheet opens by itself.
   await page.waitForTimeout(2_000)
   await expect(modal(page)).toHaveCount(0)
+  await openHomeSettings(page)
+  await expect(toggle).toBeVisible()
+  await step(page, 'memory-settings-open', '«Настроить разговор» раскрыто: внутри «Запоминать важное»')
   await shot(page, 'web-memory-switch')
 
   // The consent sheet declined: memory stays off.
@@ -689,6 +703,7 @@ test('блока «Я запомнил» нет: «Без памяти», пау
 
   // A conversation «Без памяти» says nothing to remember, however much the person told.
   await goTo(page, 'Новый разговор')
+  await openHomeSettings(page)
   await page.getByTestId('incognito-toggle').click()
   await expect(page.getByTestId('incognito-toggle')).toHaveAttribute('aria-pressed', 'true')
   await talk(page, INTRO)

@@ -1,5 +1,12 @@
 import type { Page } from '@playwright/test'
-import { button, openApp, openTab, sheetButton, startAnonymously } from '../support/app'
+import {
+  button,
+  openApp,
+  openConversationSettings,
+  openTab,
+  sheetButton,
+  startAnonymously,
+} from '../support/app'
 import { step } from '../support/evidence'
 import { expectInsideViewport } from '../support/layout'
 import { expect, test } from '../support/fixtures'
@@ -66,7 +73,9 @@ test('память в приложении: согласие → разгово�
   await button(page, 'Поговорить').click()
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  const input = page.getByPlaceholder('Напиши, что происходит')
+  // Scoped to the current page: home stays in the DOM with its own first-message field
+  // (`openspec/changes/add-fast-dialog-start`).
+  const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')
   await expect(input).toBeVisible()
   await input.fill(SAID)
   await page.getByRole('button', { name: 'Отправить' }).click()
@@ -190,15 +199,20 @@ test('«Запоминать важное» на главной: окно сам
   shot,
 }) => {
   test.setTimeout(120_000)
-  await openApp(page, { keepMemoryInvite: true })
+  await openApp(page)
   await startAnonymously(page)
 
   const home = page.locator('.page-current')
-  const row = home.getByTestId('memory-switch')
-  await expect(row).toBeVisible({ timeout: 20_000 })
+  // The choice folds into the collapsed «Настроить разговор» (`openspec/changes/add-fast-dialog-start`):
+  // the switch waits inside, out of the way of the field and the button.
+  await expect(home.getByTestId('home-settings')).toBeVisible({ timeout: 20_000 })
+  await expect(home.getByTestId('memory-switch')).not.toBeVisible()
   // Nothing interrupts: no sheet opens by itself.
   await page.waitForTimeout(2500)
   await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await openConversationSettings(page)
+  const row = home.getByTestId('memory-switch')
+  await expect(row).toBeVisible()
   await shot(page, 'memory-switch')
 
   // A declined consent leaves memory off and the switch off.
@@ -263,11 +277,15 @@ async function say(page: Page, text: string): Promise<void> {
   await button(page, 'Поговорить').click()
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  const input = page.getByPlaceholder('Напиши, что происходит')
+  // Scoped to the current page: home stays in the DOM with its own first-message field.
+  const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')
   await expect(input).toBeVisible()
   await input.fill(text)
   await page.getByRole('button', { name: 'Отправить' }).click()
-  await expect(page.locator('.message-sent')).toHaveCount(2, { timeout: 20_000 })
+  // The acknowledged message is reconciled in place, not drawn as a second copy.
+  await expect(page.locator('.page-current .message-sent').filter({ hasText: text })).toHaveCount(1, {
+    timeout: 20_000,
+  })
 }
 
 test('«Запомнил: … · Убрать»: новая чувствительная заметка → строка по опросу → «Убрать» удаляет', async ({
@@ -344,7 +362,11 @@ const pageScroll = (page: Page) =>
 async function talk(page: Page, words: string, options: { withoutMemory?: boolean } = {}): Promise<void> {
   const here = page.locator('.page-current')
   await openTab(page, 'Главная')
-  if (options.withoutMemory) await here.getByTestId('incognito').locator('.toggle').click()
+  if (options.withoutMemory) {
+    // The switch folds into the collapsed «Настроить разговор» (`openspec/changes/add-fast-dialog-start`).
+    await openConversationSettings(page)
+    await here.getByTestId('incognito').locator('.toggle').click()
+  }
   await button(page, 'Поговорить').click()
   await expect(here.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await here.getByRole('button', { name: 'Писать текстом' }).click()

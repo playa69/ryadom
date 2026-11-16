@@ -26,7 +26,10 @@ import { AppHeader } from './AppHeader'
 import { useSiteUrl } from './AppShell'
 import Breathing from './Breathing'
 import ChatComposer from './ChatComposer'
-import TermsGate from './TermsGate'
+import ConsentModal from './ConsentModal'
+import ConversationSettings from './ConversationSettings'
+import DialogStartSuggestions from './DialogStartSuggestions'
+import ThemeSwitch from './ThemeSwitch'
 import { BUTTON, FOCUS_RING } from './controls'
 import { rememberDialogStart } from './dialog-start'
 import MemoryConsent from './MemoryConsent'
@@ -41,15 +44,23 @@ import { unlockSpeech } from '@ryadom/client-core/voice/speech'
  * something said in it), the start waits for their answer: continue it, end it and begin a new one,
  * or close the question and stay here with the draft untouched.
  *
- * Someone new first passes a separate consent gate. Home then opens with active controls and no
- * repeated tick; the first action makes the account for this device and records the consents before
- * the conversation starts.
+ * Above the box sit the start suggestions, the three texts shared with the mobile client through
+ * `@ryadom/client-core`. A pick only fills the draft — no account, no dialog, no request until the
+ * person sends. Home holds the draft itself and hands it to the composer, so a suggestion can land
+ * in the box and a failed start keeps what was typed.
  *
- * Memory is a choice made here, not a sheet that interrupts: with memory off, "Запоминать важное" turns it
- * on (with the consent sheet the profile uses; for a guest, once the account exists); with memory on, a
- * switch "Без памяти" holds the next conversation without it, and after a conversation the card
- * "Я запомнил" shows up here. A tick "Не сохранять этот разговор" is a choice of its own, always there:
- * that conversation leaves nothing behind, memory or no memory. None of them is needed to start.
+ * Someone new gets this same home at once: typing, a suggestion and the theme switch are all local.
+ * The first action that would start a conversation opens the consent window over the page instead
+ * (ConsentModal), with the draft and the text/voice intent kept beside it. Closing the window
+ * changes nothing; "Продолжить" runs the waiting start, whose first step makes the account for this
+ * device and records the consents. An answer given in this session is not asked again: a failed
+ * start retries without the window.
+ *
+ * Memory is a choice made here, not a sheet that interrupts, and it folds into the collapsed
+ * "Настроить разговор" so it does not compete with the start: with memory off, "Запоминать важное"
+ * turns it on (with the consent sheet the profile uses; for a guest, once the account exists); with
+ * memory on, a switch "Без памяти" holds the next conversation without it. None of them is needed
+ * to start.
  *
  * There are no modes to pick: one conversation, which starts as `vent` (the server ignores the mode).
  */
@@ -73,7 +84,12 @@ export default function HomeScreen() {
   const siteUrl = useSiteUrl()
   /** Nobody signed in yet: the first message makes the account after an explicit consent. */
   const guest = status !== 'authenticated'
+  /** The consent window's answer, kept for the session: a failed start retries without the window. */
   const [dataConsented, setDataConsented] = useState(false)
+  /** The consent window over home: the press that opened it waits in `consentIntent`. */
+  const [consentOpen, setConsentOpen] = useState(false)
+  /** The waiting start: draft and voice/text intent survive the window's close (Esc, backdrop, cross). */
+  const [consentIntent, setConsentIntent] = useState<{ draft: string; listen: boolean } | null>(null)
   // Computed in the browser only: the server's clock and time zone are not the person's.
   const [hello, setHello] = useState('')
   useEffect(() => setHello(greeting(user?.name ?? null)), [user?.name])
@@ -81,6 +97,8 @@ export default function HomeScreen() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  /** Home holds the draft so a start suggestion can fill the box; a failed start keeps it. */
+  const [draft, setDraft] = useState('')
   /** A ref beside the state: two presses in one tick would both see `loading` as still false. */
   const starting = useRef(false)
   /** Not mounted any more (the person went elsewhere while the request was out): nothing is handed over. */
@@ -116,6 +134,8 @@ export default function HomeScreen() {
   const [memoryError, setMemoryError] = useState('')
   const choice = chosenStart(memoryEnabled, withoutMemory, false)
   const wanted = choice.memory
+  /** "Настроить разговор" renders only when there is a memory choice to fold into it. */
+  const showSettings = memoryEnabled === true || guest || memoryState?.available === true
 
   // Whether to offer "Без памяти" is asked each time home opens: the person's switch and whether the
   // server uses memory at all can both change elsewhere. A failed request leaves what was known.
@@ -215,8 +235,32 @@ export default function HomeScreen() {
     }
   }
 
+  /**
+   * The composer's send and microphone. Without a consent recorded (or given in the window this
+   * session) the first action only opens the consent window: no account, no dialog, no request.
+   */
+  function requestStart(text: string, listen: boolean) {
+    if (starting.current) return
+    if (guest && !dataConsented) {
+      setConsentIntent({ draft: text, listen })
+      setConsentOpen(true)
+      return
+    }
+    void start(text, listen)
+  }
+
+  /** "Продолжить" in the consent window: the answer is recorded by the waiting start, which now runs. */
+  function confirmConsent() {
+    const intent = consentIntent
+    if (!intent || starting.current) return
+    setDataConsented(true)
+    setConsentOpen(false)
+    setConsentIntent(null)
+    void start(intent.draft, intent.listen)
+  }
+
   async function start(draft: string, listen: boolean) {
-    if (starting.current || (guest && !dataConsented)) return
+    if (starting.current) return
     // A conversation that opens on the voice has the sphere speak first: this press lets speech through.
     unlockSpeech()
     starting.current = true
@@ -227,7 +271,7 @@ export default function HomeScreen() {
     let { memory: wanted, saved } = choice
     try {
       if (guest) {
-        // The entry gate has enabled this action: make the account and record its consents, then memory
+        // The consent window has enabled this action: make the account and record its consents, then memory
         // if the person asked for it.
         track(AnalyticsEvent.CtaClicked, { cta: 'start_anonymous', placement: 'welcome' })
         try {
@@ -330,22 +374,9 @@ export default function HomeScreen() {
     setPending(null)
   }
 
-  if (guest && !dataConsented) {
-    return (
-      <>
-        <AppHeader title="Новый разговор" titleIsHeading={false} />
-        <TermsGate
-          termsUrl={`${siteUrl}/terms`}
-          consentUrl={`${siteUrl}/consent`}
-          onContinue={() => setDataConsented(true)}
-        />
-      </>
-    )
-  }
-
   return (
     <>
-      <AppHeader title="Новый разговор" titleIsHeading={false} />
+      <AppHeader title="Новый разговор" titleIsHeading={false} actions={<ThemeSwitch />} />
       {/*
         Two parts split 4:6 at one fixed line: the sphere and the greeting sit above it, the box and
         what follows below. The box's top edge therefore stays put while a long draft grows it
@@ -371,20 +402,26 @@ export default function HomeScreen() {
         </div>
 
         <div className="flex flex-[6] flex-col items-center gap-4 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] short:gap-3 short:pb-6">
-          <div className="w-full max-w-3xl">
-            <ChatComposer
-              variant="hero"
-              testIdPrefix="home"
-              placeholder="Напиши или скажи, что на душе…"
-              busy={loading}
-              emptyLabel="Поговорить"
-              keepDraft
-              autoFocus
-              // Typed words open the text, with those words as the first message; "Поговорить" without any, like the
-              // microphone, opens the voice and starts listening: the conversation is talked first.
-              onSubmit={(text) => void start(text, text === '')}
-              onMic={(text) => void start(text, true)}
-            />
+          <div className="flex w-full max-w-3xl flex-col items-center gap-3">
+            {/* A pick only fills the draft: nothing is created or sent until the person sends. */}
+            <DialogStartSuggestions onPick={setDraft} />
+            <div className="w-full">
+              <ChatComposer
+                variant="hero"
+                testIdPrefix="home"
+                placeholder="Напиши или скажи, что на душе…"
+                busy={loading}
+                emptyLabel="Поговорить"
+                keepDraft
+                autoFocus
+                draft={draft}
+                onDraftChange={setDraft}
+                // Typed words open the text, with those words as the first message; "Поговорить" without any, like the
+                // microphone, opens the voice and starts listening: the conversation is talked first.
+                onSubmit={(text) => requestStart(text, text === '')}
+                onMic={(text) => requestStart(text, true)}
+              />
+            </div>
           </div>
 
           {/* A start that failed must be seen where the person is looking: right under the box. */}
@@ -398,80 +435,88 @@ export default function HomeScreen() {
             </p>
           )}
 
-          {/* Memory off (or someone new): the way to turn it on is here, not in a sheet that interrupts. */}
-          {memoryEnabled !== true && (guest || memoryState?.available === true) && (
-            <div
-              className="flex max-w-md flex-col items-center gap-1.5 text-center"
-              data-testid="memory-switch"
-            >
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                aria-pressed={guest && rememberOnStart}
-                disabled={memoryBusy}
-                onClick={() => void turnMemoryOn()}
-                data-testid="memory-switch-toggle"
-                className={cn(
-                  BUTTON,
-                  'outline-none',
-                  'gap-1.5 border-input! px-3.5 text-sm text-dim enabled:hover:text-foreground',
-                  'aria-pressed:border-brand-line! aria-pressed:bg-brand-soft aria-pressed:text-foreground',
-                )}
-              >
-                <Brain
-                  aria-hidden="true"
-                  className={cn('size-4', guest && rememberOnStart && 'text-brand-400')}
-                />
-                Запоминать важное
-              </Button>
-              <p className="text-xs leading-normal text-faint" aria-live="polite">
-                {guest && rememberOnStart
-                  ? 'Включится с первым разговором; выключить можно в профиле'
-                  : 'Чтобы не начинать каждый раз с нуля. По желанию'}
-              </p>
-              {memoryError && !memoryConsentOpen && (
-                <p className="text-xs leading-normal text-danger" role="alert">
-                  {memoryError}
-                </p>
+          {/* The optional memory choice folds into "Настроить разговор": the field and the voice start stay the main actions. */}
+          {showSettings && (
+            <ConversationSettings>
+              {/* Memory off (or someone new): the way to turn it on is here, not in a sheet that interrupts. */}
+              {memoryEnabled !== true && (guest || memoryState?.available === true) && (
+                <div
+                  className="flex max-w-md flex-col items-center gap-1.5 text-center"
+                  data-testid="memory-switch"
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-pressed={guest && rememberOnStart}
+                    disabled={memoryBusy}
+                    onClick={() => void turnMemoryOn()}
+                    data-testid="memory-switch-toggle"
+                    className={cn(
+                      BUTTON,
+                      'outline-none',
+                      'gap-1.5 border-input! px-3.5 text-sm text-dim enabled:hover:text-foreground',
+                      'aria-pressed:border-brand-line! aria-pressed:bg-brand-soft aria-pressed:text-foreground',
+                    )}
+                  >
+                    <Brain
+                      aria-hidden="true"
+                      className={cn('size-4', guest && rememberOnStart && 'text-brand-400')}
+                    />
+                    Запоминать важное
+                  </Button>
+                  <p className="text-xs leading-normal text-faint" aria-live="polite">
+                    {guest && rememberOnStart
+                      ? 'Включится с первым разговором; выключить можно в профиле'
+                      : 'Чтобы не начинать каждый раз с нуля. По желанию'}
+                  </p>
+                  {memoryError && !memoryConsentOpen && (
+                    <p className="text-xs leading-normal text-danger" role="alert">
+                      {memoryError}
+                    </p>
+                  )}
+                </div>
               )}
-            </div>
-          )}
 
-          {/* Only while memory is on: without it every conversation is "without memory" anyway. */}
-          {memoryEnabled === true && (
-            <div className="flex max-w-md flex-col items-center gap-1.5 text-center" data-testid="incognito">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                aria-pressed={withoutMemory}
-                onClick={() => {
-                  const on = !withoutMemory
-                  setWithoutMemory(on)
-                  track(AnalyticsEvent.MemoryIncognitoToggled, { on })
-                }}
-                data-testid="incognito-toggle"
-                className={cn(
-                  BUTTON,
-                  'outline-none',
-                  'gap-1.5 border-input! px-3.5 text-sm text-dim enabled:hover:text-foreground',
-                  'aria-pressed:border-brand-line! aria-pressed:bg-brand-soft aria-pressed:text-foreground',
-                )}
-              >
-                <EyeOff aria-hidden="true" className={cn('size-4', withoutMemory && 'text-brand-400')} />
-                {withoutMemory ? 'Без памяти' : 'Запоминать разговор'}
-              </Button>
-              <p className="text-xs leading-normal text-faint" aria-live="polite">
-                {withoutMemory
-                  ? 'Я не запомню этот разговор'
-                  : 'Я буду запоминать разговор, чтобы лучше узнать тебя'}
-              </p>
-            </div>
+              {/* Only while memory is on: without it every conversation is "without memory" anyway. */}
+              {memoryEnabled === true && (
+                <div
+                  className="flex max-w-md flex-col items-center gap-1.5 text-center"
+                  data-testid="incognito"
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-pressed={withoutMemory}
+                    onClick={() => {
+                      const on = !withoutMemory
+                      setWithoutMemory(on)
+                      track(AnalyticsEvent.MemoryIncognitoToggled, { on })
+                    }}
+                    data-testid="incognito-toggle"
+                    className={cn(
+                      BUTTON,
+                      'outline-none',
+                      'gap-1.5 border-input! px-3.5 text-sm text-dim enabled:hover:text-foreground',
+                      'aria-pressed:border-brand-line! aria-pressed:bg-brand-soft aria-pressed:text-foreground',
+                    )}
+                  >
+                    <EyeOff aria-hidden="true" className={cn('size-4', withoutMemory && 'text-brand-400')} />
+                    {withoutMemory ? 'Без памяти' : 'Запоминать разговор'}
+                  </Button>
+                  <p className="text-xs leading-normal text-faint" aria-live="polite">
+                    {withoutMemory
+                      ? 'Я не запомню этот разговор'
+                      : 'Я буду запоминать разговор, чтобы лучше узнать тебя'}
+                  </p>
+                </div>
+              )}
+            </ConversationSettings>
           )}
         </div>
 
-        {/* Keep the documents and retention terms visible even while the consent gate is closed. */}
+        {/* The documents and retention terms stay on the page for someone who has not agreed yet. */}
         <div
           className="mx-auto flex max-w-2xl flex-col items-center gap-1 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] text-center"
           data-testid="home-foot"
@@ -499,6 +544,14 @@ export default function HomeScreen() {
           </Link>
         </div>
       </div>
+
+      <ConsentModal
+        open={consentOpen}
+        termsUrl={`${siteUrl}/terms`}
+        consentUrl={`${siteUrl}/consent`}
+        onContinue={confirmConsent}
+        onClose={() => setConsentOpen(false)}
+      />
 
       <MemoryConsent
         open={memoryConsentOpen}

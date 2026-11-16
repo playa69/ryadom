@@ -16,6 +16,17 @@
         height: 100%;
         background: #00051a;
       }
+      /* The day boot, chosen by the script below before any stylesheet arrives. */
+      html[data-theme='light'],
+      html[data-theme='light'] body {
+        background: #f4f6fd;
+      }
+      html[data-theme='light'] .ryadom-boot rect {
+        fill: #f4f6fd;
+      }
+      html[data-theme='light'] .ryadom-boot circle:first-of-type {
+        stroke: #10152e;
+      }
       .ryadom-boot {
         position: fixed;
         inset: 0;
@@ -28,6 +39,42 @@
         height: 72px;
       }
     </style>
+    <script>
+      /*
+       * The theme before the first paint, so the day schedule never flashes the night palette: the
+       * saved manual choice wins, otherwise light 07:00–21:59 local. The native shell is always dark
+       * and keeps the defaults above. Mirrors packages/client-core/src/theme.ts; ThemeSwitch takes
+       * over from the root attribute once the app is up.
+       */
+      ;(function () {
+        try {
+          var cap = window.Capacitor
+          if (
+            (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) ||
+            location.protocol === 'capacitor:'
+          )
+            return
+          var saved = null
+          try {
+            saved = localStorage.getItem('ryadom.theme')
+          } catch (e) {}
+          var theme
+          if (saved === 'light' || saved === 'dark') theme = saved
+          else {
+            var hour = new Date().getHours()
+            theme = hour >= 7 && hour < 22 ? 'light' : 'dark'
+          }
+          if (theme !== 'light') return
+          var root = document.documentElement
+          root.setAttribute('data-theme', 'light')
+          root.style.colorScheme = 'light'
+          var themeColor = document.querySelector('meta[name="theme-color"]')
+          if (themeColor) themeColor.setAttribute('content', '#f4f6fd')
+          var colorScheme = document.querySelector('meta[name="color-scheme"]')
+          if (colorScheme) colorScheme.setAttribute('content', 'light')
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="app">
