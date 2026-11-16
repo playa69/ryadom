@@ -235,6 +235,58 @@ export function talkButton(page: Page): Locator {
   return button(page, 'Поговорить')
 }
 
+/**
+ * The collapsed «Настроить разговор» block of home (a native details): the optional memory choice is
+ * folded in here, so the message field and the voice start stay the main actions
+ * (`openspec/changes/add-fast-dialog-start`, «Главный экран веб-клиента»).
+ */
+export function homeSettings(page: Page): Locator {
+  return page.getByTestId('home-settings')
+}
+
+/** Opens «Настроить разговор»: the memory choice inside becomes reachable. A no-op when already open. */
+export async function openHomeSettings(page: Page): Promise<void> {
+  const settings = homeSettings(page)
+  await expect(settings).toBeVisible()
+  if (!(await settings.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await settings.getByText('Настроить разговор', { exact: true }).click()
+  }
+  await expect(settings).toHaveJSProperty('open', true)
+}
+
+/**
+ * The compact day/night switch of the home header, right before SOS: tap, swipe and keyboard flip the
+ * palette; the choice is stored on this device and wins over the schedule
+ * (`openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»).
+ */
+export function themeSwitch(page: Page): Locator {
+  return page.getByTestId('theme-switch')
+}
+
+/** The palette the document currently wears: light through `data-theme="light"`, dark by default. */
+export async function currentTheme(page: Page): Promise<'light' | 'dark'> {
+  return page.evaluate(() =>
+    document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
+  )
+}
+
+/**
+ * Collects the page's calls to the API (`/api/*` on any origin the page talks to). Before a consent is
+ * confirmed, opening home, typing, picking a suggestion and switching the theme must not make any.
+ * The one call not attributed to the control under test is the metrika loader's `GET
+ * /api/analytics/config`: it fires from the page load itself (and can retry later), not from the
+ * action, so it is skipped; every other request still fails the scenario.
+ */
+export function watchApiCalls(page: Page): () => string[] {
+  const calls: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (path === '/api/analytics/config' && request.method() === 'GET') return
+    if (path.startsWith('/api/')) calls.push(`${request.method()} ${path}`)
+  })
+  return () => calls
+}
+
 /** The lines of the feed under the header, by who said them. */
 export function messages(page: Page, role: 'user' | 'assistant'): Locator {
   return page.locator(`[data-testid="dialog-message"][data-role="${role}"]`)
@@ -282,12 +334,12 @@ export async function openSignIn(page: Page): Promise<void> {
 /** Sign-up with email confirmation: afterwards the person is already inside, on the home screen. */
 export async function registerAndConfirm(page: Page, email: string, name = 'Тест'): Promise<void> {
   await dismissMemoryInvite(page)
-  // A new visitor meets the first screen and opens the sign-in from it; from the sign-in screen the
-  // way to the sign-up is one link away.
-  const guestGate = page.getByTestId('terms-gate')
+  // A new visitor lands on home itself (the consent window asks at the first action, not before the
+  // page) and opens the sign-in from its menu; from the sign-in screen the way to the sign-up is one
+  // link away.
   const createAccount = page.getByRole('link', { name: 'Создать аккаунт', exact: true })
-  await expect(guestGate.or(createAccount)).toBeVisible({ timeout: 30_000 })
-  if (await guestGate.isVisible()) await openSignIn(page)
+  await expect(talkButton(page).or(createAccount)).toBeVisible({ timeout: 30_000 })
+  if (!(await createAccount.isVisible())) await openSignIn(page)
   await createAccount.click()
   await expect(page.getByRole('heading', { name: 'Давай знакомиться' })).toBeVisible()
 

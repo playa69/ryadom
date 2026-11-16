@@ -5,7 +5,13 @@
 import { describe, expect, it } from 'vitest'
 import type { StartDialogApiResponse } from '@ryadom/contracts/api/dialogs'
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
-import { chosenMemoryMode, chosenStart, nextStartStep, shouldAskToResume } from '../src/dialog-start'
+import {
+  chosenMemoryMode,
+  chosenStart,
+  DIALOG_START_SUGGESTIONS,
+  nextStartStep,
+  shouldAskToResume,
+} from '../src/dialog-start'
 
 const start = (patch: Partial<StartDialogApiResponse>): StartDialogApiResponse => ({
   dialogId: 'd-1',
@@ -115,5 +121,14 @@ describe('«Не сохранять этот разговор» на главн�
     const legacy = start({ resumed: true, messageCount: 0, memoryMode: DialogMemoryMode.On })
     expect(nextStartStep(legacy, undefined, false)).toBe('restart')
     expect(nextStartStep(legacy, undefined, true)).toBe('open')
+  })
+})
+
+// openspec/changes/add-fast-dialog-start — requirements «Главный экран веб-клиента» and
+// «Главный экран мобильного клиента»: one shared wording of the three starters for every surface.
+describe('подсказки начала разговора (add-fast-dialog-start)', () => {
+  it('ровно три общие подсказки: «Хочу выговориться», «Мне тревожно», «Просто поговорить»', () => {
+    expect(DIALOG_START_SUGGESTIONS).toHaveLength(3)
+    expect([...DIALOG_START_SUGGESTIONS]).toEqual(['Хочу выговориться', 'Мне тревожно', 'Просто поговорить'])
   })
 })

@@ -27,8 +27,10 @@ test('разговор: приветствие, ответ, кризис, жур
   await openApp(page)
   await registerAndConfirm(page, email)
 
-  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`).
-  await expect(page.locator('.page-current').getByText('Выговориться')).toHaveCount(0)
+  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`). Exact name:
+  // the start composer carries a «Хочу выговориться» suggestion (`openspec/changes/add-fast-dialog-start`,
+  // «Подсказки первого сообщения»), and a substring match would hit it.
+  await expect(page.getByRole('button', { name: 'Выговориться', exact: true })).toHaveCount(0)
   await shot(page, 'dialog-home')
 
   // ── conversation: voice first ────────────────────────────────────────────
@@ -65,7 +67,9 @@ test('разговор: приветствие, ответ, кризис, жур
 
   // ── text: the second way, one tap away ───────────────────────────────────
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  const input = page.getByPlaceholder(DRAFT_PLACEHOLDER)
+  // Scoped to the current page: the home page stays in the DOM with its own start-draft textarea whose
+  // placeholder begins with the same words (`openspec/changes/add-fast-dialog-start`).
+  const input = page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER)
   await expect(input).toBeVisible()
   // The feed holds the greeting, the voice turn and the reply to it.
   await expect(page.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })

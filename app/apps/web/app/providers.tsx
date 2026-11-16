@@ -5,6 +5,7 @@ import { AnalyticsProvider } from '@/lib/analytics-provider'
 import { AuthProvider } from '@/lib/auth'
 import { NoticeProvider } from '@/components/Notice'
 import { SosProvider } from '@/components/Sos'
+import ThemeRuntime from '@/components/ThemeRuntime'
 
 /*
  * Radix (behind every shadcn dialog and sheet) locks the page scroll by injecting a <style> when a
@@ -23,7 +24,11 @@ export default function Providers({ apiBase, children }: { apiBase: string; chil
     <AuthProvider apiBase={apiBase}>
       <AnalyticsProvider apiBase={apiBase}>
         <NoticeProvider>
-          <SosProvider>{children}</SosProvider>
+          <SosProvider>
+            {/* Follows the theme schedule on its own; renders nothing. */}
+            <ThemeRuntime />
+            {children}
+          </SosProvider>
         </NoticeProvider>
       </AnalyticsProvider>
     </AuthProvider>

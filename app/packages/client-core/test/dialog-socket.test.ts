@@ -298,7 +298,12 @@ describe('разброс переподключений', () => {
     const ws = last()
     ws.open()
     await vi.advanceTimersByTimeAsync(0)
-    ws.receive({ type: DialogServerFrame.Ready, dialogId: 'dialog-2', greeting: null, sinceLastDialogHours: null })
+    ws.receive({
+      type: DialogServerFrame.Ready,
+      dialogId: 'dialog-2',
+      greeting: null,
+      sinceLastDialogHours: null,
+    })
     await vi.advanceTimersByTimeAsync(0)
     ws.drop(1006)
     await vi.advanceTimersByTimeAsync(499)
@@ -382,6 +387,59 @@ describe('сообщения человека', () => {
     ws.receive({ type: DialogServerFrame.Ack, clientId, messageId: 'srv-1' })
 
     expect(h.feed().map((message) => message.id)).toEqual(['srv-1'])
+  })
+})
+
+describe('лента из REST (setHistory)', () => {
+  it('приветствие остаётся первым, а запись, которая его хранит, его не задваивает', async () => {
+    const h = harness({ greeting: 'Я рядом' })
+    await connect(h)
+
+    h.socket.setHistory([{ id: 'u1', role: 'user', text: 'привет' }])
+    expect(h.feed().map((message) => message.text)).toEqual(['Я рядом', 'привет'])
+
+    h.socket.setHistory([
+      { id: 'g1', role: 'assistant', text: 'Я рядом' },
+      { id: 'u1', role: 'user', text: 'привет' },
+    ])
+    expect(h.feed().map((message) => [message.id, message.text])).toEqual([
+      ['g1', 'Я рядом'],
+      ['u1', 'привет'],
+    ])
+  })
+
+  it('недошедшее сообщение остаётся на ленте, а дошедшее без ack подменяется записью без дубля', async () => {
+    const h = harness()
+    await connect(h)
+    h.socket.sendMessage('дошло')
+    h.socket.sendMessage('ещё летит')
+
+    h.socket.setHistory([{ id: 'srv-1', role: 'user', text: 'дошло' }])
+
+    const feed = h.feed()
+    expect(feed.map((message) => message.text)).toEqual(['дошло', 'ещё летит'])
+    expect(feed[0]).toMatchObject({ id: 'srv-1' })
+    expect(feed[0]?.pending).toBeUndefined()
+    expect(feed[1]).toMatchObject({ text: 'ещё летит', pending: true })
+  })
+
+  it('приветствие и первое сообщение из очереди переживают подгрузку записи resumed-разговора', async () => {
+    const h = harness({ greeting: 'Я рядом' })
+    await connect(h)
+    h.socket.sendMessage('начну с текста')
+
+    h.socket.setHistory([
+      { id: 'u1', role: 'user', text: 'вчера говорили' },
+      { id: 'a1', role: 'assistant', text: 'ответ вчера' },
+    ])
+
+    expect(h.feed().map((message) => [message.id, message.text])).toEqual([
+      ['greeting', 'Я рядом'],
+      ['u1', 'вчера говорили'],
+      ['a1', 'ответ вчера'],
+      [expect.any(String), 'начну с текста'],
+    ])
+    expect(h.feed().at(-1)?.pending).toBe(true)
   })
 })
 
@@ -712,7 +770,12 @@ describe('реплики человека, принятые сервером (ц
     const next = last()
     next.open()
     await vi.advanceTimersByTimeAsync(0)
-    next.receive({ type: DialogServerFrame.Ready, dialogId: 'dialog-1', greeting: null, sinceLastDialogHours: null })
+    next.receive({
+      type: DialogServerFrame.Ready,
+      dialogId: 'dialog-1',
+      greeting: null,
+      sinceLastDialogHours: null,
+    })
     await vi.advanceTimersByTimeAsync(0)
     expect(h.replies).toEqual([[2, 2]])
   })
@@ -754,10 +817,24 @@ describe('реплики человека, принятые сервером (ц
   it('кризисный сценарий: кадры состояния доходят до обработчика, кнопки уходят серверу', async () => {
     const h = harness()
     const states: unknown[] = []
-    ;(h.socket as unknown as { handlers: DialogSocketHandlers }).handlers.onSafetyState = (state) => states.push(state)
+    ;(h.socket as unknown as { handlers: DialogSocketHandlers }).handlers.onSafetyState = (state) =>
+      states.push(state)
     const ws = await connect(h)
-    ws.receive({ type: DialogServerFrame.Safety, level: 'crisis', text: 'Сейчас важно', hotlines: [], step: 'call', pinned: true })
-    ws.receive({ type: DialogServerFrame.SafetyState, step: 'check', pinned: true, banner: false, ask: 'safe' })
+    ws.receive({
+      type: DialogServerFrame.Safety,
+      level: 'crisis',
+      text: 'Сейчас важно',
+      hotlines: [],
+      step: 'call',
+      pinned: true,
+    })
+    ws.receive({
+      type: DialogServerFrame.SafetyState,
+      step: 'check',
+      pinned: true,
+      banner: false,
+      ask: 'safe',
+    })
     expect(h.safety[0]).toEqual(['crisis', 'Сейчас важно', [], 'call'])
     expect(states).toEqual([
       { step: 'call', pinned: true, banner: false, ask: null },
@@ -774,7 +851,8 @@ describe('реплики человека, принятые сервером (ц
   it('кадр safety старого агента без step не включает состояние сценария', async () => {
     const h = harness()
     const states: unknown[] = []
-    ;(h.socket as unknown as { handlers: DialogSocketHandlers }).handlers.onSafetyState = (state) => states.push(state)
+    ;(h.socket as unknown as { handlers: DialogSocketHandlers }).handlers.onSafetyState = (state) =>
+      states.push(state)
     const ws = await connect(h)
     ws.receive({ type: DialogServerFrame.Safety, level: 'crisis', text: null, hotlines: [] })
     expect(states).toEqual([])

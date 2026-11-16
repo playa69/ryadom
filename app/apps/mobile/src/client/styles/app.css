@@ -2,8 +2,11 @@
  * Ryadom screens. Colors and fonts come from the tokens in tokens.css. Classes prefixed rd- are
  * ours, everything else is Framework7.
  *
- * The theme is dark: minimal, large type, and the breathing animation as a visual anchor
- *. No gamification and no bright panels: the product is opened when things are hard.
+ * The palette follows the device clock (light 07:00–21:59 local, dark otherwise) unless the person
+ * chose a theme by hand; the native shell is always dark. The light palette is `data-theme='light'`
+ * on the root (tokens.css), the dark one the default. Minimal, large type, and the breathing
+ * animation as a visual anchor. No gamification and no bright panels: the product is opened when
+ * things are hard.
  */
 
 html,
@@ -776,7 +779,6 @@ input:-webkit-autofill:focus {
   --orb-ring: rgb(110 220 150);
 }
 
-
 /* The crisis script (PROTEUS-279): a calm, even light. The motion is held still in orb-motion (`steady`). */
 .rd-orb[data-mood='crisis'] {
   --orb-hi: rgb(236 240 247);
@@ -825,15 +827,190 @@ input:-webkit-autofill:focus {
   margin-top: var(--ryadom-s-2);
 }
 
+/* ── Fast start: the first-message field and the theme switch (PWA and Telegram) ── */
+
+.rd-start-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-3);
+  width: 100%;
+  margin-bottom: var(--ryadom-s-3);
+}
+
+/* One strip of content-wide chips, scrolled sideways instead of wrapping: three stacked rows of
+   suggestions pushed the field and the start button down on a phone (design review). The strip is
+   focusable, so a keyboard scrolls it too, and `max-width` keeps the page itself from ever
+   scrolling sideways. */
+.rd-start-suggestions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--ryadom-s-2);
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.rd-start-suggestions::-webkit-scrollbar {
+  display: none;
+}
+
+/* A chip is as wide as its text: it neither stretches nor shrinks in the strip. `width: auto`
+   overrides Framework7's reset (`button { width: 100% }`), which made the first chip full-width. */
+.rd-start-suggestions .button {
+  flex: none;
+  width: auto;
+}
+
+/* The pill is borrowed from the dialog's own composer; its dialog margins belong to the feed there. */
+.rd-start-field {
+  width: 100%;
+  margin: 0;
+}
+
+.rd-start-field textarea {
+  max-height: 96px;
+}
+
+/* «Настроить разговор» on home (PWA and Telegram), as on the web: the optional memory choice folds
+   into a native details, collapsed by default, so it does not compete with the field and the start
+   button. */
+.rd-conversation-settings {
+  width: 100%;
+  margin-top: var(--ryadom-s-3);
+}
+
+.rd-conversation-settings > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ryadom-s-1);
+  min-height: 44px;
+  list-style: none;
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-conversation-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.rd-conversation-settings > summary:focus-visible {
+  border-radius: var(--ryadom-r-s);
+  outline: 2px solid var(--ryadom-brand-400);
+  outline-offset: 2px;
+}
+
+.rd-conversation-settings > summary .icon {
+  transition: transform 0.2s ease;
+}
+
+.rd-conversation-settings[open] > summary .icon {
+  transform: rotate(45deg);
+}
+
+/* One setting sits inside: the summary's own height separates it from the button above. */
+.rd-conversation-settings-body > :first-child {
+  margin-top: var(--ryadom-s-1);
+}
+
+/*
+ * Day/night on the first and the home screen. The visual pill is small; the button itself is the
+ * 44×44 hit area around it. A tap, a horizontal swipe across the pill (pointerup decides) and the
+ * keyboard (it is a button) all switch.
+ */
+.rd-theme-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  /* A horizontal swipe belongs to the switch; the page keeps the vertical scroll. */
+  touch-action: pan-y;
+  cursor: pointer;
+}
+
+.rd-theme-switch-track {
+  position: relative;
+  width: 52px;
+  height: 28px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: 999px;
+  background: var(--ryadom-surface-2-glass);
+}
+
+.rd-theme-switch-knob {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: var(--ryadom-brand-fill);
+  box-shadow: var(--ryadom-shadow-1);
+  transition: transform 0.2s ease;
+}
+
+/* The knob carries the current theme's mark, so the switch reads at a glance. */
+.rd-theme-switch-icon {
+  color: #fff;
+}
+
+/* The crescent must read as glowing on the brand fill; two soft layers stay inside the pill. */
+.rd-theme-switch-track--dark .rd-theme-switch-icon {
+  color: #ffe9a8;
+  filter: drop-shadow(0 0 2px rgba(255, 223, 140, 0.95)) drop-shadow(0 0 5px rgba(255, 200, 90, 0.55));
+}
+
+.rd-theme-switch-track--dark .rd-theme-switch-knob {
+  transform: translateX(24px);
+}
+
+/* Home: the same corner row as SOS, left of it — SOS keeps the far right. */
+.rd-theme-switch--corner {
+  position: absolute;
+  top: calc(var(--f7-safe-area-top, 0px) + 3px);
+  right: calc(104px + var(--f7-safe-area-right, 0px));
+  z-index: 500;
+}
+
+/* The offline bar covers the corner row: the switch moves down with the SOS button. */
+.framework7-root:has(.rd-offline) .rd-theme-switch--corner {
+  top: calc(var(--f7-safe-area-top, 0px) + 41px);
+}
+
 /* The first screen is home for someone new: the mark and «Войти» sit above it, where home has its bar;
    SOS keeps its own place in the corner, as on home. */
 .rd-welcome-top {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--ryadom-s-3);
   padding: calc(var(--ryadom-s-3) + var(--f7-safe-area-top, 0px))
     calc(var(--ryadom-s-5) + var(--f7-safe-area-right, 0px)) 0
     calc(var(--ryadom-s-5) + var(--f7-safe-area-left, 0px));
+}
+
+/* The mark keeps the left edge; «Войти» and the theme switch hold the right one. */
+.rd-welcome-top .rd-logo-button {
+  margin-right: auto;
+}
+
+/* The fixed SOS pill owns the top right corner of a phone (the corner theme switch clears it by
+   104px): this row's right side must stop short of it, or the pill covers «Войти» and the theme
+   switch. From 700px SOS moves into the rail and the row keeps its own padding. */
+@media (max-width: 699px) {
+  .rd-welcome-top {
+    padding-right: calc(104px + var(--f7-safe-area-right, 0px));
+  }
 }
 
 /* The foot of the first screen: the agreement and the terms of keeping, last in the column. */
@@ -2260,6 +2437,20 @@ input:-webkit-autofill:focus {
   .rd-sos-button,
   .navbar .rd-navbar-sos {
     display: none;
+  }
+
+  /* The anonymous view has no rail: its SOS stays in the corner instead of disappearing. */
+  .framework7-root:has(.rd-welcome-top) .rd-sos-button {
+    display: inline-flex;
+  }
+
+  .framework7-root:has(.rd-welcome-top) .rd-welcome-top {
+    padding-right: calc(104px + var(--f7-safe-area-right, 0px));
+  }
+
+  /* With SOS in the rail, the corner of the home screen is the theme switch's alone. */
+  .rd-theme-switch--corner {
+    right: calc(16px + var(--f7-safe-area-right, 0px));
   }
 
   /* On a phone the conversation hides the tabs for its input field. The rail on the side is not

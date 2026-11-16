@@ -260,6 +260,9 @@ importers:
       '@ryadom/analytics':
         specifier: workspace:*
         version: link:../../packages/analytics
+      '@ryadom/client-core':
+        specifier: workspace:*
+        version: link:../../packages/client-core
       '@ryadom/design':
         specifier: workspace:*
         version: link:../../packages/design

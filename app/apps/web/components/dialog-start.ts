@@ -1,12 +1,14 @@
 import type { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+import { webDialogGreetingKey } from '../lib/storage-keys'
 
 /**
  * What `POST /api/dialogs` returned, handed from the home screen to the dialog screen. The dialog
  * id is the only thing in the URL: the greeting and the "we were apart" hint stay out of it, where
  * they would end up in history, logs and referrers.
  *
- * In memory only. The greeting is the agent's own words and has no business sitting in web
- * storage; after a reload the screen restores the feed from the API instead.
+ * In memory, plus the greeting of a fresh start per tab (sessionStorage): the history from the API
+ * does not hold it (the agent keeps it apart from the messages), so without that a screen mounted
+ * again after a reload would lose it from the feed. Nothing else of the conversation is stored.
  */
 export interface DialogStart {
   greeting: string | null
@@ -44,6 +46,7 @@ const claimed = new Set<string>()
 export function rememberDialogStart(dialogId: string, start: DialogStart, handoff?: DialogHandoff): void {
   starts.set(dialogId, start)
   claimed.delete(dialogId)
+  persistGreeting(dialogId, start)
   if (handoff?.draft || handoff?.listen) handoffs.set(dialogId, handoff)
   else handoffs.delete(dialogId)
 }
@@ -80,4 +83,37 @@ export function claimFreshStart(dialogId: string): DialogStart | null {
   if (!start || start.resumed || claimed.has(dialogId)) return null
   claimed.add(dialogId)
   return start
+}
+
+/**
+ * The greeting of a fresh start, per tab like the view (`dialog-view.ts`). Only the agent's own
+ * words, and only of a conversation that is kept: a resumed start's greeting is said aloud but never
+ * joins the feed, and an unsaved conversation leaves no trace. Storage can be missing or refuse.
+ */
+function persistGreeting(dialogId: string, start: DialogStart): void {
+  if (start.resumed || start.saved === false || !start.greeting) return
+  try {
+    sessionStorage.setItem(webDialogGreetingKey(dialogId), start.greeting)
+  } catch {
+    // Not remembering the greeting only means a reload restores the feed without it.
+  }
+}
+
+function recalledGreeting(dialogId: string): string | null {
+  try {
+    return sessionStorage.getItem(webDialogGreetingKey(dialogId))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The greeting this dialog's feed began with, however the screen was reached: the start of this
+ * page load first, then what this tab remembered of one. A resumed start's own greeting is not it,
+ * so for one the remembered greeting of the dialog's fresh start answers.
+ */
+export function feedDialogGreeting(dialogId: string): string | null {
+  const start = starts.get(dialogId)
+  if (start && !start.resumed) return start.greeting
+  return recalledGreeting(dialogId)
 }

@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { PWA_URL, WEBAPP_URL } from '../playwright.config'
 import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
@@ -336,4 +337,265 @@ test('политика описывает согласие на Метрику, 
   const termsEmail = page.getByRole('link', { name: 'playasn@yandex.ru', exact: true }).first()
   await expect(termsEmail).toBeVisible()
   await expect(termsEmail).toHaveAttribute('href', 'mailto:playasn@yandex.ru')
+})
+
+/*
+ * `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: тема лендинга
+ * по местному времени устройства (светлая в [07:00, 22:00), тёмная иначе), ручной выбор через
+ * общий модуль темы и его приоритет над расписанием. Системная палитра не читается никогда.
+ */
+
+/** The shared key of the manual choice (packages/client-core/src/theme.ts), one for the site and the clients. */
+const THEME_STORAGE_KEY = 'ryadom.theme'
+// Fixed local times (the stand and the browser share Europe/Moscow): noon is light, 23:00 is dark.
+const DAY = '2026-11-16T12:00:00+03:00'
+const NIGHT = '2026-11-16T23:00:00+03:00'
+const BEFORE_DARK_BOUNDARY = '2026-11-16T21:59:50+03:00'
+const AFTER_DARK_BOUNDARY_NEXT_DAY = '2026-11-17T08:00:00+03:00'
+const BEFORE_LIGHT_BOUNDARY_NEXT_DAY = '2026-11-17T06:59:55+03:00'
+// The values of --ryadom-paper in the design tokens; the browser chrome color follows them.
+const LIGHT_PAPER = '#f4f6fd'
+const DARK_PAPER = '#00051a'
+
+interface ThemeState {
+  dataTheme: string | null
+  darkClass: boolean
+  colorScheme: string
+  paper: string
+  metaColorScheme: string | null
+  metaThemeColor: string | null
+  manualChoice: string | null
+}
+
+/** The marks the boot script and the runtime leave on the document, plus the stored manual choice. */
+async function themeState(page: Page): Promise<ThemeState> {
+  return page.evaluate((key) => {
+    const root = document.documentElement
+    return {
+      dataTheme: root.getAttribute('data-theme'),
+      darkClass: root.classList.contains('dark'),
+      colorScheme: root.style.colorScheme,
+      paper: getComputedStyle(root).getPropertyValue('--ryadom-paper').trim(),
+      metaColorScheme: document.querySelector('meta[name="color-scheme"]')?.getAttribute('content') ?? null,
+      metaThemeColor: document.querySelector('meta[name="theme-color"]')?.getAttribute('content') ?? null,
+      manualChoice: window.localStorage.getItem(key),
+    }
+  }, THEME_STORAGE_KEY)
+}
+
+function expectLightTheme(state: ThemeState): void {
+  expect(state.dataTheme).toBe('light')
+  expect(state.darkClass).toBe(false)
+  expect(state.colorScheme).toBe('light')
+  expect(state.paper).toBe(LIGHT_PAPER)
+  expect(state.metaColorScheme).toBe('light')
+  expect(state.metaThemeColor).toBe(LIGHT_PAPER)
+}
+
+function expectDarkTheme(state: ThemeState): void {
+  expect(state.dataTheme).toBeNull()
+  expect(state.darkClass).toBe(true)
+  expect(state.colorScheme).toBe('dark')
+  expect(state.paper).toBe(DARK_PAPER)
+  expect(state.metaColorScheme).toBe('dark')
+  expect(state.metaThemeColor).toBe(DARK_PAPER)
+}
+
+// `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: сценарии
+// «Дневное оформление», «Ночное оформление» и «Тема публичных страниц лендинга».
+test('тема: днём главная и документы светлые, ночью тёмные', async ({ page }) => {
+  await page.clock.install({ time: new Date(DAY) })
+  await page.goto('/')
+
+  expectLightTheme(await themeState(page))
+  // Exactly one compact switch, readable as a switch and named after the action the next press does.
+  const switcher = page.getByTestId('theme-switch')
+  await expect(switcher).toHaveCount(1)
+  await expect(switcher).toHaveAttribute('role', 'switch')
+  await expect(switcher).toHaveAttribute('aria-checked', 'false')
+  await expect(switcher).toHaveAccessibleName('Включить тёмную тему')
+  await step(page, 'landing-light', 'Днём главная светлая: тёмный текст, светлый фон и цвет окна браузера')
+
+  await page.goto('/privacy')
+  expectLightTheme(await themeState(page))
+  await expect(page.getByTestId('theme-switch')).toBeVisible()
+  await step(page, 'landing-docs-light', 'Страница документов днём тоже светлая, переключатель справа сверху')
+
+  await page.clock.setFixedTime(new Date(NIGHT))
+  await page.reload()
+  expectDarkTheme(await themeState(page))
+  await expect(switcher).toHaveAttribute('aria-checked', 'true')
+  await expect(switcher).toHaveAccessibleName('Включить светлую тему')
+  await step(
+    page,
+    'landing-docs-dark',
+    'Ночью документы тёмные: переключатель показывает светящийся полумесяц',
+  )
+
+  await page.goto('/')
+  expectDarkTheme(await themeState(page))
+  await step(page, 'landing-dark', 'Ночью главная тёмная, цветовая схема и цвет окна браузера тёмные')
+})
+
+// `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: сценарий
+// «Тема публичных страниц лендинга» — тема выставляется до первой отрисовки без мигания.
+test('тема: палитра выставлена до первой отрисовки, без клиентских скриптов', async ({ page }) => {
+  // The server markup is always dark (the CSS default): only the inline boot script can paint the
+  // light palette. With the bundle blocked the right marks prove the first paint sees the theme.
+  const html = await (await page.request.get('/')).text()
+  expect(html).toContain('class="dark"')
+
+  await page.route('**/_next/static/**/*.js', (route) => route.abort())
+  await page.clock.install({ time: new Date(DAY) })
+  await page.goto('/')
+
+  expectLightTheme(await themeState(page))
+  await step(page, 'landing-boot-light', 'Светлая тема стоит до клиентских скриптов: отрисовка без мигания')
+})
+
+// `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: сценарий
+// «Светлая тема системы» — системная палитра не влияет на выбор.
+test('тема: системная палитра устройства не влияет на выбор', async ({ page }) => {
+  await page.clock.install({ time: new Date(NIGHT) })
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.goto('/')
+  expectDarkTheme(await themeState(page))
+
+  await page.clock.setFixedTime(new Date(DAY))
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.reload()
+  expectLightTheme(await themeState(page))
+})
+
+// `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: сценарий
+// «Ручное переключение» — нажатие, клавиатура и свайп, зона 44×44, без запроса и потери состояния.
+test('тема: переключатель — нажатие, клавиатура и свайп, без запроса', async ({ page }) => {
+  await page.clock.install({ time: new Date(DAY) })
+  await page.goto('/')
+
+  const switcher = page.getByTestId('theme-switch')
+  await expect(switcher).toBeVisible()
+  const zone = await switcher.boundingBox()
+  expect(zone).not.toBeNull()
+  expect(zone!.width).toBeGreaterThanOrEqual(44)
+  expect(zone!.height).toBeGreaterThanOrEqual(44)
+
+  // A theme flip is a purely local affair: nothing may leave the device for it.
+  await page.waitForLoadState('networkidle')
+  const apiCalls: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/api/')) apiCalls.push(request.url())
+  })
+
+  await switcher.click()
+  const tapped = await themeState(page)
+  expectDarkTheme(tapped)
+  expect(tapped.manualChoice).toBe('dark')
+  await expect(switcher).toHaveAttribute('aria-checked', 'true')
+  await expect(switcher).toHaveAccessibleName('Включить светлую тему')
+  await step(page, 'landing-theme-tap', 'Нажатие переключателя сразу включило тёмную тему')
+
+  await switcher.focus()
+  await page.keyboard.press('Enter')
+  expectLightTheme(await themeState(page))
+  await expect(switcher).toHaveAttribute('aria-checked', 'false')
+
+  // A horizontal drag across the pill is a swipe asking for the side it points to.
+  const pill = await switcher.boundingBox()
+  await page.mouse.move(pill!.x + pill!.width / 2, pill!.y + pill!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(pill!.x + pill!.width / 2 + 40, pill!.y + pill!.height / 2, { steps: 5 })
+  await page.mouse.up()
+  expectDarkTheme(await themeState(page))
+  await step(page, 'landing-theme-swipe', 'Свайп по переключателю снова включил тёмную тему')
+
+  expect(apiCalls).toEqual([])
+})
+
+// `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: сценарий
+// «Ручной выбор сохраняется» — перезагрузка и граница расписания ручной выбор не сбрасывают.
+test('тема: ручной выбор переживает перезагрузку и важнее расписания', async ({ page }) => {
+  await page.clock.install({ time: new Date(NIGHT) })
+  await page.goto('/')
+  expectDarkTheme(await themeState(page))
+
+  await page.getByTestId('theme-switch').click()
+  expectLightTheme(await themeState(page))
+
+  await page.reload()
+  const reloaded = await themeState(page)
+  expectLightTheme(reloaded)
+  expect(reloaded.manualChoice).toBe('light')
+  await step(
+    page,
+    'landing-theme-persist',
+    'Ночью после перезагрузки остаётся выбранная вручную светлая тема',
+  )
+
+  // The 07:00 boundary fires in the open page, but the stored choice still wins over the schedule.
+  await page.clock.setFixedTime(new Date(BEFORE_LIGHT_BOUNDARY_NEXT_DAY))
+  await page.clock.runFor(10_000)
+  const afterBoundary = await themeState(page)
+  expectLightTheme(afterBoundary)
+  expect(afterBoundary.manualChoice).toBe('light')
+})
+
+// `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: сценарий
+// «Смена темы без перезагрузки» — граница расписания и возврат на вкладку.
+test('тема: открытая страница меняет тему на границе и при возврате на вкладку', async ({ page }) => {
+  await page.clock.install({ time: new Date(BEFORE_DARK_BOUNDARY) })
+  await page.goto('/')
+  expectLightTheme(await themeState(page))
+
+  // Ten seconds later the schedule flips at 22:00 and the open page follows without a reload.
+  await page.clock.runFor(20_000)
+  await expect.poll(async () => (await themeState(page)).colorScheme).toBe('dark')
+  expectDarkTheme(await themeState(page))
+  await step(
+    page,
+    'landing-theme-boundary',
+    'После 22:00 открытая страница сама стала тёмной, без перезагрузки',
+  )
+
+  // A tab that slept through a boundary re-checks the schedule when it becomes visible again.
+  await page.clock.setFixedTime(new Date(AFTER_DARK_BOUNDARY_NEXT_DAY))
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect.poll(async () => (await themeState(page)).colorScheme).toBe('light')
+  expectLightTheme(await themeState(page))
+})
+
+// `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: на узком экране
+// переключатель темы не перекрывает и не обрезает остальные действия шапки.
+test('тема: шапка не перекрывает действия на узком экране', async ({ page }) => {
+  await page.goto('/')
+
+  const header = page.locator('header')
+  const actions = [
+    page.getByTestId('theme-switch'),
+    header.getByRole('link', { name: 'Скачать', exact: true }),
+    header.getByRole('link', { name: 'Открыть', exact: true }),
+  ]
+  const viewportWidth = page.viewportSize()?.width ?? 1280
+  const boxes: { x: number; y: number; width: number; height: number }[] = []
+  for (const action of actions) {
+    await expect(action).toBeVisible()
+    const box = await action.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewportWidth + 1)
+    boxes.push(box!)
+  }
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const [a, b] = [boxes[i]!, boxes[j]!]
+      const overlap =
+        a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+      expect(overlap).toBe(false)
+    }
+  }
+  await step(
+    page,
+    'landing-header-fit',
+    'Шапка: переключатель темы, «Скачать» и «Открыть» видны целиком и не перекрываются',
+  )
 })

@@ -24,7 +24,7 @@ test('шарик в приложении окрашивается по наст�
 
   const say = async (text: string) => {
     await page.getByRole('button', { name: 'Писать текстом' }).click()
-    const input = page.getByPlaceholder('Напиши, что происходит')
+    const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')
     await expect(input).toBeVisible({ timeout: 30_000 })
     await input.fill(text)
     await page.getByRole('button', { name: 'Отправить' }).click()

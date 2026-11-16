@@ -73,3 +73,31 @@ export const tokens = {
   text4xl: '40px',
   text5xl: '56px',
 } as const
+
+/**
+ * The light palette (`:root[data-theme="light"]` in tokens.css) — only the values that differ
+ * from the dark default above, everything else carries over. No non-CSS consumer needs it yet:
+ * the emails keep their own light theme. Kept mirrored so a future one does not re-derive the
+ * numbers, and so the pair is diff-checked by eye instead of by memory.
+ */
+export const lightTokens = {
+  paper: '#f4f6fd',
+  surface: '#ffffff',
+  surface2: '#edf0f9',
+  surface3: '#e1e7f5',
+  line: 'rgba(15, 23, 42, 0.1)',
+  lineStrong: 'rgba(15, 23, 42, 0.5)',
+
+  text: '#10152e',
+  textDim: '#3d4767',
+  textFaint: '#5a6486',
+
+  brand400: '#005fd0',
+
+  sage: '#1f6f62',
+  danger: '#bd2c2c',
+  sos: '#c22e35',
+
+  shadow1: '0 2px 12px rgba(15, 23, 42, 0.08)',
+  shadow2: '0 24px 60px -12px rgba(15, 23, 42, 0.18)',
+} as const

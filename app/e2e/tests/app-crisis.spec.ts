@@ -14,7 +14,10 @@ test.use({
 const SHEET_TITLE = 'Сейчас важно поговорить с живым человеком'
 const CALL_HREF = 'tel:84959895050'
 
-test('кризис в приложении: лист «Позвонить сейчас», закреплённая кнопка, вопрос о безопасности, 112', async ({ page, shot }) => {
+test('кризис в приложении: лист «Позвонить сейчас», закреплённая кнопка, вопрос о безопасности, 112', async ({
+  page,
+  shot,
+}) => {
   test.setTimeout(120_000)
   await clearMailbox()
   await openApp(page)
@@ -22,7 +25,7 @@ test('кризис в приложении: лист «Позвонить сей
   await button(page, 'Поговорить').click()
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  const input = page.getByPlaceholder('Напиши, что происходит')
+  const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')
   await input.fill('я больше не хочу жить')
   await page.getByRole('button', { name: 'Отправить' }).click()
 

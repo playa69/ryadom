@@ -35,6 +35,12 @@ export interface ChatComposerProps {
   keepDraft?: boolean
   /** Put the cursor in the field on arrival, but only where there is no on-screen keyboard to pop up. */
   autoFocus?: boolean
+  /**
+   * Controlled draft: the parent holds the text and must hand `onDraftChange` with it. Home needs
+   * that so a start suggestion can land in the box; without the pair the draft stays internal.
+   */
+  draft?: string
+  onDraftChange?: (draft: string) => void
   onSubmit(text: string): void
   /** The microphone was pressed. It gets the draft: home starts a conversation that carries it along. */
   onMic(draft: string): void
@@ -42,8 +48,7 @@ export interface ChatComposerProps {
 
 /**
  * The input box of a chat app: a growing textarea with the microphone and the send button inside
- * it. Home and the conversation share it; props decide the size and what an empty send means. The
- * draft lives here, so typing does not re-render the feed above.
+ * it. Home and the conversation share it; props decide the size and what an empty send means.
  *
  * Under a conversation the box is the text face of a voice-first screen: with nothing typed its one
  * button is the sphere that goes back to the voice, and once there are words it becomes "send".
@@ -57,10 +62,19 @@ export default function ChatComposer({
   emptyLabel,
   keepDraft = false,
   autoFocus = false,
+  draft: controlled,
+  onDraftChange,
   onSubmit,
   onMic,
 }: ChatComposerProps) {
-  const [draft, setDraft] = useState('')
+  // Own draft by default: typing does not re-render the screen above. A parent that must set the
+  // text itself (home, for the start suggestions) holds it instead and gets every edit back.
+  const [own, setOwn] = useState('')
+  const draft = controlled ?? own
+  const setDraft = (next: string) => {
+    if (controlled !== undefined) onDraftChange?.(next)
+    else setOwn(next)
+  }
   const field = useRef<HTMLTextAreaElement>(null)
   const hero = variant === 'hero'
 

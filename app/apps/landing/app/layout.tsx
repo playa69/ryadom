@@ -6,6 +6,8 @@ import '@fontsource-variable/inter/wght.css'
 import './globals.css'
 import { getWebEnv } from '@/lib/env'
 import { AnalyticsBoot } from './_components/analytics-boot'
+import { ThemeRuntime } from './_components/theme-runtime'
+import { THEME_BOOT } from './theme-boot'
 
 export const metadata: Metadata = {
   title: 'Рядом — когда нужно, чтобы кто-то был рядом',
@@ -45,8 +47,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const env = getWebEnv()
 
   return (
-    <html lang="ru" className="dark">
+    // suppressHydrationWarning: the boot script may flip the theme attributes before React hydrates.
+    <html lang="ru" className="dark" suppressHydrationWarning>
       <body className={SKY}>
+        {/*
+          The theme must be set before the first paint, or the page flashes the wrong palette.
+          The site sends no CSP of its own, so a plain inline script is enough.
+        */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+        <ThemeRuntime />
         <AnalyticsBoot apiBase={env.apiUrl} />
         {children}
       </body>
