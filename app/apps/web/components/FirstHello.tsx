@@ -12,7 +12,7 @@ import { BUTTON } from './controls'
 /** What the sphere says to someone it meets for the first time: an invitation, not a form. */
 const HELLO_LINES = ['Привет! Я рядом.', 'Поговорим?']
 
-/** The greeting recorded in the agent's voice (`public/`); a placeholder until the studio recording replaces the file. */
+/** The greeting recorded in the agent's voice (`public/`); SaluteSpeech voice "Вера" (the one voice of the Sber path), 24 kHz. */
 const GREETING_SRC = `${BASE_PATH}/hello-greeting.wav`
 
 /** How long the sphere moves as if speaking the greeting before it settles to breathing. */
