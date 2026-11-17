@@ -7,13 +7,19 @@
 # — no-op. Подробности — openspec/changes/update-sber500-dashboard-metrics.
 #
 # ПОРЯДОК СТРОГИЙ: backfill запускается ПОСЛЕ создания базы/ролей/Secret'ов и
-# ПОСЛЕ публикации образа dashboard:0.2.0, но ДО выката Deployment 0.2.0,
+# ПОСЛЕ публикации образа dashboard:0.2.1, но ДО выката Deployment 0.2.1,
 # и дождаться Complete. Backfill и фоновое закрытие суток (snapshotter) нового
 # Deployment одновременно работать НЕ должны: пока идёт backfill, в ns
 # dashboard обслуживает старый под 0.1.0, который в daily_metrics не пишет.
-# Если Deployment 0.2.0 уже выкачен — сначала остановить его
+# Если Deployment 0.2.1 уже выкачен — сначала остановить его
 # (kubectl -n dashboard scale deploy/dashboard --replicas=0), затем backfill,
 # затем вернуть реплику.
+#
+# ПЕРЕСЧЁТ СНИМКОВ 05.11–16.11.2026 (версия 0.2.1 восстанавливает сообщения из
+# Langfuse, снимки 0.2.0 посчитаны по неполной базе): backfill существующие
+# снимки НЕ переписывает — сначала по отдельному разрешению владельца удалить
+# строки daily_metrics за 05.11–16.11 (k8s/dashboard/README.md, «Выкат 0.2.1»),
+# затем пересоздать этот Job. Без разрешения строки не трогаем.
 #
 #   kubectl apply -f k8s/dashboard/05-job-backfill.yaml
 #   kubectl -n dashboard wait --for=condition=complete job/dashboard-backfill --timeout=1800s
@@ -65,7 +71,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backfill
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.1
           command: ["python", "app.py", "--backfill"]
           securityContext:
             allowPrivilegeEscalation: false

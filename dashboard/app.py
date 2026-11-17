@@ -10,16 +10,27 @@
 Метрики (openspec/changes/update-sber500-dashboard-metrics):
 - dau — аккаунты с ≥1 пользовательским сообщением за сутки;
 - daily_active_account — внутренняя метрика: аккаунты со строго >10 сообщениями за сутки;
-- new_users — первый известный день аккаунта (меньшее из first_reply_at и первого сообщения в базе агента);
+- new_users — первый известный день аккаунта (меньшее из first_reply_at, первого сообщения в базе агента
+  и первой live-turn трассы Langfuse);
 - total_users — накопленный итог по снимкам, удалённые аккаунты не вычитаются;
 - llm_requests — логические вызовы LLM по действиям пользователей (записи GENERATION Langfuse);
 - tool_requests — успешные вызовы агента к серверу памяти (записи TOOL Langfuse).
 Из всех метрик исключён трафик test/internal (по users.properties->>'traffic_type' в базе app).
 
+Сохранённая история сообщений в базе агента неполна (дни 11–16.11.2026 не записаны, провал замечен и в
+другие дни), поэтому «сообщения» для dau/daily_active_account считаются по двум источникам: базе агента и
+восстановленным из Langfuse ходам live-диалога (записи GENERATION live_turn_voice/live_turn_text: одна
+трасса — одно сообщение, связь traceId→userId трассы). Для пары «день, аккаунт» берётся большее из двух
+чисел (max), а не сумма: одни и те же ходы не должны считаться дважды — при полной базе верх даёт она,
+при потерянных записях — трейсинг. Это приближение: ход, потерянный обоими источниками по-разному,
+недосчитывается; завышения за счёт двойного счёта нет.
+
 Прошедшие сутки закрываются снимком в 00:15 МСК в собственную базу дашборда и дальше не
 пересчитываются; пробелы досчитываются catch-up'ом ограниченными окнами. Текущие сутки снимком не
 закрываются: страница и JSON считают их предварительно из сырых источников при пересчёте (кэш не
-дольше часа) и в daily_metrics не пишут. Сырые источники — базы agent и app (только чтение) и API
+дольше часа) и в daily_metrics не пишут. Первый известный день для new_users текущих суток при этом
+считается по всей истории конкурса: трассы Langfuse сворачиваются постранично (страницы в памяти не
+накапливаются), а не читаются окном одного дня. Сырые источники — базы agent и app (только чтение) и API
 Langfuse. Наружу уходят только суммы: ни текстов, ни идентификаторов людей сервис не отдаёт.
 """
 
@@ -72,6 +83,12 @@ LLM_NAMES = frozenset({
     "memory_instruct",
 })
 
+# Имена GENERATION-записей Langfuse, которые считаются приходом пользовательского сообщения: один ход
+# live-диалога (одна трасса) — одно сообщение. Подмножество LLM_NAMES: по ним восстанавливаются сообщения,
+# потерянные базой агента (см. шапку файла). live_turn_recovery сюда не входит — это технический ретрай уже
+# посчитанного хода, а не новое сообщение; recap/mood/memory — вызванные разговором вызовы, не сообщения.
+MESSAGE_TURN_NAMES = frozenset({"live_turn_voice", "live_turn_text"})
+
 # Имена TOOL-записей Langfuse — логические вызовы агента к серверу памяти (Cognee). Источник —
 # `Tracer.start_tool` и точки CogneeClient (agent/app/clients/cognee.py): recall/recall_chunks/read_consent →
 # memory_search, add_document/remember (add+cognify — один вызов) → memory_write, delete_document →
@@ -98,9 +115,14 @@ def definitions() -> dict[str, str]:
         else " Записи появляются со дня включения TOOL-инструментации агента, более ранние дни показывают 0."
     )
     return {
-        "dau": "DAU: уникальные аккаунты с хотя бы одним сообщением агенту за сутки.",
-        "daily_active_account": "Активные аккаунты (внутренняя метрика): строго больше 10 сообщений за сутки.",
-        "new_users": "Новые пользователи: аккаунты, чьё первое известное сообщение пришлось на эти сутки.",
+        "dau": "DAU: уникальные аккаунты с хотя бы одним сообщением агенту за сутки. Сообщения считаются по базе "
+        "агента и по трейсингу Langfuse вместе (часть истории в базе не сохранилась): для пары «день, аккаунт» "
+        "берётся большее из двух чисел, одни и те же ходы дважды не считаются.",
+        "daily_active_account": "Активные аккаунты (внутренняя метрика): строго больше 10 сообщений за сутки "
+        "(объединённые источники, как у DAU).",
+        "new_users": "Новые пользователи: аккаунты, чьё первое известное сообщение пришлось на эти сутки. Первый "
+        "известный день — минимум из отметки первого сообщения, первого сохранённого сообщения в базе агента и "
+        "первой трассы диалога в Langfuse; каждый аккаунт считается новым ровно один день.",
         "total_users": "Пользователи всего: накопленный итог новых по снимкам; удалённые аккаунты не вычитаются.",
         "llm_requests": "Вызовы LLM: логические вызовы моделей, инициированные действиями пользователей (ответы в диалоге, "
         "итоги разговоров, извлечение памяти, оценка настроения); технические ретраи считаются одним вызовом; прогревы, "
@@ -163,18 +185,22 @@ def activity_by_day(message_rows: Iterable[tuple[str, str, int]], excluded: set[
     return dau, active
 
 
-def first_known_day(first_reply: Mapping[str, str | None], first_message: Mapping[str, str]) -> dict[str, str]:
-    """Первый известный день аккаунта: меньшее из first_reply_at и первого сохранённого сообщения.
+def first_known_day(first_reply: Mapping[str, str | None], first_message: Mapping[str, str],
+                    first_turn: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Первый известный день аккаунта: минимум из first_reply_at, первого сохранённого сообщения
+    и первой live-turn трассы Langfuse.
 
-    У legacy-аккаунтов first_reply_at остаётся NULL навсегда (миграция 0014), поэтому одним полем обойтись
-    нельзя. Результат по определению дедуплицирован: у аккаунта ровно один первый день."""
+    У legacy-аккаунтов first_reply_at остаётся NULL навсегда (миграция 0014), а база агента потеряла часть
+    истории (дни 11–16.11.2026), поэтому одним источником обойтись нельзя. Результат по определению
+    дедуплицирован: у аккаунта ровно один первый день."""
     out = {str(user): day for user, day in first_message.items()}
-    for user, day in first_reply.items():
-        if not day:
-            continue
-        user = str(user)
-        if user not in out or day < out[user]:
-            out[user] = day
+    for source in (first_reply, first_turn or {}):
+        for user, day in source.items():
+            if not day:
+                continue
+            user = str(user)
+            if user not in out or day < out[user]:
+                out[user] = day
     return out
 
 
@@ -196,6 +222,69 @@ def _trace_users(traces: Iterable[dict]) -> dict[str, str]:
         if trace.get("id") and user_id:
             out[str(trace["id"])] = str(user_id)
     return out
+
+
+def langfuse_message_rows(generations: Iterable[dict], traces: Iterable[dict],
+                          excluded: set[str]) -> list[tuple[str, str, int]]:
+    """Восстановленные из Langfuse сообщения: (московский день, user_id, число уникальных traceId).
+
+    Приближение к пользовательским сообщениям базы агента: трасса с записью live_turn_voice/live_turn_text —
+    одно сообщение. Дедупликация по (день, user_id, traceId): повторная GENERATION той же трассы (ретрай
+    клиента) сообщение не дублирует. Трассы без userId и аккаунты test/internal не считаются, как везде."""
+    users = _trace_users(traces)
+    turns: set[tuple[str, str, str]] = set()
+    for obs in generations:
+        if obs.get("name") not in MESSAGE_TURN_NAMES:
+            continue
+        user_id = users.get(str(obs.get("traceId") or ""))
+        if not user_id or user_id in excluded:
+            continue
+        day = msk_day(obs.get("startTime") or "")
+        if day:
+            turns.add((day, user_id, str(obs["traceId"])))
+    counts: dict[tuple[str, str], int] = {}
+    for day, user_id, _trace_id in turns:
+        counts[(day, user_id)] = counts.get((day, user_id), 0) + 1
+    return [(day, user_id, n) for (day, user_id), n in counts.items()]
+
+
+def merge_message_rows(message_rows: Iterable[tuple[str, str, int]],
+                       langfuse_rows: Iterable[tuple[str, str, int]]) -> list[tuple[str, str, int]]:
+    """Объединение разбивок «день × user → число сообщений» из базы агента и Langfuse: max, а не сумма.
+
+    Оба источника описывают одни и те же ходы: у сохранённого сообщения есть и трасса. Сумма посчитала бы
+    их дважды; max берёт более полный источник для пары (день, аккаунт) — при полной базе её count, при
+    потерянных записях — восстановленное из трейсинга число."""
+    merged: dict[tuple[str, str], int] = {}
+    for rows in (message_rows, langfuse_rows):
+        for day, user_id, n in rows:
+            key = (day, str(user_id))
+            merged[key] = max(merged.get(key, 0), int(n))
+    return [(day, user_id, n) for (day, user_id), n in merged.items()]
+
+
+def first_langfuse_day(generations: Iterable[dict], traces: Iterable[dict]) -> dict[str, str]:
+    """userId → первый московский день с live-turn записью (в пределах переданной выгрузки)."""
+    users = _trace_users(traces)
+    out: dict[str, str] = {}
+    for obs in generations:
+        if obs.get("name") not in MESSAGE_TURN_NAMES:
+            continue
+        user_id = users.get(str(obs.get("traceId") or ""))
+        day = msk_day(obs.get("startTime") or "")
+        if user_id and day and (user_id not in out or day < out[user_id]):
+            out[user_id] = day
+    return out
+
+
+def _fold_first_turns(acc: dict[str, str], raw: Mapping) -> None:
+    """Накопить первые live-turn дни аккаунтов через границу окон: min по уже обработанным окнам.
+
+    Выгрузка Langfuse ограничена окном, поэтому без накопления аккаунт, чей первый ход попал в более раннее
+    окно, а из баз агент приложения его не знает, посчитался бы новым повторно в более позднем окне."""
+    for user, day in first_langfuse_day(raw["generations"], raw["traces"]).items():
+        if user not in acc or day < acc[user]:
+            acc[user] = day
 
 
 def _count_observations(
@@ -236,12 +325,19 @@ def metrics_by_day(
     generations: Iterable[dict],
     tools: Iterable[dict],
     traces: Iterable[dict],
+    first_turn: Mapping[str, str] | None = None,
 ) -> dict[str, dict]:
     """Все метрики суток из сырых выгрузок: {день: {dau, daily_active_account, new_users, llm_requests, tool_requests}}.
 
+    «Сообщения» для dau/daily_active_account — объединение базы агента и восстановленных из Langfuse ходов
+    (max по паре «день, аккаунт», без двойного счёта). `first_turn` — первые live-turn дни аккаунтов; когда
+    не передан, считается по выгрузке этого окна (backfill/catch-up передают накопленное через окна).
     `total_users` здесь нет: он накопительный по снимкам и вычисляется при записи (save_snapshots)."""
-    dau, active = activity_by_day(message_rows, excluded)
-    new = new_users_by_day(first_known_day(first_reply, first_message), excluded)
+    generations, tools, traces = list(generations), list(tools), list(traces)
+    dau, active = activity_by_day(merge_message_rows(message_rows, langfuse_message_rows(generations, traces, excluded)), excluded)
+    if first_turn is None:
+        first_turn = first_langfuse_day(generations, traces)
+    new = new_users_by_day(first_known_day(first_reply, first_message, first_turn), excluded)
     llm = llm_requests_by_day(generations, traces, excluded)
     tool = tool_requests_by_day(tools, traces, excluded)
     days = set(dau) | set(active) | set(new) | set(llm) | set(tool)
@@ -334,44 +430,94 @@ def _langfuse_get(host: str, public_key: str, secret_key: str, path: str, params
         return json.loads(response.read())
 
 
-def _langfuse_list(host: str, public_key: str, secret_key: str, path: str, params: dict) -> list[dict]:
-    """Постраничная выгрузка списка публичного API Langfuse за период."""
-    items: list[dict] = []
+def _langfuse_stamp(at: datetime) -> str:
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _langfuse_config() -> tuple[str, str, str]:
+    return (
+        os.environ.get("LANGFUSE_HOST", "http://langfuse-web.infra.svc.cluster.local:3000"),
+        os.environ["LANGFUSE_PUBLIC_KEY"],
+        os.environ["LANGFUSE_SECRET_KEY"],
+    )
+
+
+def _langfuse_fold(host: str, public_key: str, secret_key: str, path: str, params: dict,
+                   fold: Callable[[object, dict], None], acc) -> object:
+    """Постраничный обход списка публичного API Langfuse со свёрткой fold(acc, item).
+
+    Страницы не накапливаются: обработана — забыта. Так вся история конкурса помещается в память
+    пода (128Mi) даже при десятках тысяч записей: живут только текущая страница и аккумулятор."""
     page = 1
     while True:
         body = _langfuse_get(host, public_key, secret_key, path, {**params, "page": page, "limit": LANGFUSE_PAGE_LIMIT})
-        items.extend(body.get("data") or [])
+        for item in body.get("data") or []:
+            fold(acc, item)
         meta = body.get("meta") or {}
         if page >= int(meta.get("totalPages") or 1):
-            return items
+            return acc
         page += 1
+
+
+def _langfuse_list(host: str, public_key: str, secret_key: str, path: str, params: dict) -> list[dict]:
+    """Постраничная выгрузка списка целиком в память — допустимо только для ограниченных окон снимков."""
+    return _langfuse_fold(host, public_key, secret_key, path, params, list.append, [])
 
 
 def query_langfuse(host: str, public_key: str, secret_key: str, since: datetime, until: datetime) -> dict:
     """Записи GENERATION и TOOL и трассы за период. userId живёт на трассе, связь — по traceId."""
-
-    def stamp(at: datetime) -> str:
-        return at.strftime("%Y-%m-%dT%H:%M:%SZ")
     generations = _langfuse_list(host, public_key, secret_key, "/api/public/observations",
-                                 {"type": "GENERATION", "fromStartTime": stamp(since), "toStartTime": stamp(until)})
+                                 {"type": "GENERATION", "fromStartTime": _langfuse_stamp(since),
+                                  "toStartTime": _langfuse_stamp(until)})
     tools = _langfuse_list(host, public_key, secret_key, "/api/public/observations",
-                           {"type": "TOOL", "fromStartTime": stamp(since), "toStartTime": stamp(until)})
+                           {"type": "TOOL", "fromStartTime": _langfuse_stamp(since), "toStartTime": _langfuse_stamp(until)})
     traces = _langfuse_list(host, public_key, secret_key, "/api/public/traces",
-                            {"fromTimestamp": stamp(since - TRACE_LOOKBACK), "toTimestamp": stamp(until)})
+                            {"fromTimestamp": _langfuse_stamp(since - TRACE_LOOKBACK), "toTimestamp": _langfuse_stamp(until)})
     return {"generations": generations, "tools": tools, "traces": traces}
+
+
+def langfuse_first_turns(host: str, public_key: str, secret_key: str,
+                         since: datetime, until: datetime, excluded: set[str]) -> dict[str, str]:
+    """userId → первый московский день live-turn трассы за весь переданный период.
+
+    Нужен для предварительных текущих суток: их окно — один день, а первый известный день аккаунта
+    надо знать по всей истории конкурса, иначе аккаунт, известный только по трейсингу и говоривший
+    раньше, ошибочно стал бы «новым» сегодня. История в списки не собирается (попытка выгрузить её
+    целиком убивала под по памяти): трассы сворачиваются постранично в словарь traceId → userId,
+    observations — с фильтром `name` на стороне API, по проходу на каждое имя из MESSAGE_TURN_NAMES —
+    сразу в минимум дня по аккаунту. Аккаунты test/internal и трассы без userId не участвуют."""
+    users: dict[str, str] = {}
+
+    def fold_trace(acc: dict, trace: dict) -> None:
+        if trace.get("id") and trace.get("userId"):
+            acc[str(trace["id"])] = str(trace["userId"])
+
+    _langfuse_fold(host, public_key, secret_key, "/api/public/traces",
+                   {"fromTimestamp": _langfuse_stamp(since), "toTimestamp": _langfuse_stamp(until)},
+                   fold_trace, users)
+    first: dict[str, str] = {}
+
+    def fold_obs(acc: dict, obs: dict) -> None:
+        user_id = users.get(str(obs.get("traceId") or ""))
+        if not user_id or user_id in excluded:
+            return
+        day = msk_day(obs.get("startTime") or "")
+        if day and (user_id not in acc or day < acc[user_id]):
+            acc[user_id] = day
+
+    for name in sorted(MESSAGE_TURN_NAMES):
+        _langfuse_fold(host, public_key, secret_key, "/api/public/observations",
+                       {"type": "GENERATION", "name": name,
+                        "fromStartTime": _langfuse_stamp(since), "toStartTime": _langfuse_stamp(until)},
+                       fold_obs, first)
+    return first
 
 
 def collect_raw(since: datetime, until: datetime) -> dict:
     """Сырые данные для снимков за [since, until): базы agent и app (чтение) и Langfuse."""
     raw = query_agent_db(os.environ["DIALOG_DATABASE_URL"], since, until)
     raw.update(query_app_db(os.environ["APP_DATABASE_URL"]))
-    raw.update(query_langfuse(
-        os.environ.get("LANGFUSE_HOST", "http://langfuse-web.infra.svc.cluster.local:3000"),
-        os.environ["LANGFUSE_PUBLIC_KEY"],
-        os.environ["LANGFUSE_SECRET_KEY"],
-        since,
-        until,
-    ))
+    raw.update(query_langfuse(*_langfuse_config(), since, until))
     return raw
 
 
@@ -514,11 +660,14 @@ class Snapshotter:
         одним запросом в память не собирается, цепочка total_users наращивается по записанным снимкам."""
         pending = missing_days(self._now(), self._store.days())
         written = 0
+        first_turn: dict[str, str] = {}  # первые live-turn дни: накапливаются через окна, чтобы не посчитать новым дважды
         for i in range(0, len(pending), SNAPSHOT_WINDOW_DAYS):
             window = pending[i:i + SNAPSHOT_WINDOW_DAYS]
             since, until = utc_bounds([date.fromisoformat(window[0]), date.fromisoformat(window[-1])])
             started = time.monotonic()
-            metrics = metrics_by_day(**self._collect(since, until))
+            raw = self._collect(since, until)
+            _fold_first_turns(first_turn, raw)
+            metrics = metrics_by_day(**raw, first_turn=first_turn)
             written += save_snapshots(self._store, window, metrics, self._now())
             log.info("снимки за %s–%s: всего записано %s, %.1f с",
                      window[0], window[-1], written, time.monotonic() - started)
@@ -554,6 +703,7 @@ def backfill(store, collect: Callable[[datetime, datetime], dict], first_day: da
     existing = store.days()
     written = 0
     start = first_day
+    first_turn: dict[str, str] = {}  # первые live-turn дни: накапливаются через окна, чтобы не посчитать новым дважды
     while start <= yesterday:
         end = min(start + timedelta(days=window_days - 1), yesterday)
         days = []
@@ -564,7 +714,9 @@ def backfill(store, collect: Callable[[datetime, datetime], dict], first_day: da
         pending = [d for d in days if d not in existing]
         if pending:
             since, until = utc_bounds([start, end])
-            metrics = metrics_by_day(**collect(since, until))
+            raw = collect(since, until)
+            _fold_first_turns(first_turn, raw)
+            metrics = metrics_by_day(**raw, first_turn=first_turn)
             written += save_snapshots(store, pending, metrics, now)
         start = end + timedelta(days=1)
     return written
@@ -610,12 +762,17 @@ def compute_report(now: datetime) -> dict:
     """Отчёт: прошедшие сутки — только неизменяемые снимки, текущие — предварительный расчёт из сырых источников.
 
     Строка текущих суток в daily_metrics не пишется: до закрытия в 00:15 МСК данные дня ещё меняются.
-    Её total_users — накопленный итог последнего снимка до сегодня плюс предварительные new_users дня."""
+    Её total_users — накопленный итог последнего снимка до сегодня плюс предварительные new_users дня.
+    Первый известный день для new_users текущих суток считается по всей истории конкурса
+    (langfuse_first_turns сворачивает её постранично), а не по окну дня: иначе аккаунт, известный только
+    по трейсингу и говоривший раньше, ошибочно стал бы «новым» сегодня и раздул бы total_users."""
     days = period_days(now)
     store = PgSnapshotStore(os.environ["DASHBOARD_DATABASE_URL"])
     snapshots = store.load([d.isoformat() for d in days])
     today = days[-1].isoformat()
-    metrics = metrics_by_day(**collect_raw(*utc_bounds([days[-1], days[-1]]))).get(today) or ZERO_METRICS
+    raw = collect_raw(*utc_bounds([days[-1], days[-1]]))
+    first_turn = langfuse_first_turns(*_langfuse_config(), *utc_bounds([days[0], days[-1]]), raw["excluded"])
+    metrics = metrics_by_day(**raw, first_turn=first_turn).get(today) or ZERO_METRICS
     snapshots[today] = {**metrics, "total_users": store.total_before(today) + metrics["new_users"]}
     return build_report(days, snapshots, now)
 
@@ -773,7 +930,7 @@ ul {{ padding-left:18px; }} li {{ margin:4px 0; }}
 <table><thead><tr><th>Дата</th><th>DAU</th><th>Активные (&gt;10)</th><th>Новые</th><th>Всего</th><th>LLM</th><th>Память</th></tr></thead>
 <tbody>{rows}</tbody></table>
 <h2>Как считается</h2>
-<ul>{definitions_html}<li>Из метрик исключён трафик test/internal. Прошедшие сутки закрываются снимком в 00:15 МСК и дальше не пересчитываются; текущие сутки (со звёздочкой) — предварительные данные из сырых источников, снимком пока не закрываются. Страница обновляется не чаще раза в час. JSON с теми же числами — <code>/dashboard/api</code>.</li></ul>
+<ul>{definitions_html}<li>Из метрик исключён трафик test/internal. Сообщения для DAU и «активных» считаются по базе агента и трейсингу Langfuse вместе: часть истории в базе не сохранилась, поэтому ходы диалога восстанавливаются из трассы (одна трасса — одно сообщение), а для пары «день, аккаунт» берётся большее из двух чисел — одни и те же ходы дважды не считаются. Прошедшие сутки закрываются снимком в 00:15 МСК и дальше не пересчитываются; текущие сутки (со звёздочкой) — предварительные данные из сырых источников, снимком пока не закрываются. Страница обновляется не чаще раза в час. JSON с теми же числами — <code>/dashboard/api</code>.</li></ul>
 </main></body></html>"""
 
 
