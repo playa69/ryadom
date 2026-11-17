@@ -36,7 +36,7 @@ async function legacyUnsavedStart(page: Page): Promise<void> {
 }
 
 async function startFromHome(page: Page): Promise<void> {
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   await expect(current(page).getByRole('button', { name: 'Остановить запись' })).toBeVisible({
     timeout: 30_000,
   })
@@ -126,7 +126,7 @@ test('PWA: старый несохраняемый разговор пропад
   await expect(current(page).getByRole('heading', { name: 'Разговор не сохранён' })).toBeVisible()
   await step(page, 'agent-restart', 'Агент перезапустился: «Разговор не сохранён» и кнопка «На главную»')
   await current(page).getByText('На главную', { exact: true }).click()
-  await expect(button(page, 'Поговорить')).toBeVisible()
+  await expect(button(page, 'Начать разговор')).toBeVisible()
 
   await openJournal(page)
   await expect(current(page).getByTestId('journal-item')).toHaveCount(0)

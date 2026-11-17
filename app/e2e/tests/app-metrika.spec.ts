@@ -35,7 +35,7 @@ test('цели разговора в PWA: первая реплика, трет�
   test.setTimeout(150_000)
   await openApp(page)
   await startAnonymously(page)
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   // The conversation opens on the voice; the replies of this scenario are typed.
   await page.getByRole('button', { name: 'Писать текстом' }).click({ timeout: 30_000 })
   const input = page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER)

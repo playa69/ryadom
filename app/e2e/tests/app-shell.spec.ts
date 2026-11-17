@@ -1,37 +1,37 @@
 import type { Locator, Page } from '@playwright/test'
-import { InputLimit } from '@ryadom/contracts/api/limits'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { PWA_URL } from '../playwright.config'
 import {
   button,
   consentSheet,
   expectNoHorizontalOverflow,
+  firstHello,
+  helloText,
+  helloVoice,
+  homeStartText,
+  homeStartVoice,
   openApp,
-  openConversationSettings,
   startAnonymously,
 } from '../support/app'
 import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
+import { expectInsideViewport } from '../support/layout'
 import { playedBy, spokenBy } from '../support/speech'
 import { profileOf, storedDevice, trackSession } from '../support/session'
 
 /**
- * The PWA home after `openspec/changes/add-fast-dialog-start`: a new person lands on it directly
- * (no consent gate), the first-message field with the suggestions and the theme switch work
- * locally, and the first text or voice start opens the consent sheet over home instead of sending
- * anything. Plus the start itself: a typed message opens the conversation in its text view, goes
- * out exactly once (a reconnect or a second mount does not duplicate it), and the question about
- * an unfinished conversation keeps the text-or-voice intention.
+ * The PWA first screen and home after `openspec/changes/rework-web-first-screen`: a new person lands on the
+ * first screen (the sphere, «Поговорить», the keyboard) with no gate and no form, the theme switch works
+ * locally, and any press opens the consent sheet over it instead of sending anything. Plus the start
+ * itself: «Продолжить» opens the conversation by voice or in the text view with an empty box, the first
+ * typed message goes out exactly once (a reconnect or a second mount does not duplicate it), and the
+ * question about an unfinished conversation keeps the voice-or-text intention.
  *
  * The Telegram Mini App is the same code on home; its specifics (the Telegram account) live in
  * app-telegram.spec.ts. The native shell is not covered here: Playwright runs the web build, where
  * `isNative()` is false, so the kept native branch (the gate, voice-only start, dark-only palette)
- * is fixed by the unit tests of consent-gate and the composer instead.
+ * is fixed by the unit tests of consent-gate instead.
  */
-
-// The suggestion wordings live in packages/client-core/src/dialog-start.ts and are pinned here on
-// purpose: a drift between the surfaces must show up as a red test.
-const SUGGESTIONS = ['Хочу выговориться', 'Мне тревожно', 'Просто поговорить'] as const
 
 /**
  * What may not leave the device before the consent is confirmed: account, consent and conversation
@@ -123,155 +123,107 @@ async function expectFitting(page: Page, actions: Locator[]): Promise<void> {
     }
   }
 }
-
-// `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии» («Главная доступна до
-// согласия») и account-auth «Первый экран: разговор с первого действия» («Что видит новый человек»,
-// «Ввод и подсказка без запроса»).
-test('главная нового человека: поле, подсказки и тема сразу, без ворота и без запросов', async ({ page }) => {
+// `openspec/changes/rework-web-first-screen`, «Первый экран: разговор с первого действия» («Что видит новый
+// человек», «Ничего не уходит до согласия») и «Согласие при первом действии» («Главная доступна до согласия»).
+test('первый экран нового человека: шар, приглашение, кнопки и тема сразу, без ворот, формы и запросов', async ({
+  page,
+}) => {
   const calls = trackPersonalRequests(page)
   await openApp(page)
 
-  const home = page.locator('.page-current')
-  await expect(button(page, 'Поговорить')).toBeVisible()
-  await expect(home.getByTestId('welcome-talk'), 'прежнего входного ворота нет').toHaveCount(0)
-  // The mandatory tick lives only in the consent sheet now, not on home.
-  await expect(home.getByTestId('data-consent-toggle')).not.toBeVisible()
-  await expect(home.getByTestId('start-draft')).toBeVisible()
-  await expect(home.getByTestId('start-suggestion')).toHaveText(SUGGESTIONS)
-  await expect(home.getByTestId('theme-switch')).toBeVisible()
-  await expect(home.getByTestId('have-account')).toHaveText('Войти')
+  const first = page.locator('.page-current')
+  await expect(firstHello(page)).toBeVisible()
+  await expect(first.getByTestId('hello-caption')).toContainText('Привет! Я рядом.')
+  await expect(first.getByTestId('hello-caption')).toContainText('Поговорим?')
+  await expect(helloVoice(page)).toContainText('Поговорить')
+  await expect(helloText(page)).toHaveAccessibleName('Написать текстом')
+  await expect(first.getByTestId('hello-plaque')).toContainText('бесплатный ИИ-собеседник, без регистрации')
+  await expect(first.getByTestId('hello-plaque')).toContainText('В опасной ситуации звони 112.')
+  await expect(first.getByTestId('welcome-talk'), 'прежнего входного ворота нет').toHaveCount(0)
+  // No box, no suggestions, no settings and no checkbox: the press is the only way on.
+  await expect(first.locator('textarea')).toHaveCount(0)
+  await expect(first.getByTestId('start-suggestion')).toHaveCount(0)
+  await expect(first.getByTestId('home-settings')).toHaveCount(0)
+  await expect(first.getByTestId('memory-switch')).toHaveCount(0)
+  await expect(first.getByTestId('data-consent-toggle')).not.toBeVisible()
+  await expect(button(page, 'Отправить')).toHaveCount(0)
+  await expect(first.getByTestId('theme-switch')).toBeVisible()
+  await expect(first.getByTestId('have-account')).toHaveText('Войти')
   await expect(page.locator('.rd-sos-button')).toBeVisible()
-  await expect(home.getByTestId('consent-notice')).toContainText('ИИ для самоподдержки')
-  await expect(home.getByText('В опасной ситуации звони 112.')).toBeVisible()
   expect(await storedDevice(page), 'до согласия удостоверения нет').toBeNull()
   await step(
     page,
     'app-home-first',
-    'Главная нового человека: поле первого сообщения, подсказки и «Поговорить» сразу, ворота нет',
-  )
-
-  // Typing flips the main action to «Отправить»; whitespace alone does not.
-  const draft = home.getByTestId('start-draft')
-  await draft.fill('Сегодня был долгий день')
-  await expect(button(page, 'Отправить')).toBeVisible()
-  await draft.fill('   ')
-  await expect(button(page, 'Поговорить')).toBeVisible()
-
-  // A suggestion only fills the field in, and the text stays editable.
-  await home.getByTestId('start-suggestion').nth(1).click()
-  await expect(draft).toHaveValue('Мне тревожно')
-  await draft.fill('Мне тревожно и не спится')
-  await expect(button(page, 'Отправить')).toBeVisible()
-  await step(
-    page,
-    'app-home-suggestion',
-    'Подсказка подставила редактируемый черновик, кнопка стала «Отправить» — без запроса',
+    'Первый экран нового человека: шар, «Привет! Я рядом.», «Поговорить» и клавиатура, плашка про 112, ворот нет',
   )
 
   // The theme switch is local too.
   const themeBefore = (await themeState(page)).dataTheme
-  await home.getByTestId('theme-switch').click()
+  await first.getByTestId('theme-switch').click()
   expect((await themeState(page)).dataTheme, 'тема переключилась').not.toBe(themeBefore)
-  await expect(draft, 'переключение темы не тронуло черновик').toHaveValue('Мне тревожно и не спится')
 
-  expect(calls, 'ввод, подсказка и тема не создают аккаунт, разговор или запрос').toEqual([])
+  expect(calls, 'первый экран и тема не создают аккаунт, разговор или запрос').toEqual([])
   expect(await storedDevice(page), 'аккаунт так и не создан').toBeNull()
 })
 
-// `openspec/changes/add-fast-dialog-start`, «Главный экран мобильного клиента» («(PWA, Telegram)
-// Подсказки — одна прокручиваемая лента»).
-test('подсказки — одна прокручиваемая лента чипов на 390, доступная с клавиатуры', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
+// `openspec/changes/rework-web-first-screen`, «Первый экран: разговор с первого действия» («(Web) Экран
+// целиком на телефоне»), here for the PWA.
+test('первый экран на телефоне 360×780: шар, приглашение, кнопки и плашка с 112 без прокрутки', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 })
   await openApp(page)
-
-  const home = page.locator('.page-current')
-  const strip = page.getByRole('group', { name: 'Подсказки первого сообщения' })
-  const chips = home.getByTestId('start-suggestion')
-  await expect(chips).toHaveText(SUGGESTIONS)
-  await expect(strip).toHaveAttribute('tabindex', '0')
-
-  // One row of content-wide chips: all three share the strip's line, none wraps below.
-  const stripBox = (await strip.boundingBox())!
-  const chipBoxes = []
-  for (let index = 0; index < 3; index += 1) chipBoxes.push((await chips.nth(index).boundingBox())!)
-  for (const box of chipBoxes)
-    expect(Math.abs(box.y - chipBoxes[0]!.y), 'чипы в одной строке').toBeLessThanOrEqual(2)
-  expect(stripBox.height, 'лента не переносится на несколько строк').toBeLessThan(chipBoxes[0]!.height + 24)
-  // Compact chips, not full-width buttons.
-  for (const box of chipBoxes)
-    expect(box.width, 'чип по ширине содержимого').toBeLessThan(stripBox.width - 40)
-
-  // The strip overflows at 390 and scrolls on its own; the page does not.
-  const room = await strip.evaluate((el) => el.scrollWidth - el.clientWidth)
-  expect(room, 'на 390 лента прокручивается').toBeGreaterThan(10)
-  await expectNoHorizontalOverflow(page)
-
-  // The keyboard reaches every chip: the strip is focusable and End scrolls it to the last one.
-  await strip.focus()
-  await page.keyboard.press('End')
-  await expect
-    .poll(() => strip.evaluate((el) => el.scrollWidth - el.clientWidth - el.scrollLeft))
-    .toBeLessThanOrEqual(1)
-  await expect(chips.nth(2)).toBeInViewport()
-  await step(
-    page,
-    'app-chips-strip',
-    'Одна прокручиваемая лента чипов: с клавиатуры докручена до «Просто поговорить»',
-  )
-
-  // And every chip is a working suggestion.
-  for (const suggestion of SUGGESTIONS) {
-    await chips.filter({ hasText: suggestion }).click()
-    await expect(home.getByTestId('start-draft')).toHaveValue(suggestion)
+  await expect(firstHello(page)).toBeVisible()
+  for (const part of [
+    firstHello(page).locator('.rd-orb').first(),
+    page.getByTestId('hello-caption'),
+    helloVoice(page),
+    helloText(page),
+    page.getByTestId('hello-plaque'),
+  ]) {
+    await expect(part).toBeVisible()
+    await expectInsideViewport(page, part)
   }
+  await expect(page.getByTestId('hello-plaque')).toContainText('В опасной ситуации звони 112.')
+  // Nothing of the screen lies below the window: neither the document nor the page's own scroller.
+  const below = await page.evaluate(() => {
+    const scrolling = document.scrollingElement!
+    const content = document.querySelector('.page-current .page-content')
+    return Math.max(
+      scrolling.scrollHeight - scrolling.clientHeight,
+      content ? content.scrollHeight - content.clientHeight : 0,
+    )
+  })
+  expect(below, 'первый экран не прокручивается').toBeLessThanOrEqual(1)
+  await expectNoHorizontalOverflow(page)
+  await step(page, 'app-home-first-360', 'Первый экран на 360×780 помещается целиком, без прокрутки')
 })
 
-// `openspec/changes/add-fast-dialog-start`, «Главный экран мобильного клиента» («(PWA, Telegram)
-// Поле ограничивает черновик»).
-test('поле первого сообщения: не больше 4000 знаков, одни пробелы — не текст', async ({ page }) => {
-  test.setTimeout(120_000)
-  await openApp(page)
-
-  const home = page.locator('.page-current')
-  const draft = home.getByTestId('start-draft')
-  await expect(draft).toHaveAttribute('maxlength', String(InputLimit.MessageMax))
-
-  // Fill the allowed length at once, then type past it: the limit cuts the tail off without
-  // thousands of slow controlled-input round trips through the browser driver.
-  await draft.fill('а'.repeat(InputLimit.MessageMax))
-  await draft.pressSequentially('а'.repeat(100))
-  expect(await draft.evaluate((el: HTMLTextAreaElement) => el.value.length)).toBe(InputLimit.MessageMax)
-  await expect(button(page, 'Отправить')).toBeVisible()
-  await step(page, 'app-draft-limit', 'Поле приняло 4000 знаков и обрезало остальное')
-
-  await draft.fill('     ')
-  await expect(button(page, 'Поговорить'), 'пробелы не меняют кнопку').toBeVisible()
-})
-
-// `openspec/changes/add-fast-dialog-start`, «Главный экран мобильного клиента» («(PWA, Telegram)
-// Настроить разговор свёрнуто»).
-test('«Настроить разговор» свёрнуто по умолчанию, внутри — прежний выбор памяти', async ({ page }) => {
-  await openApp(page)
-  await startAnonymously(page)
-
-  const home = page.locator('.page-current')
-  const settings = home.getByTestId('home-settings')
-  await expect(settings).toBeVisible({ timeout: 20_000 })
-  expect(await settings.getAttribute('open'), 'по умолчанию свёрнуто').toBeNull()
-  await expect(home.getByTestId('memory-switch'), 'выбор памяти скрыт внутри').not.toBeVisible()
-  await expect(button(page, 'Поговорить')).toBeVisible()
-  await step(
-    page,
-    'app-settings-collapsed',
-    '«Настроить разговор» свёрнуто и не конкурирует с полем и кнопкой',
-  )
-
-  await openConversationSettings(page)
-  const choice = home.getByTestId('memory-switch')
-  await expect(choice).toBeVisible()
-  await expect(choice).toContainText('Запоминать важное')
-  await expect(choice).toContainText('Чтобы не начинать каждый раз с нуля')
-  await step(page, 'app-settings-open', 'Внутри раскрытого блока — прежний выбор памяти')
+// `openspec/changes/rework-web-first-screen`, «Первый экран: разговор с первого действия» («Приветствие
+// звучит»), here for the PWA.
+test('первый экран: приветствие звучит при первом нажатии, если браузер не дал начать сам', async ({
+  page,
+}) => {
+  // A browser refuses sound before a gesture: the stub refuses the first try and records what is played after.
+  await page.addInitScript(() => {
+    const played: string[] = []
+    ;(window as unknown as { __helloPlayed: string[] }).__helloPlayed = played
+    let allowed = false
+    window.addEventListener('pointerdown', () => (allowed = true), { capture: true })
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      if (!allowed) return Promise.reject(new DOMException('blocked', 'NotAllowedError'))
+      played.push(this.src)
+      return Promise.resolve()
+    }
+  })
+  // Not openApp: its click on the install banner would itself be the gesture that allows sound.
+  await page.goto(`${PWA_URL}/`)
+  await expect(firstHello(page)).toBeVisible({ timeout: 30_000 })
+  const played = () => page.evaluate(() => (window as unknown as { __helloPlayed: string[] }).__helloPlayed)
+  expect(await played(), 'до нажатия звука нет').toEqual([])
+  await firstHello(page).locator('.rd-first-hello-stage').click()
+  await expect.poll(played).toHaveLength(1)
+  expect((await played())[0]).toContain('hello-greeting')
 })
 
 // `openspec/changes/add-fast-dialog-start`, «Главный экран мобильного клиента» («(PWA, Telegram)
@@ -294,37 +246,34 @@ test('шапка на 390: переключатель темы, SOS и «Вой�
   await step(page, 'app-header-390-signed', 'Шапка вошедшего на 390: тема и SOS не перекрываются')
 })
 
-// `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии»: «Окно согласия при
-// отправке текста», «Окно согласия при голосовом старте», ««Продолжить» неактивна до отметки»,
-// «Закрытие сохраняет черновик и намерение», «Документы из окна согласия».
-test('лист согласия: открытие при старте, отметка, закрытие кнопкой, Esc, фоном и жестом — без запроса', async ({
+// `openspec/changes/rework-web-first-screen`, «Согласие при первом действии»: «Окно согласия при голосовом
+// старте и при старте текстом», ««Продолжить» неактивна до отметки», «Закрытие ничего не отправляет»,
+// «Документы из окна согласия».
+test('лист согласия: открывают «Поговорить», шар и клавиатура; отметка, закрытие кнопкой, Esc, фоном и жестом — без запроса', async ({
   page,
   isMobile,
 }) => {
   test.setTimeout(120_000)
   const calls = trackPersonalRequests(page)
   await openApp(page)
-  const home = page.locator('.page-current')
-  const draft = home.getByTestId('start-draft')
   const sheet = consentSheet(page)
-  const DRAFT = 'Сегодня был трудный день'
 
-  // A text start without a recorded consent opens the sheet over home instead of sending anything.
-  await draft.fill(DRAFT)
-  await button(page, 'Отправить').click()
+  // The keyboard opens the sheet over the first screen instead of sending anything.
+  await helloText(page).click()
   await expect(sheet.getByTestId('consent-sheet')).toBeVisible()
   await expect(sheet.getByRole('heading', { name: 'Перед началом' })).toBeVisible()
   await expect(sheet.getByTestId('data-consent')).toContainText('Мне есть 18 лет')
+  await expect(sheet.getByTestId('data-consent')).toContainText('на запоминание важного из них')
   const toggle = sheet.getByTestId('data-consent-toggle')
   await expect(toggle).not.toBeChecked()
   await expect(sheet.getByTestId('consent-continue'), '«Продолжить» неактивна до отметки').toHaveClass(
     /disabled/,
   )
-  await expect(draft, 'черновик остаётся за листом').toHaveValue(DRAFT)
+  await expect(sheet.getByTestId('guest-note'), 'сроки хранения под кнопками').toContainText('30 дней')
   await step(
     page,
     'app-consent-open',
-    'Лист согласия поверх главной: снятый флажок, «Продолжить» неактивна, за листом черновик',
+    'Лист согласия поверх первого экрана: снятый флажок, «Продолжить» неактивна, сроки хранения под кнопками',
   )
   expect(calls, 'открытие листа ничего не отправило').toEqual([])
 
@@ -344,30 +293,28 @@ test('лист согласия: открытие при старте, отме�
   await expect(toggle, 'открытие документа не сбросило отметку').not.toBeChecked()
   await toggle.check()
 
-  // Closing by the button: home, the draft and no request.
+  // Closing by the button: the first screen and no request.
   await sheet.getByTestId('consent-close').click()
   await expect(sheet).toHaveCount(0)
-  await expect(draft).toHaveValue(DRAFT)
+  await expect(firstHello(page)).toBeVisible()
   expect(calls, 'закрытие кнопкой ничего не отправило').toEqual([])
 
-  // Closing by Escape.
-  await button(page, 'Отправить').click()
+  // The button «Поговорить»; closing by Escape.
+  await helloVoice(page).click()
   await expect(sheet.getByTestId('consent-sheet')).toBeVisible()
+  await expect(sheet.getByTestId('data-consent-toggle'), 'отметка пережила закрытие').toBeChecked()
   await page.keyboard.press('Escape')
   await expect(sheet).toHaveCount(0)
-  await expect(draft).toHaveValue(DRAFT)
 
-  // A voice start opens the same sheet; a tap on the backdrop closes it.
-  await draft.fill('')
-  await button(page, 'Поговорить').click()
+  // The sphere opens the same sheet; a tap on the backdrop closes it.
+  await firstHello(page).locator('.rd-first-hello-stage').click()
   await expect(sheet.getByTestId('consent-sheet')).toBeVisible()
-  await expect(sheet.getByTestId('data-consent-toggle'), 'отметка пережила закрытия').toBeChecked()
   const width = page.viewportSize()!.width
   await page.locator('.sheet-backdrop').click({ position: { x: Math.floor(width / 2), y: 20 } })
   await expect(sheet).toHaveCount(0)
 
   // And the swipe-down gesture.
-  await button(page, 'Поговорить').click()
+  await helloVoice(page).click()
   await expect(sheet.getByTestId('consent-sheet')).toBeVisible()
   // modal-in appears before the opening transition; its initial coordinates can still be offscreen.
   await expect(sheet).toHaveCSS('transform', /^(?:none|matrix\(1, 0, 0, 1, 0, 0\))$/)
@@ -392,42 +339,36 @@ test('лист согласия: открытие при старте, отме�
     await page.mouse.up()
   }
   await expect(sheet).toHaveCount(0)
-  await step(page, 'app-consent-closed', 'Лист закрыт жестом вниз: человек на главной, запроса не было')
+  await step(page, 'app-consent-closed', 'Лист закрыт жестом вниз: человек на первом экране, запроса не было')
 
   expect(calls, 'ни одно закрытие ничего не отправило').toEqual([])
   expect(await storedDevice(page), 'аккаунт так и не создан').toBeNull()
 })
 
-// `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии» («Подтверждение
-// продолжает исходное действие»), dialog «Начало разговора с главного экрана» («(Web, PWA,
-// Telegram) Подтверждение согласия продолжает старт»), account-auth («(PWA, Telegram) Начало
-// текстом»).
-test('лист согласия: «Продолжить» продолжает текстовый старт — аккаунт, один текст, без микрофона', async ({
+// `openspec/changes/rework-web-first-screen`, «Первый экран: разговор с первого действия» («Начало
+// текстом»): the keyboard opens the text view with an empty box, nothing is typed on the first screen.
+test('лист согласия: «Продолжить» продолжает старт с клавиатуры — аккаунт, память, текстовый вид с пустым полем, без микрофона', async ({
   page,
   request,
 }) => {
   test.setTimeout(120_000)
   const session = trackSession(page)
   await openApp(page)
-  const FIRST = 'Мне тревожно, не могу уснуть'
 
-  await page.locator('.page-current').getByTestId('start-draft').fill(FIRST)
-  await button(page, 'Отправить').click()
+  await helloText(page).click()
   const sheet = consentSheet(page)
   await sheet.getByTestId('data-consent-toggle').check()
   await sheet.getByTestId('consent-continue').click()
 
-  // The chain ran by itself: account, consents, the conversation in its text view.
+  // The chain ran by itself: account, consents, the conversation in its text view with an empty box.
   const current = page.locator('.page-current')
-  const greeting = current.locator('.message-received').first()
-  const sent = current.locator('.message-sent').filter({ hasText: FIRST })
-  await expect(greeting).toContainText('Я рядом. С чего начнём?', { timeout: 30_000 })
-  await expect(sent).toHaveCount(1)
-  await expect(sent).toBeVisible()
-  // The text shows at once, under the greeting, before the connection is ready.
-  expect((await sent.boundingBox())!.y, 'первое сообщение под приветствием').toBeGreaterThan(
-    (await greeting.boundingBox())!.y,
-  )
+  await expect(current.locator('.message-received').first()).toContainText('Я рядом. С чего начнём?', {
+    timeout: 30_000,
+  })
+  const input = current.getByPlaceholder('Напиши, что происходит')
+  await expect(input).toBeVisible()
+  await expect(input, 'поле пустое: на первом экране ничего не набирали').toHaveValue('')
+  await expect(current.locator('.message-sent'), 'сообщений человека ещё нет').toHaveCount(0)
   await expect(
     page.getByRole('button', { name: 'Остановить запись' }),
     'прослушивание не началось',
@@ -438,7 +379,7 @@ test('лист согласия: «Продолжить» продолжает �
   await step(
     page,
     'app-consent-text-start',
-    'После отметки и «Продолжить» разговор открыт текстом: приветствие, под ним набранная фраза',
+    'После отметки и «Продолжить» разговор открыт текстом: приветствие и пустое поле ввода',
   )
 
   const accountId = session.userId()
@@ -449,24 +390,33 @@ test('лист согласия: «Продолжить» продолжает �
     consentsCompleted: true,
     consentVersion: POLICY_VERSION,
   })
-  // The reply lands as usual, and the first message is not repeated.
+
+  // The first words are typed in the conversation itself and go out once.
+  const FIRST = 'Мне тревожно, не могу уснуть'
+  await input.fill(FIRST)
+  await page.getByRole('button', { name: 'Отправить' }).click()
+  const sent = current.locator('.message-sent').filter({ hasText: FIRST })
+  await expect(sent).toHaveCount(1, { timeout: 20_000 })
   await expect(current.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
   await expect(sent, 'сообщение не ушло дважды').toHaveCount(1)
 
-  // Back on home the field starts empty again: the text now lives in the conversation.
+  // Back on the signed-in home: «Начать разговор», no first screen and no box.
   await current.locator('.navbar a.back').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await expect(page.locator('.page-current').getByTestId('start-draft')).toHaveValue('')
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
+  await expect(firstHello(page)).toHaveCount(0)
+  await expect(page.locator('.page-current textarea')).toHaveCount(0)
 })
 
-// `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии» («Окно согласия при
-// голосовом старте», «Подтверждение продолжает исходное действие»).
-test('лист согласия: «Продолжить» продолжает голосовой старт', async ({ page }) => {
+// `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии» («Окно согласия при голосовом
+// старте», «Подтверждение продолжает исходное действие»).
+test('лист согласия: «Продолжить» продолжает голосовой старт, в том числе от нажатия на шар', async ({
+  page,
+}) => {
   test.setTimeout(120_000)
   trackSession(page)
   await openApp(page)
 
-  await button(page, 'Поговорить').click()
+  await firstHello(page).locator('.rd-first-hello-stage').click()
   const sheet = consentSheet(page)
   await expect(sheet.getByTestId('consent-sheet')).toBeVisible()
   await sheet.getByTestId('data-consent-toggle').check()
@@ -487,35 +437,32 @@ test('лист согласия: «Продолжить» продолжает �
   )
 })
 
-// `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии» («Ошибка после
-// подтверждения») и account-auth «Первый экран: разговор с первого действия» («Сбой начала»).
-test('лист согласия: ошибка после подтверждения — черновик на месте, лист не открывается повторно', async ({
+// `openspec/changes/rework-web-first-screen`, «Сбой начала»: the error stays under the buttons of the
+// first screen, and the retry does not ask for the agreements again.
+test('лист согласия: ошибка после подтверждения — сообщение на первом экране, лист не открывается повторно', async ({
   page,
 }) => {
   test.setTimeout(120_000)
   const calls = trackPersonalRequests(page)
   await openApp(page)
-  const home = page.locator('.page-current')
-  const draft = home.getByTestId('start-draft')
+  const first = page.locator('.page-current')
   const sheet = consentSheet(page)
-  const FIRST = 'Хочу рассказать, как прошёл день'
 
   // The account creation fails: the chain after «Продолжить» breaks at its first step.
   await page.route('**/api/auth/device', (route) =>
     route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }),
   )
-  await draft.fill(FIRST)
-  await button(page, 'Отправить').click()
+  await helloText(page).click()
   await expect(sheet.getByTestId('consent-sheet')).toBeVisible()
   await sheet.getByTestId('data-consent-toggle').check()
   await sheet.getByTestId('consent-continue').click()
 
-  await expect(home.getByTestId('form-error')).toContainText('Попробуй', { timeout: 30_000 })
+  await expect(first.getByTestId('form-error')).toContainText('Попробуй', { timeout: 30_000 })
   await expect(sheet, 'ошибка закрыла лист и не открыла его заново').toHaveCount(0)
-  await expect(draft, 'черновик сохранён').toHaveValue(FIRST)
   // No conversation opened, and the chain stopped at its first step: no session, no consents, no dialog.
   await expect(page.locator('.message-sent'), 'разговор не открылся').toHaveCount(0)
-  await expect(home.getByTestId('start-composer'), 'человек остаётся на главной').toBeVisible()
+  await expect(firstHello(page), 'человек остаётся на первом экране').toBeVisible()
+  await expect(helloVoice(page), 'кнопки снова доступны').toBeEnabled()
   expect(calls, 'цепочка упала на первом шаге: дальше входа ничего не ушло').toEqual([
     'POST /api/auth/device',
   ])
@@ -525,31 +472,30 @@ test('лист согласия: ошибка после подтвержден�
   await step(
     page,
     'app-consent-error',
-    'Цепочка после «Продолжить» упала: ошибка на главной, черновик на месте',
+    'Цепочка после «Продолжить» упала: ошибка под кнопками первого экрана',
   )
 
   // The retry does not ask again: no sheet, the same error while the server is still down.
-  await button(page, 'Отправить').click()
-  await expect(home.getByTestId('form-error')).toContainText('Попробуй', { timeout: 30_000 })
+  await helloText(page).click()
+  await expect(first.getByTestId('form-error')).toContainText('Попробуй', { timeout: 30_000 })
   await expect(sheet, 'повтор без листа согласия').toHaveCount(0)
-  await expect(draft).toHaveValue(FIRST)
   expect(calls, 'повтор — снова только попытка входа').toEqual([
     'POST /api/auth/device',
     'POST /api/auth/device',
   ])
 
-  // And once the server is back the same press starts the conversation with the same text.
+  // And once the server is back the same press starts the conversation, in the text view as before.
   await page.unroute('**/api/auth/device')
-  await button(page, 'Отправить').click()
-  const sent = page.locator('.page-current .message-sent').filter({ hasText: FIRST })
-  await expect(sent).toBeVisible({ timeout: 30_000 })
-  await expect(sent).toHaveCount(1)
+  await helloText(page).click()
+  await expect(page.locator('.page-current').getByPlaceholder('Напиши, что происходит')).toBeVisible({
+    timeout: 30_000,
+  })
   await step(page, 'app-consent-retry', 'Повтор после ошибки: разговор открыт текстом без повторного листа')
 })
 
-// `openspec/changes/add-fast-dialog-start`, dialog «Начало разговора с главного экрана» («(PWA,
-// Telegram) Набранный текст», «(PWA, Telegram) Текст с главной уходит один раз»).
-test('начало текстом с главной: сообщение под приветствием сразу, reconnect и возврат не дублируют его', async ({
+// `openspec/changes/rework-web-first-screen`, «Главная вошедшего»: «Начать текстом» opens the dialog in the
+// text view with an empty box; the first message goes once, a reconnect or a second mount does not repeat it.
+test('начало текстом с главной: пустое поле, одно сообщение, reconnect и возврат не дублируют его', async ({
   page,
 }) => {
   test.setTimeout(150_000)
@@ -569,31 +515,40 @@ test('начало текстом с главной: сообщение под �
   await startAnonymously(page)
   const FIRST = 'Мне тревожно и не спится'
 
-  const draft = page.locator('.page-current').getByTestId('start-draft')
-  await draft.fill(FIRST)
-  await button(page, 'Отправить').click()
+  // The signed-in home has no box and no suggestions: only the two ways to start.
+  const home = page.locator('.page-current')
+  await expect(home.locator('textarea')).toHaveCount(0)
+  await expect(home.getByTestId('start-suggestion')).toHaveCount(0)
+  await expect(homeStartVoice(page)).toHaveText('Начать разговор')
+  await expect(homeStartText(page)).toHaveAccessibleName('Начать текстом')
+  await step(
+    page,
+    'app-home-signed',
+    'Главная вошедшего: «Начать разговор» и клавиатура, без поля и подсказок',
+  )
+  await homeStartText(page).click()
 
   const current = page.locator('.page-current')
   const greeting = current.locator('.message-received').first()
-  const sent = current.locator('.message-sent').filter({ hasText: FIRST })
   await expect(greeting).toContainText('Я рядом. С чего начнём?', { timeout: 30_000 })
-  // The typed message is on screen at once, under the greeting, while it is still being delivered.
-  await expect(sent).toHaveCount(1)
-  expect((await sent.boundingBox())!.y, 'первое сообщение под приветствием').toBeGreaterThan(
-    (await greeting.boundingBox())!.y,
-  )
+  const input = current.getByPlaceholder('Напиши, что происходит')
+  await expect(input).toBeVisible()
+  await expect(input).toHaveValue('')
   await expect(
     page.getByRole('button', { name: 'Остановить запись' }),
     'микрофон сам не включился',
   ).toHaveCount(0)
   expect(await spokenBy(page), 'свой голос не включался').toEqual([])
   expect(await playedBy(page), 'агент в тексте не звучит').toBe(0)
-  await step(
-    page,
-    'app-text-start',
-    'Текстовый старт: приветствие агента, под ним набранная фраза первым сообщением',
-  )
+  await step(page, 'app-text-start', 'Текстовый старт: приветствие агента и пустое поле ввода')
 
+  await input.fill(FIRST)
+  await page.getByRole('button', { name: 'Отправить' }).click()
+  const sent = current.locator('.message-sent').filter({ hasText: FIRST })
+  await expect(sent).toHaveCount(1, { timeout: 20_000 })
+  expect((await sent.boundingBox())!.y, 'сообщение под приветствием').toBeGreaterThan(
+    (await greeting.boundingBox())!.y,
+  )
   await expect(current.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
   await expect(sent, 'сообщение не ушло дважды').toHaveCount(1)
 
@@ -621,9 +576,8 @@ test('начало текстом с главной: сообщение под �
 
   // Leaving and coming back over the unfinished-conversation question does not duplicate it either.
   await current.locator('.navbar a.back').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await expect(page.locator('.page-current').getByTestId('start-draft'), 'поле снова пусто').toHaveValue('')
-  await button(page, 'Поговорить').click()
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
+  await homeStartVoice(page).click()
   const sheet = page.locator('.sheet-modal.modal-in')
   await expect(sheet.getByTestId('resume-sheet')).toBeVisible()
   await sheet.getByTestId('resume-continue').click()
@@ -639,8 +593,9 @@ test('начало текстом с главной: сообщение под �
 })
 
 // `openspec/changes/add-fast-dialog-start`, dialog «Начало разговора с главного экрана» («(PWA,
-// Telegram) Продолжение или новый разговор сохраняет намерение»).
-test('вопрос о незавершённом разговоре: «Продолжить» и «Завершить и начать новый» сохраняют текстовое намерение', async ({
+// Telegram) Продолжение или новый разговор сохраняет намерение»): the question is asked before a new
+// start, and both answers keep what the person pressed, the voice or the keyboard.
+test('вопрос о незавершённом разговоре: «Продолжить» и «Завершить и начать новый» сохраняют голосовое и текстовое намерение', async ({
   page,
 }) => {
   test.setTimeout(180_000)
@@ -648,59 +603,51 @@ test('вопрос о незавершённом разговоре: «Прод�
   await startAnonymously(page)
 
   // Something said earlier: an unfinished conversation with a message, already opened once in this
-  // session. Going back without a reload keeps it that way, so the typed start below re-enters the
-  // same dialog — where a handoff consumed by dialogId would swallow the new text.
-  await page.locator('.page-current').getByTestId('start-draft').fill('Проверка связи')
-  await button(page, 'Отправить').click()
+  // session. Going back without a reload keeps it that way, so the start below re-enters the same dialog.
+  await homeStartText(page).click()
   const started = page.locator('.page-current')
+  await started.getByPlaceholder('Напиши, что происходит').fill('Проверка связи')
+  await page.getByRole('button', { name: 'Отправить' }).click()
   await expect(started.locator('.message-sent').first()).toBeVisible({ timeout: 30_000 })
   await expect(started.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
   await started.locator('.navbar a.back').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
 
-  // A typed start finds it and asks first; «Продолжить» opens the same conversation in the text
-  // view and the draft becomes its next message — once, without listening.
-  const CONTINUED = 'Продолжим текстом'
-  await page.locator('.page-current').getByTestId('start-draft').fill(CONTINUED)
-  await button(page, 'Отправить').click()
+  // The keyboard finds it and asks first; «Продолжить» opens the same conversation in the text view,
+  // with an empty box and without listening.
+  await homeStartText(page).click()
   const sheet = page.locator('.sheet-modal.modal-in')
   await expect(sheet.getByTestId('resume-sheet')).toBeVisible()
   await expect(sheet).toContainText('Есть незавершённый разговор')
   await step(
     page,
     'app-resume-ask',
-    'Набранный старт нашёл незавершённый разговор: вопрос «Продолжить или начать новый»',
+    'Старт с клавиатуры нашёл незавершённый разговор: вопрос «Продолжить или начать новый»',
   )
   await sheet.getByTestId('resume-continue').click()
   let current = page.locator('.page-current')
   await expect(current.locator('.message-sent').filter({ hasText: 'Проверка связи' })).toHaveCount(1, {
     timeout: 30_000,
   })
-  await expect(current.locator('.message-sent').filter({ hasText: CONTINUED })).toHaveCount(1)
+  await expect(current.getByPlaceholder('Напиши, что происходит')).toHaveValue('')
   await expect(
     page.getByRole('button', { name: 'Остановить запись' }),
     'без автоматического прослушивания',
   ).toHaveCount(0)
   expect(await spokenBy(page), 'свой голос не включался').toEqual([])
-  await step(
-    page,
-    'app-resume-continue',
-    '«Продолжить»: тот же разговор в текстовом виде, набранная фраза — следующее сообщение',
-  )
+  await step(page, 'app-resume-continue', '«Продолжить»: тот же разговор в текстовом виде, поле пустое')
 
-  // «Завершить и начать новый»: the new conversation gets the draft as its first message instead.
+  // «Завершить и начать новый» from the keyboard: a new conversation in the text view.
   await current.locator('.navbar a.back').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  const ANEW = 'Начну сначала'
-  await page.locator('.page-current').getByTestId('start-draft').fill(ANEW)
-  await button(page, 'Отправить').click()
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
+  await homeStartText(page).click()
   await expect(sheet.getByTestId('resume-sheet')).toBeVisible()
   await sheet.getByTestId('resume-new').click()
   current = page.locator('.page-current')
   await expect(current.locator('.message-received').first()).toContainText('Я рядом. С чего начнём?', {
     timeout: 30_000,
   })
-  await expect(current.locator('.message-sent').filter({ hasText: ANEW })).toHaveCount(1)
+  await expect(current.getByPlaceholder('Напиши, что происходит')).toBeVisible()
   await expect(
     current.locator('.message-sent').filter({ hasText: 'Проверка связи' }),
     'это новый разговор',
@@ -709,20 +656,34 @@ test('вопрос о незавершённом разговоре: «Прод�
     page.getByRole('button', { name: 'Остановить запись' }),
     'без автоматического прослушивания',
   ).toHaveCount(0)
-  await step(
-    page,
-    'app-resume-new',
-    '«Завершить и начать новый»: новый разговор в текстовом виде, набранная фраза — первое сообщение',
-  )
+  await step(page, 'app-resume-new', '«Завершить и начать новый»: новый разговор в текстовом виде')
+
+  // The voice intent survives the question too. The new conversation has no message yet, so it is
+  // finished and replaced by one more start: say something first to keep it unfinished.
+  await current.getByPlaceholder('Напиши, что происходит').fill('Ещё одна проверка')
+  await page.getByRole('button', { name: 'Отправить' }).click()
+  await expect(current.locator('.message-sent').first()).toBeVisible({ timeout: 20_000 })
+  await current.locator('.navbar a.back').click()
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
+  await homeStartVoice(page).click()
+  await expect(sheet.getByTestId('resume-sheet')).toBeVisible()
+  await sheet.getByTestId('resume-continue').click()
+  await expect(
+    page.getByRole('button', { name: 'Остановить запись' }),
+    'голосовое намерение сохранено',
+  ).toBeVisible({
+    timeout: 30_000,
+  })
 })
 
 // `openspec/changes/add-fast-dialog-start`, dialog «Начало разговора с главного экрана» («(PWA,
 // Telegram) Старт не удался») и «Главный экран мобильного клиента» («Ошибка запуска»).
-test('старт не удался: ошибка показана, черновик на месте, кнопка снова доступна', async ({ page }) => {
+test('старт не удался: ошибка показана на главной, кнопки снова доступны, повтор открывает разговор', async ({
+  page,
+}) => {
   test.setTimeout(120_000)
   await openApp(page)
   await startAnonymously(page)
-  const FIRST = 'Сегодня было неспокойно'
 
   await page.route('**/api/dialogs', (route) =>
     route.request().method() === 'POST'
@@ -730,20 +691,17 @@ test('старт не удался: ошибка показана, чернов�
       : route.fallback(),
   )
   const home = page.locator('.page-current')
-  const draft = home.getByTestId('start-draft')
-  await draft.fill(FIRST)
-  await button(page, 'Отправить').click()
+  await homeStartText(page).click()
   await expect(home.getByTestId('form-error')).toContainText('Попробуй', { timeout: 30_000 })
-  await expect(draft, 'набранный текст остаётся в поле').toHaveValue(FIRST)
-  await expect(button(page, 'Отправить'), 'кнопка снова доступна').toBeEnabled()
-  await expect(home.getByTestId('start-composer'), 'вкладка остаётся главной').toBeVisible()
-  await step(page, 'app-start-error', 'Старт не удался: ошибка под кнопкой, черновик сохранён')
+  await expect(homeStartVoice(page), 'кнопка снова доступна').toBeEnabled()
+  await expect(homeStartText(page)).toBeEnabled()
+  await step(page, 'app-start-error', 'Старт не удался: ошибка под кнопками главной')
 
   await page.unroute('**/api/dialogs')
-  await button(page, 'Отправить').click()
-  const sent = page.locator('.page-current .message-sent').filter({ hasText: FIRST })
-  await expect(sent).toBeVisible({ timeout: 30_000 })
-  await expect(sent).toHaveCount(1)
+  await homeStartText(page).click()
+  await expect(page.locator('.page-current').getByPlaceholder('Напиши, что происходит')).toBeVisible({
+    timeout: 30_000,
+  })
 })
 
 // `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: «Дневное
@@ -793,9 +751,7 @@ test('тема: системная палитра устройства не вл
 
 // `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление» («Ручное
 // переключение»).
-test('тема: переключатель — нажатие, клавиатура и свайп, зона 44×44, без запроса и потери черновика', async ({
-  page,
-}) => {
+test('тема: переключатель — нажатие, клавиатура и свайп, зона 44×44, без запроса', async ({ page }) => {
   await page.clock.install({ time: new Date(DAY) })
   const calls = trackPersonalRequests(page)
   await openApp(page)
@@ -808,17 +764,12 @@ test('тема: переключатель — нажатие, клавиату�
   expect(zone!.width, 'зона нажатия по ширине').toBeGreaterThanOrEqual(44)
   expect(zone!.height, 'зона нажатия по высоте').toBeGreaterThanOrEqual(44)
 
-  // The switch does not touch the draft.
-  const draft = home.getByTestId('start-draft')
-  await draft.fill('Проверяю тему')
-
   await switcher.click()
   const tapped = await themeState(page)
   expectDarkTheme(tapped)
   expect(tapped.manualChoice, 'выбор сохранён на устройстве').toBe('dark')
   await expect(switcher).toHaveAttribute('aria-checked', 'true')
   await expect(switcher).toHaveAccessibleName('Включить светлую тему')
-  await expect(draft, 'черновик на месте').toHaveValue('Проверяю тему')
   await step(page, 'app-theme-tap', 'Нажатие переключателя сразу включило тёмную тему')
 
   await switcher.focus()
@@ -840,20 +791,16 @@ test('тема: переключатель — нажатие, клавиату�
 
 // `openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»: «Смена темы без
 // перезагрузки», «Ручной выбор сохраняется».
-test('тема: граница без перезагрузки и потери черновика; ручной выбор сохраняется и важнее расписания', async ({
-  page,
-}) => {
+test('тема: граница без перезагрузки; ручной выбор сохраняется и важнее расписания', async ({ page }) => {
   await page.clock.install({ time: new Date(BEFORE_DARK_BOUNDARY) })
   await openApp(page)
   expectLightTheme(await themeState(page))
-  const draft = page.locator('.page-current').getByTestId('start-draft')
-  await draft.fill('Черновик перед границей')
 
   // Ten seconds later the schedule flips at 22:00 and the open client follows without a reload.
   await page.clock.runFor(20_000)
   await expect.poll(async () => (await themeState(page)).colorScheme).toBe('dark')
   expectDarkTheme(await themeState(page))
-  await expect(draft, 'черновик пережил смену темы').toHaveValue('Черновик перед границей')
+  await expect(helloVoice(page), 'первый экран на месте после смены темы').toBeVisible()
   await step(page, 'app-theme-boundary', 'После 22:00 открытая главная сама стала тёмной')
 
   // A manual choice wins over the schedule: the 07:00 boundary does not reset it.

@@ -1,8 +1,10 @@
 import type { Page } from '@playwright/test'
 import {
   button,
+  consentSheet,
+  firstHello,
+  helloVoice,
   openApp,
-  openConversationSettings,
   openTab,
   sheetButton,
   startAnonymously,
@@ -70,11 +72,10 @@ test('память в приложении: согласие → разгово�
 
   // ── a conversation: the person tells about themselves ──────────────────────────────────────
   await openTab(page, 'Главная')
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  // Scoped to the current page: home stays in the DOM with its own first-message field
-  // (`openspec/changes/add-fast-dialog-start`).
+  // Scoped to the current page: home stays in the DOM under the conversation.
   const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')
   await expect(input).toBeVisible()
   await input.fill(SAID)
@@ -192,63 +193,100 @@ test('память в приложении: согласие → разгово�
   await shot(page, 'memory-deleted')
 })
 
-// ── «Запоминать важное» on home (`openspec/changes/merge-first-screen-into-home`) ─────────────────────
+// ── memory from the first conversation and «Не запоминать этот разговор» (`openspec/changes/rework-web-first-screen`) ──
 
-test('«Запоминать важное» на главной: окно само не открывается; переключатель → согласие → память включена, на месте — «Без памяти»', async ({
+test('память с первого разговора: отметка в листе согласия включает её, в профиле она включена', async ({
   page,
-  shot,
 }) => {
   test.setTimeout(120_000)
   await openApp(page)
-  await startAnonymously(page)
+  await expect(firstHello(page)).toBeVisible()
+  await helloVoice(page).click()
+  const sheet = consentSheet(page)
+  // One tick covers the data and the memory, and says where memory is turned off.
+  await expect(sheet.getByTestId('data-consent')).toContainText(
+    'на запоминание важного из них (выключается в профиле)',
+  )
+  await step(
+    page,
+    'memory-first-consent',
+    'Лист согласия первого разговора: отметка включает и запоминание важного',
+  )
+  await sheet.getByTestId('data-consent-toggle').check()
+  const started = page.waitForRequest(
+    (r) => new URL(r.url()).pathname === '/api/dialogs' && r.method() === 'POST',
+  )
+  await sheet.getByTestId('consent-continue').click()
+  expect((await started).postDataJSON(), 'старт не просит разговор без памяти').not.toHaveProperty(
+    'memory',
+    'off',
+  )
+  await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('dialog-incognito'), 'первый разговор идёт с памятью').toHaveCount(0)
 
+  // Back on home the one-off tick is offered, because memory is on; the switch itself lives in the profile.
+  await page.locator('.page-current .navbar a.back:visible').click()
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   const home = page.locator('.page-current')
-  // The choice folds into the collapsed «Настроить разговор» (`openspec/changes/add-fast-dialog-start`):
-  // the switch waits inside, out of the way of the field and the button.
-  await expect(home.getByTestId('home-settings')).toBeVisible({ timeout: 20_000 })
-  await expect(home.getByTestId('memory-switch')).not.toBeVisible()
-  // Nothing interrupts: no sheet opens by itself.
-  await page.waitForTimeout(2500)
-  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
-  await openConversationSettings(page)
-  const row = home.getByTestId('memory-switch')
-  await expect(row).toBeVisible()
-  await shot(page, 'memory-switch')
-
-  // A declined consent leaves memory off and the switch off.
-  await row.locator('.toggle').click()
-  const consent = page.locator('.sheet-modal.modal-in')
-  await expect(consent.getByTestId('memory-consent')).toBeVisible({ timeout: 10_000 })
-  await sheetButton(page, 'Не сейчас').click()
-  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
-  await expect(row.locator('input[type="checkbox"]')).not.toBeChecked()
-
-  // Accepted: memory is on, and «Без памяти» takes the switch's place.
-  await row.locator('.toggle').click()
-  await expect(consent.getByTestId('memory-consent')).toBeVisible({ timeout: 10_000 })
-  await sheetButton(page, 'Включить память').click()
-  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
   await expect(home.getByTestId('incognito')).toBeVisible({ timeout: 20_000 })
-  await expect(row).toHaveCount(0)
-  // `openspec/changes/remove-unsaved-dialog-option`, «Подписи без срока».
-  await expect(home.getByTestId('incognito')).toContainText('Запоминать разговор')
-  await expect(home.getByTestId('incognito')).toContainText(
-    'Я буду запоминать разговор, чтобы лучше узнать тебя',
-  )
-  await step(page, 'memory-caption-on', 'Память включена: подпись прямо обещает запомнить разговор')
-  await home.getByTestId('incognito').locator('.toggle').click()
-  await expect(home.getByTestId('incognito')).toContainText('Без памяти')
-  await expect(home.getByTestId('incognito')).toContainText('Я не запомню этот разговор')
-  await step(page, 'memory-caption-off', 'Без памяти: подпись прямо говорит, что разговор не запомнят')
-  await home.getByTestId('incognito').locator('.toggle').click()
-  await expect(home.getByTestId('incognito')).toContainText(
-    'Я буду запоминать разговор, чтобы лучше узнать тебя',
-  )
-
+  await expect(home.getByTestId('memory-switch'), 'переключателя памяти на главной нет').toHaveCount(0)
   await openTab(page, 'Профиль')
   await page.locator('.page-current').getByTestId('row-memory').click()
   const memory = page.locator('.page-current[data-name="memory"]')
   await expect(memory.getByTestId('memory-switch').locator('input[type="checkbox"]')).toBeChecked()
+  await step(page, 'memory-first-profile', 'В профиле память включена после первого разговора')
+})
+
+test('«Не запоминать этот разговор»: галочка только при включённой памяти, действует на один разговор', async ({
+  page,
+  shot,
+}) => {
+  test.setTimeout(150_000)
+  await openApp(page)
+  await startAnonymously(page)
+
+  const home = page.locator('.page-current')
+  // Memory is off for this account: nothing to opt out of, no sheet by itself, no switch on home.
+  await expect(home.getByTestId('home-start-voice')).toBeVisible()
+  await page.waitForTimeout(2500)
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await expect(home.getByTestId('incognito')).toHaveCount(0)
+  await expect(home.getByTestId('memory-switch')).toHaveCount(0)
+
+  // Turned on in the profile (the only place for it), the tick appears on home, unticked.
+  await openTab(page, 'Профиль')
+  await page.locator('.page-current').getByTestId('row-memory').click()
+  const memory = page.locator('.page-current[data-name="memory"]')
+  await memory.getByTestId('memory-switch').locator('.toggle').click()
+  await sheetButton(page, 'Включить память').click()
+  await expect(page.locator('.sheet-modal.modal-in')).toHaveCount(0)
+  await openTab(page, 'Главная')
+  const tick = home.getByTestId('incognito-toggle')
+  await expect(home.getByTestId('incognito')).toContainText('Не запоминать этот разговор')
+  await expect(tick).not.toBeChecked()
+  await shot(page, 'memory-incognito-tick')
+  await step(
+    page,
+    'memory-tick-off',
+    'Память включена: на главной снятая галочка «Не запоминать этот разговор»',
+  )
+  await tick.check()
+  await expect(tick).toBeChecked()
+  await step(page, 'memory-tick-on', 'Галочка отмечена: следующий разговор пойдёт без памяти')
+
+  const started = page.waitForRequest(
+    (r) => new URL(r.url()).pathname === '/api/dialogs' && r.method() === 'POST',
+  )
+  await home.getByTestId('home-start-voice').click()
+  expect((await started).postDataJSON(), 'старт просит разговор без памяти').toMatchObject({ memory: 'off' })
+  await expect(page.getByTestId('dialog-incognito')).toContainText('Без памяти', { timeout: 30_000 })
+  await step(page, 'memory-incognito-dialog', 'Разговор «Без памяти»: в нём об этом сказано')
+
+  // The tick was for that one conversation.
+  // The profile tab keeps its own current page (memory) in the DOM: take the visible back arrow.
+  await page.locator('.page-current .navbar a.back:visible').click()
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
+  await expect(tick).not.toBeChecked()
 })
 
 // ── "Запомнил: … · Убрать" in the conversation (task 6.4) ──────────────────────────────────────────
@@ -274,10 +312,10 @@ async function turnMemoryOn(page: Page, sensitive: boolean): Promise<void> {
 }
 
 async function say(page: Page, text: string): Promise<void> {
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  // Scoped to the current page: home stays in the DOM with its own first-message field.
+  // Scoped to the current page: home stays in the DOM under the conversation.
   const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')
   await expect(input).toBeVisible()
   await input.fill(text)
@@ -363,11 +401,9 @@ async function talk(page: Page, words: string, options: { withoutMemory?: boolea
   const here = page.locator('.page-current')
   await openTab(page, 'Главная')
   if (options.withoutMemory) {
-    // The switch folds into the collapsed «Настроить разговор» (`openspec/changes/add-fast-dialog-start`).
-    await openConversationSettings(page)
-    await here.getByTestId('incognito').locator('.toggle').click()
+    await here.getByTestId('incognito-toggle').check()
   }
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   await expect(here.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await here.getByRole('button', { name: 'Писать текстом' }).click()
   await here.getByPlaceholder('Напиши, что происходит').fill(words)
@@ -393,7 +429,7 @@ async function closeWindow(page: Page): Promise<void> {
   await closing(page).getByText('ОК').click()
   await expect(closing(page)).toHaveCount(0)
   // Home is back: a tap on a tab while the screen is still sliding out is lost.
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 20_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 20_000 })
 }
 
 /** Profile → Память. The tab keeps its pages: when the person has been there already, it opens on the memory page itself. */

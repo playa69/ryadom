@@ -7,7 +7,10 @@ import { expect, test } from '../support/fixtures'
  * кризисный пункт PHQ-9 открывает экран помощи и лист SOS, тест проходится без сети. Сохранение и история появятся
  * с серверной частью (миграция 0010). Зеркало `web-self-check.spec.ts`.
  */
-test('тесты в PWA: самопроверка, каталог, прохождение, результат, кризисный пункт, без сети', async ({ page, shot }) => {
+test('тесты в PWA: самопроверка, каталог, прохождение, результат, кризисный пункт, без сети', async ({
+  page,
+  shot,
+}) => {
   test.setTimeout(180_000)
   await openApp(page)
   await startAnonymously(page)
@@ -128,9 +131,13 @@ async function answerAll(page: import('@playwright/test').Page, values: number[]
 }
 
 /** The confirmation of Framework7 («ОК»). */
-const confirmOk = (page: import('@playwright/test').Page) => page.locator('.dialog.modal-in .dialog-button', { hasText: 'ОК' }).click()
+const confirmOk = (page: import('@playwright/test').Page) =>
+  page.locator('.dialog.modal-in .dialog-button', { hasText: 'ОК' }).click()
 
-test('тесты в PWA: согласие, сохранение, история с графиком, удаление, ошибка красным тостом, профиль', async ({ page, shot }) => {
+test('тесты в PWA: согласие, сохранение, история с графиком, удаление, ошибка красным тостом, профиль', async ({
+  page,
+  shot,
+}) => {
   test.setTimeout(240_000)
   await openApp(page)
   await startAnonymously(page)
@@ -180,7 +187,9 @@ test('тесты в PWA: согласие, сохранение, история 
   await expect(diary.getByTestId('saved-line-gad7')).toHaveCount(0)
 
   // ── ошибка сохранения — тот же тост, красный; результат остаётся ─────────
-  await page.route('**/api/self-check/results', (route) => (route.request().method() === 'POST' ? route.abort() : route.continue()))
+  await page.route('**/api/self-check/results', (route) =>
+    route.request().method() === 'POST' ? route.abort() : route.continue(),
+  )
   await diary.getByTestId('self-check-start-gad7').click()
   await answerAll(page, [1, 1, 1, 1, 1, 1, 1])
   await page.getByTestId('result-save').click()

@@ -59,20 +59,6 @@ export function startTalk(): void {
 }
 
 /**
- * What a typed first message turns the start into: text (even pasted and trimmed) opens the dialog in
- * its text view and is sent there once, while an empty or whitespace-only draft keeps the voice start.
- */
-export function draftIntent(draft: string): { draft: string; listen: boolean } {
-  const text = draft.trim()
-  return text ? { draft: text, listen: false } : { draft: '', listen: true }
-}
-
-/** Whitespace alone does not turn «Поговорить» into «Отправить». */
-export function hasDraftText(draft: string): boolean {
-  return draft.trim().length > 0
-}
-
-/**
  * A conversation asked for on the first screen, carried over the sign-in: the app swaps its screens for
  * the tabs when the session starts, so the first screen cannot open the conversation itself. Home takes
  * the request once, when it appears, and starts the conversation as its own button does.
@@ -80,10 +66,8 @@ export function hasDraftText(draft: string): boolean {
 export interface TalkRequest {
   /** "Запоминать важное" was turned on (the consent sheet accepted): memory is turned on before the start. */
   rememberMemory: boolean
-  /** The first message typed on the first screen; empty for a voice start (see `draftIntent`). */
-  draft?: string
-  /** A voice start listens after the greeting; a text start does not. Absent means voice. */
-  listen?: boolean
+  /** A text start (the keyboard) opens the conversation in its text view; absent means voice. */
+  text?: boolean
 }
 
 let talkRequested: TalkRequest | null = null

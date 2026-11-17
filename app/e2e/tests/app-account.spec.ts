@@ -73,7 +73,7 @@ test('путь аккаунта: регистрация, вход, смена п
   // names the one voice that speaks, and the choice is kept for Gemini Live.
   await setVoicePipeline('sber')
   await page.reload()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   await openTab(page, 'Профиль')
   await expect(page.getByTestId('voice-name')).toContainText('Вера')
   await page.getByTestId('voice-name').click()
@@ -84,7 +84,7 @@ test('путь аккаунта: регистрация, вход, смена п
   await page.locator('.navbar a.back').click()
   await setVoicePipeline('gemini')
   await page.reload()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   await openTab(page, 'Профиль')
   await expect(page.getByTestId('voice-name')).toContainText('Алиса')
 
@@ -139,8 +139,8 @@ test('новая запись согласий: «Продолжить» зак�
 
   const first = page.locator('.page-current')
   // `openspec/changes/add-fast-dialog-start`, «Первый экран: разговор с первого действия».
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await button(page, 'Поговорить').click()
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
+  await button(page, 'Начать разговор').click()
   const sheet = page.locator('.sheet-modal.modal-in:has([data-testid="consent-sheet"])')
   await expect(sheet.getByTestId('data-consent-toggle')).not.toBeChecked()
   await expect(sheet.getByTestId('consent-continue')).toHaveClass(/disabled/)

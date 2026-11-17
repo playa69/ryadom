@@ -16,7 +16,7 @@ test('шарик в приложении окрашивается по наст�
   await clearMailbox()
   await openApp(page)
   await registerAndConfirm(page, uniqueEmail('orb-mood'))
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   const orb = page.locator('.rd-orb')
   await expect(orb).toBeVisible({ timeout: 30_000 })
   await expect(orb).not.toHaveAttribute('data-mood', /.+/)
