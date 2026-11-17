@@ -486,6 +486,31 @@ test('первый экран: сбой старта — ошибка на пе�
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
 })
 
+test('первый экран: приветствие звучит при первом нажатии, если браузер не дал начать сам', async ({
+  page,
+}) => {
+  // `openspec/changes/rework-web-first-screen`, «Первый экран: разговор с первого действия».
+  // A browser refuses sound before a gesture: the stub refuses the first try and records what is played after.
+  await page.addInitScript(() => {
+    const played: string[] = []
+    ;(window as unknown as { __played: string[] }).__played = played
+    let allowed = false
+    window.addEventListener('pointerdown', () => (allowed = true), { capture: true })
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      if (!allowed) return Promise.reject(new DOMException('blocked', 'NotAllowedError'))
+      played.push(this.src)
+      return Promise.resolve()
+    }
+  })
+  await openWebApp(page)
+  await expect(firstHello(page)).toBeVisible()
+  const played = () => page.evaluate(() => (window as unknown as { __played: string[] }).__played)
+  expect(await played(), 'до нажатия звука нет').toEqual([])
+  await firstHello(page).locator('[data-slot="voice-orb"]').click()
+  await expect.poll(played).toHaveLength(1)
+  expect((await played())[0]).toContain('hello-greeting')
+})
+
 test('первый экран на телефоне 360×780: шар, приглашение, кнопки и плашка с 112 без прокрутки', async ({
   page,
 }) => {

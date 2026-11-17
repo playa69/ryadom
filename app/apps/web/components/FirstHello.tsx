@@ -6,10 +6,14 @@ import { Button } from '@ryadom/ui/components/button'
 import { VoiceOrb, type OrbState } from '@ryadom/ui/components/voice-orb'
 import { cn } from '@ryadom/ui/lib/utils'
 import { PRIMARY_BUTTON } from '@/app/(auth)/_components/parts'
+import { BASE_PATH } from '@/lib/base-path'
 import { BUTTON } from './controls'
 
 /** What the sphere says to someone it meets for the first time: an invitation, not a form. */
 const HELLO_LINES = ['Привет! Я рядом.', 'Поговорим?']
+
+/** The greeting recorded in the agent's voice (`public/`); a placeholder until the studio recording replaces the file. */
+const GREETING_SRC = `${BASE_PATH}/hello-greeting.wav`
 
 /** How long the sphere moves as if speaking the greeting before it settles to breathing. */
 const SPEAKING_MS = 3200
@@ -17,8 +21,9 @@ const SPEAKING_MS = 3200
 /**
  * The newcomer's first screen: the sphere of the voice screen greets the person and invites them to talk,
  * before any form. Nothing is sent and no account is made here: the consent is asked in a window after the
- * press ("Поговорить" or the keyboard), and only then the conversation starts. The greeting is shown, not
- * heard: a browser lets a page make sound only after a gesture, so the sphere moves as if speaking.
+ * press ("Поговорить" or the keyboard), and only then the conversation starts. The greeting is spoken
+ * aloud as soon as the browser allows (a page may make sound only after a gesture: until then the sphere
+ * moves as if speaking, and the first press anywhere plays the phrase). It stops when the screen goes away.
  *
  * The plaque at the foot says what the service is and what it costs, because a person sent here by an ad
  * has seen nothing else of it, and the ad's moderation checks that its promises are on the page.
@@ -39,7 +44,30 @@ export default function FirstHello({
   useEffect(() => {
     started.current = performance.now()
     const timer = window.setTimeout(() => setOrb('idle'), SPEAKING_MS)
-    return () => window.clearTimeout(timer)
+    // The greeting is spoken aloud once. A browser may refuse sound before a gesture, so it is tried at once
+    // and, if refused, on the first touch anywhere on the screen; a failure leaves the silent sphere as is.
+    const audio = new Audio(GREETING_SRC)
+    let played = false
+    const play = () => {
+      if (played) return
+      audio.play().then(
+        () => {
+          played = true
+          window.clearTimeout(timer)
+          started.current = performance.now()
+          setOrb('speaking')
+        },
+        () => {},
+      )
+    }
+    audio.addEventListener('ended', () => setOrb('idle'))
+    play()
+    window.addEventListener('pointerdown', play)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pointerdown', play)
+      audio.pause()
+    }
   }, [])
   // A voice-like swell while "speaking": syllables over a slower phrase, no sound behind it.
   const level = () => {
