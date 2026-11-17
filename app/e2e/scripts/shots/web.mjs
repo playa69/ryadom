@@ -31,23 +31,28 @@ export function webSpec(args, repoRoot) {
     await page.evaluate((value) => sessionStorage.setItem('ryadom.pending-auth', JSON.stringify(value)), { kind, email: 'anna@example.com' })
     await page.goto(`${base}${path}`, { waitUntil: 'networkidle' })
   }
-  /** A short, natural exchange from the home screen: two messages and the two answers to them. */
+  /**
+   * A short, natural exchange started on the text from home (home has no box: the keyboard opens the
+   * conversation with an empty one): two messages and the two answers to them.
+   */
   const chat = async (page) => {
     await go('/home')(page)
-    await page.getByTestId('home-input').fill('Сегодня было очень тяжело, поссорились с мамой')
-    await page.getByTestId('home-talk').click()
+    await page.getByTestId('home-start-text').click()
     await page.waitForURL('**/dialog/**', { timeout: 20_000 })
     const messages = page.getByTestId('dialog-message')
+    await messages.first().waitFor({ timeout: 20_000 })
+    await page.getByTestId('dialog-input').fill('Сегодня было очень тяжело, поссорились с мамой')
+    await page.getByTestId('dialog-send').click()
     await messages.nth(2).waitFor({ timeout: 20_000 })
     await page.getByTestId('dialog-input').fill('Не знаю, как ей позвонить и что сказать')
     await page.getByTestId('dialog-send').click()
     await messages.nth(4).waitFor({ timeout: 20_000 })
     await page.waitForTimeout(1200)
   }
-  // "Поговорить" with nothing typed opens the voice screen and starts listening (the runner's fake microphone).
+  // «Начать разговор» opens the voice screen and starts listening (the runner's fake microphone).
   const startVoice = async (page) => {
     await go('/home')(page)
-    await page.getByTestId('home-talk').click()
+    await page.getByTestId('home-start-voice').click()
     await page.waitForURL('**/dialog/**', { timeout: 20_000 })
     // The conversation starts hands-free: it is listening as soon as the voice screen is up.
     await page.getByTestId('voice-caption').waitFor({ timeout: 30_000 })

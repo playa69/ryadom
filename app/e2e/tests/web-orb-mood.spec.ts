@@ -1,4 +1,4 @@
-import { openWebApp, registerAndConfirm, talkButton, uniqueEmail } from '../support/web'
+import { openWebApp, registerAndConfirm, startVoiceButton, uniqueEmail } from '../support/web'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
@@ -22,7 +22,7 @@ test('шарик в вебе окрашивается по настроению:
   await clearMailbox()
   await openWebApp(page)
   await registerAndConfirm(page, uniqueEmail('web-orb-mood'))
-  await talkButton(page).click()
+  await startVoiceButton(page).click()
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/)
   const orb = page.locator('[data-slot="voice-orb"]')
   await expect(orb).toBeVisible({ timeout: 30_000 })

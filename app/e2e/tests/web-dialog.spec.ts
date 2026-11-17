@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import {
   closeSidebar,
   dialogInput,
@@ -6,7 +7,6 @@ import {
   expectSingleSos,
   goTo,
   historyItems,
-  homeInput,
   messages,
   modal,
   modalButton,
@@ -15,7 +15,11 @@ import {
   openWebApp,
   pageTitle,
   registerAndConfirm,
-  talkButton,
+  sendInDialog,
+  startAnonymously,
+  startTextButton,
+  startTextDialog,
+  startVoiceButton,
   uniqueEmail,
   watchCsp,
 } from '../support/web'
@@ -44,6 +48,27 @@ test.use({
 const DRAFT_PLACEHOLDER = 'Напиши, что происходит'
 const FIRST_MESSAGE = 'Сегодня было очень тяжело'
 const TAKEAWAY = 'Стало чуть легче'
+/** The mock agent's greeting for a new conversation. */
+const GREETING = 'Я рядом. С чего начнём?'
+
+/** The conversation is open on the voice: the sphere, no box. */
+async function expectVoiceView(page: Page): Promise<void> {
+  await expect(page.getByTestId('dialog-voice')).toBeVisible({ timeout: 30_000 })
+  await expect(dialogInput(page)).toHaveCount(0)
+}
+
+/** The conversation is open on the text: the box, no sphere. */
+async function expectTextView(page: Page): Promise<void> {
+  await expect(dialogInput(page)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('dialog-voice')).toHaveCount(0)
+}
+
+/** The question a start asks when a conversation with something said in it is still open. */
+async function expectResumeQuestion(page: Page): Promise<void> {
+  await expect(modal(page).getByRole('heading', { name: 'Есть незавершённый разговор' })).toBeVisible({
+    timeout: 30_000,
+  })
+}
 
 test('разговор в вебе: приветствие, ответ, кризис, завершение, журнал', async ({ page, shot }) => {
   test.setTimeout(150_000)
@@ -60,8 +85,9 @@ test('разговор в вебе: приветствие, ответ, криз
   await expectNoHorizontalOverflow(page)
   await shot(page, 'web-dialog-modes')
 
-  // ── conversation, started with nothing typed: it opens on the voice ──────
-  await talkButton(page).click()
+  // ── conversation, started with «Начать разговор»: it opens on the voice ──
+  // `openspec/changes/rework-web-first-screen`, «Начало разговора с главного экрана»: «„Поговорить“ без текста».
+  await startVoiceButton(page).click()
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/)
   // The sphere listens by itself (the fake microphone), and the greeting is under it.
   const stop = page.getByRole('button', { name: 'Остановить запись' })
@@ -239,12 +265,13 @@ test('разговор в вебе: приветствие, ответ, криз
 })
 
 /**
- * Home is the empty state of a chat: what is typed in its box becomes the first message of the
- * conversation, once. With text the button says "Отправить", with an empty box "Поговорить". A
- * reload brings the same conversation back from the server, and "new conversation" while one is
- * still open returns to it instead of starting a second.
+ * Home has no box: the keyboard beside «Начать разговор» opens the conversation on the text, with the
+ * agent's greeting and an empty box, and the first words are written there. They go out once; a reload
+ * brings the same conversation back from the server on the text, "back" and "forward" send nothing again,
+ * and "new conversation" while one is still open asks first instead of starting a second.
+ * `openspec/changes/rework-web-first-screen`, «Начало разговора с главного экрана».
  */
-test('с главной: набранный текст — первое сообщение, ответ приходит, повторного старта нет', async ({
+test('с главной текстом: чат с пустым полем, первое сообщение пишется там и уходит один раз, повторного старта нет', async ({
   page,
   shot,
 }) => {
@@ -254,20 +281,25 @@ test('с главной: набранный текст — первое сооб
   await openWebApp(page)
   await registerAndConfirm(page, uniqueEmail('web-first'))
 
-  const send = page.getByTestId('home-talk')
-  await expect(homeInput(page)).toHaveAttribute('placeholder', 'Напиши или скажи, что на душе…')
-  await expect(send).toHaveAccessibleName('Поговорить')
-  await expect(page.getByTestId('home-mic')).toHaveAccessibleName('Говорить')
-  await homeInput(page).fill(FIRST_MESSAGE)
-  await expect(send).toHaveAccessibleName('Отправить')
-  await shot(page, 'web-home-typed')
-  await homeInput(page).press('Enter')
+  // «(Web) Набранный текст»: no box on home, the keyboard is the way to start with words.
+  await expect(page.getByTestId('home-input')).toHaveCount(0)
+  await expect(startTextButton(page)).toHaveAccessibleName('Начать текстом')
+  await startTextButton(page).click()
 
+  // «(Web) Старт текстом»: the greeting first, an empty box, no listening.
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
   const dialogUrl = page.url()
   const user = messages(page, 'user')
   const assistant = messages(page, 'assistant')
-  // The text arrives as the person's first message, once, and the greeting stays above it.
+  await expectTextView(page)
+  await expect(assistant.first()).toContainText(GREETING, { timeout: 30_000 })
+  await expect(dialogInput(page)).toHaveValue('')
+  await expect(user).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Остановить запись' })).toHaveCount(0)
+  await step(page, 'home-text-start', 'Старт клавиатурой: чат с приветствием агента и пустым полем')
+
+  await sendInDialog(page, FIRST_MESSAGE)
+  // The words arrive as the person's first message, once, and the greeting stays above them.
   await expect(user).toHaveCount(1, { timeout: 30_000 })
   await expect(user.first()).toContainText(FIRST_MESSAGE)
   await expect(assistant).toHaveCount(2, { timeout: 30_000 })
@@ -286,7 +318,7 @@ test('с главной: набранный текст — первое сооб
   await step(
     page,
     'home-text-first',
-    'Текстовый старт: приветствие выше, набранная фраза — первое сообщение, ровно один раз',
+    'Первое сообщение написано в чате: приветствие выше, фраза ушла ровно один раз',
   )
   await shot(page, 'web-dialog-from-home')
 
@@ -298,20 +330,21 @@ test('с главной: набранный текст — первое сооб
   await expect(historyItems(page).first()).toHaveAttribute('aria-current', 'page')
   await closeSidebar(page)
 
-  // A reload restores the feed from the server: nothing lost, nothing twice.
+  // A reload restores the feed from the server, nothing lost and nothing twice, and the conversation is
+  // still on the text («при возвращении в этот разговор он снова открывается в текстовом виде»).
   await page.reload({ waitUntil: 'networkidle' })
   await expect(page).toHaveURL(dialogUrl)
   await expect(user).toHaveCount(1, { timeout: 30_000 })
   await expect(user.first()).toContainText(FIRST_MESSAGE)
   await expect(assistant.last()).toBeVisible()
-  await expect(dialogInput(page)).toBeVisible()
+  await expectTextView(page)
   // The live region holds the latest reply as plain text (a message in the feed also carries a hidden "Рядом:").
   await expect(page.getByTestId('dialog-live')).not.toBeEmpty()
   const lastReply = ((await page.getByTestId('dialog-live').textContent()) ?? '').trim()
 
-  // Browser "back" and "forward" revisit the conversation without the spent handoff: the first text
-  // is not sent again and the microphone does not turn on by itself
-  // (`openspec/changes/add-fast-dialog-start`, «(Web) Текст с главной уходит один раз»).
+  // Browser "back" and "forward" revisit the conversation without the spent handoff: nothing is sent
+  // again and the microphone does not turn on by itself
+  // (`openspec/changes/rework-web-first-screen`, «(Web) Текст с главной уходит один раз»).
   await page.goBack()
   await expect(page).toHaveURL(/\/home$/)
   await page.goForward()
@@ -329,19 +362,89 @@ test('с главной: набранный текст — первое сооб
   // "New conversation" while this one is open: the same conversation, not a second one.
   await goTo(page, 'Новый разговор')
   await expect(page).toHaveURL(/\/home$/)
-  await expect(talkButton(page)).toBeVisible()
-  await talkButton(page).click()
+  await expect(startVoiceButton(page)).toBeVisible()
+  await startVoiceButton(page).click()
   // Something was said in it, so the person is asked first; "Продолжить" goes back to it.
-  await expect(modal(page).getByRole('heading', { name: 'Есть незавершённый разговор' })).toBeVisible()
+  await expectResumeQuestion(page)
   await modalButton(page, 'Продолжить').click()
   await expect(page).toHaveURL(dialogUrl, { timeout: 30_000 })
-  // It opens on the voice, with the conversation's latest reply under the sphere: the same
-  // conversation, not a second one.
-  await expect(page.getByTestId('dialog-voice')).toBeVisible({ timeout: 30_000 })
+  // It opens on the voice, as the press asked, with the conversation's latest reply under the sphere: the
+  // same conversation, not a second one.
+  await expectVoiceView(page)
   await expect(page.getByTestId('voice-caption')).toHaveText(lastReply, { timeout: 30_000 })
   await expectHistoryCount(page, 1)
 
   expect(await violations(), 'нарушения политики безопасности').toEqual([])
+})
+
+/**
+ * The question about an unfinished conversation comes before either start, and the answer opens the
+ * conversation the way the press asked: on the voice after «Начать разговор», on the text after the
+ * keyboard. `openspec/changes/rework-web-first-screen`, «Начало разговора с главного экрана»: «(Web)
+ * Незавершённый разговор перед стартом».
+ */
+test('вопрос о незавершённом разговоре для обеих кнопок: «Продолжить» и «Завершить и начать новый» открывают выбранный вид', async ({
+  page,
+}) => {
+  test.setTimeout(180_000)
+  await openWebApp(page)
+  await startAnonymously(page)
+
+  // Something is said in a conversation, and it is left open.
+  await startTextDialog(page, FIRST_MESSAGE)
+  await expect(messages(page, 'assistant')).toHaveCount(2, { timeout: 30_000 })
+  await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
+  const first = page.url()
+
+  // The keyboard asks first; «Продолжить» goes back to that conversation, on the text.
+  await goTo(page, 'Новый разговор')
+  await startTextButton(page).click()
+  await expectResumeQuestion(page)
+  await modalButton(page, 'Продолжить').click()
+  await expect(page).toHaveURL(first, { timeout: 30_000 })
+  await expectTextView(page)
+  await expect(messages(page, 'user'), 'тот же разговор, ничего не ушло заново').toHaveCount(1)
+
+  // «Начать разговор» asks too; «Продолжить» goes back to it, on the voice.
+  await goTo(page, 'Новый разговор')
+  await startVoiceButton(page).click()
+  await expectResumeQuestion(page)
+  await modalButton(page, 'Продолжить').click()
+  await expect(page).toHaveURL(first, { timeout: 30_000 })
+  await expectVoiceView(page)
+
+  // The keyboard and «Завершить и начать новый»: a new conversation on the text, with an empty box.
+  await goTo(page, 'Новый разговор')
+  await startTextButton(page).click()
+  await expectResumeQuestion(page)
+  await modalButton(page, 'Завершить и начать новый').click()
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(page).not.toHaveURL(first)
+  const second = page.url()
+  await expectTextView(page)
+  await expect(messages(page, 'assistant').first()).toContainText(GREETING, { timeout: 30_000 })
+  await expect(messages(page, 'user')).toHaveCount(0)
+  await expect(dialogInput(page)).toHaveValue('')
+
+  // Something said in the new one too; then «Начать разговор» and «Завершить и начать новый»: on the voice.
+  await sendInDialog(page, 'Хочу начать с другого')
+  await expect(messages(page, 'assistant')).toHaveCount(2, { timeout: 30_000 })
+  await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
+  await goTo(page, 'Новый разговор')
+  await startVoiceButton(page).click()
+  await expectResumeQuestion(page)
+  await modalButton(page, 'Завершить и начать новый').click()
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(page).not.toHaveURL(second)
+  await expect(page).not.toHaveURL(first)
+  await expectVoiceView(page)
+  await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
+
+  // Three conversations, and only the last one is still open: the other two were ended by the answer.
+  await openSidebar(page)
+  await expect(historyItems(page)).toHaveCount(3)
+  await expect(openMark(page)).toHaveCount(1)
+  await closeSidebar(page)
 })
 
 /**
@@ -350,6 +453,7 @@ test('с главной: набранный текст — первое сооб
  * checked is that the microphone on home starts a conversation that listens by itself, that the
  * heard line becomes the person's message, the reply arrives (and its speech does not break the
  * page), and that a drop turns the microphone off and leaves the feed intact.
+ * `openspec/changes/rework-web-first-screen`, «Начало разговора с главного экрана»: «„Поговорить“ без текста».
  */
 test('голос в вебе: расшифровка в ленте, обрыв связи выключает микрофон', async ({ page }) => {
   test.setTimeout(120_000)
@@ -372,8 +476,8 @@ test('голос в вебе: расшифровка в ленте, обрыв �
   await openWebApp(page)
   await registerAndConfirm(page, email)
 
-  // The microphone on home starts the conversation, on the voice, and begins listening as soon as it is connected.
-  await page.getByTestId('home-mic').click()
+  // «Начать разговор» starts the conversation, on the voice, and begins listening as soon as it is connected.
+  await startVoiceButton(page).click()
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/)
   const mic = page.getByTestId('dialog-mic')
   await expect(mic).toHaveAccessibleName('Остановить запись', { timeout: 30_000 })
@@ -434,7 +538,7 @@ test('агент без озвучки: шар в вебе читает прив
     await openWebApp(page)
     await registerAndConfirm(page, uniqueEmail('web-own-voice'))
 
-    await talkButton(page).click()
+    await startVoiceButton(page).click()
     const stop = page.getByRole('button', { name: 'Остановить запись' })
     await expect(stop).toBeVisible({ timeout: 30_000 })
     const caption = page.getByTestId('voice-caption')
@@ -455,46 +559,46 @@ test('агент без озвучки: шар в вебе читает прив
 })
 
 /**
- * A failed start keeps the person on home with the draft, and a retry goes without the consent
- * window: the answer was given this session already (`openspec/changes/add-fast-dialog-start`,
- * «Согласие при первом действии» — «Ошибка после подтверждения», «(Web) Старт не удался»).
- * Here the account and the consents succeed (the window did that), and only the start itself fails.
+ * A failed start from the signed-in home keeps the person there with the message right under the
+ * buttons, and both buttons work again. The first screen's own failure (after the consent window) is in
+ * web-anonymous.spec.ts. `openspec/changes/rework-web-first-screen`, «Начало разговора с главного
+ * экрана»: «(Web) Старт не удался».
  */
-test('старт не удался: сообщение под полем, черновик на месте, повтор без окна согласия', async ({
+test('старт с главной не удался: сообщение под кнопками, кнопки снова доступны, повтор начинает разговор', async ({
   page,
 }) => {
   test.setTimeout(90_000)
   await openWebApp(page)
-  await expect(page).toHaveURL(/\/home$/)
-  await expect(homeInput(page)).toBeVisible()
+  await startAnonymously(page)
 
-  // A guest types and confirms the consent window; the conversation start itself then fails.
-  await homeInput(page).fill('Сегодня был длинный день')
-  await page.getByTestId('home-talk').click()
-  await expect(modal(page).getByTestId('consent-modal')).toBeVisible()
-  await modal(page).getByTestId('data-consent-toggle').check()
   await page.route('**/api/dialogs', (route) =>
     route.request().method() === 'POST'
       ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
       : route.fallback(),
   )
-  await modal(page).getByTestId('consent-continue').click()
+  await startTextButton(page).click()
 
+  const error = page.getByTestId('form-error')
+  await expect(error).toBeVisible({ timeout: 20_000 })
+  await expect(error).not.toBeEmpty()
   await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByTestId('form-error')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByTestId('form-error')).not.toBeEmpty()
-  await expect(homeInput(page)).toHaveValue('Сегодня был длинный день')
-  await expect(page.getByTestId('home-talk')).toBeEnabled()
-  await step(page, 'start-failed-draft', 'Старт не удался: ошибка под полем, черновик сохранён, окна нет')
+  await expect(startVoiceButton(page)).toBeEnabled()
+  await expect(startTextButton(page)).toBeEnabled()
+  const buttons = (await startVoiceButton(page).boundingBox())!
+  expect((await error.boundingBox())!.y, 'сообщение под кнопками').toBeGreaterThan(
+    buttons.y + buttons.height - 1,
+  )
+  await step(
+    page,
+    'start-failed-home',
+    'Старт с главной не удался: сообщение под кнопками, кнопки снова доступны',
+  )
 
-  // The retry goes straight to the start: the window does not come back, the text leaves once.
+  // The retry starts the conversation, on the text as the keyboard asked.
   await page.unroute('**/api/dialogs')
-  await page.getByTestId('home-talk').click()
-  await expect(modal(page), 'повторное окно согласия не открывается').toHaveCount(0)
+  await startTextButton(page).click()
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
-  await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
-  await expect(messages(page, 'user').first()).toContainText('Сегодня был длинный день')
-  await expect(messages(page, 'assistant')).toHaveCount(2, { timeout: 30_000 })
-  await expect(messages(page, 'user'), 'текст ушёл ровно один раз').toHaveCount(1)
-  await step(page, 'start-retried', 'Повтор без окна: разговор открыт, текст ушёл первым сообщением один раз')
+  await expectTextView(page)
+  await expect(messages(page, 'assistant').first()).toContainText(GREETING, { timeout: 30_000 })
+  await expect(dialogInput(page)).toHaveValue('')
 })

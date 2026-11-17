@@ -25,6 +25,8 @@ export function ConsentNotice({ termsUrl, consentUrl, className }: DocumentLinks
 interface ConsentCheckboxProps extends DocumentLinks {
   checked: boolean
   onCheckedChange(checked: boolean): void
+  /** The first screen's window, whose start turns memory on: the same tick covers it, and says where it is turned off. */
+  memory?: boolean
 }
 
 export function ConsentCheckbox({
@@ -33,6 +35,7 @@ export function ConsentCheckbox({
   termsUrl,
   consentUrl,
   className,
+  memory = false,
 }: ConsentCheckboxProps) {
   const id = useId()
   const labelId = `${id}-label`
@@ -51,7 +54,7 @@ export function ConsentCheckbox({
       <p id={labelId} className="text-sm leading-normal text-dim text-balance">
         Мне есть 18 лет, я принимаю <ExternalLink href={termsUrl}>условия использования</ExternalLink> и даю{' '}
         <ExternalLink href={consentUrl}>согласие на обработку персональных данных</ExternalLink>, включая
-        голос и текст разговоров.
+        голос и текст разговоров{memory ? ', и на запоминание важного из них (выключается в профиле)' : ''}.
       </p>
     </div>
   )

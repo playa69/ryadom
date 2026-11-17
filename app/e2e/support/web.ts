@@ -82,27 +82,19 @@ export async function dismissMemoryInvite(page: Page): Promise<void> {
 /**
  * A guest on home, with no address and no password. The first screen makes an account only together with
  * the first conversation, so for scenarios about anything else this browser becomes a known device (see
- * `guestDevice`) and the app signs in by itself; the first screen is covered by its own scenarios.
+ * `guestDevice`) and the app signs in by itself, straight to the signed-in home; the first screen is covered
+ * by its own scenarios. Such a guest has memory off: only the first screen's consent turns it on.
  */
-export async function startAnonymously(
-  page: Page,
-  options: { keepMemoryInvite?: boolean } = {},
-): Promise<void> {
+export async function startAnonymously(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/home$/)
-  // The sheet "Рядом теперь запоминает важное" would cover home for a new account: unless a test is about it,
-  // it is already answered ("Не сейчас"), like for a person who has seen it. Same origin, read when home opens.
-  if (!options.keepMemoryInvite) await dismissMemoryInvite(page)
+  await dismissMemoryInvite(page)
   const device = await guestDevice(page.request)
   await page.evaluate(
     (value) => window.localStorage.setItem('ryadom.web.device', value),
     JSON.stringify(device),
   )
   await openWebApp(page)
-  // An open sheet makes the page behind it inert, so the button is not seen by role then.
-  const ready = options.keepMemoryInvite
-    ? talkButton(page).or(page.getByTestId('memory-invite'))
-    : talkButton(page)
-  await expect(ready).toBeVisible({ timeout: 30_000 })
+  await expect(startVoiceButton(page)).toBeVisible({ timeout: 30_000 })
 }
 
 /** What a layout decision hangs on: the sidebar is a drawer below 768px and a column from there up. */
@@ -220,9 +212,50 @@ export function pageTitle(page: Page): Locator {
   return page.getByRole('heading', { level: 1 })
 }
 
-/** The big box in the middle of the home page. */
-export function homeInput(page: Page): Locator {
-  return page.getByTestId('home-input')
+/**
+ * The newcomer's first screen on `/home`: the sphere invites to talk, «Поговорить» and the keyboard sit
+ * under it, the plaque about the service at the foot; no box, no suggestions, no checkbox
+ * (`openspec/changes/rework-web-first-screen`, «Первый экран: разговор с первого действия»).
+ */
+export function firstHello(page: Page): Locator {
+  return page.getByTestId('first-hello')
+}
+
+/** «Поговорить» on the first screen: the voice start, through the consent window. */
+export function helloVoiceButton(page: Page): Locator {
+  return page.getByTestId('hello-voice')
+}
+
+/** The keyboard on the first screen («Написать текстом»): the text start, through the consent window. */
+export function helloTextButton(page: Page): Locator {
+  return page.getByTestId('hello-text')
+}
+
+/**
+ * The newcomer's whole way in: a press on the first screen, the tick in the consent window, «Продолжить».
+ * The account, the consents and memory are made behind it, and the conversation opens on the voice or on
+ * the text, as the press asked (`openspec/changes/rework-web-first-screen`, «Согласие при первом действии»).
+ */
+export async function startFromFirstScreen(page: Page, via: 'voice' | 'text'): Promise<void> {
+  await expect(firstHello(page)).toBeVisible({ timeout: 30_000 })
+  await (via === 'voice' ? helloVoiceButton(page) : helloTextButton(page)).click()
+  await expect(modal(page).getByTestId('consent-modal')).toBeVisible()
+  await modal(page).getByTestId('data-consent-toggle').check()
+  await modal(page).getByTestId('consent-continue').click()
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+}
+
+/**
+ * «Начать разговор» on the signed-in home: the conversation opens on the voice and listens after the
+ * greeting (`openspec/changes/rework-web-first-screen`, «Главная веб-клиента: старт голосом или текстом»).
+ */
+export function startVoiceButton(page: Page): Locator {
+  return page.getByTestId('home-start-voice')
+}
+
+/** The keyboard beside it («Начать текстом»): the conversation opens on the text with an empty box. */
+export function startTextButton(page: Page): Locator {
+  return page.getByTestId('home-start-text')
 }
 
 /** The box under a conversation. */
@@ -230,32 +263,32 @@ export function dialogInput(page: Page): Locator {
   return page.getByTestId('dialog-input')
 }
 
-/** With nothing typed the home page's send button reads "Поговорить" and starts a conversation without words. */
-export function talkButton(page: Page): Locator {
-  return button(page, 'Поговорить')
-}
-
 /**
- * The collapsed «Настроить разговор» block of home (a native details): the optional memory choice is
- * folded in here, so the message field and the voice start stay the main actions
- * (`openspec/changes/add-fast-dialog-start`, «Главный экран веб-клиента»).
+ * Sends a line from the conversation's box. The send button stays disabled until the socket is up, so it
+ * is pressed only once it can take the words: a press before that is ignored.
  */
-export function homeSettings(page: Page): Locator {
-  return page.getByTestId('home-settings')
-}
-
-/** Opens «Настроить разговор»: the memory choice inside becomes reachable. A no-op when already open. */
-export async function openHomeSettings(page: Page): Promise<void> {
-  const settings = homeSettings(page)
-  await expect(settings).toBeVisible()
-  if (!(await settings.evaluate((el) => (el as HTMLDetailsElement).open))) {
-    await settings.getByText('Настроить разговор', { exact: true }).click()
-  }
-  await expect(settings).toHaveJSProperty('open', true)
+export async function sendInDialog(page: Page, text: string): Promise<void> {
+  await dialogInput(page).fill(text)
+  const send = page.getByTestId('dialog-send')
+  await expect(send).toBeEnabled({ timeout: 30_000 })
+  await send.click()
 }
 
 /**
- * The compact day/night switch of the home header, right before SOS: tap, swipe and keyboard flip the
+ * A conversation started from home with words, the way a person does it now that home has no box: the
+ * keyboard opens the conversation on the text, the greeting comes first, then the words are typed there
+ * and sent. Without words the conversation is left open on its empty box.
+ */
+export async function startTextDialog(page: Page, text?: string): Promise<void> {
+  await startTextButton(page).click()
+  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await expect(dialogInput(page)).toBeVisible({ timeout: 30_000 })
+  await expect(messages(page, 'assistant').first()).toBeVisible({ timeout: 30_000 })
+  if (text !== undefined) await sendInDialog(page, text)
+}
+
+/**
+ * The compact day/night switch of the header, right before SOS: tap, swipe and keyboard flip the
  * palette; the choice is stored on this device and wins over the schedule
  * (`openspec/changes/add-fast-dialog-start`, «Русскоязычный интерфейс и оформление»).
  */
@@ -272,7 +305,8 @@ export async function currentTheme(page: Page): Promise<'light' | 'dark'> {
 
 /**
  * Collects the page's calls to the API (`/api/*` on any origin the page talks to). Before a consent is
- * confirmed, opening home, typing, picking a suggestion and switching the theme must not make any.
+ * confirmed, opening the first screen, switching the theme and opening or closing the consent window must
+ * not make any.
  * The one call not attributed to the control under test is the metrika loader's `GET
  * /api/analytics/config`: it fires from the page load itself (and can retry later), not from the
  * action, so it is skipped; every other request still fails the scenario.
@@ -318,12 +352,12 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(password)
   await button(page, 'Войти').click()
-  await expect(talkButton(page)).toBeVisible({ timeout: 20_000 })
+  await expect(startVoiceButton(page)).toBeVisible({ timeout: 20_000 })
 }
 
 /**
- * The way into an account from home without a session: «Войти» at the foot of the menu, which is a drawer on
- * a phone (`openspec/changes/merge-first-screen-into-home`).
+ * The way into an account from the first screen (home without a session): «Войти» at the foot of the menu,
+ * which is a drawer on a phone (`openspec/changes/merge-first-screen-into-home`).
  */
 export async function openSignIn(page: Page): Promise<void> {
   await openSidebar(page)
@@ -334,11 +368,11 @@ export async function openSignIn(page: Page): Promise<void> {
 /** Sign-up with email confirmation: afterwards the person is already inside, on the home screen. */
 export async function registerAndConfirm(page: Page, email: string, name = 'Тест'): Promise<void> {
   await dismissMemoryInvite(page)
-  // A new visitor lands on home itself (the consent window asks at the first action, not before the
+  // A new visitor lands on the first screen (the consent window asks at the first press, not before the
   // page) and opens the sign-in from its menu; from the sign-in screen the way to the sign-up is one
   // link away.
   const createAccount = page.getByRole('link', { name: 'Создать аккаунт', exact: true })
-  await expect(talkButton(page).or(createAccount)).toBeVisible({ timeout: 30_000 })
+  await expect(firstHello(page).or(createAccount)).toBeVisible({ timeout: 30_000 })
   if (!(await createAccount.isVisible())) await openSignIn(page)
   await createAccount.click()
   await expect(page.getByRole('heading', { name: 'Давай знакомиться' })).toBeVisible()
@@ -359,7 +393,7 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   // Six digits submit on their own, no button needed; the screen then signs in with the password.
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(code)
 
-  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
+  await expect(startVoiceButton(page)).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('data-consent')).toHaveCount(0)
 }
 

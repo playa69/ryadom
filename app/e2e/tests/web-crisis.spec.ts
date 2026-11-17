@@ -3,11 +3,11 @@ import { expect, test } from '../support/fixtures'
 import {
   dialogInput,
   expectNoHorizontalOverflow,
-  homeInput,
   messages,
   modal,
   openWebApp,
   registerAndConfirm,
+  startTextDialog,
   uniqueEmail,
 } from '../support/web'
 import type { Page } from '@playwright/test'
@@ -22,9 +22,7 @@ const CALL_HREF = 'tel:84959895050'
 
 async function begin(page: Page, text: string): Promise<void> {
   await openWebApp(page, '/home')
-  await homeInput(page).fill(text)
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\//, { timeout: 30_000 })
+  await startTextDialog(page, text)
 }
 
 async function say(page: Page, text: string): Promise<void> {

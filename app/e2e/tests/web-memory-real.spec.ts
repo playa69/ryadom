@@ -2,13 +2,13 @@ import type { Page } from '@playwright/test'
 import {
   dialogInput,
   goTo,
-  homeInput,
   messages,
   modal,
   modalButton,
   openProfile,
   openWebApp,
   startAnonymously,
+  startTextDialog,
 } from '../support/web'
 import { expect, test } from '../support/fixtures'
 
@@ -62,9 +62,7 @@ async function eventually(page: Page, check: (text: string) => boolean, what: st
 /** Starts a conversation with the typed words, waits for the model's reply, ends it, returns home. */
 async function talkAndEnd(page: Page, words: string, shotName?: string, shoot?: (page: Page, name: string) => Promise<void>): Promise<string> {
   await goTo(page, 'Новый разговор')
-  await homeInput(page).fill(words)
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await startTextDialog(page, words)
   // The first assistant line is the fixed greeting; the model's answer to the words is the second.
   await expect.poll(() => messages(page, 'assistant').count(), { timeout: 90_000 }).toBeGreaterThanOrEqual(2)
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 90_000 })
