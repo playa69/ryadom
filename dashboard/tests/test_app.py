@@ -38,6 +38,9 @@ class FakeStore:
     def load(self, days):
         return {d: dict(self.rows[d]) for d in days if d in self.rows}
 
+    def tool_recovery(self):
+        return {}
+
 
 def empty_raw():
     return {"message_rows": [], "first_message": {}, "excluded": set(), "first_reply": {},
@@ -806,3 +809,15 @@ def test_main_fails_fast_without_langfuse_keys(monkeypatch):
         assert "LANGFUSE_PUBLIC_KEY" in str(error)
     else:
         raise AssertionError("без LANGFUSE_PUBLIC_KEY сервис не должен стартовать")
+
+
+def test_report_uses_cognee_recovery_as_tool_floor():
+    days = [date(2026, 11, 5), date(2026, 11, 6)]
+    snapshots = {
+        "2026-11-05": snapshot_row("2026-11-05", tool_requests=0),
+        "2026-11-06": snapshot_row("2026-11-06", tool_requests=7),
+    }
+    report = app.build_report(days, snapshots, NOW, {"2026-11-05": 13, "2026-11-06": 4})
+    assert report["days"][0]["tool_requests"] == 13
+    assert report["days"][1]["tool_requests"] == 7
+    assert snapshots["2026-11-05"]["tool_requests"] == 0
