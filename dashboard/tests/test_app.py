@@ -207,6 +207,91 @@ def test_name_lists_are_fixed_and_non_overlapping_with_excluded():
     assert "memory_search" in app.TOOL_NAMES and "memory_forget_dataset" in app.TOOL_NAMES
 
 
+# ---------- восстановление сообщений из Langfuse ----------
+
+def test_same_trace_generations_do_not_duplicate_message():
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # дедупликация по (московский день, аккаунт, traceId): повторная GENERATION той же трассы —
+    # не новое сообщение, две разные трассы — два сообщения.
+    traces = [{"id": "t1", "userId": "u1"}, {"id": "t2", "userId": "u1"}]
+    generations = [
+        {"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-10T10:00:00Z"},
+        {"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-10T10:00:20Z"},  # ретрай той же трассы
+        {"name": "live_turn_text", "traceId": "t2", "startTime": "2026-11-10T11:00:00Z"},
+    ]
+    assert app.langfuse_message_rows(generations, traces, set()) == [("2026-11-10", "u1", 2)]
+
+
+def test_recovery_recap_and_tool_records_are_not_messages():
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # сообщение — только live_turn_voice/live_turn_text; recovery (ретрай хода), вызванные разговором
+    # вызовы (итог, настроение, память) и записи TOOL сообщением не считаются.
+    traces = [{"id": "t1", "userId": "u1"}]
+    generations = [
+        {"name": "live_turn_recovery", "traceId": "t1", "startTime": "2026-11-10T10:00:00Z"},
+        {"name": "dialog_recap", "traceId": "t1", "startTime": "2026-11-10T10:01:00Z"},
+        {"name": "mood_classify_sber", "traceId": "t1", "startTime": "2026-11-10T10:02:00Z"},
+        {"name": "memory_extract", "traceId": "t1", "startTime": "2026-11-10T10:03:00Z"},
+    ]
+    tools = [{"name": "memory_search", "traceId": "t1", "startTime": "2026-11-10T10:04:00Z"}]
+    assert app.langfuse_message_rows(generations, traces, set()) == []
+    raw = empty_raw()
+    raw.update({"generations": generations, "tools": tools, "traces": traces})
+    metrics = app.metrics_by_day(**raw)
+    assert metrics["2026-11-10"]["dau"] == 0 and metrics["2026-11-10"]["daily_active_account"] == 0
+
+
+def test_db_and_langfuse_merge_takes_max_not_sum():
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # база и Langfuse описывают одни и те же ходы — для пары «день, аккаунт» берётся max, а не сумма.
+    merged = app.merge_message_rows([("2026-11-10", "u1", 8), ("2026-11-10", "u2", 5)],
+                                    [("2026-11-10", "u1", 12)])
+    assert {(d, u): n for d, u, n in merged} == {("2026-11-10", "u1"): 12, ("2026-11-10", "u2"): 5}  # не 8+12=20
+    # max(8, 12) = 12 > 10 — аккаунт активный, хотя по одной сохранённой базе у него 8 сообщений
+    raw = empty_raw()
+    raw["message_rows"] = [("2026-11-10", "u1", 8)]
+    raw["traces"] = [{"id": f"t{i}", "userId": "u1"} for i in range(12)]
+    raw["generations"] = [{"name": "live_turn_voice", "traceId": f"t{i}", "startTime": f"2026-11-10T{i:02d}:00:00Z"}
+                          for i in range(12)]
+    metrics = app.metrics_by_day(**raw)
+    assert metrics["2026-11-10"]["dau"] == 1
+    assert metrics["2026-11-10"]["daily_active_account"] == 1
+
+
+def test_empty_db_day_is_filled_from_langfuse():
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # день, которого нет в базе агента (11–16.11.2026 не сохранились), заполняется по трейсингу;
+    # test/internal и трассы без userId при этом отбрасываются, как везде.
+    raw = empty_raw()
+    raw["excluded"] = {"tester"}
+    raw["message_rows"] = [("2026-11-10", "u1", 3)]  # в базе есть только 10.11
+    raw["traces"] = [{"id": "t1", "userId": "u1"}, {"id": "t2", "userId": "u2"},
+                     {"id": "t3", "userId": "tester"}, {"id": "t4"}]
+    raw["generations"] = [
+        {"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-12T09:00:00Z"},
+        {"name": "live_turn_text", "traceId": "t2", "startTime": "2026-11-12T10:00:00Z"},
+        {"name": "live_turn_voice", "traceId": "t3", "startTime": "2026-11-12T11:00:00Z"},  # test-аккаунт
+        {"name": "live_turn_voice", "traceId": "t4", "startTime": "2026-11-12T12:00:00Z"},  # без userId
+    ]
+    metrics = app.metrics_by_day(**raw)
+    assert metrics["2026-11-12"]["dau"] == 2  # дня нет в базе — заполнен из Langfuse
+    assert metrics["2026-11-10"]["dau"] == 1
+
+
+def test_first_known_day_from_earlier_langfuse_turn():
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # первый известный день — минимум трёх источников; более ранняя live-turn трасса сдвигает его назад,
+    # аккаунт остаётся новым ровно один день.
+    assert app.first_known_day({"u1": "2026-11-14"}, {"u1": "2026-11-16"}, {"u1": "2026-11-11"}) == {"u1": "2026-11-11"}
+    raw = empty_raw()
+    raw["first_message"] = {"u1": "2026-11-16"}
+    raw["traces"] = [{"id": "t1", "userId": "u1"}]
+    raw["generations"] = [{"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-11T09:00:00Z"}]
+    metrics = app.metrics_by_day(**raw)
+    assert metrics["2026-11-11"]["new_users"] == 1
+    assert metrics.get("2026-11-16", app.ZERO_METRICS)["new_users"] == 0
+
+
 # ---------- снимки ----------
 
 def test_snapshot_insert_conflict_keeps_first_row():
@@ -401,6 +486,24 @@ def test_backfill_keeps_existing_snapshots():
     assert "2026-11-01" in store.rows and "2026-11-10" in store.rows
 
 
+def test_backfill_counts_langfuse_only_user_once_across_windows():
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # аккаунт, известный только по трейсингу (ни first_reply_at, ни сообщений в базе), считается новым
+    # один раз — в день первой live-turn трассы; первые дни накапливаются через границу окон backfill.
+    raw = empty_raw()
+    raw["traces"] = [{"id": "t1", "userId": "u1"}, {"id": "t2", "userId": "u1"}]
+    raw["generations"] = [
+        {"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-06T10:00:00Z"},  # первое окно
+        {"name": "live_turn_voice", "traceId": "t2", "startTime": "2026-11-09T10:00:00Z"},  # второе окно
+    ]
+    store = FakeStore()
+    app.backfill(store, lambda s, u: raw, date(2026, 11, 5), NOW, window_days=2)  # окна 05–06, 07–08, 09–10
+    assert store.rows["2026-11-06"]["new_users"] == 1  # первый известный день
+    assert store.rows["2026-11-09"]["new_users"] == 0  # во втором окне — уже не новый
+    assert sum(row["new_users"] for row in store.rows.values()) == 1  # и только один раз за всю историю
+    assert store.rows["2026-11-06"]["dau"] == 1 and store.rows["2026-11-09"]["dau"] == 1
+
+
 # ---------- отчёт, кэш, вход ----------
 
 def test_report_combines_snapshots_with_preliminary_today(monkeypatch):
@@ -442,6 +545,35 @@ def test_report_today_without_activity_keeps_total_from_snapshots(monkeypatch):
     report = app.compute_report(NOW)
     assert report["days"][-1]["total_users"] == 42
     assert report["days"][-1]["dau"] == 0
+
+
+def test_report_today_merges_db_and_langfuse(monkeypatch):
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # предварительные текущие сутки считаются по тому же объединению, что и снимок: аккаунт, которого база
+    # сегодня не сохранила, виден по трейсингу, а аккаунт из обоих источников не задваивается.
+    store = FakeStore([snapshot_row("2026-11-10", dau=1, new_users=1, total_users=1)])
+
+    def collect(since, until):
+        raw = empty_raw()
+        raw["message_rows"] = [("2026-11-11", "u1", 4)]  # u1 есть в базе
+        raw["first_message"] = {"u1": "2026-11-11"}
+        raw["traces"] = [{"id": "t1", "userId": "u1"}, {"id": "t2", "userId": "u2"}]
+        raw["generations"] = [
+            {"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-11T08:00:00Z"},  # тот же u1
+            {"name": "live_turn_text", "traceId": "t2", "startTime": "2026-11-11T09:00:00Z"},  # u2 — только трейсинг
+        ]
+        return raw
+
+    monkeypatch.setattr(app, "PgSnapshotStore", lambda dsn: store)
+    monkeypatch.setattr(app, "collect_raw", collect)
+    monkeypatch.setenv("DASHBOARD_DATABASE_URL", "postgres://dashboard")
+    report = app.compute_report(NOW)
+    today = report["days"][-1]
+    assert today["date"] == "2026-11-11"
+    assert today["dau"] == 2  # u1 (база + трейсинг, без двойного счёта) + u2 (только трейсинг)
+    assert today["new_users"] == 2
+    assert today["total_users"] == 3
+    assert "2026-11-11" not in store.rows  # предварительный день снимком не закрывается
 
 def test_report_has_six_new_fields_and_no_old_ones():
     # openspec/changes/update-sber500-dashboard-metrics, «JSON»: в каждом дне date, dau, llm_requests,
