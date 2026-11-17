@@ -32,6 +32,15 @@ describe('ConsentModalContent', () => {
     expect(button).not.toContain('type="submit"')
   })
 
+  // `openspec/changes/rework-web-first-screen`, «Согласие при первом действии»: on the web the start turns
+  // memory on, so the tick covers it, and the retention terms moved here from home.
+  it('covers memory in the tick and states the retention terms under the button', () => {
+    const markup = renderToStaticMarkup(<ConsentModalContent {...PROPS} />)
+    expect(markup).toContain('и на запоминание важного из них (выключается в профиле).')
+    expect(markup).toContain('Разговоры хранятся 30 дней после последнего сообщения.')
+    expect(markup).toContain('Без почты аккаунт удаляется через 90 дней без визитов.')
+  })
+
   it('links the documents in a new tab, so the window, the draft and the intent stay put', () => {
     const markup = renderToStaticMarkup(<ConsentModalContent {...PROPS} />)
     expect(markup).toContain('href="https://ryadom.example/terms"')

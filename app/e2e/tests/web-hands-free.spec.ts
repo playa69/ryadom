@@ -1,4 +1,4 @@
-import { messages, openWebApp, registerAndConfirm, talkButton, uniqueEmail } from '../support/web'
+import { messages, openWebApp, registerAndConfirm, startVoiceButton, uniqueEmail } from '../support/web'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { playedBy, speakAndTime, speakIntoMic, spokenBy } from '../support/speech'
@@ -7,7 +7,7 @@ import { playedBy, speakAndTime, speakIntoMic, spokenBy } from '../support/speec
 test.use({ handsFree: true, permissions: ['microphone'] })
 
 /**
- * Hands-free voice against the agent mock: after one tap on "Поговорить" the conversation goes on by
+ * Hands-free voice against the agent mock: after one tap on «Начать разговор» the conversation goes on by
  * voice alone. Speech starts a turn and a second of silence ends it, talking over the agent silences it
  * at once and is heard as a new turn, a tap only pauses the microphone, and a hidden tab closes it.
  */
@@ -19,7 +19,7 @@ test('голос без рук в вебе: реплики без касаний
   await openWebApp(page)
   await registerAndConfirm(page, uniqueEmail('web-hands-free'))
 
-  await talkButton(page).click()
+  await startVoiceButton(page).click()
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/)
   const mic = page.getByTestId('dialog-mic')
   const hint = page.getByTestId('voice-hint')

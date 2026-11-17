@@ -1,9 +1,9 @@
 import {
   endConversation,
-  homeInput,
   messages,
   openWebApp,
   registerAndConfirm,
+  startTextDialog,
   uniqueEmail,
   webUrl,
 } from '../support/web'
@@ -23,9 +23,7 @@ test('ссылка на разговор: создать, открыть чуж�
   await openWebApp(page)
   await registerAndConfirm(page, uniqueEmail('web-share'))
 
-  await homeInput(page).fill(FIRST_MESSAGE)
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await startTextDialog(page, FIRST_MESSAGE)
   await expect(messages(page, 'assistant')).toHaveCount(2, { timeout: 30_000 })
   await endConversation(page, 'Про тяжёлый день')
 

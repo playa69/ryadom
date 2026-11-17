@@ -4,16 +4,20 @@ import { X } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 import { ConsentCheckbox } from '@/app/(auth)/_components/consent-group'
 import { PRIMARY_BUTTON } from '@/app/(auth)/_components/parts'
 import Modal from './Modal'
 import { BUTTON } from './controls'
 
 /**
- * The consent window over home: the gate's content without the gate. The first action that would
- * start a conversation (a sent text, "Поговорить", the microphone) opens it instead of sending
- * anything; "Продолжить" hands the waiting action back to home, and closing it (the cross, Esc or
- * the backdrop) sends nothing and keeps the draft and the intent for the next try.
+ * The consent window over the first screen. A press that would start a conversation ("Поговорить", the
+ * sphere, the keyboard) opens it instead of sending anything; "Продолжить" hands the waiting start back,
+ * and closing it (the cross, Esc or the backdrop) sends nothing and keeps the intent for the next try.
+ *
+ * The start turns memory on, so the tick covers that too and says where it is turned off. The retention
+ * terms sit here, under the button, because this is where the person decides and the first screen keeps
+ * to its invitation.
  */
 export default function ConsentModal({
   open,
@@ -27,7 +31,7 @@ export default function ConsentModal({
   consentUrl: string
   /** The required checkbox is ticked: the waiting start may run (account, consents, conversation). */
   onContinue(): void
-  /** Cross, Esc or the backdrop: nothing is sent, home keeps the draft and the intent. */
+  /** Cross, Esc or the backdrop: nothing is sent, the first screen keeps the intent. */
   onClose(): void
 }) {
   return (
@@ -69,6 +73,7 @@ export function ConsentModalContent({
         onCheckedChange={setChecked}
         termsUrl={termsUrl}
         consentUrl={consentUrl}
+        memory
       />
       <Button
         type="button"
@@ -79,6 +84,9 @@ export function ConsentModalContent({
       >
         Продолжить
       </Button>
+      <p className="text-xs leading-normal text-faint text-balance" data-testid="guest-note">
+        {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}.
+      </p>
       <Button
         type="button"
         variant="ghost"

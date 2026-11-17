@@ -5,14 +5,14 @@ import { step } from '../support/evidence'
 import { trackSession } from '../support/session'
 import {
   goTo,
-  homeInput,
   messages,
   modal,
   modalButton,
-  openHomeSettings,
   openProfile,
   openWebApp,
   startAnonymously,
+  startTextDialog,
+  startVoiceButton,
 } from '../support/web'
 
 /**
@@ -42,11 +42,9 @@ async function legacyUnsavedStart(page: Page): Promise<void> {
   })
 }
 
-/** The legacy start is opened by the current client, typed on home and answered by the mock. */
+/** The legacy start is opened by the current client on the text from home, and the words are answered by the mock. */
 async function say(page: Page, text: string): Promise<void> {
-  await homeInput(page).fill(text)
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await startTextDialog(page, text)
   await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
   await expect.poll(() => messages(page, 'assistant').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
@@ -60,7 +58,7 @@ test('web: галочки нет, старый несохраняемый раз
   const session = trackSession(page)
   await openWebApp(page)
   await startAnonymously(page)
-  await expect(homeInput(page)).toBeVisible()
+  await expect(startVoiceButton(page)).toBeVisible()
 
   await expect(page.getByTestId('incognito')).toHaveCount(0)
   await expect(page.getByTestId('unsaved')).toHaveCount(0)
@@ -160,15 +158,15 @@ test('«Без памяти» — не «не сохранять»: разгов
   await expect(memorySwitch).toBeChecked()
 
   await goTo(page, 'Новый разговор')
-  // The memory choice is folded into «Настроить разговор»: open the details before the toggle.
-  await openHomeSettings(page)
-  await page.getByTestId('incognito-toggle').click()
+  // `openspec/changes/rework-web-first-screen`, «Разговор „Без памяти“»: on the web home it is the tick
+  // «Не запоминать этот разговор» under the start buttons, with nothing to unfold first.
+  await expect(page.getByTestId('incognito')).toContainText('Не запоминать этот разговор')
+  await page.getByTestId('incognito-toggle').check()
+  await expect(page.getByTestId('incognito-toggle')).toBeChecked()
   // `openspec/changes/remove-unsaved-dialog-option`, «Независима от «Без памяти»»: отдельной галочки нет.
   await expect(page.getByTestId('unsaved')).toHaveCount(0)
   const started = page.waitForRequest((r) => r.url().endsWith('/api/dialogs') && r.method() === 'POST')
-  await homeInput(page).fill(SAID)
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await startTextDialog(page, SAID)
   await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
   expect((await started).postDataJSON()).toMatchObject({ memory: 'off' })
   expect((await started).postDataJSON()).not.toHaveProperty('saved', false)

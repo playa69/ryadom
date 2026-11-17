@@ -7,6 +7,7 @@ import {
   expectNoHorizontalOverflow,
   expectSingleSos,
   field,
+  firstHello,
   isPhone,
   modal,
   modalButton,
@@ -17,7 +18,7 @@ import {
   registerAndConfirm,
   signIn,
   sosButton,
-  talkButton,
+  startVoiceButton,
   uniqueEmail,
   viewportWidth,
   watchCsp,
@@ -53,10 +54,10 @@ test('путь аккаунта в вебе: регистрация, профи�
 
   // ── sign-up ──────────────────────────────────────────────────────────────
   await openWebApp(page)
-  // The root has no screen of its own: a visitor with no account lands on home, which is the first screen
-  // for them, and the sign-in is a door they open themselves.
+  // The root has no screen of its own: a visitor with no account lands on home, which shows them the first
+  // screen, and the sign-in is a door they open themselves.
   await expect(page).toHaveURL(/\/home$/)
-  await expect(talkButton(page)).toBeVisible()
+  await expect(firstHello(page)).toBeVisible()
   await expectNoHorizontalOverflow(page)
   await shot(page, 'web-welcome')
   await openSignIn(page)
@@ -167,7 +168,7 @@ test('путь аккаунта в вебе: регистрация, профи�
   // A second tab of the same browser shares the session; it must not outlive the sign-out.
   const otherTab = await page.context().newPage()
   await openWebApp(otherTab, '/home')
-  await expect(talkButton(otherTab)).toBeVisible({ timeout: 20_000 })
+  await expect(startVoiceButton(otherTab)).toBeVisible({ timeout: 20_000 })
 
   await page.getByTestId('logout').click()
   await expect(modal(page).getByText('Выйти из аккаунта на этом устройстве?')).toBeVisible()
@@ -375,7 +376,7 @@ test('неподтверждённую почту можно зарегистр�
   await codeField.fill('000000')
   await expect(page.getByTestId('form-error')).toContainText('Код не подошёл', { timeout: 20_000 })
   await codeField.fill(code)
-  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
+  await expect(startVoiceButton(page)).toBeVisible({ timeout: 30_000 })
   // The account carries the owner's name and password, not the first registration's.
   await expect(page.getByTestId('home-greeting')).toContainText('Тест')
   await expect(page.getByTestId('home-greeting')).not.toContainText('Чужой')
@@ -404,6 +405,6 @@ test('новая запись согласий: «Продолжить» зак�
   await expect(page.getByTestId('welcome-continue')).toBeEnabled()
   await step(page, 'terms-gate-consented', 'После явной отметки кнопка «Продолжить» доступна')
   await page.getByTestId('welcome-continue').click()
-  await expect(talkButton(page)).toBeVisible({ timeout: 30_000 })
+  await expect(startVoiceButton(page)).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('data-consent')).toHaveCount(0)
 })

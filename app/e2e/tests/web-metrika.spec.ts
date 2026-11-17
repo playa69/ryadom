@@ -1,7 +1,15 @@
 import { WEBAPP_URL } from '../playwright.config'
 import { expect, test } from '../support/fixtures'
 import { E2E_COUNTER_ID, hitUrls, reachedGoals, refusedMetrikaRequests, ymCalls } from '../support/metrika'
-import { dialogInput, homeInput, messages, openWebApp, startAnonymously, watchCsp } from '../support/web'
+import {
+  dialogInput,
+  messages,
+  openWebApp,
+  startAnonymously,
+  startTextDialog,
+  startVoiceButton,
+  watchCsp,
+} from '../support/web'
 
 /**
  * Yandex Metrika in the web app (spec `product-analytics`: «Яндекс Метрика: включение и состав», «…: что передаётся»,
@@ -43,7 +51,7 @@ test('Метрика в вебе: переход между экранами —
   await openWebApp(page, '/home')
   await expect.poll(() => hitUrls(page)).toEqual([`${ORIGIN}/home`])
   await startAnonymously(page)
-  await expect(homeInput(page)).toBeVisible()
+  await expect(startVoiceButton(page)).toBeVisible()
   const hits = await ymCalls(page, 'hit')
   expect(hits.length).toBeGreaterThan(1)
   expect(String(hits.at(-1)![2])).toMatch(new RegExp(`^${ORIGIN}/`))
@@ -79,9 +87,7 @@ test('цели разговора: первая реплика, третья —
     await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
   }
 
-  await homeInput(page).fill('Сегодня было тяжело')
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  await startTextDialog(page, 'Сегодня было тяжело')
   // A typed reply counts when the server has accepted it: the goal comes with the reply, not before it.
   await settled(2)
   await expect.poll(() => reachedGoals(page)).toEqual(['first_reply'])
