@@ -113,6 +113,8 @@ class CogneeOutbox:
         return done
 
     async def _run(self, db: DialogDatabase, client: CogneeClient, user_id: str, op: str, payload: dict[str, Any]) -> None:
+        # Вызовы клиента получают user_id (а где есть — и dialog_id как session_id) для TOOL-записей Langfuse
+        # (метрика `tool_requests`, `openspec/changes/update-sber500-dashboard-metrics`).
         dataset = dataset_name(user_id)
         if op == "reindex_dialog":
             # Документ разговора пересобирается без подавленных реплик: старый удаляется жёстко, новый строится заново.
@@ -120,7 +122,7 @@ class CogneeOutbox:
             data_id = await asyncio.to_thread(db.get_cognee_data_id, dialog_id)
             if not data_id:
                 return  # в индексе его нет: при индексации подавленные реплики и так не попадут
-            await client.delete_document(dataset, data_id, document_name(dialog_id))
+            await client.delete_document(dataset, data_id, document_name(dialog_id), user_id=user_id, session_id=dialog_id)
             await asyncio.to_thread(db.set_cognee_data_id, dialog_id, None)
             await self._index(db, client, user_id, dataset, dialog_id)
         elif op == "index_dialog":
@@ -129,9 +131,12 @@ class CogneeOutbox:
                 return  # уже в индексе
             await self._index(db, client, user_id, dataset, dialog_id)
         elif op == "delete_document":
-            await client.delete_document(dataset, payload.get("data_id"), document_name(payload["dialog_id"]))
+            await client.delete_document(
+                dataset, payload.get("data_id"), document_name(payload["dialog_id"]),
+                user_id=user_id, session_id=payload["dialog_id"],
+            )
         elif op == "delete_dataset":
-            await client.forget_dataset(dataset)
+            await client.forget_dataset(dataset, user_id=user_id)
             await asyncio.to_thread(db.clear_cognee_data_ids, user_id)
         elif op == "rebuild":
             for dialog_id in await asyncio.to_thread(db.indexable_dialog_ids, user_id):
@@ -150,10 +155,10 @@ class CogneeOutbox:
         document = build_document(started_at, messages, suppressed)
         if document is None:
             return
-        data_id = await client.add_document(document, dataset, document_name(dialog_id))
+        data_id = await client.add_document(document, dataset, document_name(dialog_id), user_id=user_id, session_id=dialog_id)
         # Разговор могли удалить за время вызова: тогда документ сразу убираем, чтобы не воскресить удалённое.
         if await asyncio.to_thread(db.dialog_for_index, dialog_id) is None:
-            await client.delete_document(dataset, data_id, document_name(dialog_id))
+            await client.delete_document(dataset, data_id, document_name(dialog_id), user_id=user_id, session_id=dialog_id)
             return
         if data_id:
             await asyncio.to_thread(db.set_cognee_data_id, dialog_id, data_id)

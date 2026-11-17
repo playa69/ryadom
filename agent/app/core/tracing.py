@@ -133,6 +133,17 @@ class Tracer(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> Observation: ...
 
+    def start_tool(
+        self,
+        name: str,
+        *,
+        user_id: str | None,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Observation:
+        """Вызов внешнего инструмента (память Cognee): своя трасса, одна запись типа TOOL, без input/output."""
+        ...
+
     async def aclose(self) -> None:
         """Дождаться отправки накопленного (flush). Вызывается при остановке приложения."""
         ...
@@ -147,6 +158,9 @@ class NullTracer:
         return NULL_OBSERVATION
 
     def start_span(self, parent: Observation | None, **kwargs: Any) -> Observation:
+        return NULL_OBSERVATION
+
+    def start_tool(self, name: str, **kwargs: Any) -> Observation:
         return NULL_OBSERVATION
 
     async def aclose(self) -> None:
@@ -302,6 +316,28 @@ class LangfuseTracer:
             logger.warning("langfuse span start failed: %s", error)
             return NULL_OBSERVATION
 
+    def start_tool(
+        self,
+        name: str,
+        *,
+        user_id: str | None,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Observation:
+        """Вызов инструмента (память): своя трасса с одной записью TOOL. Фоновые вызовы идут, когда трасса хода уже
+        закрыта, поэтому к ней не прикрепляемся — связь с человеком идёт через userId новой трассы (метрика
+        `tool_requests`, `openspec/changes/update-sber500-dashboard-metrics`). Input/output не пишутся вовсе."""
+        try:
+            tool = self._client.start_observation(name=name, as_type="tool", metadata=_mask_metadata(metadata))
+            trace: dict[str, Any] = {"user_id": user_id}
+            if session_id is not None:
+                trace["session_id"] = session_id
+            tool.update_trace(**trace)
+            return LangfuseObservation(tool, capture_content=self._capture_content)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("langfuse tool start failed: %s", error)
+            return NULL_OBSERVATION
+
     async def aclose(self) -> None:
         try:
             await asyncio.to_thread(self._client.flush)
@@ -309,8 +345,20 @@ class LangfuseTracer:
             logger.warning("langfuse flush failed: %s", error)
 
 
+_PROCESS_TRACER: Tracer | None = None
+
+
+def current_tracer() -> Tracer:
+    """Трассировщик процесса, построенный при старте приложения; до старта — пустышка.
+
+    Lifespan в `main.py` строит трассировщик до клиента памяти и не передаёт его дальше, поэтому клиент памяти
+    берёт общий экземпляр отсюда — иначе пришлось бы держать второй Langfuse-клиент со своей фоновой отправкой.
+    """
+    return _PROCESS_TRACER if _PROCESS_TRACER is not None else NullTracer()
+
+
 def build_tracer(settings: LangfuseSettings) -> Tracer:
     """Tracer по настройкам: ключи проекта заданы — LangfuseTracer, иначе NullTracer."""
-    if not settings.tracing_active:
-        return NullTracer()
-    return LangfuseTracer(settings)
+    global _PROCESS_TRACER
+    _PROCESS_TRACER = LangfuseTracer(settings) if settings.tracing_active else NullTracer()
+    return _PROCESS_TRACER

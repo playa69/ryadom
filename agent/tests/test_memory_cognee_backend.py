@@ -5,7 +5,6 @@ Cognee API мокается двумя способами: клиент (`Cognee
 """
 
 import asyncio
-import json
 import time
 import uuid
 from typing import Any
@@ -72,23 +71,23 @@ class FakeCognee:
     async def cognify(self, dataset: str) -> None:
         self.cognified.append(dataset)
 
-    async def remember(self, text: str, dataset: str) -> None:
+    async def remember(self, text: str, dataset: str, *, user_id: str | None = None, session_id: str | None = None) -> None:
         await self.add(text, dataset)
         await self.cognify(dataset)
 
-    async def recall(self, query: str, dataset: str) -> str:
+    async def recall(self, query: str, dataset: str, *, user_id: str | None = None, session_id: str | None = None) -> str:
         self.recalls.append((query, dataset))
         if self.recall_gate is not None:
             await self.recall_gate.wait()
         return self.recall_text
 
-    async def recall_chunks(self, query: str, dataset: str) -> str:
+    async def recall_chunks(self, query: str, dataset: str, *, user_id: str | None = None, session_id: str | None = None) -> str:
         self.recalls.append((query, dataset))
         if self.recall_gate is not None:
             await self.recall_gate.wait()
         return self.recall_text
 
-    async def add_document(self, text: str, dataset: str, name: str) -> str | None:
+    async def add_document(self, text: str, dataset: str, name: str, *, user_id: str | None = None, session_id: str | None = None) -> str | None:
         if self.down:
             raise RuntimeError("cognee down")
         data_id = str(uuid.uuid4())
@@ -96,7 +95,10 @@ class FakeCognee:
         self.datasets.add(dataset)
         return data_id
 
-    async def delete_document(self, dataset: str, data_id: str | None = None, name: str | None = None) -> bool:
+    async def delete_document(
+        self, dataset: str, data_id: str | None = None, name: str | None = None,
+        *, user_id: str | None = None, session_id: str | None = None,
+    ) -> bool:
         if self.down:
             raise RuntimeError("cognee down")
         docs = self.documents.get(dataset, {})
@@ -104,14 +106,14 @@ class FakeCognee:
             data_id = next((key for key, (doc_name, _) in docs.items() if doc_name == name), None)
         return docs.pop(data_id, None) is not None if data_id else False
 
-    async def read_consent(self, dataset: str) -> str:
+    async def read_consent(self, dataset: str, *, user_id: str | None = None, session_id: str | None = None) -> str:
         self.consent_reads += 1
         return self.consents.get(dataset, "")
 
     async def dataset_exists(self, dataset: str) -> bool:
         return dataset in self.datasets
 
-    async def forget_dataset(self, dataset: str) -> bool:
+    async def forget_dataset(self, dataset: str, *, user_id: str | None = None, session_id: str | None = None) -> bool:
         if self.down:
             raise RuntimeError("cognee down")
         self.deleted.append(dataset)

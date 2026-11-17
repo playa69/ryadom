@@ -1,8 +1,9 @@
 # =============================================================================
 # Дашборд метрик для Sber500 (dashboard/app.py)
 # =============================================================================
-# Одна реплика: кэш на час живёт в памяти процесса. Secret dashboard-secrets собирается из Lockbox
-# при выкате (README рядом): DSN базы и ключи Langfuse — те же записи, что у агента, плюс пароль дашборда.
+# Одна реплика: кэш на час и фоновые снимки суток живут в памяти процесса.
+# Secret dashboard-secrets собирается из Lockbox при выкате (README рядом):
+# DSN баз agent/app/dashboard, ключи Langfuse и пароль дашборда.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,7 +34,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.1.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -47,6 +48,15 @@ spec:
               value: sber500
             - name: LANGFUSE_HOST
               value: http://langfuse-web.infra.svc.cluster.local:3000
+            # Дни начала точного учёта: более ранние дни получают 0 и честную
+            # пометку на странице. LLM_REQUESTS_SINCE — глубина доступной
+            # истории Langfuse; TOOL_REQUESTS_SINCE — день выката агента с
+            # TOOL-инструментацией: если фактический день другой, поправить
+            # значение ДО выката (здесь и в 05-job-backfill.yaml).
+            - name: LLM_REQUESTS_SINCE
+              value: "2026-11-05"
+            - name: TOOL_REQUESTS_SINCE
+              value: "2026-11-17"
             - name: DASHBOARD_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -57,6 +67,16 @@ spec:
                 secretKeyRef:
                   name: dashboard-secrets
                   key: DIALOG_DATABASE_URL
+            - name: APP_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: APP_DATABASE_URL
+            - name: DASHBOARD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: DASHBOARD_DATABASE_URL
             - name: LANGFUSE_PUBLIC_KEY
               valueFrom:
                 secretKeyRef:
