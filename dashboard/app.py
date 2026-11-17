@@ -28,7 +28,9 @@
 Прошедшие сутки закрываются снимком в 00:15 МСК в собственную базу дашборда и дальше не
 пересчитываются; пробелы досчитываются catch-up'ом ограниченными окнами. Текущие сутки снимком не
 закрываются: страница и JSON считают их предварительно из сырых источников при пересчёте (кэш не
-дольше часа) и в daily_metrics не пишут. Сырые источники — базы agent и app (только чтение) и API
+дольше часа) и в daily_metrics не пишут. Первый известный день для new_users текущих суток при этом
+считается по всей истории конкурса: трассы Langfuse сворачиваются постранично (страницы в памяти не
+накапливаются), а не читаются окном одного дня. Сырые источники — базы agent и app (только чтение) и API
 Langfuse. Наружу уходят только суммы: ни текстов, ни идентификаторов людей сервис не отдаёт.
 """
 
@@ -428,44 +430,94 @@ def _langfuse_get(host: str, public_key: str, secret_key: str, path: str, params
         return json.loads(response.read())
 
 
-def _langfuse_list(host: str, public_key: str, secret_key: str, path: str, params: dict) -> list[dict]:
-    """Постраничная выгрузка списка публичного API Langfuse за период."""
-    items: list[dict] = []
+def _langfuse_stamp(at: datetime) -> str:
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _langfuse_config() -> tuple[str, str, str]:
+    return (
+        os.environ.get("LANGFUSE_HOST", "http://langfuse-web.infra.svc.cluster.local:3000"),
+        os.environ["LANGFUSE_PUBLIC_KEY"],
+        os.environ["LANGFUSE_SECRET_KEY"],
+    )
+
+
+def _langfuse_fold(host: str, public_key: str, secret_key: str, path: str, params: dict,
+                   fold: Callable[[object, dict], None], acc) -> object:
+    """Постраничный обход списка публичного API Langfuse со свёрткой fold(acc, item).
+
+    Страницы не накапливаются: обработана — забыта. Так вся история конкурса помещается в память
+    пода (128Mi) даже при десятках тысяч записей: живут только текущая страница и аккумулятор."""
     page = 1
     while True:
         body = _langfuse_get(host, public_key, secret_key, path, {**params, "page": page, "limit": LANGFUSE_PAGE_LIMIT})
-        items.extend(body.get("data") or [])
+        for item in body.get("data") or []:
+            fold(acc, item)
         meta = body.get("meta") or {}
         if page >= int(meta.get("totalPages") or 1):
-            return items
+            return acc
         page += 1
+
+
+def _langfuse_list(host: str, public_key: str, secret_key: str, path: str, params: dict) -> list[dict]:
+    """Постраничная выгрузка списка целиком в память — допустимо только для ограниченных окон снимков."""
+    return _langfuse_fold(host, public_key, secret_key, path, params, list.append, [])
 
 
 def query_langfuse(host: str, public_key: str, secret_key: str, since: datetime, until: datetime) -> dict:
     """Записи GENERATION и TOOL и трассы за период. userId живёт на трассе, связь — по traceId."""
-
-    def stamp(at: datetime) -> str:
-        return at.strftime("%Y-%m-%dT%H:%M:%SZ")
     generations = _langfuse_list(host, public_key, secret_key, "/api/public/observations",
-                                 {"type": "GENERATION", "fromStartTime": stamp(since), "toStartTime": stamp(until)})
+                                 {"type": "GENERATION", "fromStartTime": _langfuse_stamp(since),
+                                  "toStartTime": _langfuse_stamp(until)})
     tools = _langfuse_list(host, public_key, secret_key, "/api/public/observations",
-                           {"type": "TOOL", "fromStartTime": stamp(since), "toStartTime": stamp(until)})
+                           {"type": "TOOL", "fromStartTime": _langfuse_stamp(since), "toStartTime": _langfuse_stamp(until)})
     traces = _langfuse_list(host, public_key, secret_key, "/api/public/traces",
-                            {"fromTimestamp": stamp(since - TRACE_LOOKBACK), "toTimestamp": stamp(until)})
+                            {"fromTimestamp": _langfuse_stamp(since - TRACE_LOOKBACK), "toTimestamp": _langfuse_stamp(until)})
     return {"generations": generations, "tools": tools, "traces": traces}
+
+
+def langfuse_first_turns(host: str, public_key: str, secret_key: str,
+                         since: datetime, until: datetime, excluded: set[str]) -> dict[str, str]:
+    """userId → первый московский день live-turn трассы за весь переданный период.
+
+    Нужен для предварительных текущих суток: их окно — один день, а первый известный день аккаунта
+    надо знать по всей истории конкурса, иначе аккаунт, известный только по трейсингу и говоривший
+    раньше, ошибочно стал бы «новым» сегодня. История в списки не собирается (попытка выгрузить её
+    целиком убивала под по памяти): трассы сворачиваются постранично в словарь traceId → userId,
+    observations — с фильтром `name` на стороне API, по проходу на каждое имя из MESSAGE_TURN_NAMES —
+    сразу в минимум дня по аккаунту. Аккаунты test/internal и трассы без userId не участвуют."""
+    users: dict[str, str] = {}
+
+    def fold_trace(acc: dict, trace: dict) -> None:
+        if trace.get("id") and trace.get("userId"):
+            acc[str(trace["id"])] = str(trace["userId"])
+
+    _langfuse_fold(host, public_key, secret_key, "/api/public/traces",
+                   {"fromTimestamp": _langfuse_stamp(since), "toTimestamp": _langfuse_stamp(until)},
+                   fold_trace, users)
+    first: dict[str, str] = {}
+
+    def fold_obs(acc: dict, obs: dict) -> None:
+        user_id = users.get(str(obs.get("traceId") or ""))
+        if not user_id or user_id in excluded:
+            return
+        day = msk_day(obs.get("startTime") or "")
+        if day and (user_id not in acc or day < acc[user_id]):
+            acc[user_id] = day
+
+    for name in sorted(MESSAGE_TURN_NAMES):
+        _langfuse_fold(host, public_key, secret_key, "/api/public/observations",
+                       {"type": "GENERATION", "name": name,
+                        "fromStartTime": _langfuse_stamp(since), "toStartTime": _langfuse_stamp(until)},
+                       fold_obs, first)
+    return first
 
 
 def collect_raw(since: datetime, until: datetime) -> dict:
     """Сырые данные для снимков за [since, until): базы agent и app (чтение) и Langfuse."""
     raw = query_agent_db(os.environ["DIALOG_DATABASE_URL"], since, until)
     raw.update(query_app_db(os.environ["APP_DATABASE_URL"]))
-    raw.update(query_langfuse(
-        os.environ.get("LANGFUSE_HOST", "http://langfuse-web.infra.svc.cluster.local:3000"),
-        os.environ["LANGFUSE_PUBLIC_KEY"],
-        os.environ["LANGFUSE_SECRET_KEY"],
-        since,
-        until,
-    ))
+    raw.update(query_langfuse(*_langfuse_config(), since, until))
     return raw
 
 
@@ -710,12 +762,17 @@ def compute_report(now: datetime) -> dict:
     """Отчёт: прошедшие сутки — только неизменяемые снимки, текущие — предварительный расчёт из сырых источников.
 
     Строка текущих суток в daily_metrics не пишется: до закрытия в 00:15 МСК данные дня ещё меняются.
-    Её total_users — накопленный итог последнего снимка до сегодня плюс предварительные new_users дня."""
+    Её total_users — накопленный итог последнего снимка до сегодня плюс предварительные new_users дня.
+    Первый известный день для new_users текущих суток считается по всей истории конкурса
+    (langfuse_first_turns сворачивает её постранично), а не по окну дня: иначе аккаунт, известный только
+    по трейсингу и говоривший раньше, ошибочно стал бы «новым» сегодня и раздул бы total_users."""
     days = period_days(now)
     store = PgSnapshotStore(os.environ["DASHBOARD_DATABASE_URL"])
     snapshots = store.load([d.isoformat() for d in days])
     today = days[-1].isoformat()
-    metrics = metrics_by_day(**collect_raw(*utc_bounds([days[-1], days[-1]]))).get(today) or ZERO_METRICS
+    raw = collect_raw(*utc_bounds([days[-1], days[-1]]))
+    first_turn = langfuse_first_turns(*_langfuse_config(), *utc_bounds([days[0], days[-1]]), raw["excluded"])
+    metrics = metrics_by_day(**raw, first_turn=first_turn).get(today) or ZERO_METRICS
     snapshots[today] = {**metrics, "total_users": store.total_before(today) + metrics["new_users"]}
     return build_report(days, snapshots, now)
 

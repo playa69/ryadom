@@ -522,6 +522,10 @@ def test_report_combines_snapshots_with_preliminary_today(monkeypatch):
 
     monkeypatch.setattr(app, "PgSnapshotStore", lambda dsn: store)
     monkeypatch.setattr(app, "collect_raw", collect)
+    # Первые live-turn дни за всю историю здесь не отличаются от окна дня: u1 новый по first_message.
+    monkeypatch.setattr(app, "langfuse_first_turns", lambda *args: {})
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
     monkeypatch.setenv("DASHBOARD_DATABASE_URL", "postgres://dashboard")
     report = app.compute_report(NOW)
     assert report["period"] == {"from": "2026-11-05", "to": "2026-11-11", "timezone": "Europe/Moscow"}
@@ -541,6 +545,9 @@ def test_report_today_without_activity_keeps_total_from_snapshots(monkeypatch):
     store = FakeStore([snapshot_row("2026-11-09", new_users=5, total_users=42)])
     monkeypatch.setattr(app, "PgSnapshotStore", lambda dsn: store)
     monkeypatch.setattr(app, "collect_raw", lambda since, until: empty_raw())
+    monkeypatch.setattr(app, "langfuse_first_turns", lambda *args: {})
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
     monkeypatch.setenv("DASHBOARD_DATABASE_URL", "postgres://dashboard")
     report = app.compute_report(NOW)
     assert report["days"][-1]["total_users"] == 42
@@ -566,6 +573,10 @@ def test_report_today_merges_db_and_langfuse(monkeypatch):
 
     monkeypatch.setattr(app, "PgSnapshotStore", lambda dsn: store)
     monkeypatch.setattr(app, "collect_raw", collect)
+    # История live-turn тоже начинается сегодня: оба аккаунта действительно новые.
+    monkeypatch.setattr(app, "langfuse_first_turns", lambda *args: {"u1": "2026-11-11", "u2": "2026-11-11"})
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
     monkeypatch.setenv("DASHBOARD_DATABASE_URL", "postgres://dashboard")
     report = app.compute_report(NOW)
     today = report["days"][-1]
@@ -574,6 +585,92 @@ def test_report_today_merges_db_and_langfuse(monkeypatch):
     assert today["new_users"] == 2
     assert today["total_users"] == 3
     assert "2026-11-11" not in store.rows  # предварительный день снимком не закрывается
+
+def test_langfuse_first_turns_fold_history_page_by_page(monkeypatch):
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # первые live-turn дни за всю историю конкурса сворачиваются постранично (страницы запрашиваются и
+    # забываются по одной, вся история в память не собирается), observations — с фильтром name на стороне
+    # API по проходу на имя; test/internal и трассы без userId отброшены.
+    requests = []
+
+    def fake_get(host, public_key, secret_key, path, params):
+        requests.append((path, params.get("type"), params.get("name"), params["page"]))
+        if path == "/api/public/traces":
+            data = {
+                1: [{"id": "t1", "userId": "u1"}, {"id": "t2", "userId": "u2"}],
+                2: [{"id": "t3", "userId": "tester"}, {"id": "t4"}],  # t4 — трасса без userId
+            }[params["page"]]
+            return {"data": data, "meta": {"totalPages": 2}}
+        observations = {
+            "live_turn_voice": {
+                1: [{"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-05T10:00:00Z"},
+                    {"name": "live_turn_voice", "traceId": "t3", "startTime": "2026-11-06T10:00:00Z"}],  # tester
+                2: [{"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-07T10:00:00Z"},
+                    {"name": "live_turn_voice", "traceId": "t4", "startTime": "2026-11-07T11:00:00Z"}],  # без userId
+            },
+            "live_turn_text": {
+                1: [{"name": "live_turn_text", "traceId": "t2", "startTime": "2026-11-09T10:00:00Z"}],
+                2: [],
+            },
+        }[params["name"]]
+        return {"data": observations[params["page"]], "meta": {"totalPages": 2}}
+
+    monkeypatch.setattr(app, "_langfuse_get", fake_get)
+    since, until = datetime(2026, 11, 4, 21, tzinfo=UTC), datetime(2026, 11, 11, 21, tzinfo=UTC)
+    first = app.langfuse_first_turns("http://lf", "pk", "sk", since, until, {"tester"})
+    assert first == {"u1": "2026-11-05", "u2": "2026-11-09"}  # min по всем страницам истории
+    traces = [r for r in requests if r[0] == "/api/public/traces"]
+    observations = [r for r in requests if r[0] == "/api/public/observations"]
+    assert [r[3] for r in traces] == [1, 2]  # обе страницы трасс
+    assert sorted((r[2], r[3]) for r in observations) == [
+        ("live_turn_text", 1), ("live_turn_text", 2), ("live_turn_voice", 1), ("live_turn_voice", 2)]
+    assert all(r[1] == "GENERATION" for r in observations)  # только live-turn имена, фильтр на стороне API
+
+
+def test_report_today_langfuse_only_user_from_yesterday_is_not_new(monkeypatch):
+    # openspec/changes/update-sber500-dashboard-metrics, «Сообщения восстанавливаются из трейсинга»:
+    # первый известный день текущих суток — по всей истории конкурса, а не по окну дня: аккаунт,
+    # известный только по трейсингу и говоривший вчера, сегодня НЕ новый и total_users не раздувает;
+    # впервые говорящий сегодня — новый.
+    store = FakeStore([snapshot_row("2026-11-10", dau=1, new_users=1, total_users=1)])
+
+    def collect(since, until):  # сырые данные только текущих суток, как в бою
+        assert (since, until) == (datetime(2026, 11, 10, 21, tzinfo=UTC), datetime(2026, 11, 11, 21, tzinfo=UTC))
+        raw = empty_raw()
+        raw["traces"] = [{"id": "t1", "userId": "u1"}, {"id": "t2", "userId": "u2"}]
+        raw["generations"] = [
+            {"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-11T08:00:00Z"},  # u1 снова
+            {"name": "live_turn_text", "traceId": "t2", "startTime": "2026-11-11T09:00:00Z"},  # u2 впервые
+        ]
+        return raw
+
+    def fake_get(host, public_key, secret_key, path, params):
+        if path == "/api/public/traces":
+            assert params["fromTimestamp"] == "2026-11-04T21:00:00Z"  # история с начала конкурса, не с полуночи
+            return {"data": [{"id": "t0", "userId": "u1"}, {"id": "t1", "userId": "u1"}, {"id": "t2", "userId": "u2"}],
+                    "meta": {"totalPages": 1}}
+        observations = {
+            "live_turn_voice": [
+                {"name": "live_turn_voice", "traceId": "t0", "startTime": "2026-11-10T10:00:00Z"},  # u1 вчера
+                {"name": "live_turn_voice", "traceId": "t1", "startTime": "2026-11-11T08:00:00Z"},
+            ],
+            "live_turn_text": [{"name": "live_turn_text", "traceId": "t2", "startTime": "2026-11-11T09:00:00Z"}],
+        }
+        return {"data": observations[params["name"]], "meta": {"totalPages": 1}}
+
+    monkeypatch.setattr(app, "PgSnapshotStore", lambda dsn: store)
+    monkeypatch.setattr(app, "collect_raw", collect)
+    monkeypatch.setattr(app, "_langfuse_get", fake_get)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+    monkeypatch.setenv("DASHBOARD_DATABASE_URL", "postgres://dashboard")
+    report = app.compute_report(NOW)
+    today = report["days"][-1]
+    assert today["date"] == "2026-11-11"
+    assert today["dau"] == 2  # u1 и u2 активны сегодня
+    assert today["new_users"] == 1  # но новый только u2: у u1 есть трасса t0 вчера
+    assert today["total_users"] == 2  # 1 по снимкам + 1 действительно новый, без раздувания
+    assert "2026-11-11" not in store.rows
 
 def test_report_has_six_new_fields_and_no_old_ones():
     # openspec/changes/update-sber500-dashboard-metrics, «JSON»: в каждом дне date, dau, llm_requests,
