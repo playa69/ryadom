@@ -22,7 +22,7 @@ test('кризис в приложении: лист «Позвонить сей
   await clearMailbox()
   await openApp(page)
   await registerAndConfirm(page, uniqueEmail('app-crisis'))
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   await expect(page.getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Писать текстом' }).click()
   const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')

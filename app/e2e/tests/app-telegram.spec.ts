@@ -31,9 +31,8 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await page.goto(launch)
   await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
   await expect(field(page, 'name'), 'поля имени перед стартом больше нет').toHaveCount(0)
-  await expect(page.locator('.page-current').getByTestId('consent-notice')).toBeVisible()
-  await step(page, 'tg-welcome', 'Первый вход в Telegram: сразу главная, без ворота согласия')
-  await expect(page.getByText(/Аккаунт привязан к твоему Telegram/)).toBeVisible()
+  await expect(page.locator('.page-current').getByTestId('hello-plaque')).toBeVisible()
+  await step(page, 'tg-welcome', 'Первый вход в Telegram: сразу первый экран с шаром, без ворота согласия')
   await expect(page.getByRole('button', { name: 'Скрыть' }), 'баннера установки в Telegram нет').toHaveCount(
     0,
   )
@@ -50,6 +49,8 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await expect(sheet).toBeVisible()
   await expect(sheet.getByTestId('data-consent-toggle')).not.toBeChecked()
   await expect(sheet.getByTestId('consent-continue')).toHaveClass(/disabled/)
+  // The terms of the Telegram account are in the sheet, under the buttons.
+  await expect(sheet.getByTestId('guest-note')).toContainText('Аккаунт привязан к твоему Telegram')
   await sheet.getByTestId('data-consent-toggle').check()
   const started = page.waitForRequest((r) => r.url().endsWith('/api/dialogs') && r.method() === 'POST')
   await sheet.getByTestId('consent-continue').click()
@@ -71,7 +72,7 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   })
   expect(await storedDevice(page), 'удостоверение устройства не нужно').toBeNull()
   await page.locator('.page-current .navbar a.back').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.page-current').getByTestId('unsaved')).toHaveCount(0)
 
   // ── the profile: not a guest, the way in is Telegram ─
@@ -85,7 +86,7 @@ test('Mini App: аккаунт пользователя Telegram, повторн
   await page.evaluate(() => localStorage.clear())
   await page.goto('about:blank')
   await page.goto(launch)
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   expect(session.userId(), 'тот же аккаунт').toBe(accountId)
 
   // ── signing out: no silent sign-in until the Mini App is closed; Telegram is one button away ─
@@ -98,7 +99,7 @@ test('Mini App: аккаунт пользователя Telegram, повторн
     timeout: 30_000,
   })
   await button(page, 'Войти через Telegram').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   expect(session.userId(), 'вход через Telegram — в тот же аккаунт').toBe(accountId)
 })
 

@@ -4,6 +4,9 @@ import {
   checkConsent,
   consentSheet,
   field,
+  firstHello,
+  helloText,
+  helloVoice,
   openApp,
   openTab,
   PASSWORD,
@@ -43,31 +46,30 @@ test('первый запуск, привязка почты, выход: акк
   const email = uniqueEmail('app-anonymous')
   await clearMailbox()
 
-  // ── a new visitor: home at once, the agreements wait in a sheet for the first start ─
-  // `openspec/changes/add-fast-dialog-start`, «Согласие при первом действии»: no gate before home;
-  // the documents and the help line are on home itself, and nothing is sent before the sheet's
-  // «Продолжить».
+  // ── a new visitor: the first screen at once, the agreements wait in a sheet for the first press ─
+  // `openspec/changes/rework-web-first-screen`: no gate before it, no form on it; the sphere invites
+  // to talk, and nothing is sent before the sheet's «Продолжить».
   await openApp(page)
   const first = page.locator('.page-current')
-  await expect(button(page, 'Поговорить')).toBeVisible()
+  await expect(firstHello(page)).toBeVisible()
+  await expect(helloVoice(page)).toContainText('Поговорить')
+  await expect(helloText(page)).toHaveAccessibleName('Написать текстом')
+  await expect(first.getByTestId('hello-caption')).toContainText('Привет! Я рядом.')
   await expect(first.getByTestId('welcome-talk'), 'ворота перед главной больше нет').toHaveCount(0)
-  await expect(first.getByTestId('consent-notice')).toContainText('ИИ для самоподдержки')
+  await expect(first.getByTestId('hello-plaque')).toContainText('бесплатный ИИ-собеседник, без регистрации')
+  await expect(first.getByTestId('hello-plaque')).toContainText('В опасной ситуации звони 112.')
   await expect(
     first.getByTestId('data-consent-toggle'),
-    'отметка согласия живёт в листе, а не на главной',
+    'отметка согласия живёт в листе, а не на экране',
   ).not.toBeVisible()
-  await expect(first.getByText('В опасной ситуации звони 112.')).toBeVisible()
+  await expect(first.locator('textarea'), 'поля первого сообщения нет').toHaveCount(0)
   await expect(first.getByTestId('memory-switch')).toHaveCount(0)
-  // `openspec/changes/update-privacy-policy`, «Человек знает о сроке хранения разговоров».
-  const foot = first.getByTestId('home-foot')
-  await expect(foot).toContainText('Разговоры хранятся 30 дней после последнего сообщения.')
-  await expect(foot).toContainText('Без почты аккаунт удаляется через 90 дней без визитов.')
   await shot(page, 'app-welcome')
-  await step(page, 'app-welcome', 'Первый вход приложения: сразу главная, без ворота согласия')
+  await step(page, 'app-welcome', 'Первый вход приложения: шар приглашает поговорить, без ворота и формы')
   expect(await storedDevice(page), 'до согласия удостоверения нет').toBeNull()
 
-  // ── «Поговорить» opens the consent sheet over home; nothing leaves the phone yet ─
-  await button(page, 'Поговорить').click()
+  // ── «Поговорить» opens the consent sheet over the first screen; nothing leaves the phone yet ─
+  await helloVoice(page).click()
   const sheet = consentSheet(page)
   await expect(sheet).toBeVisible()
   await expect(sheet).toContainText('Перед началом')
@@ -75,6 +77,13 @@ test('первый запуск, привязка почты, выход: акк
   await expect(toggle).not.toBeChecked()
   await expect(sheet.getByTestId('consent-continue')).toHaveClass(/disabled/)
   await expect(sheet.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(0)
+  // `openspec/changes/update-privacy-policy`, «Человек знает о сроке хранения разговоров»: the terms
+  // are in the sheet now, under the buttons.
+  const keep = sheet.getByTestId('guest-note')
+  await expect(keep).toContainText('Разговоры хранятся 30 дней после последнего сообщения.')
+  await expect(keep).toContainText('Без почты аккаунт удаляется через 90 дней без визитов.')
+  const continueBox = (await sheet.getByTestId('consent-continue').boundingBox())!
+  expect((await keep.boundingBox())!.y, 'сроки хранения под кнопкой').toBeGreaterThan(continueBox.y)
   expect(await storedDevice(page), 'лист открыт, а аккаунта всё ещё нет').toBeNull()
 
   const consentPagePromise = page.waitForEvent('popup')
@@ -109,7 +118,7 @@ test('первый запуск, привязка почты, выход: акк
     consentVersion: POLICY_VERSION,
   })
   await page.locator('.page-current .navbar a.back').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
 
   // ── the profile offers an address, not a password, and says how long the account lives ─
   await openTab(page, 'Профиль')
@@ -129,13 +138,18 @@ test('первый запуск, привязка почты, выход: акк
       if (!/device|memory-invite/.test(key)) localStorage.removeItem(key)
   })
   await page.reload()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   expect(session.userId(), 'тот же аккаунт, не новый').toBe(accountId)
 
   // ── linking: the form, then the code from the email ──────────────────────
   await openTab(page, 'Профиль')
   await linkRow(page).click()
-  await expect(page.getByText(new RegExp(`удаляется через ${ANONYMOUS_RETENTION_DAYS} дней`))).toBeVisible()
+  // Scoped to the page's own text: the closed consent sheet of home keeps a similar sentence in its note.
+  await expect(
+    page
+      .locator('.page-current .rd-muted')
+      .getByText(new RegExp(`удаляется через ${ANONYMOUS_RETENTION_DAYS} дней`)),
+  ).toBeVisible()
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(PASSWORD)
   await shot(page, 'app-anonymous-link-email')

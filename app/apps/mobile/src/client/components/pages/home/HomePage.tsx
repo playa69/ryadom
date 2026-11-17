@@ -1,30 +1,22 @@
-import { Button, Page, f7 } from 'framework7-react'
+import { Button, Icon, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { chosenStart, nextStartStep } from '@ryadom/client-core/dialog-start'
-import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 import { rememberUnsaved } from '@ryadom/client-core/unsaved'
 import {
   DialogMode,
   StartDialogApiErrorCode,
   type StartDialogApiResponse,
 } from '@ryadom/contracts/api/dialogs'
-import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
-import { memoryInUse, needsMemoryConsent } from '@ryadom/client-core/memory'
+import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
+import { memoryInUse } from '@ryadom/client-core/memory'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, codeText, deviceLogin, getMemory, startDialog, telegramLogin } from '../../../lib/api'
 import { needsFirstActionConsent } from '../../../lib/consent-gate'
 import { enableMemory } from '../../../lib/memory'
-import {
-  draftIntent,
-  hasDraftText,
-  requestTalkOnHome,
-  START_TALK_EVENT,
-  takeTalkRequest,
-  type TalkRequest,
-} from '../../../lib/nav'
+import { requestTalkOnHome, START_TALK_EVENT, takeTalkRequest, type TalkRequest } from '../../../lib/nav'
 import { isNative } from '../../../lib/platform'
 import { isTelegramMiniApp, telegramInitData } from '../../../lib/telegram'
 import { telegramLoginErrorText } from '../../../lib/telegram-account'
@@ -36,12 +28,9 @@ import { BrandMark } from '../../Brand'
 import Breathing from '../../Breathing'
 import ConsentNote from '../../ConsentNote'
 import ConsentSheet from '../../ConsentSheet'
-import ConversationSettings from '../../ConversationSettings'
-import StartComposer from '../../StartComposer'
-import Switch from '../../Switch'
+import FirstHello from '../../FirstHello'
 import { SosButton, openSos } from '../../SosSheet'
 import ThemeSwitch from '../../ThemeSwitch'
-import MemoryConsentSheet from '../profile/MemoryConsentSheet'
 import ResumeDialogSheet from './ResumeDialogSheet'
 
 /**
@@ -75,12 +64,13 @@ import ResumeDialogSheet from './ResumeDialogSheet'
 
 /** How a start opens the conversation: voice listens after the greeting, text hands a first message over. */
 interface StartIntent {
-  /** The first message, trimmed; empty for a voice start. */
-  draft: string
   listen: boolean
+  /** The keyboard: the conversation opens in its text view with an empty box; absent means voice. */
+  text?: boolean
 }
 
-const VOICE_INTENT: StartIntent = { draft: '', listen: true }
+const VOICE_INTENT: StartIntent = { listen: true }
+const TEXT_INTENT: StartIntent = { listen: false, text: true }
 
 const mode = DialogMode.Vent
 
@@ -122,11 +112,10 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const [renewing, setRenewing] = useState(false)
   /** The question was answered (or its request is out): closing the sheet is then no "dismissed". */
   const answered = useRef(false)
-  /** The first message (PWA and Telegram): kept over a failed start, cleared once the conversation opens. */
-  const [draft, setDraft] = useState('')
   /** The intention of the start that found an unfinished conversation, kept until the question is answered. */
   const pendingIntent = useRef<StartIntent>(VOICE_INTENT)
-  const textStart = !isNative() && hasDraftText(draft)
+  /** A new person of the PWA and Telegram: the first screen instead of home. */
+  const firstScreen = !isNative() && !auth.isAuthenticated
 
   /** The consent sheet over home (PWA and Telegram): opened by a start with no current consent on record. */
   const [consentSheetOpen, setConsentSheetOpen] = useState(false)
@@ -159,11 +148,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   const memoryEnabled = auth.user?.memoryEnabled
   /** "Без памяти" for the next conversation; it goes back to off once a conversation starts. */
   const [withoutMemory, setWithoutMemory] = useState(false)
-  /** The invitation to memory: the sheet with the offer, then the consent sheet after "Включить". */
-  const [invite, setInvite] = useState<'consent' | null>(null)
-  const [invitedMemory, setInvitedMemory] = useState<MemoryApiResponse | null>(null)
-  const [consentBusy, setConsentBusy] = useState(false)
-  const [consentError, setConsentError] = useState('')
   const choice = chosenStart(memoryEnabled, withoutMemory, false)
   const wanted = choice.memory
 
@@ -178,7 +162,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     getMemory()
       .then((memory) => {
         updateUser({ memoryEnabled: memoryInUse(memory) })
-        setInvitedMemory(memory)
       })
       .catch(() => {})
   }, [userId, updateUser])
@@ -186,27 +169,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   useEffect(() => {
     loadMemory()
   }, [loadMemory])
-
-  /** "Запоминать важное": the consent sheet when the consent was never given for this text, otherwise straight on. */
-  function turnMemoryOn() {
-    setConsentError('')
-    if (needsMemoryConsent(invitedMemory)) setInvite('consent')
-    else void acceptConsent()
-  }
-
-  async function acceptConsent() {
-    setConsentBusy(true)
-    setConsentError('')
-    const result = await enableMemory()
-    setConsentBusy(false)
-    if (!result.ok) {
-      setConsentError(result.text)
-      return
-    }
-    updateUser({ memoryEnabled: invitedMemory !== null && memoryInUse({ ...invitedMemory, ...result.data }) })
-    setInvite(null)
-    f7.toast.create({ text: 'Память включена', closeTimeout: 2500 }).open()
-  }
 
   function release(navigated: boolean) {
     if (navigated) setTimeout(() => (starting.current = false), NAVIGATION_LOCK_MS)
@@ -232,17 +194,15 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         // A voice start opens on the sphere and listens. A text start opens the text view and hands
         // the typed message over once: the dialog queues it and sends it when the connection is ready.
         listen: intent.listen,
-        ...(intent.draft ? { initialMode: 'text' as const, initialText: intent.draft } : {}),
+        ...(intent.text ? { initialMode: 'text' as const } : {}),
       },
     })
     setWithoutMemory(false)
-    // The text now lives in the conversation; the field starts empty again.
-    if (intent.draft) setDraft('')
   }
 
   async function handleTalk({
     chosen = choice,
-    intent = isNative() ? VOICE_INTENT : draftIntent(draft),
+    intent = VOICE_INTENT,
   }: { chosen?: ReturnType<typeof chosenStart>; intent?: StartIntent } = {}) {
     if (starting.current) return
     if (
@@ -335,7 +295,8 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     // behind, blocking the screen.
     await closeConsentSheet()
     try {
-      requestTalkOnHome({ rememberMemory: false, ...intent })
+      // The consent tick of the sheet covers memory, as on the web: the start turns it on.
+      requestTalkOnHome({ rememberMemory: true, ...(intent.text ? { text: true } : {}) })
       if (telegram) {
         const outcome = await telegramLogin(telegramInitData() ?? '', true)
         if (!outcome.ok) {
@@ -421,10 +382,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
           updateUser({ memoryEnabled: remembered })
         }
       }
-      const intent: StartIntent = request.draft
-        ? { draft: request.draft, listen: request.listen ?? false }
-        : VOICE_INTENT
-      if (intent.draft) setDraft(intent.draft)
+      const intent: StartIntent = request.text ? TEXT_INTENT : VOICE_INTENT
       await talkRef.current({ chosen: chosenStart(remembered, false, false), intent })
     })().finally(() => (fromWelcome.current = null))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when home first appears
@@ -487,42 +445,21 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     setPrompt(null)
   }
 
-  /** The memory choice of home. On the PWA and Telegram it folds into «Настроить разговор» (rendered
-      below); the native shell keeps it in plain view, as before. */
-  const memoryChoice = (
-    <>
-      {/* Memory off: the way to turn it on is here, not in a sheet that interrupts. */}
-      {memoryEnabled !== true && invitedMemory?.available === true && (
-        <div className="rd-incognito" data-testid="memory-switch">
-          <span className="rd-incognito-text">
-            <span className="rd-incognito-title">Запоминать важное</span>
-            <span className="rd-caption">Чтобы не начинать каждый раз с нуля. По желанию</span>
-          </span>
-          {/* Remounted when the sheet opens or closes: a declined consent puts the switch back. */}
-          <Switch key={String(invite)} checked={false} onChange={(on) => on && turnMemoryOn()} />
-        </div>
-      )}
-      {/* Only while memory is on: without it every conversation is "without memory" anyway. */}
-      {memoryEnabled === true && (
-        <div className="rd-incognito" data-testid="incognito">
-          <span className="rd-incognito-text">
-            <span className="rd-incognito-title">{withoutMemory ? 'Без памяти' : 'Запоминать разговор'}</span>
-            <span className="rd-caption">
-              {withoutMemory
-                ? 'Я не запомню этот разговор'
-                : 'Я буду запоминать разговор, чтобы лучше узнать тебя'}
-            </span>
-          </span>
-          <Switch
-            checked={withoutMemory}
-            onChange={(on) => {
-              setWithoutMemory(on)
-              track(AnalyticsEvent.MemoryIncognitoToggled, { on })
-            }}
-          />
-        </div>
-      )}
-    </>
+  /** With memory on, the one-off choice: the next conversation is not remembered. Memory itself is in the profile. */
+  const memoryChoice = memoryEnabled === true && (
+    <label className="rd-first-hello-incognito" data-testid="incognito">
+      <input
+        type="checkbox"
+        className="rd-unsaved-check"
+        checked={withoutMemory}
+        onChange={(event) => {
+          setWithoutMemory(event.target.checked)
+          track(AnalyticsEvent.MemoryIncognitoToggled, { on: event.target.checked })
+        }}
+        data-testid="incognito-toggle"
+      />
+      Не запоминать этот разговор
+    </label>
   )
 
   return (
@@ -557,90 +494,87 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
           <ThemeSwitch />
         </div>
       )}
-      {/* One column on a phone; from WIDE the circle and the actions stand side by side. */}
-      <div className="rd-home">
-        <div className="rd-home-orb">
-          <Breathing size={isWide ? 280 : isShort ? 140 : 176} />
-        </div>
-        <div className="rd-home-main">
-          <p className="rd-home-greeting">{greeting(auth.user?.name ?? null)}</p>
-          <p className="rd-muted rd-home-lead">Я здесь и никуда не спешу. О чём хочется сказать?</p>
+      {firstScreen ? (
+        // A new person of the PWA and Telegram: the sphere invites them to talk; the sheet asks for the
+        // agreements only on a press, and nothing is sent before it.
+        <FirstHello
+          busy={loading}
+          error={error}
+          onVoice={() => void handleTalk({ intent: VOICE_INTENT })}
+          onText={() => void handleTalk({ intent: TEXT_INTENT })}
+        />
+      ) : (
+        /* One column on a phone; from WIDE the circle and the actions stand side by side. */
+        <div className="rd-home">
+          <div className="rd-home-orb">
+            <Breathing size={isWide ? 280 : isShort ? 140 : 176} />
+          </div>
+          <div className="rd-home-main">
+            <p className="rd-home-greeting">{greeting(auth.user?.name ?? null)}</p>
+            <p className="rd-muted rd-home-lead">Я здесь и никуда не спешу. О чём хочется сказать?</p>
 
-          <div className="rd-talk">
-            {/* The first message and the suggestions: PWA and Telegram only, the native shell starts by voice. */}
-            {!isNative() && (
-              <StartComposer
-                draft={draft}
-                disabled={loading}
-                onDraftChange={(value) => {
-                  setDraft(value)
-                  setError('')
-                }}
-                onSubmit={() => void handleTalk()}
-              />
-            )}
-            <Button
-              fill
-              large
-              preloader
-              loading={loading}
-              disabled={loading}
-              onClick={() => void handleTalk()}
-            >
-              {textStart ? 'Отправить' : 'Поговорить'}
-            </Button>
-            {/* The memory choice: in the PWA and Telegram it folds into the collapsed «Настроить
-                разговор» so it does not compete with the field and the button; the native shell
-                keeps it in plain view. */}
-            {isNative()
-              ? memoryChoice
-              : // The details renders only when there is a choice to fold into it.
-                (memoryEnabled === true || invitedMemory?.available === true) && (
-                  <ConversationSettings>{memoryChoice}</ConversationSettings>
+            <div className="rd-talk">
+              {/* One press starts the conversation on the voice; the keyboard beside it starts it on the
+                  text (the native shell is voice-only). No box and no suggestions. */}
+              <div className="rd-home-start">
+                <Button
+                  fill
+                  large
+                  preloader
+                  loading={loading}
+                  disabled={loading}
+                  onClick={() => void handleTalk()}
+                  data-testid="home-start-voice"
+                >
+                  Начать разговор
+                </Button>
+                {!isNative() && (
+                  <Button
+                    large
+                    outline
+                    disabled={loading}
+                    onClick={() => void handleTalk({ intent: TEXT_INTENT })}
+                    aria-label="Начать текстом"
+                    className="rd-first-hello-text"
+                    data-testid="home-start-text"
+                  >
+                    <Icon f7="keyboard" size={20} aria-hidden="true" />
+                  </Button>
                 )}
-          </div>
+              </div>
+              {memoryChoice}
+            </div>
 
-          {error && (
-            <p className="rd-form-error" data-testid="form-error">
-              {error}
-            </p>
-          )}
-
-          {/* Keep the documents visible even while the consent gate is closed. */}
-          <div className="rd-welcome-foot" data-testid="home-foot">
-            <ConsentNote />
-            <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>
-            {/* As on the web: a line, not a card, so that the foot stays in view above the tabs. */}
-            <button
-              type="button"
-              className="rd-inline-link rd-home-people-link ph-no-capture"
-              onClick={() => openSos({ source: 'home' })}
-              data-testid="home-people"
-            >
-              Люди рядом&nbsp;— линии помощи
-            </button>
-            {/* The retention terms the first screen used to tell, now on home until the account exists. */}
-            {!signedIn && !telegram && (
-              <p className="rd-fineprint">
-                {DIALOG_KEEP_NOTE} Без почты аккаунт {GUEST_LIFE_CLAUSE}. Привязать почту можно в любой момент
-                в профиле.
+            {error && (
+              <p className="rd-form-error" data-testid="form-error">
+                {error}
               </p>
             )}
-            {!signedIn && telegram && (
-              <p className="rd-fineprint">
-                Аккаунт привязан к твоему Telegram, и открыть его можно в Telegram на любом устройстве.{' '}
-                {DIALOG_KEEP_NOTE} Почту для входа вне Telegram можно добавить в профиле.
-              </p>
-            )}
+
+            {/* Keep the documents visible even while the consent gate is closed. */}
+            <div className="rd-welcome-foot" data-testid="home-foot">
+              <ConsentNote />
+              <p className="rd-fineprint rd-welcome-sos">В опасной ситуации звони 112.</p>
+              {/* As on the web: a line, not a card, so that the foot stays in view above the tabs. */}
+              <button
+                type="button"
+                className="rd-inline-link rd-home-people-link ph-no-capture"
+                onClick={() => openSos({ source: 'home' })}
+                data-testid="home-people"
+              >
+                Люди рядом&nbsp;— линии помощи
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* PWA and Telegram only: the agreements at the first action, over home; the native shell
           keeps its gate on the first screen and never renders this. */}
       <ConsentSheet
         opened={consentSheetOpen}
         busy={loading}
+        telegram={telegram}
         checked={sheetConsented}
         onCheckedChange={setSheetConsented}
         onContinue={() => void confirmConsent()}
@@ -662,14 +596,6 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
         onContinue={continueDialog}
         onStartNew={() => void startNew()}
         onClose={closeQuestion}
-      />
-      <MemoryConsentSheet
-        opened={invite === 'consent'}
-        kind="consent"
-        busy={consentBusy}
-        error={consentError}
-        onAccept={() => void acceptConsent()}
-        onClose={() => !consentBusy && setInvite(null)}
       />
     </Page>
   )

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Button, Sheet } from 'framework7-react'
+import { DIALOG_KEEP_NOTE, GUEST_LIFE_CLAUSE } from '@ryadom/client-core/retention'
 import { DataConsentCheckbox } from './ConsentNote'
 
 /**
@@ -15,6 +16,7 @@ import { DataConsentCheckbox } from './ConsentNote'
 export default function ConsentSheet({
   opened,
   busy,
+  telegram,
   checked,
   onCheckedChange,
   onContinue,
@@ -23,6 +25,8 @@ export default function ConsentSheet({
   opened: boolean
   /** The chain after «Продолжить» is in flight: one press is enough, and closing waits for it. */
   busy: boolean
+  /** The Telegram Mini App: the account is the person's Telegram, which the note under the button says. */
+  telegram: boolean
   /** The mandatory tick, owned by the page so a close and a document link do not untick it. */
   checked: boolean
   onCheckedChange: (checked: boolean) => void
@@ -59,7 +63,7 @@ export default function ConsentSheet({
       <div className="rd-sheet-body" data-testid="consent-sheet">
         <h2 className="rd-sheet-title">Перед началом</h2>
         <p className="rd-muted">Один раз подтверди, что согласен(на), — и можно говорить.</p>
-        <DataConsentCheckbox checked={checked} onChange={onCheckedChange} />
+        <DataConsentCheckbox checked={checked} onChange={onCheckedChange} memory />
         <Button
           fill
           large
@@ -74,6 +78,12 @@ export default function ConsentSheet({
         <Button large disabled={busy} onClick={onClose} data-testid="consent-close">
           Закрыть
         </Button>
+        {/* The retention terms sit here, where the person decides, and the first screen keeps to its invitation. */}
+        <p className="rd-fineprint" data-testid="guest-note">
+          {telegram
+            ? `Аккаунт привязан к твоему Telegram, и открыть его можно в Telegram на любом устройстве. ${DIALOG_KEEP_NOTE} Почту для входа вне Telegram можно добавить в профиле.`
+            : `${DIALOG_KEEP_NOTE} Без почты аккаунт ${GUEST_LIFE_CLAUSE}. Привязать почту можно в любой момент в профиле.`}
+        </p>
       </div>
     </Sheet>
   )

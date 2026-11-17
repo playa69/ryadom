@@ -827,93 +827,7 @@ input:-webkit-autofill:focus {
   margin-top: var(--ryadom-s-2);
 }
 
-/* ── Fast start: the first-message field and the theme switch (PWA and Telegram) ── */
-
-.rd-start-composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ryadom-s-3);
-  width: 100%;
-  margin-bottom: var(--ryadom-s-3);
-}
-
-/* One strip of content-wide chips, scrolled sideways instead of wrapping: three stacked rows of
-   suggestions pushed the field and the start button down on a phone (design review). The strip is
-   focusable, so a keyboard scrolls it too, and `max-width` keeps the page itself from ever
-   scrolling sideways. */
-.rd-start-suggestions {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: var(--ryadom-s-2);
-  max-width: 100%;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-}
-
-.rd-start-suggestions::-webkit-scrollbar {
-  display: none;
-}
-
-/* A chip is as wide as its text: it neither stretches nor shrinks in the strip. `width: auto`
-   overrides Framework7's reset (`button { width: 100% }`), which made the first chip full-width. */
-.rd-start-suggestions .button {
-  flex: none;
-  width: auto;
-}
-
-/* The pill is borrowed from the dialog's own composer; its dialog margins belong to the feed there. */
-.rd-start-field {
-  width: 100%;
-  margin: 0;
-}
-
-.rd-start-field textarea {
-  max-height: 96px;
-}
-
-/* «Настроить разговор» on home (PWA and Telegram), as on the web: the optional memory choice folds
-   into a native details, collapsed by default, so it does not compete with the field and the start
-   button. */
-.rd-conversation-settings {
-  width: 100%;
-  margin-top: var(--ryadom-s-3);
-}
-
-.rd-conversation-settings > summary {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ryadom-s-1);
-  min-height: 44px;
-  list-style: none;
-  font-size: 14px;
-  color: var(--ryadom-text-dim);
-  cursor: pointer;
-}
-
-.rd-conversation-settings > summary::-webkit-details-marker {
-  display: none;
-}
-
-.rd-conversation-settings > summary:focus-visible {
-  border-radius: var(--ryadom-r-s);
-  outline: 2px solid var(--ryadom-brand-400);
-  outline-offset: 2px;
-}
-
-.rd-conversation-settings > summary .icon {
-  transition: transform 0.2s ease;
-}
-
-.rd-conversation-settings[open] > summary .icon {
-  transform: rotate(45deg);
-}
-
-/* One setting sits inside: the summary's own height separates it from the button above. */
-.rd-conversation-settings-body > :first-child {
-  margin-top: var(--ryadom-s-1);
-}
+/* ── The theme switch (PWA and Telegram) ── */
 
 /*
  * Day/night on the first and the home screen. The visual pill is small; the button itself is the
@@ -3580,5 +3494,101 @@ p.rd-recap-text {
   font: inherit;
   font-weight: 600;
   color: var(--ryadom-text);
+  cursor: pointer;
+}
+
+/* ── First screen of a new person (PWA and Telegram) and the start buttons of home ───────────────── */
+
+.rd-first-hello {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ryadom-s-4);
+  /* Border-box: otherwise the padding is added on top of the height and the screen scrolls by it. */
+  box-sizing: border-box;
+  min-height: calc(100% - 60px);
+  padding: var(--ryadom-s-2) var(--ryadom-s-5) calc(var(--ryadom-s-3) + var(--f7-safe-area-bottom, 0px));
+  text-align: center;
+}
+
+/* The whole stage is the target: the sphere is large and need not be aimed at. */
+.rd-first-hello-stage {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  cursor: pointer;
+}
+
+.rd-first-hello-stage .rd-orb {
+  width: min(70vw, 34vh, 320px);
+}
+
+.rd-first-hello-caption {
+  margin: 0;
+  font-size: var(--ryadom-t-2xl);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: var(--ryadom-tracking-tight);
+  color: var(--ryadom-text);
+}
+
+/* One sentence per line, so "Я рядом" never splits. */
+.rd-first-hello-caption span {
+  display: block;
+}
+
+.rd-first-hello-actions,
+.rd-home-start {
+  display: flex;
+  align-items: stretch;
+  gap: var(--ryadom-s-2);
+  width: 100%;
+  max-width: 360px;
+}
+
+.rd-first-hello-actions > .button:first-child,
+.rd-home-start > .button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The keyboard is the quieter way in: an icon beside the voice button, as tall as it. */
+.rd-first-hello-text {
+  flex: none;
+  width: var(--f7-button-large-height, 48px);
+  padding: 0;
+}
+
+.rd-first-hello-plaque {
+  width: 100%;
+  max-width: 360px;
+  padding: var(--ryadom-s-3) var(--ryadom-s-4);
+  border: 1px solid var(--ryadom-line, rgba(127, 127, 127, 0.25));
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-first-hello-plaque p {
+  margin: 0;
+}
+
+.rd-first-hello-plaque .rd-fineprint {
+  margin-top: var(--ryadom-s-1);
+}
+
+/* "Не запоминать этот разговор": a tick under the start buttons, only while memory is on. */
+.rd-first-hello-incognito {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ryadom-s-2);
+  margin-top: var(--ryadom-s-3);
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
   cursor: pointer;
 }

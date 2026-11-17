@@ -27,14 +27,14 @@ test('разговор: приветствие, ответ, кризис, жур
   await openApp(page)
   await registerAndConfirm(page, email)
 
-  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`). Exact name:
-  // the start composer carries a «Хочу выговориться» suggestion (`openspec/changes/add-fast-dialog-start`,
-  // «Подсказки первого сообщения»), and a substring match would hit it.
+  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`), and no box
+  // or suggestions on home (`openspec/changes/rework-web-first-screen`).
   await expect(page.getByRole('button', { name: 'Выговориться', exact: true })).toHaveCount(0)
+  await expect(page.locator('.page-current textarea')).toHaveCount(0)
   await shot(page, 'dialog-home')
 
   // ── conversation: voice first ────────────────────────────────────────────
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   // The conversation opens on the voice screen and listens by itself (the fake microphone).
   const stop = page.getByRole('button', { name: 'Остановить запись' })
   await expect(stop).toBeVisible({ timeout: 30_000 })
@@ -67,8 +67,6 @@ test('разговор: приветствие, ответ, кризис, жур
 
   // ── text: the second way, one tap away ───────────────────────────────────
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  // Scoped to the current page: the home page stays in the DOM with its own start-draft textarea whose
-  // placeholder begins with the same words (`openspec/changes/add-fast-dialog-start`).
   const input = page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER)
   await expect(input).toBeVisible()
   // The feed holds the greeting, the voice turn and the reply to it.
@@ -131,7 +129,7 @@ test('агент без озвучки: шар читает приветстви
     await openApp(page)
     await registerAndConfirm(page, email)
 
-    await button(page, 'Поговорить').click()
+    await button(page, 'Начать разговор').click()
     const stop = page.getByRole('button', { name: 'Остановить запись' })
     await expect(stop).toBeVisible({ timeout: 30_000 })
     const caption = page.getByTestId('voice-caption')
