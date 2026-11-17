@@ -71,7 +71,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backfill
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.1
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.2
           command: ["python", "app.py", "--backfill"]
           securityContext:
             allowPrivilegeEscalation: false

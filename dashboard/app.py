@@ -110,9 +110,10 @@ def definitions() -> dict[str, str]:
         else " Глубина истории ограничена хранилищем Langfuse: дни, для которых записей уже нет, показывают 0."
     )
     tool_note = (
-        f" Учёт — начиная с {tool_since} (день включения TOOL-записей агентом), более ранние дни показывают 0."
+        f" Непрерывный учёт Langfuse — начиная с {tool_since}; более ранние дни дополнены фактически подтверждёнными "
+        "операциями из журналов Cognee (без сопоставления с аккаунтами)."
         if tool_since
-        else " Записи появляются со дня включения TOOL-инструментации агента, более ранние дни показывают 0."
+        else " Дополнено фактически подтверждёнными операциями из журналов Cognee и записями TOOL Langfuse."
     )
     return {
         "dau": "DAU: уникальные аккаунты с хотя бы одним сообщением агенту за сутки. Сообщения считаются по базе "
@@ -536,6 +537,14 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
 )
 """
 
+TOOL_RECOVERY_DDL = """
+CREATE TABLE IF NOT EXISTS tool_call_recovery (
+    day date PRIMARY KEY,
+    tool_requests integer NOT NULL,
+    source text NOT NULL
+)
+"""
+
 # Снимок пишется один раз: повторный запуск не переписывает прошлое даже при ошибке в коде расчёта.
 SNAPSHOT_INSERT = """
 INSERT INTO daily_metrics (day, dau, daily_active_account, new_users, total_users, llm_requests, tool_requests, computed_at)
@@ -558,6 +567,13 @@ class PgSnapshotStore:
     def ensure_schema(self) -> None:
         with self._connect() as conn:
             conn.execute(SNAPSHOT_DDL)
+            conn.execute(TOOL_RECOVERY_DDL)
+
+    def tool_recovery(self) -> dict[str, int]:
+        """Подтверждённые журналами Cognee вызовы: нижняя граница для TOOL-метрики дня."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT day, tool_requests FROM tool_call_recovery").fetchall()
+        return {r[0].isoformat(): int(r[1]) for r in rows}
 
     def days(self) -> set[str]:
         with self._connect() as conn:
@@ -736,20 +752,25 @@ def run_backfill() -> int:
 
 # ---------- отчёт: снимки прошлых суток + предварительный расчёт текущих ----------
 
-def build_report(days: list[date], snapshots: Mapping[str, dict], computed_at: datetime) -> dict:
+def build_report(days: list[date], snapshots: Mapping[str, dict], computed_at: datetime,
+                 tool_recovery: Mapping[str, int] | None = None) -> dict:
     """Отчёт за период из снимков (текущие сутки подкладывает вызывающий как предварительную строку).
 
-    День без данных (catch-up ещё не добежал) — нули, total_users повторяет накануне."""
+    День без данных (catch-up ещё не добежал) — нули, total_users повторяет накануне. Журналы Cognee
+    дают нижнюю границу Tool calls и не перезаписывают снимки Langfuse."""
     out = []
     total = 0
+    recovery = tool_recovery or {}
     for d in days:
         key = d.isoformat()
         snap = snapshots.get(key)
         if snap is not None:
             total = snap["total_users"]
-            out.append({"date": key, **{f: snap[f] for f in METRIC_FIELDS}, "total_users": total})
+            row = {"date": key, **{f: snap[f] for f in METRIC_FIELDS}, "total_users": total}
         else:
-            out.append({"date": key, **ZERO_METRICS, "total_users": total})
+            row = {"date": key, **ZERO_METRICS, "total_users": total}
+        row["tool_requests"] = max(row["tool_requests"], recovery.get(key, 0))
+        out.append(row)
     return {
         "period": {"from": days[0].isoformat(), "to": days[-1].isoformat(), "timezone": "Europe/Moscow"},
         "updated_at": computed_at.astimezone(MSK).isoformat(timespec="minutes"),
@@ -774,7 +795,7 @@ def compute_report(now: datetime) -> dict:
     first_turn = langfuse_first_turns(*_langfuse_config(), *utc_bounds([days[0], days[-1]]), raw["excluded"])
     metrics = metrics_by_day(**raw, first_turn=first_turn).get(today) or ZERO_METRICS
     snapshots[today] = {**metrics, "total_users": store.total_before(today) + metrics["new_users"]}
-    return build_report(days, snapshots, now)
+    return build_report(days, snapshots, now, store.tool_recovery())
 
 
 class ReportCache:
