@@ -1,51 +1,126 @@
 # Дашборд метрик для Sber500
 
 Отдельный сервис в своём namespace `dashboard`: страница `https://слышу-рядом.рф/dashboard` и JSON
-`https://слышу-рядом.рф/dashboard/api` с тремя числами по дням за последние 7 полных суток по Москве.
-Код и определения метрик — `dashboard/app.py`, спека — `openspec/specs/sber500-dashboard`.
+`https://слышу-рядом.рф/dashboard/api` с шестью метриками по дням за весь период конкурса — с 2026-11-05
+по текущие сутки по Москве включительно
+(`dau`, `daily_active_account`, `new_users`, `total_users`, `llm_requests`, `tool_requests`; из всех метрик
+исключён трафик аккаунтов `test`/`internal`). Код и определения метрик — `dashboard/app.py`, спека —
+`openspec/specs/sber500-dashboard`.
 
-Сервисы agent и api дашборд не трогает. Он сам читает базу `agent` в сессии только на чтение и API метрик Langfuse,
-пересчитывает раз в час и отдаёт наружу только суммы. Вход — basic auth (логин `sber500`), неудачные входы ограничены
-по IP.
+Сервисы agent и api дашборд не трогает. Он читает базы `agent` и `app` в сессиях только на чтение и API
+Langfuse, а после полуночи по Москве закрывает завершённые сутки снимком в собственную базу `dashboard` в кластере
+CNPG `ryadom-db` (одна таблица `daily_metrics`: дата и шесть целых чисел, без текстов и id людей; запись —
+`INSERT ... ON CONFLICT (day) DO NOTHING`, прошлые сутки не пересчитываются). Завершённые дни страница и JSON
+читают только из этого хранилища; текущие сутки снимком не закрываются — их метрики считаются из баз
+`agent`/`app` и Langfuse при обновлении кэша в памяти (не чаще раза в час) и отдаются как предварительные.
+При сбое хранилища или сырых источников отдаётся последний удачный отчёт из кэша, при холодном старте без
+базы — 503. Вход — basic auth (логин `sber500`), неудачные входы ограничены по IP.
 
 ## Secret
 
-`dashboard-secrets` в ns `dashboard` собирается из Lockbox `ryadom-app-secrets` помощником создания Secret'ов, сначала
-с `--dry-run=server`. Значения хранятся у администратора.
+`dashboard-secrets` в ns `dashboard` собирается из Lockbox `ryadom-app-secrets` помощником создания Secret'ов,
+сначала с `--dry-run=server`. Значения хранятся у администратора.
 
 | Ключ Secret'а | Ключ в Lockbox |
 |---|---|
-| `DIALOG_DATABASE_URL` | `AGENT_DIALOG_DATABASE_URL` (то же значение, что в Secret `agent-db` агента) |
+| `DIALOG_DATABASE_URL` | `AGENT_DIALOG_DATABASE_URL` (то же значение, что в Secret `agent-db` агента; чтение базы `agent`) |
+| `APP_DATABASE_URL` | `APP_DATABASE_URL` (новая запись; read-only пользователь базы `app`, см. ниже) |
+| `DASHBOARD_DATABASE_URL` | `DASHBOARD_DATABASE_URL` (новая запись; роль `dashboard`, запись только в свою базу) |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | `AGENT_LANGFUSE_PUBLIC_KEY`, `AGENT_LANGFUSE_SECRET_KEY` (то же, что в `agent-secrets`) |
 | `DASHBOARD_PASSWORD` | `DASHBOARD_PASSWORD` |
+
+Пароль роли `dashboard` дополнительно хранится в Secret `dashboard-db-credentials` (ключ `password`) в ns
+`ryadom-db` — его читает Job создания базы (`k8s/app/db/02-job-create-dashboard-db.yaml`). Создаётся вручную
+`kubectl create secret generic` (не `apply`), значение то же, что в `DASHBOARD_DATABASE_URL`.
 
 Если у агента сменились пароль базы или ключи Langfuse, сначала обновляется Lockbox, затем Secret дашборда
 пересоздаётся. `registry-pull` в ns `dashboard` — копия общего секрета реестра из ns `agent` (в Lockbox его нет).
 
-## Выкат
+### Read-only пользователь базы `app` (для `APP_DATABASE_URL`)
 
-Применять поимённо, admin-kubeconfig:
+Отдельная роль `dashboard_app_ro` — НЕ роль `dashboard`: у роли `dashboard` прав на базы `agent` и `app`
+нет и быть не должно (это контролирует Job создания базы). Роль создаёт администратор вручную под
+суперпользователем postgres (скилл `db`), идемпотентно:
 
-```bash
-kubectl apply -f k8s/dashboard/00-namespace.yaml -f k8s/dashboard/01-network-policy.yaml
-# В живой ryadom-db-allow-ingress есть ns, которых нет в репозитории: не apply файлом, а patch одной строкой
-kubectl -n ryadom-db patch networkpolicy ryadom-db-allow-ingress --type json \
-  -p '[{"op":"add","path":"/spec/ingress/0/from/-","value":{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"dashboard"}}}}]'
-# из 02-network-policy-infra.yaml — только политика infra-allow-ingress-dashboard-langfuse
-# Secret'ы dashboard-secrets и registry-pull
-kubectl apply -f k8s/dashboard/02-deployment.yaml -f k8s/dashboard/03-service.yaml -f k8s/dashboard/04-httproute.yaml
-kubectl -n dashboard rollout status deploy/dashboard --timeout=120s
+```sql
+-- в базе postgres:
+CREATE ROLE dashboard_app_ro LOGIN PASSWORD '<пароль из Lockbox APP_DATABASE_URL>';  -- если роли нет
+GRANT CONNECT ON DATABASE app TO dashboard_app_ro;
+-- в базе app:
+GRANT USAGE ON SCHEMA public TO dashboard_app_ro;
+GRANT SELECT ON users, user_reply_counts TO dashboard_app_ro;
 ```
 
-Образ: `cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:<версия>`, собирается из `dashboard/` под `linux/amd64`.
+Больше ничего не выдавать: дашборду нужны только `users` (метка `traffic_type`) и `user_reply_counts`
+(`first_reply_at`).
 
-## Проверка
+## Выкат метрик v2 (порядок строгий)
 
-- `curl -sI https://слышу-рядом.рф/dashboard` → 401; с логином и паролем → 200.
-- `/dashboard/api` отдаёт 7 дней.
-- В журнале пода `пересчитано за …` раз в час, ошибок подключения нет.
+Прод — только после явного «да» владельца на каждую операцию. Применять поимённо, admin-kubeconfig.
+
+**Порядок: база/роли/секреты → образ dashboard → backfill (дождаться Complete) → только потом новый
+Deployment.** Backfill и фоновое закрытие суток (snapshotter) нового Deployment одновременно работать не
+должны, поэтому Deployment 0.2.0 выкатывается последним.
+
+1. **Агент с TOOL-инструментацией памяти** — образ агента выкачен первым (по скиллу `deploy`), записи TOOL
+   в Langfuse начинают появляться; поведение диалогов не меняется. Зафиксировать фактический день выката:
+   если он не 2026-11-17, до дальнейших шагов поправить `TOOL_REQUESTS_SINCE` в
+   `k8s/dashboard/02-deployment.yaml` и `k8s/dashboard/05-job-backfill.yaml`.
+2. **База и роли**: создать Secret `dashboard-db-credentials` в ns `ryadom-db`, затем
+   `kubectl apply -f k8s/app/db/02-job-create-dashboard-db.yaml` и
+   `kubectl -n ryadom-db wait --for=condition=complete job/create-dashboard-db`. Проверка (скилл `db`):
+   база и роль существуют, `has_database_privilege('dashboard','app','CREATE')` и `…,'agent','CREATE')` — false.
+   Роль `dashboard_app_ro` для `APP_DATABASE_URL` — SQL из раздела выше.
+3. **Lockbox и Secret**: добавить записи `APP_DATABASE_URL` и `DASHBOARD_DATABASE_URL` в Lockbox, пересобрать
+   `dashboard-secrets` помощником — сначала прогон с `--dry-run=server`, затем реальное применение. Ключи
+   Langfuse и `DASHBOARD_PASSWORD` остаются прежними. Бегущий старый под 0.1.0 пересоздание Secret'а не
+   затрагивает (env читается при старте пода).
+4. **Образ**: `cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.0` собран из `dashboard/` под linux/amd64 и
+   отправлен в реестр — до этого шага Job и Deployment не применять (поды не стартуют без образа).
+5. **Backfill истории**: `kubectl apply -f k8s/dashboard/05-job-backfill.yaml`,
+   `kubectl -n dashboard wait --for=condition=complete job/dashboard-backfill --timeout=1800s`,
+   журнал — `kubectl -n dashboard logs job/dashboard-backfill`. Backfill закрывает только завершённые сутки,
+   текущие сутки остаются предварительными и считаются подом из сырых источников. Пока идёт backfill,
+   страницу обслуживает старый под 0.1.0, который в `daily_metrics` не пишет. Если Deployment 0.2.0 по ошибке
+   уже выкачен — сначала `kubectl -n dashboard scale deploy/dashboard --replicas=0`, затем backfill, затем
+   вернуть реплику на шаге 6. Повторный запуск backfill — no-op (пишет только дни без снимка).
+6. **Дашборд**: `kubectl apply -f k8s/dashboard/02-deployment.yaml`,
+   `kubectl -n dashboard rollout status deploy/dashboard --timeout=120s`. `kubectl diff` до применения
+   должен показать только новые env и тег образа.
+7. **Проверка**: `curl -sI https://слышу-рядом.рф/dashboard` → 401; с логином → 200; `/dashboard/api`
+   отдаёт по дню на каждые сутки с 2026-11-05 по текущие московские сутки включительно с полями `dau`,
+   `llm_requests`, `tool_requests`, `total_users`, `new_users`, `daily_active_account`; текущие сутки —
+   реальные предварительные данные, не нулевая заглушка; в журнале пода — закрытие суток и catch-up без ошибок.
+
+Первичный выкат namespace с нуля — как раньше (`00-namespace.yaml`, `01-network-policy.yaml`, patch
+`ryadom-db-allow-ingress`, политика `infra-allow-ingress-dashboard-langfuse`, Secret'ы, Deployment, Service,
+HTTPRoute); сеть к `ryadom-db` и Langfuse уже разрешена и под базу снимков подходит без изменений.
+
+### Даты начала точного учёта
+
+`LLM_REQUESTS_SINCE` (`2026-11-05` — доступная история Langfuse) и `TOOL_REQUESTS_SINCE` (день выката
+агента с TOOL-инструментацией) — обычные env в манифестах, не секреты; более ранние дни получают 0 и
+честную пометку на странице. Значения в `02-deployment.yaml` и `05-job-backfill.yaml` должны совпадать.
+
+## Откат
+
+- **Дашборд**: `kubectl -n dashboard rollout undo deploy/dashboard` (образ 0.1.0): `DIALOG_DATABASE_URL` и
+  ключи Langfuse на месте, лишние ключи Secret'а старым образом игнорируются.
+- **Агент**: прежним образом (по скиллу `deploy`) — записи TOOL перестают появляться; дашборд посчитает за
+  те сутки меньшее, но честное число.
+- **Ошибочный запуск backfill** (одновременно со snapshotter или до готовности базы): остановить под —
+  `kubectl -n dashboard delete job dashboard-backfill`; при работающем snapshotter —
+  `kubectl -n dashboard scale deploy/dashboard --replicas=0`. Уже записанные строки `daily_metrics` НЕ
+  удалять и не перезаписывать автоматически: снимки неизменны по дизайну, разбор расхождений и любой
+  `DELETE` — только вручную по отдельному разрешению владельца (чтение — по скиллу `db`), после чего
+  вернуть реплику дашборда.
+- Базу `dashboard` и роли при откате НЕ удаляем: они никому не мешают, а снимки пригодятся при повторном
+  выкате. Удаление — только осознанно (ниже).
 
 ## Удаление
 
 `kubectl delete ns dashboard`, затем убрать строку `dashboard` из `ryadom-db-allow-ingress` и политику
-`infra-allow-ingress-dashboard-langfuse` (или оставить: без namespace они ничего не открывают).
+`infra-allow-ingress-dashboard-langfuse` (или оставить: без namespace они ничего не открывают). База, роли
+и Secret `dashboard-db-credentials` при этом остаются: их удаление — отдельная прод-операция по явному «да»
+владельца (`DROP DATABASE dashboard`, `DROP ROLE dashboard`, `DROP ROLE dashboard_app_ro` после отзыва
+GRANT'ов в базе `app`), снимки до этого сохраняются в daily-бэкапе CNPG.

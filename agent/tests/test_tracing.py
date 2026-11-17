@@ -126,6 +126,11 @@ class FakeLangfuseClient:
         self.traces.append(span)
         return span
 
+    def start_observation(self, name: str, as_type: str = "span", **kwargs: object) -> FakeSpan:
+        span = FakeSpan(name, as_type, **kwargs)
+        self.traces.append(span)
+        return span
+
     def flush(self) -> None:
         self.flushed = True
 
@@ -320,6 +325,59 @@ async def test_update_after_end_is_ignored() -> None:
     turn.end()  # повторный end безопасен
     turn.update(output="поздно")
     assert client.traces[0].updates == []
+
+
+# ─── TOOL-записи вызовов памяти ──────────────────────────────────────────────
+
+
+async def test_tool_trace_maps_fields_to_sdk() -> None:
+    """`openspec/changes/update-sber500-dashboard-metrics`, «Метрики по дням для Sber500»: своя трасса с одной записью TOOL."""
+    tracer, client = make_tracer()
+    tool = tracer.start_tool(
+        "memory_search", user_id="user-1", session_id="dialog-1", metadata={"search_type": "chunks", "chars": 12}
+    )
+    tool.update(level="ERROR", status="http 500")
+    tool.end()
+
+    root = client.traces[0]
+    assert root.name == "memory_search" and root.kind == "tool"
+    assert root.trace == {"user_id": "user-1", "session_id": "dialog-1"}
+    assert root.kwargs["metadata"] == {"search_type": "chunks", "chars": 12}
+    assert root.updates == [{"level": "ERROR", "status_message": "http 500"}]
+    assert root.ended
+
+
+async def test_tool_trace_carries_no_input_output_and_masks_metadata() -> None:
+    """`openspec/changes/update-sber500-dashboard-metrics`, «Хранятся только агрегаты»: ни текстов, ни содержимого памяти."""
+    tracer, client = make_tracer(capture_content=True)  # даже в диагностическом режиме TOOL-запись тексты не несёт
+    tool = tracer.start_tool(
+        "memory_write", user_id="user-1", metadata={"op": "add", "note": "длинный личный текст не должен уйти"}
+    )
+    tool.end()
+
+    root = client.traces[0]
+    assert "input" not in root.kwargs and "output" not in root.kwargs
+    assert root.trace == {"user_id": "user-1"}  # без session_id, когда диалог неизвестен
+    assert root.kwargs["metadata"] == {"op": "add", "note": "[скрыто]"}
+    assert "личный текст" not in str(root.kwargs) + str(root.trace)
+
+
+async def test_tool_sdk_failure_falls_back_to_null() -> None:
+    """`openspec/changes/update-sber500-dashboard-metrics`, «Метрики по дням для Sber500»: сбой записи не влияет на вызов."""
+    tracer, _ = make_tracer()
+
+    def broken_start(name: str, **kwargs: object) -> FakeSpan:
+        raise RuntimeError("sdk down")
+
+    tracer._client.start_observation = broken_start  # type: ignore[method-assign]
+    assert tracer.start_tool("memory_search", user_id="u") is NULL_OBSERVATION
+
+
+async def test_null_tracer_tool_is_a_noop() -> None:
+    """`openspec/changes/update-sber500-dashboard-metrics`, «Метрики по дням для Sber500»: без ключей трейсинг выключен."""
+    tool = NullTracer().start_tool("memory_search", user_id="u", session_id="d")
+    tool.update(level="ERROR")
+    tool.end()
 
 
 @pytest.mark.parametrize("capture_content", [False, True])

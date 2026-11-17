@@ -207,7 +207,7 @@ class CogneeMemoryBackend:
                 self._consents[user_id] = (version, at)  # и пустое согласие: строка настроек главнее зерна в датасете
                 await self._refresh_notes(user_id)
                 return
-            exists = await self._client.dataset_exists(dataset_name(user_id))
+            exists = await self._client.dataset_exists(dataset_name(user_id))  # служебная проверка: TOOL-записи не создаёт
             self._datasets[user_id] = exists  # старая память без строки настроек: есть датасет — человек включал
             if exists:
                 await self._adopt_legacy(user_id)
@@ -360,13 +360,18 @@ class CogneeMemoryBackend:
             or not self._chat_search_cache.get(dialog.user_id, True)
         ):
             return
-        self._spawn(self._recall_turn(dialog.user_id, text))
+        self._spawn(self._recall_turn(dialog.user_id, text, dialog.id))
 
-    async def _recall_turn(self, user_id: str, text: str) -> str:
+    async def _recall_turn(self, user_id: str, text: str, dialog_id: str | None = None) -> str:
         assert self._client is not None
         try:
             # CHUNKS, а не GRAPH_COMPLETION: фоновый поиск на каждую реплику, синтез LLM тут не нужен и втрое медленнее
-            found = await self._visible(user_id, _dialog_chunks(await self._client.recall_chunks(text, dataset_name(user_id))))
+            found = await self._visible(
+                user_id,
+                _dialog_chunks(
+                    await self._client.recall_chunks(text, dataset_name(user_id), user_id=user_id, session_id=dialog_id)
+                ),
+            )
         except Exception:  # noqa: BLE001 - сбой поиска — просто старая сводка, разговор не трогаем
             logger.exception("cognee turn recall failed user=%s", user_id)
             return ""
@@ -423,7 +428,7 @@ class CogneeMemoryBackend:
         if cached is not None or self._client is None:
             return cached or (None, None)
         try:
-            seed = await self._client.read_consent(dataset_name(user_id))
+            seed = await self._client.read_consent(dataset_name(user_id), user_id=user_id)
         except Exception:  # noqa: BLE001
             logger.exception("cognee consent read failed user=%s", user_id)
             return (None, None)
@@ -592,7 +597,7 @@ class CogneeMemoryBackend:
         if self._client is None:
             return
         try:
-            await self._client.forget_dataset(dataset_name(user_id))
+            await self._client.forget_dataset(dataset_name(user_id), user_id=user_id)
         except Exception as error:  # noqa: BLE001
             logger.exception("cognee erase failed user=%s", user_id)
             raise MemoryUnavailable() from error
