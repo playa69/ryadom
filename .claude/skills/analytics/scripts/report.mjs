@@ -446,6 +446,27 @@ if (mk) {
   );
   reconcileNotes.push('С Метрикой расхождение до 10 % — обычное: цели отправляет браузер (блокировщик, Do Not Track, закрытая вкладка), а посетителей она считает по своей cookie. Цель 1 при рекламе в играх меньше сильнее: быстрые нажатия не успевают дойти.');
 }
+// Yandex Direct through Metrika (spend needs access to the advertiser's Direct client): by campaign and by day.
+const direct = mk?.direct && !mk.direct.error ? mk.direct : null;
+if (mk?.direct?.error) sourceErrors.direct = mk.direct.error;
+for (const d of daily) d.directCost = direct ? (direct.byDay[d.date]?.cost ?? 0) : null;
+const perGoal = (cost, count) => (count > 0 && cost > 0 ? cost / count : null);
+const directCampaigns = direct
+  ? direct.campaigns.map((c) => ({
+      ...c,
+      perClick: perGoal(c.cost, c.clicks),
+      perFirstReply: perGoal(c.cost, c.goals.firstReply ?? 0),
+      perPolz3: perGoal(c.cost, c.goals.polz3 ?? 0),
+    }))
+  : [];
+const directTotal = direct
+  ? {
+      clicks: direct.clicks, cost: direct.cost, visits: direct.visits, goals: direct.goals,
+      perClick: perGoal(direct.cost, direct.clicks),
+      perFirstReply: perGoal(direct.cost, direct.goals.firstReply ?? 0),
+      perPolz3: perGoal(direct.cost, direct.goals.polz3 ?? 0),
+    }
+  : null;
 const audience = mk && (mk.gender.length || mk.age.length)
   ? [
       ...(mk.gender.length ? [{ group: 'Пол' }, ...mk.gender] : []),
@@ -524,9 +545,10 @@ const sber = dashDays.length
 
 const report = {
   period: { from: fromDate, to: lastDate, days, label: periodLabel, generatedAt: new Date().toISOString() },
-  sources: { posthog: true, dashboard: Boolean(dash), metrika: Boolean(mk), database: Boolean(db), langfuse: Boolean(lf) },
+  sources: { posthog: true, dashboard: Boolean(dash), metrika: Boolean(mk), direct: Boolean(direct), database: Boolean(db), langfuse: Boolean(lf) },
   sourceErrors,
   sber,
+  direct: directTotal ? { ...directTotal, campaigns: directCampaigns } : null,
   metrika: mk,
   reconcile,
   audience,
@@ -554,8 +576,8 @@ const report = {
 // ---------- issue description (Markdown) ----------
 const k = report.kpi;
 const sourceMark = (ok, error) => (ok ? '✅' : error ? '⚠️' : '❌');
-const sourcesLine = `Источники: PostHog ✅ · дашборд ${sourceMark(dash, sourceErrors.dashboard)} · Метрика ${sourceMark(mk, sourceErrors.metrika)} · база ${sourceMark(db, sourceErrors.database)} · Langfuse ${sourceMark(lf, sourceErrors.langfuse)}`;
-const SOURCE_NAMES = { dashboard: 'Дашборд', metrika: 'Метрика', database: 'База', langfuse: 'Langfuse' };
+const sourcesLine = `Источники: PostHog ✅ · дашборд ${sourceMark(dash, sourceErrors.dashboard)} · Метрика ${sourceMark(mk, sourceErrors.metrika)} · Директ ${sourceMark(direct, sourceErrors.direct)} · база ${sourceMark(db, sourceErrors.database)} · Langfuse ${sourceMark(lf, sourceErrors.langfuse)}`;
+const SOURCE_NAMES = { dashboard: 'Дашборд', metrika: 'Метрика', direct: 'Директ', database: 'База', langfuse: 'Langfuse' };
 const errorLine = Object.entries(sourceErrors)
   .map(([name, message]) => `${SOURCE_NAMES[name]}: ${message.replace(/^(dashboard|Metrika|база|Langfuse):?\s*/i, '').replace(/\|/g, '/')}`)
   .join('. ');
@@ -578,6 +600,7 @@ const mainRows = [
   ['Реплики', daily.map((d) => int(d.turns)), int(sp.turns)],
   ['Говорили голосом', daily.map((d) => pct(share(d.voice, d.dau))), pct(k.voiceShare)],
   ['Отказ в микрофоне, людей', daily.map((d) => int(d.micDenied)), int(micDenied)],
+  direct ? ['Расход Директа, ₽', daily.map((d) => int(Math.round(d.directCost))), int(Math.round(direct.cost))] : null,
   db?.app.optout_total
     ? ['Видно в PostHog', daily.map((d) => pct(share(d.turns, d.dbUserMessages))), pct(share(num(sp.turns), act.user_messages))]
     : null,
@@ -607,6 +630,15 @@ const sberTable = dash
       ...daily.map((d) => `| ${d.day} | ${SBER_COLUMNS.map(([field]) => (d.sber ? plain(d.sber[field]) : '—')).join(' | ')} |`),
     ].join('\n')
   : `Дашборд ${sourceErrors.dashboard ? 'не ответил' : 'недоступен агенту'}: таблицы нет.`;
+const rub = (x) => (x == null ? '—' : int(Math.round(x)));
+const directTable = directTotal
+  ? [
+      '| Кампания | Расход, ₽ | Клики | ₽ за клик | Первая реплика (цель 2) | ₽ за первую реплику | 3+ реплики за сутки (цель 3) | ₽ за цель 3 |',
+      '|---|---:|---:|---:|---:|---:|---:|---:|',
+      ...directCampaigns.map((c) => `| ${c.name.replace(/\|/g, '/')} | ${rub(c.cost)} | ${int(c.clicks)} | ${rub(c.perClick)} | ${int(c.goals.firstReply ?? 0)} | ${rub(c.perFirstReply)} | ${int(c.goals.polz3 ?? 0)} | ${rub(c.perPolz3)} |`),
+      `| **Всего** | **${rub(directTotal.cost)}** | **${int(directTotal.clicks)}** | **${rub(directTotal.perClick)}** | **${int(directTotal.goals.firstReply ?? 0)}** | **${rub(directTotal.perFirstReply)}** | **${int(directTotal.goals.polz3 ?? 0)}** | **${rub(directTotal.perPolz3)}** |`,
+    ].join('\n')
+  : null;
 const title = `Сводка Рядом · ${periodLabel}`;
 const description = `Автоматический отчёт за ${days} полных дней по Москве (${periodLabel}). Детализация с графиком и таблицами — в первом комментарии. Прочитали — закройте задачу.
 
@@ -621,7 +653,7 @@ ${mainTable}
 ### По дням — как на дашборде Sber500
 
 ${sberTable}
-
+${directTable ? `\n### Реклама в Директе\n\n${directTable}\n` : ''}
 ### Как считаются цифры
 
 - **По дням — как на дашборде Sber500.** Числа взяты из дашборда (\`/dashboard/api\`) как есть: это определения команды, прошедшие сутки там закрыты снимком и не пересчитываются. Сообщения — база агента и ходы разговора из Langfuse вместе (в базе нет сообщений 11–16.11.2026), без тестовых и командных аккаунтов. **DAU** — аккаунты хотя бы с одним сообщением за сутки. **Новые пользователи** — аккаунты, чьё первое известное сообщение пришлось на эти сутки. **Пользователи всего** — накопленный итог новых с 05.11.2026, удалённые не вычитаются. **Активные** — больше 10 сообщений за сутки (внутренняя метрика). **Вызовы LLM** — вызовы моделей от действий людей (ответ, итог разговора, память, настроение) без повторов, прогревов, озвучки и плановых сводок. **Tool calls — Память** — успешные обращения агента к памяти. Дней до 05.11.2026 на дашборде нет («—»).
@@ -635,6 +667,7 @@ ${sberTable}
 - **Говорили голосом** — хотя бы одна голосовая реплика: за день — доля от DAU, за период — от WAU.
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели 1–4 за те же дни (сверка в детализации), пол и возраст по данным Яндекса.
+- **Реклама в Директе** — по Метрике: расход и клики кампаний Директа, визиты и цели по кампании последнего значимого перехода. Цель — люди (посетители), достигшие её за период. **₽ за первую реплику** и **₽ за цель 3** — расход кампании ÷ число таких людей; оба числа из Метрики. Цель 2 срабатывает раз на аккаунт, поэтому «₽ за первую реплику» — цена нового заговорившего. Расход Telegram Ads сюда не входит. **Расход Директа, ₽** в главной таблице — по дням.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
 - **Расход моделей** — токены всех вызовов моделей агента за те же дни по Langfuse, без тестовых и командных аккаунтов; в него входят и разговоры «Не сохранять», и стёртые — только суммой. Вызовы через прокси (итог разговора, память) и озвучка фраз приходят без токенов, так что настоящий расход немного больше.
 - **Токенов на разговор** — расход в сохраняемых разговорах из базы агента ÷ разговоры с расходом в тот же день (за период — ÷ разговоры с расходом за период).

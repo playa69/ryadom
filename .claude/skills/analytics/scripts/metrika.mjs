@@ -1,5 +1,6 @@
 // Yandex Metrika (the counter «Слышу Рядом») through the Reports API: totals and goals for the reconciliation, and who
-// comes (age, gender) with the share that reaches goal 3 (3+ replies in a day). Read-only.
+// comes (age, gender) with the share that reaches goal 3 (3+ replies in a day), and Yandex Direct spend by campaign.
+// Read-only.
 // The OAuth token (scope metrika:read) comes from YANDEX_METRIKA_TOKEN; it is never printed.
 // YANDEX_METRIKA_COUNTER overrides the counter.
 const API = 'https://api-metrika.yandex.net';
@@ -23,6 +24,64 @@ async function get(path, params = {}) {
 
 const goalBy = (goals, identifier) =>
   goals.find((g) => (g.conditions ?? []).some((c) => c.url === identifier || c.value === identifier));
+
+const GOAL_KEYS = Object.keys(GOALS);
+const n = (v) => Number(v) || 0;
+
+// Yandex Direct through Metrika: spend and clicks (the ym:ad namespace) need the token's login to have access to the
+// advertiser's Direct client — a representative, read access is enough. The clients are found from the counter, so
+// there is nothing to configure; without access this returns { error } and the rest of the report goes on.
+// Visits and goals by campaign (ym:s) come from the same counter, joined to the spend by the campaign id: both
+// figures of a «₽ per goal» are Metrika's. Only counts leave: no client logins.
+async function collectDirect(base, goal) {
+  const { clients = [] } = await get('/management/v1/clients', { counters: COUNTER });
+  const logins = [...new Set(clients.map((c) => c.chief_login).filter(Boolean))];
+  if (!logins.length) return { error: 'нет доступа к клиенту Директа: приглашение не выдано или не принято' };
+  const ad = { ...base, direct_client_logins: logins.join(','), limit: 100 };
+  const goalKeys = GOAL_KEYS.filter((key) => goal[key]);
+  const [spend, spendByDay, visits] = await Promise.all([
+    get('/stat/v1/data', { ...ad, dimensions: 'ym:ad:lastsignDirectOrder', metrics: 'ym:ad:clicks,ym:ad:RUBAdCost' }),
+    get('/stat/v1/data', { ...ad, dimensions: 'ym:ad:date', metrics: 'ym:ad:clicks,ym:ad:RUBAdCost' }),
+    get('/stat/v1/data', {
+      ...base,
+      limit: 100,
+      dimensions: 'ym:s:lastsignDirectClickOrder',
+      metrics: ['ym:s:visits', 'ym:s:users', ...goalKeys.map((key) => `ym:s:goal${goal[key].id}users`)].join(','),
+    }),
+  ]);
+  const byId = new Map();
+  const campaign = (dim) => {
+    const key = String(dim?.id ?? dim?.name ?? '—');
+    if (!byId.has(key)) byId.set(key, { name: dim?.name ?? '—', clicks: 0, cost: 0, visits: 0, users: 0, goals: {} });
+    return byId.get(key);
+  };
+  for (const row of spend.data ?? []) {
+    const c = campaign(row.dimensions?.[0]);
+    c.clicks += n(row.metrics?.[0]);
+    c.cost += n(row.metrics?.[1]);
+  }
+  for (const row of visits.data ?? []) {
+    const c = campaign(row.dimensions?.[0]);
+    c.visits += n(row.metrics?.[0]);
+    c.users += n(row.metrics?.[1]);
+    goalKeys.forEach((key, i) => (c.goals[key] = (c.goals[key] ?? 0) + n(row.metrics?.[2 + i])));
+  }
+  const campaigns = [...byId.values()]
+    .filter((c) => c.cost || c.clicks || c.visits)
+    .sort((a, b) => b.cost - a.cost || b.visits - a.visits);
+  const goalsTotal = Object.fromEntries(goalKeys.map((key) => [key, campaigns.reduce((a, c) => a + (c.goals[key] ?? 0), 0)]));
+  return {
+    clients: logins.length,
+    clicks: n(spend.totals?.[0]),
+    cost: n(spend.totals?.[1]),
+    visits: campaigns.reduce((a, c) => a + c.visits, 0),
+    goals: goalsTotal,
+    campaigns,
+    byDay: Object.fromEntries(
+      (spendByDay.data ?? []).map((row) => [row.dimensions?.[0]?.name, { clicks: n(row.metrics?.[0]), cost: n(row.metrics?.[1]) }]),
+    ),
+  };
+}
 
 // from and to are Moscow dates, both included (the counter keeps Moscow time).
 export async function collectMetrika({ from, to }) {
@@ -62,5 +121,6 @@ export async function collectMetrika({ from, to }) {
     missingGoals: Object.keys(goal).filter((key) => !goal[key]),
     age: await audience('ym:s:ageInterval'),
     gender: await audience('ym:s:gender'),
+    direct: await collectDirect(base, goal).catch((error) => ({ error: error.message })),
   };
 }
