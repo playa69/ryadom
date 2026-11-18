@@ -6,7 +6,14 @@ import { client } from './platform-adapter'
  * client-core (shared with the web app), and only re-exported here.
  */
 
-export { ApiError, NETWORK_ERROR_STATUS, apiErrorText, codeText } from '@ryadom/client-core/index'
+export {
+  ApiError,
+  DEVICE_LOGIN_REFUSED_TEXT,
+  NETWORK_ERROR_STATUS,
+  apiErrorText,
+  codeText,
+  isDeviceLoginRefused,
+} from '@ryadom/client-core/index'
 export { ACCOUNT_UNAVAILABLE_EVENT, setSessionEndHandler } from './platform-adapter'
 
 export const {

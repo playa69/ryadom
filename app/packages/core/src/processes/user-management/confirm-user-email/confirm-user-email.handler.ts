@@ -8,6 +8,7 @@ import {
   MarkUserEmailConfirmedCommandErrorCode,
   usersManager,
 } from '../../../managers/users-manager'
+import { DeleteUserDevicesCommand, userDevicesManager } from '../../../managers/user-devices-manager'
 import { ConfirmUserEmailOperation } from './confirm-user-email.operation'
 import { ConfirmUserEmailOperationErrorCode, type ConfirmUserEmailResult } from './confirm-user-email.types'
 import { recordAudit } from '../shared/record-audit'
@@ -44,6 +45,9 @@ export class ConfirmUserEmailOperationHandler implements RequestHandler<ConfirmU
             assertNever(marked.error)
         }
       }
+      // Same as the person's own confirmation: with a confirmed address the device keys are forgotten,
+      // otherwise the device login keeps refusing the key with DEVICE_KEY_INVALID on every start.
+      await userDevicesManager.execute(new DeleteUserDevicesCommand({ userId: user.id }))
       await recordAudit({
         adminEmail: operation.adminEmail,
         action: 'USER_EMAIL_CONFIRMED',

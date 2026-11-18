@@ -34,6 +34,19 @@ export const NETWORK_ERROR_TEXT = 'Нет связи с сервером. Про
 export const SERVER_ERROR_TEXT = 'Что-то пошло не так на нашей стороне. Попробуй чуть позже'
 export const AGENT_ERROR_TEXT = 'Сейчас я не могу ответить. Если тяжело — линии помощи ниже'
 
+/**
+ * The server refuses a device key (401) when the account of the device has moved to an address and a
+ * password, or is off. Trying again changes nothing; the way in is the sign-in by email, and the
+ * stored identity stays until the person decides to give the account up.
+ */
+export const DEVICE_LOGIN_REFUSED_TEXT =
+  'Этот аккаунт теперь открывается по почте и паролю. Нажми «Войти» и введи свою почту'
+
+/** Whether a failure of `deviceLogin` is that refusal, so the screen can offer the email sign-in. */
+export function isDeviceLoginRefused(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401
+}
+
 /** Phrase for a catch block: generic, refined per status when the screen knows the status. */
 export function apiErrorText(error: unknown, texts: ApiErrorTexts, fallback: string): string {
   if (!(error instanceof ApiError)) return fallback

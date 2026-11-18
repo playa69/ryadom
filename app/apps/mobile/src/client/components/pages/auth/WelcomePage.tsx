@@ -5,7 +5,14 @@ import type { Router } from 'framework7/types'
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
-import { apiErrorText, deviceLogin, telegramLogin, updateProfile } from '../../../lib/api'
+import {
+  DEVICE_LOGIN_REFUSED_TEXT,
+  apiErrorText,
+  deviceLogin,
+  isDeviceLoginRefused,
+  telegramLogin,
+  updateProfile,
+} from '../../../lib/api'
 import { requestTalkOnHome, takeTalkRequest, type TalkRequest } from '../../../lib/nav'
 import { isNative } from '../../../lib/platform'
 import { useAuth } from '../../../lib/store'
@@ -104,7 +111,11 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
     } catch (err) {
       takeTalkRequest()
       reportForm(startForm, outcomeFromError(err))
-      setError(apiErrorText(err, {}, 'Не получилось начать разговор. Попробуй ещё раз'))
+      setError(
+        isDeviceLoginRefused(err) && !telegram
+          ? DEVICE_LOGIN_REFUSED_TEXT
+          : apiErrorText(err, {}, 'Не получилось начать разговор. Попробуй ещё раз'),
+      )
     } finally {
       setLoading(false)
     }
