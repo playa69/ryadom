@@ -4,8 +4,10 @@
 `https://слышу-рядом.рф/dashboard/api` с шестью метриками по дням за весь период конкурса — с 2026-11-05
 по текущие сутки по Москве включительно
 (`dau`, `daily_active_account`, `new_users`, `total_users`, `llm_requests`, `tool_requests`; из всех метрик
-исключён трафик аккаунтов `test`/`internal`). Код и определения метрик — `dashboard/app.py`, спека —
-`openspec/specs/sber500-dashboard`.
+исключён трафик аккаунтов `test`/`internal`). Плюс публичный endpoint для системы сбора Sber500:
+`GET https://слышу-рядом.рф/api/v1/metrics/daily?date_from=…&date_to=…` с Bearer-токеном, метрики по ТЗ
+конкурса (`dau`, `llm_requests`, `tool_requests`, `total_users`, `new_users`, `is_final`). Код и определения
+метрик — `dashboard/app.py`, спека — `openspec/specs/sber500-dashboard`.
 
 Сервисы agent и api дашборд не трогает. Он читает базы `agent` и `app` в сессиях только на чтение и API
 Langfuse, а после полуночи по Москве закрывает завершённые сутки снимком в собственную базу `dashboard` в кластере
@@ -28,6 +30,7 @@ CNPG `ryadom-db` (одна таблица `daily_metrics`: дата и шест�
 | `DASHBOARD_DATABASE_URL` | `DASHBOARD_DATABASE_URL` (новая запись; роль `dashboard`, запись только в свою базу) |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | `AGENT_LANGFUSE_PUBLIC_KEY`, `AGENT_LANGFUSE_SECRET_KEY` (то же, что в `agent-secrets`) |
 | `DASHBOARD_PASSWORD` | `DASHBOARD_PASSWORD` |
+| `METRICS_API_TOKEN` | `METRICS_API_TOKEN` (новая запись; токен `GET /api/v1/metrics/daily`, ≥32 символов, только чтение) |
 
 Пароль роли `dashboard` дополнительно хранится в Secret `dashboard-db-credentials` (ключ `password`) в ns
 `ryadom-db` — его читает Job создания базы (`k8s/app/db/02-job-create-dashboard-db.yaml`). Создаётся вручную
@@ -131,6 +134,30 @@ HTTPRoute); сеть к `ryadom-db` и Langfuse уже разрешена и п�
 6. Проверка: `/dashboard/api` — дни 11.11–16.11 ненулевые (DAU/новые/всего выросли относительно 0.2.0),
    текущие сутки — предварительные по тому же объединённому расчёту; в журнале пода — backfill и закрытие
    суток без ошибок.
+
+## Выкат 0.2.3 (metrics API для системы сбора Sber500)
+
+Добавляет публичный `GET /api/v1/metrics/daily` (Bearer `METRICS_API_TOKEN`, см. `dashboard/README.md`).
+Данные — те же снимки `daily_metrics` и тот же предварительный расчёт текущих суток, что у страницы;
+новых зависимостей и правок других сервисов нет. Snapshotter не трогаем: под 0.2.2 и новый по очереди
+писать не будут, пока образ не заменён — обычный rollout.
+
+Порядок (прод — только после «да» владельца на каждую операцию, admin-kubeconfig):
+
+1. Добавить запись `METRICS_API_TOKEN` (≥32 символов, бессрочный, только чтение; при утечке — перевыпуск
+   в Lockbox и пересборка Secret'а) в Lockbox `ryadom-app-secrets`, пересобрать `dashboard-secrets`
+   помощником — сначала прогон с `--dry-run=server`. Бегущий под пересоздание Secret'а не затрагивает.
+2. Собрать и отправить образ `cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.3` (linux/amd64).
+3. `kubectl diff -f k8s/dashboard/02-deployment.yaml -f k8s/dashboard/04-httproute.yaml` → только env
+   `METRICS_API_TOKEN`, тег образа и правило `metrics-api` в HTTPRoute; затем `kubectl apply` тех же файлов,
+   `kubectl -n dashboard rollout status deploy/dashboard --timeout=120s`.
+4. Проверка: без заголовка → 401 с телом `{"error": …}`; с `Authorization: Bearer <токен>` →
+   `curl -s 'https://слышу-рядом.рф/api/v1/metrics/daily?date_from=2026-11-17&date_to=2026-11-18'` отдаёт
+   два дня: 17.11 с `is_final=true` и числами, совпадающими с `/dashboard/api` за тот день, 18.11 (текущие
+   сутки) с `is_final=false`; мусорные даты (`date_from=bad`, диапазон больше 90 дней, `date_to` в будущем)
+   → 400; больше 30 запросов в минуту с одного адреса → 429; числа за закрытые дни совпадают при повторном
+   запросе. Откат — `kubectl -n dashboard rollout undo deploy/dashboard` + убрать правило из HTTPRoute:
+   префикс `/api/v1/metrics` без живого backend даст 5xx, поэтому HTTPRoute откатывается сразу после Deployment.
 
 ## Откат
 

@@ -1,4 +1,5 @@
-# Наружу — только /dashboard и /dashboard/api; /healthz сервиса снаружи не виден.
+# Наружу — /dashboard, /dashboard/api (basic auth) и /api/v1/metrics (Bearer, система сбора Sber500);
+# /healthz сервиса снаружи не виден. Префикс /api/v1/metrics длиннее /api у app-api: матчит его шлюз.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -19,6 +20,14 @@ spec:
         - path:
             type: PathPrefix
             value: /dashboard
+      backendRefs:
+        - name: dashboard
+          port: 8080
+    - name: metrics-api
+      matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1/metrics
       backendRefs:
         - name: dashboard
           port: 8080

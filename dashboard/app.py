@@ -3,6 +3,8 @@
 
     GET /dashboard      — страница с графиками и таблицей (basic auth)
     GET /dashboard/api  — те же числа JSON-ом (basic auth)
+    GET /api/v1/metrics/daily?date_from=…&date_to=… — метрики за диапазон для системы
+                            сбора Sber500 (Bearer METRICS_API_TOKEN, формат по ТЗ конкурса)
     GET /healthz        — для проб, наружу не маршрутизируется
 
     python app.py --backfill  — разовый досчёт истории в хранилище снимков (идемпотентно)
@@ -40,6 +42,7 @@ import html
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -61,6 +64,14 @@ CLOSE_HOUR, CLOSE_MINUTE = 0, 15  # закрытие суток по Москв�
 SNAPSHOT_RETRY_SECONDS = 600  # сбой снимка — новая попытка через 10 минут, не через сутки
 SNAPSHOT_WINDOW_DAYS = 7  # окно выгрузки источников при catch-up/backfill: вся история одним запросом в память не собирается
 LANGFUSE_PAGE_LIMIT = 100
+
+# Metrics API (система сбора Sber500): диапазон до 90 дней включительно, лимит ТЗ — не ниже 10 запросов
+# в минуту; закрытые дни из неизменяемых снимков, поэтому ответ кэшируется на 15 минут.
+METRICS_MAX_RANGE_DAYS = 90
+METRICS_RATE_PER_MINUTE = 30
+METRICS_CACHE_SECONDS = 900
+TODAY_REFRESH_SECONDS = 600  # фоновое обновление текущих суток: свежее окна кэша ответа
+STARTUP_ID = "ryadom"
 # Трассы выгружаются с запасом назад: observation на границе окна может принадлежать трассе, начавшейся
 # раньше окна; без запаса она потеряла бы userId и выпала из метрик. Дублей нет: считаются только
 # observations своего окна, трассы — справочник traceId → userId.
@@ -779,22 +790,35 @@ def build_report(days: list[date], snapshots: Mapping[str, dict], computed_at: d
     }
 
 
+def today_metrics(now: datetime, first_day: date) -> dict:
+    """Метрики текущих суток из сырых источников, без total_users.
+
+    Первый известный день для new_users считается по всей истории конкурса (langfuse_first_turns
+    сворачивает её постранично), а не по окну дня: иначе аккаунт, известный только по трейсингу
+    и говоривший раньше, ошибочно стал бы «новым» сегодня и раздул бы total_users. Расчёт тяжёлый
+    (десятки секунд), поэтому для metrics API его держит в тёплом кэше TodayCache."""
+    today = now.astimezone(MSK).date()
+    raw = collect_raw(*utc_bounds([today, today]))
+    first_turn = langfuse_first_turns(*_langfuse_config(), *utc_bounds([first_day, today]), raw["excluded"])
+    return metrics_by_day(**raw, first_turn=first_turn).get(today.isoformat()) or ZERO_METRICS
+
+
+def preliminary_today(store, now: datetime, first_day: date,
+                      source: Callable[[datetime, date], dict] = today_metrics) -> dict:
+    """Предварительные метрики текущих суток; total_users цепочкой от снимков."""
+    today = now.astimezone(MSK).date()
+    metrics = source(now, first_day)
+    return {**metrics, "total_users": store.total_before(today.isoformat()) + metrics["new_users"]}
+
+
 def compute_report(now: datetime) -> dict:
     """Отчёт: прошедшие сутки — только неизменяемые снимки, текущие — предварительный расчёт из сырых источников.
 
-    Строка текущих суток в daily_metrics не пишется: до закрытия в 00:15 МСК данные дня ещё меняются.
-    Её total_users — накопленный итог последнего снимка до сегодня плюс предварительные new_users дня.
-    Первый известный день для new_users текущих суток считается по всей истории конкурса
-    (langfuse_first_turns сворачивает её постранично), а не по окну дня: иначе аккаунт, известный только
-    по трейсингу и говоривший раньше, ошибочно стал бы «новым» сегодня и раздул бы total_users."""
+    Строка текущих суток в daily_metrics не пишется: до закрытия в 00:15 МСК данные дня ещё меняются."""
     days = period_days(now)
     store = PgSnapshotStore(os.environ["DASHBOARD_DATABASE_URL"])
     snapshots = store.load([d.isoformat() for d in days])
-    today = days[-1].isoformat()
-    raw = collect_raw(*utc_bounds([days[-1], days[-1]]))
-    first_turn = langfuse_first_turns(*_langfuse_config(), *utc_bounds([days[0], days[-1]]), raw["excluded"])
-    metrics = metrics_by_day(**raw, first_turn=first_turn).get(today) or ZERO_METRICS
-    snapshots[today] = {**metrics, "total_users": store.total_before(today) + metrics["new_users"]}
+    snapshots[days[-1].isoformat()] = preliminary_today(store, now, days[0])
     return build_report(days, snapshots, now, store.tool_recovery())
 
 
@@ -824,6 +848,185 @@ class ReportCache:
                     raise
                 # Отдаём последнее удачное, а не ошибку: следующий запрос попробует снова.
             return self._report
+
+
+# ---------- metrics API для системы сбора Sber500 ----------
+
+ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def parse_iso_day(value: str) -> date | None:
+    """Строгий YYYY-MM-DD: date.fromisoformat принял бы и '20261105'."""
+    if not ISO_DAY.match(value):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def parse_metrics_range(params: Mapping[str, list[str]], today: date) -> tuple[list[date] | None, str | None]:
+    """Параметры запроса → дни диапазона либо текст ошибки (400).
+
+    Обе даты обязательны, включительно, не больше METRICS_MAX_RANGE_DAYS, date_to — не позже
+    текущих московских суток: будущие дни данных нет и is_final для них не определён."""
+    raw_from = (params.get("date_from") or [""])[0].strip()
+    raw_to = (params.get("date_to") or [""])[0].strip()
+    if not raw_from or not raw_to:
+        return None, "обязательные параметры: date_from и date_to (YYYY-MM-DD)"
+    day_from, day_to = parse_iso_day(raw_from), parse_iso_day(raw_to)
+    if day_from is None or day_to is None:
+        return None, "даты должны быть в формате YYYY-MM-DD"
+    if day_from > day_to:
+        return None, "date_from не должен быть позже date_to"
+    if (day_to - day_from).days + 1 > METRICS_MAX_RANGE_DAYS:
+        return None, f"диапазон больше {METRICS_MAX_RANGE_DAYS} дней"
+    if day_to > today:
+        return None, "date_to не должен быть позже текущих суток"
+    return [day_from + timedelta(days=i) for i in range((day_to - day_from).days + 1)], None
+
+
+def token_ok(header: str | None, token: str) -> bool:
+    """Bearer-токен metrics API: только чтение, сравнение в постоянное время."""
+    if not token or not header or not header.startswith("Bearer "):
+        return False
+    return hmac.compare_digest(header[len("Bearer "):].strip().encode(), token.encode())
+
+
+def build_metrics_payload(days: list[date], snapshots: Mapping[str, dict],
+                          recovery: Mapping[str, int], total_start: int,
+                          generated_at: datetime, today: date) -> dict:
+    """Ответ metrics API по ТЗ: строгий набор полей, нули за дни без данных, is_final.
+
+    Дни без снимка — нули; total_users такого дня повторяет последний известный итог (не 0), чтобы
+    накопленная кривая не проваливалась. Итог на первый день диапазона — снимок строго раньше него,
+    иначе запрос куска истории обнулил бы накопленное значение."""
+    data = []
+    total = total_start
+    for d in days:
+        key = d.isoformat()
+        snap = snapshots.get(key)
+        if snap is not None:
+            total = snap["total_users"]
+            dau, llm, tool, new = snap["dau"], snap["llm_requests"], snap["tool_requests"], snap["new_users"]
+        else:
+            dau = llm = tool = new = 0
+        data.append({
+            "date": key,
+            "dau": int(dau),
+            "llm_requests": int(llm),
+            "tool_requests": max(int(tool), recovery.get(key, 0)),
+            "total_users": int(total),
+            "new_users": int(new),
+            "is_final": d < today,
+        })
+    return {
+        "startup_id": STARTUP_ID,
+        "timezone": "Europe/Moscow",
+        "generated_at": generated_at.astimezone(MSK).isoformat(timespec="seconds"),
+        "data": data,
+    }
+
+
+def compute_metrics_api(day_from: date, day_to: date, now: datetime) -> dict:
+    """Метрики диапазона для системы сбора: снимки закрытых дней, текущие сутки — предварительно.
+
+    Текущие сутки считаются из сырых источников по тем же определениям, что и страница; снимком
+    они не закрываются и в ответе помечаются is_final=false."""
+    store = PgSnapshotStore(os.environ["DASHBOARD_DATABASE_URL"])
+    days = [day_from + timedelta(days=i) for i in range((day_to - day_from).days + 1)]
+    snapshots = store.load([d.isoformat() for d in days])
+    today = now.astimezone(MSK).date()
+    if today in days:
+        first_day = min(CONTEST_START, today)
+        snapshots[today.isoformat()] = preliminary_today(store, now, first_day, TODAY_CACHE.get)
+    return build_metrics_payload(days, snapshots, store.tool_recovery(),
+                                 store.total_before(day_from.isoformat()), now, today)
+
+
+class RangeCache:
+    """Кэш ответов metrics API по ключу (from, to): закрытые дни неизменны, пересчёт — раз в 15 минут.
+
+    Память ограничена: при обращении протухшие записи выбрасываются, по живому ключу держится
+    один ответ. Сбой расчёта наружу уходит как есть: система сбора по ТЗ сама повторяет 5xx."""
+
+    def __init__(self, compute: Callable[[date, date, datetime], dict], ttl: float = METRICS_CACHE_SECONDS,
+                 clock: Callable[[], float] = time.monotonic):
+        self._compute, self._ttl, self._clock = compute, ttl, clock
+        self._lock = threading.Lock()
+        self._entries: dict[tuple[str, str], tuple[float, dict]] = {}
+
+    def get(self, day_from: date, day_to: date, now: datetime) -> dict:
+        key = (day_from.isoformat(), day_to.isoformat())
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is not None and self._clock() - entry[0] < self._ttl:
+                return entry[1]
+            payload = self._compute(day_from, day_to, now)
+            self._entries = {k: v for k, v in self._entries.items() if self._clock() - v[0] < self._ttl}
+            self._entries[key] = (self._clock(), payload)
+            return payload
+
+
+class TodayCache:
+    """Тёплый расчёт текущих суток для metrics API.
+
+    Холодный расчёт идёт десятки секунд — дольше таймаутов ingress и системы сбора, — поэтому его
+    обновляет фоновый поток, а запрос получает готовое значение. Пока расчёт текущих суток ещё ни
+    разу не удался, запрос считает сам; сбой обновления оставляет прошлое значение того же дня."""
+
+    def __init__(self, compute: Callable[[datetime, date], dict] = today_metrics):
+        self._compute = compute
+        self._lock = threading.Lock()
+        self._day: date | None = None
+        self._value: dict | None = None
+
+    def refresh(self, now: datetime | None = None) -> None:
+        now = now or datetime.now(UTC)
+        today = now.astimezone(MSK).date()
+        value = self._compute(now, min(CONTEST_START, today))
+        with self._lock:
+            self._day, self._value = today, value
+
+    def get(self, now: datetime, first_day: date) -> dict:
+        today = now.astimezone(MSK).date()
+        with self._lock:
+            if self._value is not None and self._day == today:
+                return self._value
+        self.refresh(now)
+        with self._lock:
+            return self._value
+
+    def run_forever(self, interval: float = TODAY_REFRESH_SECONDS) -> None:
+        while True:
+            try:
+                self.refresh()
+            except Exception:
+                log.exception("тёплый расчёт текущих суток не удался")
+            time.sleep(interval)
+
+
+class RateLimit:
+    """Не больше limit обращений с IP за текущую минуту (окно фиксированное, как у FailedLogins)."""
+
+    def __init__(self, limit: int, clock: Callable[[], float] = time.time):
+        self._limit, self._clock = limit, clock
+        self._lock = threading.Lock()
+        self._minute = -1
+        self._counts: dict[str, int] = {}
+
+    def _roll(self) -> None:
+        minute = int(self._clock() // 60)
+        if minute != self._minute:
+            self._minute, self._counts = minute, {}
+
+    def allowed(self, ip: str) -> bool:
+        with self._lock:
+            self._roll()
+            if self._counts.get(ip, 0) >= self._limit:
+                return False
+            self._counts[ip] = self._counts.get(ip, 0) + 1
+            return True
 
 
 # ---------- доступ ----------
@@ -959,8 +1162,12 @@ ul {{ padding-left:18px; }} li {{ margin:4px 0; }}
 
 USER = os.environ.get("DASHBOARD_USER", "sber500")
 PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+METRICS_TOKEN = os.environ.get("METRICS_API_TOKEN", "")
 CACHE = ReportCache(compute_report)
+RANGE_CACHE = RangeCache(compute_metrics_api)
+TODAY_CACHE = TodayCache()
 FAILED = FailedLogins()
+RATE = RateLimit(METRICS_RATE_PER_MINUTE)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -984,10 +1191,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_json(self, status: int, body: dict) -> None:
+        self._send(status, json.dumps(body, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+
+    def _metrics_api(self) -> None:
+        """Метрики по дням для системы сбора Sber500 (контракт — ТЗ конкурса).
+
+        Только чтение: токен отдельный от пароля страницы, лимит — на IP, тело ошибок — {"error": …}."""
+        ip = self._client_ip()
+        if not RATE.allowed(ip):
+            return self._send_json(429, {"error": "превышен лимит запросов, подождите минуту"})
+        if not token_ok(self.headers.get("Authorization"), METRICS_TOKEN):
+            if self.headers.get("Authorization"):
+                log.warning("metrics api: неверный токен с %s", ip)
+            return self._send_json(401, {"error": "нужен заголовок Authorization: Bearer <token>"})
+        now = datetime.now(UTC)
+        params = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        days, error = parse_metrics_range(params, now.astimezone(MSK).date())
+        if error:
+            return self._send_json(400, {"error": error})
+        try:
+            payload = RANGE_CACHE.get(days[0], days[-1], now)
+        except Exception:
+            log.exception("metrics api: расчёт не удался")
+            return self._send_json(500, {"error": "данные временно недоступны"})
+        return self._send_json(200, payload)
+
     def do_GET(self) -> None:
         path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
         if path == "/healthz":
             return self._send(200, b"ok", "text/plain; charset=utf-8")
+        if path == "/api/v1/metrics/daily":
+            return self._metrics_api()
         if path not in ("/dashboard", "/dashboard/api"):
             return self._send(404, b"not found", "text/plain; charset=utf-8")
         ip = self._client_ip()
@@ -1027,11 +1262,12 @@ def main() -> None:
     if not PASSWORD:
         raise SystemExit("DASHBOARD_PASSWORD не задан")
     _require_env("DIALOG_DATABASE_URL", "APP_DATABASE_URL", "DASHBOARD_DATABASE_URL",
-                 "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
+                 "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "METRICS_API_TOKEN")
     store = PgSnapshotStore(os.environ["DASHBOARD_DATABASE_URL"])
     store.ensure_schema()
     snapshotter = Snapshotter(store, collect_raw)
     threading.Thread(target=snapshotter.run_forever, daemon=True).start()
+    threading.Thread(target=TODAY_CACHE.run_forever, daemon=True).start()
     port = int(os.environ.get("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     server.daemon_threads = True
