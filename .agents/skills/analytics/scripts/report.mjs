@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectDashboard, dashboardConfigured } from './dashboard.mjs';
 import { collectDatabase, databaseConfigured, testAccountIds } from './database.mjs';
+import { collectDirectApi, directApiConfigured } from './direct.mjs';
 import { collectLangfuse, langfuseConfigured } from './langfuse.mjs';
 import { collectMetrika, metrikaConfigured } from './metrika.mjs';
 import { fillQuery, rowsOf, runHogQL } from './posthog.mjs';
@@ -250,8 +251,17 @@ for (const name of Object.keys(QUERIES)) if (!data[name]) fail(`no results for $
 // Saved results (--data) may carry them under the keys dashboard, metrika, database and langfuse.
 const extra = {
   dashboard: raw.dashboard ?? null, metrika: raw.metrika ?? null, database: raw.database ?? null, langfuse: raw.langfuse ?? null,
+  directApi: raw.directApi ?? null,
 };
 const sourceErrors = {};
+let directApiError = null;
+if (!extra.directApi && directApiConfigured()) {
+  try {
+    extra.directApi = await collectDirectApi({ from: fromDate, to: lastDate });
+  } catch (error) {
+    directApiError = error.message.replace(/^Direct API:?\s*/, '');
+  }
+}
 if (!extra.dashboard && dashboardConfigured()) {
   try {
     extra.dashboard = await collectDashboard({ from: fromDate, to: lastDate });
@@ -446,14 +456,20 @@ if (mk) {
   );
   reconcileNotes.push('С Метрикой расхождение до 10 % — обычное: цели отправляет браузер (блокировщик, Do Not Track, закрытая вкладка), а посетителей она считает по своей cookie. Цель 1 при рекламе в играх меньше сильнее: быстрые нажатия не успевают дойти.');
 }
-// Yandex Direct through Metrika (spend needs access to the advertiser's Direct client): by campaign and by day.
-const direct = mk?.direct && !mk.direct.error ? mk.direct : null;
-if (mk?.direct?.error) sourceErrors.direct = mk.direct.error;
+// Yandex Direct: its own API when there is a token (spend, impressions and Direct's conversions by goal), otherwise
+// Metrika (spend needs the token's login to reach the advertiser's Direct client; goals are Metrika's people).
+const direct = extra.directApi ?? (mk?.direct && !mk.direct.error ? { ...mk.direct, source: 'metrika' } : null);
+const directErrors = [
+  directApiError && `API: ${directApiError}`,
+  !direct && mk?.direct?.error ? `Метрика: ${mk.direct.error}` : null,
+].filter(Boolean);
+if (directErrors.length) sourceErrors.direct = directErrors.join('; ');
 for (const d of daily) d.directCost = direct ? (direct.byDay[d.date]?.cost ?? 0) : null;
 const perGoal = (cost, count) => (count > 0 && cost > 0 ? cost / count : null);
 const directCampaigns = direct
   ? direct.campaigns.map((c) => ({
       ...c,
+      ctr: c.impressions ? (c.clicks / c.impressions) * 100 : null,
       perClick: perGoal(c.cost, c.clicks),
       perFirstReply: perGoal(c.cost, c.goals.firstReply ?? 0),
       perPolz3: perGoal(c.cost, c.goals.polz3 ?? 0),
@@ -461,7 +477,9 @@ const directCampaigns = direct
   : [];
 const directTotal = direct
   ? {
-      clicks: direct.clicks, cost: direct.cost, visits: direct.visits, goals: direct.goals,
+      source: direct.source, model: direct.model ?? null,
+      clicks: direct.clicks, cost: direct.cost, visits: direct.visits ?? null, impressions: direct.impressions ?? null, goals: direct.goals,
+      ctr: direct.impressions ? (direct.clicks / direct.impressions) * 100 : null,
       perClick: perGoal(direct.cost, direct.clicks),
       perFirstReply: perGoal(direct.cost, direct.goals.firstReply ?? 0),
       perPolz3: perGoal(direct.cost, direct.goals.polz3 ?? 0),
@@ -631,12 +649,29 @@ const sberTable = dash
     ].join('\n')
   : `Дашборд ${sourceErrors.dashboard ? 'не ответил' : 'недоступен агенту'}: таблицы нет.`;
 const rub = (x) => (x == null ? '—' : int(Math.round(x)));
+const kop = (x) => (x == null ? '—' : x.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+// Columns of «Реклама в Директе»: impressions and CTR exist only in Direct's own API.
+const fromApi = directTotal?.source === 'api';
+const DIRECT_COLUMNS = [
+  ['Расход, ₽', (r) => rub(r.cost)],
+  ...(fromApi ? [['Показы', (r) => int(r.impressions)], ['CTR', (r) => pct(r.ctr)]] : []),
+  ['Клики', (r) => int(r.clicks)],
+  ['₽ за клик', (r) => kop(r.perClick)],
+  ['Первая реплика (цель 2)', (r) => int(r.goals.firstReply ?? 0)],
+  ['₽ за первую реплику', (r) => rub(r.perFirstReply)],
+  ['3+ реплики за сутки (цель 3)', (r) => int(r.goals.polz3 ?? 0)],
+  ['₽ за цель 3', (r) => rub(r.perPolz3)],
+];
 const directTable = directTotal
   ? [
-      '| Кампания | Расход, ₽ | Клики | ₽ за клик | Первая реплика (цель 2) | ₽ за первую реплику | 3+ реплики за сутки (цель 3) | ₽ за цель 3 |',
-      '|---|---:|---:|---:|---:|---:|---:|---:|',
-      ...directCampaigns.map((c) => `| ${c.name.replace(/\|/g, '/')} | ${rub(c.cost)} | ${int(c.clicks)} | ${rub(c.perClick)} | ${int(c.goals.firstReply ?? 0)} | ${rub(c.perFirstReply)} | ${int(c.goals.polz3 ?? 0)} | ${rub(c.perPolz3)} |`),
-      `| **Всего** | **${rub(directTotal.cost)}** | **${int(directTotal.clicks)}** | **${rub(directTotal.perClick)}** | **${int(directTotal.goals.firstReply ?? 0)}** | **${rub(directTotal.perFirstReply)}** | **${int(directTotal.goals.polz3 ?? 0)}** | **${rub(directTotal.perPolz3)}** |`,
+      fromApi
+        ? 'По API Директа: цели — конверсии по модели «последний значимый клик».'
+        : 'По Метрике: цели — люди, достигшие цели, по последнему значимому переходу.',
+      '',
+      `| Кампания | ${DIRECT_COLUMNS.map(([label]) => label).join(' | ')} |`,
+      `|---|${DIRECT_COLUMNS.map(() => '---:').join('|')}|`,
+      ...directCampaigns.map((c) => `| ${c.name.replace(/\|/g, '/')} | ${DIRECT_COLUMNS.map(([, cell]) => cell(c)).join(' | ')} |`),
+      `| **Всего** | ${DIRECT_COLUMNS.map(([, cell]) => `**${cell(directTotal)}**`).join(' | ')} |`,
     ].join('\n')
   : null;
 const title = `Сводка Рядом · ${periodLabel}`;
@@ -667,7 +702,7 @@ ${directTable ? `\n### Реклама в Директе\n\n${directTable}\n` : '
 - **Говорили голосом** — хотя бы одна голосовая реплика: за день — доля от DAU, за период — от WAU.
 - **Канал** — UTM первой сессии с просмотром страницы.
 - **Метрика** — счётчик «Слышу Рядом»: посетители и цели 1–4 за те же дни (сверка в детализации), пол и возраст по данным Яндекса.
-- **Реклама в Директе** — по Метрике: расход и клики кампаний Директа, визиты и цели по кампании последнего значимого перехода. Цель — люди (посетители), достигшие её за период. **₽ за первую реплику** и **₽ за цель 3** — расход кампании ÷ число таких людей; оба числа из Метрики. Цель 2 срабатывает раз на аккаунт, поэтому «₽ за первую реплику» — цена нового заговорившего. Расход Telegram Ads сюда не входит. **Расход Директа, ₽** в главной таблице — по дням.
+- **Реклама в Директе** — по API Директа, если у агента есть к нему доступ: расход (с НДС), показы, клики и конверсии по целям Метрики в модели «последний значимый клик» — это число конверсий, а не людей. Без API — по Метрике: расход и клики, а цели — люди (посетители), достигшие их, по кампании последнего значимого перехода. **₽ за первую реплику** и **₽ за цель 3** — расход кампании ÷ число по цели, оба числа из одного источника. Цель 2 срабатывает раз на аккаунт, поэтому «₽ за первую реплику» — цена нового заговорившего. Расход Telegram Ads сюда не входит. **Расход Директа, ₽** в главной таблице — по дням.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
 - **Расход моделей** — токены всех вызовов моделей агента за те же дни по Langfuse, без тестовых и командных аккаунтов; в него входят и разговоры «Не сохранять», и стёртые — только суммой. Вызовы через прокси (итог разговора, память) и озвучка фраз приходят без токенов, так что настоящий расход немного больше.
 - **Токенов на разговор** — расход в сохраняемых разговорах из базы агента ÷ разговоры с расходом в тот же день (за период — ÷ разговоры с расходом за период).

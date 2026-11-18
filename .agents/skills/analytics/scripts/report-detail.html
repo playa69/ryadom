@@ -147,19 +147,20 @@ svg .val { fill: var(--fg); font-weight: 600; }
 </div>
 
 <div class="sec" id="direct-sec" hidden>
-  <div class="head"><h2 id="direct-title">5. Реклама в Директе</h2><p class="note">Метрика: расход и цели по кампании последнего значимого перехода</p></div>
+  <div class="head"><h2 id="direct-title">5. Реклама в Директе</h2><p class="note" id="direct-note"></p></div>
   <div class="scroll"><table>
     <thead><tr>
-      <th data-tip="Кампания Директа. Расход и цели склеены по id кампании.|Кампания">Кампания</th>
-      <th data-tip="Расход кампании за период по Метрике.|Расход, ₽">Расход, ₽</th>
+      <th data-tip="Кампания Директа.|Кампания">Кампания</th>
+      <th data-tip="Расход кампании за период: по API Директа (с НДС) или по Метрике.|Расход, ₽">Расход, ₽</th>
+      <th data-tip="Показы объявлений — только в API Директа.|Показы">Показы</th>
       <th data-tip="Клики по объявлениям кампании.|Клики">Клики</th>
-      <th data-tip="Визиты на сайт из кампании (последний значимый переход).|Визиты">Визиты</th>
-      <th data-tip="Посетители из кампании, нажавшие на лендинге кнопку в продукт (цель 1, open_app).|Цель 1">Цель 1</th>
-      <th data-tip="Посетители, сказавшие первую реплику аккаунта (цель 2, first_reply): новые заговорившие.|Цель 2">Цель 2</th>
-      <th data-tip="Посетители с 3 репликами и больше за московские сутки (цель 3, polz_3).|Цель 3">Цель 3</th>
+      <th data-tip="Визиты на сайт из кампании по последнему значимому переходу — только по Метрике.|Визиты">Визиты</th>
+      <th data-tip="Цель 1 (open_app): нажатие на лендинге кнопки в продукт. API — конверсии, Метрика — посетители.|Цель 1">Цель 1</th>
+      <th data-tip="Цель 2 (first_reply): первая реплика аккаунта, то есть новые заговорившие. API — конверсии, Метрика — посетители.|Цель 2">Цель 2</th>
+      <th data-tip="Цель 3 (polz_3): 3 реплики и больше за московские сутки. API — конверсии, Метрика — посетители.|Цель 3">Цель 3</th>
       <th data-tip="Расход ÷ клики.|₽ за клик">₽ за клик</th>
-      <th data-tip="Расход ÷ цель 2: цена нового заговорившего. Оба числа из Метрики.|₽ за первую реплику">₽ за первую реплику</th>
-      <th data-tip="Расход ÷ цель 3. Оба числа из Метрики.|₽ за цель 3">₽ за цель 3</th>
+      <th data-tip="Расход ÷ цель 2: цена нового заговорившего. Оба числа из одного источника.|₽ за первую реплику">₽ за первую реплику</th>
+      <th data-tip="Расход ÷ цель 3. Оба числа из одного источника.|₽ за цель 3">₽ за цель 3</th>
     </tr></thead>
     <tbody id="direct"></tbody>
   </table></div>
@@ -308,10 +309,13 @@ const DATA = /*__DATA__*/null;
     document.getElementById('direct-title').textContent = `${++section}. Реклама в Директе`;
     const rub = (x) => (x == null ? '—' : nf(Math.round(x)));
     const g = (r, key) => nf((r.goals && r.goals[key]) || 0);
-    const line = (r, cls) => `<tr class="${cls}"><td>${esc(r.name)}</td><td>${rub(r.cost)}</td><td>${nf(r.clicks)}</td><td>${nf(r.visits)}</td>` +
-      `<td>${g(r, 'openApp')}</td><td>${g(r, 'firstReply')}</td><td>${g(r, 'polz3')}</td><td>${rub(r.perClick)}</td><td>${rub(r.perFirstReply)}</td><td>${rub(r.perPolz3)}</td></tr>`;
-    document.getElementById('direct').innerHTML = dir.campaigns.map((r) => line(r, '')).join('') + line({ ...dir, name: 'Всего' }, 'sum');
-  }
+    document.getElementById('direct-note').textContent = dir.source === 'api'
+      ? 'API Директа: цели — конверсии, модель «последний значимый клик»'
+      : 'Метрика: цели — посетители, последний значимый переход';
+    const opt = (v) => (v == null ? '—' : nf(v));
+    const line = (r, cls) => `<tr class="${cls}"><td>${esc(r.name)}</td><td>${rub(r.cost)}</td><td>${opt(r.impressions)}</td><td>${nf(r.clicks)}</td><td>${opt(r.visits)}</td>` +
+      `<td>${g(r, 'openApp')}</td><td>${g(r, 'firstReply')}</td><td>${g(r, 'polz3')}</td><td>${r.perClick == null ? '—' : r.perClick.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td><td>${rub(r.perFirstReply)}</td><td>${rub(r.perPolz3)}</td></tr>`;
+    document.getElementById('direct').innerHTML = dir.campaigns.map((r) => line(r, '')).join('') + line({ ...dir, name: 'Всего' }, 'sum');  }
   const aud = DATA.audience || [];
   if (aud.length) {
     document.getElementById('audience-sec').hidden = false;
