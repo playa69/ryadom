@@ -25,9 +25,12 @@ export default function ConsentNote() {
 export function DataConsentCheckbox({
   checked,
   onChange,
+  memory = false,
 }: {
   checked: boolean
   onChange(checked: boolean): void
+  /** The first screen's start turns memory on: the same tick covers it and says where it is turned off. */
+  memory?: boolean
 }) {
   return (
     <label className="rd-incognito rd-unsaved rd-data-consent" data-testid="data-consent">
@@ -40,7 +43,8 @@ export function DataConsentCheckbox({
         <a href="#" className="rd-inline-link" onClick={openDoc(consentUrl)}>
           согласие на обработку персональных данных
         </a>
-        , включая голос и текст разговоров.
+        , включая голос и текст разговоров
+        {memory ? ', и на запоминание важного из них (выключается в профиле)' : ''}.
       </span>
       <input
         type="checkbox"

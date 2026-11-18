@@ -129,6 +129,8 @@ class _Link:
 class _Opener:
     def __init__(self, name: str, fail: bool = False) -> None:
         self.name = name
+        self.pipeline = name
+        self.fail_text = f"{name} недоступен"
         self.model = f"{name}-model"
         self.fail = fail
         self.opened = 0
@@ -136,7 +138,7 @@ class _Opener:
     async def open(self, voice, instructions, history=None):  # noqa: ANN001, ANN201
         self.opened += 1
         if self.fail:
-            raise LiveError(f"{self.name} недоступен")
+            raise LiveError(self.fail_text)
         return _Link(self.name)
 
     async def aclose(self) -> None:

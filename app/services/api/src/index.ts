@@ -16,6 +16,7 @@ import { createRateLimiter } from './lib/rate-limit'
 import { createRedisClient } from './lib/redis'
 import { createRedisRateLimiter } from './lib/redis-rate-limiter'
 import { createPolicySource } from './lib/release-policy'
+import { countReply } from './lib/reply-counts'
 import { createSessions } from './lib/sessions'
 import { createShutdown } from './lib/shutdown'
 
@@ -111,7 +112,7 @@ server.on('upgrade', (request, socket, head) => {
     return
   }
   wss.handleUpgrade(request, socket, head, (ws) =>
-    handleDialogSocket(ws, { env, jwt, sessions, analytics }, request),
+    handleDialogSocket(ws, { env, jwt, sessions, analytics, countReply }, request),
   )
 })
 

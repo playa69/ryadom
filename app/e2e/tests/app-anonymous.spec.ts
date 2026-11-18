@@ -2,7 +2,11 @@ import { ANONYMOUS_RETENTION_DAYS, POLICY_VERSION } from '@ryadom/contracts/api/
 import {
   button,
   checkConsent,
+  consentSheet,
   field,
+  firstHello,
+  helloText,
+  helloVoice,
   openApp,
   openTab,
   PASSWORD,
@@ -16,9 +20,9 @@ import { expect, test } from '../support/fixtures'
 import { step } from '../support/evidence'
 
 /**
- * Anonymous entry in the Framework7 client (the PWA), the counterpart of web-anonymous.spec.ts: the
- * first screen with the three agreements, an account behind it, and the profile that offers an
- * address where it has something to give.
+ * Anonymous entry in the Framework7 client (the PWA), the counterpart of web-anonymous.spec.ts: home
+ * from the first launch with no gate before it, the agreements in a sheet at the first start, an
+ * account behind it, and the profile that offers an address where it has something to give.
  *
  * One scenario for the account's life and a short one for its end, for the reason the other
  * account scenarios give: every test would start its own session, and the entry points are rate
@@ -42,55 +46,68 @@ test('первый запуск, привязка почты, выход: акк
   const email = uniqueEmail('app-anonymous')
   await clearMailbox()
 
-  // ── a new visitor: a separate consent gate before the active home ─
-  // `openspec/changes/add-explicit-data-consent`, «Первый экран: разговор с первого действия».
-  // The memory sheet is not answered beforehand: the start must not be covered by it.
-  await openApp(page, { keepMemoryInvite: true })
+  // ── a new visitor: the first screen at once, the agreements wait in a sheet for the first press ─
+  // `openspec/changes/rework-web-first-screen`: no gate before it, no form on it; the sphere invites
+  // to talk, and nothing is sent before the sheet's «Продолжить».
+  await openApp(page)
   const first = page.locator('.page-current')
-  await expect(first.getByTestId('consent-notice')).toContainText('ИИ для самоподдержки')
-  await expect(first.getByTestId('data-consent')).toContainText('Мне есть 18 лет')
-  await expect(first.getByText('В опасной ситуации звони 112.')).toBeVisible()
-  await expect(first.getByTestId('data-consent-toggle')).toHaveCount(1)
-  await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(0)
-  await expect(first.getByTestId('data-consent-toggle')).not.toBeChecked()
-  await expect(first.getByTestId('welcome-talk')).toHaveText('Продолжить')
-  await expect(first.getByTestId('welcome-talk')).toBeDisabled()
+  await expect(firstHello(page)).toBeVisible()
+  await expect(helloVoice(page)).toContainText('Поговорить')
+  await expect(helloText(page)).toHaveAccessibleName('Написать текстом')
+  await expect(first.getByTestId('hello-caption')).toContainText('Привет! Я рядом.')
+  await expect(first.getByTestId('welcome-talk'), 'ворота перед главной больше нет').toHaveCount(0)
+  await expect(first.getByTestId('hello-plaque')).toContainText('бесплатный ИИ-собеседник, без регистрации')
+  await expect(first.getByTestId('hello-plaque')).toContainText('В опасной ситуации звони 112.')
+  await expect(
+    first.getByTestId('data-consent-toggle'),
+    'отметка согласия живёт в листе, а не на экране',
+  ).not.toBeVisible()
+  await expect(first.locator('textarea'), 'поля первого сообщения нет').toHaveCount(0)
   await expect(first.getByTestId('memory-switch')).toHaveCount(0)
-  // `openspec/changes/update-privacy-policy`, «Человек знает о сроке хранения разговоров».
-  await expect(first).toContainText('Разговоры хранятся 30 дней после последнего сообщения.')
-  await expect(first).toContainText('Без почты аккаунт удаляется через 90 дней без визитов.')
   await shot(page, 'app-welcome')
-  await step(page, 'app-welcome', 'Первый вход приложения: отдельное согласие, «Продолжить» неактивно')
+  await step(page, 'app-welcome', 'Первый вход приложения: шар приглашает поговорить, без ворота и формы')
   expect(await storedDevice(page), 'до согласия удостоверения нет').toBeNull()
 
+  // ── «Поговорить» opens the consent sheet over the first screen; nothing leaves the phone yet ─
+  await helloVoice(page).click()
+  const sheet = consentSheet(page)
+  await expect(sheet).toBeVisible()
+  await expect(sheet).toContainText('Перед началом')
+  const toggle = sheet.getByTestId('data-consent-toggle')
+  await expect(toggle).not.toBeChecked()
+  await expect(sheet.getByTestId('consent-continue')).toHaveClass(/disabled/)
+  await expect(sheet.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(0)
+  // `openspec/changes/update-privacy-policy`, «Человек знает о сроке хранения разговоров»: the terms
+  // are in the sheet now, under the buttons.
+  const keep = sheet.getByTestId('guest-note')
+  await expect(keep).toContainText('Разговоры хранятся 30 дней после последнего сообщения.')
+  await expect(keep).toContainText('Без почты аккаунт удаляется через 90 дней без визитов.')
+  const continueBox = (await sheet.getByTestId('consent-continue').boundingBox())!
+  expect((await keep.boundingBox())!.y, 'сроки хранения под кнопкой').toBeGreaterThan(continueBox.y)
+  expect(await storedDevice(page), 'лист открыт, а аккаунта всё ещё нет').toBeNull()
+
   const consentPagePromise = page.waitForEvent('popup')
-  await first.getByRole('link', { name: 'согласие на обработку персональных данных', exact: true }).click()
+  await sheet.getByRole('link', { name: 'согласие на обработку персональных данных', exact: true }).click()
   const consentPage = await consentPagePromise
   await consentPage.waitForLoadState('domcontentloaded')
   await expect(consentPage).toHaveURL(/\/consent$/)
   await consentPage.close()
-  await expect(first.getByTestId('data-consent-toggle')).not.toBeChecked()
+  await expect(toggle, 'открытие документа не сбрасывает отметку').not.toBeChecked()
   expect(await storedDevice(page), 'открытие документа не создаёт аккаунт').toBeNull()
 
-  // ── the gate opens the active home; only «Поговорить» makes the account and opens the conversation ─
-  await first.getByTestId('data-consent-toggle').check()
-  await expect(first.getByTestId('welcome-talk')).toBeEnabled()
-  await first.getByTestId('welcome-talk').click()
-  await expect(first.getByTestId('welcome-talk')).toHaveText('Поговорить')
-  await expect(first.getByTestId('data-consent')).toHaveCount(0)
-  await expect(first.getByTestId('memory-switch')).toBeVisible()
-  await expect(first.locator('[data-testid="unsaved"] input[type="checkbox"]')).toHaveCount(1)
-  expect(await storedDevice(page), 'продолжение пока не создаёт аккаунт').toBeNull()
+  // ── the sheet's «Продолжить» makes the account and opens the conversation, in one press ─
+  await toggle.check()
+  await expect(sheet.getByTestId('consent-continue')).not.toHaveClass(/disabled/)
   await shot(page, 'app-welcome-consented')
-  await step(page, 'app-welcome-home', 'После согласия открыт активный первый экран без повторной отметки')
-  await first.getByTestId('welcome-talk').click()
+  await step(page, 'app-welcome-home', 'Лист согласия над главной: отметка включила «Продолжить»')
+  await sheet.getByTestId('consent-continue').click()
   await expect(page.getByText('Я рядом. С чего начнём?').first()).toBeVisible({ timeout: 30_000 })
   // A closed sheet stays in the page: what must not be there is an open one.
   await expect(page.locator('.sheet-modal.modal-in'), 'окно про память не мешает началу').toHaveCount(0)
   await step(
     page,
     'app-welcome-voice',
-    '«Поговорить»: разговор открыт голосом, агент здоровается, окна про память нет',
+    '«Продолжить» в листе: разговор открыт голосом, агент здоровается, окон нет',
   )
   const accountId = session.userId()
   expect(await storedDevice(page), 'удостоверение устройства сохранено').not.toBeNull()
@@ -100,11 +117,8 @@ test('первый запуск, привязка почты, выход: акк
     consentsCompleted: true,
     consentVersion: POLICY_VERSION,
   })
-  // Home offers memory on the visit after the start, which is not this test's subject: answered beforehand,
-  // like for a person who has seen it (read when home checks).
-  await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.memory-invite-dismissed')
   await page.locator('.page-current .navbar a.back').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
 
   // ── the profile offers an address, not a password, and says how long the account lives ─
   await openTab(page, 'Профиль')
@@ -124,13 +138,18 @@ test('первый запуск, привязка почты, выход: акк
       if (!/device|memory-invite/.test(key)) localStorage.removeItem(key)
   })
   await page.reload()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   expect(session.userId(), 'тот же аккаунт, не новый').toBe(accountId)
 
   // ── linking: the form, then the code from the email ──────────────────────
   await openTab(page, 'Профиль')
   await linkRow(page).click()
-  await expect(page.getByText(new RegExp(`удаляется через ${ANONYMOUS_RETENTION_DAYS} дней`))).toBeVisible()
+  // Scoped to the page's own text: the closed consent sheet of home keeps a similar sentence in its note.
+  await expect(
+    page
+      .locator('.page-current .rd-muted')
+      .getByText(new RegExp(`удаляется через ${ANONYMOUS_RETENTION_DAYS} дней`)),
+  ).toBeVisible()
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(PASSWORD)
   await shot(page, 'app-anonymous-link-email')
@@ -159,7 +178,7 @@ test('первый запуск, привязка почты, выход: акк
   await expect(button(page, 'Войти')).toBeVisible({ timeout: 20_000 })
   expect(await sessionAlive(request, ended), 'сессия завершена на сервере').toBe(false)
   await openApp(page)
-  await expect(page.locator('.page-current').getByTestId('welcome-talk')).toBeVisible()
+  await expect(button(page, 'Поговорить'), 'снова главная, без ворота').toBeVisible({ timeout: 30_000 })
   await page.locator('.page-current').getByTestId('have-account').click()
   await signIn(page, email)
   expect(session.userId(), 'тот же аккаунт со всем, что в нём было').toBe(accountId)
@@ -191,8 +210,9 @@ test('удаление аккаунта без регистрации: устр�
   await expect(page.getByText('Аккаунт и все разговоры удалены')).toBeVisible({ timeout: 30_000 })
   await page.locator('.dialog.modal-in').getByText('ОК').click()
 
-  // Back at the start, not at a sign-in for an account the person never had.
-  await expect(page.locator('.page-current').getByTestId('welcome-talk')).toBeVisible({ timeout: 20_000 })
+  // Back at home as a stranger, not at a sign-in for an account the person never had.
+  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.page-current').getByTestId('have-account')).toBeVisible()
   expect(await storedDevice(page), 'ключ устройства стёрт вместе с аккаунтом').toBeNull()
   expect(await sessionAlive(request, oldSession), 'сессия удалённого аккаунта закончена').toBe(false)
 

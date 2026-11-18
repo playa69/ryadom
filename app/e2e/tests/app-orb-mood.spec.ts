@@ -16,7 +16,7 @@ test('шарик в приложении окрашивается по наст�
   await clearMailbox()
   await openApp(page)
   await registerAndConfirm(page, uniqueEmail('orb-mood'))
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   const orb = page.locator('.rd-orb')
   await expect(orb).toBeVisible({ timeout: 30_000 })
   await expect(orb).not.toHaveAttribute('data-mood', /.+/)
@@ -24,7 +24,7 @@ test('шарик в приложении окрашивается по наст�
 
   const say = async (text: string) => {
     await page.getByRole('button', { name: 'Писать текстом' }).click()
-    const input = page.getByPlaceholder('Напиши, что происходит')
+    const input = page.locator('.page-current').getByPlaceholder('Напиши, что происходит')
     await expect(input).toBeVisible({ timeout: 30_000 })
     await input.fill(text)
     await page.getByRole('button', { name: 'Отправить' }).click()

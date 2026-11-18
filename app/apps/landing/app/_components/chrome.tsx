@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Badge } from '@ryadom/ui/components/badge'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
+import { ThemeSwitch } from './theme-switch'
 import { TrackedLink, TrackedRouteLink } from './tracked'
 
 /*
@@ -15,7 +16,8 @@ import { TrackedLink, TrackedRouteLink } from './tracked'
  * The page column. It is wide and its gutter grows with the viewport, so the content neither
  * touches the edge on a tablet nor floats in a void on a wide monitor.
  */
-export const SHELL = 'mx-auto max-w-[1320px] px-4 min-[400.02px]:px-[18px] min-[720.02px]:px-[clamp(20px,4vw,48px)]'
+export const SHELL =
+  'mx-auto max-w-[1320px] px-4 min-[400.02px]:px-[18px] min-[720.02px]:px-[clamp(20px,4vw,48px)]'
 
 /**
  * Keyboard focus: the design's two-tone ring (an inner paper gap, an outer blue band), which reads
@@ -44,7 +46,10 @@ function BrandMark({ size = 28 }: { size?: number }) {
   )
 }
 
-const BRAND = cn('inline-flex items-center gap-2.5 rounded-sm text-[18px] font-[650] tracking-display text-foreground', FOCUS_RING)
+const BRAND = cn(
+  'inline-flex items-center gap-2.5 rounded-sm text-[18px] font-[650] tracking-display text-foreground',
+  FOCUS_RING,
+)
 
 const NAV_LINK = cn('rounded-sm text-[15px] text-dim hover:text-foreground', FOCUS_RING)
 
@@ -64,9 +69,14 @@ export function SiteHeader({ appUrl }: { appUrl: string }) {
           <Link className={cn(NAV_LINK, 'hidden min-[720.02px]:inline')} href="/#privacy">
             Приватность
           </Link>
-          <TrackedRouteLink className={NAV_LINK} href="/download" tracking={{ cta: 'download_page', placement: 'nav' }}>
+          <TrackedRouteLink
+            className={NAV_LINK}
+            href="/download"
+            tracking={{ cta: 'download_page', placement: 'nav' }}
+          >
             Скачать
           </TrackedRouteLink>
+          <ThemeSwitch />
           {/* min-h, not h: the button grows with a larger text size instead of clipping it. */}
           <Button asChild className={cn('h-auto min-h-12 px-6 leading-[1.6]', LIT_BUTTON)}>
             <TrackedLink href={appUrl} tracking={{ cta: 'open_web_app', placement: 'nav' }}>
@@ -100,10 +110,12 @@ export function SiteFooter({ supportEmail }: { supportEmail: string }) {
             Рядом
           </Link>
           <p className="mt-3 mb-4 max-w-[38ch] text-[15px]">
-            Голосовой собеседник для эмоциональной разгрузки. Не медицинская услуга и не замена
-            психотерапии.
+            Голосовой собеседник для эмоциональной разгрузки. Не медицинская услуга и не замена психотерапии.
           </p>
-          <Badge variant="outline" className="size-[34px] rounded-[10px] border-input p-0 text-[13px] font-semibold text-dim">
+          <Badge
+            variant="outline"
+            className="size-[34px] rounded-[10px] border-input p-0 text-[13px] font-semibold text-dim"
+          >
             18+
           </Badge>
         </div>
@@ -121,7 +133,11 @@ export function SiteFooter({ supportEmail }: { supportEmail: string }) {
         </nav>
         <nav className="grid content-start gap-2">
           <strong className="font-medium text-foreground">Связь</strong>
-          <TrackedLink className={FOOTER_LINK} href={`mailto:${supportEmail}`} tracking={{ cta: 'contact_support', placement: 'footer' }}>
+          <TrackedLink
+            className={FOOTER_LINK}
+            href={`mailto:${supportEmail}`}
+            tracking={{ cta: 'contact_support', placement: 'footer' }}
+          >
             {supportEmail}
           </TrackedLink>
           <Link className={FOOTER_LINK} href="/download">

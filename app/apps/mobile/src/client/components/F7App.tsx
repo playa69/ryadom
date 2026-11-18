@@ -15,7 +15,7 @@ import { initBackButton, initBackTrap, initTelegramBackButton } from '../lib/nat
 import { initLaunchRouting } from '../lib/launch'
 import { initPush } from '../lib/push'
 import { TAB_IDS } from '../lib/nav'
-import { isWebBuild } from '../lib/platform'
+import { isNative, isWebBuild } from '../lib/platform'
 import { syncTimezone } from '../lib/timezone'
 import { initScreenTracking } from '../lib/screen-tracking'
 import { AuthProvider, useAuth } from '../lib/store'
@@ -26,15 +26,23 @@ import InstallBanner from './InstallBanner'
 import OfflineBar from './OfflineBar'
 import { routes } from './routes'
 import SosSheet, { openSos } from './SosSheet'
+import { initThemeSchedule } from './ThemeSwitch'
 import HistorySheet from './self-check/HistorySheet'
 import TestSheet from './self-check/TestSheet'
 
 /**
- * The app root: Framework7 (the md theme gives one layout on every platform, and the dark palette
- * comes from the tokens), either the sign-in screen or the tabs, plus the global listeners.
+ * The app root: Framework7 (the md theme gives one layout on every platform, and the palette comes
+ * from the tokens), either the sign-in screen or the tabs, plus the global listeners.
  *
  * The two trees are swapped by key, so the previous session's tabs cannot survive a sign-out.
  */
+
+/**
+ * Framework7's dark chrome at boot, from the choice the inline script in index.html made before the
+ * first paint (PWA/Telegram: the saved choice or the schedule; the native shell is always dark).
+ * ThemeSwitch keeps it in sync from then on.
+ */
+const initialDarkMode = document.documentElement.getAttribute('data-theme') !== 'light'
 
 const f7params = {
   name: 'Рядом',
@@ -42,9 +50,10 @@ const f7params = {
   /*
    * Framework7's own dark mode. Without it, it derives dozens of chrome surfaces (lists, popovers,
    * sheets, cards) from the accent color and ends up with cream panels on a dark background. Our
-   * values from tokens.css override it, because tokens.css is loaded after its styles.
+   * values from tokens.css override it, because tokens.css is loaded after its styles. In the light
+   * theme the `dark` class is simply absent and tokens.css gives the day palette instead.
    */
-  darkMode: true,
+  darkMode: initialDarkMode,
   colors: { primary: '#007aff' },
   routes,
   dialog: {
@@ -175,8 +184,11 @@ function Shell() {
 
   if (!auth.isAuthenticated) return <AnonymousEntry key="anonymous" />
   if (gate === 'checking') return <BootSplash />
-  // The terms need agreeing to (a new account, or a newer version): the first screen takes the person through.
-  if (gate === 'needed') return <View key="consent" main url="/welcome/" className="safe-areas" />
+  // The terms need agreeing to (a new account, or a newer version): the native shell is taken through
+  // the first screen; the PWA and Telegram stay on home, where the consent sheet asks at the first
+  // text or voice start instead.
+  if (gate === 'needed' && isNative())
+    return <View key="consent" main url="/welcome/" className="safe-areas" />
   return <SignedInViews key="signed-in" />
 }
 
@@ -190,13 +202,15 @@ function BootSplash() {
 
 /**
  * Where a person without a session lands. A phone that already has an anonymous identity is signed
- * back in without a screen: that is an account with no password to ask for. Anyone else sees the
- * first screen if they are new, or the sign-in if they have had an account and left it.
+ * back in without a screen: that is an account with no password to ask for. Anyone else: the sign-in
+ * if they have had an account and left it; a new person — the first screen with its consent gate on
+ * the native shell, and home directly on the PWA and in Telegram, where the field, the suggestions
+ * and the theme work before any account and the consent sheet asks at the first text or voice start.
  *
  * In the Telegram Mini App the person is their Telegram user: the account of that user is opened
- * without a screen too, unless they signed out in this launch. A Telegram user with no account lands on
- * the first screen, which makes one after the agreements; an anonymous account this device made before
- * is kept and given the Telegram user, so nothing said in it is lost.
+ * without a screen too, unless they signed out in this launch. A Telegram user with no account lands
+ * on home, whose consent sheet makes one after the agreements; an anonymous account this device made
+ * before is kept and given the Telegram user, so nothing said in it is lost.
  */
 function AnonymousEntry() {
   const { auth, login } = useAuth()
@@ -244,7 +258,10 @@ function AnonymousEntry() {
   if (checking) return <BootSplash />
   // A reload after signing out inside Telegram starts with fresh state: the sign-in is still where they belong.
   const signIn = auth.entry === 'login' || (isTelegramMiniApp() && wasTelegramSignedOut())
-  return <View main url={signIn ? '/login/' : '/welcome/'} className="safe-areas" />
+  if (signIn) return <View main url="/login/" className="safe-areas" />
+  // The native shell keeps the first screen with its consent gate; the PWA and Telegram land on home
+  // directly, and the consent sheet there asks at the first text or voice start.
+  return <View main url={isNative() ? '/welcome/' : '/home/'} className="safe-areas" />
 }
 
 /**
@@ -284,6 +301,9 @@ function useConsentGate(): 'checking' | 'needed' | 'ok' {
 }
 
 export default function F7App() {
+  // The day/night schedule of the PWA and Telegram: flips on the 07:00/22:00 boundary and on coming
+  // back to the tab, without a reload; a manual choice from the switch wins over it. Native: a no-op.
+  useEffect(() => initThemeSchedule(), [])
   return (
     <App {...f7params}>
       <AuthProvider>

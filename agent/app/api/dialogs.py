@@ -332,6 +332,7 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             tracer=app.state.tracer,
             mood=mood,
             prompt_provider=app.state.prompt_provider,
+            pipeline=pipeline,
         )
         session.bind_component_calls()
         await session.run()

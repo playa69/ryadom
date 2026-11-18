@@ -8,10 +8,14 @@
  * sphere, mint calms confirmations, red is reserved for irreversible actions, and SOS has a shade
  * of its own.
  *
+ * The light palette lives at the bottom of this file behind `[data-theme="light"]`; the schedule
+ * and the manual choice that set the attribute are in packages/client-core/src/theme.ts.
+ *
  * This file is the single source of truth for color, radius and shadow across mobile, web,
  * landing and admin — edit values here, not in a consumer. Values must stay byte-for-byte
  * identical to `tokens.ts` next to it (the emails render to static HTML and cannot use CSS custom
- * properties, so they read the same numbers from there instead of importing this file).
+ * properties, so they read the same numbers from there instead of importing this file). The dark
+ * `:root` values are mirrored as `tokens`, the light values that differ — as `lightTokens`.
  */
 :root {
   --ryadom-paper: #00051a;
@@ -153,4 +157,56 @@
   /* Large type sits tighter: at display sizes default tracking reads as loose. */
   --ryadom-tracking: -0.02em;
   --ryadom-tracking-tight: -0.035em;
+}
+
+/*
+ * The light palette, chosen by `data-theme="light"` on the root element (07:00–21:59 local, or
+ * the saved manual choice — packages/client-core/src/theme.ts). Same structure and meaning: blue
+ * stays the one action color, red stays danger and SOS. The day sky drops the night stars and
+ * keeps only a soft wash of the aurora hues.
+ *
+ * Contrast was measured on the lightest surfaces, where it is weakest for dark ink:
+ * --ryadom-text 14.5:1, --ryadom-text-faint 4.71:1 and --ryadom-brand-400 4.78:1 on
+ * --ryadom-surface-3 (more on everything lighter); --ryadom-line-strong 3.24:1 there and 3.41:1
+ * on white — the 3:1 control-boundary minimum holds on every surface of the palette.
+ */
+:root[data-theme='light'] {
+  --ryadom-paper: #f4f6fd;
+  --ryadom-paper-rgb: 244, 246, 253;
+  --ryadom-surface: #ffffff;
+  --ryadom-surface-2: #edf0f9;
+  --ryadom-surface-3: #e1e7f5;
+  --ryadom-line: rgba(15, 23, 42, 0.1);
+  --ryadom-line-strong: rgba(15, 23, 42, 0.5);
+  --ryadom-glass: rgba(255, 255, 255, 0.78);
+  --ryadom-surface-glass: rgba(255, 255, 255, 0.6);
+  --ryadom-surface-2-glass: rgba(255, 255, 255, 0.82);
+  /* On white surfaces the lit top edge reads through the hairline, not through glare. */
+  --ryadom-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+
+  --ryadom-text: #10152e;
+  --ryadom-text-dim: #3d4767;
+  --ryadom-text-faint: #5a6486;
+
+  /* The dark theme's text blue #4da3ff is only ~2.5:1 on white, so light text/icons go darker. */
+  --ryadom-brand-400: #005fd0;
+  --ryadom-cta-glow: 0 10px 30px -8px rgba(0, 122, 255, 0.35);
+
+  /* Mint confirmations appear as text; #79d2c2 would be 1.8:1 on white. */
+  --ryadom-sage: #1f6f62;
+
+  --ryadom-danger: #bd2c2c;
+  /* Doubles as text and as the SOS fill under white: 5.6:1 both ways. */
+  --ryadom-sos: #c22e35;
+
+  --ryadom-bloom-teal: rgba(var(--ryadom-teal-rgb), 0.16);
+  --ryadom-bloom-indigo: rgba(var(--ryadom-indigo-rgb), 0.13);
+  --ryadom-bloom-violet: rgba(var(--ryadom-violet-rgb), 0.11);
+  --ryadom-atmosphere: var(--ryadom-ambient);
+
+  --ryadom-shadow-1: 0 2px 12px rgba(15, 23, 42, 0.08);
+  --ryadom-shadow-2: 0 24px 60px -12px rgba(15, 23, 42, 0.18);
+
+  /* Native form controls and scrollbars follow the chosen palette, not the OS theme. */
+  color-scheme: light;
 }

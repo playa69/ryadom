@@ -15,20 +15,26 @@ const EDITED_RECAP = 'Ты решил не откладывать разгово
 const SAID = 'Мне сегодня очень тяжело из-за работы. Давай так: поговорю с руководителем до пятницы'
 
 async function readDiary(request: APIRequestContext, token: string) {
-  const response = await request.get(`${APP_URL}/api/diary`, { headers: { Authorization: `Bearer ${token}` } })
+  const response = await request.get(`${APP_URL}/api/diary`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
   return ((await response.json()) as { result: DiaryApiResponse }).result
 }
 
 async function recapCount(request: APIRequestContext, token: string): Promise<number> {
-  const response = await request.get(`${APP_URL}/api/recaps`, { headers: { Authorization: `Bearer ${token}` } })
+  const response = await request.get(`${APP_URL}/api/recaps`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
   return ((await response.json()) as { result: { items: unknown[] } }).result.items.length
 }
 
 /** One conversation: opened from home, the text typed, the mock's reply waited for. */
 async function talk(page: Page, text: string): Promise<void> {
   await openTab(page, 'Главная')
-  await button(page, 'Поговорить').click()
-  await expect(current(page).getByRole('button', { name: 'Остановить запись' })).toBeVisible({ timeout: 30_000 })
+  await button(page, 'Начать разговор').click()
+  await expect(current(page).getByRole('button', { name: 'Остановить запись' })).toBeVisible({
+    timeout: 30_000,
+  })
   await current(page).getByRole('button', { name: 'Писать текстом' }).click()
   await current(page).getByPlaceholder('Напиши, что происходит').fill(text)
   await current(page).getByRole('button', { name: 'Отправить' }).click()
@@ -59,7 +65,11 @@ async function submitAndLeave(page: Page): Promise<string> {
   return text
 }
 
-test('итог разговора в приложении: три способа, короткий разговор без итога, итоги недели, удаление', async ({ page, request, shot }) => {
+test('итог разговора в приложении: три способа, короткий разговор без итога, итоги недели, удаление', async ({
+  page,
+  request,
+  shot,
+}) => {
   test.setTimeout(700_000)
   const session = trackSession(page)
   await openApp(page)
@@ -109,21 +119,31 @@ test('итог разговора в приложении: три способа
   const back = page.locator('.page-current .navbar a.back')
   if (await back.count()) await back.first().click()
   await rows.nth(0).click()
-  await expect(entry.getByTestId('journal-summary').or(entry.locator('.rd-card').first())).toBeVisible({ timeout: 20_000 })
+  await expect(entry.getByTestId('journal-summary').or(entry.locator('.rd-card').first())).toBeVisible({
+    timeout: 20_000,
+  })
   await expect(entry.getByTestId('journal-recap')).toHaveCount(0)
   await expect(entry.getByTestId('journal-recap-none')).toHaveCount(0)
 
   // ── итоги недели читают итоги разговоров ─────────────────────────────────
   const { week } = await readDiary(request, token())
-  const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(week.start) + i * 86_400_000).toISOString().slice(0, 10))
-  await seedMarks(session.userId(), days.slice(0, 3).map((date) => ({ date, mood: 3 as const })))
+  const days = Array.from({ length: 7 }, (_, i) =>
+    new Date(Date.parse(week.start) + i * 86_400_000).toISOString().slice(0, 10),
+  )
+  await seedMarks(
+    session.userId(),
+    days.slice(0, 3).map((date) => ({ date, mood: 3 as const })),
+  )
   if (await back.count()) await back.first().click()
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
   await page.locator('.page-current').getByTestId('diary-segment-diary').click()
   const diary = page.locator('.page-current[data-name="diary"]')
   await expect
-    .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
+    .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', {
+      timeout: 240_000,
+      intervals: [5_000],
+    })
     .toContain('работа и дела')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
@@ -141,7 +161,10 @@ test('итог разговора в приложении: три способа
   await expect.poll(() => recapCount(request, token()), { timeout: 30_000 }).toBe(4)
   await ageWeekSummary(session.userId())
   await expect
-    .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [5_000] })
+    .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', {
+      timeout: 240_000,
+      intervals: [5_000],
+    })
     .toContain('работа и дела')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
@@ -164,7 +187,10 @@ test('итог разговора в приложении: три способа
   await page.getByTestId('journal-delete-confirm-yes').click()
   await expect.poll(() => recapCount(request, token())).toBe(3)
   await expect
-    .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', { timeout: 240_000, intervals: [3_000] })
+    .poll(async () => (await readDiary(request, token())).week.summary?.text ?? '', {
+      timeout: 240_000,
+      intervals: [3_000],
+    })
     .toContain('работа и дела')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
@@ -173,7 +199,11 @@ test('итог разговора в приложении: три способа
   await shot(page, 'recap-week-after-delete')
 })
 
-test('журнал в приложении: пометка о не сохранённом разговоре, удаление пометки, настройка автоитога', async ({ page, request, shot }) => {
+test('журнал в приложении: пометка о не сохранённом разговоре, удаление пометки, настройка автоитога', async ({
+  page,
+  request,
+  shot,
+}) => {
   test.setTimeout(180_000)
   const session = trackSession(page)
   await openApp(page)
@@ -195,7 +225,12 @@ test('журнал в приложении: пометка о не сохран�
       },
       messages: [{ role: 'user', text: 'Мне тяжело на работе, расскажу, что произошло сегодня утром' }],
     },
-    { startedAt: hourAgo.toISOString(), endedAt: new Date(hourAgo.getTime() + 12 * 60_000).toISOString(), summary: null, saved: false },
+    {
+      startedAt: hourAgo.toISOString(),
+      endedAt: new Date(hourAgo.getTime() + 12 * 60_000).toISOString(),
+      summary: null,
+      saved: false,
+    },
   ])
   await openJournal(page)
   const rows = page.locator('.page-current').getByTestId('journal-item')
@@ -207,12 +242,23 @@ test('журнал в приложении: пометка о не сохран�
   await expect(setting).toBeChecked()
   await setting.uncheck()
   await expect
-    .poll(async () => ((await (await request.get(`${APP_URL}/api/dialog-settings`, { headers: { Authorization: `Bearer ${session.accessToken()}` } })).json()) as { result: { recapEnabled: boolean } }).result.recapEnabled)
+    .poll(
+      async () =>
+        (
+          (await (
+            await request.get(`${APP_URL}/api/dialog-settings`, {
+              headers: { Authorization: `Bearer ${session.accessToken()}` },
+            })
+          ).json()) as { result: { recapEnabled: boolean } }
+        ).result.recapEnabled,
+    )
     .toBe(false)
 
   await rows.first().click()
   const entry = page.locator('.page-current')
-  await expect(entry.getByTestId('journal-unsaved')).toContainText('Был разговор, который не сохранён по твоему желанию')
+  await expect(entry.getByTestId('journal-unsaved')).toContainText(
+    'Был разговор, который не сохранён по твоему желанию',
+  )
   await expect(entry.getByTestId('journal-unsaved')).toContainText('12 мин')
   await shot(page, 'recap-unsaved-mark')
   await entry.getByTestId('journal-delete').click()

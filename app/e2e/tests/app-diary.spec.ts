@@ -16,13 +16,19 @@ import { ageWeekSummary, seedMarks } from '../support/diary'
 const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' })
 
 async function serverDiary(request: APIRequestContext, accessToken: string) {
-  const response = await request.get(`${APP_URL}/api/diary`, { headers: { Authorization: `Bearer ${accessToken}` } })
+  const response = await request.get(`${APP_URL}/api/diary`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
   expect(response.status(), 'дневник на сервере').toBe(200)
   const body = (await response.json()) as { status: boolean; result: DiaryApiResponse }
   return body.result
 }
 
-test('дневник: пустой → отметка в два касания → передумал → график → мост → без сети', async ({ page, request, shot }) => {
+test('дневник: пустой → отметка в два касания → передумал → график → мост → без сети', async ({
+  page,
+  request,
+  shot,
+}) => {
   test.setTimeout(180_000)
   const session = trackSession(page)
   await openApp(page)
@@ -51,7 +57,10 @@ test('дневник: пустой → отметка в два касания �
   await expect(diary.getByTestId('diary-factors')).toHaveCount(0)
   await expect(diary.getByTestId('diary-streak')).toContainText('1 дн.')
   await expect(diary.getByTestId('diary-chart-point')).toHaveCount(1)
-  await expect(diary.getByTestId('diary-chart')).toHaveAttribute('aria-label', /отмечено 1 день, чаще всего — нормально/)
+  await expect(diary.getByTestId('diary-chart')).toHaveAttribute(
+    'aria-label',
+    /отмечено 1 день, чаще всего — нормально/,
+  )
   await expect(diary.getByTestId('diary-week-waiting')).toContainText('(сейчас: 1 из 3)')
   await shot(page, 'diary-marked')
 
@@ -99,7 +108,10 @@ test('дневник: пустой → отметка в два касания �
     .toBe(3)
 })
 
-test('дневник: сегменты «Дневник», «Журнал» и «Тесты»; последний открытый помнится', async ({ page, shot }) => {
+test('дневник: сегменты «Дневник», «Журнал» и «Тесты»; последний открытый помнится', async ({
+  page,
+  shot,
+}) => {
   test.setTimeout(120_000)
   await openApp(page)
   await startAnonymously(page)
@@ -117,7 +129,7 @@ test('дневник: сегменты «Дневник», «Журнал» и �
 
   // The last segment is remembered for the next opening of the tab.
   await page.reload()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
   await openTab(page, 'Дневник')
   await expect(page.getByTestId('diary-segment-journal')).toHaveAttribute('aria-checked', 'true')
   await expect(page.locator('.page-current').getByText('Здесь появятся твои разговоры.')).toBeVisible()
@@ -139,7 +151,11 @@ test('три вкладки помещаются на ширине 320px без 
   await shot(page, 'diary-tabs-320')
 })
 
-test('первый текст недели пишется сам, потом — «Обновить итоги» и автоматическая перезапись после паузы', async ({ page, request, shot }) => {
+test('первый текст недели пишется сам, потом — «Обновить итоги» и автоматическая перезапись после паузы', async ({
+  page,
+  request,
+  shot,
+}) => {
   test.setTimeout(900_000)
   const session = trackSession(page)
   await openApp(page)
@@ -151,10 +167,15 @@ test('первый текст недели пишется сам, потом —
 
   // Three more marked days of the same week, written straight to the table (the API takes only today and yesterday).
   const { week } = await serverDiary(request, session.accessToken())
-  const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(week.start) + i * 86_400_000).toISOString().slice(0, 10))
+  const days = Array.from({ length: 7 }, (_, i) =>
+    new Date(Date.parse(week.start) + i * 86_400_000).toISOString().slice(0, 10),
+  )
   await seedMarks(
     session.userId(),
-    days.filter((d) => d !== today()).slice(0, 3).map((date) => ({ date, mood: 1 as const })),
+    days
+      .filter((d) => d !== today())
+      .slice(0, 3)
+      .map((date) => ({ date, mood: 1 as const })),
   )
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
@@ -164,7 +185,10 @@ test('первый текст недели пишется сам, потом —
   await expect(diary.getByTestId('diary-week-waiting')).toHaveCount(0)
   await shot(page, 'diary-week-building')
   await expect
-    .poll(async () => (await serverDiary(request, session.accessToken())).week.summary?.text ?? '', { timeout: 180_000, intervals: [5_000] })
+    .poll(async () => (await serverDiary(request, session.accessToken())).week.summary?.text ?? '', {
+      timeout: 180_000,
+      intervals: [5_000],
+    })
     .toContain('Тяжёлых дней было 4')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')
@@ -178,7 +202,9 @@ test('первый текст недели пишется сам, потом —
   await diary.getByTestId('diary-mood-4').click()
   await expect.poll(async () => (await serverDiary(request, session.accessToken())).today?.mood).toBe(4)
   await page.waitForTimeout(150_000)
-  expect((await serverDiary(request, session.accessToken())).week.summary?.text).toContain('Тяжёлых дней было 4')
+  expect((await serverDiary(request, session.accessToken())).week.summary?.text).toContain(
+    'Тяжёлых дней было 4',
+  )
 
   // The button rewrites it at once; the old text stays under «Собираю итоги…» until the new one is there.
   await diary.getByTestId('diary-week-refresh').click()
@@ -194,16 +220,31 @@ test('первый текст недели пишется сам, потом —
   await expect.poll(async () => (await serverDiary(request, session.accessToken())).today?.mood).toBe(2)
   await ageWeekSummary(session.userId())
   await expect
-    .poll(async () => (await serverDiary(request, session.accessToken())).week.summary?.text ?? '', { timeout: 180_000, intervals: [5_000] })
+    .poll(async () => (await serverDiary(request, session.accessToken())).week.summary?.text ?? '', {
+      timeout: 180_000,
+      intervals: [5_000],
+    })
     .toContain('лёгких — 0')
 })
 
-test('итоги прошлой недели: карточка появляется, когда планировщик закрыл неделю', async ({ page, request, shot }) => {
+test('итоги прошлой недели: карточка появляется, когда планировщик закрыл неделю', async ({
+  page,
+  request,
+  shot,
+}) => {
   test.setTimeout(240_000)
   // By design the weekly tick does nothing before 06:00 local time on Monday (REQ-WELL-03), so the card cannot appear then.
-  const moscow = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Moscow', weekday: 'short', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date())
+  const moscow = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Moscow',
+    weekday: 'short',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date())
   const part = (type: string) => moscow.find((p) => p.type === type)?.value
-  test.skip(part('weekday') === 'Mon' && Number(part('hour')) < 6, 'до 06:00 в понедельник по Москве планировщик итоги недели не считает')
+  test.skip(
+    part('weekday') === 'Mon' && Number(part('hour')) < 6,
+    'до 06:00 в понедельник по Москве планировщик итоги недели не считает',
+  )
   const session = trackSession(page)
   await openApp(page)
   await startAnonymously(page)
@@ -215,11 +256,19 @@ test('итоги прошлой недели: карточка появляет�
   // Three marked days of the last finished week: the minute tick closes it with a final summary (agent mock: fixed text).
   const { week } = await serverDiary(request, session.accessToken())
   const lastMonday = new Date(Date.parse(week.start) - 7 * 86_400_000)
-  const days = [0, 1, 2].map((i) => new Date(lastMonday.getTime() + i * 86_400_000).toISOString().slice(0, 10))
-  await seedMarks(session.userId(), days.map((date) => ({ date, mood: 3 as const })))
+  const days = [0, 1, 2].map((i) =>
+    new Date(lastMonday.getTime() + i * 86_400_000).toISOString().slice(0, 10),
+  )
+  await seedMarks(
+    session.userId(),
+    days.map((date) => ({ date, mood: 3 as const })),
+  )
 
   await expect
-    .poll(async () => (await serverDiary(request, session.accessToken())).previousWeek?.text ?? '', { timeout: 150_000, intervals: [5_000] })
+    .poll(async () => (await serverDiary(request, session.accessToken())).previousWeek?.text ?? '', {
+      timeout: 150_000,
+      intervals: [5_000],
+    })
     .not.toBe('')
   await openTab(page, 'Главная')
   await openTab(page, 'Дневник')

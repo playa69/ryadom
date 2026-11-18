@@ -6,7 +6,6 @@ import {
   expectSingleSos,
   goTo,
   historyItems,
-  homeInput,
   messages,
   nav,
   openMark,
@@ -14,7 +13,8 @@ import {
   openWebApp,
   pageTitle,
   registerAndConfirm,
-  talkButton,
+  startTextDialog,
+  startVoiceButton,
   uniqueEmail,
 } from '../support/web'
 import { clearMailbox } from '../support/mail'
@@ -98,10 +98,8 @@ test('история: сайдбар растёт с разговорами, «�
   await page.getByTestId('journal-empty').getByRole('link', { name: 'Начать разговор' }).click()
   await expect(page).toHaveURL(/\/home$/)
 
-  // ── a first conversation, started from the text on home ──────────────────
-  await homeInput(page).fill(FIRST_MESSAGE)
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
+  // ── a first conversation, started on the text from home ──────────────────
+  await startTextDialog(page, FIRST_MESSAGE)
   await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
   await expect(messages(page, 'assistant')).toHaveCount(2, { timeout: 30_000 })
 
@@ -122,11 +120,11 @@ test('история: сайдбар растёт с разговорами, «�
   await expect(nav(page).getByRole('link', { name: 'Все разговоры', exact: true })).toBeVisible()
   await closeSidebar(page)
 
-  // ── a second one, started with nothing typed ─────────────────────────────
+  // ── a second one, started on the voice ───────────────────────────────────
   await goTo(page, 'Новый разговор')
-  await talkButton(page).click()
+  await startVoiceButton(page).click()
   await expect(page).toHaveURL(/\/dialog\/[^/]+$/, { timeout: 30_000 })
-  // Nothing typed: the conversation opens on the voice, with the greeting under the sphere.
+  // «Начать разговор»: the conversation opens on the voice, with the greeting under the sphere.
   await expect(page.getByTestId('dialog-voice')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('voice-caption')).not.toBeEmpty({ timeout: 30_000 })
 

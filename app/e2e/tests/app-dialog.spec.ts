@@ -27,12 +27,14 @@ test('разговор: приветствие, ответ, кризис, жур
   await openApp(page)
   await registerAndConfirm(page, email)
 
-  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`).
-  await expect(page.locator('.page-current').getByText('Выговориться')).toHaveCount(0)
+  // No modes to pick: one conversation (`openspec/changes/merge-first-screen-into-home`), and no box
+  // or suggestions on home (`openspec/changes/rework-web-first-screen`).
+  await expect(page.getByRole('button', { name: 'Выговориться', exact: true })).toHaveCount(0)
+  await expect(page.locator('.page-current textarea')).toHaveCount(0)
   await shot(page, 'dialog-home')
 
   // ── conversation: voice first ────────────────────────────────────────────
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   // The conversation opens on the voice screen and listens by itself (the fake microphone).
   const stop = page.getByRole('button', { name: 'Остановить запись' })
   await expect(stop).toBeVisible({ timeout: 30_000 })
@@ -65,7 +67,7 @@ test('разговор: приветствие, ответ, кризис, жур
 
   // ── text: the second way, one tap away ───────────────────────────────────
   await page.getByRole('button', { name: 'Писать текстом' }).click()
-  const input = page.getByPlaceholder(DRAFT_PLACEHOLDER)
+  const input = page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER)
   await expect(input).toBeVisible()
   // The feed holds the greeting, the voice turn and the reply to it.
   await expect(page.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
@@ -86,7 +88,7 @@ test('разговор: приветствие, ответ, кризис, жур
   await input.fill('не хочу жить')
   await page.getByRole('button', { name: 'Отправить' }).click()
   // The help lines appear on their own instead of waiting for the person to press SOS.
-  await expect(page.getByText('Если сейчас тяжело')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Сейчас важно поговорить с живым человеком')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('link', { name: /112/ })).toBeVisible()
   await shot(page, 'dialog-safety')
   await closeSheet(page)
@@ -127,7 +129,7 @@ test('агент без озвучки: шар читает приветстви
     await openApp(page)
     await registerAndConfirm(page, email)
 
-    await button(page, 'Поговорить').click()
+    await button(page, 'Начать разговор').click()
     const stop = page.getByRole('button', { name: 'Остановить запись' })
     await expect(stop).toBeVisible({ timeout: 30_000 })
     const caption = page.getByTestId('voice-caption')

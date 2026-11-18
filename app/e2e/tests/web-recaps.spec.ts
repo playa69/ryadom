@@ -4,12 +4,12 @@ import { ageWeekSummary, seedDialogs, seedMarks } from '../support/diary'
 import { trackSession } from '../support/session'
 import { expect, test } from '../support/fixtures'
 import {
-  homeInput,
   messages,
   modal,
   modalButton,
   openWebApp,
   registerAndConfirm,
+  startTextDialog,
   uniqueEmail,
 } from '../support/web'
 import type { Page } from '@playwright/test'
@@ -28,12 +28,10 @@ interface DiaryResult {
   week: { start: string; summary: { text: string } | null }
 }
 
-/** One conversation: typed on home, answered by the mock; the page stays on the conversation. */
+/** One conversation: started on the text from home, answered by the mock; the page stays on the conversation. */
 async function talk(page: Page, text: string): Promise<void> {
   await openWebApp(page, '/home')
-  await homeInput(page).fill(text)
-  await homeInput(page).press('Enter')
-  await expect(page).toHaveURL(/\/dialog\//, { timeout: 30_000 })
+  await startTextDialog(page, text)
   await expect(messages(page, 'user')).toHaveCount(1, { timeout: 30_000 })
   await expect.poll(() => messages(page, 'assistant').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
   // Ending in the middle of a reply would only test the fallback timer.
@@ -101,7 +99,7 @@ test('итог разговора: три способа, разговоры б�
   await openEnd(page)
   expect(await submitAndLeave(page)).not.toContain('Итог')
   await talk(page, CRISIS)
-  await expect(modal(page).getByRole('heading', { name: 'Если сейчас тяжело' })).toBeVisible({ timeout: 30_000 })
+  await expect(modal(page).getByRole('heading', { name: 'Сейчас важно поговорить с живым человеком' })).toBeVisible({ timeout: 30_000 })
   await modalButton(page, 'Закрыть').click()
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0, { timeout: 30_000 })
   await openEnd(page)

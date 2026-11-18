@@ -136,6 +136,33 @@ spec:
           port: 3000
 
 ---
+# Дашборд метрик для Sber500 (ns dashboard) читает агрегаты трасс через API метрик Langfuse web (:3000).
+# Обратная сторона — dashboard-allow-egress в k8s/dashboard/01-network-policy.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra-allow-ingress-dashboard-langfuse
+  namespace: infra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: langfuse
+      app.kubernetes.io/component: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dashboard
+          podSelector:
+            matchLabels:
+              app: dashboard
+      ports:
+        - protocol: TCP
+          port: 3000
+
+---
 # Исходящий трафик: DNS, внутренний трафик namespace, внешний HTTPS
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

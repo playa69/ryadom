@@ -8,7 +8,9 @@ import {
   type DialogWsErrorCode,
   type HotlineApiResponse,
   type MoodTone,
+  type SafetyAnswer,
   type SafetyLevel,
+  type SafetyStep,
   type TtsCodec,
 } from '@ryadom/contracts/api/dialogs'
 import { ApiPath } from '@ryadom/contracts/api/paths'
@@ -60,7 +62,14 @@ export interface DialogSocketDeps {
 export interface DialogSocketHandlers {
   onState(state: DialogSocketState): void
   onMessages(messages: DialogMessageView[]): void
-  onSafety(level: SafetyLevel, text: string | null, hotlines: HotlineApiResponse[]): void
+  onSafety(level: SafetyLevel, text: string | null, hotlines: HotlineApiResponse[], step?: SafetyStep): void
+  /** Crisis script (PROTEUS-279) outside the sheet: the pinned call button, the banner, the quick answers. */
+  onSafetyState?(state: {
+    step: SafetyStep
+    pinned: boolean
+    banner: boolean
+    ask: 'thoughts' | 'safe' | null
+  }): void
   /** The tone of the person's last turn; only sent with the agent's mood classifier on. */
   onMood?(tone: MoodTone, intensity: number): void
   onEnded(summary: DialogSummaryApiResponse | null): void
@@ -80,6 +89,11 @@ export interface DialogSocketHandlers {
    * `delta` above one is the record loaded after a drop, not a person speaking.
    */
   onUserReplies?(count: number, delta: number): void
+  /**
+   * The server counted a reply of the person for the account: `today` replies on this day in Moscow, in all dialogs
+   * and on all devices; `first` for the account's very first reply. For Metrika's goals.
+   */
+  onReplyCount?(today: number, first: boolean): void
 }
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 8000]
@@ -237,6 +251,21 @@ export class DialogSocket {
 
   endAudio(): void {
     this.send({ type: DialogClientFrame.AudioEnd })
+  }
+
+  /** The call button of the crisis branch was pressed. */
+  safetyCall(): void {
+    this.send({ type: DialogClientFrame.SafetyCall })
+  }
+
+  /** A quick answer under a crisis question. */
+  safetyAnswer(answer: SafetyAnswer): void {
+    this.send({ type: DialogClientFrame.SafetyAnswer, answer })
+  }
+
+  /** The person is back in the app after the call. */
+  safetyReturn(): void {
+    this.send({ type: DialogClientFrame.SafetyReturn })
   }
 
   cancelTts(messageId: string): void {
@@ -447,10 +476,34 @@ export class DialogSocket {
         this.handlers.onSpeech?.(frame.messageId, 'end')
         return
       case DialogServerFrame.Safety:
-        this.handlers.onSafety(frame.level, frame.text, frame.hotlines)
+        this.handlers.onSafety(frame.level, frame.text, frame.hotlines, frame.step)
+        // The sheet frame of the script also pins the call button for the rest of the session.
+        if (frame.step) {
+          this.handlers.onSafetyState?.({
+            step: frame.step,
+            pinned: frame.pinned === true,
+            banner: false,
+            ask: null,
+          })
+        }
+        return
+      case DialogServerFrame.SafetyState:
+        this.handlers.onSafetyState?.({
+          step: frame.step,
+          pinned: frame.pinned,
+          banner: frame.banner,
+          ask: frame.ask,
+        })
         return
       case DialogServerFrame.Mood:
         this.handlers.onMood?.(frame.tone, frame.intensity)
+        return
+      case DialogServerFrame.ReplyCount:
+        try {
+          this.handlers.onReplyCount?.(frame.today, frame.first)
+        } catch {
+          // A counter for analytics must not break the dialog.
+        }
         return
       case DialogServerFrame.Ended:
         this.closedByUs = true
@@ -507,10 +560,12 @@ export class DialogSocket {
     this.reconnectTimer = setTimeout(() => this.connect(), delay * spread)
   }
 
-  /** History from REST: the screen restores the feed after a drop, or opens a past dialog. */
+  /**
+   * History from REST: the screen restores the feed after a drop, or opens a past dialog. It merges
+   * into what is already shown rather than replacing it: the greeting and the replies still on their
+   * way to the server are not in the record yet and must not vanish.
+   */
   setHistory(messages: DialogMessageView[]): void {
-    this.messages = messages
-    this.lastMessageId = messages.at(-1)?.id
-    this.emitMessages()
+    this.reconcile(messages)
   }
 }

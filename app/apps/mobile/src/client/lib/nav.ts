@@ -64,10 +64,10 @@ export function startTalk(): void {
  * the request once, when it appears, and starts the conversation as its own button does.
  */
 export interface TalkRequest {
-  /** "Не сохранять этот разговор" was not ticked. */
-  saved: boolean
   /** "Запоминать важное" was turned on (the consent sheet accepted): memory is turned on before the start. */
   rememberMemory: boolean
+  /** A text start (the keyboard) opens the conversation in its text view; absent means voice. */
+  text?: boolean
 }
 
 let talkRequested: TalkRequest | null = null

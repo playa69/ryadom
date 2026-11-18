@@ -2,13 +2,14 @@ import type { Page } from '@playwright/test'
 import {
   button,
   expectNoHorizontalOverflow,
+  firstHello,
   modal,
   modalButton,
   openProfile,
   openWebApp,
   registerAndConfirm,
   signIn,
-  talkButton,
+  startVoiceButton,
   uniqueEmail,
   watchCsp,
   openSignIn,
@@ -39,10 +40,10 @@ async function presentAs(page: Page, userAgent: string): Promise<void> {
     )
 }
 
-/** The second device signs in to the account. */
+/** The second device signs in to the account: without a session it meets the first screen, and signs in from its menu. */
 async function signInOn(device: Page, email: string): Promise<void> {
   await openWebApp(device)
-  await expect(device.getByTestId('terms-gate')).toBeVisible()
+  await expect(firstHello(device)).toBeVisible()
   await openSignIn(device)
   await signIn(device, email)
 }
@@ -60,7 +61,7 @@ async function openSessions(page: Page): Promise<void> {
 /** What the other device meets once its session has been ended: its next call is refused, and it is signed out. */
 async function expectSignedOut(device: Page): Promise<void> {
   // The access token is still good for minutes: the next thing the person does is what finds out.
-  await talkButton(device).click()
+  await startVoiceButton(device).click()
   await expect(device).toHaveURL(/\/login$/, { timeout: 30_000 })
 }
 
@@ -123,7 +124,7 @@ test('устройства и сессии: список, завершение �
 
   // ── a dialog that is open on another device closes when its session ends ──
   await signInOn(other, email)
-  await talkButton(other).click()
+  await startVoiceButton(other).click()
   await expect(other).toHaveURL(/\/dialog\//, { timeout: 30_000 })
   await page.reload()
   await page.getByTestId('sessions-others').getByTestId('session-end').click()

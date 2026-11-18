@@ -88,7 +88,7 @@ export function mobileSpec(args, repoRoot) {
   // The conversation opens on the voice screen and starts listening (the fake microphone of the runner).
   const startVoice = async (page) => {
     await home(page)
-    await page.locator('.page-current').getByText('Поговорить').first().click()
+    await page.locator('.page-current').getByText('Начать разговор').first().click()
     await page.locator('.page-current .rd-voice').waitFor({ timeout: 30_000 })
     // The conversation starts hands-free: it is listening as soon as the voice screen is up.
     await page.locator('.page-current [data-testid="voice-caption"]').waitFor({ timeout: 30_000 })
@@ -101,7 +101,7 @@ export function mobileSpec(args, repoRoot) {
         Promise.reject(new DOMException('denied', 'NotAllowedError'))
     })
     await home(page)
-    await page.locator('.page-current').getByText('Поговорить').first().click()
+    await page.locator('.page-current').getByText('Начать разговор').first().click()
     await page.locator('.page-current .rd-dialog-bar textarea').waitFor({ timeout: 30_000 })
     // The toast that explains the fall back is not part of the screen.
     await page.waitForSelector('.toast', { state: 'detached', timeout: 10_000 }).catch(() => {})

@@ -36,8 +36,9 @@ export function startOver(): void {
  * content. Below 768px the sidebar is a drawer; from there up it is a column that can collapse.
  *
  * Home and «Люди рядом» are open to everyone. Without a session, a device with an anonymous identity
- * signs back in without a screen; anyone else first passes a separate consent gate, then gets the same
- * frame and home as a guest: the first message there makes the account and starts the conversation.
+ * signs back in without a screen; anyone else gets the same frame and home as a guest right away, where
+ * the consent window asks at the first action and the first message makes the account and starts the
+ * conversation.
  * Every other page without a session goes to the sign-in.
  *
  * It also holds the door for the terms: until the account has agreed to the current version, the

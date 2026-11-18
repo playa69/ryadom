@@ -34,6 +34,7 @@ import { getEnqueuedJobs } from '@ryadom/core/services/job-queue-service'
 import { getDb } from '@ryadom/core/shared'
 import { afterDeleteJob } from '../src/jobs/after-delete'
 import { closeAllDialogSessions, handleDialogSocket } from '../src/dialogs/gateway'
+import { countReply } from '../src/lib/reply-counts'
 import { resetDraining, startDraining } from '../src/lib/lifecycle'
 import { createJwt } from '../src/lib/jwt'
 import { createSessions } from '../src/lib/sessions'
@@ -575,7 +576,7 @@ interface AgentConnection {
   socket: WebSocket
   /** Headers of the handshake the gateway made. */
   headers: IncomingHttpHeaders
-  received: unknown[]
+  received: { type: string }[]
   binaryFrames: Buffer[]
 }
 
@@ -669,7 +670,7 @@ async function startGatewayServer(agentUrl: string) {
       return
     }
     wss.handleUpgrade(request, socket, head, (ws) =>
-      handleDialogSocket(ws as never, { env, jwt, sessions, analytics }, request),
+      handleDialogSocket(ws as never, { env, jwt, sessions, analytics, countReply }, request),
     )
   })
   await new Promise<void>((resolve) => setTimeout(resolve, 50))
@@ -812,6 +813,35 @@ describe('WebSocket-шлюз', () => {
     client.close()
   })
 
+  it('кризисный сценарий: safety_state доходит до клиента, нажатие звонка считается без человека и уходит агенту', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-crisis' }))
+    const agentSide = await agent.waitFor('d-crisis')
+
+    agentSide.socket.send(
+      JSON.stringify({ type: 'safety', level: 'crisis', text: 'Сейчас важно', step: 'call', pinned: true, trigger: 'red', source: 'model' }),
+    )
+    const safety = await nextFrame(client, DialogServerFrame.Safety)
+    expect(safety).toMatchObject({ step: 'call', pinned: true })
+    agentSide.socket.send(JSON.stringify({ type: 'safety_state', step: 'check', pinned: true, banner: false, ask: 'safe' }))
+    const state = await nextFrame(client, DialogServerFrame.SafetyState)
+    expect(state).toMatchObject({ step: 'check', pinned: true, banner: false, ask: 'safe' })
+
+    const before = gateway.analytics.events.length
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyCall }))
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyAnswer, answer: 'unknown' }))
+    client.send(JSON.stringify({ type: DialogClientFrame.SafetyAnswer, answer: 'nonsense' }))
+    await vi.waitFor(() => expect(agentSide.received.filter((f) => f.type === 'safety_answer')).toHaveLength(1))
+    expect(agentSide.received.filter((f) => f.type === 'safety_call')).toHaveLength(1)
+    expect(agentSide.received.filter((f) => f.type === 'safety_answer')).toEqual([{ type: 'safety_answer', answer: 'unknown' }])
+    const pressed = gateway.analytics.events.slice(before).filter((entry) => entry.event === 'crisis_call_pressed')
+    expect(pressed).toEqual([{ userId: null, event: 'crisis_call_pressed', properties: { level: 'red', source: 'model' } }])
+
+    client.close()
+  })
+
   it('кадр safety без линий помощи дополняется нашими', async () => {
     const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
@@ -891,6 +921,47 @@ describe('WebSocket-шлюз', () => {
     expect(JSON.stringify(mine)).not.toMatch(/секретн/)
   })
 
+  // `openspec/changes/add-metrika-daily-goals`, «Цели Метрики»: the count is per account, across dialogs and devices.
+  it('после принятой реплики шлюз присылает счёт реплик аккаунта за сутки и признак первой', async () => {
+    const { accessToken } = await gateway.signIn()
+    const counts: Record<string, unknown>[] = []
+    const collect = (socket: WebSocket) =>
+      socket.on('message', (data: Buffer, isBinary: boolean) => {
+        if (isBinary) return
+        const frame = JSON.parse(data.toString('utf8')) as Record<string, unknown>
+        if (frame.type === DialogServerFrame.ReplyCount) counts.push(frame)
+      })
+
+    const phone = new WebSocket(gateway.wsUrl)
+    collect(phone)
+    await waitOpen(phone)
+    phone.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-count-1' }))
+    const first = await agent.waitFor('d-count-1')
+    phone.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-1', text: 'привет' }))
+    await vi.waitFor(() => expect(counts).toHaveLength(1))
+    // A spoken turn counts too; a final transcript with no text (silence, an echo) does not.
+    first.socket.send(JSON.stringify({ type: 'transcript', text: '', final: true }))
+    first.socket.send(JSON.stringify({ type: 'transcript', text: 'ну вот', final: true, messageId: 'm-9' }))
+    await vi.waitFor(() => expect(counts).toHaveLength(2))
+    phone.close()
+
+    // Another device, another dialog, the same account: the count goes on.
+    const laptop = new WebSocket(gateway.wsUrl)
+    collect(laptop)
+    await waitOpen(laptop)
+    laptop.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId: 'd-count-2' }))
+    await agent.waitFor('d-count-2')
+    laptop.send(JSON.stringify({ type: DialogClientFrame.Message, clientId: 'c-2', text: 'ещё' }))
+    await vi.waitFor(() => expect(counts).toHaveLength(3))
+    laptop.close()
+
+    expect(counts).toEqual([
+      { v: 1, type: 'reply_count', today: 1, first: true },
+      { v: 1, type: 'reply_count', today: 2, first: false },
+      { v: 1, type: 'reply_count', today: 3, first: false },
+    ])
+  })
+
   it('аналитика: у событий диалога есть dialog_id, а счётчики берутся за весь диалог, если их знает агент', async () => {
     const dialogId = '6f1d6c1e-2f43-4a53-9d77-0a3d3a8f7b11'
     const { userId, accessToken } = await gateway.signIn()
@@ -947,14 +1018,32 @@ describe('WebSocket-шлюз', () => {
     )
     // A name outside the set is not reported: the report cannot be made to carry an arbitrary string.
     agentSide.socket.send(JSON.stringify({ type: 'component', component: 'секретный компонент', outcome: 'ok' }))
+    // The path and the reason are kept only from their closed sets (PROTEUS-282).
+    agentSide.socket.send(
+      JSON.stringify({ type: 'component', component: 'live', outcome: 'error', cached: false, pipeline: 'sber', reason: 'timeout' }),
+    )
+    agentSide.socket.send(
+      JSON.stringify({
+        type: 'component',
+        component: 'live',
+        outcome: 'error',
+        pipeline: 'секретный путь',
+        reason: 'секретная причина вендора',
+      }),
+    )
     await vi.waitFor(() =>
-      expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toHaveLength(2),
+      expect(gateway.analytics.events.filter((entry) => entry.userId === userId)).toHaveLength( 4),
     )
 
     const mine = gateway.analytics.events.filter((entry) => entry.userId === userId)
     expect(mine.map((entry) => [entry.event, entry.properties])).toEqual([
       ['component_called', { dialog_id: dialogId, component: 'tts', outcome: 'ok', cached: true }],
-      ['component_called', { dialog_id: dialogId, component: 'llm', outcome: 'error', cached: false }],
+      ['component_called', { dialog_id: dialogId, component: 'llm', outcome: 'error', cached: false, reason: 'unknown' }],
+      [
+        'component_called',
+        { dialog_id: dialogId, component: 'live', outcome: 'error', cached: false, pipeline: 'sber', reason: 'timeout' },
+      ],
+      ['component_called', { dialog_id: dialogId, component: 'live', outcome: 'error', cached: false, reason: 'unknown' }],
     ])
     expect(JSON.stringify(mine)).not.toMatch(/секретн/)
     client.close()

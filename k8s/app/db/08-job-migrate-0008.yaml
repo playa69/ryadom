@@ -1,23 +1,24 @@
 # =============================================================================
-# Job app-migrate-0007 — миграция БД app 0013 (ns prod)
+# Job app-migrate-0008 — миграция БД app 0014 (ns prod)
 #
-# Что делает (образ app/migrate:0.12.0 — из packages/db/Dockerfile той же ревизии, что api 0.12.0, в нём миграции 0000…0013):
-#   0013_push_subscriptions  таблица push_subscriptions — подписки устройств на уведомления (канал rustore, токен
-#                            push-сервиса, пуш-проект, пакет, сессия); уникальность (channel, token), cascade к users
-# После миграций тот же процесс обновляет схему очереди задач `pgboss`, если нужно. Только добавляет: прежний api (0.11.x)
+# Что делает (образ app/migrate:0.15.0 — из packages/db/Dockerfile той же ревизии, что api 0.15.0, в нём миграции 0000…0014):
+#   0014_user_reply_counts   таблица user_reply_counts — счёт принятых реплик аккаунта за сутки по Москве для целей
+#                            Яндекс Метрики (одна строка на аккаунт, cascade к users); каждому неудалённому аккаунту
+#                            ставится строка replies = 0 без first_reply_at: он считается уже говорившим
+# После миграций тот же процесс обновляет схему очереди задач `pgboss`, если нужно. Только добавляет: прежний api (0.14.x)
 # новую таблицу не замечает, миграцию можно применять заранее. Существующие таблицы не меняются.
 #
 # Порядок в выкате:
-#   kubectl apply -f k8s/app/db/07-job-migrate-0007.yaml
-#   kubectl -n prod wait --for=condition=complete job/app-migrate-0007 --timeout=240s
-#   kubectl -n prod logs job/app-migrate-0007
-# Проверка: в журнале ожидается «applied 1 of 14» (0013_push_subscriptions), затем «job queue schema installed or upgraded».
+#   kubectl apply -f k8s/app/db/08-job-migrate-0008.yaml
+#   kubectl -n prod wait --for=condition=complete job/app-migrate-0008 --timeout=240s
+#   kubectl -n prod logs job/app-migrate-0008
+# Проверка: в журнале ожидается «applied 1 of 15» (0014_user_reply_counts), затем «job queue schema installed or upgraded».
 # Ненулевой код выхода = миграция не применена (под повторит до трёх раз). drizzle применяет только ещё не применённые.
 # Откат: миграции назад не откатываются, но откат api безопасен (прежний образ таблицу не читает). Если схему всё же
-# нужно вернуть: DROP TABLE push_subscriptions и запись журнала drizzle вместе с ней.
+# нужно вернуть: DROP TABLE user_reply_counts и запись журнала drizzle вместе с ней.
 #
-# Предыдущий Job (app-migrate-0006, миграции 0009…0012) уже применён; если ещё есть:
-# kubectl -n prod delete job app-migrate-0006 --ignore-not-found.
+# Предыдущий Job (app-migrate-0007, миграция 0013) уже применён; если ещё есть:
+# kubectl -n prod delete job app-migrate-0007 --ignore-not-found.
 #
 # sidecar.istio.io/inject=false: Job с istio-сайдкаром зависает, если сайдкар не умеет завершаться вместе с
 # приложением; PG в ryadom-db вне mesh, так что сайдкар здесь ничего не даёт.
@@ -26,7 +27,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: app-migrate-0007
+  name: app-migrate-0008
   namespace: prod
   labels:
     app: app-migrate
@@ -54,7 +55,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/migrate:0.12.0
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/migrate:0.15.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

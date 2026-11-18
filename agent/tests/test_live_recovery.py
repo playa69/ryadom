@@ -277,3 +277,25 @@ def test_a_real_continuation_answers_both_without_a_second_request(user_id: str)
     while time.monotonic() < deadline and counter("agent_live_recoveries_total", outcome="continued") == continued:
         time.sleep(0.02)
     assert counter("agent_live_recoveries_total", outcome="continued") == continued + 1
+
+
+def test_a_failed_voice_turn_reports_the_path_and_the_reason_in_the_component_frame(user_id: str, caplog: pytest.LogCaptureFixture) -> None:
+    """PROTEUS-282: у отказавшего хода в кадре `component` путь и код причины, в журнале строка с компонентом и диалогом."""
+    connector = QuietConnector(DroppingLink)
+    connector.fail_from = 2
+    before = REGISTRY.get_sample_value(
+        "agent_component_errors_total", {"component": "gemini_live", "pipeline": "gemini", "reason": "closed"}
+    ) or 0.0
+
+    def failed_call(fs: list) -> bool:
+        return any(f[0] == "json" and f[1]["type"] == "component" and f[1]["component"] == "live" and f[1]["outcome"] == "error" for f in fs)
+
+    frames, _ = run(connector, user_id, speak_turn, failed_call)
+    frame = next(f[1] for f in frames if f[0] == "json" and f[1]["type"] == "component" and f[1]["outcome"] == "error")
+    assert frame["pipeline"] == "gemini" and frame["reason"] == "closed"
+    assert set(frame) == {"v", "type", "component", "outcome", "cached", "pipeline", "reason"}
+    line = next(m for m in caplog.messages if m.startswith("voice link closed"))
+    assert "component=gemini_live" in line and "reason=closed" in line and "pipeline=gemini" in line and "dialog_id=" in line
+    assert REGISTRY.get_sample_value(
+        "agent_component_errors_total", {"component": "gemini_live", "pipeline": "gemini", "reason": "closed"}
+    ) == before + 1

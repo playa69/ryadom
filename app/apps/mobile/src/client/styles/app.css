@@ -2,8 +2,11 @@
  * Ryadom screens. Colors and fonts come from the tokens in tokens.css. Classes prefixed rd- are
  * ours, everything else is Framework7.
  *
- * The theme is dark: minimal, large type, and the breathing animation as a visual anchor
- *. No gamification and no bright panels: the product is opened when things are hard.
+ * The palette follows the device clock (light 07:00–21:59 local, dark otherwise) unless the person
+ * chose a theme by hand; the native shell is always dark. The light palette is `data-theme='light'`
+ * on the root (tokens.css), the dark one the default. Minimal, large type, and the breathing
+ * animation as a visual anchor. No gamification and no bright panels: the product is opened when
+ * things are hard.
  */
 
 html,
@@ -776,6 +779,16 @@ input:-webkit-autofill:focus {
   --orb-ring: rgb(110 220 150);
 }
 
+/* The crisis script (PROTEUS-279): a calm, even light. The motion is held still in orb-motion (`steady`). */
+.rd-orb[data-mood='crisis'] {
+  --orb-hi: rgb(236 240 247);
+  --orb-warm: rgb(196 206 224);
+  --orb-mid: rgb(120 138 176);
+  --orb-deep: rgb(58 70 104);
+  --orb-halo: rgb(110 128 168);
+  --orb-ring: rgb(170 184 212);
+}
+
 /* ── Home ────────────────────────────────────────────────────────────────── */
 
 .rd-home {
@@ -814,15 +827,104 @@ input:-webkit-autofill:focus {
   margin-top: var(--ryadom-s-2);
 }
 
+/* ── The theme switch (PWA and Telegram) ── */
+
+/*
+ * Day/night on the first and the home screen. The visual pill is small; the button itself is the
+ * 44×44 hit area around it. A tap, a horizontal swipe across the pill (pointerup decides) and the
+ * keyboard (it is a button) all switch.
+ */
+.rd-theme-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  /* A horizontal swipe belongs to the switch; the page keeps the vertical scroll. */
+  touch-action: pan-y;
+  cursor: pointer;
+}
+
+.rd-theme-switch-track {
+  position: relative;
+  width: 52px;
+  height: 28px;
+  border: 1px solid var(--ryadom-line-strong);
+  border-radius: 999px;
+  background: var(--ryadom-surface-2-glass);
+}
+
+.rd-theme-switch-knob {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: var(--ryadom-brand-fill);
+  box-shadow: var(--ryadom-shadow-1);
+  transition: transform 0.2s ease;
+}
+
+/* The knob carries the current theme's mark, so the switch reads at a glance. */
+.rd-theme-switch-icon {
+  color: #fff;
+}
+
+/* The crescent must read as glowing on the brand fill; two soft layers stay inside the pill. */
+.rd-theme-switch-track--dark .rd-theme-switch-icon {
+  color: #ffe9a8;
+  filter: drop-shadow(0 0 2px rgba(255, 223, 140, 0.95)) drop-shadow(0 0 5px rgba(255, 200, 90, 0.55));
+}
+
+.rd-theme-switch-track--dark .rd-theme-switch-knob {
+  transform: translateX(24px);
+}
+
+/* Home: the same corner row as SOS, left of it — SOS keeps the far right. */
+.rd-theme-switch--corner {
+  position: absolute;
+  top: calc(var(--f7-safe-area-top, 0px) + 3px);
+  right: calc(104px + var(--f7-safe-area-right, 0px));
+  z-index: 500;
+}
+
+/* The offline bar covers the corner row: the switch moves down with the SOS button. */
+.framework7-root:has(.rd-offline) .rd-theme-switch--corner {
+  top: calc(var(--f7-safe-area-top, 0px) + 41px);
+}
+
 /* The first screen is home for someone new: the mark and «Войти» sit above it, where home has its bar;
    SOS keeps its own place in the corner, as on home. */
 .rd-welcome-top {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--ryadom-s-3);
   padding: calc(var(--ryadom-s-3) + var(--f7-safe-area-top, 0px))
     calc(var(--ryadom-s-5) + var(--f7-safe-area-right, 0px)) 0
     calc(var(--ryadom-s-5) + var(--f7-safe-area-left, 0px));
+}
+
+/* The mark keeps the left edge; «Войти» and the theme switch hold the right one. */
+.rd-welcome-top .rd-logo-button {
+  margin-right: auto;
+}
+
+/* The fixed SOS pill owns the top right corner of a phone (the corner theme switch clears it by
+   104px): this row's right side must stop short of it, or the pill covers «Войти» and the theme
+   switch. From 700px SOS moves into the rail and the row keeps its own padding. */
+@media (max-width: 699px) {
+  .rd-welcome-top {
+    padding-right: calc(104px + var(--f7-safe-area-right, 0px));
+  }
 }
 
 /* The foot of the first screen: the agreement and the terms of keeping, last in the column. */
@@ -2251,6 +2353,20 @@ input:-webkit-autofill:focus {
     display: none;
   }
 
+  /* The anonymous view has no rail: its SOS stays in the corner instead of disappearing. */
+  .framework7-root:has(.rd-welcome-top) .rd-sos-button {
+    display: inline-flex;
+  }
+
+  .framework7-root:has(.rd-welcome-top) .rd-welcome-top {
+    padding-right: calc(104px + var(--f7-safe-area-right, 0px));
+  }
+
+  /* With SOS in the rail, the corner of the home screen is the theme switch's alone. */
+  .rd-theme-switch--corner {
+    right: calc(16px + var(--f7-safe-area-right, 0px));
+  }
+
   /* On a phone the conversation hides the tabs for its input field. The rail on the side is not
      in its way, so navigation stays. */
   .views:has(> .view.tab-active > .page-current.rd-no-tabbar) > .toolbar.tabbar {
@@ -3310,4 +3426,169 @@ p.rd-recap-text {
   border: 1px solid #e5484d;
   background: #3d1418;
   color: var(--ryadom-text);
+}
+
+/* ── Crisis script (PROTEUS-279) ─────────────────────────────────────────── */
+
+.rd-crisis-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ryadom-s-2);
+  padding: var(--ryadom-s-2) var(--ryadom-s-4) 0;
+}
+
+.rd-crisis-call {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  border: 1px solid var(--ryadom-danger-100);
+  border-radius: 999px;
+  background: rgba(var(--ryadom-danger-rgb, 220, 38, 38), 0.22);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ryadom-text);
+  text-decoration: none;
+}
+
+.rd-crisis-112 {
+  display: block;
+  text-align: center;
+  text-decoration: underline;
+}
+
+.rd-crisis-safe {
+  display: block;
+  margin: var(--ryadom-s-3) auto 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  text-decoration: underline;
+  color: var(--ryadom-text-dim, var(--ryadom-text));
+  cursor: pointer;
+}
+
+.rd-crisis-banner {
+  min-height: 44px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  font: inherit;
+  font-weight: 700;
+  color: var(--ryadom-text);
+  cursor: pointer;
+}
+
+.rd-crisis-ask {
+  display: flex;
+  gap: var(--ryadom-s-2);
+}
+
+.rd-crisis-ask button {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid var(--ryadom-line);
+  border-radius: var(--ryadom-r-m);
+  background: var(--ryadom-surface-glass);
+  font: inherit;
+  font-weight: 600;
+  color: var(--ryadom-text);
+  cursor: pointer;
+}
+
+/* ── First screen of a new person (PWA and Telegram) and the start buttons of home ───────────────── */
+
+.rd-first-hello {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ryadom-s-4);
+  /* Border-box: otherwise the padding is added on top of the height and the screen scrolls by it. */
+  box-sizing: border-box;
+  min-height: calc(100% - 60px);
+  padding: var(--ryadom-s-2) var(--ryadom-s-5) calc(var(--ryadom-s-3) + var(--f7-safe-area-bottom, 0px));
+  text-align: center;
+}
+
+/* The whole stage is the target: the sphere is large and need not be aimed at. */
+.rd-first-hello-stage {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  cursor: pointer;
+}
+
+.rd-first-hello-stage .rd-orb {
+  width: min(70vw, 34vh, 320px);
+}
+
+.rd-first-hello-caption {
+  margin: 0;
+  font-size: var(--ryadom-t-2xl);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: var(--ryadom-tracking-tight);
+  color: var(--ryadom-text);
+}
+
+/* One sentence per line, so "Я рядом" never splits. */
+.rd-first-hello-caption span {
+  display: block;
+}
+
+.rd-first-hello-actions,
+.rd-home-start {
+  display: flex;
+  align-items: stretch;
+  gap: var(--ryadom-s-2);
+  width: 100%;
+  max-width: 360px;
+}
+
+.rd-first-hello-actions > .button:first-child,
+.rd-home-start > .button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The keyboard is the quieter way in: an icon beside the voice button, as tall as it. */
+.rd-first-hello-text {
+  flex: none;
+  width: var(--f7-button-large-height, 48px);
+  padding: 0;
+}
+
+.rd-first-hello-plaque {
+  width: 100%;
+  max-width: 360px;
+  padding: var(--ryadom-s-3) var(--ryadom-s-4);
+  border: 1px solid var(--ryadom-line, rgba(127, 127, 127, 0.25));
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ryadom-text-dim);
+}
+
+.rd-first-hello-plaque p {
+  margin: 0;
+}
+
+.rd-first-hello-plaque .rd-fineprint {
+  margin-top: var(--ryadom-s-1);
+}
+
+/* "Не запоминать этот разговор": a tick under the start buttons, only while memory is on. */
+.rd-first-hello-incognito {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ryadom-s-2);
+  margin-top: var(--ryadom-s-3);
+  font-size: 14px;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
 }

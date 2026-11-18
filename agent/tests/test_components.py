@@ -32,7 +32,7 @@ class Calls:
 
     def __init__(self) -> None:
         self.items: list[tuple[str, str, bool]] = []
-        model_usage.bind_calls(lambda component, outcome, cached: self.items.append((component, outcome, cached)))
+        model_usage.bind_calls(lambda component, outcome, cached, pipeline=None, reason=None: self.items.append((component, outcome, cached)))
 
 
 @pytest.fixture
@@ -152,8 +152,8 @@ def test_a_typed_turn_reports_the_safety_check_and_the_model_call_and_nothing_el
             send_user_message(ws, "c-1", "Мне плохо")
             frames = read_frames(ws, answered_and_counted)
     assert sorted(components(frames)) == [("live", "ok", False), ("safety", "ok", False)]
-    frame = next(b for k, b in frames if k == "json" and b["type"] == "component")
-    assert set(frame) == {"v", "type", "component", "outcome", "cached"}
+    frame = next(b for k, b in frames if k == "json" and b["type"] == "component" and b["component"] == "live")
+    assert set(frame) == {"v", "type", "component", "outcome", "cached", "pipeline"}
 
 
 def test_a_crisis_phrase_is_still_one_safety_call_and_the_model_is_not_called(user_id: str) -> None:

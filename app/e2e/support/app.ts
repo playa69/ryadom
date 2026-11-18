@@ -31,10 +31,14 @@ export function field(page: Page, name: string) {
   return screen(page).locator(`input[name="${name}"]`)
 }
 
-/** A button whether it is a `button` or a Framework7 `a`. */
+/**
+ * A button whether it is a `button` or a Framework7 `a`. A string name matches the whole accessible
+ * name: the substring default would let «Начать текстом» or other longer names steal a lookup.
+ */
 export function button(page: Page, name: string | RegExp) {
   const scope = screen(page)
-  return scope.getByRole('button', { name }).or(scope.getByRole('link', { name })).first()
+  const options = typeof name === 'string' ? { name, exact: true } : { name }
+  return scope.getByRole('button', options).or(scope.getByRole('link', options)).first()
 }
 
 /**
@@ -73,15 +77,56 @@ export function sheetButton(page: Page, name: string | RegExp) {
   return scope.getByRole('button', { name }).or(scope.getByRole('link', { name })).first()
 }
 
-export async function openApp(page: Page, options: { keepMemoryInvite?: boolean } = {}): Promise<void> {
+/**
+ * The consent sheet of the first text or voice start (`openspec/changes/add-fast-dialog-start`,
+ * «Согласие при первом действии»), open over home. Other sheets share `.sheet-modal.modal-in`,
+ * so this one is picked by its body.
+ */
+export function consentSheet(page: Page) {
+  return page.locator('.sheet-modal.modal-in:has([data-testid="consent-sheet"])')
+}
+
+/** The first screen of a new person (`openspec/changes/rework-web-first-screen`): the sphere, the greeting, two ways to start. */
+export function firstHello(page: Page) {
+  return screen(page).getByTestId('first-hello')
+}
+
+/** «Поговорить» on the first screen. */
+export function helloVoice(page: Page) {
+  return screen(page).getByTestId('hello-voice')
+}
+
+/** The keyboard button on the first screen. */
+export function helloText(page: Page) {
+  return screen(page).getByTestId('hello-text')
+}
+
+/** «Начать разговор» on the signed-in home, and the keyboard beside it. */
+export function homeStartVoice(page: Page) {
+  return screen(page).getByTestId('home-start-voice')
+}
+
+export function homeStartText(page: Page) {
+  return screen(page).getByTestId('home-start-text')
+}
+
+/** The page must not scroll sideways at any width: that is the first thing a narrow screen breaks. */
+export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
+  const overflow = await page.evaluate(
+    () =>
+      Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) -
+      document.documentElement.clientWidth,
+  )
+  expect(overflow, 'страница шире окна').toBeLessThanOrEqual(0)
+}
+
+export async function openApp(page: Page): Promise<void> {
   await page.goto(`${PWA_URL}/`)
-  // The sheet "Рядом теперь запоминает важное" would cover home of a new account: unless a test is about it,
-  // it is already answered, like for a person who has seen it. Read when home opens.
-  if (!options.keepMemoryInvite) {
-    await page.evaluate((key) => window.localStorage.setItem(key, '1'), 'ryadom.memory-invite-dismissed')
-  }
-  // A new visitor lands on the consent gate, someone with a session on the active home.
-  await expect(button(page, 'Поговорить').or(button(page, 'Продолжить'))).toBeVisible({ timeout: 30_000 })
+  // A new visitor meets the first screen («Поговорить»), someone with a session the signed-in home
+  // («Начать разговор»): the agreements are asked in a sheet at the first press.
+  await expect(button(page, 'Поговорить').or(button(page, 'Начать разговор'))).toBeVisible({
+    timeout: 30_000,
+  })
   // The PWA install banner covers the bottom of the screen and is not needed in the test browser.
   const dismiss = page.getByRole('button', { name: 'Скрыть' })
   if (await dismiss.isVisible().catch(() => false)) await dismiss.click()
@@ -100,17 +145,17 @@ export async function startAnonymously(page: Page): Promise<void> {
     JSON.stringify(JSON.stringify(device)),
   )
   await page.reload()
-  await expect(screen(page).getByTestId('welcome-talk'), 'не первый экран, а главная').toHaveCount(0, {
+  await expect(screen(page).getByTestId('first-hello'), 'не первый экран, а главная').toHaveCount(0, {
     timeout: 30_000,
   })
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
 }
 
 export async function signIn(page: Page, email: string, password = PASSWORD): Promise<void> {
   await field(page, 'email').fill(email)
   await field(page, 'password').fill(password)
   await button(page, 'Войти').click()
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 20_000 })
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 20_000 })
 }
 
 /** Sign-up with email confirmation: afterwards the person is already inside. */
@@ -138,8 +183,8 @@ export async function registerAndConfirm(page: Page, email: string, name = 'Те
   // Six digits submit on their own, no button needed.
   await page.getByRole('textbox', { name: 'Код из письма' }).fill(code)
 
-  await expect(button(page, 'Поговорить')).toBeVisible({ timeout: 30_000 })
-  await expect(screen(page).getByTestId('data-consent')).toHaveCount(0)
+  await expect(button(page, 'Начать разговор')).toBeVisible({ timeout: 30_000 })
+  await expect(screen(page).getByTestId('data-consent-toggle')).not.toBeVisible()
 }
 
 export async function openTab(page: Page, label: 'Главная' | 'Дневник' | 'Профиль'): Promise<void> {

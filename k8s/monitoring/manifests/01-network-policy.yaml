@@ -174,11 +174,15 @@ spec:
         - protocol: UDP
           port: 9153
     # Istio sidecar/proxy metrics (:15090, job istio-proxy): сайдкары
-    # приложений в prod + сам ingressgateway в istio-system
+    # приложений в prod и agent + сам ingressgateway в istio-system.
+    # Без agent здесь istio-proxy агента был up=0 (PROTEUS-282).
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: prod
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: istio-system

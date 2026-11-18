@@ -35,7 +35,7 @@ class Usage:
 
 
 Sink = Callable[[Usage], None]
-CallSink = Callable[[str, str, bool], None]  # компонент, исход, из памяти
+CallSink = Callable[[str, str, bool, str | None, str | None], None]  # компонент, исход, из памяти, путь, причина
 
 
 _sink: ContextVar[Sink | None] = ContextVar("usage_sink", default=None)
@@ -51,16 +51,16 @@ def record(model: str, task: str, direction: str, modality: str, unit: str, amou
         dialog_sink(Usage(model, task, direction, modality, unit, amount))
 
 
-def call(component: str, outcome: str = "ok", cached: bool = False) -> None:
+def call(component: str, outcome: str = "ok", cached: bool = False, pipeline: str | None = None, reason: str | None = None) -> None:
     """Одно реальное обращение к компоненту агента. Счётчик Prometheus растёт всегда; если оно идёт внутри диалога,
-    сессия получает его и сообщает шлюзу кадром `component`: название, исход, «из памяти», больше ничего (ни промпта, ни
-    текста, ни ошибки провайдера). Прогрев озвучки при старте идёт вне диалога и остаётся только в счётчике."""
+    сессия получает его и сообщает шлюзу кадром `component`: название, исход, «из памяти», путь (`sber` | `gemini`) и код
+    причины ошибки (app/core/reasons.py), больше ничего (ни промпта, ни текста, ни ошибки провайдера). Прогрев озвучки при старте идёт вне диалога и остаётся только в счётчике."""
     COMPONENT_CALLS_TOTAL.labels(component, outcome, "true" if cached else "false").inc()
     sink = _call_sink.get()
     if sink is None:
         return
     try:
-        sink(component, outcome, cached)
+        sink(component, outcome, cached, pipeline, reason)
     except Exception:
         logger.exception("component call report failed")
 

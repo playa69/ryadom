@@ -1,0 +1,121 @@
+# =============================================================================
+# Job: роль dashboard + база dashboard в CNPG-кластере ryadom-db
+# =============================================================================
+# База снимков метрик дашборда Sber500 (openspec/changes/update-sber500-dashboard-metrics):
+# сервис пишет туда только агрегаты (дата и шесть целых чисел), таблицу
+# daily_metrics создаёт сам при старте (идемпотентный DDL в dashboard/app.py).
+#
+# Запускать ПОСЛЕ создания Secret dashboard-db-credentials (ключ password, в ns
+# ryadom-db; значение хранится локально у администратора, то же значение, что в
+# DASHBOARD_DATABASE_URL Secret'а dashboard-secrets) и когда кластер
+# ryadom-db healthy:
+#   kubectl -n ryadom-db wait --for=condition=ready pod -l cnpg.io/cluster=ryadom-db
+#   kubectl apply -f k8s/app/db/02-job-create-dashboard-db.yaml
+#   kubectl -n ryadom-db wait --for=condition=complete job/create-dashboard-db
+#
+# Подключается суперпользователем postgres (Secret ryadom-db-superuser) — по
+# образцу 01-job-create-db.yaml; SA db-jobs уже создан манифестом Langfuse
+# (здесь не пересоздаём, чтобы не затронуть чужой ресурс).
+#
+# Что делает (идемпотентно, ТОЛЬКО роль dashboard и база dashboard, чужие базы
+# не трогает):
+#   1. CREATE ROLE dashboard LOGIN, если нет; атрибутов (SUPERUSER, CREATEDB,
+#      CREATEROLE) у роли нет; пароль всегда выравнивается с Secret
+#      (Secret — источник правды: пересоздали секрет → перезапустили Job);
+#   2. CREATE DATABASE dashboard OWNER dashboard, если нет;
+#   3. Проверка, что базы app и agent существуют (иначе контроль прав
+#      ответил бы NULL и упал непонятно);
+#   4. Контроль минимальности прав: у роли нет CREATE на базах agent и app,
+#      иначе Job падает. Отдельных GRANT'ов роли никто не выдаёт, а CONNECT к
+#      чужим базам приходит от PUBLIC (дефолт кластера) и ничего не открывает:
+#      без прав на объекты роль не может ни читать, ни писать таблицы app/agent.
+#      Read-only доступ к базе app (для APP_DATABASE_URL) — отдельная роль,
+#      создаётся администратором вручную (k8s/dashboard/README.md).
+# Повторный прогон: удалить старый Job (kubectl -n ryadom-db delete job
+# create-dashboard-db) и применить заново.
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-dashboard-db
+  namespace: ryadom-db
+  labels:
+    app: dashboard
+    component: db-init
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: dashboard
+        component: db-init
+    spec:
+      serviceAccountName: db-jobs
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: registry-pull
+      containers:
+        - name: psql
+          # Образ из зеркала cr.yandex (см. k8s/README.md «Реестр образов»)
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/library/postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              export PGPASSWORD="${POSTGRES_PASSWORD}"
+              HOST=ryadom-db-rw.ryadom-db.svc.cluster.local
+              psql_admin() { psql -h "$HOST" -U "$POSTGRES_USER" -v ON_ERROR_STOP=1 "$@"; }
+
+              # 1. Роль dashboard (пароль из Secret; psql подставляет :'pw' из stdin)
+              if ! psql_admin -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'dashboard'" | grep -q 1; then
+                echo "CREATE ROLE dashboard LOGIN" | psql_admin -d postgres
+              fi
+              echo "ALTER ROLE dashboard WITH LOGIN PASSWORD :'pw'" | psql_admin -d postgres -v pw="$DASHBOARD_DB_PASSWORD"
+
+              # 2. База dashboard
+              if ! psql_admin -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'dashboard'" | grep -q 1; then
+                psql_admin -d postgres -c "CREATE DATABASE dashboard OWNER dashboard"
+              fi
+
+              # 3. Базы app и agent должны существовать: без этого проверка прав
+              #    ниже ответила бы NULL и упала бы непонятно
+              for db in app agent; do
+                if ! psql_admin -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
+                  echo "ОШИБКА: база $db не существует — контроль прав невозможен" >&2
+                  exit 1
+                fi
+              done
+
+              # 4. Контроль минимальности: CREATE на чужих базах у роли быть не должно
+              psql_admin -d postgres -tAc \
+                "SELECT NOT (has_database_privilege('dashboard', 'app', 'CREATE')
+                          OR has_database_privilege('dashboard', 'agent', 'CREATE'))" | grep -qx t
+              echo "OK: role dashboard, database dashboard; прав CREATE на базы agent и app нет"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ryadom-db-superuser
+                  key: password
+            - name: DASHBOARD_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-db-credentials
+                  key: password
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"

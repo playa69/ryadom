@@ -117,6 +117,8 @@ export interface OrbMotionSource {
   state(): OrbMotionState
   /** Loudness 0..1; asked on a frame only when the state carries a voice. */
   level(): number
+  /** While true the sphere holds a still, even light: no breathing, no swelling, no turning (the crisis script). */
+  steady?(): boolean
 }
 
 const num = (value: number, digits: number) => value.toFixed(digits)
@@ -137,6 +139,15 @@ export function startOrbMotion(element: HTMLElement, source: OrbMotionSource): (
   const tick = (now: number) => {
     const dt = before === undefined ? 0 : (now - before) / 1000
     before = now
+    if (source.steady?.()) {
+      element.style.setProperty('--orb-level', '0')
+      element.style.setProperty('--orb-breath', '0.5')
+      element.style.setProperty('--orb-breath-lag', '0.5')
+      element.style.setProperty('--orb-turn', '0')
+      before = undefined
+      frame = requestAnimationFrame(tick)
+      return
+    }
     const state = source.state()
     const out = motion.step(state, carriesVoice(state) ? source.level() : 0, dt)
     element.style.setProperty('--orb-level', num(out.level, 4))

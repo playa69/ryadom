@@ -31,14 +31,14 @@ test('Метрика в PWA: запуск без записи экрана, эк
   expect(refusedMetrikaRequests(page)).toEqual([])
 })
 
-test('цели разговора в PWA: первая реплика, третья — основная цель', async ({ page }) => {
+test('цели разговора в PWA: первая реплика, третья — polz_3', async ({ page }) => {
   test.setTimeout(150_000)
   await openApp(page)
   await startAnonymously(page)
-  await button(page, 'Поговорить').click()
+  await button(page, 'Начать разговор').click()
   // The conversation opens on the voice; the replies of this scenario are typed.
   await page.getByRole('button', { name: 'Писать текстом' }).click({ timeout: 30_000 })
-  const input = page.getByPlaceholder(DRAFT_PLACEHOLDER)
+  const input = page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER)
   await expect(input).toBeVisible()
 
   const say = async (text: string, sent: number) => {
@@ -54,7 +54,7 @@ test('цели разговора в PWA: первая реплика, трет�
   await say('Второе сообщение', 2)
   expect(await reachedGoals(page)).toEqual(['first_reply'])
   await say('Третье сообщение', 3)
-  await expect.poll(() => reachedGoals(page)).toEqual(['first_reply', 'first_dialog_3_replies'])
+  await expect.poll(async () => (await reachedGoals(page)).sort()).toEqual(['first_reply', 'polz_3'])
   await say('Четвёртое сообщение', 4)
-  expect(await reachedGoals(page)).toEqual(['first_reply', 'first_dialog_3_replies'])
+  expect((await reachedGoals(page)).sort()).toEqual(['first_reply', 'polz_3'])
 })

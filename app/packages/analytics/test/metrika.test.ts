@@ -7,7 +7,7 @@ import {
   metrikaGoal,
   metrikaHit,
   metrikaWillReport,
-  reportDialogReplies,
+  reportReplyCount,
   resetMetrikaForTests,
   setMetrikaSuppressed,
   startMetrika,
@@ -56,7 +56,7 @@ beforeEach(() => {
 
 describe('каталог целей', () => {
   it('идентификаторы совпадают с теми, что заведены в кабинете счётчика (цель «Переход в продукт» — по адресам, её здесь нет)', () => {
-    expect(Object.values(MetrikaGoal)).toEqual(['first_reply', 'first_dialog_3_replies'])
+    expect(Object.values(MetrikaGoal)).toEqual(['open_app', 'first_reply', 'polz_3', 'dau_10'])
   })
 })
 
@@ -189,52 +189,30 @@ describe('отказ и Do Not Track', () => {
   })
 })
 
-describe('цели разговора', () => {
-  it('первая принятая реплика — цель first_reply', () => {
+// `openspec/changes/add-metrika-daily-goals`, «Цели Метрики».
+describe('цели по счёту реплик аккаунта', () => {
+  function goals(): unknown[] {
+    return calls('reachGoal').map((call) => call[2])
+  }
+
+  it('первая реплика аккаунта — first_reply, третья за сутки — polz_3, десятая — dau_10', () => {
     begin({})
-    reportDialogReplies(1, 1)
-    expect(calls('reachGoal')).toEqual([[COUNTER, 'reachGoal', 'first_reply']])
+    reportReplyCount(1, true)
+    expect(goals()).toEqual(['first_reply'])
+    for (let today = 2; today <= 12; today += 1) reportReplyCount(today, false)
+    expect(goals()).toEqual(['first_reply', 'polz_3', 'dau_10'])
   })
 
-  it('прыжок счётчика больше единицы — это загрузка записи после переподключения, а не реплика', () => {
+  it('следующие сутки начинают счёт заново, а first_reply не повторяется', () => {
     begin({})
-    reportDialogReplies(5, 5)
-    reportDialogReplies(3, 3)
-    expect(calls('reachGoal')).toHaveLength(0)
+    for (let today = 1; today <= 10; today += 1) reportReplyCount(today, false)
+    expect(goals()).toEqual(['polz_3', 'dau_10'])
   })
 
-  it('вторая реплика целей не даёт', () => {
-    begin({})
-    reportDialogReplies(2, 1)
-    expect(calls('reachGoal')).toHaveLength(0)
-  })
-
-  it('третья реплика — основная цель, один раз на устройстве', () => {
-    begin({})
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toEqual([[COUNTER, 'reachGoal', 'first_dialog_3_replies']])
-    // The fourth reply, and the third one of the next dialog, do not repeat it.
-    reportDialogReplies(4, 1)
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toHaveLength(1)
-  })
-
-  it('отметка «цель достигнута» переживает перезагрузку страницы', () => {
-    begin({})
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toHaveLength(1)
-    // A new page load: the module state is gone, the device's storage is not.
-    resetMetrikaForTests()
-    ym.mockClear()
-    begin({})
-    reportDialogReplies(3, 1)
-    expect(calls('reachGoal')).toHaveLength(0)
-  })
-
-  it('кто отказался от аналитики, «потратить» цель не может: отметка не ставится', () => {
+  it('без Метрики и после отказа цели не уходят', () => {
     begin({ suppressed: true })
-    reportDialogReplies(3, 1)
-    expect(globalThis.localStorage.getItem('ryadom.metrika.main-goal')).toBeNull()
+    reportReplyCount(3, true)
+    expect(ym).not.toHaveBeenCalled()
   })
 })
 
@@ -337,6 +315,39 @@ describe('склейка с запуском аналитики', () => {
       'https://prod.test/android/diary/journal/:id/',
       'https://prod.test/android/home/',
     ])
+  })
+
+  // `openspec/changes/add-metrika-daily-goals`, «Яндекс Метрика: что передаётся».
+  it('переход из Директа: в хит Метрики уходят метки и yclid, а нецифровой yclid отбрасывается', async () => {
+    vi.stubGlobal('location', {
+      origin: 'https://app.test',
+      pathname: '/',
+      href: 'https://app.test/?utm_campaign=autumn_promo&yclid=123456789&gclid=abc',
+    })
+    const { started } = launch(NO_POSTHOG, { platform: 'landing' })
+    trackPageview()
+    await started
+    expect(calls('hit')[0]![2]).toBe('https://app.test/?utm_campaign=autumn_promo&yclid=123456789')
+
+    resetAnalyticsForTests()
+    ym.mockClear()
+    vi.stubGlobal('location', { origin: 'https://app.test', pathname: '/', href: 'https://app.test/?yclid=anna%40mail.ru' })
+    const again = launch(NO_POSTHOG, { platform: 'landing' })
+    trackPageview()
+    await again.started
+    expect(calls('hit')[0]![2]).toBe('https://app.test/')
+  })
+
+  it('PWA, открытая по ссылке с метками: метки идут с адресом экрана', async () => {
+    vi.stubGlobal('location', {
+      origin: 'https://app.test',
+      pathname: '/pwa/',
+      href: 'https://app.test/pwa/?utm_source=tg_ads&utm_campaign=promo#tgWebAppData=secret',
+    })
+    const { started } = launch(NO_POSTHOG, { platform: 'telegram', pageBase: 'https://app.test/pwa' })
+    trackPageview('/home/')
+    await started
+    expect(calls('hit')[0]![2]).toBe('https://app.test/pwa/home/?utm_source=tg_ads&utm_campaign=promo')
   })
 
   it('Do Not Track: тег не загружается', async () => {

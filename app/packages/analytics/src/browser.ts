@@ -4,7 +4,7 @@ import type { ApiEnvelope } from '@ryadom/contracts/api/envelope'
 import { ApiPath } from '@ryadom/contracts/api/paths'
 import type { AnalyticsEvent, AnalyticsEventArgs, AnalyticsPlatform, AnalyticsTraits } from './events'
 import { metrikaHit, resetMetrikaForTests, setMetrikaSuppressed, startMetrika } from './metrika'
-import { normalizePath, roundedToHour, sanitizeProperties, sanitizeUrl, scrubEvent } from './sanitize'
+import { metrikaCampaignQuery, normalizePath, roundedToHour, sanitizeProperties, sanitizeUrl, scrubEvent } from './sanitize'
 
 /**
  * Product analytics in the browser and in the store builds' WebView: one module for the web app, the
@@ -451,10 +451,17 @@ function screenAddress(route: string): { $current_url: string; $host?: string; $
   }
 }
 
-/** The address a screen is reported under to Metrika: our own base and the route, or the page's cleaned address. */
+/**
+ * The address a screen is reported under to Metrika: our own base and the route, or the page's cleaned address. Either
+ * way it carries the campaign of the address the page was opened with (`metrikaCampaignQuery`): the PWA never shows
+ * its routes in the address bar, so without this a visit begun there would lose its UTM labels.
+ */
 function metrikaPageUrl(path: string | undefined): string {
-  if (metrikaPageBase !== undefined) return `${metrikaPageBase}${normalizePath(path ?? '/')}`
-  return sanitizeUrl(globalThis.location?.href ?? '')
+  const href = globalThis.location?.href ?? ''
+  const campaign = metrikaCampaignQuery(href)
+  if (metrikaPageBase !== undefined) return `${metrikaPageBase}${normalizePath(path ?? '/')}${campaign}`
+  const [page = ''] = sanitizeUrl(href).split('?', 1)
+  return `${page}${campaign}`
 }
 
 /** The person signed in (or the session was restored). The id is the account's, never the email. */

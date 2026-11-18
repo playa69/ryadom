@@ -29,6 +29,20 @@ from app.prompts.provider import ResolvedPrompt  # noqa: E402
 from tests.fake_db import FakeDialogDatabase  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolate_process_tracer() -> Iterator[None]:
+    """Процессный трассировщик (`app.core.tracing.current_tracer`, его ставит `build_tracer`) между тестами не течёт:
+    до теста — пусто (клиент памяти без явного трейсера получит NullTracer), после — восстановлено."""
+    from app.core import tracing
+
+    saved = tracing._PROCESS_TRACER
+    tracing._PROCESS_TRACER = None
+    try:
+        yield
+    finally:
+        tracing._PROCESS_TRACER = saved
+
+
 def _let_the_session_finish(session: Any) -> None:
     """Закрыть сокет и дождаться, пока сеанс агента закончит уборку, прежде чем TestClient отменит приложение.
 

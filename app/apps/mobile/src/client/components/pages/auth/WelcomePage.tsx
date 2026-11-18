@@ -2,12 +2,12 @@ import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Button, List, ListInput, Page } from 'framework7-react'
 import type { Router } from 'framework7/types'
-import { useState, type ChangeEvent } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
 import { InputLimit } from '@ryadom/contracts/api/limits'
-import { UNSAVED_HINT, UNSAVED_LABEL } from '@ryadom/client-core/unsaved'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
 import { apiErrorText, deviceLogin, telegramLogin, updateProfile } from '../../../lib/api'
-import { requestTalkOnHome, takeTalkRequest } from '../../../lib/nav'
+import { requestTalkOnHome, takeTalkRequest, type TalkRequest } from '../../../lib/nav'
+import { isNative } from '../../../lib/platform'
 import { useAuth } from '../../../lib/store'
 import { isTelegramMiniApp, telegramFirstName, telegramInitData } from '../../../lib/telegram'
 import { telegramLoginErrorText } from '../../../lib/telegram-account'
@@ -29,15 +29,20 @@ function partOfDay(): string {
 }
 
 /**
- * The first screen. Someone new passes a separate consent gate before the active home with «Поговорить»
- * and the same optional choices as an account («Запоминать важное», «Не сохранять этот разговор»).
- * Continuing the gate only opens home: nothing is sent. The start then makes an account for this phone,
- * records the consents and asks home for a conversation with these choices, which home starts as soon
- * as the tabs appear; the companion greets the person there.
+ * The first screen of the native shell (Android, iOS) — and only of it. Someone new passes its
+ * consent gate before the active screen with «Поговорить» and the optional memory choice. Continuing
+ * the gate only opens the active screen: nothing is sent. The start then makes an account for this
+ * phone, records the consents and asks home for a conversation with this choice, which home starts
+ * as soon as the tabs appear; the companion greets the person there.
+ *
+ * The PWA and Telegram never land here: they open on home directly, where the consent sheet asks
+ * for the agreements at the first text or voice start. Should such a client reach this address
+ * anyway (an old link), it is sent to home.
  *
  * The same screen is also the gate for someone who is already signed in but has not agreed to the
- * current version of the terms (an account from before this screen existed, or a newer version of the
- * terms): there it only records the agreement on «Продолжить» and goes on, and there is no account to make.
+ * current version of the terms (an account from before this screen existed, or a newer version of
+ * the terms): there it only records the agreement on «Продолжить» and goes on, and there is no
+ * account to make.
  *
  * In the Telegram Mini App the account is made for the person's Telegram user instead of this phone,
  * and the name from their Telegram profile is offered for the agent to call them by: it is saved only
@@ -58,17 +63,21 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
   const startForm = telegram ? 'telegram_start' : 'device_start'
   const [dataConsented, setDataConsented] = useState(false)
   const [entryPassed, setEntryPassed] = useState(false)
-  /** "Не сохранять этот разговор", as on home: off at every visit, optional. */
-  const [unsaved, setUnsaved] = useState(false)
   /** "Запоминать важное" with the consent sheet accepted: home turns memory on before the conversation. */
   const [rememberMemory, setRememberMemory] = useState(false)
   const [memoryConsentOpen, setMemoryConsentOpen] = useState(false)
-  const talkRequest = () => ({ saved: !unsaved, rememberMemory })
+  const talkRequest = (): TalkRequest => ({ rememberMemory })
   const entryGate = !signedIn && !entryPassed
+
+  // The PWA and Telegram start on home; this address sends them there. The native shell keeps this
+  // screen as its entry with the consent gate, so nothing below changes for it.
+  useEffect(() => {
+    if (!isNative()) f7router.navigate('/home/', { clearPreviousHistory: true })
+  }, [f7router])
 
   async function handleTalk() {
     if (loading || !dataConsented) return
-    // The conversation opens on the voice and the sphere speaks first: speech is let through by this tap.
+    // The start opens on the sphere, which speaks first: speech is let through by this tap.
     unlockSpeech()
     track(AnalyticsEvent.CtaClicked, {
       cta: telegram ? 'start_telegram' : 'start_anonymous',
@@ -131,6 +140,9 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
     if (!(await acceptConsents())) setError('Не получилось сохранить согласие. Попробуй ещё раз')
     setLoading(false)
   }
+
+  // Reached only in the native shell; the redirect above is on its way for anyone else.
+  if (!isNative()) return null
 
   return (
     <Page name="welcome" className="rd-page-auth ph-no-capture">
@@ -218,7 +230,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
               {signedIn || entryGate ? 'Продолжить' : 'Поговорить'}
             </Button>
             {signedIn && <ConsentNote />}
-            {/* The same optional choices as on home; neither is needed to start. */}
+            {/* The optional memory choice is not needed to start. */}
             {!signedIn && !entryGate && (
               <>
                 <div className="rd-incognito" data-testid="memory-switch">
@@ -237,19 +249,6 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
                     onChange={(on) => (on ? setMemoryConsentOpen(true) : setRememberMemory(false))}
                   />
                 </div>
-                <label className="rd-incognito rd-unsaved" data-testid="unsaved">
-                  <span className="rd-incognito-text">
-                    <span className="rd-incognito-title">{UNSAVED_LABEL}</span>
-                    <span className="rd-caption">{UNSAVED_HINT}</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    className="rd-unsaved-check"
-                    data-testid="unsaved-toggle"
-                    checked={unsaved}
-                    onChange={(event) => setUnsaved(event.target.checked)}
-                  />
-                </label>
               </>
             )}
           </div>

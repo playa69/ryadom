@@ -5,10 +5,10 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
-import { HOTLINES } from '@ryadom/client-core/hotlines'
+import { CRISIS_CALL, CRISIS_SHEET_TITLE, HOTLINES, telHref } from '@ryadom/client-core/hotlines'
 import { Button } from '@ryadom/ui/components/button'
 import { cn } from '@ryadom/ui/lib/utils'
-import { BUTTON } from './controls'
+import { BUTTON, FOCUS_RING } from './controls'
 import Hotline from './Hotline'
 import Modal from './Modal'
 
@@ -20,6 +20,8 @@ import Modal from './Modal'
 export interface SosPayload {
   text?: string | null
   hotlines?: HotlineApiResponse[]
+  /** The crisis script (PROTEUS-279): the sheet gets the heading, the "Call now" button and the way back to the conversation. */
+  crisis?: { onCall(): void }
 }
 
 interface SosApi {
@@ -56,13 +58,41 @@ export function SosProvider({ children }: { children: ReactNode }) {
   const closeSos = useCallback(() => setOpen(false), [])
   const api = useMemo(() => ({ openSos, closeSos }), [openSos, closeSos])
 
-  const hotlines = payload.hotlines?.length ? payload.hotlines : HOTLINES
+  const listed = payload.hotlines?.length ? payload.hotlines : HOTLINES
+  // In the crisis script 112 has its own line under "Call now"; the list keeps the rest.
+  const hotlines = payload.crisis ? listed.filter((hotline) => hotline.phone !== '112') : listed
 
   return (
     <SosContext.Provider value={api}>
       {children}
-      <Modal open={open} onClose={closeSos} title="Если сейчас тяжело" className={SHEET}>
-        <p className={TEXT}>{payload.text ?? DEFAULT_TEXT}</p>
+      <Modal open={open} onClose={closeSos} title={payload.crisis ? CRISIS_SHEET_TITLE : 'Если сейчас тяжело'} className={SHEET}>
+        {payload.crisis ? (
+          <div className="grid gap-2.5" data-testid="sos-crisis">
+            <Button asChild size="lg" variant="destructive" className={cn(BUTTON, 'w-full gap-2 font-bold')}>
+              <a
+                href={telHref(CRISIS_CALL.phone)}
+                data-testid="sos-call-now"
+                onClick={() => {
+                  trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: CRISIS_CALL.name })
+                  payload.crisis?.onCall()
+                }}
+              >
+                <Phone className="size-4" aria-hidden="true" />
+                Позвонить сейчас
+              </a>
+            </Button>
+            <a
+              href={telHref('112')}
+              className={cn(TEXT, 'text-center underline underline-offset-4')}
+              data-testid="sos-112"
+              onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: 'Экстренные службы' })}
+            >
+              112 — если есть опасность для жизни
+            </a>
+          </div>
+        ) : (
+          <p className={TEXT}>{payload.text ?? DEFAULT_TEXT}</p>
+        )}
         <div className="grid gap-2.5 short-wide:col-start-2 short-wide:row-span-3 short-wide:row-start-1 short-wide:gap-2">
           {hotlines.map((hotline) => (
             <Hotline
@@ -90,6 +120,16 @@ export function SosProvider({ children }: { children: ReactNode }) {
         >
           Закрыть
         </Button>
+        {payload.crisis && (
+          <button
+            type="button"
+            className={cn(TEXT, 'text-xs underline underline-offset-4 short-wide:col-start-1', FOCUS_RING)}
+            onClick={closeSos}
+            data-testid="sos-safe"
+          >
+            Я в безопасности, давай продолжим
+          </button>
+        )}
       </Modal>
     </SosContext.Provider>
   )

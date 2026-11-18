@@ -1,0 +1,135 @@
+# =============================================================================
+# Job: разовый backfill истории метрик дашборда Sber500
+# =============================================================================
+# Считает снимки daily_metrics за прошлые сутки из сырых источников (базы agent
+# и app — только чтение, API Langfuse) и пишет их в базу dashboard. Пишет
+# только дни без снимка (INSERT ... ON CONFLICT DO NOTHING): повторный запуск
+# — no-op. Подробности — openspec/changes/update-sber500-dashboard-metrics.
+#
+# ПОРЯДОК СТРОГИЙ: backfill запускается ПОСЛЕ создания базы/ролей/Secret'ов и
+# ПОСЛЕ публикации образа dashboard:0.2.1, но ДО выката Deployment 0.2.1,
+# и дождаться Complete. Backfill и фоновое закрытие суток (snapshotter) нового
+# Deployment одновременно работать НЕ должны: пока идёт backfill, в ns
+# dashboard обслуживает старый под 0.1.0, который в daily_metrics не пишет.
+# Если Deployment 0.2.1 уже выкачен — сначала остановить его
+# (kubectl -n dashboard scale deploy/dashboard --replicas=0), затем backfill,
+# затем вернуть реплику.
+#
+# ПЕРЕСЧЁТ СНИМКОВ 05.11–16.11.2026 (версия 0.2.1 восстанавливает сообщения из
+# Langfuse, снимки 0.2.0 посчитаны по неполной базе): backfill существующие
+# снимки НЕ переписывает — сначала по отдельному разрешению владельца удалить
+# строки daily_metrics за 05.11–16.11 (k8s/dashboard/README.md, «Выкат 0.2.1»),
+# затем пересоздать этот Job. Без разрешения строки не трогаем.
+#
+#   kubectl apply -f k8s/dashboard/05-job-backfill.yaml
+#   kubectl -n dashboard wait --for=condition=complete job/dashboard-backfill --timeout=1800s
+#   kubectl -n dashboard logs job/dashboard-backfill
+#
+# Повторный прогон: удалить старый Job (kubectl -n dashboard delete job
+# dashboard-backfill) и применить заново — записанные дни не переписываются.
+#
+# Ошибочный запуск (одновременно со snapshotter или до готовности базы):
+# остановить под удалением Job (см. выше); уже записанные строки daily_metrics
+# НЕ удалять и не перезаписывать автоматически — разбор и любой DELETE только
+# вручную по отдельному разрешению владельца (k8s/dashboard/README.md, «Откат»).
+#
+# Публичных точек входа у Job нет (нет Service/HTTPRoute, ingress закрыт
+# default-deny), egress — по существующей политике dashboard-allow-egress
+# (DNS, ryadom-db:5432, Langfuse :3000), для этого у пода label app: dashboard.
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dashboard-backfill
+  namespace: dashboard
+  labels:
+    app: dashboard
+    component: backfill
+    app.kubernetes.io/part-of: ryadom
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: dashboard
+        component: backfill
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: registry-pull
+      securityContext:
+        runAsNonRoot: true
+        # dashboard/Dockerfile: uid и gid 10001
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backfill
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.2
+          command: ["python", "app.py", "--backfill"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: LANGFUSE_HOST
+              value: http://langfuse-web.infra.svc.cluster.local:3000
+            # Дни начала точного учёта: более ранние дни получают 0 и честную
+            # пометку на странице. LLM_REQUESTS_SINCE — глубина доступной
+            # истории Langfuse; TOOL_REQUESTS_SINCE — день выката агента с
+            # TOOL-инструментацией: если фактический день другой, поправить
+            # значение ДО запуска (здесь и в 02-deployment.yaml).
+            - name: LLM_REQUESTS_SINCE
+              value: "2026-11-05"
+            - name: TOOL_REQUESTS_SINCE
+              value: "2026-11-17"
+            - name: DASHBOARD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: DASHBOARD_PASSWORD
+            - name: DIALOG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: DIALOG_DATABASE_URL
+            - name: APP_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: APP_DATABASE_URL
+            - name: DASHBOARD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: DASHBOARD_DATABASE_URL
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: LANGFUSE_SECRET_KEY
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
