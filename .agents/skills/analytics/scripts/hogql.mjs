@@ -6,12 +6,13 @@
 // POSTHOG_UI_HOST and POSTHOG_PROJECT_ID override the host and the project.
 //
 // Placeholders in the query text:
-//   {{people}}  the standard filter of real people (the same text is in SKILL.md, keep them in step);
+//   {{people}}  the standard filter of real people (posthog.mjs; the same text is in SKILL.md, keep them in step);
 //   {{name}}    any other name, from --set name=value (dates in UTC, numbers).
 // POSTHOG_EXCLUDE_PERSONS=<id prefix>,<id prefix> adds team accounts that are not marked `internal` yet to {{people}};
 // the list is kept locally, not in the repository.
 // --dry prints the final query and does not call PostHog (no key needed): to paste it into the browser console.
 import { readFileSync } from 'node:fs';
+import { fillQuery, runHogQL } from './posthog.mjs';
 
 const fail = (message) => {
   console.error(message);
@@ -40,45 +41,23 @@ if (!sql) {
   process.exit(2);
 }
 
-// Not a person with a conversation: load test, team, tests, and events about nobody (a random id for every event,
-// so uniq(person_id) would count the events, not the people).
-const excluded = (process.env.POSTHOG_EXCLUDE_PERSONS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-if (excluded.some((prefix) => !/^[0-9a-f-]{4,36}$/i.test(prefix))) {
-  fail('POSTHOG_EXCLUDE_PERSONS: comma-separated id prefixes, hex digits and dashes only');
+try {
+  sql = fillQuery(sql, values);
+} catch (error) {
+  fail(error.message);
 }
-values.people = [
-  'person_id NOT IN COHORT 275976',
-  "coalesce(properties.app_env, '') NOT IN ('local', 'staging', 'development')",
-  "coalesce(properties.traffic_type, 'real') NOT IN ('test', 'internal')",
-  "event NOT IN ('safety_signal', 'sos_opened', 'hotline_called', 'password_reset_requested', 'account_deleted')",
-  "NOT (event = 'cta_clicked' AND properties.cta = 'hotline')",
-  ...excluded.map((prefix) => `toString(person_id) NOT LIKE '${prefix}%'`),
-].join('\n  AND ');
-
-sql = sql.replace(/\{\{(\w+)\}\}/g, (_, name) => {
-  if (!(name in values)) fail(`no value for {{${name}}}: pass --set ${name}=…`);
-  return values[name];
-});
 
 if (dry) {
   console.log(sql);
   process.exit(0);
 }
 
-const key = process.env.POSTHOG_PERSONAL_API_KEY;
-if (!key) fail('POSTHOG_PERSONAL_API_KEY is not set: a personal API key with query:read, from the administrator');
-const host = (process.env.POSTHOG_UI_HOST || 'https://eu.posthog.com').replace(/\/$/, '');
-const project = process.env.POSTHOG_PROJECT_ID || '300786';
-
-const response = await fetch(`${host}/api/environments/${project}/query/`, {
-  method: 'POST',
-  headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ query: { kind: 'HogQLQuery', query: sql }, refresh: 'force_blocking' }),
-});
-const body = await response.json().catch(() => ({}));
-if (!response.ok) {
-  console.error(`HTTP ${response.status}: ${body.detail ?? JSON.stringify(body).slice(0, 500)}`);
-  process.exit(1);
+let body;
+try {
+  body = await runHogQL(sql);
+} catch (error) {
+  console.error(error.message);
+  process.exit(error.message.startsWith('POSTHOG_PERSONAL_API_KEY') ? 2 : 1);
 }
 if (json) {
   console.log(JSON.stringify({ columns: body.columns, results: body.results }, null, 1));
