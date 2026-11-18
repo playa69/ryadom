@@ -34,7 +34,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.2
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
