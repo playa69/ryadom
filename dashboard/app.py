@@ -888,9 +888,10 @@ def parse_metrics_range(params: Mapping[str, list[str]], today: date) -> tuple[l
 
 def token_ok(header: str | None, token: str) -> bool:
     """Bearer-токен metrics API: только чтение, сравнение в постоянное время."""
-    if not token or not header or not header.startswith("Bearer "):
+    # Схема в Authorization регистронезависима (RFC 7235): клиенты шлют и «bearer».
+    if not token or not header or header[:7].lower() != "bearer ":
         return False
-    return hmac.compare_digest(header[len("Bearer "):].strip().encode(), token.encode())
+    return hmac.compare_digest(header[7:].strip().encode(), token.encode())
 
 
 def build_metrics_payload(days: list[date], snapshots: Mapping[str, dict],

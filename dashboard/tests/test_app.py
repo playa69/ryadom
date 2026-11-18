@@ -989,3 +989,10 @@ def test_today_cache_keeps_previous_value_when_refresh_fails():
     except RuntimeError:
         pass
     assert cache.get(now, date(2026, 11, 5)) == {"dau": 5}
+
+
+def test_token_ok_accepts_case_insensitive_scheme():
+    assert app.token_ok("Bearer secret", "secret")
+    assert app.token_ok("bearer secret", "secret")
+    assert not app.token_ok("secret", "secret")
+    assert not app.token_ok("Bearer wrong", "secret")
