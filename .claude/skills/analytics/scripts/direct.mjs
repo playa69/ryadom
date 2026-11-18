@@ -2,7 +2,7 @@
 // for the advertiser's account. Read-only: nothing but reports is called.
 // YANDEX_DIRECT_TOKEN — OAuth token (scope direct:api) of a user who can see the account; it is never printed.
 // YANDEX_DIRECT_CLIENT_LOGIN — the advertiser's login, sent as Client-Login (the user's own account without it).
-// YANDEX_DIRECT_API overrides the endpoint (the sandbox is https://api-sandbox.direct.yandex.com/json/v5).
+// YANDEX_DIRECT_API overrides the endpoint.
 const API = process.env.YANDEX_DIRECT_API || 'https://api.direct.yandex.com/json/v5';
 // Metrika goals the campaigns are measured by (MetrikaGoal in events.ts): conversions come back per goal.
 const GOALS = { openApp: 681279212, firstReply: 678454750, polz3: 681201713, dau10: 681201815 };
@@ -31,7 +31,15 @@ async function fetchReport(params) {
   const started = Date.now();
   for (;;) {
     const response = await fetch(`${API}/reports`, { method: 'POST', headers, body: JSON.stringify({ params }) });
-    if (response.status === 200) return response.text();
+    if (response.status === 200) {
+      const text = await response.text();
+      // Direct may answer an error with status 200: a JSON body instead of the TSV report.
+      if (text.trimStart().startsWith('{')) {
+        const error = JSON.parse(text).error ?? {};
+        throw new Error(`Direct API: ${[error.error_code, error.error_string, error.error_detail].filter(Boolean).join(' ')}`.slice(0, 300));
+      }
+      return text;
+    }
     if (response.status === 201 || response.status === 202) {
       if (Date.now() - started > MAX_WAIT_MS) throw new Error('Direct API: отчёт не собрался за 5 минут');
       await sleep(Math.min(Number(response.headers.get('retryIn')) || 10, 60) * 1000);
