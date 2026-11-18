@@ -821,3 +821,134 @@ def test_report_uses_cognee_recovery_as_tool_floor():
     assert report["days"][0]["tool_requests"] == 13
     assert report["days"][1]["tool_requests"] == 7
     assert snapshots["2026-11-05"]["tool_requests"] == 0
+
+
+# ---------- metrics API (openspec/changes/add-sber500-metrics-api) ----------
+
+TODAY = date(2026, 11, 11)
+
+
+def test_metrics_api_range_validation():
+    # openspec/changes/add-sber500-metrics-api, «Параметры и ошибки»: обе даты обязательны, формат
+    # строгий, from ≤ to, не больше 90 дней включительно, date_to — не в будущем.
+    days, error = app.parse_metrics_range({"date_from": ["2026-11-01"], "date_to": ["2026-11-05"]}, TODAY)
+    assert error is None and days == [date(2026, 11, 1), date(2026, 11, 2), date(2026, 11, 3),
+                                      date(2026, 11, 4), date(2026, 11, 5)]
+    for params, text in (
+        ({"date_from": ["2026-11-01"]}, "обязательные"),
+        ({"date_from": ["2026-11-01"], "date_to": ["01.11.2026"]}, "YYYY-MM-DD"),
+        ({"date_from": ["20261101"], "date_to": ["2026-11-05"]}, "YYYY-MM-DD"),
+        ({"date_from": ["2026-11-10"], "date_to": ["2026-11-05"]}, "позже"),
+        ({"date_from": ["2026-08-01"], "date_to": ["2026-11-10"]}, "90 дней"),
+        ({"date_from": ["2026-11-05"], "date_to": ["2026-11-12"]}, "позже текущих суток"),
+    ):
+        days, error = app.parse_metrics_range(params, TODAY)
+        assert days is None and text in error
+    days, error = app.parse_metrics_range({"date_from": ["2026-11-01"], "date_to": ["2026-11-05", "2026-11-06"]}, TODAY)
+    assert error is None and days[-1] == date(2026, 11, 5)  # повтор параметра допустим: берётся первое значение
+    days, error = app.parse_metrics_range({"date_from": ["2026-08-13"], "date_to": ["2026-11-10"]}, TODAY)
+    assert error is None and len(days) == 90  # ровно 90 дней включительно — граница допустима
+
+
+def test_metrics_api_payload_shape_and_totals_chain():
+    # openspec/changes/add-sber500-metrics-api, «Ответ»: поля строго как в ТЗ, числа целые, нули за день
+    # без снимка, total_users без снимка повторяет последний известный итог, is_final только у прошлого.
+    days = [date(2026, 11, 9), date(2026, 11, 10), date(2026, 11, 11)]
+    snapshots = {
+        "2026-11-09": snapshot_row("2026-11-09", dau=3, new_users=2, total_users=10, llm_requests=5, tool_requests=1),
+        "2026-11-10": snapshot_row("2026-11-10", dau=4, new_users=1, total_users=11, llm_requests=6, tool_requests=2),
+    }
+    payload = app.build_metrics_payload(days, snapshots, {"2026-11-09": 7}, 4, NOW, TODAY)
+    assert payload["startup_id"] == "ryadom"
+    assert payload["timezone"] == "Europe/Moscow"
+    assert payload["generated_at"] == "2026-11-11T12:00:00+03:00"
+    assert payload["data"] == [
+        {"date": "2026-11-09", "dau": 3, "llm_requests": 5, "tool_requests": 7, "total_users": 10,
+         "new_users": 2, "is_final": True},
+        {"date": "2026-11-10", "dau": 4, "llm_requests": 6, "tool_requests": 2, "total_users": 11,
+         "new_users": 1, "is_final": True},
+        {"date": "2026-11-11", "dau": 0, "llm_requests": 0, "tool_requests": 0, "total_users": 11,
+         "new_users": 0, "is_final": False},
+    ]
+    assert list(payload["data"][0]) == ["date", "dau", "llm_requests", "tool_requests", "total_users", "new_users",
+                                        "is_final"]
+
+
+def test_metrics_api_total_start_keeps_cumulative_total():
+    # openspec/changes/add-sber500-metrics-api, «Ответ»: запрос куска истории не обнуляет накопленный
+    # итог — на первый день диапазона подкладывается total_users последнего снимка строго раньше него.
+    days = [date(2026, 11, 10), date(2026, 11, 11)]
+    snapshots = {"2026-11-10": snapshot_row("2026-11-10", total_users=11)}
+    payload = app.build_metrics_payload(days, snapshots, {}, 11, NOW, TODAY)
+    assert payload["data"][0]["total_users"] == 11  # из снимка дня
+    snapshots = {}
+    payload = app.build_metrics_payload(days, snapshots, {}, 11, NOW, TODAY)
+    assert payload["data"][0]["total_users"] == 11  # из итога раньше диапазона
+    assert payload["data"][1]["total_users"] == 11  # без снимка повторяет итог, а не падает к нулю
+
+
+def test_metrics_api_combines_snapshots_and_preliminary_today(monkeypatch):
+    # openspec/changes/add-sber500-metrics-api, «Источники»: закрытые дни — из неизменяемых снимков,
+    # текущие сутки — предварительный расчёт из сырых источников, is_final=false.
+    store = FakeStore(rows=[
+        snapshot_row("2026-11-09", dau=3, new_users=2, total_users=10, llm_requests=5, tool_requests=1),
+        snapshot_row("2026-11-10", dau=4, new_users=1, total_users=11, llm_requests=6, tool_requests=2),
+    ])
+    monkeypatch.setattr(app, "PgSnapshotStore", lambda dsn: store)
+    monkeypatch.setenv("DASHBOARD_DATABASE_URL", "postgres://example")
+    monkeypatch.setattr(app, "collect_raw", lambda since, until: empty_raw())
+    monkeypatch.setattr(app, "_langfuse_config", lambda: ("http://langfuse", "pk", "sk"))
+    monkeypatch.setattr(app, "_langfuse_fold", lambda *args: args[-1])  # свёртка без данных: аккумулятор как есть
+
+    payload = app.compute_metrics_api(date(2026, 11, 9), date(2026, 11, 11), NOW)
+
+    assert payload["data"][0]["dau"] == 3 and payload["data"][0]["is_final"] is True
+    assert payload["data"][1]["tool_requests"] == 2
+    today_row = payload["data"][2]
+    assert today_row["date"] == "2026-11-11" and today_row["is_final"] is False
+    assert today_row["dau"] == 0 and today_row["total_users"] == 11  # итог вчерашнего снимка + 0 новых
+
+
+def test_metrics_api_cache_recomputes_range_once_per_ttl():
+    # openspec/changes/add-sber500-metrics-api, «Нагрузка»: закрытые дни неизменны — пересчёт диапазона
+    # не чаще раза в 15 минут; протухшие ключи выбрасываются.
+    calls = []
+    clock = [0.0]
+
+    def compute(day_from, day_to, now):
+        calls.append((day_from, day_to))
+        return {"ok": True}
+
+    cache = app.RangeCache(compute, ttl=900, clock=lambda: clock[0])
+    now = datetime(2026, 11, 11, 9, tzinfo=UTC)
+    assert cache.get(date(2026, 11, 1), date(2026, 11, 7), now) == {"ok": True}
+    clock[0] = 899
+    cache.get(date(2026, 11, 1), date(2026, 11, 7), now)
+    assert len(calls) == 1
+    clock[0] = 901
+    cache.get(date(2026, 11, 1), date(2026, 11, 7), now)
+    assert len(calls) == 2
+    clock[0] = 2000
+    cache.get(date(2026, 11, 8), date(2026, 11, 9), now)  # протухший ключ выброшен, память не растёт
+    assert len(calls) == 3
+
+
+def test_metrics_api_token():
+    # openspec/changes/add-sber500-metrics-api, «Доступ»: Bearer, постоянное время, без токена — никого.
+    assert app.token_ok("Bearer abcdef", "abcdef")
+    assert not app.token_ok("Bearer abcdef", "abcdefg")
+    assert not app.token_ok("Basic abcdef", "abcdef")
+    assert not app.token_ok(None, "abcdef")
+    assert not app.token_ok("Bearer abcdef", "")
+
+
+def test_metrics_api_rate_limit_allows_up_to_limit_per_minute():
+    # openspec/changes/add-sber500-metrics-api, «Доступ»: лимит не ниже 10 запросов в минуту на IP.
+    clock = [60.0]
+    rate = app.RateLimit(limit=3, clock=lambda: clock[0])
+    for _ in range(3):
+        assert rate.allowed("1.2.3.4")
+    assert not rate.allowed("1.2.3.4")
+    assert rate.allowed("5.6.7.8")
+    clock[0] = 120.0
+    assert rate.allowed("1.2.3.4")
