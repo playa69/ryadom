@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { POLICY_VERSION } from '@ryadom/contracts/api/policy'
 import { createClient } from '../src/client'
 import { newDeviceCredentials } from '../src/device'
-import { ApiError } from '../src/errors'
+import { ApiError, DEVICE_LOGIN_REFUSED_TEXT, apiErrorText, isDeviceLoginRefused } from '../src/errors'
 import { envelope, makeToken, memoryStorage, userOf, type MemoryStorage } from './helpers'
 
 const fetchMock = vi.fn<typeof fetch>()
@@ -258,5 +258,25 @@ describe('привязка почты', () => {
       ok: false,
       code: 'EMAIL_TAKEN',
     })
+  })
+})
+
+describe('отказ по ключу устройства', () => {
+  it('401 узнаётся как отказ, и человеку говорят войти по почте', async () => {
+    const { client, storage } = setup()
+    fetchMock.mockResolvedValue(new Response('{}', { status: 401 }))
+
+    const error = await client.deviceLogin().catch((err: unknown) => err)
+
+    expect(isDeviceLoginRefused(error)).toBe(true)
+    expect(apiErrorText(error, {}, 'общая')).toBe('общая')
+    expect(DEVICE_LOGIN_REFUSED_TEXT).toContain('почте')
+    // The identity stays: only the person gives the account up.
+    expect(await storage.getDevice()).not.toBeNull()
+  })
+
+  it('сбой сети не считается отказом', () => {
+    expect(isDeviceLoginRefused(new ApiError(0))).toBe(false)
+    expect(isDeviceLoginRefused(new ApiError(500))).toBe(false)
   })
 })

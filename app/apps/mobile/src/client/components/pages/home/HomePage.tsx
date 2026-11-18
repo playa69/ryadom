@@ -13,7 +13,16 @@ import {
 import { DialogMemoryMode } from '@ryadom/contracts/api/memory'
 import { memoryInUse } from '@ryadom/client-core/memory'
 import { outcomeFromCode, outcomeFromError, reportForm } from '../../../lib/analytics'
-import { apiErrorText, codeText, deviceLogin, getMemory, startDialog, telegramLogin } from '../../../lib/api'
+import {
+  DEVICE_LOGIN_REFUSED_TEXT,
+  apiErrorText,
+  codeText,
+  deviceLogin,
+  getMemory,
+  isDeviceLoginRefused,
+  startDialog,
+  telegramLogin,
+} from '../../../lib/api'
 import { needsFirstActionConsent } from '../../../lib/consent-gate'
 import { enableMemory } from '../../../lib/memory'
 import { requestTalkOnHome, START_TALK_EVENT, takeTalkRequest, type TalkRequest } from '../../../lib/nav'
@@ -316,7 +325,11 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
     } catch (err) {
       takeTalkRequest()
       reportForm(startForm, outcomeFromError(err))
-      setError(apiErrorText(err, {}, 'Не получилось начать разговор. Попробуй ещё раз'))
+      setError(
+        isDeviceLoginRefused(err) && !telegram
+          ? DEVICE_LOGIN_REFUSED_TEXT
+          : apiErrorText(err, {}, 'Не получилось начать разговор. Попробуй ещё раз'),
+      )
     } finally {
       starting.current = false
       setLoading(false)

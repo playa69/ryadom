@@ -285,6 +285,44 @@ describe('остальные сценарии, где почты может не
     expect((await getUserRow(user.id))?.isEmailConfirmed).toBe(false)
   })
 
+  it('подтверждение админом, как и своё, забывает ключи устройств: вход по ключу не зацикливается', async () => {
+    const device = newDevice()
+    const { user } = await signedIn(device)
+    await link(user.id, uniqueEmail())
+    expect(await getDb().select().from(userDevices)).toHaveLength(1)
+
+    const confirmed = await userManagementProcess.execute(
+      new ConfirmUserEmailOperation({ adminEmail: ADMIN_EMAIL, userId: user.id }),
+    )
+
+    expect(confirmed).toEqual({ success: true })
+    expect(await getDb().select().from(userDevices)).toHaveLength(0)
+    // The key no longer opens the account: it is not refused over and over, the device starts afresh.
+    const again = await signedIn(device)
+    expect(again.user.id).not.toBe(user.id)
+    expect(again.isNewAccount).toBe(true)
+  })
+
+  it('вход по ключу аккаунта с подтверждённой почтой отклоняется', async () => {
+    const device = newDevice()
+    const { user } = await signedIn(device)
+    const email = uniqueEmail()
+    await link(user.id, email)
+    // The state of an account confirmed before the devices were cleared on confirmation.
+    await confirmWithCode(email, user.id)
+    await getDb().insert(userDevices).values({
+      id: randomUUID(),
+      userId: user.id,
+      deviceId: device.deviceId,
+      keyHash: (await tokenService.execute(new HashTokenRequest({ token: device.deviceKey }))).tokenHash,
+    })
+
+    expect(await deviceLogin(device)).toEqual({
+      success: false,
+      error: DeviceLoginOperationErrorCode.DEVICE_KEY_INVALID,
+    })
+  })
+
   it('анонимный аккаунт удаляется, как и любой другой', async () => {
     mockAgent()
     const { user } = await signedIn(newDevice())

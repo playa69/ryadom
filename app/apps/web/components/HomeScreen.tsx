@@ -15,7 +15,7 @@ import { chosenStart, nextStartStep } from '@ryadom/client-core/dialog-start'
 import { rememberUnsaved } from '@ryadom/client-core/unsaved'
 import { DialogMemoryMode, type MemoryApiResponse } from '@ryadom/contracts/api/memory'
 import { memoryInUse } from '@ryadom/client-core/memory'
-import { apiErrorText, codeText } from '@ryadom/client-core/errors'
+import { DEVICE_LOGIN_REFUSED_TEXT, apiErrorText, codeText, isDeviceLoginRefused } from '@ryadom/client-core/errors'
 import { Button } from '@ryadom/ui/components/button'
 import { NativeCheckbox } from '@ryadom/ui/components/native-checkbox'
 import { cn } from '@ryadom/ui/lib/utils'
@@ -257,7 +257,13 @@ export default function HomeScreen() {
       openDialog(result.data, listen)
       leaving = true
     } catch (err) {
-      if (alive.current) setError(apiErrorText(err, {}, 'Не получилось начать разговор'))
+      if (alive.current) {
+        setError(
+          guest && isDeviceLoginRefused(err)
+            ? DEVICE_LOGIN_REFUSED_TEXT
+            : apiErrorText(err, {}, 'Не получилось начать разговор'),
+        )
+      }
     } finally {
       // After a successful start the buttons stay busy until this screen unmounts: the navigation takes a
       // moment, and a press in that gap would start a second request.
