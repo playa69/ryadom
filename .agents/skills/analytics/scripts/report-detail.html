@@ -64,17 +64,20 @@ svg .val { fill: var(--fg); font-weight: 600; }
 
 <div class="sec">
   <div class="head"><h2>По дням</h2><p class="note" id="daily-note"></p></div>
-  <div class="legend"><span><b style="background:var(--s1)"></b>DAU: сказали хоть одну реплику</span><span><b style="background:var(--s2)"></b>Заговорили впервые</span></div>
+  <div class="legend"><span><b style="background:var(--s1)"></b>DAU по PostHog: сказали хоть одну реплику</span><span><b style="background:var(--s2)"></b>Заговорили впервые</span></div>
   <div class="scroll"><svg id="daily" viewBox="0 0 640 190" width="100%" role="img" aria-label="DAU и новые заговорившие по дням"></svg></div>
   <div class="scroll"><table>
     <thead><tr>
       <th>Дата</th>
-      <th data-tip="Люди с хотя бы одной репликой за московские сутки. В строке за период — WAU: каждый человек один раз.|DAU">DAU</th>
-      <th data-tip="Люди, чья первая реплика за всё время пришлась на этот день.|Заговорили впервые">Заговорили впервые</th>
-      <th data-tip="Реплики людей (dialog_turn) за сутки, набранные и сказанные.|Реплики">Реплики</th>
-      <th data-tip="Люди, у которых за сутки больше 10 реплик. За период не складывается.|Активные: больше 10 реплик">Активные: больше 10 реплик</th>
-      <th data-tip="Трассы Langfuse за сутки: одна трасса — один вызов модели, без тестовых и командных аккаунтов.|Запросы к моделям">Запросы к моделям</th>
-      <th data-tip="Нарастающий итог: аккаунты, у которых к концу суток набралось больше 3 реплик за всё время (реплики в аналитике — с 14.10.2026).|Пользователи: больше 3 реплик, всего">Пользователи: больше 3 реплик, всего</th>
+      <th data-tip="PostHog: люди с хотя бы одной репликой (dialog_turn) за московские сутки. В строке за период — WAU: каждый человек один раз.|DAU по PostHog">DAU, PostHog</th>
+      <th data-tip="PostHog: люди, чья первая реплика за всё время пришлась на этот день.|Заговорили впервые">Заговорили впервые</th>
+      <th data-tip="PostHog: реплики людей (dialog_turn) за сутки, набранные и сказанные.|Реплики">Реплики</th>
+      <th data-tip="Дашборд Sber500: аккаунты хотя бы с одним сообщением за сутки (база агента и ходы из Langfuse вместе). За период не складывается.|DAU, дашборд">DAU, дашборд</th>
+      <th data-tip="Дашборд Sber500: аккаунты, чьё первое известное сообщение пришлось на эти сутки.|Новые пользователи">Новые</th>
+      <th data-tip="Дашборд Sber500: накопленный итог новых с 05.11.2026, удалённые не вычитаются.|Пользователи всего">Всего</th>
+      <th data-tip="Дашборд Sber500: аккаунты с больше чем 10 сообщениями за сутки (внутренняя метрика). За период не складывается.|Активные">Активные</th>
+      <th data-tip="Дашборд Sber500: вызовы моделей от действий людей — ответ, итог разговора, память, настроение; без повторов, прогревов, озвучки и плановых сводок.|Вызовы LLM">Вызовы LLM</th>
+      <th data-tip="Дашборд Sber500: успешные обращения агента к памяти (поиск, запись, удаление).|Tool calls — Память">Tool calls</th>
     </tr></thead>
     <tbody id="daily-table"></tbody>
   </table></div>
@@ -135,9 +138,9 @@ svg .val { fill: var(--fg); font-weight: 600; }
     <thead><tr>
       <th>Что</th>
       <th data-tip="Значение в продуктовой аналитике за те же дни.|PostHog">PostHog</th>
-      <th data-tip="Метрика — независимый счётчик посещений и целей; база — боевые базы приложения и агента.|Сверяем с">Сверяем с</th>
+      <th data-tip="Дашборд Sber500 — числа команды (база агента и Langfuse); Метрика — независимый счётчик посещений и целей 1–4; база — боевые базы приложения и агента.|Сверяем с">Сверяем с</th>
       <th data-tip="Значение во втором источнике. Что именно сравнивается — в подсказке к строке.|Значение">Значение</th>
-      <th data-tip="Разница по модулю ÷ второй источник. До 10 % — обычное расхождение; больше выделено красным. С базой PostHog всегда немного меньше: в нём нет тех, кто отказался от аналитики.|Расхождение">Расхождение</th>
+      <th data-tip="Разница по модулю ÷ второй источник. До 10 % — обычное расхождение; больше выделено красным. С базой и дашбордом PostHog обычно немного меньше: в нём нет тех, кто отказался от аналитики, и разговоров «Не сохранять».|Расхождение">Расхождение</th>
     </tr></thead>
     <tbody id="reconcile"></tbody>
   </table></div>
@@ -149,7 +152,7 @@ svg .val { fill: var(--fg); font-weight: 600; }
     <thead><tr>
       <th data-tip="Пол и возраст по данным Яндекса о посетителе. Определены не у всех, поэтому сумма меньше числа посетителей.|Группа">Группа</th>
       <th data-tip="Уникальные посетители периода в группе.|Посетители">Посетители</th>
-      <th data-tip="Посетители группы, достигшие цели «первый разговор от 3 реплик» (first_dialog_3_replies).|Дошли до 3 реплик">Дошли до 3 реплик</th>
+      <th data-tip="Посетители группы, достигшие цели 3 Метрики: 3 реплики и больше за московские сутки (polz_3).|Дошли до 3 реплик за сутки">Дошли до 3 реплик за сутки</th>
       <th data-tip="Дошли до 3 реплик ÷ Посетители.|Доля">Доля</th>
       <th style="text-align:left">Доля дошедших</th>
     </tr></thead>
@@ -223,11 +226,14 @@ const DATA = /*__DATA__*/null;
 
   // The same days as a table, with the figures asked for by day and a row for the whole period.
   const dsum = (key) => days.reduce((a, d) => a + (d[key] ?? 0), 0);
-  const hasTraces = days.some((d) => d.traces != null);
-  const last = days[days.length - 1] || {};
+  const sber = (d, field) => (d.sber ? nf(d.sber[field]) : '—');
+  const sb = DATA.sber;
   document.getElementById('daily-table').innerHTML = days.map((d) =>
-    `<tr><td>${esc(d.day)}</td><td>${nf(d.dau)}</td><td>${nf(d.new)}</td><td>${nf(d.turns)}</td><td>${nf(d.active10 ?? 0)}</td><td>${d.traces == null ? '—' : nf(d.traces)}</td><td>${nf(d.users ?? 0)}</td></tr>`).join('') +
-    `<tr class="sum"><td>За период</td><td>${nf(DATA.kpi.wau)}</td><td>${nf(dsum('new'))}</td><td>${nf(dsum('turns'))}</td><td>—</td><td>${hasTraces ? nf(dsum('traces')) : '—'}</td><td>${nf(last.users ?? 0)}</td></tr>`;
+    `<tr><td>${esc(d.day)}</td><td>${nf(d.dau)}</td><td>${nf(d.new)}</td><td>${nf(d.turns)}</td>` +
+    ['dau', 'new_users', 'total_users', 'daily_active_account', 'llm_requests', 'tool_requests'].map((f) => `<td>${sber(d, f)}</td>`).join('') + '</tr>').join('') +
+    `<tr class="sum"><td>За период</td><td>${nf(DATA.kpi.wau)}</td><td>${nf(dsum('new'))}</td><td>${nf(dsum('turns'))}</td>` +
+    `<td>—</td><td>${sb ? nf(sb.newUsers) : '—'}</td><td>${sb ? nf(sb.totalUsers) : '—'}</td><td>—</td>` +
+    `<td>${sb ? nf(sb.llmRequests) : '—'}</td><td>${sb ? nf(sb.toolRequests) : '—'}</td></tr>`;
 
   // Channels.
   document.getElementById('channels').innerHTML = DATA.channels.map((r) => {
@@ -273,19 +279,21 @@ const DATA = /*__DATA__*/null;
     }).join('');
   }
 
-  // Who comes (Metrika): age and gender with the share that reaches a 3+ reply dialog.
+  // Who comes (Metrika): age and gender with the share that reaches goal 3 (3+ replies in a day). Responses saved
+  // before 18.11.2026 carry the former goal under `d3`.
   let section = 4;
   const aud = DATA.audience || [];
   if (aud.length) {
     document.getElementById('audience-sec').hidden = false;
     document.getElementById('audience-title').textContent = `${++section}. Кто приходит`;
-    const shares = aud.filter((r) => !r.group && r.users).map((r) => r.d3 / r.users * 100);
+    const reached = (r) => r.reached ?? r.d3 ?? 0;
+    const shares = aud.filter((r) => !r.group && r.users).map((r) => reached(r) / r.users * 100);
     const ascale = Math.max(10, Math.ceil(Math.max(0, ...shares) / 10) * 10);
     document.getElementById('audience').innerHTML = aud.map((r) => {
       if (r.group) return `<tr class="dim"><td colspan="5"><b>${esc(r.group)}</b></td></tr>`;
-      const p = r.users ? r.d3 / r.users * 100 : 0;
-      return `<tr><td>${esc(r.label)}${flag(r.users < 20)}</td><td>${nf(r.users)}</td><td>${nf(r.d3)}</td><td>${r.users ? pct(p) : '—'}</td>` +
-        `<td class="barcell"><div class="bar"${tipAttr(`дошли ${r.d3} из ${r.users} (${pct(p)}); шкала 0–${ascale} %`, r.label)}><span style="width:${p / ascale * 100}%"></span></div></td></tr>`;
+      const p = r.users ? reached(r) / r.users * 100 : 0;
+      return `<tr><td>${esc(r.label)}${flag(r.users < 20)}</td><td>${nf(r.users)}</td><td>${nf(reached(r))}</td><td>${r.users ? pct(p) : '—'}</td>` +
+        `<td class="barcell"><div class="bar"${tipAttr(`дошли ${reached(r)} из ${r.users} (${pct(p)}); шкала 0–${ascale} %`, r.label)}><span style="width:${p / ascale * 100}%"></span></div></td></tr>`;
     }).join('');
   }
 

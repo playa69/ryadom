@@ -1,11 +1,14 @@
 // Yandex Metrika (the counter «Слышу Рядом») through the Reports API: totals and goals for the reconciliation, and who
-// comes (age, gender) with the share that reaches a 3+ reply dialog. Read-only.
+// comes (age, gender) with the share that reaches goal 3 (3+ replies in a day). Read-only.
 // The OAuth token (scope metrika:read) comes from YANDEX_METRIKA_TOKEN; it is never printed.
 // YANDEX_METRIKA_COUNTER overrides the counter.
 const API = 'https://api-metrika.yandex.net';
 const COUNTER = process.env.YANDEX_METRIKA_COUNTER || '114043323';
-// «Переход в продукт»: a page goal; the two JS goals are found by their identifiers (MetrikaGoal in events.ts).
-const PRODUCT_GOAL_ID = 678475442;
+// The goals of the marketing brief (since 13.11.2026), found by their JS identifiers (MetrikaGoal in events.ts):
+// goal 1 — a landing button into the product, goal 2 — the account's first reply, goals 3 and 4 — the account's
+// third and tenth reply of a Moscow day. The former page goal «Переход в продукт» is archived and
+// first_dialog_3_replies is deleted, so periods before 13.11 have no counterpart here.
+const GOALS = { openApp: 'open_app', firstReply: 'first_reply', polz3: 'polz_3', dau10: 'dau_10' };
 
 export const metrikaConfigured = () => Boolean(process.env.YANDEX_METRIKA_TOKEN);
 
@@ -24,11 +27,7 @@ const goalBy = (goals, identifier) =>
 // from and to are Moscow dates, both included (the counter keeps Moscow time).
 export async function collectMetrika({ from, to }) {
   const { goals = [] } = await get(`/management/v1/counter/${COUNTER}/goals`);
-  const goal = {
-    product: goals.find((g) => g.id === PRODUCT_GOAL_ID),
-    reply: goalBy(goals, 'first_reply'),
-    d3: goalBy(goals, 'first_dialog_3_replies'),
-  };
+  const goal = Object.fromEntries(Object.entries(GOALS).map(([key, identifier]) => [key, goalBy(goals, identifier)]));
   const found = Object.entries(goal).filter(([, g]) => g);
   const base = { ids: COUNTER, date1: from, date2: to, accuracy: 'full', lang: 'ru' };
 
@@ -38,17 +37,17 @@ export async function collectMetrika({ from, to }) {
   const goalUsers = Object.fromEntries(found.map(([key], i) => [key, Number(totals[2 + i]) || 0]));
 
   const audience = async (dimension) => {
-    if (!goal.d3) return [];
+    if (!goal.polz3) return [];
     const body = await get('/stat/v1/data', {
       ...base,
       dimensions: dimension,
-      metrics: `ym:s:users,ym:s:goal${goal.d3.id}users`,
+      metrics: `ym:s:users,ym:s:goal${goal.polz3.id}users`,
       limit: 20,
     });
     const rows = (body.data ?? []).map((row) => ({
       label: row.dimensions?.[0]?.name ?? '—',
       users: Number(row.metrics?.[0]) || 0,
-      d3: Number(row.metrics?.[1]) || 0,
+      reached: Number(row.metrics?.[1]) || 0,
     }));
     // Age groups in their natural order: «младше 18» first, then by the first number in the name.
     const order = (label) => (/^(младше|younger)/i.test(label) ? -1 : Number(label.match(/\d+/)?.[0] ?? 999));

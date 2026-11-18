@@ -12,6 +12,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectDashboard, dashboardConfigured } from './dashboard.mjs';
 import { collectDatabase, databaseConfigured, testAccountIds } from './database.mjs';
 import { collectLangfuse, langfuseConfigured } from './langfuse.mjs';
 import { collectMetrika, metrikaConfigured } from './metrika.mjs';
@@ -97,9 +98,10 @@ GROUP BY utm_source, utm_campaign, device
 ORDER BY visitors DESC
 LIMIT 500`,
 
-  // DAU, replies, people with more than 10 replies and people who used voice, per Moscow day.
+  // DAU, replies and people who used voice, per Moscow day. The team's DAU, users and active accounts come from the
+  // dashboard (dashboard.mjs); this one is PostHog's, for shares and slices.
   daily: `
-SELECT toString(day) AS day, count() AS dau, sum(n) AS turns, countIf(n > 10) AS active10, countIf(v > 0) AS voice FROM (
+SELECT toString(day) AS day, count() AS dau, sum(n) AS turns, countIf(v > 0) AS voice FROM (
   SELECT toDate(toTimeZone(timestamp, 'Europe/Moscow')) AS day, person_id, count() AS n,
     countIf(properties.input = 'voice') AS v
   FROM events WHERE event = 'dialog_turn' AND {{people}} AND ${WINDOW}
@@ -108,18 +110,19 @@ GROUP BY day
 ORDER BY day
 LIMIT 100`,
 
-  // The day each account reached its fourth reply ever: a user is an account with more than 3 replies (the team's
-  // definition), counted as a running total.
-  usersReached: `
-SELECT toString(toDate(toTimeZone(t4, 'Europe/Moscow'))) AS day, count() AS accounts
-FROM (
-  SELECT person_id, arrayElement(arraySort(groupArray(timestamp)), 4) AS t4
-  FROM events WHERE event = 'dialog_turn' AND {{people}} AND timestamp < toDateTime('{{to}}')
-  GROUP BY person_id
-  HAVING count() > 3)
-GROUP BY day
-ORDER BY day
-LIMIT 1000`,
+  // People with 3+ and 10+ replies in at least one Moscow day of the period: goals 3 and 4 of Metrika on PostHog's side.
+  goalPeople: `
+SELECT uniqIf(person_id, n >= 3) AS polz3, uniqIf(person_id, n >= 10) AS dau10 FROM (
+  SELECT person_id, toDate(toTimeZone(timestamp, 'Europe/Moscow')) AS day, count() AS n
+  FROM events WHERE event = 'dialog_turn' AND {{people}} AND ${WINDOW}
+  GROUP BY person_id, day)`,
+
+  // Devices that pressed a landing button into the product: goal 1 of Metrika on PostHog's side.
+  openApp: `
+SELECT uniq(person_id) AS devices
+FROM events
+WHERE ((event = 'cta_clicked' AND properties.cta = 'open_web_app') OR event = 'store_link_clicked')
+  AND {{people}} AND ${WINDOW}`,
 
   // People whose first reply ever fell on each day: dialogs of 3+ replies, length of the first dialog, and how many
   // of them came back on another day before the end of the period.
@@ -244,9 +247,18 @@ for (const name of Object.keys(QUERIES)) if (!data[name]) fail(`no results for $
 
 // ---------- other sources ----------
 // Each needs its own access and is optional: a failure is shown in the report instead of stopping it.
-// Saved results (--data) may carry them under the keys metrika, database and langfuse.
-const extra = { metrika: raw.metrika ?? null, database: raw.database ?? null, langfuse: raw.langfuse ?? null };
+// Saved results (--data) may carry them under the keys dashboard, metrika, database and langfuse.
+const extra = {
+  dashboard: raw.dashboard ?? null, metrika: raw.metrika ?? null, database: raw.database ?? null, langfuse: raw.langfuse ?? null,
+};
 const sourceErrors = {};
+if (!extra.dashboard && dashboardConfigured()) {
+  try {
+    extra.dashboard = await collectDashboard({ from: fromDate, to: lastDate });
+  } catch (error) {
+    sourceErrors.dashboard = error.message;
+  }
+}
 if (!extra.metrika && metrikaConfigured()) {
   try {
     extra.metrika = await collectMetrika({ from: fromDate, to: lastDate });
@@ -356,19 +368,18 @@ const funnel = STEPS.map(([key, label]) => ({ key, label, total: cohortTotal[key
 const dayList = Array.from({ length: days }, (_, i) => shiftDate(fromDate, i));
 const dailyBy = new Map(data.daily.map((r) => [r.day, r]));
 const newBy = new Map(data.newSpeakers.map((r) => [r.day, r]));
-const usersBefore = data.usersReached.filter((r) => r.day < fromDate).reduce((a, r) => a + num(r.accounts), 0);
-const usersBy = new Map(data.usersReached.map((r) => [r.day, num(r.accounts)]));
-let users = usersBefore;
 const cohortBy = new Map(data.cohortDaily.map((r) => [r.day, r]));
 const micBy = new Map(data.micDaily.map((r) => [r.day, num(r.people)]));
+const dash = extra.dashboard;
 const daily = dayList.map((d) => {
-  users += usersBy.get(d) ?? 0;
   const nb = newBy.get(d);
   return {
     date: d, day: ddmm(d), dau: num(dailyBy.get(d)?.dau), new: num(nb?.new_speakers), turns: num(dailyBy.get(d)?.turns),
-    active10: num(dailyBy.get(d)?.active10), voice: num(dailyBy.get(d)?.voice), users,
+    voice: num(dailyBy.get(d)?.voice),
     newD3: num(nb?.new_d3), returnedNew: num(nb?.returned), firstDialogs: (nb?.first_dialogs ?? []).map(num),
     visitors: num(cohortBy.get(d)?.visitors), cohortSpoke: num(cohortBy.get(d)?.spoke), micDenied: micBy.get(d) ?? 0,
+    // The team's figures from the dashboard: null for a day it does not have (before the contest) or without access.
+    sber: dash?.days?.[d] ?? null,
     // Filled from Langfuse and the database below; null when they are not available.
     traces: null, tokens: null, tokensPerDialog: null, dbUserMessages: null,
   };
@@ -408,26 +419,41 @@ const medians = {
   desktop: median(desktop.first_dialogs),
 };
 
-// Reconciliation and audience from Metrika.
+// Reconciliation: the team's figures from the dashboard, then Metrika's goals. The field `metrika` of a row is the
+// value of the second source, whichever it is (`source`).
+const reconcile = [];
+const reconcileNotes = [];
+const dashDays = daily.filter((d) => d.sber);
+if (dashDays.length) {
+  const sumOf = (rows, pick) => rows.reduce((a, d) => a + pick(d), 0);
+  const span = dashDays.length === days ? '' : ` (${dashDays.length} из ${days} дней: остальных нет на дашборде)`;
+  reconcile.push(
+    { label: `DAU, сумма по дням${span}`, source: 'Дашборд', tip: 'PostHog — люди с репликой (dialog_turn) за сутки; дашборд — аккаунты с сообщением за сутки по базе агента и ходам из Langfuse. В PostHog нет отказавшихся от аналитики и разговоров «Не сохранять», поэтому он обычно меньше.', posthog: sumOf(dashDays, (d) => d.dau), metrika: sumOf(dashDays, (d) => d.sber.dau) },
+    { label: `Новые${span}`, source: 'Дашборд', tip: 'PostHog — люди, чья первая реплика за всё время пришлась на эти дни (dialog_turn есть с 14.10.2026); дашборд — аккаунты, чьё первое известное сообщение пришлось на эти дни (счётчик реплик, база агента, Langfuse).', posthog: sumOf(dashDays, (d) => d.new), metrika: sumOf(dashDays, (d) => d.sber.new_users) },
+  );
+  reconcileNotes.push('С дашбордом PostHog обычно меньше: в нём нет отказавшихся от аналитики и разговоров «Не сохранять».');
+}
 const mk = extra.metrika;
-const reconcile = mk
-  ? [
-      { label: 'Посетители', source: 'Метрика', tip: 'PostHog — новые устройства периода; Метрика — уникальные посетители периода по своей cookie.', posthog: cohortTotal.visitors, metrika: mk.users },
-      mk.goals.product && { label: 'Пришли в продукт', source: 'Метрика', tip: 'Метрика: цель «Переход в продукт» (адрес содержит /app/ или /pwa/; Android и iOS не входят).', posthog: cohortTotal.product, metrika: mk.goals.product.users },
-      mk.goals.reply && { label: 'Сказали реплику', source: 'Метрика', tip: 'Метрика: цель first_reply, уникальные посетители.', posthog: cohortTotal.spoke, metrika: mk.goals.reply.users },
-      mk.goals.d3 && { label: 'Разговор от 3 реплик', source: 'Метрика', tip: 'Метрика: цель first_dialog_3_replies, один раз на устройстве.', posthog: cohortTotal.d3, metrika: mk.goals.d3.users },
-    ].filter(Boolean)
-  : [];
+if (mk) {
+  const goalPeople = data.goalPeople[0] ?? {};
+  const openAppDevices = num(data.openApp[0]?.devices);
+  reconcile.push(
+    { label: 'Посетители', source: 'Метрика', tip: 'PostHog — новые устройства периода; Метрика — уникальные посетители периода по своей cookie.', posthog: cohortTotal.visitors, metrika: mk.users },
+    mk.goals.openApp && { label: 'Цель 1: открыли приложение', source: 'Метрика', tip: 'PostHog — устройства, нажавшие на лендинге «Открыть веб-приложение» или ссылку магазина; Метрика — цель 1 (open_app). Метрика теряет нажатия в первые 1–2 секунды после открытия лендинга, поэтому при рекламе в играх она заметно меньше.', posthog: openAppDevices, metrika: mk.goals.openApp.users },
+    mk.goals.firstReply && { label: 'Цель 2: первая реплика', source: 'Метрика', tip: 'PostHog — люди, чья первая реплика за всё время пришлась на эти дни; Метрика — цель 2 (first_reply, первая реплика аккаунта).', posthog: newSpeakers, metrika: mk.goals.firstReply.users },
+    mk.goals.polz3 && { label: 'Цель 3: 3+ реплики за сутки', source: 'Метрика', tip: 'Люди, у которых хотя бы в одни московские сутки периода было 3 реплики и больше; Метрика — цель 3 (polz_3).', posthog: num(goalPeople.polz3), metrika: mk.goals.polz3.users },
+    mk.goals.dau10 && { label: 'Цель 4: 10+ реплик за сутки', source: 'Метрика', tip: 'Люди, у которых хотя бы в одни московские сутки периода было 10 реплик и больше; Метрика — цель 4 (dau_10).', posthog: num(goalPeople.dau10), metrika: mk.goals.dau10.users },
+  );
+  reconcileNotes.push('С Метрикой расхождение до 10 % — обычное: цели отправляет браузер (блокировщик, Do Not Track, закрытая вкладка), а посетителей она считает по своей cookie. Цель 1 при рекламе в играх меньше сильнее: быстрые нажатия не успевают дойти.');
+}
 const audience = mk && (mk.gender.length || mk.age.length)
   ? [
       ...(mk.gender.length ? [{ group: 'Пол' }, ...mk.gender] : []),
       ...(mk.age.length ? [{ group: 'Возраст' }, ...mk.age] : []),
     ]
   : [];
-let reconcileNote = mk
-  ? 'Расхождение до 10 % — обычное: PostHog считает новые устройства, Метрика — посетителей по своей cookie.'
-  : 'Сверка с Метрикой появится, когда у агента будет к ней доступ.';
-if (sourceErrors.metrika) reconcileNote = `Метрика: ${sourceErrors.metrika.replace(/^Metrika:?\s*/, '')}`;
+if (!mk) reconcileNotes.push(sourceErrors.metrika ? `Метрика: ${sourceErrors.metrika.replace(/^Metrika:?\s*/, '')}.` : 'Сверка с Метрикой появится, когда у агента будет к ней доступ.');
+if (!dash) reconcileNotes.push(sourceErrors.dashboard ? `Дашборд: ${sourceErrors.dashboard.replace(/^dashboard:?\s*/, '')}.` : 'Сверка с дашбордом появится, когда у агента будет к нему доступ.');
 
 // The database: true totals, token use and the state of features.
 const db = extra.database;
@@ -440,8 +466,9 @@ if (db) {
     { label: 'Разговоры с репликой', source: 'База', tip: 'Разговоры, в которых человек сказал хоть что-то в эти дни.', posthog: num(sp.dialogs), metrika: act.dialogs },
     { label: 'Новые аккаунты', source: 'База', tip: 'PostHog — события account_created; база — аккаунты, созданные в эти дни (без тестовых и командных).', posthog: accountsPosthog, metrika: db.app.accounts_new },
   );
-  if (!mk) reconcileNote = 'С базой: PostHog не видит отказавшихся от аналитики, а в базе нет стёртых разговоров.';
+  reconcileNotes.push('С базой: PostHog не видит отказавшихся от аналитики, а в базе нет стёртых разговоров и сообщений 11–16.11.2026.');
 }
+const reconcileNote = reconcileNotes.join(' ');
 const activeDays = act?.person_days || daily.reduce((a, d) => a + d.dau, 0);
 // All model calls come from Langfuse (it also sees the conversations people asked not to save, so only the sum is
 // shown); per conversation and per active day come from the database, which keeps saved conversations only.
@@ -481,10 +508,25 @@ const features = db
     ]
   : [];
 
+// The team's figures for the period: DAU and active accounts are per day and do not add up, new users and calls do.
+const sberSum = (field) => dashDays.reduce((a, d) => a + d.sber[field], 0);
+const sber = dashDays.length
+  ? {
+      days: dashDays.length, updatedAt: dash.updatedAt,
+      dauAvg: sberSum('dau') / dashDays.length,
+      dauPeak: dashDays.reduce((best, d) => (d.sber.dau > best.dau ? { day: d.day, dau: d.sber.dau } : best), { day: null, dau: -1 }),
+      newUsers: sberSum('new_users'),
+      totalUsers: dashDays[dashDays.length - 1].sber.total_users,
+      totalUsersBefore: dashDays[0].sber.total_users - dashDays[0].sber.new_users,
+      llmRequests: sberSum('llm_requests'), toolRequests: sberSum('tool_requests'),
+    }
+  : null;
+
 const report = {
   period: { from: fromDate, to: lastDate, days, label: periodLabel, generatedAt: new Date().toISOString() },
-  sources: { posthog: true, metrika: Boolean(mk), database: Boolean(db), langfuse: Boolean(lf) },
+  sources: { posthog: true, dashboard: Boolean(dash), metrika: Boolean(mk), database: Boolean(db), langfuse: Boolean(lf) },
   sourceErrors,
+  sber,
   metrika: mk,
   reconcile,
   audience,
@@ -512,10 +554,10 @@ const report = {
 // ---------- issue description (Markdown) ----------
 const k = report.kpi;
 const sourceMark = (ok, error) => (ok ? '✅' : error ? '⚠️' : '❌');
-const sourcesLine = `Источники: PostHog ✅ · Метрика ${sourceMark(mk, sourceErrors.metrika)} · база ${sourceMark(db, sourceErrors.database)} · Langfuse ${sourceMark(lf, sourceErrors.langfuse)}`;
-const SOURCE_NAMES = { metrika: 'Метрика', database: 'База', langfuse: 'Langfuse' };
+const sourcesLine = `Источники: PostHog ✅ · дашборд ${sourceMark(dash, sourceErrors.dashboard)} · Метрика ${sourceMark(mk, sourceErrors.metrika)} · база ${sourceMark(db, sourceErrors.database)} · Langfuse ${sourceMark(lf, sourceErrors.langfuse)}`;
+const SOURCE_NAMES = { dashboard: 'Дашборд', metrika: 'Метрика', database: 'База', langfuse: 'Langfuse' };
 const errorLine = Object.entries(sourceErrors)
-  .map(([name, message]) => `${SOURCE_NAMES[name]}: ${message.replace(/^(Metrika|база|Langfuse):?\s*/i, '').replace(/\|/g, '/')}`)
+  .map(([name, message]) => `${SOURCE_NAMES[name]}: ${message.replace(/^(dashboard|Metrika|база|Langfuse):?\s*/i, '').replace(/\|/g, '/')}`)
   .join('. ');
 
 // The first table: every figure by Moscow day and for the whole period. People are counted once in the period column,
@@ -532,7 +574,7 @@ const mainRows = [
   ['из них разговор от 3 реплик', daily.map((d) => int(d.newD3)), int(newD3)],
   ['Первый разговор, медиана реплик', daily.map((d) => medianCell(d.firstDialogs)), medianCell(daily.flatMap((d) => d.firstDialogs))],
   ['Вернулись в другой день', daily.map((d) => int(d.returnedNew)), int(k.returnedNew)],
-  ['Говорили (DAU, за период — WAU)', daily.map((d) => int(d.dau)), int(k.wau)],
+  ['Говорили по PostHog (DAU, за период — WAU)', daily.map((d) => int(d.dau)), int(k.wau)],
   ['Реплики', daily.map((d) => int(d.turns)), int(sp.turns)],
   ['Говорили голосом', daily.map((d) => pct(share(d.voice, d.dau))), pct(k.voiceShare)],
   ['Отказ в микрофоне, людей', daily.map((d) => int(d.micDenied)), int(micDenied)],
@@ -554,6 +596,17 @@ const mainTable = [
 
 // Plain digits: the by-day table is meant to be pasted into a spreadsheet, where grouped digits become text.
 const plain = (x) => String(Math.round(num(x)));
+const SBER_COLUMNS = [
+  ['dau', 'DAU'], ['new_users', 'Новые пользователи'], ['total_users', 'Пользователи всего'],
+  ['daily_active_account', 'Активные: больше 10 сообщений'], ['llm_requests', 'Вызовы LLM'], ['tool_requests', 'Tool calls — Память'],
+];
+const sberTable = dash
+  ? [
+      `| Дата | ${SBER_COLUMNS.map(([, label]) => label).join(' | ')} |`,
+      `|---|${SBER_COLUMNS.map(() => '---:').join('|')}|`,
+      ...daily.map((d) => `| ${d.day} | ${SBER_COLUMNS.map(([field]) => (d.sber ? plain(d.sber[field]) : '—')).join(' | ')} |`),
+    ].join('\n')
+  : `Дашборд ${sourceErrors.dashboard ? 'не ответил' : 'недоступен агенту'}: таблицы нет.`;
 const title = `Сводка Рядом · ${periodLabel}`;
 const description = `Автоматический отчёт за ${days} полных дней по Москве (${periodLabel}). Детализация с графиком и таблицами — в первом комментарии. Прочитали — закройте задачу.
 
@@ -565,27 +618,23 @@ ${mainTable}
 
 <!-- ГЛАВНОЕ -->
 
-### По дням
+### По дням — как на дашборде Sber500
 
-| Дата | Активные: больше 10 реплик | Запросы к моделям | Пользователи: больше 3 реплик, всего |
-|---|---:|---:|---:|
-${daily.map((d) => `| ${d.day} | ${plain(d.active10)} | ${d.traces == null ? '—' : plain(d.traces)} | ${plain(d.users)} |`).join('\n')}
+${sberTable}
 
 ### Как считаются цифры
 
-- **По дням и за период.** День — московские сутки. В колонке «За ${days} дней» люди считаются один раз (поэтому DAU за период — это WAU), реплики, отказы и токены складываются, доли считаются по всему периоду.
+- **По дням — как на дашборде Sber500.** Числа взяты из дашборда (\`/dashboard/api\`) как есть: это определения команды, прошедшие сутки там закрыты снимком и не пересчитываются. Сообщения — база агента и ходы разговора из Langfuse вместе (в базе нет сообщений 11–16.11.2026), без тестовых и командных аккаунтов. **DAU** — аккаунты хотя бы с одним сообщением за сутки. **Новые пользователи** — аккаунты, чьё первое известное сообщение пришлось на эти сутки. **Пользователи всего** — накопленный итог новых с 05.11.2026, удалённые не вычитаются. **Активные** — больше 10 сообщений за сутки (внутренняя метрика). **Вызовы LLM** — вызовы моделей от действий людей (ответ, итог разговора, память, настроение) без повторов, прогревов, озвучки и плановых сводок. **Tool calls — Память** — успешные обращения агента к памяти. Дней до 05.11.2026 на дашборде нет («—»).
+- **Главная таблица — PostHog.** День — московские сутки. В колонке «За ${days} дней» люди считаются один раз (поэтому DAU за период — это WAU), реплики, отказы и токены складываются, доли считаются по всему периоду. PostHog нужен для долей и разрезов: каналы, голос, возврат.
 - **Новые** — люди и устройства, впервые появившиеся в эти дни; учитываются только настоящие люди (без тестов и команды).
 - **Посетитель** — устройство: до входа события анонимны. **Посетитель → заговорил** — заговорившие ÷ новые устройства, по дню первого появления устройства.
 - **Заговорил** — сервер принял хотя бы одну реплику (\`dialog_turn\`), набранную или сказанную.
-- **DAU** — люди с репликой за московские сутки; **WAU** — люди с репликой за весь период.
+- **Говорили по PostHog (DAU)** — люди с репликой за московские сутки; **WAU** — люди с репликой за весь период. Обычно немного меньше DAU дашборда: в PostHog нет отказавшихся от аналитики и разговоров «Не сохранять».
 - **Разговор от 3 реплик** — три реплики под одним \`dialog_id\`; реплики разных разговоров не складываются.
 - **Первый разговор** — число реплик в самом раннем разговоре человека; **Вернулись в другой день** — из заговоривших впервые, у кого есть реплики ещё в каком-то дне до конца периода. Обе строки — по дню первой реплики; число вернувшихся за последние дни ещё вырастет.
 - **Говорили голосом** — хотя бы одна голосовая реплика: за день — доля от DAU, за период — от WAU.
 - **Канал** — UTM первой сессии с просмотром страницы.
-- **Активные: больше 10 реплик** — люди, у которых за московские сутки больше 10 реплик.
-- **Запросы к моделям** — трассы Langfuse за московские сутки: одна трасса — один вызов модели (ход разговора, классификатор настроения, итог, память, озвучка фраз), без тестовых и командных аккаунтов; без Langfuse — «—».
-- **Пользователи: больше 3 реплик, всего** — нарастающий итог: аккаунты, у которых к концу суток набралось больше 3 реплик за всё время (реплики в аналитике есть с 14.10.2026).
-- **Метрика** — счётчик «Слышу Рядом»: посетители и цели за те же дни, пол и возраст по данным Яндекса.
+- **Метрика** — счётчик «Слышу Рядом»: посетители и цели 1–4 за те же дни (сверка в детализации), пол и возраст по данным Яндекса.
 - **База** — боевые базы приложения и агента, только чтение и только суммы. **Видно в PostHog** (появляется, если кто-то отказался от аналитики) — реплики в PostHog ÷ сообщения человека в базе.
 - **Расход моделей** — токены всех вызовов моделей агента за те же дни по Langfuse, без тестовых и командных аккаунтов; в него входят и разговоры «Не сохранять», и стёртые — только суммой. Вызовы через прокси (итог разговора, память) и озвучка фраз приходят без токенов, так что настоящий расход немного больше.
 - **Токенов на разговор** — расход в сохраняемых разговорах из базы агента ÷ разговоры с расходом в тот же день (за период — ÷ разговоры с расходом за период).
