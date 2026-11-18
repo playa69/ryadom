@@ -70,6 +70,7 @@ LANGFUSE_PAGE_LIMIT = 100
 METRICS_MAX_RANGE_DAYS = 90
 METRICS_RATE_PER_MINUTE = 30
 METRICS_CACHE_SECONDS = 900
+TODAY_REFRESH_SECONDS = 600  # фоновое обновление текущих суток: свежее окна кэша ответа
 STARTUP_ID = "ryadom"
 # Трассы выгружаются с запасом назад: observation на границе окна может принадлежать трассе, начавшейся
 # раньше окна; без запаса она потеряла бы userId и выпала из метрик. Дублей нет: считаются только
@@ -789,16 +790,24 @@ def build_report(days: list[date], snapshots: Mapping[str, dict], computed_at: d
     }
 
 
-def preliminary_today(store, now: datetime, first_day: date) -> dict:
-    """Предварительные метрики текущих суток из сырых источников; total_users цепочкой от снимков.
+def today_metrics(now: datetime, first_day: date) -> dict:
+    """Метрики текущих суток из сырых источников, без total_users.
 
     Первый известный день для new_users считается по всей истории конкурса (langfuse_first_turns
     сворачивает её постранично), а не по окну дня: иначе аккаунт, известный только по трейсингу
-    и говоривший раньше, ошибочно стал бы «новым» сегодня и раздул бы total_users."""
+    и говоривший раньше, ошибочно стал бы «новым» сегодня и раздул бы total_users. Расчёт тяжёлый
+    (десятки секунд), поэтому для metrics API его держит в тёплом кэше TodayCache."""
     today = now.astimezone(MSK).date()
     raw = collect_raw(*utc_bounds([today, today]))
     first_turn = langfuse_first_turns(*_langfuse_config(), *utc_bounds([first_day, today]), raw["excluded"])
-    metrics = metrics_by_day(**raw, first_turn=first_turn).get(today.isoformat()) or ZERO_METRICS
+    return metrics_by_day(**raw, first_turn=first_turn).get(today.isoformat()) or ZERO_METRICS
+
+
+def preliminary_today(store, now: datetime, first_day: date,
+                      source: Callable[[datetime, date], dict] = today_metrics) -> dict:
+    """Предварительные метрики текущих суток; total_users цепочкой от снимков."""
+    today = now.astimezone(MSK).date()
+    metrics = source(now, first_day)
     return {**metrics, "total_users": store.total_before(today.isoformat()) + metrics["new_users"]}
 
 
@@ -930,7 +939,7 @@ def compute_metrics_api(day_from: date, day_to: date, now: datetime) -> dict:
     today = now.astimezone(MSK).date()
     if today in days:
         first_day = min(CONTEST_START, today)
-        snapshots[today.isoformat()] = preliminary_today(store, now, first_day)
+        snapshots[today.isoformat()] = preliminary_today(store, now, first_day, TODAY_CACHE.get)
     return build_metrics_payload(days, snapshots, store.tool_recovery(),
                                  store.total_before(day_from.isoformat()), now, today)
 
@@ -957,6 +966,44 @@ class RangeCache:
             self._entries = {k: v for k, v in self._entries.items() if self._clock() - v[0] < self._ttl}
             self._entries[key] = (self._clock(), payload)
             return payload
+
+
+class TodayCache:
+    """Тёплый расчёт текущих суток для metrics API.
+
+    Холодный расчёт идёт десятки секунд — дольше таймаутов ingress и системы сбора, — поэтому его
+    обновляет фоновый поток, а запрос получает готовое значение. Пока расчёт текущих суток ещё ни
+    разу не удался, запрос считает сам; сбой обновления оставляет прошлое значение того же дня."""
+
+    def __init__(self, compute: Callable[[datetime, date], dict] = today_metrics):
+        self._compute = compute
+        self._lock = threading.Lock()
+        self._day: date | None = None
+        self._value: dict | None = None
+
+    def refresh(self, now: datetime | None = None) -> None:
+        now = now or datetime.now(UTC)
+        today = now.astimezone(MSK).date()
+        value = self._compute(now, min(CONTEST_START, today))
+        with self._lock:
+            self._day, self._value = today, value
+
+    def get(self, now: datetime, first_day: date) -> dict:
+        today = now.astimezone(MSK).date()
+        with self._lock:
+            if self._value is not None and self._day == today:
+                return self._value
+        self.refresh(now)
+        with self._lock:
+            return self._value
+
+    def run_forever(self, interval: float = TODAY_REFRESH_SECONDS) -> None:
+        while True:
+            try:
+                self.refresh()
+            except Exception:
+                log.exception("тёплый расчёт текущих суток не удался")
+            time.sleep(interval)
 
 
 class RateLimit:
@@ -1118,6 +1165,7 @@ PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 METRICS_TOKEN = os.environ.get("METRICS_API_TOKEN", "")
 CACHE = ReportCache(compute_report)
 RANGE_CACHE = RangeCache(compute_metrics_api)
+TODAY_CACHE = TodayCache()
 FAILED = FailedLogins()
 RATE = RateLimit(METRICS_RATE_PER_MINUTE)
 
@@ -1219,6 +1267,7 @@ def main() -> None:
     store.ensure_schema()
     snapshotter = Snapshotter(store, collect_raw)
     threading.Thread(target=snapshotter.run_forever, daemon=True).start()
+    threading.Thread(target=TODAY_CACHE.run_forever, daemon=True).start()
     port = int(os.environ.get("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     server.daemon_threads = True

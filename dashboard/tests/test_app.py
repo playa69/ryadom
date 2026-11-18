@@ -952,3 +952,40 @@ def test_metrics_api_rate_limit_allows_up_to_limit_per_minute():
     assert rate.allowed("5.6.7.8")
     clock[0] = 120.0
     assert rate.allowed("1.2.3.4")
+
+
+def test_today_cache_serves_warm_value_without_recomputing():
+    # openspec/specs/sber500-dashboard, «Нагрузка»: тяжёлый расчёт текущих суток обновляет фон,
+    # запрос получает готовое значение того же дня.
+    calls = []
+
+    def compute(now, first_day):
+        calls.append(first_day)
+        return {"dau": len(calls)}
+
+    cache = app.TodayCache(compute)
+    now = datetime(2026, 11, 11, 9, tzinfo=UTC)
+    cache.refresh(now)
+    assert cache.get(now, date(2026, 11, 5)) == {"dau": 1}
+    assert len(calls) == 1
+    cache.get(datetime(2026, 11, 12, 9, tzinfo=UTC), date(2026, 11, 5))  # сутки сменились — считаем заново
+    assert len(calls) == 2
+
+
+def test_today_cache_keeps_previous_value_when_refresh_fails():
+    state = {"fail": False}
+
+    def compute(now, first_day):
+        if state["fail"]:
+            raise RuntimeError("источник недоступен")
+        return {"dau": 5}
+
+    cache = app.TodayCache(compute)
+    now = datetime(2026, 11, 11, 9, tzinfo=UTC)
+    cache.refresh(now)
+    state["fail"] = True
+    try:
+        cache.refresh(now)
+    except RuntimeError:
+        pass
+    assert cache.get(now, date(2026, 11, 5)) == {"dau": 5}
