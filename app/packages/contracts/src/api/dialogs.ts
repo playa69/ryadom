@@ -254,6 +254,7 @@ export enum DialogServerFrame {
   AssistantStart = 'assistant_start',
   AssistantDelta = 'assistant_delta',
   AssistantEnd = 'assistant_end',
+  Recommendation = 'recommendation',
   TtsStart = 'tts_start',
   TtsEnd = 'tts_end',
   Safety = 'safety',
@@ -309,6 +310,8 @@ export interface HelloFrame {
    * decodes `pcm16`, so it need not be listed. Names the gateway does not know are skipped.
    */
   codecs?: TtsCodec[]
+  /** The gateway sends recommendation frames only to connections that opt in. */
+  recommendation?: boolean
 }
 
 export interface MessageFrame {
@@ -356,6 +359,8 @@ export type DialogServerMessage =
   | { type: DialogServerFrame.AssistantStart; messageId: string }
   | { type: DialogServerFrame.AssistantDelta; messageId: string; text: string }
   | { type: DialogServerFrame.AssistantEnd; messageId: string; text: string; emotions?: string[] }
+  /** While speech is pending, only the text view can present the offer. The terminal frame omits the flag. */
+  | { type: DialogServerFrame.Recommendation; messageId: string; speechPending?: true }
   /** `codec` is the one picked from `hello.codecs` (`pcm16` without them); `sampleRate` is 24000. */
   | { type: DialogServerFrame.TtsStart; messageId: string; codec: TtsCodec; sampleRate: number }
   | { type: DialogServerFrame.TtsEnd; messageId: string }
@@ -379,7 +384,7 @@ export type DialogServerMessage =
    */
   | { type: DialogServerFrame.ReplyCount; today: number; first: boolean }
   | { type: DialogServerFrame.Ended; summary: DialogSummaryApiResponse | null }
-  | { type: DialogServerFrame.Error; code: DialogWsErrorCode; message: string }
+  | { type: DialogServerFrame.Error; code: DialogWsErrorCode; message: string; clientId?: string }
   | { type: DialogServerFrame.Pong }
 
 /** Protocol version carried in every frame as field `v`. Still 1; it changes only on a breaking change. */

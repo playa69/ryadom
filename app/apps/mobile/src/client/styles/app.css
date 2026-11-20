@@ -1248,6 +1248,85 @@ input:-webkit-autofill:focus {
   -webkit-tap-highlight-color: transparent;
 }
 
+.rd-card.rd-recommendation {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 500px;
+  box-sizing: border-box;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+}
+
+.messages .rd-recommendation {
+  width: calc(100% - 44px);
+  margin-inline-start: 44px;
+}
+
+.rd-recommendation h2 {
+  margin: 0 44px 4px 0;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.rd-recommendation-close {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ryadom-text-dim);
+  cursor: pointer;
+}
+
+.rd-recommendation-copy,
+.rd-recommendation-status {
+  margin: 0;
+  color: var(--ryadom-text-dim);
+  font-size: 14px;
+  line-height: 1.42;
+  user-select: text;
+}
+
+.rd-recommendation-copy a {
+  color: var(--ryadom-brand-400);
+  white-space: nowrap;
+}
+
+.rd-recommendation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rd-recommendation-actions .button {
+  width: auto;
+  min-height: 44px;
+  padding-inline: 14px;
+}
+
+.rd-recommendation-status:not(:empty) {
+  margin-top: 8px;
+}
+
+.rd-voice:has(.rd-recommendation) {
+  overflow-y: auto;
+}
+
+.rd-voice:has(.rd-recommendation) .rd-voice-stage {
+  container-type: size;
+  min-height: 96px;
+}
+
+.rd-voice:has(.rd-recommendation) .rd-voice-stage .rd-orb {
+  max-width: 100cqh;
+}
+
 /* The person's words while they speak, then the agent's reply. A long reply scrolls in place
    rather than pushing the sphere off the screen; the whole feed is in the text mode. */
 .rd-voice-caption {

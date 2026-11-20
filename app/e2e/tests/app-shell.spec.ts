@@ -546,9 +546,15 @@ test('начало текстом с главной: пустое поле, од
   await page.getByRole('button', { name: 'Отправить' }).click()
   const sent = current.locator('.message-sent').filter({ hasText: FIRST })
   await expect(sent).toHaveCount(1, { timeout: 20_000 })
-  expect((await sent.boundingBox())!.y, 'сообщение под приветствием').toBeGreaterThan(
-    (await greeting.boundingBox())!.y,
-  )
+  await expect
+    .poll(
+      async () => {
+        const [messageBox, greetingBox] = await Promise.all([sent.boundingBox(), greeting.boundingBox()])
+        return Boolean(messageBox && greetingBox && messageBox.y > greetingBox.y)
+      },
+      { message: 'сообщение под приветствием' },
+    )
+    .toBe(true)
   await expect(current.locator('.message-received')).toHaveCount(2, { timeout: 30_000 })
   await expect(sent, 'сообщение не ушло дважды').toHaveCount(1)
 

@@ -574,6 +574,7 @@ describe('итог разговора, удаление и настройка', 
 
 interface AgentConnection {
   socket: WebSocket
+  recommendation: string | null
   /** Headers of the handshake the gateway made. */
   headers: IncomingHttpHeaders
   received: { type: string }[]
@@ -615,6 +616,7 @@ async function startFakeAgent(): Promise<FakeAgent> {
     const dialogId = decodeURIComponent(parts[4] ?? '')
     const connection: AgentConnection = {
       socket: socket as unknown as WebSocket,
+      recommendation: new URL(request.url ?? '/', 'http://localhost').searchParams.get('recommendation'),
       headers: request.headers,
       received: [],
       binaryFrames: [],
@@ -729,6 +731,56 @@ describe('WebSocket-шлюз', () => {
     await agent.close()
   })
 
+  // openspec/changes/add-dialog-recommendation, «Карточка рекомендации сервиса в разговоре».
+  it.each([true, false])(
+    'передаёт только корректную рекомендацию при согласованной поддержке (%s)',
+    async (supported) => {
+      const { accessToken } = await gateway.signIn()
+      const client = new WebSocket(gateway.wsUrl)
+      await waitOpen(client)
+      try {
+        const dialogId = `recommendation-${supported}`
+        client.send(
+          JSON.stringify({
+            type: DialogClientFrame.Hello,
+            token: accessToken,
+            dialogId,
+            ...(supported ? { recommendation: true } : {}),
+          }),
+        )
+        const upstream = await agent.waitFor(dialogId)
+        expect(upstream.recommendation).toBe(supported ? '1' : null)
+        const frames: Array<Record<string, unknown>> = []
+        client.on('message', (data) => frames.push(JSON.parse(data.toString())))
+        const ready = nextFrame(client, DialogServerFrame.Ready)
+        for (const frame of [
+          { type: 'recommendation', messageId: '' },
+          { type: 'recommendation', messageId: 'a-1', speechPending: 'yes' },
+          {
+            type: 'recommendation',
+            messageId: 'a-1',
+            speechPending: true,
+            privateText: 'Синтетический текст',
+          },
+          { type: 'recommendation', messageId: 'a-1' },
+          { type: 'ready' },
+        ])
+          upstream.socket.send(JSON.stringify(frame))
+        await ready
+        expect(frames.filter((frame) => frame.type === DialogServerFrame.Recommendation)).toEqual(
+          supported
+            ? [
+                { v: 1, type: 'recommendation', messageId: 'a-1', speechPending: true },
+                { v: 1, type: 'recommendation', messageId: 'a-1' },
+              ]
+            : [],
+        )
+      } finally {
+        client.close()
+      }
+    },
+  )
+
   it('hello с токеном открывает диалог и пропускает кадры в обе стороны', async () => {
     const { accessToken } = await gateway.signIn()
     const client = new WebSocket(gateway.wsUrl)
@@ -757,6 +809,30 @@ describe('WebSocket-шлюз', () => {
     })
 
     client.close()
+  })
+
+  it('ошибка лимита содержит id отклонённой текстовой реплики', async () => {
+    const { accessToken } = await gateway.signIn()
+    const client = new WebSocket(gateway.wsUrl)
+    await waitOpen(client)
+    try {
+      const dialogId = 'text-rejection'
+      client.send(JSON.stringify({ type: DialogClientFrame.Hello, token: accessToken, dialogId }))
+      await agent.waitFor(dialogId)
+      const rejected = nextFrame(client, DialogServerFrame.Error)
+      for (let index = 0; index < 6; index++) {
+        client.send(
+          JSON.stringify({
+            type: DialogClientFrame.Message,
+            clientId: `c-${index}`,
+            text: `Реплика ${index}`,
+          }),
+        )
+      }
+      expect(await rejected).toMatchObject({ code: DialogWsErrorCode.RATE_LIMITED, clientId: 'c-5' })
+    } finally {
+      client.close()
+    }
   })
 
   it('заголовки трассировки из рукопожатия клиента уходят агенту, а userId подменяется проверенным', async () => {

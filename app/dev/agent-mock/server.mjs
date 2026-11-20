@@ -48,6 +48,8 @@ function effectiveTts() {
 
 /** `POST /dev/digests {"fail": true}` makes `/digests` answer 502, as an agent whose model is down. */
 let digestsFail = false
+let nextTranscript = null
+let nextRecommendationFor = null
 
 // Memory, the agent's long-term notes about the person: the person can turn it on, and "запомни, что ..."
 // said in a conversation becomes a note shortly after (`MOCK_NOTE_DELAY_MS`, see `memory-notes.mjs`).
@@ -306,6 +308,17 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { mode: ttsMode, effective: effectiveTts(), espeak: espeakAvailable })
   }
 
+  if (path === '/dev/transcript' && method === 'POST') {
+    const { text } = await readBody(req)
+    nextTranscript = typeof text === 'string' ? text : null
+    return noContent(res)
+  }
+  // Tests supply the verdict for a synthetic turn in place of calling the model.
+  if (path === '/dev/recommendation' && method === 'POST') {
+    const { text } = await readBody(req)
+    nextRecommendationFor = typeof text === 'string' ? text : null
+    return noContent(res)
+  }
   // Dev only: switch the digests route into failure and back.
   if (path === '/dev/digests' && method === 'POST') {
     const body = await readBody(req)
@@ -663,6 +676,7 @@ function send(socket, frame) {
 }
 
 const STREAM_DELAY_MS = 60
+const MIN_RECOMMENDATION_MESSAGES = 9
 
 /** The tone the real agent's classifier would report for a line (REQ-VOICE-10): a few words are enough for the mock. */
 function moodOf(text) {
@@ -672,8 +686,15 @@ function moodOf(text) {
   return { tone: 'neutral', intensity: 0.1 }
 }
 
-async function streamAssistantReply(socket, dialog, crisis = false) {
-  const text = typeof crisis === 'string' ? crisis : crisis ? SCRIPT.redFirst : nextReply(dialog)
+async function streamAssistantReply(socket, dialog, crisis = false, feedback = false) {
+  const text =
+    typeof crisis === 'string'
+      ? crisis
+      : crisis
+        ? SCRIPT.redFirst
+        : feedback
+          ? 'Рад, что разговор помог тебе разобраться.'
+          : nextReply(dialog)
   const message = addMessage(dialog, 'assistant', text)
 
   send(socket, { type: 'assistant_start', messageId: message.id })
@@ -686,7 +707,12 @@ async function streamAssistantReply(socket, dialog, crisis = false) {
     send(socket, { type: 'assistant_delta', messageId: message.id, text: `${word} ` })
   }
   send(socket, { type: 'assistant_end', messageId: message.id, text })
+  const offer =
+    !crisis && !dialog.crisisSeen && feedback && dialog.messages.length >= MIN_RECOMMENDATION_MESSAGES
+  const recommendation = { type: 'recommendation', messageId: message.id }
+  if (offer && effectiveTts() !== 'none') send(socket, { ...recommendation, speechPending: true })
   await speech
+  if (offer && !dialog.crisisSeen) send(socket, recommendation)
 }
 
 const openSheet = (socket, step) =>
@@ -713,7 +739,9 @@ async function crisisTurn(socket, dialog, text) {
       screenState(socket, 'ask_thoughts', { ask: 'thoughts', trigger: 'yellow' })
       return streamAssistantReply(socket, dialog, SCRIPT.yellowAsk)
     }
-    return streamAssistantReply(socket, dialog)
+    const feedback = text === nextRecommendationFor
+    if (feedback) nextRecommendationFor = null
+    return streamAssistantReply(socket, dialog, false, feedback)
   }
   if (state === 'yellow_asked') {
     if (yes || isCrisis(text) || !no) {
@@ -770,12 +798,15 @@ wss.on('connection', (socket, request, context) => {
       // A real ASR finalizes on silence; here it is a pause in the frames.
       audioTimer = setTimeout(() => {
         const seconds = Math.max(1, Math.round((audioFrames * 100) / 1000))
-        const text = `[голосовая реплика, ${seconds} с]`
+        const scripted = nextTranscript
+        const text = scripted ?? `[голосовая реплика, ${seconds} с]`
+        nextTranscript = null
         const message = addMessage(dialog, 'user', text)
         audioFrames = 0
         // A voice turn is not acknowledged: the final transcript carries the id of the stored message.
         send(socket, { type: 'transcript', text, final: true, messageId: message.id })
-        void streamAssistantReply(socket, dialog)
+        if (scripted === null) void streamAssistantReply(socket, dialog)
+        else void crisisTurn(socket, dialog, text)
       }, 700)
       return
     }

@@ -1,7 +1,7 @@
 'use client'
 
 import { Phone } from 'lucide-react'
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
@@ -25,6 +25,8 @@ export interface SosPayload {
 }
 
 interface SosApi {
+  sosOpened: boolean
+  isSosOpen(): boolean
   openSos(payload?: SosPayload): void
   closeSos(): void
 }
@@ -49,14 +51,22 @@ const TEXT = 'text-base leading-[1.55] text-dim short-wide:text-[0.9375rem] shor
 
 export function SosProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
+  const openRef = useRef(false)
   const [payload, setPayload] = useState<SosPayload>({})
 
   const openSos = useCallback((next: SosPayload = {}) => {
+    openRef.current = true
     setPayload(next)
     setOpen(true)
   }, [])
-  const closeSos = useCallback(() => setOpen(false), [])
-  const api = useMemo(() => ({ openSos, closeSos }), [openSos, closeSos])
+  const closeSos = useCallback(() => {
+    openRef.current = false
+    setOpen(false)
+  }, [])
+  const api = useMemo(
+    () => ({ openSos, closeSos, sosOpened: open, isSosOpen: () => openRef.current }),
+    [openSos, closeSos, open],
+  )
 
   const listed = payload.hotlines?.length ? payload.hotlines : HOTLINES
   // In the crisis script 112 has its own line under "Call now"; the list keeps the rest.

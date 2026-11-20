@@ -155,6 +155,7 @@ class DialogSession {
   private closed = false
   /** The codec of the agent's speech on this connection, from `hello.codecs`. */
   private codec: TtsCodec = 'pcm16'
+  private supportsRecommendation = false
   /** The encoder of the speech being voiced now; a new one for each `tts_start`. */
   private speech: SpeechEncoder | null = null
   /** The agent's frames, in its order, while Opus speech is being encoded off the main thread. */
@@ -403,6 +404,7 @@ class DialogSession {
     this.dialogId = dialogId
     this.openedAt = Date.now()
     this.codec = pickTtsCodec(frame.codecs, this.deps.env.DIALOG_AUDIO_CODECS)
+    this.supportsRecommendation = frame.recommendation === true
     // The upgrade carried only what the client could put in headers; now the account is verified.
     updateRequestContext({ userId: this.userId })
 
@@ -436,6 +438,7 @@ class DialogSession {
         type: DialogServerFrame.Error,
         code: DialogWsErrorCode.MESSAGE_TOO_LONG,
         message: `message longer than ${InputLimit.MessageMax} characters`,
+        clientId,
       })
     }
     if (!this.allowMessage()) {
@@ -443,6 +446,7 @@ class DialogSession {
         type: DialogServerFrame.Error,
         code: DialogWsErrorCode.RATE_LIMITED,
         message: 'too many messages',
+        clientId,
       })
     }
     // A reply the agent never got (it is not connected yet or just left) is not a turn of the conversation.
@@ -518,6 +522,7 @@ class DialogSession {
         token: this.deps.env.AGENT_API_TOKEN,
         userId,
         dialogId,
+        recommendation: this.supportsRecommendation,
       },
       {
         onOpen: () => {
@@ -682,6 +687,16 @@ class DialogSession {
           type: DialogServerFrame.AssistantEnd,
           messageId,
           text,
+        })
+      }
+      case 'recommendation': {
+        const messageId = str('messageId')
+        if (!this.supportsRecommendation || !messageId?.trim()) return
+        if (frame.speechPending !== undefined && frame.speechPending !== true) return
+        return this.toClient({
+          type: DialogServerFrame.Recommendation,
+          messageId,
+          ...(frame.speechPending === true ? { speechPending: true } : {}),
         })
       }
       case 'tts_start': {

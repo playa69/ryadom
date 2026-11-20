@@ -128,6 +128,7 @@ export function createStreamDecoder(codec: TtsCodec | string, sink: PcmSink): St
 export class TtsReceiver {
   /** The speeches whose output is not all out yet; the first one plays, the rest wait their turn. */
   private speeches: Speech[] = []
+  private drainWaiters: Array<() => void> = []
   /** After an interruption, frames still on their way belong to speech nobody wants: dropped until `begin`. */
   private discarding = false
   /** The codec of the connection, as the last `tts_start` named it. */
@@ -168,11 +169,18 @@ export class TtsReceiver {
     })
   }
 
+  /** A finished network stream may still have samples in the decoder. */
+  drained(): Promise<void> {
+    if (this.speeches.length === 0) return Promise.resolve()
+    return new Promise((resolve) => this.drainWaiters.push(resolve))
+  }
+
   /** The person interrupted, or the connection dropped: every decoder goes, nothing more comes out. */
   cancel(): void {
     for (const speech of this.speeches) speech.decoder.close()
     this.speeches = []
     this.discarding = true
+    this.releaseDrained()
   }
 
   private current(): Speech | undefined {
@@ -196,9 +204,16 @@ export class TtsReceiver {
     while (this.speeches[0]?.drained) {
       this.speeches.shift()
       const next = this.speeches[0]
-      if (!next) return
+      if (!next) break
       for (const chunk of next.held) this.sink(chunk)
       next.held = []
     }
+    this.releaseDrained()
+  }
+
+  private releaseDrained(): void {
+    if (this.speeches.length > 0) return
+    for (const resolve of this.drainWaiters) resolve()
+    this.drainWaiters = []
   }
 }

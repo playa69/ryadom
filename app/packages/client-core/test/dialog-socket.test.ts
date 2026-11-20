@@ -3,6 +3,7 @@ import {
   DialogClientFrame,
   DialogCloseCode,
   DialogServerFrame,
+  DialogWsErrorCode,
   type TtsCodec,
 } from '@ryadom/contracts/api/dialogs'
 import {
@@ -80,6 +81,9 @@ function harness(
     loadHistory?: DialogSocketDeps['loadHistory']
     random?: () => number
     ttsCodecs?: () => Promise<TtsCodec[]>
+    ttsDecoders?: DialogSocketDeps['ttsDecoders']
+    onRecommendation?: DialogSocketHandlers['onRecommendation']
+    onTextRejected?: DialogSocketHandlers['onTextRejected']
   } = {},
 ): Harness {
   const states: DialogSocketState[] = []
@@ -103,10 +107,13 @@ function harness(
     // The middle of the spread: the delays of the schedule come out exactly.
     random: options.random ?? (() => 0.5),
     ttsCodecs: options.ttsCodecs,
+    ttsDecoders: options.ttsDecoders,
   }
   const handlers: DialogSocketHandlers = {
     onState: (state) => states.push(state),
     onMessages: (next) => (messages = next),
+    onRecommendation: options.onRecommendation,
+    onTextRejected: options.onTextRejected,
     onSafety: (...args) => safety.push(args),
     onEnded: () => undefined,
     onError: () => undefined,
@@ -388,6 +395,29 @@ describe('сообщения человека', () => {
 
     expect(h.feed().map((message) => message.id)).toEqual(['srv-1'])
   })
+
+  it('отмечает только отклонённую реплику и повторяет её с тем же id', async () => {
+    const onTextRejected = vi.fn()
+    const h = harness({ onTextRejected })
+    const ws = await connect(h)
+    h.socket.sendMessage('Первая реплика')
+    h.socket.sendMessage('Вторая реплика')
+    const clientId = ws.framesOf(DialogClientFrame.Message)[0]!.clientId as string
+    ws.receive({ type: DialogServerFrame.Error, code: DialogWsErrorCode.RATE_LIMITED, clientId })
+    expect(onTextRejected).toHaveBeenCalledWith(DialogWsErrorCode.RATE_LIMITED)
+    expect(h.feed()[0]).toMatchObject({
+      id: clientId,
+      pending: false,
+      rejected: DialogWsErrorCode.RATE_LIMITED,
+    })
+    expect(h.feed()[1]).toMatchObject({ text: 'Вторая реплика', pending: true })
+    expect(h.replies).toEqual([])
+    h.socket.retryMessage(clientId)
+    expect(ws.framesOf(DialogClientFrame.Message)[2]).toMatchObject({ clientId, text: 'Первая реплика' })
+    ws.receive({ type: DialogServerFrame.Ack, clientId, messageId: 'srv-1' })
+    expect(h.feed().at(-1)).toMatchObject({ id: 'srv-1', pending: false })
+    expect(h.replies).toEqual([[1, 1]])
+  })
 })
 
 describe('лента из REST (setHistory)', () => {
@@ -440,6 +470,50 @@ describe('лента из REST (setHistory)', () => {
       [expect.any(String), 'начну с текста'],
     ])
     expect(h.feed().at(-1)?.pending).toBe(true)
+  })
+})
+
+// openspec/changes/add-dialog-recommendation, «Карточка рекомендации сервиса в разговоре».
+describe('рекомендация к завершённому ответу', () => {
+  it('запрашивает событие и ждёт хвост декодера для голосовой готовности', async () => {
+    let flush: (() => void) | undefined
+    const onRecommendation = vi.fn()
+    const h = harness({
+      onRecommendation,
+      ttsDecoders: () => ({
+        decode: () => undefined,
+        close: () => undefined,
+        flush: () =>
+          new Promise<void>((resolve) => {
+            flush = resolve
+          }),
+      }),
+    })
+    const ws = await connect(h)
+    expect(ws.framesOf(DialogClientFrame.Hello)[0]).toHaveProperty('recommendation', true)
+
+    ws.receive({ type: DialogServerFrame.Recommendation, messageId: 'unknown' })
+    ws.receive({ type: DialogServerFrame.TtsStart, messageId: 'a1' })
+    ws.receive({ type: DialogServerFrame.AssistantEnd, messageId: 'a1', text: 'Рад, что помог.' })
+    ws.receive({ type: DialogServerFrame.Recommendation, messageId: 'a1', speechPending: true })
+    ws.receive({ type: DialogServerFrame.TtsEnd, messageId: 'a1' })
+    ws.receive({ type: DialogServerFrame.Recommendation, messageId: 'a1' })
+    expect(onRecommendation.mock.calls).toEqual([['a1', true]])
+    flush?.()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(onRecommendation.mock.calls).toEqual([
+      ['a1', true],
+      ['a1', false],
+    ])
+    expect(h.feed()).toEqual([{ id: 'a1', role: 'assistant', text: 'Рад, что помог.' }])
+    h.socket.close()
+  })
+
+  it('оставляет hello без поддержки для старого клиента', async () => {
+    const h = harness()
+    const ws = await connect(h)
+    expect(ws.framesOf(DialogClientFrame.Hello)[0]).not.toHaveProperty('recommendation')
+    h.socket.close()
   })
 })
 
