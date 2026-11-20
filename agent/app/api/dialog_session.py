@@ -83,6 +83,7 @@ from app.services import usage as model_usage
 from app.services.crisis import CrisisFlow, Decision, Level, classify_words, classify_with_model
 from app.services.dialog_store import Dialog, DialogStore, Message
 from app.services.gemini_budget import DEFAULT_TURN_TOKENS, PCM_BYTES_PER_SECOND, TokenBudget, estimate_turn
+from app.services.recommendation import MIN_DIALOG_MESSAGES, classify_help_feedback
 from app.services.replies import (
     NOISE_CHECK_CHARS,
     REPEAT_REQUEST,
@@ -311,6 +312,7 @@ class DialogSession:
         mood: "ToneClassifier | Literal['gemini'] | None" = "gemini",
         prompt_provider: PromptProvider | None = None,
         pipeline: str = "gemini",
+        recommendation_enabled: bool = False,
     ) -> None:
         self._ws = websocket
         self._store = store
@@ -343,6 +345,8 @@ class DialogSession:
         self._speech_lock = asyncio.Lock()
         self._jobs: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue()  # фиксированные фразы: кризис, повтор
         self._speech_tasks: set[asyncio.Task[None]] = set()
+        self._recommendation_enabled = recommendation_enabled
+        self._recommendation_task: asyncio.Task[None] | None = None
         self._flow = CrisisFlow()
         self._flow_level: Level | None = None  # уровень, на котором сработала кризисная ветка (для счёта нажатий)
         self._flow_source: str | None = None  # слова, модель или ответ на вопрос
@@ -512,6 +516,10 @@ class DialogSession:
             worker.cancel()
             for task in self._speech_tasks:
                 task.cancel()
+            recommendation_task, self._recommendation_task = self._recommendation_task, None
+            if recommendation_task is not None:
+                recommendation_task.cancel()
+                await asyncio.gather(recommendation_task, return_exceptions=True)
             await asyncio.gather(worker, *self._speech_tasks, return_exceptions=True)
 
     async def _worker(self) -> None:
@@ -539,6 +547,7 @@ class DialogSession:
             case "user_message":
                 await self._on_user_message(frame)
             case "audio_start":
+                self._cancel_recommendation()
                 self._audio_open = True
                 self._audio_bytes = 0
                 self._last_voiced = None
@@ -584,6 +593,7 @@ class DialogSession:
         if client_id and client_id in dialog.client_ids:
             await self._send({"type": "ack", "id": client_id, "messageId": dialog.client_ids[client_id]})
             return
+        self._cancel_recommendation()
         self._supersede_speech()
         message = self._store.add_message(dialog, "user", text[:MAX_USER_TEXT])
         if client_id:
@@ -1562,6 +1572,7 @@ class DialogSession:
     # ─── ход ──────────────────────────────────────────────────────────────────
 
     async def _begin(self, turn: LiveTurn) -> None:
+        self._cancel_recommendation()
         if not turn.recovery and self._unanswered is not None:
             # Человек продолжил сам (заговорил или написал), пока агент ждал: модель ответит на всё сразу, переспрашивать не нужно.
             LIVE_RECOVERIES_TOTAL.labels("continued").inc()
@@ -1832,6 +1843,7 @@ class DialogSession:
     async def _save_voice(self, turn: LiveTurn, heard: str) -> None:
         message = self._store.add_message(self._dialog, "user", heard[:MAX_USER_TEXT], audio_seconds=turn.audio_seconds)
         turn.user_saved = True
+        turn.input_message_id = message.id
         await self._send({"type": "transcript", "text": message.text, "final": True, "messageId": message.id})
 
     def _refresh_after_crisis(self) -> None:
@@ -2050,6 +2062,41 @@ class DialogSession:
             feed.add(sentence)
         feed.close()
 
+    def _cancel_recommendation(self) -> None:
+        if self._recommendation_task is not None:
+            self._recommendation_task.cancel()
+
+    def _recommendation_allowed(self, turn: LiveTurn) -> bool:
+        return (
+            not (self._closed or self._dialog.crisis_seen or self._flow.active or turn.message_id in self._cancelled)
+            and bool(self._dialog.messages)
+            and self._dialog.messages[-1].id == turn.message_id
+        )
+
+    async def _offer_recommendation(self, turn: LiveTurn) -> None:
+        model = self._store.recap_model
+        if model is None or not self._recommendation_allowed(turn):
+            return
+        if sum(m.role == "user" or m.text != REPEAT_REQUEST for m in self._dialog.messages) < MIN_DIALOG_MESSAGES:
+            return
+        message = self._store.message(self._dialog, turn.input_message_id)
+        if message is None:
+            return
+        # Поздняя часть расшифровки может менять смысл уже показанной фразы.
+        if turn.kind == "voice" and (not turn.ended or turn.heard.strip() != message.text):
+            return
+        if not await classify_help_feedback(model, message.text) or not self._recommendation_allowed(turn):
+            return
+
+        frame = {"type": "recommendation", "messageId": turn.message_id}
+        speech = self._speeches.get(turn.message_id)
+        if speech is not None and not speech.done():
+            # Прерывание проверки не должно отменять саму озвучку.
+            await self._send({**frame, "speechPending": True})
+            await asyncio.wait({speech})
+        if self._recommendation_allowed(turn):
+            await self._send(frame)
+
     async def _finish(self, turn: LiveTurn, superseded: bool = False) -> None:
         if not turn.generating:
             return
@@ -2076,6 +2123,8 @@ class DialogSession:
             await self._send({"type": "assistant_end", "messageId": turn.message_id, "text": turn.sent_text})
             if turn.audio is None:
                 self._voice_text_answer(turn, superseded)
+            if self._recommendation_enabled and not (superseded or turn.failed or turn.discarded or turn.recovery):
+                self._recommendation_task = asyncio.create_task(self._offer_recommendation(turn))
         if turn.assistant_started and not turn.recovery and self._unanswered is not None and self._unanswered is not turn:
             # Реплика, перебившая ход без ответа, получила ответ — он и на прежнюю: переспрашивать не нужно.
             LIVE_RECOVERIES_TOTAL.labels("continued").inc()

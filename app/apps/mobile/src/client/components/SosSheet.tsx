@@ -1,7 +1,7 @@
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, type AnalyticsEventProperties } from '@ryadom/analytics/events'
 import { Button, Icon, Sheet } from 'framework7-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
 import { CRISIS_CALL, CRISIS_SHEET_TITLE, HOTLINES, telHref } from '../lib/hotlines'
 
@@ -13,6 +13,27 @@ import { CRISIS_CALL, CRISIS_SHEET_TITLE, HOTLINES, telHref } from '../lib/hotli
  */
 
 const SOS_EVENT = 'ryadom:sos'
+const openListeners = new Set<() => void>()
+let sheetOpen = false
+
+function setSheetOpen(open: boolean): void {
+  if (sheetOpen === open) return
+  sheetOpen = open
+  for (const listener of openListeners) listener()
+}
+
+function subscribeSos(listener: () => void): () => void {
+  openListeners.add(listener)
+  return () => openListeners.delete(listener)
+}
+
+export function isSosOpen(): boolean {
+  return sheetOpen
+}
+
+export function useSosOpened(): boolean {
+  return useSyncExternalStore(subscribeSos, isSosOpen)
+}
 
 export type SosSource = AnalyticsEventProperties[AnalyticsEvent.SosOpened]['source']
 
@@ -27,6 +48,7 @@ export interface SosPayload {
 
 /** Open the help sheet from anywhere: the SOS button or a safety frame. */
 export function openSos(payload: SosPayload = {}): void {
+  setSheetOpen(true)
   window.dispatchEvent(new CustomEvent<SosPayload>(SOS_EVENT, { detail: payload }))
 }
 
@@ -61,7 +83,10 @@ export default function SosSheet() {
       if (detail.source) trackAnonymous(AnalyticsEvent.SosOpened, { source: detail.source })
     }
     window.addEventListener(SOS_EVENT, handler)
-    return () => window.removeEventListener(SOS_EVENT, handler)
+    return () => {
+      window.removeEventListener(SOS_EVENT, handler)
+      setSheetOpen(false)
+    }
   }, [])
 
   const listed = payload.hotlines?.length ? payload.hotlines : HOTLINES
@@ -72,7 +97,10 @@ export default function SosSheet() {
     <Sheet
       className="ph-no-capture"
       opened={opened}
-      onSheetClosed={() => setOpened(false)}
+      onSheetClosed={() => {
+        setOpened(false)
+        setSheetOpen(false)
+      }}
       swipeToClose
       closeOnEscape
       backdrop

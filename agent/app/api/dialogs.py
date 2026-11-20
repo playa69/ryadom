@@ -333,6 +333,7 @@ async def dialog_ws(websocket: WebSocket, user_id: str, dialog_id: str) -> None:
             mood=mood,
             prompt_provider=app.state.prompt_provider,
             pipeline=pipeline,
+            recommendation_enabled=websocket.query_params.get("recommendation") == "1",
         )
         session.bind_component_calls()
         await session.run()

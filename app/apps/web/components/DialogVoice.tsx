@@ -26,6 +26,7 @@ export default function DialogVoice({
   onToggle,
   onText,
   onEnd,
+  recommendation,
 }: {
   orb: OrbState
   mood?: OrbMood | null
@@ -40,6 +41,7 @@ export default function DialogVoice({
   onToggle(): void
   onText(): void
   onEnd(): void
+  recommendation?: ReactNode
 }) {
   const captionBox = useRef<HTMLDivElement>(null)
   const handsFree = micOpen !== null
@@ -56,7 +58,8 @@ export default function DialogVoice({
     <div
       className={cn(
         COLUMN,
-        'flex flex-1 flex-col items-center gap-3 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] tab:pb-8 short:gap-1.5 short:pt-2',
+        'flex flex-1 flex-col items-center gap-3 overflow-x-clip pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] tab:pb-8 short:gap-1.5 short:pt-2',
+        recommendation && 'short:overflow-y-auto',
       )}
       data-testid="dialog-voice"
     >
@@ -64,7 +67,10 @@ export default function DialogVoice({
           button below is the same action for those who look for a button. */}
       <div
         role="presentation"
-        className="flex min-h-0 w-full flex-1 cursor-pointer items-center justify-center"
+        className={cn(
+          'flex min-h-0 w-full flex-1 cursor-pointer items-center justify-center',
+          recommendation && 'min-h-24 [container-type:size]',
+        )}
         onClick={() => {
           if (!micDisabled) onToggle()
         }}
@@ -74,7 +80,10 @@ export default function DialogVoice({
           state={orb}
           mood={mood}
           level={level}
-          className="w-[min(88vw,46dvh,380px)] short:w-[min(60vw,40dvh,380px)]"
+          className={cn(
+            'w-[min(88vw,46dvh,380px)] short:w-[min(60vw,40dvh,380px)]',
+            recommendation && 'max-w-[100cqh]',
+          )}
         />
       </div>
 
@@ -93,6 +102,8 @@ export default function DialogVoice({
       >
         {hint}
       </p>
+
+      {recommendation}
 
       <div className="flex items-start justify-center gap-7 pt-2">
         <SideButton label="Текстом" accessibleName="Писать текстом" onClick={onText} testId="voice-text">

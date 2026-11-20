@@ -1,15 +1,28 @@
+import type { Page } from '@playwright/test'
 import {
   button,
   closeSheet,
   openApp,
   openJournal,
   registerAndConfirm,
+  startAnonymously,
   sheetButton,
   uniqueEmail,
 } from '../support/app'
 import { clearMailbox } from '../support/mail'
 import { expect, test } from '../support/fixtures'
 import { expectSpoken, playedBy, setAgentSpeech, spokenBy } from '../support/speech'
+import {
+  checkTextRecommendation,
+  checkVoiceRecommendation,
+  checkLegacyRecommendation,
+  checkRejectedTextMessage,
+  injectCrisisDuringRecommendation,
+  installRecommendationActions,
+  omitRecommendationSupport,
+  rejectFirstTextMessage,
+  textTurn,
+} from '../support/recommendation'
 
 /**
  * The conversation. The agent is a mock here, so what is checked is not the content of the
@@ -20,6 +33,57 @@ import { expectSpoken, playedBy, setAgentSpeech, spokenBy } from '../support/spe
  * One scenario, for the same reason as the account path: sign-in is rate limited.
  */
 const DRAFT_PLACEHOLDER = 'Напиши, что происходит'
+
+test.describe('рекомендация Рядом в PWA', () => {
+  async function start(page: Page) {
+    await installRecommendationActions(page)
+    await openApp(page)
+    await startAnonymously(page)
+    await button(page, 'Начать текстом').click()
+    await expect(page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER)).toBeVisible()
+    await expect(page.locator('.page-current .message-received')).toHaveCount(1)
+  }
+
+  const send = (page: Page) =>
+    textTurn(
+      page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER),
+      button(page, 'Отправить'),
+      page.locator('.page-current .message-received .message-text span:not(.rd-typing)'),
+    )
+
+  test('после отзыва в чате, с копированием и приоритетом SOS', async ({ page }) => {
+    await start(page)
+    await checkTextRecommendation(page, send(page), 'pwa')
+  })
+
+  test('после отзыва голосом и окончания воспроизведения', async ({ page }) => {
+    await start(page)
+    await checkVoiceRecommendation(page, send(page), 'pwa')
+  })
+
+  test('сигнал кризиса во время озвучки отменяет карточку', async ({ page }) => {
+    await injectCrisisDuringRecommendation(page)
+    await start(page)
+    await checkVoiceRecommendation(page, send(page), 'pwa', true)
+  })
+
+  test('клиент без поддержки продолжает разговор без карточки', async ({ page }) => {
+    await omitRecommendationSupport(page)
+    await start(page)
+    await checkLegacyRecommendation(page, send(page), 'pwa')
+  })
+
+  test('отказ отправки сохраняет текст и даёт повторить', async ({ page }) => {
+    await rejectFirstTextMessage(page)
+    await start(page)
+    await checkRejectedTextMessage(
+      page,
+      page.locator('.page-current').getByPlaceholder(DRAFT_PLACEHOLDER),
+      button(page, 'Отправить'),
+      'pwa',
+    )
+  })
+})
 
 test('разговор: приветствие, ответ, кризис, журнал', async ({ page, shot }) => {
   const email = uniqueEmail('dialog')

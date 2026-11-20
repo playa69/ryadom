@@ -1,7 +1,8 @@
 'use client'
 
-import { memo, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DialogMessageView } from '@ryadom/client-core/dialog-socket'
+import { DialogWsErrorCode } from '@ryadom/contracts/api/dialogs'
 import { ChatMessage } from './ChatMessage'
 
 /**
@@ -9,7 +10,15 @@ import { ChatMessage } from './ChatMessage'
  * makes a screen reader stutter through half-sentences. A separate hidden region gets each
  * assistant message once, when it is complete.
  */
-function DialogFeed({ messages }: { messages: DialogMessageView[] }) {
+function DialogFeed({
+  messages,
+  recommendation,
+  onRetry,
+}: {
+  messages: DialogMessageView[]
+  recommendation?: { messageId: string; card: ReactNode }
+  onRetry?: (id: string) => void
+}) {
   const [announcement, setAnnouncement] = useState('')
   const announced = useRef(new Set<string>())
 
@@ -24,9 +33,24 @@ function DialogFeed({ messages }: { messages: DialogMessageView[] }) {
     <>
       <ol className="flex flex-col gap-6" aria-label="Сообщения" data-testid="dialog-feed">
         {messages.map((message) => (
-          <ChatMessage key={message.id} role={message.role} streaming={message.streaming} pending={message.pending}>
-            {message.text}
-          </ChatMessage>
+          <Fragment key={message.id}>
+            <ChatMessage
+              role={message.role}
+              streaming={message.streaming}
+              pending={message.pending}
+              rejected={Boolean(message.rejected)}
+              onRetry={
+                onRetry && message.rejected === DialogWsErrorCode.RATE_LIMITED
+                  ? () => onRetry(message.id)
+                  : undefined
+              }
+            >
+              {message.text}
+            </ChatMessage>
+            {recommendation?.messageId === message.id && (
+              <li className="min-w-0 pl-11">{recommendation.card}</li>
+            )}
+          </Fragment>
         ))}
       </ol>
       <div className="sr-only" aria-live="polite" aria-atomic="true" data-testid="dialog-live">

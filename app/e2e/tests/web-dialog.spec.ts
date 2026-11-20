@@ -27,6 +27,17 @@ import { clearMailbox } from '../support/mail'
 import { step } from '../support/evidence'
 import { expect, test } from '../support/fixtures'
 import { expectSpoken, playedBy, setAgentSpeech, spokenBy } from '../support/speech'
+import {
+  checkTextRecommendation,
+  checkVoiceRecommendation,
+  checkLegacyRecommendation,
+  checkRejectedTextMessage,
+  injectCrisisDuringRecommendation,
+  installRecommendationActions,
+  omitRecommendationSupport,
+  rejectFirstTextMessage,
+  textTurn,
+} from '../support/recommendation'
 
 // A headless browser has no microphone of its own: the fake device plays a tone, and the fake prompt
 // answers the permission question (the desktop project grants nothing by itself).
@@ -47,6 +58,50 @@ test.use({
  */
 const DRAFT_PLACEHOLDER = 'Напиши, что происходит'
 const FIRST_MESSAGE = 'Сегодня было очень тяжело'
+
+test.describe('рекомендация Рядом в Web', () => {
+  async function start(page: Page) {
+    await installRecommendationActions(page)
+    await openWebApp(page)
+    await startAnonymously(page)
+    await startTextDialog(page)
+  }
+
+  const send = (page: Page) =>
+    textTurn(
+      dialogInput(page),
+      page.getByTestId('dialog-send'),
+      messages(page, 'assistant').locator('p:not([data-streaming])'),
+    )
+
+  test('после отзыва в чате, с копированием и приоритетом SOS', async ({ page }) => {
+    await start(page)
+    await checkTextRecommendation(page, send(page), 'web')
+  })
+
+  test('после отзыва голосом и окончания воспроизведения', async ({ page }) => {
+    await start(page)
+    await checkVoiceRecommendation(page, send(page), 'web')
+  })
+
+  test('сигнал кризиса во время озвучки отменяет карточку', async ({ page }) => {
+    await injectCrisisDuringRecommendation(page)
+    await start(page)
+    await checkVoiceRecommendation(page, send(page), 'web', true)
+  })
+
+  test('клиент без поддержки продолжает разговор без карточки', async ({ page }) => {
+    await omitRecommendationSupport(page)
+    await start(page)
+    await checkLegacyRecommendation(page, send(page), 'web')
+  })
+
+  test('отказ отправки сохраняет текст и даёт повторить', async ({ page }) => {
+    await rejectFirstTextMessage(page)
+    await start(page)
+    await checkRejectedTextMessage(page, dialogInput(page), page.getByTestId('dialog-send'), 'web')
+  })
+})
 const TAKEAWAY = 'Стало чуть легче'
 /** The mock agent's greeting for a new conversation. */
 const GREETING = 'Я рядом. С чего начнём?'

@@ -13,6 +13,7 @@ import {
   type DialogSummaryApiResponse,
 } from '@ryadom/contracts/api/dialogs'
 import { apiErrorText, codeText } from '@ryadom/client-core/errors'
+import { DialogRecommendation } from '@ryadom/client-core/dialog-recommendation'
 import { RECAP_ERROR_TEXT } from '@ryadom/client-core/recaps'
 import {
   createMemoryRecap,
@@ -76,6 +77,7 @@ import DialogAlert from './DialogAlert'
 import DialogEndSheet, { type EndRecapSource } from './DialogEndSheet'
 import ShareDialogModal from './ShareDialogModal'
 import DialogFeed from './DialogFeed'
+import RecommendationCard from './RecommendationCard'
 import MemoryRecap from './MemoryRecap'
 import DialogVoice from './DialogVoice'
 import { BUTTON, COLUMN } from './controls'
@@ -141,7 +143,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const notify = useNotice()
   // The input box sits where the default toast stack would, so toasts go under the header.
   useNoticePlacement('top')
-  const { openSos } = useSos()
+  const { openSos, sosOpened, isSosOpen } = useSos()
+  const recommendation = useMemo(() => new DialogRecommendation(dialogId), [dialogId])
+  const offer = useSyncExternalStore(recommendation.subscribe, recommendation.getSnapshot, () => null)
 
   const start = readDialogStart(dialogId)
   // A dialog started from home says whether the server resumed one; any other way in (a reload, the
@@ -190,7 +194,29 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   /** The dialog is gone from the agent (a restart took an unsaved one): what the screen says depends on whether it was unsaved. */
   const unsavedRef = useRef(unsaved)
   unsavedRef.current = unsaved
-  const trackDialog = trackUnlessUnsaved(() => unsavedRef.current)
+  const trackDialog = useMemo(() => trackUnlessUnsaved(() => unsavedRef.current), [])
+  useEffect(() => {
+    if (sosOpened) {
+      recommendation.dropPending()
+      return
+    }
+    if (!offer || offer.shown || state !== 'ready' || isSosOpen() || endOpen || ending) return
+    if (view === 'voice' && (!offer.speechFinished || recording || voiceOut || awaitingReply)) return
+    if (recommendation.show()) trackDialog(AnalyticsEvent.DialogRecommendationShown, { mode: view })
+  }, [
+    sosOpened,
+    isSosOpen,
+    recommendation,
+    offer,
+    state,
+    endOpen,
+    ending,
+    view,
+    recording,
+    voiceOut,
+    awaitingReply,
+    trackDialog,
+  ])
   /** Sensitive notes made during this conversation, told as "Запомнил: … · Убрать". The texts are the person's words: state only. */
   const [notices, setNotices] = useState<Array<{ id: string; text: string }>>([])
   const [noticeBusy, setNoticeBusy] = useState<string | null>(null)
@@ -237,7 +263,8 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
 
   const dock = useRef<HTMLDivElement>(null)
   // Coming back to the text must land on the end of the feed, as a new message does.
-  const feedVersion = useMemo(() => ({ messages, view }), [messages, view])
+  const visibleOffer = !sosOpened && state !== 'ended' && offer?.shown ? offer.messageId : null
+  const feedVersion = useMemo(() => ({ messages, view, visibleOffer }), [messages, view, visibleOffer])
   const { hasNew, follow, jumpToEnd } = useStickToEnd(feedVersion, view === 'text' ? dock : undefined)
 
   // While memory and "Запоминать чувствительное" are on, new sensitive notes are asked for every MEMORY_NOTICE_POLL_MS.
@@ -414,9 +441,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   // The socket handlers outlive renders; they read the latest helpers through here.
   const greeting = start?.greeting ?? null
   const gone = () => setMissing(true)
-  const latest = useRef({ notify, openSos, startListening, openMic, onTurn, greeting, gone })
+  const latest = useRef({ notify, openSos, isSosOpen, startListening, openMic, onTurn, greeting, gone })
   useEffect(() => {
-    latest.current = { notify, openSos, startListening, openMic, onTurn, greeting, gone }
+    latest.current = { notify, openSos, isSosOpen, startListening, openMic, onTurn, greeting, gone }
   })
 
   const pressCall = useCallback(() => {
@@ -479,6 +506,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         // `audio_start` again: a microphone that stays on would record into the void. Off it goes,
         // and so does the agent's speech that is still queued.
         if (next !== 'ready' && next !== 'streaming') {
+          recommendation.dropPending()
           voicePlayer.stop()
           replyVoice.cancel()
           if (capture.current) {
@@ -489,7 +517,18 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         // The agent has started to answer (or the line is gone): nothing is awaited any more.
         if (next !== 'ready') setAwaitingReply(false)
       },
+      onRecommendation: (messageId, speechPending) => {
+        recommendation.receive(messageId, latest.current.isSosOpen())
+        if (!speechPending) void voicePlayer.drained().then(() => recommendation.speechFinished(messageId))
+      },
       onMessages: setMessages,
+      onTextRejected: (code) =>
+        latest.current.notify(
+          code === DialogWsErrorCode.RATE_LIMITED
+            ? 'Сообщения идут слишком быстро. Повтори через секунду.'
+            : 'Сообщение слишком длинное.',
+          'error',
+        ),
       // A reply of the person counted by the server for the whole account: the goals of Yandex Metrika (the server skips unsaved ones).
       onReplyCount: reportReplyCount,
       onSpeech: (messageId, phase) =>
@@ -506,8 +545,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       onAudio: (speech) => voicePlayer.enqueue(speech),
       // Not reported from here on purpose: the server already counts this signal (safety_signal), with no
       // person attached; a second count from a signed-in screen would only risk pointing at who was in crisis.
-      onSafety: (_level, text, hotlines, step) =>
-        latest.current.openSos(step ? { text, hotlines, crisis: { onCall: pressCall } } : { text, hotlines }),
+      onSafety: (_level, text, hotlines, step) => {
+        recommendation.close()
+        latest.current.openSos(step ? { text, hotlines, crisis: { onCall: pressCall } } : { text, hotlines })
+      },
       onSafetyState: (next) => setCrisisUi((prev) => reduceCrisisUi(prev, next)),
       onMood: (tone, intensity) => moodHold.report(tone, intensity),
       onEnded: (result) => finish(result),
@@ -584,7 +625,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       voice.current = null
       void voicePlayer.dispose()
     }
-  }, [client, dialogId, router, finish, stopRecording])
+  }, [client, dialogId, router, finish, stopRecording, recommendation])
 
   const connected = state === 'ready' || state === 'streaming'
 
@@ -972,6 +1013,14 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       ? Math.round(start.sinceLastDialogHours / 24)
       : null
 
+  const recommendationCard = visibleOffer ? (
+    <RecommendationCard
+      onClose={recommendation.close}
+      onCopy={() => trackDialog(AnalyticsEvent.DialogRecommendationCopied, { mode: view })}
+      onShare={() => trackDialog(AnalyticsEvent.DialogRecommendationShared, { mode: view })}
+    />
+  ) : null
+
   return (
     <>
       <AppHeader
@@ -1071,6 +1120,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
           onToggle={toggleListening}
           onText={() => void showText()}
           onEnd={openEnd}
+          recommendation={recommendationCard}
         />
       ) : (
         <>
@@ -1087,7 +1137,13 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
               </div>
             )}
 
-            <DialogFeed messages={messages} />
+            <DialogFeed
+              messages={messages}
+              onRetry={connected ? (id) => socket.current?.retryMessage(id) : undefined}
+              recommendation={
+                visibleOffer ? { messageId: visibleOffer, card: recommendationCard } : undefined
+              }
+            />
             {noticeLines}
           </div>
 

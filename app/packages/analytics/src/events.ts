@@ -88,6 +88,9 @@ export enum AnalyticsEvent {
   HandsFreeToggled = 'hands_free_toggled',
   DialogEndSheetOpened = 'dialog_end_sheet_opened',
   DialogEndSubmitted = 'dialog_end_submitted',
+  DialogRecommendationShown = 'dialog_recommendation_shown',
+  DialogRecommendationCopied = 'dialog_recommendation_copied',
+  DialogRecommendationShared = 'dialog_recommendation_shared',
   SosOpened = 'sos_opened',
   HotlineCalled = 'hotline_called',
   BreathingStarted = 'breathing_started',
@@ -417,6 +420,9 @@ export interface AnalyticsEventProperties {
    * `skipped` is true when the sheet was closed with nothing filled in (no takeaway and no tension).
    */
   [AnalyticsEvent.DialogEndSubmitted]: { has_takeaway: boolean; gave_tension: boolean; skipped: boolean }
+  [AnalyticsEvent.DialogRecommendationShown]: { mode: 'text' | 'voice' }
+  [AnalyticsEvent.DialogRecommendationCopied]: { mode: 'text' | 'voice' }
+  [AnalyticsEvent.DialogRecommendationShared]: { mode: 'text' | 'voice' }
   /** Send with `trackAnonymous`: how often SOS is opened, not who opened it. */
   [AnalyticsEvent.SosOpened]: { source: 'header' | 'dialog' | 'safety_frame' | 'home' | 'menu' }
   /** Send with `trackAnonymous`: a tap on a hotline's number, not whose. */
