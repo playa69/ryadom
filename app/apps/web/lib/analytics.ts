@@ -9,7 +9,7 @@ import {
   type VoiceProblemReason,
 } from '@ryadom/analytics/events'
 import { ApiError } from '@ryadom/client-core/errors'
-import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
+import { MicrophoneDeniedError, MicrophoneNotFoundError } from '@ryadom/client-core/voice/capture'
 
 /**
  * The small pieces the screens share to report what only the screen knows. The events themselves are
@@ -35,15 +35,12 @@ export function trackForm(form: AuthForm, outcome: FormOutcome): void {
   track(AnalyticsEvent.AuthFormSubmitted, { form, outcome })
 }
 
-/**
- * Why the microphone did not start. The capture module folds every `getUserMedia` failure into
- * `MicrophoneDeniedError`, so a missing microphone cannot be told from a refused permission here.
- * Anything else failed after the microphone opened (the audio context, the worklet): the browser
- * cannot do what the voice needs.
- */
+/** Why the browser could not start the microphone. */
 export function micProblemReason(error: unknown, captureSupported: boolean): VoiceProblemReason {
   if (!captureSupported) return 'unsupported'
-  return error instanceof MicrophoneDeniedError ? 'permission_denied' : 'unsupported'
+  if (error instanceof MicrophoneDeniedError) return 'permission_denied'
+  if (error instanceof MicrophoneNotFoundError) return 'no_microphone'
+  return 'unsupported'
 }
 
 export function trackVoiceProblem(reason: VoiceProblemReason): void {

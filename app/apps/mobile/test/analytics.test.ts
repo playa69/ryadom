@@ -3,7 +3,7 @@
  * is replaced by a spy: what matters here is what the app asks to report, and how often.
  */
 import { ApiError, NETWORK_ERROR_STATUS } from '@ryadom/client-core/errors'
-import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
+import { MicrophoneDeniedError, MicrophoneNotFoundError } from '@ryadom/client-core/voice/capture'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({ track: vi.fn() }))
@@ -123,18 +123,10 @@ describe('название экрана', () => {
 })
 
 describe('почему не заработал микрофон', () => {
-  it('отказ без устройств в списке это нет микрофона', () => {
-    expect(micFailureReason(new MicrophoneDeniedError(), 0)).toBe('no_microphone')
-  })
-
-  it('отказ при микрофоне в списке или без списка это запрет', () => {
-    expect(micFailureReason(new MicrophoneDeniedError(), 1)).toBe('permission_denied')
-    expect(micFailureReason(new MicrophoneDeniedError(), null)).toBe('permission_denied')
-  })
-
-  it('любая другая ошибка запуска это неподдерживаемое окружение', () => {
-    expect(micFailureReason(new Error('worklet'), 1)).toBe('unsupported')
-    expect(micFailureReason(new Error('worklet'), 0)).toBe('unsupported')
+  it('различает отсутствие устройства, отказ и иные ошибки', () => {
+    expect(micFailureReason(new MicrophoneNotFoundError())).toBe('no_microphone')
+    expect(micFailureReason(new MicrophoneDeniedError())).toBe('permission_denied')
+    expect(micFailureReason(new Error('worklet'))).toBe('unsupported')
   })
 })
 

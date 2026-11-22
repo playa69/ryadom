@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MicrophoneDeniedError, startCapture } from '../src/voice/capture'
+import { MicrophoneDeniedError, MicrophoneNotFoundError, startCapture } from '../src/voice/capture'
 import { PRE_ROLL_MS } from '../src/voice/turn-detector'
 
 interface Audio {
@@ -85,11 +85,22 @@ describe('startCapture', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: async () => {
-          throw new Error('NotAllowedError')
+          throw new DOMException('permission denied', 'NotAllowedError')
         },
       },
     })
     await expect(startCapture(() => undefined)).rejects.toBeInstanceOf(MicrophoneDeniedError)
+  })
+
+  it('отсутствие устройства не считается отказом', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: async () => {
+          throw new DOMException('missing input', 'NotFoundError')
+        },
+      },
+    })
+    await expect(startCapture(() => undefined)).rejects.toBeInstanceOf(MicrophoneNotFoundError)
   })
 
   it('stop() отпускает дорожки и закрывает контекст', async () => {

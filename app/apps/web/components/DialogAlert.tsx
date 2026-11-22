@@ -8,7 +8,7 @@ import { BUTTON } from './controls'
 
 /** An offer under the message: something that would help, with its own button next to the acknowledgement. */
 export interface DialogAlertOffer {
-  text: string
+  text?: string
   action: string
   onAction(): void
 }
@@ -21,6 +21,7 @@ export default function DialogAlert({
   extra,
   offer,
   onClose,
+  confirm,
 }: {
   open: boolean
   title: string
@@ -29,6 +30,7 @@ export default function DialogAlert({
   extra?: ReactNode
   offer?: DialogAlertOffer
   onClose(): void
+  confirm?: { label: string; onClick: () => void; disabled?: boolean }
 }) {
   return (
     <Modal open={open} onClose={onClose} title={title}>
@@ -36,7 +38,7 @@ export default function DialogAlert({
         {text}
       </p>
       {extra}
-      {offer && (
+      {offer?.text && (
         <p className="text-base leading-[1.55] text-dim" data-testid="alert-offer">
           {offer.text}
         </p>
@@ -45,11 +47,15 @@ export default function DialogAlert({
         <Button
           type="button"
           // A lone acknowledgement: full width on a phone sheet, its own width on a desktop pane.
-          className={cn(BUTTON, 'w-full bg-clip-border focus-visible:border-transparent tab:w-auto tab:min-w-36')}
-          onClick={onClose}
+          className={cn(
+            BUTTON,
+            'w-full bg-clip-border focus-visible:border-transparent tab:w-auto tab:min-w-36',
+          )}
+          onClick={confirm?.onClick ?? onClose}
+          disabled={confirm?.disabled}
           data-testid="alert-ok"
         >
-          ОК
+          {confirm?.label ?? 'ОК'}
         </Button>
         {offer && (
           <Button

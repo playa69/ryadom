@@ -1476,6 +1476,18 @@ input:-webkit-autofill:focus {
     0 -12px 40px rgba(0, 0, 0, 0.4);
 }
 
+.rd-mic-help-steps {
+  list-style: decimal;
+  padding-inline-start: 1.5em;
+  margin-block: 0.75rem 0;
+  text-align: start;
+  line-height: 1.45;
+}
+
+.rd-mic-help-steps li + li {
+  margin-block-start: 0.5rem;
+}
+
 .rd-sheet-body {
   display: flex;
   flex-direction: column;

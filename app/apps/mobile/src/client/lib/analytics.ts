@@ -11,7 +11,7 @@ import {
   type VoiceProblemReason,
 } from '@ryadom/analytics/events'
 import { ApiError } from '@ryadom/client-core/errors'
-import { MicrophoneDeniedError } from '@ryadom/client-core/voice/capture'
+import { MicrophoneDeniedError, MicrophoneNotFoundError } from '@ryadom/client-core/voice/capture'
 
 /**
  * Product analytics glue for this app: the mappings from what the screens know (an error, a route, a
@@ -100,24 +100,11 @@ export function screenPath(pattern: string | undefined): string | null {
 
 // ── Voice ───────────────────────────────────────────────────────────────────────────────────
 
-/**
- * Why the microphone did not start. client-core collapses every `getUserMedia` failure into
- * `MicrophoneDeniedError`, so a missing microphone is told apart by the device list: a browser that
- * lists devices and has no input among them has no microphone. `audioInputs` is null when that is unknown.
- */
-export function micFailureReason(error: unknown, audioInputs: number | null): VoiceProblemReason {
-  if (!(error instanceof MicrophoneDeniedError)) return 'unsupported'
-  return audioInputs === 0 ? 'no_microphone' : 'permission_denied'
-}
-
-/** How many audio inputs the browser lists; null when it lists nothing at all or cannot be asked. */
-async function countAudioInputs(): Promise<number | null> {
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices()
-    return devices.length === 0 ? null : devices.filter((device) => device.kind === 'audioinput').length
-  } catch {
-    return null
-  }
+/** Browser permission decisions and absent inputs are reported separately. */
+export function micFailureReason(error: unknown): VoiceProblemReason {
+  if (error instanceof MicrophoneDeniedError) return 'permission_denied'
+  if (error instanceof MicrophoneNotFoundError) return 'no_microphone'
+  return 'unsupported'
 }
 
 const reportedVoiceProblems = new Set<VoiceProblemReason>()
@@ -129,8 +116,8 @@ export function reportVoiceProblem(reason: VoiceProblemReason): void {
   track(AnalyticsEvent.VoiceProblem, { reason })
 }
 
-export async function reportMicFailure(error: unknown): Promise<void> {
-  reportVoiceProblem(micFailureReason(error, await countAudioInputs()))
+export function reportMicFailure(error: unknown): void {
+  reportVoiceProblem(micFailureReason(error))
 }
 
 // ── Updates ─────────────────────────────────────────────────────────────────────────────────
@@ -141,7 +128,11 @@ const reportedUpdates = new Set<string>()
  * An update event once per page load: the status check runs on every resume and the service worker
  * announces a waiting version more than once. `version` only tells releases apart here, it is not reported.
  */
-export function reportAppUpdate(kind: AppUpdateKind, action: AppUpdateAction, version: string | number = ''): void {
+export function reportAppUpdate(
+  kind: AppUpdateKind,
+  action: AppUpdateAction,
+  version: string | number = '',
+): void {
   const key = `${kind}:${action}:${version}`
   if (reportedUpdates.has(key)) return
   reportedUpdates.add(key)
