@@ -463,11 +463,11 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   )
 
   return (
-    <Page name="home" onPageTabShow={loadMemory}>
+    <Page name="home" className={firstScreen ? 'rd-home-entry' : 'rd-home-signed'} onPageTabShow={loadMemory}>
       {/* slot="fixed" keeps the button outside .page-content: without it the button is
           absolutely positioned relative to the scroll container and would scroll away with
           the page the moment its content grows taller than the screen (design review). */}
-      <SosButton slot="fixed" source="home" />
+      {signedIn && <SosButton slot="fixed" source="home" />}
       {/* Day/night next to SOS; the native shell stays dark and renders nothing here. */}
       {signedIn && <ThemeSwitch slot="fixed" className="rd-theme-switch--corner" />}
       {/* A new person of the PWA/Telegram lands here without a session: the mark, the way to the
@@ -492,6 +492,7 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
             Войти
           </Button>
           <ThemeSwitch />
+          <SosButton source="home" />
         </div>
       )}
       {firstScreen ? (

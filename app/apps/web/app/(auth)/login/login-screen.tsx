@@ -170,6 +170,8 @@ export default function LoginScreen() {
         </div>
       </AuthForm>
 
+      <FinePrint>Создано при участии гештальт-терапевтов</FinePrint>
+
       <FinePrint>
         Продолжая, ты соглашаешься с <ExternalLink href={termsUrl}>условиями</ExternalLink> и{' '}
         <ExternalLink href={privacyUrl}>политикой обработки персональных данных</ExternalLink>. Только 18+.

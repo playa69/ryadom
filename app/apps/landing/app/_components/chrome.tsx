@@ -56,12 +56,12 @@ const NAV_LINK = cn('rounded-sm text-[15px] text-dim hover:text-foreground', FOC
 export function SiteHeader({ appUrl }: { appUrl: string }) {
   return (
     <header className="sticky top-0 z-10 border-b border-line bg-paper/55 leading-[1.6] [backdrop-filter:var(--ryadom-blur)]">
-      <div className={cn(SHELL, 'flex items-center gap-4 py-3')}>
+      <div className={cn(SHELL, 'flex items-center gap-2 py-3 min-[720.02px]:gap-4')}>
         <Link className={BRAND} href="/">
           <BrandMark />
           Рядом
         </Link>
-        <nav className="ml-auto flex items-center gap-[22px]">
+        <nav className="ml-auto flex items-center gap-2 min-[720.02px]:gap-[22px]">
           {/* Two of the three links give way on a phone, so the button keeps its room. */}
           <Link className={cn(NAV_LINK, 'hidden min-[720.02px]:inline')} href="/#safety">
             Безопасность
@@ -78,7 +78,10 @@ export function SiteHeader({ appUrl }: { appUrl: string }) {
           </TrackedRouteLink>
           <ThemeSwitch />
           {/* min-h, not h: the button grows with a larger text size instead of clipping it. */}
-          <Button asChild className={cn('h-auto min-h-12 px-6 leading-[1.6]', LIT_BUTTON)}>
+          <Button
+            asChild
+            className={cn('h-auto min-h-12 px-3 leading-[1.6] min-[720.02px]:px-6', LIT_BUTTON)}
+          >
             <TrackedLink href={appUrl} tracking={{ cta: 'open_web_app', placement: 'nav' }}>
               Открыть
             </TrackedLink>

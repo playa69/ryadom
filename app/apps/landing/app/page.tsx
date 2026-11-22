@@ -1,6 +1,15 @@
 import { Item, ItemDescription, ItemTitle } from '@ryadom/ui/components/item'
 import { cn } from '@ryadom/ui/lib/utils'
-import { BookOpen, Heart, MessageCircle, Mic, Sparkles, Sprout, type LucideIcon } from 'lucide-react'
+import {
+  BookOpen,
+  Heart,
+  MessageCircle,
+  Mic,
+  Sparkles,
+  Sprout,
+  UsersRound,
+  type LucideIcon,
+} from 'lucide-react'
 import Link from 'next/link'
 import { connection } from 'next/server'
 import { HOTLINE_NO_CAPTURE, HOTLINES, telHref } from '@/lib/hotlines'
@@ -78,6 +87,18 @@ export default async function LandingPage() {
             <CtaButtons appUrl={env.appUrl} placement="hero" className="min-[720.02px]:max-[880.02px]:justify-center" />
             <p className="mb-4 text-[15px] text-dim">
               Бесплатно на старте. Работает в браузере и на телефоне. 18+
+            </p>
+            <p
+              className={cn(
+                PANE,
+                'inline-flex items-center gap-3 rounded-lg px-4 py-3 text-[15px] font-medium',
+              )}
+            >
+              <UsersRound className="size-5 shrink-0 text-brand-400" aria-hidden="true" />
+              Создано при участии практикующих гештальт-терапевтов
+            </p>
+            <p className="mt-3 text-[15px] text-dim">
+              Выслушано более <strong>14 000</strong> разговоров
             </p>
           </div>
           <HeroPhone />
@@ -198,6 +219,13 @@ export default async function LandingPage() {
           </Grid>
         </Section>
 
+        <Section id="contributors" glow="indigo" side="right">
+          <SectionTitle title="Кто помогал создавать">
+            Практикующие гештальт-терапевты участвовали в работе над гештальт-дневником и кризисным
+            протоколом.
+          </SectionTitle>
+        </Section>
+
         <Section id="safety" glow="violet" side="right">
           <SectionTitle title="Безопасность">
             Если в разговоре звучит угроза жизни, «Рядом» не продолжает беседу как ни в чём не
@@ -252,6 +280,12 @@ export default async function LandingPage() {
               Это быстрее и надёжнее любого приложения.
             </p>
           </div>
+          <a
+            className={cn(IN_TEXT_LINK, HOTLINE_NO_CAPTURE, 'mt-4 inline-flex min-h-11 items-center')}
+            href={`${env.appUrl}/people#specialists`}
+          >
+            Не кризис, но хочется поговорить с живым человеком? → Специалисты
+          </a>
         </Section>
 
         <Section id="privacy" glow="teal" side="left">

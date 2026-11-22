@@ -100,6 +100,7 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
         </button>
         <h1 className="rd-title rd-title--lg">Рядом</h1>
         <p className="rd-muted">Когда нужно, чтобы кто-то был рядом.</p>
+        <p className="rd-caption">Создано при участии гештальт-терапевтов</p>
       </div>
 
       <List

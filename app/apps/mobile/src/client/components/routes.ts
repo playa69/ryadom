@@ -11,7 +11,7 @@ import DialogPage from './pages/dialog/DialogPage'
 import HomePage from './pages/home/HomePage'
 import JournalEntryPage from './pages/journal/JournalEntryPage'
 import JournalPage from './pages/journal/JournalPage'
-import PeoplePage from './pages/people/PeoplePage'
+import PeoplePage, { PEOPLE_PATH } from './pages/people/PeoplePage'
 import ChangePasswordPage from './pages/profile/ChangePasswordPage'
 import DeleteAccountPage from './pages/profile/DeleteAccountPage'
 import LinkEmailPage from './pages/profile/LinkEmailPage'
@@ -53,5 +53,5 @@ export const routes: Router.RouteParameters[] = [
 
   // conversation and people, opened from any tab
   { path: '/dialog/:dialogId/', component: DialogPage },
-  { path: '/people/', component: PeoplePage },
+  { path: PEOPLE_PATH, component: PeoplePage },
 ]
