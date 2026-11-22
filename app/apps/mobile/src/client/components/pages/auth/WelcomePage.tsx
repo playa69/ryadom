@@ -148,7 +148,7 @@ export default function WelcomePage({ f7router }: { f7router: Router.Router }) {
     <Page name="welcome" className="rd-page-auth ph-no-capture">
       {/* Where it is on home: the way to help in danger needs no account. */}
       <SosButton slot="fixed" source="home" />
-      <div className="rd-welcome-top">
+      <div className="rd-welcome-top rd-welcome-top--fixed-sos">
         <button type="button" className="rd-logo-button" onClick={onLogoTap} aria-label="Рядом">
           <BrandMark size={36} />
         </button>

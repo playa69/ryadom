@@ -1,6 +1,7 @@
 'use client'
 
 import { Phone } from 'lucide-react'
+import Link from 'next/link'
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
@@ -140,6 +141,16 @@ export function SosProvider({ children }: { children: ReactNode }) {
             Я в безопасности, давай продолжим
           </button>
         )}
+        <Link
+          href="/people#specialists"
+          onNavigate={closeSos}
+          className={cn(
+            'flex min-h-11 items-center justify-center rounded-sm text-center text-sm text-brand-400 underline underline-offset-4 short-wide:col-span-2',
+            FOCUS_RING,
+          )}
+        >
+          Не кризис, но хочется поговорить с живым человеком? → Специалисты
+        </Link>
       </Modal>
     </SosContext.Provider>
   )

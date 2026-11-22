@@ -800,6 +800,28 @@ input:-webkit-autofill:focus {
   text-align: center;
 }
 
+@media (max-width: 699px) {
+  .rd-home-signed .rd-home {
+    padding-top: calc(56px + var(--f7-safe-area-top, 0px) + var(--rd-offline-clearance, 0px));
+  }
+
+  .rd-home-signed .rd-sos-button {
+    right: calc(16px + var(--f7-safe-area-right, 0px));
+  }
+
+  .rd-home-start:has(.rd-first-hello-text) {
+    grid-template-columns: var(--f7-button-large-height, 48px) minmax(0, 1fr) var(
+        --f7-button-large-height,
+        48px
+      );
+    display: grid;
+  }
+
+  .rd-home-start > .button:first-child {
+    grid-column: 2;
+  }
+}
+
 .rd-home-main {
   display: flex;
   flex-direction: column;
@@ -922,7 +944,7 @@ input:-webkit-autofill:focus {
    104px): this row's right side must stop short of it, or the pill covers «Войти» and the theme
    switch. From 700px SOS moves into the rail and the row keeps its own padding. */
 @media (max-width: 699px) {
-  .rd-welcome-top {
+  .rd-welcome-top--fixed-sos {
     padding-right: calc(104px + var(--f7-safe-area-right, 0px));
   }
 }
@@ -1495,6 +1517,18 @@ input:-webkit-autofill:focus {
   padding: var(--ryadom-s-6) var(--ryadom-s-5) calc(var(--ryadom-s-5) + var(--f7-safe-area-bottom, 0px));
 }
 
+.rd-sos-sheet-body {
+  box-sizing: border-box;
+}
+
+.rd-sos-specialists {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
 /* A grab handle: the sheet swipes down to close, and this says so. */
 .rd-sheet-body::before {
   content: '';
@@ -1665,6 +1699,32 @@ input:-webkit-autofill:focus {
   border-radius: var(--ryadom-r-l);
   background: var(--ryadom-surface-glass);
   box-shadow: var(--ryadom-highlight);
+}
+
+.rd-specialists {
+  display: grid;
+  gap: var(--ryadom-s-3);
+  margin: 0 var(--ryadom-s-4) var(--ryadom-s-5);
+  padding: 0;
+  list-style: none;
+}
+
+.rd-specialists .rd-card {
+  display: grid;
+  gap: var(--ryadom-s-2);
+  margin: 0;
+}
+
+.rd-specialists h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.rd-specialists a {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 44px;
+  align-items: center;
 }
 
 .rd-note {
@@ -2016,6 +2076,26 @@ input:-webkit-autofill:focus {
   color: var(--ryadom-brand-400);
 }
 
+.framework7-root:has(.rd-offline) {
+  --rd-offline-clearance: 40px;
+}
+
+@media (max-width: 380px) {
+  .framework7-root:has(.rd-offline) {
+    --rd-offline-clearance: 56px;
+  }
+}
+
+.page[data-name='people'] > .navbar {
+  top: var(--rd-offline-clearance, 0px);
+}
+
+.page[data-name='people'] > .page-content {
+  top: var(--rd-offline-clearance, 0px);
+  height: calc(100% - var(--rd-offline-clearance, 0px));
+  scroll-padding-top: calc(var(--f7-page-navbar-offset, 0px) + var(--ryadom-s-3));
+}
+
 /* ── Bottom tabs ─────────────────────────────────────────────────────────── */
 
 .toolbar.tabbar#rd-tabbar {
@@ -2131,11 +2211,12 @@ input:-webkit-autofill:focus {
 }
 
 /*
- * During a conversation there is no bottom banner: it covers the input field, and this is the one
- * screen where installing the app is certainly not on the person's mind. The top banner stays,
- * since it announces updates. Where `:has` is unsupported the banner simply remains, as before.
+ * The install banner can cover the conversation input or the help contacts. The update banner
+ * stays in place.
  */
-.framework7-root:has(.page-current.rd-dialog-page) .rd-banner--bottom {
+.framework7-root:has(.page-current.rd-dialog-page) .rd-banner--bottom,
+.framework7-root:has(:is(.view:not(.tab), .view.tab-active) > .page-current[data-name='people'])
+  .rd-banner--bottom {
   display: none;
 }
 
@@ -2449,7 +2530,7 @@ input:-webkit-autofill:focus {
     display: inline-flex;
   }
 
-  .framework7-root:has(.rd-welcome-top) .rd-welcome-top {
+  .framework7-root:has(.rd-welcome-top) .rd-welcome-top--fixed-sos {
     padding-right: calc(104px + var(--f7-safe-area-right, 0px));
   }
 
@@ -3056,6 +3137,10 @@ input:-webkit-autofill:focus {
   flex-shrink: 0;
 }
 
+.rd-sheet-body--scroll.rd-sos-sheet-body {
+  max-height: calc(100dvh - var(--f7-safe-area-top, 0px) - 16px);
+}
+
 .rd-recap-editor {
   display: flex;
   flex-direction: column;
@@ -3590,22 +3675,43 @@ p.rd-recap-text {
 
 /* ── First screen of a new person (PWA and Telegram) and the start buttons of home ───────────────── */
 
+.rd-home-entry > .page-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.rd-home-entry .rd-welcome-top {
+  position: sticky;
+  z-index: 2;
+  top: var(--rd-offline-clearance, 0px);
+  flex-shrink: 0;
+  gap: var(--ryadom-s-2);
+  margin-top: var(--rd-offline-clearance, 0px);
+  padding: calc(var(--ryadom-s-3) + var(--f7-safe-area-top, 0px))
+    calc(var(--ryadom-s-4) + var(--f7-safe-area-right, 0px)) var(--ryadom-s-2)
+    calc(var(--ryadom-s-4) + var(--f7-safe-area-left, 0px));
+}
+
+.rd-home-entry .rd-welcome-top .rd-sos-button {
+  position: static;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
 .rd-first-hello {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--ryadom-s-4);
-  /* Border-box: otherwise the padding is added on top of the height and the screen scrolls by it. */
-  box-sizing: border-box;
-  min-height: calc(100% - 60px);
-  padding: var(--ryadom-s-2) var(--ryadom-s-5) calc(var(--ryadom-s-3) + var(--f7-safe-area-bottom, 0px));
+  flex: 1;
+  justify-content: safe center;
+  padding: var(--ryadom-s-2) var(--ryadom-s-5) calc(var(--ryadom-s-5) + var(--f7-safe-area-bottom, 0px));
   text-align: center;
 }
 
 /* The whole stage is the target: the sphere is large and need not be aimed at. */
 .rd-first-hello-stage {
   display: flex;
-  flex: 1;
   align-items: center;
   justify-content: center;
   width: 100%;
@@ -3654,6 +3760,7 @@ p.rd-recap-text {
 }
 
 .rd-first-hello-plaque {
+  box-sizing: border-box;
   width: 100%;
   max-width: 360px;
   padding: var(--ryadom-s-3) var(--ryadom-s-4);

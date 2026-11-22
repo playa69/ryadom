@@ -1,9 +1,10 @@
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, type AnalyticsEventProperties } from '@ryadom/analytics/events'
-import { Button, Icon, Sheet } from 'framework7-react'
+import { Button, f7, Icon, Sheet } from 'framework7-react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
 import { CRISIS_CALL, CRISIS_SHEET_TITLE, HOTLINES, telHref } from '../lib/hotlines'
+import { PEOPLE_PATH, revealSpecialists } from './pages/people/PeoplePage'
 
 /**
  * Help lines (SOS is reachable from any screen, and the lines are one tap away).
@@ -106,7 +107,7 @@ export default function SosSheet() {
       backdrop
       style={{ height: 'auto' }}
     >
-      <div className="rd-sheet-body">
+      <div className="rd-sheet-body rd-sheet-body--scroll rd-sos-sheet-body">
         <h2 className="rd-sheet-title">{payload.crisis ? CRISIS_SHEET_TITLE : 'Если сейчас тяжело'}</h2>
         {payload.crisis ? (
           <>
@@ -164,6 +165,24 @@ export default function SosSheet() {
             Я в безопасности, давай продолжим
           </button>
         )}
+        <a
+          className="external rd-inline-link rd-sos-specialists"
+          href={`${PEOPLE_PATH}#specialists`}
+          onClick={(event) => {
+            event.preventDefault()
+            const view = f7.views.current
+            setOpened(false)
+            if (!view) return
+            const { router } = view
+            if (router.currentRoute.path === PEOPLE_PATH) {
+              revealSpecialists(view.el.querySelector('.page-current'))
+            } else {
+              router.navigate(PEOPLE_PATH, { props: { showSpecialists: true } })
+            }
+          }}
+        >
+          Не кризис, но хочется поговорить с живым человеком? → Специалисты
+        </a>
       </div>
     </Sheet>
   )
