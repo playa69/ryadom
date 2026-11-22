@@ -1,3 +1,4 @@
+import { clearRecommendationHistory } from './dialog-recommendation'
 import type {
   DeleteSelfCheckApiResponse,
   SaveSelfCheckApiRequest,
@@ -204,6 +205,7 @@ export function createClient(config: ClientConfig) {
 
   async function clearSession(): Promise<void> {
     forgetSession()
+    clearRecommendationHistory()
     try {
       await config.storage.removeRefreshToken()
     } catch {

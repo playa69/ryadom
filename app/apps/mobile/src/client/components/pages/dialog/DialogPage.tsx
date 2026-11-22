@@ -4,6 +4,7 @@ import { reportReplyCount } from '@ryadom/analytics/metrika'
 import { Block, Button, Icon, Message, Messages, Navbar, Page, Preloader, f7 } from 'framework7-react'
 import type { Router } from 'framework7/types'
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -53,7 +54,8 @@ import { openRoute } from '../../../lib/nav'
 import { isNative } from '../../../lib/platform'
 import { takeDialogHandoff } from './dialog-handoff'
 import { useAuth } from '../../../lib/store'
-import { setTelegramClosingConfirmation } from '../../../lib/telegram'
+import { isTelegramLaunch, setTelegramClosingConfirmation } from '../../../lib/telegram'
+import { DialogRecommendation } from '@ryadom/client-core/dialog-recommendation'
 import {
   isCaptureSupported,
   MicrophoneDeniedError,
@@ -76,10 +78,11 @@ import {
   type TurnEvent,
 } from '../../../lib/voice/turn-detector'
 import CrisisBar from '../../CrisisBar'
-import { openSos } from '../../SosSheet'
+import { isSosOpen, openSos, useSosOpened } from '../../SosSheet'
 import Breathing from '../../Breathing'
 import VoiceOrb, { type OrbState } from '../../VoiceOrb'
 import DialogEndSheet from './DialogEndSheet'
+import RecommendationCard from './RecommendationCard'
 import MemoryRecap from './MemoryRecap'
 import ShareSheet, { ShareNavButton } from '../journal/ShareSheet'
 import MemoryNotesSheet from '../profile/MemoryNotesSheet'
@@ -169,7 +172,7 @@ export default function DialogPage({
   const [unsaved, setUnsaved] = useState(() => startedSaved === false || wasUnsaved(dialogId))
   const unsavedRef = useRef(unsaved)
   unsavedRef.current = unsaved
-  const trackDialog = trackUnlessUnsaved(() => unsavedRef.current)
+  const trackDialog = useMemo(() => trackUnlessUnsaved(() => unsavedRef.current), [])
   /** The dialog is gone from the agent (a restart took an unsaved one). */
   const [gone, setGone] = useState(false)
 
@@ -318,6 +321,31 @@ export default function DialogPage({
   const [shareOpened, setShareOpened] = useState(false)
   const [notesOpened, setNotesOpened] = useState(false)
   const [summary, setSummary] = useState<DialogSummaryApiResponse | null | undefined>(undefined)
+  const recommendation = useMemo(() => new DialogRecommendation(dialogId), [dialogId])
+  const offer = useSyncExternalStore(recommendation.subscribe, recommendation.getSnapshot)
+  const sosOpened = useSosOpened()
+  useEffect(() => {
+    if (sosOpened) {
+      recommendation.dropPending()
+      return
+    }
+    if (!offer || offer.shown || state !== 'ready' || isSosOpen() || endOpened || summary !== undefined)
+      return
+    if (mode === 'voice' && (!offer.speechFinished || recording || voiceOut || awaitingReply)) return
+    if (recommendation.show()) trackDialog(AnalyticsEvent.DialogRecommendationShown, { mode })
+  }, [
+    sosOpened,
+    recommendation,
+    offer,
+    state,
+    endOpened,
+    summary,
+    mode,
+    recording,
+    voiceOut,
+    awaitingReply,
+    trackDialog,
+  ])
 
   const socket = useRef<DialogSocket | null>(null)
   const pressCall = useCallback(() => {
@@ -432,6 +460,7 @@ export default function DialogPage({
           // Frames sent while the connection is down are lost and the gateway would never hear
           // `audio_start` again: a microphone left on would record into the void.
           if (next !== 'ready' && next !== 'streaming') {
+            recommendation.dropPending()
             voicePlayer.stop()
             replyVoice.cancel()
             // Hands-free comes back paused: a tap after the reconnect takes the microphone back.
@@ -441,6 +470,22 @@ export default function DialogPage({
           if (next !== 'ready') setAwaitingReply(false)
         },
         onMessages: setMessages,
+        ...(!isNative() && !isTelegramLaunch()
+          ? {
+              onRecommendation: (messageId: string, speechPending: boolean) => {
+                recommendation.receive(messageId, isSosOpen())
+                if (!speechPending)
+                  void voicePlayer.drained().then(() => recommendation.speechFinished(messageId))
+              },
+              onTextRejected: (code: DialogWsErrorCode) => {
+                const text =
+                  code === DialogWsErrorCode.RATE_LIMITED
+                    ? 'Сообщения идут слишком быстро. Повтори через секунду.'
+                    : 'Сообщение слишком длинное.'
+                f7.toast.create({ text, closeTimeout: 2500 }).open()
+              },
+            }
+          : {}),
         // A reply of the person counted by the server for the whole account: the goals of Yandex Metrika (the server skips unsaved ones).
         onReplyCount: reportReplyCount,
         onSpeech: (messageId, phase) =>
@@ -455,13 +500,15 @@ export default function DialogPage({
           if (final && !text) setAwaitingReply(false)
         },
         onAudio: (speech) => voicePlayer.enqueue(speech),
-        onSafety: (_level, text, hotlines, step) =>
+        onSafety: (_level, text, hotlines, step) => {
+          recommendation.close()
           openSos({
             text,
             hotlines,
             source: 'safety_frame',
             ...(step ? { crisis: { onCall: pressCall } } : {}),
-          }),
+          })
+        },
         onSafetyState: (next) => setCrisisUi((prev) => reduceCrisisUi(prev, next)),
         onMood: (tone, intensity) => moodHold.report(tone, intensity),
         onEnded: (result) => setSummary(result),
@@ -515,7 +562,7 @@ export default function DialogPage({
       replyVoice.dispose()
       void voicePlayer.dispose()
     }
-  }, [dialogId, greeting, closeMic])
+  }, [dialogId, greeting, closeMic, recommendation])
 
   // A resumed conversation opens with an empty feed: the socket does not replay what was said, and the
   // voice view does not need it. The text view shows the whole feed, so its record is read from REST
@@ -919,6 +966,17 @@ export default function DialogPage({
     if (element) element.scrollTop = element.scrollHeight
   }, [subtitle, mode])
 
+  const visibleOffer =
+    !sosOpened && summary === undefined && state !== 'ended' && offer?.shown ? offer.messageId : null
+  const recommendationCard = visibleOffer ? (
+    <RecommendationCard
+      revealInFeed={mode === 'text'}
+      onClose={recommendation.close}
+      onCopy={() => trackDialog(AnalyticsEvent.DialogRecommendationCopied, { mode })}
+      onShare={() => trackDialog(AnalyticsEvent.DialogRecommendationShared, { mode })}
+    />
+  ) : null
+
   if (gone) {
     return (
       <Page name="dialog" className="rd-dialog-page rd-no-tabbar ph-no-capture">
@@ -1015,6 +1073,8 @@ export default function DialogPage({
             {hint}
           </p>
 
+          {recommendationCard}
+
           <div className="rd-voice-controls">
             <button
               type="button"
@@ -1060,15 +1120,38 @@ export default function DialogPage({
 
           <Messages>
             {messages.map((message) => (
-              <Message
-                key={message.id}
-                type={message.role === 'user' ? 'sent' : 'received'}
-                className={message.role === 'assistant' ? 'rd-message-assistant' : undefined}
-              >
-                <span slot="text" className={message.streaming ? 'rd-typing' : undefined}>
-                  {message.text}
-                </span>
-              </Message>
+              <Fragment key={message.id}>
+                <Message
+                  type={message.role === 'user' ? 'sent' : 'received'}
+                  className={message.role === 'assistant' ? 'rd-message-assistant' : undefined}
+                >
+                  <span slot="text" className={message.streaming ? 'rd-typing' : undefined}>
+                    {message.text}
+                    {message.rejected && (
+                      <span
+                        className="rd-caption"
+                        style={{ display: 'block' }}
+                        data-testid="dialog-message-rejected"
+                      >
+                        Не отправлено
+                        {connected && message.rejected === DialogWsErrorCode.RATE_LIMITED && (
+                          <>
+                            {' '}
+                            <button
+                              type="button"
+                              className="rd-inline-link"
+                              onClick={() => socket.current?.retryMessage(message.id)}
+                            >
+                              Повторить
+                            </button>
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </span>
+                </Message>
+                {visibleOffer === message.id && recommendationCard}
+              </Fragment>
             ))}
             {notices.map((notice) => (
               <div key={notice.id} className="rd-memory-notice" data-testid="memory-notice">

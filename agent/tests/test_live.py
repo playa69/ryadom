@@ -1,19 +1,24 @@
 """Режим gemini_live: речь в речь через Gemini Live (поддельная модель, без сети)."""
 
+import asyncio
 import json
 import logging
 from collections.abc import Iterator
+from threading import Event
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.clients.gemini_live import LiveEvent
 from app.core.config import APP_CONFIG
+from app.services.recommendation import classify_help_feedback
 from app.services.replies import CRISIS_REPLY
 from tests.conftest import (
     components,
     make_app,
     AUTH,
+    FakeBackgroundModel,
     FakeTts,
     audio_in_frame,
     has,
@@ -23,7 +28,7 @@ from tests.conftest import (
     types,
     ws_url,
 )
-from tests.fake_live import FakeConnector, deltas_text, reply_done, speak_turn
+from tests.fake_live import FakeConnector, FakeLink, deltas_text, reply_done, speak_turn
 
 
 def make_live_client(connector: FakeConnector, tts: Any = None) -> TestClient:
@@ -71,6 +76,127 @@ def test_text_message_is_answered_by_the_model(live_client: TestClient, connecto
     history = live_client.get(f"/v1/users/{user_id}/dialogs/{dialog['dialogId']}", headers=AUTH).json()["messages"]
     assert [m["role"] for m in history] == ["user", "assistant"]
     assert history[1]["text"] == connector.reply
+
+
+# openspec/changes/add-dialog-recommendation, «Карточка рекомендации сервиса в разговоре».
+@pytest.mark.parametrize(("reply", "expected"), [("OFFER", True), ("SKIP", False), ("OFFER because …", False)])
+async def test_recommendation_uses_only_the_model_verdict(reply: str, expected: bool) -> None:
+    model = FakeBackgroundModel(reply)
+    text = "Наконец разложил всё по полочкам благодаря тебе"
+    assert await classify_help_feedback(model, text) is expected
+    assert model.calls[0][-1] == {"role": "user", "content": text}
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_recommendation_skips_unavailable_model(fail: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.services.recommendation.MODEL_TIMEOUT_SECONDS", 0.01)
+    model = FakeBackgroundModel("OFFER", delay=0 if fail else 1, fail=fail)
+    assert not await classify_help_feedback(model, "Спасибо за поомщь")
+
+
+@pytest.mark.parametrize(
+    ("prior_count", "voice", "crisis", "late_denial", "enabled", "expected"),
+    [
+        (6, False, False, False, True, False),
+        (7, False, False, False, True, True),
+        (8, False, False, False, False, False),
+        (8, True, False, False, True, True),
+        (8, True, True, False, True, False),
+        (8, True, False, True, True, False),
+    ],
+)
+def test_recommendation_frame_after_answer(
+    live_client: TestClient,
+    connector: FakeConnector,
+    user_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    prior_count: int,
+    voice: bool,
+    crisis: bool,
+    late_denial: bool,
+    enabled: bool,
+    expected: bool,
+) -> None:
+    if late_denial:
+        respond = FakeLink._respond
+
+        def respond_with_late_denial(link: FakeLink, heard: str | None) -> None:
+            respond(link, heard)
+            events = [link._queue.get_nowait() for _ in range(link._queue.qsize())]
+            for event in events:
+                if heard and event.kind == "generation_complete":
+                    link._queue.put_nowait(LiveEvent("input_text", text=", но теперь нет"))
+                link._queue.put_nowait(event)
+
+        monkeypatch.setattr(FakeLink, "_respond", respond_with_late_denial)
+
+    intro = start_dialog(live_client, user_id)
+    store = live_client.app.state.store
+    model = FakeBackgroundModel("OFFER")
+    store.recap_model = model
+    dialog = store.get(user_id, intro["dialogId"])
+    for index in range(prior_count):
+        store.add_message(dialog, "user" if index % 2 == 0 else "assistant", f"Реплика {index}")
+    if crisis:
+        store.mark_crisis(dialog)
+    feedback = "Наконец разложил всё по полочкам благодаря тебе"
+    connector.heard = feedback
+
+    url = ws_url(user_id, dialog.id) + ("?recommendation=1" if enabled else "")
+    with live_client.websocket_connect(url, headers=AUTH) as ws:
+        if voice:
+            speak_turn(ws)
+        else:
+            send_user_message(ws, "feedback", feedback)
+        if expected:
+            frames = read_frames(
+                ws,
+                lambda f: has(f, "recommendation") and any(
+                    kind == "json" and body["type"] == "recommendation" and not body.get("speechPending")
+                    for kind, body in f
+                ),
+            )
+            reply = next(body for kind, body in frames if kind == "json" and body["type"] == "assistant_end")
+            assert frames[-1][1] == {"v": 1, "type": "recommendation", "messageId": reply["messageId"]}
+            assert types(frames).index("assistant_end") < types(frames).index("recommendation")
+            assert has(frames, "tts_end", messageId=reply["messageId"])
+        else:
+            frames = read_frames(ws, reply_done)
+            ws.send_text(json.dumps({"type": "end"}))
+            frames += read_frames(ws, lambda f: has(f, "ended"))
+            assert "recommendation" not in types(frames)
+    calls = [call for call in model.calls if "OFFER" in call[0]["content"]]
+    assert [call[-1]["content"] for call in calls] == ([feedback] if expected else [])
+
+
+def test_new_crisis_turn_cancels_recommendation_without_waiting_for_model(live_client: TestClient, user_id: str) -> None:
+    started, cancelled = Event(), Event()
+
+    class PendingModel(FakeBackgroundModel):
+        async def complete(self, messages: list[dict[str, str]]) -> str:
+            if "OFFER" not in messages[0]["content"]:
+                return "NONE"
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+            return "OFFER"
+
+    intro = start_dialog(live_client, user_id)
+    store = live_client.app.state.store
+    store.recap_model = PendingModel()
+    dialog = store.get(user_id, intro["dialogId"])
+    for index in range(8):
+        store.add_message(dialog, "user" if index % 2 == 0 else "assistant", f"Реплика {index}")
+    with live_client.websocket_connect(ws_url(user_id, dialog.id) + "?recommendation=1", headers=AUTH) as ws:
+        send_user_message(ws, "feedback", "Спасибо тебе за помощь")
+        read_frames(ws, lambda f: has(f, "assistant_end"))
+        assert started.wait(1)
+        send_user_message(ws, "crisis", "не хочу жить")
+        frames = read_frames(ws, lambda f: has(f, "safety"))
+        assert cancelled.is_set()
+        assert "recommendation" not in types(frames)
 
 
 def answered_and_counted(frames: list[Any]) -> bool:

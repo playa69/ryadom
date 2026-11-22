@@ -42,11 +42,13 @@ export interface AgentSocketOptions {
   token?: string
   userId: string
   dialogId: string
+  recommendation?: boolean
 }
 
 export function openAgentSocket(options: AgentSocketOptions, handlers: AgentSocketHandlers): AgentSocket {
   const { token } = options
-  const socket = new WebSocket(agentWsUrl(options.baseUrl, options.userId, options.dialogId), {
+  const url = agentWsUrl(options.baseUrl, options.userId, options.dialogId)
+  const socket = new WebSocket(options.recommendation ? `${url}?recommendation=1` : url, {
     // Server to server: headers are available, so the token does not have to go into the URL.
     headers: { ...tracingHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     handshakeTimeout: 10_000,

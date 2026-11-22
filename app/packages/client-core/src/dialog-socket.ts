@@ -3,9 +3,9 @@ import {
   DialogClientFrame,
   DialogCloseCode,
   DialogServerFrame,
+  DialogWsErrorCode,
   type DialogServerMessage,
   type DialogSummaryApiResponse,
-  type DialogWsErrorCode,
   type HotlineApiResponse,
   type MoodTone,
   type SafetyAnswer,
@@ -35,6 +35,7 @@ export interface DialogMessageView {
   streaming?: boolean
   /** The message was sent but the server has not acknowledged it yet. */
   pending?: boolean
+  rejected?: DialogWsErrorCode.RATE_LIMITED | DialogWsErrorCode.MESSAGE_TOO_LONG
 }
 
 /** What the socket needs from the client: the token, a way to refresh it, and where to connect. */
@@ -62,6 +63,7 @@ export interface DialogSocketDeps {
 export interface DialogSocketHandlers {
   onState(state: DialogSocketState): void
   onMessages(messages: DialogMessageView[]): void
+  onRecommendation?(messageId: string, speechPending: boolean): void
   onSafety(level: SafetyLevel, text: string | null, hotlines: HotlineApiResponse[], step?: SafetyStep): void
   /** Crisis script (PROTEUS-279) outside the sheet: the pinned call button, the banner, the quick answers. */
   onSafetyState?(state: {
@@ -74,6 +76,7 @@ export interface DialogSocketHandlers {
   onMood?(tone: MoodTone, intensity: number): void
   onEnded(summary: DialogSummaryApiResponse | null): void
   onError(code: DialogWsErrorCode, message: string): void
+  onTextRejected?(code: NonNullable<DialogMessageView['rejected']>): void
   /** What the recognition heard: partial text while talking, the final one at the end (it also joins the feed). */
   onTranscript?(text: string, final: boolean): void
   /** The agent's voice, decoded from the connection's codec, for the player; in the order it was spoken. */
@@ -163,7 +166,9 @@ export class DialogSocket {
 
   /** Every change of the feed passes through `emitMessages`, so this is the one place that sees a reply accepted. */
   private noteAcceptedReplies(): void {
-    const count = this.messages.filter((message) => message.role === 'user' && !message.pending).length
+    const count = this.messages.filter(
+      (message) => message.role === 'user' && !message.pending && !message.rejected,
+    ).length
     if (count <= this.acceptedReplies) return
     const delta = count - this.acceptedReplies
     this.acceptedReplies = count
@@ -229,6 +234,7 @@ export class DialogSocket {
       dialogId: this.dialogId,
       ...(this.lastMessageId ? { lastMessageId: this.lastMessageId } : {}),
       ...(codecs ? { codecs } : {}),
+      ...(this.handlers.onRecommendation ? { recommendation: true } : {}),
     })
   }
 
@@ -290,6 +296,21 @@ export class DialogSocket {
     this.messages = [...this.messages, { id: clientId, role: 'user', text, pending: true }]
     this.emitMessages()
     if (this.isConnected()) this.sendPending()
+  }
+
+  retryMessage(clientId: string): void {
+    if (!this.isConnected()) return
+    const message = this.messages.find(
+      (entry) => entry.id === clientId && entry.rejected === DialogWsErrorCode.RATE_LIMITED,
+    )
+    if (!message) return
+    this.messages = [
+      ...this.messages.filter((entry) => entry.id !== clientId),
+      { id: clientId, role: 'user', text: message.text, pending: true },
+    ]
+    this.sentOnConnection.delete(clientId)
+    this.emitMessages()
+    this.sendPending()
   }
 
   end(
@@ -470,6 +491,23 @@ export class DialogSocket {
         this.tts.begin(frame.codec ?? 'pcm16')
         this.handlers.onSpeech?.(frame.messageId, 'start')
         return
+      case DialogServerFrame.Recommendation:
+        if (
+          !this.handlers.onRecommendation ||
+          !this.messages.some(
+            (message) => message.id === frame.messageId && message.role === 'assistant' && !message.streaming,
+          )
+        )
+          return
+        if (frame.speechPending) {
+          this.handlers.onRecommendation(frame.messageId, true)
+        } else {
+          const socket = this.socket
+          void this.tts.drained().then(() => {
+            if (this.socket === socket) this.handlers.onRecommendation?.(frame.messageId, false)
+          })
+        }
+        return
       case DialogServerFrame.TtsEnd:
         if (this.speakingId === frame.messageId) this.speakingId = null
         this.tts.end()
@@ -511,6 +549,21 @@ export class DialogSocket {
         this.handlers.onEnded(frame.summary)
         return
       case DialogServerFrame.Error:
+        if (
+          frame.clientId &&
+          this.handlers.onTextRejected &&
+          (frame.code === DialogWsErrorCode.RATE_LIMITED || frame.code === DialogWsErrorCode.MESSAGE_TOO_LONG)
+        ) {
+          const message = this.messages.find((entry) => entry.id === frame.clientId && entry.pending)
+          if (!message) return
+          const rejected = frame.code
+          this.messages = this.messages.map((entry) =>
+            entry.id === message.id ? { ...entry, pending: false, rejected } : entry,
+          )
+          this.emitMessages()
+          this.handlers.onTextRejected(frame.code)
+          return
+        }
         this.handlers.onError(frame.code, frame.message)
         return
       default:

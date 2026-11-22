@@ -17,6 +17,8 @@ export function ChatMessage({
   children,
   streaming = false,
   pending = false,
+  rejected = false,
+  onRetry,
   className,
 }: {
   role: ChatRole
@@ -25,6 +27,8 @@ export function ChatMessage({
   streaming?: boolean
   /** The message has not been acknowledged by the server yet. */
   pending?: boolean
+  rejected?: boolean
+  onRetry?: () => void
   className?: string
 }) {
   return (
@@ -53,6 +57,16 @@ export function ChatMessage({
         <span className="sr-only">{role === 'user' ? 'Ты: ' : 'Рядом: '}</span>
         {children}
         {pending && <span className="sr-only"> (отправляется)</span>}
+        {rejected && (
+          <span className="mt-1 block text-sm text-dim" data-testid="dialog-message-rejected">
+            Не отправлено
+            {onRetry && (
+              <button type="button" className="ml-2 underline" onClick={onRetry}>
+                Повторить
+              </button>
+            )}
+          </span>
+        )}
       </p>
     </li>
   )
