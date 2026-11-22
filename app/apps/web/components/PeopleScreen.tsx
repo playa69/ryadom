@@ -1,19 +1,20 @@
 'use client'
 
 import { useId } from 'react'
-import { HOTLINES } from '@ryadom/client-core/hotlines'
+import { HOTLINES, telHref } from '@ryadom/client-core/hotlines'
+import {
+  SPECIALISTS,
+  SPECIALISTS_INTRO,
+  SPECIALISTS_NOTE,
+  SPECIALISTS_TITLE,
+} from '@ryadom/client-core/specialists'
 import { Card } from '@ryadom/ui/components/card'
 import Hotline from './Hotline'
 import { Page, SECTION_HEADING } from './Page'
 
-/**
- * The "people nearby" page: help lines come first. Support groups and specialists
- * appear once there is a catalogue; we must not promise them before that. The list is bundled, so
- * there is nothing to load or refresh and it works offline.
- */
 export default function PeopleScreen() {
   const callId = useId()
-  const soonId = useId()
+  const specialistsId = useId()
 
   return (
     <Page title="Люди рядом" className="gap-10">
@@ -28,16 +29,30 @@ export default function PeopleScreen() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-3.5" aria-labelledby={soonId}>
-        <h2 id={soonId} className={SECTION_HEADING}>
-          Скоро
+      <section
+        id="specialists"
+        className="ph-no-capture flex scroll-mt-24 flex-col gap-3.5"
+        aria-labelledby={specialistsId}
+      >
+        <h2 id={specialistsId} className={SECTION_HEADING}>
+          {SPECIALISTS_TITLE}
         </h2>
-        <Card className="rounded-lg px-5 py-4 shadow-none">
-          <p className="text-base leading-[1.55] text-dim">
-            Группы поддержки и проверенные специалисты. Разговор со мной&nbsp;— это разгрузка здесь и сейчас,
-            а не замена живым людям.
-          </p>
-        </Card>
+        <p className="text-base leading-relaxed text-dim">{SPECIALISTS_INTRO}</p>
+        <div className="grid gap-3">
+          {SPECIALISTS.map(({ name, description, phone }) => (
+            <Card key={name} className="gap-2 rounded-lg px-5 py-4 shadow-none">
+              <h3 className="text-lg font-semibold">{name}</h3>
+              <p className="text-base leading-relaxed text-dim">{description}</p>
+              <a
+                href={telHref(phone)}
+                className="inline-flex min-h-11 w-fit items-center text-brand-400 underline underline-offset-4"
+              >
+                {phone}
+              </a>
+            </Card>
+          ))}
+        </div>
+        <p className="text-sm leading-relaxed text-dim">{SPECIALISTS_NOTE}</p>
       </section>
     </Page>
   )

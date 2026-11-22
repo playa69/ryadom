@@ -463,7 +463,11 @@ export default function HomePage({ f7router }: { f7router: Router.Router }) {
   )
 
   return (
-    <Page name="home" onPageTabShow={loadMemory}>
+    <Page
+      name="home"
+      className={signedIn && !isNative() ? 'rd-home-with-controls' : undefined}
+      onPageTabShow={loadMemory}
+    >
       {/* slot="fixed" keeps the button outside .page-content: without it the button is
           absolutely positioned relative to the scroll container and would scroll away with
           the page the moment its content grows taller than the screen (design review). */}

@@ -1,3 +1,4 @@
+import { THERAPIST_CREDIT } from '@ryadom/client-core/specialists'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
 import { Block, Button, Link, List, ListInput, Page, f7 } from 'framework7-react'
@@ -101,6 +102,8 @@ export default function LoginPage({ f7router }: { f7router: Router.Router }) {
         <h1 className="rd-title rd-title--lg">Рядом</h1>
         <p className="rd-muted">Когда нужно, чтобы кто-то был рядом.</p>
       </div>
+
+      <p className="rd-muted rd-auth-credit">{THERAPIST_CREDIT}</p>
 
       <List
         form

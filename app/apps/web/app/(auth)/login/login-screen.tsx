@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 import { XIcon } from 'lucide-react'
 import { track } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
+import { THERAPIST_CREDIT } from '@ryadom/client-core/specialists'
 import { apiErrorText } from '@ryadom/client-core/errors'
 import { Alert } from '@ryadom/ui/components/alert'
 import { Button } from '@ryadom/ui/components/button'
@@ -96,6 +97,7 @@ export default function LoginScreen() {
       <AuthHead title="Вход" hideTitle>
         Когда нужно, чтобы кто-то был рядом.
       </AuthHead>
+      <p className="text-center text-sm text-dim">{THERAPIST_CREDIT}</p>
 
       <AuthForm formRef={formRef} onSubmit={() => void submit()}>
         <TextField

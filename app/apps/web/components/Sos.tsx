@@ -1,6 +1,7 @@
 'use client'
 
 import { Phone } from 'lucide-react'
+import Link from 'next/link'
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
@@ -114,9 +115,17 @@ export function SosProvider({ children }: { children: ReactNode }) {
           ))}
         </div>
         {/* The single most consequential sentence in the app: readable tone, not the faint caption one. */}
-        <p className={cn(TEXT, 'short-wide:col-start-1 short-wide:row-span-2 short-wide:row-start-3')}>
-          «Рядом»&nbsp;— сервис самоподдержки, не медицинская услуга. В опасной ситуации звони 112.
-        </p>
+        <div className="grid gap-2 short-wide:col-start-1 short-wide:row-span-2 short-wide:row-start-3">
+          <p className={TEXT}>
+            «Рядом»&nbsp;— сервис самоподдержки, не медицинская услуга. В опасной ситуации звони 112.
+          </p>
+          <p className="text-sm text-dim">
+            Не кризис, но хочется поговорить с живым человеком?{' '}
+            <Link href="/people#specialists" onNavigate={closeSos} className={cn('text-brand-400 underline underline-offset-4', FOCUS_RING)}>
+              <span aria-hidden="true">→ </span>Специалисты
+            </Link>
+          </p>
+        </div>
         {/* An explicit button: this opens at a hard moment, so the way out must be visible. */}
         <Button
           type="button"
