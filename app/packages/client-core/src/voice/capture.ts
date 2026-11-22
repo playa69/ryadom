@@ -35,6 +35,13 @@ export class MicrophoneDeniedError extends Error {
   }
 }
 
+export class MicrophoneNotFoundError extends Error {
+  constructor() {
+    super('microphone not found')
+    this.name = 'MicrophoneNotFoundError'
+  }
+}
+
 /** A socket frame: kind, sequence number, raw samples. */
 function frameFor(sequence: number, samples: Int16Array): ArrayBuffer {
   const buffer = new ArrayBuffer(AUDIO_FRAME_HEADER_BYTES + samples.byteLength)
@@ -77,8 +84,12 @@ export async function startCapture(
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     })
-  } catch {
-    throw new MicrophoneDeniedError()
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.name === 'NotAllowedError') throw new MicrophoneDeniedError()
+      if (error.name === 'NotFoundError') throw new MicrophoneNotFoundError()
+    }
+    throw error
   }
 
   // From here on the microphone is open: whatever fails below must let it go, or the browser's

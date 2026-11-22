@@ -96,6 +96,7 @@ export enum AnalyticsEvent {
   BreathingStarted = 'breathing_started',
   /** Something about voice did not work: it tells the product where speech breaks for people. */
   VoiceProblem = 'voice_problem',
+  MicrophonePermission = 'microphone_permission',
 
   // ── Client: other screens ───────────────────────────────────────────────────────────────────
   JournalEntryOpened = 'journal_entry_opened',
@@ -429,6 +430,7 @@ export interface AnalyticsEventProperties {
   [AnalyticsEvent.HotlineCalled]: { hotline: string }
   [AnalyticsEvent.BreathingStarted]: { source: 'home' | 'dialog' | 'sos' }
   [AnalyticsEvent.VoiceProblem]: { reason: VoiceProblemReason }
+  [AnalyticsEvent.MicrophonePermission]: { stage: 'denied' } | { stage: 'recovered'; elapsed_ms: number }
 
   [AnalyticsEvent.JournalEntryOpened]: NoProperties
   [AnalyticsEvent.DeleteAccountStep]: { step: DeleteAccountStepName }

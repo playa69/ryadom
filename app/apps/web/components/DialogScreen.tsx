@@ -44,9 +44,19 @@ import type {
 import {
   isCaptureSupported,
   MicrophoneDeniedError,
+  MicrophoneNotFoundError,
   startCapture,
   type VoiceCapture,
 } from '@ryadom/client-core/voice/capture'
+import {
+  createMicrophoneRecovery,
+  currentMicrophonePermissionSteps,
+  MIC_DENIED_TEXT,
+  MIC_HELP_RETRY,
+  MIC_HELP_TEXT,
+  MIC_HELP_TITLE,
+  MIC_NOT_FOUND_TEXT,
+} from '@ryadom/client-core/voice/microphone-permission'
 import {
   HANDS_FREE_HINT,
   pausedHint,
@@ -114,7 +124,6 @@ const STATE_TEXT: Partial<Record<DialogSocketState, string>> = {
 const END_FALLBACK_MS = 2000
 
 const MIC_UNSUPPORTED_TEXT = 'Здесь микрофон недоступен. Можно писать текстом.'
-const MIC_DENIED_TEXT = 'Микрофон не разрешён. Разреши его в настройках — или пиши текстом.'
 const MIC_FAILED_TEXT = 'Не получилось включить микрофон. Можно писать текстом.'
 const MIC_OFF_TEXT = 'Связь прервалась — микрофон выключен'
 const END_FAILED_TEXT = 'Не получилось завершить разговор. Попробуй ещё раз'
@@ -185,6 +194,7 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const [endError, setEndError] = useState('')
   // «Подводить итог автоматически»: read when the end sheet opens; null until then.
   const [recapEnabled, setRecapEnabled] = useState<boolean | null>(null)
+  const [micHelp, setMicHelp] = useState<string[] | null>(null)
   const [alert, setAlert] = useState<AlertState | null>(null)
   const [missing, setMissing] = useState(false)
   /** `off`: held "without memory". From home it comes with the start; any other way in, with the dialog. */
@@ -195,6 +205,10 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   const unsavedRef = useRef(unsaved)
   unsavedRef.current = unsaved
   const trackDialog = useMemo(() => trackUnlessUnsaved(() => unsavedRef.current), [])
+  const micRecovery = useMemo(
+    () => createMicrophoneRecovery((event) => trackDialog(AnalyticsEvent.MicrophonePermission, event)),
+    [dialogId, trackDialog],
+  )
   useEffect(() => {
     if (sosOpened) {
       recommendation.dropPending()
@@ -699,20 +713,40 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
    * without a microphone is useless, so instead of a dialog on arrival it says so softly and moves to
    * the text it falls back to.
    */
+  function microphoneFailed(error: unknown, automatic: boolean) {
+    const reason = micProblemReason(error, isCaptureSupported())
+    trackVoiceProblem(reason)
+    if (finished.current || !socket.current?.isConnected() || viewRef.current !== 'voice') return
+    const denied = error instanceof MicrophoneDeniedError
+    if (denied) micRecovery.denied(performance.now())
+    const text = denied
+      ? MIC_DENIED_TEXT
+      : error instanceof MicrophoneNotFoundError
+        ? MIC_NOT_FOUND_TEXT
+        : MIC_FAILED_TEXT
+    if (automatic) {
+      viewRef.current = 'text'
+      setView('text')
+      notify(text, 'info')
+    } else if (denied) {
+      setMicHelp(currentMicrophonePermissionSteps())
+    } else {
+      setAlert({ title: 'Голос', text, leaves: false })
+    }
+  }
+
   async function startListening(automatic: boolean) {
     if (micStarting.current || capture.current) return
     unlockSpeech()
-    const refuse = (text: string) => {
-      if (automatic) {
-        setView('text')
-        notify(text, 'info')
-      } else {
-        setAlert({ title: 'Голос', text, leaves: false })
-      }
-    }
     if (!isCaptureSupported()) {
       trackVoiceProblem('unsupported')
-      refuse(MIC_UNSUPPORTED_TEXT)
+      if (automatic) {
+        viewRef.current = 'text'
+        setView('text')
+        notify(MIC_UNSUPPORTED_TEXT, 'info')
+      } else {
+        setAlert({ title: 'Голос', text: MIC_UNSUPPORTED_TEXT, leaves: false })
+      }
       return
     }
     micStarting.current = true
@@ -738,9 +772,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       live.startAudio(started.sampleRate)
       markRecording(true)
       setAwaitingReply(false)
+      micRecovery.opened(performance.now())
     } catch (error) {
-      trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      microphoneFailed(error, automatic)
     } finally {
       micStarting.current = false
     }
@@ -766,14 +800,6 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
   async function openMic(automatic: boolean) {
     if (micStarting.current || capture.current) return
     unlockSpeech()
-    const refuse = (text: string) => {
-      if (automatic) {
-        setView('text')
-        notify(text, 'info')
-      } else {
-        setAlert({ title: 'Голос', text, leaves: false })
-      }
-    }
     micStarting.current = true
     try {
       if (!automatic) hush()
@@ -799,9 +825,9 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
       })
       setMicOpen(true)
       setPaused(null)
+      micRecovery.opened(performance.now())
     } catch (error) {
-      trackVoiceProblem(micProblemReason(error, isCaptureSupported()))
-      refuse(error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT)
+      microphoneFailed(error, automatic)
     } finally {
       micStarting.current = false
     }
@@ -1204,6 +1230,34 @@ export default function DialogScreen({ dialogId }: { dialogId: string }) {
         onRecapEnabledChange={(next) => void changeRecapEnabled(next)}
         onDraft={draftRecap}
         unsaved={unsaved}
+      />
+      <DialogAlert
+        open={micHelp !== null}
+        title={MIC_HELP_TITLE}
+        text="Чтобы продолжить голосом, включи микрофон для «Рядом»."
+        extra={
+          <ol className="list-decimal space-y-2 pl-6">
+            {micHelp?.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        }
+        confirm={{
+          label: MIC_HELP_RETRY,
+          disabled: !connected,
+          onClick: () => {
+            setMicHelp(null)
+            toggleListening()
+          },
+        }}
+        offer={{
+          action: MIC_HELP_TEXT,
+          onAction: () => {
+            setMicHelp(null)
+            void showText()
+          },
+        }}
+        onClose={() => setMicHelp(null)}
       />
       <DialogAlert
         open={alert !== null}

@@ -59,9 +59,19 @@ import { DialogRecommendation } from '@ryadom/client-core/dialog-recommendation'
 import {
   isCaptureSupported,
   MicrophoneDeniedError,
+  MicrophoneNotFoundError,
   startCapture,
   type VoiceCapture,
 } from '../../../lib/voice/capture'
+import {
+  createMicrophoneRecovery,
+  currentMicrophonePermissionSteps,
+  MIC_DENIED_TEXT,
+  MIC_HELP_RETRY,
+  MIC_HELP_TEXT,
+  MIC_HELP_TITLE,
+  MIC_NOT_FOUND_TEXT,
+} from '@ryadom/client-core/voice/microphone-permission'
 import {
   HANDS_FREE_HINT,
   HANDS_FREE_KEY,
@@ -121,7 +131,6 @@ const STATE_TEXT: Partial<Record<DialogSocketState, string>> = {
 }
 
 const MIC_UNSUPPORTED_TEXT = 'Здесь микрофон недоступен. Можно писать текстом.'
-const MIC_DENIED_TEXT = 'Микрофон не разрешён. Разреши его в настройках — или пиши текстом.'
 const MIC_FAILED_TEXT = 'Не получилось включить микрофон. Можно писать текстом.'
 
 /**
@@ -173,6 +182,11 @@ export default function DialogPage({
   const unsavedRef = useRef(unsaved)
   unsavedRef.current = unsaved
   const trackDialog = useMemo(() => trackUnlessUnsaved(() => unsavedRef.current), [])
+  const micRecovery = useMemo(
+    () => createMicrophoneRecovery((event) => trackDialog(AnalyticsEvent.MicrophonePermission, event)),
+    [dialogId, trackDialog],
+  )
+  const [micHelp, setMicHelp] = useState<string[] | null>(null)
   /** The dialog is gone from the agent (a restart took an unsaved one). */
   const [gone, setGone] = useState(false)
 
@@ -624,20 +638,46 @@ export default function DialogPage({
     socket.current?.interruptSpeech()
   }, [])
 
+  const microphoneFailed = useCallback(
+    (error: unknown, automatic: boolean) => {
+      reportMicFailure(error)
+      if (!socket.current?.isConnected() || modeRef.current !== 'voice') return
+      const denied = error instanceof MicrophoneDeniedError
+      const browser = !isNative() && !isTelegramLaunch()
+      if (denied && browser) micRecovery.denied(performance.now())
+      const text = denied
+        ? MIC_DENIED_TEXT
+        : error instanceof MicrophoneNotFoundError
+          ? MIC_NOT_FOUND_TEXT
+          : MIC_FAILED_TEXT
+      if (automatic) {
+        modeRef.current = 'text'
+        setMode('text')
+        f7.toast.create({ text, closeTimeout: 4000 }).open()
+      } else if (denied && browser) {
+        setMicHelp(currentMicrophonePermissionSteps())
+      } else {
+        f7.dialog.alert(text, 'Голос')
+      }
+    },
+    [micRecovery],
+  )
+
   const startListening = useCallback(
     async (automatic: boolean) => {
       if (micStarting.current || capture.current) return
       unlockSpeech()
       // A voice screen without a microphone is useless: when nobody asked for the microphone just now,
       // say so softly and move to the text it falls back to, instead of a dialog on arrival.
-      const fallBack = (text: string) => {
-        setMode('text')
-        f7.toast.create({ text, closeTimeout: 4000 }).open()
-      }
       if (!isCaptureSupported()) {
         reportVoiceProblem('unsupported')
-        if (automatic) fallBack(MIC_UNSUPPORTED_TEXT)
-        else f7.dialog.alert(MIC_UNSUPPORTED_TEXT, 'Голос')
+        if (automatic) {
+          modeRef.current = 'text'
+          setMode('text')
+          f7.toast.create({ text: MIC_UNSUPPORTED_TEXT, closeTimeout: 4000 }).open()
+        } else {
+          f7.dialog.alert(MIC_UNSUPPORTED_TEXT, 'Голос')
+        }
         return
       }
       micStarting.current = true
@@ -663,16 +703,14 @@ export default function DialogPage({
         socket.current.startAudio(started.sampleRate)
         markRecording(true)
         setAwaitingReply(false)
+        micRecovery.opened(performance.now())
       } catch (error) {
-        void reportMicFailure(error)
-        const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
-        if (automatic) fallBack(text)
-        else f7.dialog.alert(text, 'Голос')
+        microphoneFailed(error, automatic)
       } finally {
         micStarting.current = false
       }
     },
-    [markRecording],
+    [markRecording, micRecovery, microphoneFailed],
   )
 
   /** The person finished a turn: the utterance goes to the agent, which should now answer. */
@@ -761,20 +799,14 @@ export default function DialogPage({
         })
         setMicOpen(true)
         setPaused(null)
+        micRecovery.opened(performance.now())
       } catch (error) {
-        void reportMicFailure(error)
-        const text = error instanceof MicrophoneDeniedError ? MIC_DENIED_TEXT : MIC_FAILED_TEXT
-        if (automatic) {
-          setMode('text')
-          f7.toast.create({ text, closeTimeout: 4000 }).open()
-        } else {
-          f7.dialog.alert(text, 'Голос')
-        }
+        microphoneFailed(error, automatic)
       } finally {
         micStarting.current = false
       }
     },
-    [hush, onTurn],
+    [hush, micRecovery, microphoneFailed, onTurn],
   )
 
   // Hands-free never listens in the background: a hidden tab or an app sent away closes the microphone
@@ -813,7 +845,7 @@ export default function DialogPage({
     else void startListening(false)
   }
 
-  async function showText() {
+  const showText = useCallback(async () => {
     trackDialog(AnalyticsEvent.DialogVoiceToggled, { enabled: false })
     hush()
     if (handsFree) await closeMic(null, 'send')
@@ -821,7 +853,42 @@ export default function DialogPage({
     // At once, not after the next render: whatever waits on the greeting must see the text already chosen.
     modeRef.current = 'text'
     setMode('text')
-  }
+  }, [closeMic, finishUtterance, handsFree, hush, trackDialog])
+
+  useEffect(() => {
+    if (!micHelp) return
+    // These steps come from a fixed copy catalog. No browser- or user-supplied strings enter the HTML.
+    const steps = micHelp.map((step) => `<li>${step}</li>`).join('')
+    const help = f7.dialog.create({
+      title: MIC_HELP_TITLE,
+      content: `<ol class="rd-mic-help-steps">${steps}</ol>`,
+      verticalButtons: true,
+      destroyOnClose: true,
+      buttons: [
+        {
+          text: MIC_HELP_RETRY,
+          strong: true,
+          close: false,
+          onClick: () => {
+            if (!socket.current?.isConnected()) return
+            help.close(false)
+            if (handsFree) void openMic(false)
+            else void startListening(false)
+          },
+        },
+        { text: MIC_HELP_TEXT, onClick: () => void showText() },
+      ],
+    })
+    help.el.setAttribute('role', 'dialog')
+    help.el.setAttribute('aria-modal', 'true')
+    help.el.setAttribute('aria-label', MIC_HELP_TITLE)
+    help.on('close', () => help.el.setAttribute('aria-hidden', 'true'))
+    help.on('closed', () => setMicHelp((current) => (current === micHelp ? null : current)))
+    help.open()
+    return () => {
+      if (help.opened) help.close(false)
+    }
+  }, [handsFree, micHelp, openMic, showText, startListening])
 
   function showVoice() {
     trackDialog(AnalyticsEvent.DialogVoiceToggled, { enabled: true })
