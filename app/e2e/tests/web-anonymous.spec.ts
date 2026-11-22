@@ -207,8 +207,9 @@ test('первый экран: шар и плашка без запросов, �
   await helloStage(page).click()
   await expect(modal(page).getByTestId('consent-modal')).toBeVisible()
   await expect(modal(page).getByTestId('data-consent-toggle'), 'окно монтируется заново').not.toBeChecked()
-  const viewport = page.viewportSize()!
-  await page.mouse.click(viewport.width / 2, 150)
+  await page.locator('[data-slot="dialog-overlay"][data-state="open"]').click({
+    position: { x: 8, y: 8 },
+  })
   await expect(modal(page)).toHaveCount(0)
   await expect(firstHello(page)).toBeVisible()
   expect(apiCalls(), 'закрытие фоном не отправляет запрос').toEqual([])
