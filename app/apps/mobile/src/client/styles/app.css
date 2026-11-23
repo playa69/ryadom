@@ -228,6 +228,11 @@ input:-webkit-autofill:focus {
   --f7-navbar-bg-color: transparent;
 }
 
+.rd-auth-credit {
+  margin: 0 var(--ryadom-s-4) var(--ryadom-s-4);
+  text-align: center;
+}
+
 .rd-auth-head {
   display: flex;
   flex-direction: column;
@@ -925,6 +930,16 @@ input:-webkit-autofill:focus {
   .rd-welcome-top {
     padding-right: calc(104px + var(--f7-safe-area-right, 0px));
   }
+
+  /* The fixed controls stay in reach when scrolling. Leave room for their full touch area. */
+  .rd-home-with-controls .rd-home {
+    padding-top: calc(56px + var(--f7-safe-area-top, 0px));
+  }
+
+  .framework7-root:has(.rd-offline) .rd-home-with-controls .rd-home,
+  .framework7-root:has(.rd-offline) .page[data-name='home'] .rd-welcome-top {
+    margin-top: 38px;
+  }
 }
 
 /* The foot of the first screen: the agreement and the terms of keeping, last in the column. */
@@ -1506,6 +1521,41 @@ input:-webkit-autofill:focus {
   background: var(--ryadom-line-strong);
 }
 
+.rd-sos-sheet {
+  max-height: calc(100dvh - var(--f7-safe-area-top, 0px));
+  box-sizing: border-box;
+}
+
+.rd-sos-sheet > * {
+  flex-shrink: 0;
+}
+
+.rd-sos-sheet .rd-sos-sheet-content {
+  display: grid;
+  gap: var(--ryadom-s-3);
+  min-height: 0;
+  flex-shrink: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rd-sos-specialists {
+  min-height: 56px;
+  padding: 0 var(--ryadom-s-4);
+  border: 1px solid #3caa79;
+  border-radius: 999px;
+  background-color: #176344;
+  background-image: var(--ryadom-sos-specialists-gradient);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rd-sos-specialists:hover {
+  filter: brightness(1.1);
+}
+
 .rd-takeaway {
   width: 100%;
   min-height: 80px;
@@ -1654,6 +1704,31 @@ input:-webkit-autofill:focus {
   font-size: 15px;
   font-weight: 700;
   color: var(--ryadom-sos);
+}
+
+.rd-people-specialists {
+  display: grid;
+  gap: var(--ryadom-s-3);
+}
+
+.rd-people-specialists .rd-title {
+  scroll-margin-top: calc(var(--f7-page-navbar-offset, 56px) + var(--ryadom-s-3));
+}
+
+.rd-people-specialists .rd-card {
+  margin: 0;
+}
+
+.rd-people-specialists h3 {
+  margin: 0 0 var(--ryadom-s-2);
+  font-size: var(--ryadom-t-lg);
+}
+
+.rd-people-specialists .rd-inline-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  color: var(--ryadom-brand-400);
 }
 
 /* ── Journal and cards ───────────────────────────────────────────────────── */

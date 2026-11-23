@@ -1,6 +1,7 @@
+import { SPECIALISTS } from '@ryadom/client-core/specialists'
 import { Item, ItemDescription, ItemTitle } from '@ryadom/ui/components/item'
 import { cn } from '@ryadom/ui/lib/utils'
-import { BookOpen, Heart, MessageCircle, Mic, Sparkles, Sprout, type LucideIcon } from 'lucide-react'
+import { BookOpen, Heart, UsersRound, MessageCircle, Mic, Sparkles, Sprout, type LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { connection } from 'next/server'
 import { HOTLINE_NO_CAPTURE, HOTLINES, telHref } from '@/lib/hotlines'
@@ -78,6 +79,13 @@ export default async function LandingPage() {
             <CtaButtons appUrl={env.appUrl} placement="hero" className="min-[720.02px]:max-[880.02px]:justify-center" />
             <p className="mb-4 text-[15px] text-dim">
               Бесплатно на старте. Работает в браузере и на телефоне. 18+
+            </p>
+            <div className="glass-2 inline-flex max-w-full items-center gap-2.5 rounded-lg border border-line px-3.5 py-2.5 text-left text-sm leading-snug font-medium">
+              <UsersRound className="size-5 shrink-0 text-brand-400" aria-hidden="true" />
+              <span>Создано при участии практикующих гештальт-терапевтов</span>
+            </div>
+            <p className="mt-3 text-sm text-dim">
+              Выслушано более <strong className="font-semibold text-foreground">14&nbsp;000</strong> разговоров
             </p>
           </div>
           <HeroPhone />
@@ -195,6 +203,21 @@ export default async function LandingPage() {
               <H3>Тепло</H3>
               <p className="text-dim">Появится позже: совсем короткие разговоры, когда сил нет вообще.</p>
             </Tile>
+          </Grid>
+        </Section>
+
+        <Section id="contributors" glow="indigo" side="right">
+          <SectionTitle title="Кто помогал создавать">
+            Практикующие гештальт-терапевты консультировали нас при создании гештальт-дневника
+            и кризисного протокола.
+          </SectionTitle>
+          <Grid cols={2}>
+            {SPECIALISTS.map(({ name, description }) => (
+              <Tile key={name}>
+                <H3>{name}</H3>
+                <p className="text-dim">{description}</p>
+              </Tile>
+            ))}
           </Grid>
         </Section>
 

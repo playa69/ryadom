@@ -1,7 +1,7 @@
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent, type AnalyticsEventProperties } from '@ryadom/analytics/events'
-import { Button, Icon, Sheet } from 'framework7-react'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { Button, Icon, Sheet, f7 } from 'framework7-react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { HotlineApiResponse } from '@ryadom/contracts/api/dialogs'
 import { CRISIS_CALL, CRISIS_SHEET_TITLE, HOTLINES, telHref } from '../lib/hotlines'
 
@@ -73,6 +73,7 @@ export function SosButton({ slot, source }: { slot?: string; source: SosSource }
 export default function SosSheet() {
   const [opened, setOpened] = useState(false)
   const [payload, setPayload] = useState<SosPayload>({})
+  const specialistsRequested = useRef(false)
 
   useEffect(() => {
     function handler(event: Event) {
@@ -100,60 +101,81 @@ export default function SosSheet() {
       onSheetClosed={() => {
         setOpened(false)
         setSheetOpen(false)
+        if (specialistsRequested.current) {
+          specialistsRequested.current = false
+          const view = f7.views.current ?? f7.views.main
+          const heading = view.el.querySelector<HTMLElement>('.page-current[data-name="people"] #specialists')
+          if (heading) {
+            heading.focus({ preventScroll: true })
+            heading.scrollIntoView()
+          } else {
+            view.router.navigate('/people/?section=specialists')
+          }
+        }
       }}
       swipeToClose
       closeOnEscape
       backdrop
       style={{ height: 'auto' }}
     >
-      <div className="rd-sheet-body">
-        <h2 className="rd-sheet-title">{payload.crisis ? CRISIS_SHEET_TITLE : 'Если сейчас тяжело'}</h2>
-        {payload.crisis ? (
-          <>
+      <div className="rd-sheet-body rd-sos-sheet">
+        <div className="rd-sos-sheet-content">
+          <h2 className="rd-sheet-title">{payload.crisis ? CRISIS_SHEET_TITLE : 'Если сейчас тяжело'}</h2>
+          {payload.crisis ? (
+            <>
+              <a
+                className="rd-crisis-call ph-no-capture"
+                data-testid="sos-call-now"
+                href={telHref(CRISIS_CALL.phone)}
+                onClick={() => {
+                  trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: CRISIS_CALL.name })
+                  payload.crisis?.onCall()
+                }}
+              >
+                <Icon f7="phone_fill" size={16} />
+                Позвонить сейчас
+              </a>
+              <a
+                className="rd-muted rd-crisis-112 ph-no-capture"
+                data-testid="sos-112"
+                href={telHref('112')}
+                onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: 'Экстренные службы' })}
+              >
+                112 — если есть опасность для жизни
+              </a>
+            </>
+          ) : (
+            <p className="rd-muted">
+              {payload.text ??
+                'Позвони по одному из номеров — там ответит человек. Это бесплатно и круглосуточно.'}
+            </p>
+          )}
+          {hotlines.map((hotline) => (
             <a
-              className="rd-crisis-call ph-no-capture"
-              data-testid="sos-call-now"
-              href={telHref(CRISIS_CALL.phone)}
-              onClick={() => {
-                trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: CRISIS_CALL.name })
-                payload.crisis?.onCall()
-              }}
+              key={hotline.phone}
+              className="rd-hotline ph-no-capture"
+              href={telHref(hotline.phone)}
+              onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })}
             >
-              <Icon f7="phone_fill" size={16} />
-              Позвонить сейчас
+              <span className="rd-hotline-name">{hotline.name}</span>
+              <span className="rd-hotline-phone">{hotline.phone}</span>
             </a>
-            <a
-              className="rd-muted rd-crisis-112 ph-no-capture"
-              data-testid="sos-112"
-              href={telHref('112')}
-              onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: 'Экстренные службы' })}
-            >
-              112 — если есть опасность для жизни
-            </a>
-          </>
-        ) : (
-          <p className="rd-muted">
-            {payload.text ??
-              'Позвони по одному из номеров — там ответит человек. Это бесплатно и круглосуточно.'}
-          </p>
-        )}
-        {hotlines.map((hotline) => (
-          <a
-            key={hotline.phone}
-            className="rd-hotline ph-no-capture"
-            href={telHref(hotline.phone)}
-            onClick={() => trackAnonymous(AnalyticsEvent.HotlineCalled, { hotline: hotline.name })}
+          ))}
+          <p className="rd-muted">Не кризис, но хочется поговорить с живым человеком?</p>
+          <button
+            type="button"
+            className="rd-sos-specialists"
+            onClick={() => {
+              specialistsRequested.current = true
+              setOpened(false)
+            }}
           >
-            <span className="rd-hotline-name">{hotline.name}</span>
-            <span className="rd-hotline-phone">{hotline.phone}</span>
-          </a>
-        ))}
-        {/* This is the single most consequential sentence in the app, so it uses the readable
-            muted tone rather than the faint caption one: --ryadom-text-faint fails contrast on
-            this surface (design review). */}
-        <p className="rd-muted">
-          «Рядом»&nbsp;— сервис самоподдержки, не медицинская услуга. В опасной ситуации звони 112.
-        </p>
+            Специалисты
+          </button>
+          <p className="rd-muted">
+            «Рядом»&nbsp;— сервис самоподдержки, не медицинская услуга. В опасной ситуации звони 112.
+          </p>
+        </div>
         {/* An explicit button rather than tap-outside-to-close: this sheet opens at a hard moment,
             so the way out has to be visible. */}
         <Button large outline onClick={() => setOpened(false)}>

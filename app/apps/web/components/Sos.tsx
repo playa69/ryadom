@@ -1,6 +1,7 @@
 'use client'
 
 import { Phone } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { trackAnonymous } from '@ryadom/analytics/browser'
 import { AnalyticsEvent } from '@ryadom/analytics/events'
@@ -50,6 +51,7 @@ const SHEET =
 const TEXT = 'text-base leading-[1.55] text-dim short-wide:text-[0.9375rem] short-wide:leading-[1.4]'
 
 export function SosProvider({ children }: { children: ReactNode }) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const openRef = useRef(false)
   const [payload, setPayload] = useState<SosPayload>({})
@@ -113,10 +115,28 @@ export function SosProvider({ children }: { children: ReactNode }) {
             />
           ))}
         </div>
-        {/* The single most consequential sentence in the app: readable tone, not the faint caption one. */}
-        <p className={cn(TEXT, 'short-wide:col-start-1 short-wide:row-span-2 short-wide:row-start-3')}>
-          «Рядом»&nbsp;— сервис самоподдержки, не медицинская услуга. В опасной ситуации звони 112.
-        </p>
+        <div className="grid gap-2.5 short-wide:col-start-1 short-wide:row-span-2 short-wide:row-start-3 short-wide:gap-2">
+          <p className={TEXT}>Не кризис, но хочется поговорить с живым человеком?</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            className={cn(
+              BUTTON,
+              'w-full border-[#3caa79] bg-[#176344] [background-image:var(--ryadom-sos-specialists-gradient)]',
+              'font-bold text-white hover:bg-[#176344] hover:text-white hover:brightness-110 short:h-11',
+            )}
+            onClick={() => {
+              closeSos()
+              router.push('/people#specialists')
+            }}
+          >
+            Специалисты
+          </Button>
+          <p className={TEXT}>
+            «Рядом»&nbsp;— сервис самоподдержки, не медицинская услуга. В опасной ситуации звони 112.
+          </p>
+        </div>
         {/* An explicit button: this opens at a hard moment, so the way out must be visible. */}
         <Button
           type="button"
@@ -124,7 +144,7 @@ export function SosProvider({ children }: { children: ReactNode }) {
           className={cn(
             BUTTON,
             // The glass in `outline` redraws the border as the faint hairline; a control keeps its 3:1 edge.
-            'w-full border-input! leading-[1.2] short-wide:col-start-2 short-wide:row-start-4 short-wide:h-11',
+            'sticky bottom-0 z-10 w-full border-input! leading-[1.2] short:bg-paper! short-wide:col-start-2 short-wide:row-start-4 short-wide:h-11',
           )}
           onClick={closeSos}
         >
