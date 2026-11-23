@@ -28,6 +28,9 @@ import {
 import { HeroPhone } from './_components/home-phone'
 import { TrackedLink } from './_components/tracked'
 
+const LISTENED_CONVERSATIONS = 14_000
+const formattedConversationCount = new Intl.NumberFormat('ru-RU').format(LISTENED_CONVERSATIONS)
+
 /** A lit squircle above each mode: a glyph to scan the grid by; the title carries the meaning. */
 function ModeMark({ icon: Icon }: { icon: LucideIcon }) {
   return (
@@ -85,7 +88,9 @@ export default async function LandingPage() {
               <span>Создано при участии практикующих гештальт-терапевтов</span>
             </div>
             <p className="mt-3 text-sm text-dim">
-              Выслушано более <strong className="font-semibold text-foreground">14&nbsp;000</strong> разговоров
+              Выслушано более{' '}
+              <strong className="font-semibold text-foreground">{formattedConversationCount}</strong>{' '}
+              разговоров
             </p>
           </div>
           <HeroPhone />
@@ -171,7 +176,9 @@ export default async function LandingPage() {
         </Section>
 
         <Section id="modes" glow="teal" side="left">
-          <SectionTitle title="Режимы разговора">Выбираете в начале; можно поменять в любой момент.</SectionTitle>
+          <SectionTitle title="Режимы разговора">
+            Сейчас доступен режим «Выговориться». Остальные режимы в планах.
+          </SectionTitle>
           <Grid cols={3}>
             <Tile>
               <ModeMark icon={Mic} />
@@ -201,7 +208,7 @@ export default async function LandingPage() {
             <Tile>
               <ModeMark icon={Heart} />
               <H3>Тепло</H3>
-              <p className="text-dim">Появится позже: совсем короткие разговоры, когда сил нет вообще.</p>
+              <p className="text-dim">Совсем короткие разговоры, когда сил нет вообще.</p>
             </Tile>
           </Grid>
         </Section>
@@ -275,6 +282,18 @@ export default async function LandingPage() {
               Это быстрее и надёжнее любого приложения.
             </p>
           </div>
+          <p className="mt-4 text-sm text-dim">
+            Не кризис, но хочется поговорить с живым человеком?{' '}
+            <span className="whitespace-nowrap">
+              <span aria-hidden="true">→ </span>
+              <a
+                className={cn(IN_TEXT_LINK, HOTLINE_NO_CAPTURE, 'inline-flex min-h-11 items-center')}
+                href={`${env.appUrl}/people#specialists`}
+              >
+                Специалисты
+              </a>
+            </span>
+          </p>
         </Section>
 
         <Section id="privacy" glow="teal" side="left">
@@ -285,8 +304,8 @@ export default async function LandingPage() {
             <CheckItem lead="Аудио не хранится.">
               Голос распознаётся на лету и нигде не записывается — ни у нас, ни в приложении.
             </CheckItem>
-            <CheckItem lead="Регистрация по почте.">
-              Ни имени, ни телефона, ни входа через соцсети. Имя можно выдумать.
+            <CheckItem lead="Можно начать без регистрации.">
+              В свой аккаунт можно войти по почте и паролю.
             </CheckItem>
             <CheckItem lead="Данные в России.">
               Аккаунт и разговоры хранятся на серверах в РФ, обработка по 152-ФЗ.
@@ -324,7 +343,7 @@ export default async function LandingPage() {
               Попробуйте прямо сейчас
             </H2>
             <p className="text-[18px] text-dim min-[720.02px]:text-[19px] min-[1280px]:text-[21px]">
-              Регистрация занимает минуту и требует только почту.
+              Начать разговор можно без регистрации.
             </p>
             <CtaButtons appUrl={env.appUrl} placement="closing" className="mb-0 justify-center min-[720.02px]:mb-0" />
           </div>
