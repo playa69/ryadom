@@ -15,11 +15,33 @@ test('лендинг показывает участие специалисто�
   await step(page, 'landing-credit', 'Баннер и число разговоров на первом экране')
 
   const contributors = page.locator('section#modes + section#contributors:has(+ section#safety)')
+  await expect(page.locator('#modes')).toContainText(
+    'Сейчас доступен режим «Выговориться». Остальные режимы в планах.',
+  )
+  await expect(page.getByText('Начать разговор можно без регистрации.', { exact: true })).toBeVisible()
   await expect(contributors.getByRole('heading', { name: 'Кто помогал создавать' })).toBeVisible()
   await expect(contributors.getByRole('heading', { level: 3 })).toHaveCount(4)
   await expect(contributors.getByRole('heading', { level: 3 }).first()).toHaveText('Алексей Лаптев')
   await contributors.scrollIntoViewIfNeeded()
   await step(page, 'landing-contributors', 'Карточки между режимами разговора и безопасностью')
+})
+
+// PROTEUS-332, complete-landing-safety-and-copy, REQ-SAFE-04, REQ-CARE-03.
+test('лендинг: из раздела безопасности можно перейти к специалистам без входа', async ({
+  page,
+  isMobile,
+}) => {
+  if (isMobile) await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/#safety')
+  const safety = page.locator('#safety')
+  const specialists = safety.getByRole('link', { name: 'Специалисты', exact: true })
+  await expect(safety.locator('a[href^="tel:"]')).toHaveCount(3)
+  await expect(specialists).toHaveAttribute('href', `${WEBAPP_URL}/people#specialists`)
+  await specialists.scrollIntoViewIfNeeded()
+  await step(page, 'landing-safety-specialists', 'Переход к плановой консультации после круглосуточных линий')
+  await specialists.click()
+  await expect(page).toHaveURL(`${WEBAPP_URL}/people#specialists`)
+  await expect(page.getByRole('heading', { name: TITLE })).toBeInViewport()
 })
 
 // PROTEUS-333, REQ-SAFE-04, REQ-CARE-03, REQ-ACC-01: SOS ведёт к отдельному блоку специалистов.
@@ -79,14 +101,19 @@ test('PWA: вход и переход из SOS к специалистам бе�
 })
 
 // PROTEUS-333, «Размещение элементов мобильной главной».
-test('PWA: шар отцентрирован ниже SOS и темы, в том числе в офлайне', async ({ page, context }) => {
-  await page.setViewportSize({ width: 320, height: 640 })
+test('PWA: шар отцентрирован ниже SOS и темы, в том числе в офлайне', async ({ page, context, isMobile }) => {
+  if (isMobile) await page.setViewportSize({ width: 390, height: 844 })
   await openApp(page)
   await startAnonymously(page)
   const home = page.locator('.page-current[data-name="home"]')
   const orb = home.locator('.rd-home-orb')
   const theme = home.getByTestId('theme-switch')
   const sos = home.locator('.rd-sos-button')
+  const voice = home.getByTestId('home-start-voice')
+  const text = home.getByTestId('home-start-text')
+  await expect(orb).toBeVisible()
+  await step(page, 'pwa-home', 'Главная после входа: шар и кнопки начала разговора')
+  await page.setViewportSize({ width: 320, height: 640 })
 
   for (const offline of [false, true]) {
     if (offline) {
@@ -95,6 +122,10 @@ test('PWA: шар отцентрирован ниже SOS и темы, в том
     }
     const circle = (await orb.boundingBox())!
     expect(circle.x + circle.width / 2).toBeCloseTo(160, 0)
+    const voiceBox = (await voice.boundingBox())!
+    const textBox = (await text.boundingBox())!
+    expect(voiceBox.x + voiceBox.width).toBeLessThan(textBox.x)
+    expect((voiceBox.x + textBox.x + textBox.width) / 2).toBeCloseTo(160, 0)
     for (const control of [theme, sos]) {
       const box = (await control.boundingBox())!
       expect(box.y + box.height).toBeLessThan(circle.y)
