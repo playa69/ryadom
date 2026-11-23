@@ -1544,7 +1544,8 @@ input:-webkit-autofill:focus {
   padding: 0 var(--ryadom-s-4);
   border: 1px solid #3caa79;
   border-radius: 999px;
-  background: #176344;
+  background-color: #176344;
+  background-image: var(--ryadom-sos-specialists-gradient);
   color: #fff;
   font: inherit;
   font-weight: 700;
@@ -1552,7 +1553,7 @@ input:-webkit-autofill:focus {
 }
 
 .rd-sos-specialists:hover {
-  background: #217b55;
+  filter: brightness(1.1);
 }
 
 .rd-takeaway {

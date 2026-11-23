@@ -34,6 +34,10 @@ test('веб: вход и переход из SOS к записи на конс�
   const sos = page.getByRole('dialog', { name: 'Если сейчас тяжело' })
   await expect(sos.locator('a[href^="tel:"]')).toHaveCount(3)
   await expect(sos.locator('a[href="tel:112"]')).toBeVisible()
+  await expect(sos.getByRole('button', { name: 'Специалисты' })).toHaveCSS(
+    'background-image',
+    /radial-gradient.*linear-gradient/,
+  )
   await step(page, 'web-sos-specialists', 'Круглосуточные линии и зелёная кнопка «Специалисты» в SOS')
   await sos.getByRole('button', { name: 'Специалисты' }).click()
   await expect(sos).toBeHidden()
@@ -58,6 +62,10 @@ test('PWA: вход и переход из SOS к специалистам бе�
   const sos = page.locator('.sheet-modal.modal-in').filter({ hasText: 'Если сейчас тяжело' })
   await expect(sos.locator('a[href^="tel:"]')).toHaveCount(3)
   await expect(sos.locator('a[href="tel:112"]')).toBeVisible()
+  await expect(sos.getByRole('button', { name: 'Специалисты' })).toHaveCSS(
+    'background-image',
+    /radial-gradient.*linear-gradient/,
+  )
   await step(page, 'pwa-sos-specialists', 'Круглосуточные линии и зелёная кнопка «Специалисты» SOS в PWA')
   await sos.getByRole('button', { name: 'Специалисты' }).click()
   await expect(sos).toBeHidden()

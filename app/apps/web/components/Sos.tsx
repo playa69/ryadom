@@ -123,7 +123,8 @@ export function SosProvider({ children }: { children: ReactNode }) {
             size="lg"
             className={cn(
               BUTTON,
-              'w-full border-[#3caa79] bg-[#176344] font-bold text-white hover:bg-[#217b55] hover:text-white short:h-11',
+              'w-full border-[#3caa79] bg-[#176344] [background-image:var(--ryadom-sos-specialists-gradient)]',
+              'font-bold text-white hover:bg-[#176344] hover:text-white hover:brightness-110 short:h-11',
             )}
             onClick={() => {
               closeSos()
