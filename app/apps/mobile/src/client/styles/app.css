@@ -1540,7 +1540,19 @@ input:-webkit-autofill:focus {
 }
 
 .rd-sos-specialists {
-  font-size: 14px;
+  min-height: 56px;
+  padding: 0 var(--ryadom-s-4);
+  border: 1px solid #3caa79;
+  border-radius: 999px;
+  background: #176344;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rd-sos-specialists:hover {
+  background: #217b55;
 }
 
 .rd-takeaway {

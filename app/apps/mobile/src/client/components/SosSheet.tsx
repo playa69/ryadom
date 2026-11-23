@@ -161,25 +161,19 @@ export default function SosSheet() {
               <span className="rd-hotline-phone">{hotline.phone}</span>
             </a>
           ))}
-          {/* This is the single most consequential sentence in the app, so it uses the readable
-              muted tone rather than the faint caption one: --ryadom-text-faint fails contrast on
-              this surface (design review). */}
+          <p className="rd-muted">Не кризис, но хочется поговорить с живым человеком?</p>
+          <button
+            type="button"
+            className="rd-sos-specialists"
+            onClick={() => {
+              specialistsRequested.current = true
+              setOpened(false)
+            }}
+          >
+            Специалисты
+          </button>
           <p className="rd-muted">
             «Рядом»&nbsp;— сервис самоподдержки, не медицинская услуга. В опасной ситуации звони 112.
-          </p>
-          <p className="rd-muted rd-sos-specialists">
-            Не кризис, но хочется поговорить с живым человеком?{' '}
-            <a
-              className="rd-inline-link external"
-              href="/people/?section=specialists"
-              onClick={(event) => {
-                event.preventDefault()
-                specialistsRequested.current = true
-                setOpened(false)
-              }}
-            >
-              <span aria-hidden="true">→ </span>Специалисты
-            </a>
           </p>
         </div>
         {/* An explicit button rather than tap-outside-to-close: this sheet opens at a hard moment,
