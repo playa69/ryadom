@@ -3728,6 +3728,18 @@ p.rd-recap-text {
   padding: 0;
 }
 
+@media (max-width: 699px) {
+  .rd-home-with-controls .rd-home-start:has(> .rd-first-hello-text) {
+    --keyboard-width: var(--f7-button-large-height, 48px);
+    display: grid;
+    grid-template-columns: var(--keyboard-width) minmax(0, 1fr) var(--keyboard-width);
+  }
+
+  .rd-home-with-controls .rd-home-start:has(> .rd-first-hello-text) > .button:first-child {
+    grid-column: 2;
+  }
+}
+
 .rd-first-hello-plaque {
   width: 100%;
   max-width: 360px;

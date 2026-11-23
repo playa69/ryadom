@@ -100,8 +100,12 @@ test('PWA: вход и переход из SOS к специалистам бе�
   await step(page, 'pwa-people-specialists', 'Плановые консультации в PWA доступны без входа')
 })
 
-// PROTEUS-333, «Размещение элементов мобильной главной».
-test('PWA: шар отцентрирован ниже SOS и темы, в том числе в офлайне', async ({ page, context, isMobile }) => {
+// PROTEUS-332, REQ-DLG-01, «Центрирование голосового старта на мобильной главной».
+test('PWA: шар и голосовой старт отцентрированы, в том числе в офлайне', async ({
+  page,
+  context,
+  isMobile,
+}) => {
   if (isMobile) await page.setViewportSize({ width: 390, height: 844 })
   await openApp(page)
   await startAnonymously(page)
@@ -125,7 +129,7 @@ test('PWA: шар отцентрирован ниже SOS и темы, в том
     const voiceBox = (await voice.boundingBox())!
     const textBox = (await text.boundingBox())!
     expect(voiceBox.x + voiceBox.width).toBeLessThan(textBox.x)
-    expect((voiceBox.x + textBox.x + textBox.width) / 2).toBeCloseTo(160, 0)
+    expect(voiceBox.x + voiceBox.width / 2).toBeCloseTo(160, 0)
     for (const control of [theme, sos]) {
       const box = (await control.boundingBox())!
       expect(box.y + box.height).toBeLessThan(circle.y)
