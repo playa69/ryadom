@@ -290,4 +290,4 @@
 | `REQ-OBS-03` | Сквозная трассировка | `agent-api` | частично | агент заголовки не читает |
 | `REQ-OBS-04` | Логи | `agent-api` | частично |  |
 | `REQ-OBS-05` | Langfuse | `agent-api` | есть |  |
-| `REQ-OBS-06` | Выгрузка метрик и удержания для Sber500 | `sber500-dashboard` | есть | PROTEUS-343 |
+| `REQ-OBS-06` | Выгрузка метрик и таблица удержания для Sber500 | `sber500-dashboard` | есть | PROTEUS-343 |

@@ -3,6 +3,7 @@
 «Ежедневная выгрузка и retention для Sber500» и «Когорты регистрации в выгрузке Sber500».
 """
 
+import base64
 import http.client
 import json
 import sys
@@ -186,3 +187,56 @@ def test_export_activity_uses_same_dau_sources(monkeypatch):
         [(day, "both", 2), (day, "db", 1), (day, "internal", 1)], {}, {"internal"}, {}, **raw,
     )[day]
     assert metrics == {field: legacy[field] for field in export.ACTIVITY_FIELDS}
+
+
+def test_dashboard_renders_registration_cohorts_from_export(monkeypatch):
+    """OpenSpec «Таблица удержания на дашборде Sber500»."""
+    now = datetime(2026, 11, 24, 9, tzinfo=UTC)
+    report = app.build_report(app.period_days(now), {}, now)
+    monkeypatch.setattr(app.CACHE, "get", lambda: report)
+    monkeypatch.setattr(app, "USER", "demo")
+    monkeypatch.setattr(app, "PASSWORD", "synthetic")
+    monkeypatch.setattr(app, "METRICS_TOKEN", "")
+
+    class Export:
+        def report(self, first, last, now):
+            assert (first, last) == (date(2026, 11, 5), date(2026, 11, 24))
+            return {"data": [{
+                "date": "2026-11-16", "new_users": 3, "is_final": True,
+                "retained_d1": 0, "retained_d3": 1, "retained_d7": 2, "retained_d14": None,
+            }]}
+
+    with app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler) as server:
+        server.daily_metrics = Export()
+        thread = Thread(target=server.serve_forever)
+        thread.start()
+        connection = http.client.HTTPConnection(*server.server_address, timeout=2)
+        headers = {"Authorization": "Basic " + base64.b64encode(b"demo:synthetic").decode()}
+        try:
+            connection.request("GET", "/dashboard", headers=headers)
+            response = connection.getresponse()
+            assert response.status == 200
+            page = response.read().decode()
+            assert "Удержание по дате регистрации" in page
+            assert 'datetime="2026-11-16">16.11.2026</time>' in page
+            assert '<td>3</td><td>0</td><td>1</td><td>2</td><td class="muted">—</td>' in page
+
+            connection.request("GET", "/dashboard/api", headers=headers)
+            response = connection.getresponse()
+            assert response.status == 200
+            assert json.loads(response.read()) == report
+
+            def unavailable(*_):
+                raise LookupError
+
+            server.daily_metrics.report = unavailable
+            connection.request("GET", "/dashboard", headers=headers)
+            response = connection.getresponse()
+            assert response.status == 200
+            page = response.read().decode()
+            assert "Данные когорт ещё обновляются." in page
+            assert "DAU — активные за сутки" in page
+        finally:
+            connection.close()
+            server.shutdown()
+            thread.join(timeout=2)

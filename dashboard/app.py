@@ -933,7 +933,36 @@ def chart(days: list[dict], key: str, title: str, color: str) -> str:
     )
 
 
-def render_page(report: dict) -> str:
+def render_retention(cohorts: list[dict] | None) -> str:
+    heading = '<h2 id="retention-title">Удержание по дате регистрации</h2>'
+    if not cohorts:
+        return f'<section id="retention">{heading}<p class="muted">Данные когорт ещё обновляются.</p></section>'
+
+    rows = []
+    for cohort in reversed(cohorts):
+        day = date.fromisoformat(cohort["date"])
+        marker = "" if cohort["is_final"] else "*"
+        cells = []
+        for field in daily_metrics.RETENTION_FIELDS.values():
+            count = cohort[field]
+            cells.append('<td class="muted">—</td>' if count is None else f'<td>{count}</td>')
+        rows.append(
+            f'<tr><th scope="row"><time datetime="{day.isoformat()}">{day:%d.%m.%Y}</time>{marker}</th>'
+            f'<td>{cohort["new_users"]}</td>{"".join(cells)}</tr>'
+        )
+
+    return f"""<section id="retention">
+{heading}
+<p id="retention-help" class="muted">Новые — регистрации за день. D1, D3, D7 и D14 — сколько участников когорты
+написали агенту ровно через 1, 3, 7 или 14 дней после регистрации. Прочерк означает, что целевые сутки ещё не закрыты.</p>
+<div class="retention-scroll" role="region" aria-labelledby="retention-title" tabindex="0">
+<table class="retention-table" aria-labelledby="retention-title" aria-describedby="retention-help">
+<thead><tr><th scope="col">Когорта</th><th scope="col">Новые</th><th scope="col">D1</th>
+<th scope="col">D3</th><th scope="col">D7</th><th scope="col">D14</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div></section>"""
+
+
+def render_page(report: dict, cohorts: list[dict] | None = None) -> str:
     days = report["days"]
     # последний день периода — текущие сутки: строка предварительная, помечается звёздочкой
     rows = "".join(
@@ -970,6 +999,13 @@ svg text {{ fill:var(--muted); font-size:12px; }} svg text.v {{ fill:var(--fg); 
 table {{ display:block; width:100%; overflow-x:auto; border-collapse:collapse; margin-top:22px; font-variant-numeric:tabular-nums; }}
 th, td {{ padding:8px 6px; border-bottom:1px solid var(--line); text-align:right; }}
 th:first-child, td:first-child {{ text-align:left; }} th {{ font-size:13px; color:var(--muted); font-weight:600; }}
+.retention-scroll {{ max-height:380px; overflow:auto; border:1px solid var(--line); border-radius:10px; }}
+.retention-scroll:focus-visible {{ outline:2px solid var(--a); outline-offset:2px; }}
+.retention-table {{ display:table; margin:0; }}
+.retention-table th, .retention-table td {{ padding:8px clamp(5px, 2vw, 16px); white-space:nowrap; }}
+.retention-table thead th {{ position:sticky; top:0; background:var(--bg); }}
+.retention-table tbody th {{ color:var(--fg); }}
+.retention-table tbody tr:last-child > * {{ border-bottom:0; }}
 ul {{ padding-left:18px; }} li {{ margin:4px 0; }}
 </style></head>
 <body><main>
@@ -977,21 +1013,22 @@ ul {{ padding-left:18px; }} li {{ margin:4px 0; }}
 <div class="muted">{period}, сутки по Москве · обновлено {html.escape(report["updated_at"][11:16])} МСК {report["updated_at"][8:10]}.{report["updated_at"][5:7]} · * текущие сутки — предварительные данные</div>
 <div class="kpi">
 <div><span class="muted">DAU в среднем за сутки</span><b>{f"{avg_dau:.1f}".replace(".", ",")}</b></div>
-<div><span class="muted">Новых за период</span><b>{total_new}</b></div>
+<div><span class="muted">Новых за период по первому сообщению</span><b>{total_new}</b></div>
 <div><span class="muted">Пользователей на {p["to"][8:10]}.{p["to"][5:7]}*</span><b>{days[-1]["total_users"]}</b></div>
 <div><span class="muted">Вызовов LLM за период</span><b>{total_llm}</b></div>
 <div><span class="muted">Tool calls — Память, за период</span><b>{total_tool}</b></div>
 </div>
 {chart(days, "dau", "DAU — активные за сутки", "var(--a)")}
+{render_retention(cohorts)}
 {chart(days, "daily_active_account", "Активные аккаунты (>10 сообщений)", "var(--d)")}
-{chart(days, "new_users", "Новые пользователи", "var(--e)")}
+{chart(days, "new_users", "Новые пользователи — первое сообщение", "var(--e)")}
 {chart(days, "total_users", "Пользователи, всего", "var(--c)")}
 {chart(days, "llm_requests", "Вызовы LLM", "var(--b)")}
 {chart(days, "tool_requests", "Tool calls — Память", "var(--f)")}
-<table><thead><tr><th>Дата</th><th>DAU</th><th>Активные (&gt;10)</th><th>Новые</th><th>Всего</th><th>LLM</th><th>Память</th></tr></thead>
+<table><thead><tr><th>Дата</th><th>DAU</th><th>Активные (&gt;10)</th><th>Впервые написали</th><th>Всего</th><th>LLM</th><th>Память</th></tr></thead>
 <tbody>{rows}</tbody></table>
 <h2>Как считается</h2>
-<ul>{definitions_html}<li>Из метрик исключён трафик test/internal. Сообщения для DAU и «активных» считаются по базе агента и трейсингу Langfuse вместе: часть истории в базе не сохранилась, поэтому ходы диалога восстанавливаются из трассы (одна трасса — одно сообщение), а для пары «день, аккаунт» берётся большее из двух чисел — одни и те же ходы дважды не считаются. Прошедшие сутки закрываются снимком в 00:15 МСК и дальше не пересчитываются; текущие сутки (со звёздочкой) — предварительные данные из сырых источников, снимком пока не закрываются. Страница обновляется не чаще раза в час. JSON с теми же числами — <code>/dashboard/api</code>.</li></ul>
+<ul>{definitions_html}<li>Из метрик исключён трафик test/internal. Сообщения для DAU и «активных» считаются по базе агента и трейсингу Langfuse вместе: часть истории в базе не сохранилась, поэтому ходы диалога восстанавливаются из трассы (одна трасса — одно сообщение), а для пары «день, аккаунт» берётся большее из двух чисел — одни и те же ходы дважды не считаются. Прошедшие сутки закрываются снимком в 00:15 МСК и дальше не пересчитываются; текущие сутки (со звёздочкой) — предварительные данные из сырых источников, снимком пока не закрываются. Основные метрики кэшируются на час, их JSON доступен по <code>/dashboard/api</code>. Для выгрузки когорт используется <code>/api/v1/metrics/daily</code>.</li></ul>
 </main></body></html>"""
 
 
@@ -1073,7 +1110,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, "Данные временно недоступны".encode(), "text/plain; charset=utf-8")
         if path == "/dashboard/api":
             return self._send(200, json.dumps(report, ensure_ascii=False).encode(), "application/json; charset=utf-8")
-        return self._send(200, render_page(report).encode(), "text/html; charset=utf-8")
+        cohorts = None
+        try:
+            first = date.fromisoformat(report["period"]["from"])
+            last = date.fromisoformat(report["period"]["to"])
+            cohorts = self.server.daily_metrics.report(first, last, datetime.now(UTC))["data"]
+        except LookupError:
+            pass  # фоновый расчёт ещё не завершён
+        except Exception:
+            log.error("Не удалось прочитать когорты для дашборда")
+        return self._send(200, render_page(report, cohorts).encode(), "text/html; charset=utf-8")
 
     def log_message(self, format: str, *args) -> None:
         # Журнал доступа без заголовков: в них пароль.
@@ -1103,14 +1149,13 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     server.daemon_threads = True
-    if len(METRICS_TOKEN) >= 32:
-        export = daily_metrics.DailyMetrics(
-            os.environ["DASHBOARD_DATABASE_URL"], os.environ["APP_DATABASE_URL"], CONTEST_START, MSK,
-            os.environ.get("DAILY_METRICS_STARTUP_ID", "ryadom"), collect_export_activity,
-        )
-        export.ensure_schema()
-        server.daily_metrics = export
-        threading.Thread(target=export.run_forever, args=(900, CLOSE_HOUR, CLOSE_MINUTE), daemon=True).start()
+    export = daily_metrics.DailyMetrics(
+        os.environ["DASHBOARD_DATABASE_URL"], os.environ["APP_DATABASE_URL"], CONTEST_START, MSK,
+        os.environ.get("DAILY_METRICS_STARTUP_ID", "ryadom"), collect_export_activity,
+    )
+    export.ensure_schema()
+    server.daily_metrics = export
+    threading.Thread(target=export.run_forever, args=(900, CLOSE_HOUR, CLOSE_MINUTE), daemon=True).start()
     log.info("слушаю :%s", port)
     server.serve_forever()
 
