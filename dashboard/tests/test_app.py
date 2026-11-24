@@ -173,7 +173,7 @@ def test_langfuse_traces_lookback_beyond_observation_window(monkeypatch):
     # дублей нет — считаются только observations своего окна.
     calls = []
 
-    def fake_list(host, public_key, secret_key, path, params):
+    def fake_list(host, public_key, secret_key, path, params, fields):
         calls.append((path, params))
         return []
 

@@ -3,6 +3,7 @@
 
     GET /dashboard      — страница с графиками и таблицей (basic auth)
     GET /dashboard/api  — те же числа JSON-ом (basic auth)
+    GET /api/v1/metrics/daily — выгрузка для коллектора (Bearer)
     GET /healthz        — для проб, наружу не маршрутизируется
 
     python app.py --backfill  — разовый досчёт истории в хранилище снимков (идемпотентно)
@@ -48,6 +49,8 @@ import urllib.request
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import daily_metrics
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("dashboard")
@@ -318,6 +321,11 @@ def tool_requests_by_day(tools: Iterable[dict], traces: Iterable[dict], excluded
     return _count_observations(tools, traces, TOOL_NAMES, excluded, only_success=True)
 
 
+def activity_rows(message_rows: Iterable[tuple[str, str, int]], generations: Iterable[dict],
+                  traces: Iterable[dict], excluded: set[str]) -> list[tuple[str, str, int]]:
+    return merge_message_rows(message_rows, langfuse_message_rows(generations, traces, excluded))
+
+
 def metrics_by_day(
     message_rows: Iterable[tuple[str, str, int]],
     first_message: Mapping[str, str],
@@ -335,7 +343,7 @@ def metrics_by_day(
     не передан, считается по выгрузке этого окна (backfill/catch-up передают накопленное через окна).
     `total_users` здесь нет: он накопительный по снимкам и вычисляется при записи (save_snapshots)."""
     generations, tools, traces = list(generations), list(tools), list(traces)
-    dau, active = activity_by_day(merge_message_rows(message_rows, langfuse_message_rows(generations, traces, excluded)), excluded)
+    dau, active = activity_by_day(activity_rows(message_rows, generations, traces, excluded), excluded)
     if first_turn is None:
         first_turn = first_langfuse_day(generations, traces)
     new = new_users_by_day(first_known_day(first_reply, first_message, first_turn), excluded)
@@ -391,15 +399,19 @@ FROM user_reply_counts WHERE first_reply_at IS NOT NULL
 """
 
 
+def query_message_rows(conn, since: datetime, until: datetime) -> list[tuple[str, str, int]]:
+    return [
+        (day, str(user), int(count))
+        for day, user, count in conn.execute(SQL_MESSAGES_BY_DAY, {"since": since, "until": until})
+    ]
+
+
 def query_agent_db(dsn: str, since: datetime, until: datetime) -> dict:
     import psycopg  # импорт здесь, чтобы тесты чистых функций не требовали драйвера
 
     # Сессия только на чтение: в чужие базы сервис ничего не пишет, даже по ошибке.
     with psycopg.connect(dsn, options="-c default_transaction_read_only=on", connect_timeout=10) as conn:
-        rows = [
-            (r[0], str(r[1]), int(r[2]))
-            for r in conn.execute(SQL_MESSAGES_BY_DAY, {"since": since, "until": until})
-        ]
+        rows = query_message_rows(conn, since, until)
         first_message = {str(r[0]): r[1] for r in conn.execute(SQL_FIRST_MESSAGE_DAY)}
     return {"message_rows": rows, "first_message": first_message}
 
@@ -460,20 +472,26 @@ def _langfuse_fold(host: str, public_key: str, secret_key: str, path: str, param
         page += 1
 
 
-def _langfuse_list(host: str, public_key: str, secret_key: str, path: str, params: dict) -> list[dict]:
-    """Постраничная выгрузка списка целиком в память — допустимо только для ограниченных окон снимков."""
-    return _langfuse_fold(host, public_key, secret_key, path, params, list.append, [])
+def _langfuse_list(host: str, public_key: str, secret_key: str, path: str, params: dict,
+                   fields: tuple[str, ...]) -> list[dict]:
+    """Сохраняет только поля для метрик, чтобы содержимое трасс не копилось в памяти между страницами."""
+    def project(rows: list[dict], item: dict) -> None:
+        rows.append({field: item.get(field) for field in fields})
+
+    return _langfuse_fold(host, public_key, secret_key, path, params, project, [])
 
 
 def query_langfuse(host: str, public_key: str, secret_key: str, since: datetime, until: datetime) -> dict:
     """Записи GENERATION и TOOL и трассы за период. userId живёт на трассе, связь — по traceId."""
+    bounds = {"fromStartTime": _langfuse_stamp(since), "toStartTime": _langfuse_stamp(until)}
+    observation_fields = ("traceId", "name", "startTime")
     generations = _langfuse_list(host, public_key, secret_key, "/api/public/observations",
-                                 {"type": "GENERATION", "fromStartTime": _langfuse_stamp(since),
-                                  "toStartTime": _langfuse_stamp(until)})
+                                 {"type": "GENERATION", **bounds}, observation_fields)
     tools = _langfuse_list(host, public_key, secret_key, "/api/public/observations",
-                           {"type": "TOOL", "fromStartTime": _langfuse_stamp(since), "toStartTime": _langfuse_stamp(until)})
+                           {"type": "TOOL", **bounds}, (*observation_fields, "level"))
     traces = _langfuse_list(host, public_key, secret_key, "/api/public/traces",
-                            {"fromTimestamp": _langfuse_stamp(since - TRACE_LOOKBACK), "toTimestamp": _langfuse_stamp(until)})
+                            {"fromTimestamp": _langfuse_stamp(since - TRACE_LOOKBACK),
+                             "toTimestamp": _langfuse_stamp(until)}, ("id", "userId"))
     return {"generations": generations, "tools": tools, "traces": traces}
 
 
@@ -520,6 +538,28 @@ def collect_raw(since: datetime, until: datetime) -> dict:
     raw.update(query_app_db(os.environ["APP_DATABASE_URL"]))
     raw.update(query_langfuse(*_langfuse_config(), since, until))
     return raw
+
+
+def collect_export_activity(since: datetime, until: datetime) -> tuple[set[str], dict[str, int]]:
+    import psycopg
+
+    options = "-c default_transaction_read_only=on"
+    with psycopg.connect(os.environ["DIALOG_DATABASE_URL"], options=options, connect_timeout=10) as conn:
+        messages = query_message_rows(conn, since, until)
+    with psycopg.connect(os.environ["APP_DATABASE_URL"], options=options, connect_timeout=10) as conn:
+        excluded = {str(row[0]) for row in conn.execute(SQL_EXCLUDED_USERS)}
+    raw = query_langfuse(*_langfuse_config(), since, until)
+    generations, traces = raw["generations"], raw["traces"]
+    day = since.astimezone(MSK).date().isoformat()
+    active = {
+        user for activity_day, user, count in activity_rows(messages, generations, traces, excluded)
+        if activity_day == day and user not in excluded and count > 0
+    }
+    return active, {
+        "dau": len(active),
+        "llm_requests": llm_requests_by_day(generations, traces, excluded).get(day, 0),
+        "tool_requests": tool_requests_by_day(raw["tools"], traces, excluded).get(day, 0),
+    }
 
 
 # ---------- хранилище снимков (собственная база дашборда) ----------
@@ -961,6 +1001,8 @@ USER = os.environ.get("DASHBOARD_USER", "sber500")
 PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 CACHE = ReportCache(compute_report)
 FAILED = FailedLogins()
+METRICS_TOKEN = os.environ.get("DAILY_METRICS_TOKEN", "")
+METRICS_LIMIT = daily_metrics.MetricsRateLimit()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -984,8 +1026,34 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_metrics_json(self, status: int, payload: dict, headers: dict | None = None) -> None:
+        self._send(status, json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8", headers)
+
+    def _daily_metrics(self, query: str) -> None:
+        scheme, _, token = self.headers.get("Authorization", "").partition(" ")
+        if (len(METRICS_TOKEN) < 32 or scheme.lower() != "bearer"
+                or not hmac.compare_digest(token.encode(), METRICS_TOKEN.encode())):
+            return self._send_metrics_json(401, {"error": "Требуется Bearer-токен"}, {"WWW-Authenticate": "Bearer"})
+        if not METRICS_LIMIT.allow():
+            return self._send_metrics_json(429, {"error": "Лимит запросов исчерпан"}, {"Retry-After": "60"})
+        try:
+            first, last = daily_metrics.date_range(query)
+        except ValueError:
+            return self._send_metrics_json(400, {"error": "Невалидные даты или диапазон больше 90 суток"})
+        try:
+            report = self.server.daily_metrics.report(first, last, datetime.now(UTC))
+        except LookupError:
+            return self._send_metrics_json(503, {"error": "Агрегаты ещё формируются"})
+        except Exception:
+            log.error("Не удалось прочитать агрегаты ежедневной выгрузки")
+            return self._send_metrics_json(503, {"error": "Метрики временно недоступны"})
+        return self._send_metrics_json(200, report)
+
     def do_GET(self) -> None:
-        path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
+        url = urllib.parse.urlsplit(self.path)
+        if url.path == daily_metrics.PATH:
+            return self._daily_metrics(url.query)
+        path = url.path.rstrip("/") or "/"
         if path == "/healthz":
             return self._send(200, b"ok", "text/plain; charset=utf-8")
         if path not in ("/dashboard", "/dashboard/api"):
@@ -1035,6 +1103,14 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     server.daemon_threads = True
+    if len(METRICS_TOKEN) >= 32:
+        export = daily_metrics.DailyMetrics(
+            os.environ["DASHBOARD_DATABASE_URL"], os.environ["APP_DATABASE_URL"], CONTEST_START, MSK,
+            os.environ.get("DAILY_METRICS_STARTUP_ID", "ryadom"), collect_export_activity,
+        )
+        export.ensure_schema()
+        server.daily_metrics = export
+        threading.Thread(target=export.run_forever, args=(900, CLOSE_HOUR, CLOSE_MINUTE), daemon=True).start()
     log.info("слушаю :%s", port)
     server.serve_forever()
 

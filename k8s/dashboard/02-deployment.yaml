@@ -62,6 +62,12 @@ spec:
                 secretKeyRef:
                   name: dashboard-secrets
                   key: DASHBOARD_PASSWORD
+            - name: DAILY_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: DAILY_METRICS_TOKEN
+                  optional: true
             - name: DIALOG_DATABASE_URL
               valueFrom:
                 secretKeyRef:
