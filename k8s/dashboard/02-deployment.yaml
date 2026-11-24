@@ -14,6 +14,7 @@ metadata:
     app.kubernetes.io/part-of: ryadom
 spec:
   replicas: 1
+  progressDeadlineSeconds: 1800
   selector:
     matchLabels:
       app: dashboard
@@ -34,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.2
+          image: cr.yandex/crpsqeamqpuvrkm5tpr9/app/dashboard:0.2.6
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -87,10 +88,15 @@ spec:
                 secretKeyRef:
                   name: dashboard-secrets
                   key: LANGFUSE_SECRET_KEY
+            - name: METRICS_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-secrets
+                  key: METRICS_API_TOKEN
           # exec, а не httpGet: пробы kubelet шли бы с IP узлов, а их default-deny не пускает.
           readinessProbe:
             exec:
-              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3)"]
             periodSeconds: 20
             timeoutSeconds: 5
           livenessProbe:

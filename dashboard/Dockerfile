@@ -6,7 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && groupadd --system --gid 10001 dashboard \
     && useradd --system --uid 10001 --gid 10001 dashboard
-COPY app.py .
+COPY app.py daily_metrics.py .
 
 USER 10001
 EXPOSE 8080
