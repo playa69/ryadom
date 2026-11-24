@@ -1038,7 +1038,7 @@ USER = os.environ.get("DASHBOARD_USER", "sber500")
 PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 CACHE = ReportCache(compute_report)
 FAILED = FailedLogins()
-METRICS_TOKEN = os.environ.get("DAILY_METRICS_TOKEN", "")
+METRICS_TOKEN = os.environ.get("METRICS_API_TOKEN", "")
 METRICS_LIMIT = daily_metrics.MetricsRateLimit()
 
 
@@ -1069,16 +1069,19 @@ class Handler(BaseHTTPRequestHandler):
     def _daily_metrics(self, query: str) -> None:
         scheme, _, token = self.headers.get("Authorization", "").partition(" ")
         if (len(METRICS_TOKEN) < 32 or scheme.lower() != "bearer"
-                or not hmac.compare_digest(token.encode(), METRICS_TOKEN.encode())):
+                or not hmac.compare_digest(token.strip().encode(), METRICS_TOKEN.encode())):
             return self._send_metrics_json(401, {"error": "Требуется Bearer-токен"}, {"WWW-Authenticate": "Bearer"})
-        if not METRICS_LIMIT.allow():
+        if not METRICS_LIMIT.allow(self._client_ip()):
             return self._send_metrics_json(429, {"error": "Лимит запросов исчерпан"}, {"Retry-After": "60"})
+        now = datetime.now(UTC)
         try:
             first, last = daily_metrics.date_range(query)
         except ValueError:
             return self._send_metrics_json(400, {"error": "Невалидные даты или диапазон больше 90 суток"})
+        if last > now.astimezone(MSK).date():
+            return self._send_metrics_json(400, {"error": "date_to не должен быть позже текущих суток"})
         try:
-            report = self.server.daily_metrics.report(first, last, datetime.now(UTC))
+            report = self.server.daily_metrics.report(first, last, now)
         except LookupError:
             return self._send_metrics_json(503, {"error": "Агрегаты ещё формируются"})
         except Exception:
@@ -1088,11 +1091,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         url = urllib.parse.urlsplit(self.path)
-        if url.path == daily_metrics.PATH:
+        if url.path.rstrip("/") == daily_metrics.PATH:
             return self._daily_metrics(url.query)
         path = url.path.rstrip("/") or "/"
         if path == "/healthz":
             return self._send(200, b"ok", "text/plain; charset=utf-8")
+        if path == "/readyz":
+            ready = self.server.daily_metrics.ready.is_set()
+            return self._send(200 if ready else 503, b"ready" if ready else b"warming up", "text/plain; charset=utf-8")
         if path not in ("/dashboard", "/dashboard/api"):
             return self._send(404, b"not found", "text/plain; charset=utf-8")
         ip = self._client_ip()

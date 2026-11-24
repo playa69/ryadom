@@ -5,7 +5,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta, tzinfo
-from threading import Lock
+from threading import Event, Lock
 from urllib.parse import parse_qs
 
 log = logging.getLogger("dashboard")
@@ -90,21 +90,22 @@ def retention_counts(day: date, active: Iterable[str], cohorts: Mapping[str, dat
 
 
 class MetricsRateLimit:
-    def __init__(self, limit: int = 60, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, limit: int = 30, clock: Callable[[], float] = time.monotonic):
         self.limit = limit
         self.clock = clock
         self.lock = Lock()
         self.minute = -1
-        self.count = 0
+        self.counts: dict[str, int] = {}
 
-    def allow(self) -> bool:
+    def allow(self, ip: str) -> bool:
         with self.lock:
             minute = int(self.clock() // 60)
             if minute != self.minute:
-                self.minute, self.count = minute, 0
-            if self.count >= self.limit:
+                self.minute, self.counts = minute, {}
+            count = self.counts.get(ip, 0)
+            if count >= self.limit:
                 return False
-            self.count += 1
+            self.counts[ip] = count + 1
             return True
 
 
@@ -117,6 +118,7 @@ class DailyMetrics:
         self.msk = msk
         self.startup_id = startup_id
         self.collect_activity = collect_activity
+        self.ready = Event()
 
     def _connect(self, *, app: bool = False):
         import psycopg
@@ -165,17 +167,25 @@ class DailyMetrics:
         while True:
             try:
                 self.refresh(datetime.now(UTC), close_hour, close_minute)
-            except Exception:
+                if not self.ready.is_set():
+                    self.ready.set()
+                    log.info("Агрегаты ежедневной выгрузки готовы")
+            except Exception as error:
                 # Тела ответов источников и DSN не должны попадать в журнал.
-                log.error("Не удалось обновить агрегаты ежедневной выгрузки")
+                log.error("Не удалось обновить агрегаты ежедневной выгрузки: %s", type(error).__name__)
             time.sleep(refresh_seconds)
 
     def _load_activity(self, first: date, last: date) -> dict[date, dict]:
         with self._connect() as conn:
             rows = conn.execute("""
-                SELECT day, is_final, dau, llm_requests, tool_requests,
-                       retained_d1, retained_d3, retained_d7, retained_d14
-                FROM daily_export_activity WHERE day BETWEEN %s AND %s
+                SELECT day, e.is_final, coalesce(s.dau, e.dau, 0),
+                       coalesce(s.llm_requests, e.llm_requests, 0),
+                       greatest(coalesce(s.tool_requests, e.tool_requests, 0), coalesce(r.tool_requests, 0)),
+                       e.retained_d1, e.retained_d3, e.retained_d7, e.retained_d14
+                FROM daily_export_activity e
+                FULL JOIN daily_metrics s USING (day)
+                FULL JOIN tool_call_recovery r USING (day)
+                WHERE day BETWEEN %s AND %s
             """, (first, last))
             return {day: dict(zip(("is_final",) + STORED_FIELDS, values, strict=True)) for day, *values in rows}
 
@@ -197,10 +207,10 @@ class DailyMetrics:
         def for_day(day: date) -> dict:
             if self.activity_start <= day <= today:
                 row = activity.get(day)
-                if row is None or (day < today and not row["is_final"]):
+                if row is None or row["is_final"] != (day < today):
                     raise LookupError("Агрегаты ещё формируются")
                 return row
-            return ZERO_ACTIVITY
+            return activity.get(day, ZERO_ACTIVITY)
 
         data = []
         for index in range((last - first).days + 1):
@@ -217,7 +227,11 @@ class DailyMetrics:
             }
             for offset, field in RETENTION_FIELDS.items():
                 target_is_closed = (today - day).days > offset
-                row[field] = for_day(day + timedelta(days=offset))[field] if target_is_closed else None
+                target = day + timedelta(days=offset)
+                if target_is_closed and target >= self.activity_start:
+                    row[field] = for_day(target)[field]
+                else:
+                    row[field] = 0 if target_is_closed else None
             data.append(row)
         return {
             "startup_id": self.startup_id,

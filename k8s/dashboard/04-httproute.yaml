@@ -22,11 +22,11 @@ spec:
       backendRefs:
         - name: dashboard
           port: 8080
-    - name: daily-metrics
+    - name: metrics-api
       matches:
         - path:
-            type: Exact
-            value: /api/v1/metrics/daily
+            type: PathPrefix
+            value: /api/v1/metrics
       backendRefs:
         - name: dashboard
           port: 8080
