@@ -142,14 +142,21 @@ def test_an_unknown_pipeline_is_refused_and_changes_nothing() -> None:
         assert client.get(f"/v1/users/{user_id}/dialogs", headers=AUTH).json()["items"] == []
 
 
-def test_when_sber_does_not_open_the_dialog_goes_on_gemini_live() -> None:
+@pytest.mark.parametrize("voice_name", [None, "Aoede"])
+def test_when_sber_does_not_open_gemini_uses_the_selected_female_voice(voice_name: str | None) -> None:
+    """REQ-VOICE-07, REQ-ACC-07: при отказе Сбера Gemini получает голос профиля для приветствия и ответа."""
     gemini, sber = FakeConnector(reply="Ответ Gemini."), FakeSber(fail=True)
-    with sber_client(gemini, sber) as client:
+    gemini_tts = FakeTts()
+    with TestClient(make_app(gemini, gemini_tts, sber_factory=lambda: sber)) as client:
         user_id = str(uuid.uuid4())
-        dialog = start(client, user_id, pipeline="sber").json()["dialogId"]
+        dialog = start(client, user_id, pipeline="sber", voice="female", voiceName=voice_name).json()["dialogId"]
         with client.websocket_connect(ws_url(user_id, dialog), headers=AUTH) as ws:
-            send_user_message(ws, "c1", "Мне сегодня тяжело")
-            frames = read_frames(ws, lambda fs: has(fs, "assistant_end"))
+            read_frames(ws, lambda fs: has(fs, "tts_end", messageId="greeting"))
+            speak_turn(ws)
+            frames = read_frames(ws, reply_done)
+        expected = voice_name or "female"
+        assert sber.open_calls == [expected] and gemini.open_calls == [expected]
+        assert gemini_tts.voices and set(gemini_tts.voices) == {expected}
         assert has(frames, "assistant_end", text="Ответ Gemini.")
         assert not has(frames, "error")
 
