@@ -146,7 +146,9 @@ class SaluteSpeaker:
                 self.broken = True
                 raise TtsError("сессия SaluteSpeech закрыта")
             await self._drain()
-            await self._ws.send(json.dumps({"type": "response.create", "response": {"instructions": text}}))
+            await self._ws.send(
+                json.dumps({"type": "response.create", "response": {"instructions": text, "voice": TTS_VOICE}})
+            )
             self._unfinished += 1
             try:
                 async with asyncio.timeout(SPEECH_TIMEOUT_SECONDS):

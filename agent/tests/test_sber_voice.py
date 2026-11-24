@@ -5,9 +5,11 @@ import asyncio
 import json
 import math
 from array import array
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from websockets.protocol import State
 
 from app.clients.gemini_live import LiveError
 from app.clients.sber_voice import (
@@ -15,6 +17,7 @@ from app.clients.sber_voice import (
     FallbackConnector,
     FallbackTts,
     GigaChatMoodClassifier,
+    SaluteSpeaker,
     SberVoiceLink,
     Upsampler,
     realtime_url,
@@ -51,6 +54,26 @@ def test_upsampling_gives_24_khz() -> None:
 
 def test_realtime_url_from_the_proxy_base() -> None:
     assert realtime_url("https://proxy.example:4000/v1/", "gigaasr") == "wss://proxy.example:4000/v1/realtime?model=gigaasr"
+
+
+async def test_salutespeech_requests_vera_for_every_phrase() -> None:
+    """REQ-VOICE-03, REQ-ACC-07: ответы и фиксированные фразы используют голос «Вера»."""
+    socket = AsyncMock()
+    socket.state = State.OPEN
+    socket.recv.side_effect = [
+        '{"type":"response.audio.delta","delta":"AQA="}',
+        '{"type":"response.done"}',
+        '{"type":"response.audio.delta","delta":"AgA="}',
+        '{"type":"response.done"}',
+    ]
+    speaker = SaluteSpeaker(socket)
+
+    assert [piece async for piece in speaker.speak("Привет.")] == [b"\x01\x00"]
+    assert [piece async for piece in speaker.speak("Я рядом.")] == [b"\x02\x00"]
+    assert [json.loads(call.args[0]) for call in socket.send.await_args_list] == [
+        {"type": "response.create", "response": {"instructions": "Привет.", "voice": "Bab-Freespeech"}},
+        {"type": "response.create", "response": {"instructions": "Я рядом.", "voice": "Bab-Freespeech"}},
+    ]
 
 
 def sse(pieces: list[str], usage: dict | None = None) -> bytes:
